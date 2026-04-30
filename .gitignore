@@ -1,0 +1,53 @@
+# Dependencies
+node_modules/
+backend/vendor/
+
+# Build outputs
+dist/
+landing/dist/
+.turbo/
+
+# Env — nunca subir secretos
+.env
+.env.*
+!.env.example
+!.env.production
+*.local
+
+# SQLite DB (efímera en dev)
+backend/database/database.sqlite
+backend/database/database.sqlite-shm
+backend/database/database.sqlite-wal
+
+# Laravel generated
+backend/storage/logs/*.log
+backend/bootstrap/cache/*.php
+backend/public/storage
+backend/public/hot
+
+# Test results
+test-results/
+playwright-report/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Archivos personales / herramientas de dev (no son código del proyecto)
+.claude/
+.sanitized-skills/
+ai-agents/
+ai-agents.zip
+skills/
+skills.zip
+everything-claude-code-main/
+ai-page-design-prompts.*
+tienda-T/
+tienda-T-develop/
+tienda-T-develop.zip
+CSP_502m_app.pkg
+app/
+apps/mobile/

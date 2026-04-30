@@ -1,0 +1,27 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('pre_sale_items', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('pre_sale_id')->constrained()->cascadeOnDelete();
+            $table->foreignId('product_id')->nullable()->constrained()->nullOnDelete();
+            $table->foreignId('manga_id')->nullable()->constrained()->nullOnDelete();
+            $table->decimal('quantity', 12, 2);
+            $table->tinyInteger('price_level')->unsigned()->default(1); // 1–5
+            $table->decimal('price', 12, 2);
+            $table->timestamp('created_at')->useCurrent();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('pre_sale_items');
+    }
+};

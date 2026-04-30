@@ -1,0 +1,33 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "paths": {
+      "@tadaima/api": ["./packages/api/src/index.ts"],
+      "@tadaima/api/*": ["./packages/api/src/*"],
+      "@tadaima/hooks": ["./packages/hooks/src/index.ts"],
+      "@tadaima/hooks/*": ["./packages/hooks/src/*"],
+      "@tadaima/auth": ["./packages/auth/src/index.ts"],
+      "@tadaima/auth/*": ["./packages/auth/src/*"],
+      "@tadaima/permissions": ["./packages/permissions/src/index.ts"],
+      "@tadaima/permissions/*": ["./packages/permissions/src/*"],
+      "@tadaima/utils": ["./packages/utils/src/index.ts"],
+      "@tadaima/utils/*": ["./packages/utils/src/*"]
+    }
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "types": ["vite/client"],
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+
+    /* Strict */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+
+    /* Paths — resueltos por vite alias, pero TypeScript necesita saber */
+    "paths": {
+      "@/*": ["./src/*"],
+      "@tadaima/api": ["../packages/api/src/index.ts"],
+      "@tadaima/api/*": ["../packages/api/src/*"],
+      "@tadaima/hooks": ["../packages/hooks/src/index.ts"],
+      "@tadaima/hooks/*": ["../packages/hooks/src/*"],
+      "@tadaima/auth": ["../packages/auth/src/index.ts"],
+      "@tadaima/auth/*": ["../packages/auth/src/*"],
+      "@tadaima/permissions": ["../packages/permissions/src/index.ts"],
+      "@tadaima/permissions/*": ["../packages/permissions/src/*"],
+      "@tadaima/utils": ["../packages/utils/src/index.ts"],
+      "@tadaima/utils/*": ["../packages/utils/src/*"]
+    }
+  },
+  "include": ["src"]
+}
