@@ -172,6 +172,10 @@ class ProductController extends Controller
 
         $path = $request->file('image')->store("products/{$product->id}");
 
+        if ($path === false) {
+            return $this->error('No se pudo guardar la imagen en el almacenamiento.', 500);
+        }
+
         $image = ProductImage::create([
             'product_id' => $product->id,
             'image_path' => $path,
@@ -181,7 +185,7 @@ class ProductController extends Controller
         return $this->success([
             'id'         => $image->id,
             'image_path' => $path,
-            'url'        => Storage::url($path),
+            'url'        => $image->url,
         ], 'Imagen subida.', 201);
     }
 

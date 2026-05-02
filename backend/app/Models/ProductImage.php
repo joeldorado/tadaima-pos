@@ -16,6 +16,13 @@ class ProductImage extends Model
 
     public function getUrlAttribute(): string
     {
+        if (!$this->image_path || $this->image_path === '0') {
+            return '';
+        }
+        if (config('filesystems.default') === 'gcs') {
+            $bucket = config('filesystems.disks.gcs.bucket', 'tadaima-media');
+            return "https://storage.googleapis.com/{$bucket}/{$this->image_path}";
+        }
         return Storage::url($this->image_path);
     }
 
