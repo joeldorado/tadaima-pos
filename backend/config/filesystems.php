@@ -61,15 +61,16 @@ return [
         ],
 
         'gcs' => [
-            'driver'         => 'gcs',
-            'project_id'     => env('GOOGLE_CLOUD_PROJECT_ID', 'impusodigitaldorado'),
-            'key_file_path'  => env('GOOGLE_CLOUD_KEY_FILE'),   // null in prod (uses ADC)
-            'bucket'         => env('GOOGLE_CLOUD_STORAGE_BUCKET', 'tadaima-media'),
-            'path_prefix'    => env('GOOGLE_CLOUD_STORAGE_PATH_PREFIX', ''),
-            'apiEndpoint'    => env('GOOGLE_CLOUD_STORAGE_API_ENDPOINT'),
-            'visibility'     => 'public',
-            'metadata'       => ['cacheControl' => 'public, max-age=86400'],
-            'throw'          => false,
+            'driver'                   => 'gcs',
+            'project_id'               => env('GOOGLE_CLOUD_PROJECT_ID', 'impusodigitaldorado'),
+            'key_file_path'            => env('GOOGLE_CLOUD_KEY_FILE'),   // null in prod (uses ADC)
+            'bucket'                   => env('GOOGLE_CLOUD_STORAGE_BUCKET', 'tadaima-media'),
+            'path_prefix'              => env('GOOGLE_CLOUD_STORAGE_PATH_PREFIX', ''),
+            'apiEndpoint'              => env('GOOGLE_CLOUD_STORAGE_API_ENDPOINT'),
+            'visibility'               => 'public',
+            'uniformBucketLevelAccess' => true,   // bucket has uniform access — skip per-object ACLs
+            'metadata'                 => ['cacheControl' => 'public, max-age=86400'],
+            'throw'                    => false,
         ],
 
     ],
