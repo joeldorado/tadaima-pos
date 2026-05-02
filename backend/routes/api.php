@@ -248,6 +248,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('cash',         [ReportsController::class, 'cash']);
         Route::get('top-products', [ReportsController::class, 'topProducts']);
         Route::get('customers',    [ReportsController::class, 'customers']);
+        Route::get('pre-sales',    [ReportsController::class, 'preSales']);
     });
 
     // ── Catalog (admin) ───────────────────────────────────────────────────────
