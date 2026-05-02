@@ -436,25 +436,35 @@ class ReportsController extends Controller
         $to      = $request->input('to',   now()->toDateString());
         $storeId = $request->integer('store_id') ?: null;
 
-        // New schema totals
-        $ordersQuery = DB::table('pre_sale_orders')
-            ->whereDate('created_at', '>=', $from)
-            ->whereDate('created_at', '<=', $to)
-            ->when($storeId, fn ($q) => $q->where('store_id', $storeId));
+        // New schema — total revenue from items, collected from payments
+        $newOrders = DB::table('pre_sale_orders')
+            ->whereDate('pre_sale_orders.created_at', '>=', $from)
+            ->whereDate('pre_sale_orders.created_at', '<=', $to)
+            ->when($storeId, fn ($q) => $q->where('pre_sale_orders.store_id', $storeId))
+            ->count();
 
-        $totalOrders   = (clone $ordersQuery)->count();
-        $totalRevenue  = (clone $ordersQuery)->sum('total');
-        $totalCollected = (clone $ordersQuery)->sum('paid_amount');
-        $totalPending  = (clone $ordersQuery)->sum('balance');
+        $newRevenue = DB::table('pre_sale_order_items')
+            ->join('pre_sale_orders', 'pre_sale_orders.id', '=', 'pre_sale_order_items.pre_sale_order_id')
+            ->whereDate('pre_sale_orders.created_at', '>=', $from)
+            ->whereDate('pre_sale_orders.created_at', '<=', $to)
+            ->when($storeId, fn ($q) => $q->where('pre_sale_orders.store_id', $storeId))
+            ->sum(DB::raw('pre_sale_order_items.quantity * pre_sale_order_items.unit_price'));
+
+        $newCollected = DB::table('pre_sale_order_payments')
+            ->join('pre_sale_orders', 'pre_sale_orders.id', '=', 'pre_sale_order_payments.pre_sale_order_id')
+            ->whereDate('pre_sale_order_payments.created_at', '>=', $from)
+            ->whereDate('pre_sale_order_payments.created_at', '<=', $to)
+            ->when($storeId, fn ($q) => $q->where('pre_sale_orders.store_id', $storeId))
+            ->sum('pre_sale_order_payments.amount');
 
         // Legacy schema totals
-        $legacyOrders     = DB::table('pre_sales')
+        $legacyOrders = DB::table('pre_sales')
             ->whereDate('created_at', '>=', $from)
             ->whereDate('created_at', '<=', $to)
             ->when($storeId, fn ($q) => $q->where('store_id', $storeId))
             ->count();
 
-        $legacyCollected  = DB::table('pre_sale_payments')
+        $legacyCollected = DB::table('pre_sale_payments')
             ->join('pre_sales', 'pre_sales.id', '=', 'pre_sale_payments.pre_sale_id')
             ->whereDate('pre_sale_payments.created_at', '>=', $from)
             ->whereDate('pre_sale_payments.created_at', '<=', $to)
@@ -462,23 +472,27 @@ class ReportsController extends Controller
             ->sum('pre_sale_payments.amount');
 
         // Daily breakdown — UNION both schemas
-        $legacyDaily = DB::table('pre_sale_payments')
+        $legacySql = DB::table('pre_sale_payments')
             ->join('pre_sales', 'pre_sales.id', '=', 'pre_sale_payments.pre_sale_id')
             ->whereDate('pre_sale_payments.created_at', '>=', $from)
             ->whereDate('pre_sale_payments.created_at', '<=', $to)
             ->when($storeId, fn ($q) => $q->where('pre_sales.store_id', $storeId))
-            ->selectRaw('DATE(pre_sale_payments.created_at) as day, SUM(pre_sale_payments.amount) as collected');
+            ->selectRaw('DATE(pre_sale_payments.created_at) as day, SUM(pre_sale_payments.amount) as collected')
+            ->groupBy(DB::raw('DATE(pre_sale_payments.created_at)'));
 
-        $newDaily = DB::table('pre_sale_order_payments')
+        $newSql = DB::table('pre_sale_order_payments')
             ->join('pre_sale_orders', 'pre_sale_orders.id', '=', 'pre_sale_order_payments.pre_sale_order_id')
             ->whereDate('pre_sale_order_payments.created_at', '>=', $from)
             ->whereDate('pre_sale_order_payments.created_at', '<=', $to)
             ->when($storeId, fn ($q) => $q->where('pre_sale_orders.store_id', $storeId))
-            ->selectRaw('DATE(pre_sale_order_payments.created_at) as day, SUM(pre_sale_order_payments.amount) as collected');
+            ->selectRaw('DATE(pre_sale_order_payments.created_at) as day, SUM(pre_sale_order_payments.amount) as collected')
+            ->groupBy(DB::raw('DATE(pre_sale_order_payments.created_at)'));
 
-        $daily = DB::table(DB::raw("({$legacyDaily->toSql()} UNION ALL {$newDaily->toSql()}) as psp"))
-            ->mergeBindings($legacyDaily)
-            ->mergeBindings($newDaily)
+        $daily = DB::table(
+            DB::raw("({$legacySql->toSql()} UNION ALL {$newSql->toSql()}) as psp")
+        )
+            ->mergeBindings($legacySql)
+            ->mergeBindings($newSql)
             ->selectRaw('day, SUM(collected) as collected')
             ->groupBy('day')
             ->orderBy('day')
@@ -487,10 +501,10 @@ class ReportsController extends Controller
         return $this->success([
             'period'  => ['from' => $from, 'to' => $to],
             'summary' => [
-                'total_orders'    => $totalOrders + $legacyOrders,
-                'total_revenue'   => round((float) $totalRevenue, 2),
-                'total_collected' => round((float) ($totalCollected + $legacyCollected), 2),
-                'total_pending'   => round((float) $totalPending, 2),
+                'total_orders'    => $newOrders + $legacyOrders,
+                'total_revenue'   => round((float) $newRevenue, 2),
+                'total_collected' => round((float) ($newCollected + $legacyCollected), 2),
+                'total_pending'   => round((float) ($newRevenue - $newCollected), 2),
             ],
             'daily'   => $daily->map(fn ($r) => [
                 'day'       => $r->day,
