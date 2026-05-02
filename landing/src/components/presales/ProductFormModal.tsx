@@ -217,7 +217,9 @@ export function ProductFormModal({ preSale, onClose, onSuccess }: Props) {
         );
         productId = preSale.product_id!;
         if (imageFile) {
-          await uploadProductImage(productId, imageFile).catch(() => {});
+          await uploadProductImage(productId, imageFile).catch(() => {
+            toast.error('Cambios guardados, pero no se pudo subir la imagen.');
+          });
         }
         toast.success("Producto actualizado");
       } else {
@@ -236,7 +238,9 @@ export function ProductFormModal({ preSale, onClose, onSuccess }: Props) {
         productId = result.product_id;
         updatedPreSale = result.pre_sale;
         if (imageFile) {
-          await uploadProductImage(productId, imageFile).catch(() => {});
+          await uploadProductImage(productId, imageFile).catch(() => {
+            toast.error('Producto creado, pero no se pudo subir la imagen.');
+          });
         }
         toast.success(`Producto #${productId} dado de alta`);
       }

@@ -917,7 +917,9 @@ export function ProductsPage() {
       }).then(async (created) => {
         // Upload image if provided
         if (imageFile) {
-          await uploadProductImage(created.id, imageFile).catch(() => {});
+          await uploadProductImage(created.id, imageFile).catch(() => {
+            toast.error('Producto creado, pero no se pudo subir la imagen.');
+          });
         }
         // Save inventory per warehouse now that we have the real product id
         const assignments = p.stockUbicaciones.filter(
@@ -957,7 +959,9 @@ export function ProductsPage() {
       }).then(() => {
         // Upload new image if provided
         if (imageFile) {
-          void uploadProductImage(p.id, imageFile).then(() => void fetchProducts()).catch(() => {});
+          void uploadProductImage(p.id, imageFile)
+            .catch(() => { toast.error('Producto actualizado, pero no se pudo subir la imagen.'); })
+            .finally(() => void fetchProducts());
         }
       }).catch((err: unknown) => {
         const msg = (err as { message?: string }).message ?? 'Error al actualizar producto';
