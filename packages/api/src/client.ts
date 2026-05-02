@@ -53,20 +53,11 @@ export function setOnUnauthorized(fn: () => void): void {
 const FALLBACK_BASE_URL = 'http://127.0.0.1:8000/api/v1'
 
 function resolveBaseUrl(): string {
-  // import.meta.env is injected by Vite at build time
-  const metaEnv = (import.meta as unknown as Record<string, Record<string, unknown>>)['env'] ?? {}
-  const viteUrl = typeof metaEnv['VITE_API_URL'] === 'string' ? metaEnv['VITE_API_URL'] : ''
+  const viteUrl = import.meta.env.VITE_API_URL ?? ''
 
   if (!viteUrl) {
-    if (metaEnv['PROD'] === true) {
-      // Hard failure in production — a missing URL would silently send credentials
-      // to localhost over plain HTTP, which must never happen in production.
-      throw new Error(
-        '[api] VITE_API_URL is required in production. Set the environment variable before building.',
-      )
-    }
-    if (metaEnv['DEV'] === true) {
-      console.warn('[api] VITE_API_URL not set — using dev fallback:', FALLBACK_BASE_URL)
+    if (import.meta.env.PROD) {
+      return `${window.location.origin}/api/v1`
     }
     return FALLBACK_BASE_URL
   }
@@ -160,7 +151,7 @@ export const apiClient: AxiosInstance = createApiClient(resolveBaseUrl())
  * Uses the same base as VITE_API_URL so it works in both dev and production.
  */
 export function storageUrl(path: string): string {
-  const metaEnv = (import.meta as unknown as Record<string, Record<string, unknown>>)['env'] ?? {}
-  const viteUrl = typeof metaEnv['VITE_API_URL'] === 'string' ? metaEnv['VITE_API_URL'] : 'http://127.0.0.1:8000'
-  return `${viteUrl}/storage/${path}`
+  const viteUrl = import.meta.env.VITE_API_URL ?? ''
+  const base = viteUrl || (import.meta.env.PROD ? window.location.origin : 'http://127.0.0.1:8000')
+  return `${base}/storage/${path}`
 }

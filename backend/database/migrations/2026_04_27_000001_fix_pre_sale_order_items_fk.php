@@ -10,7 +10,10 @@ return new class extends Migration
         // SQLite auto-updated the FK in pre_sale_order_items when migration
         // 000001 renamed pre_sale_catalogs → pre_sale_catalogs_old, leaving a
         // broken reference after the old table was dropped.  Recreate the table
-        // with the correct FK.
+        // with the correct FK.  MySQL is unaffected (uses ALTER TABLE, no rename).
+        if (DB::getDriverName() !== 'sqlite') {
+            return;
+        }
 
         DB::statement('PRAGMA foreign_keys = OFF');
 

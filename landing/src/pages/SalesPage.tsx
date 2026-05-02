@@ -8,8 +8,8 @@ import {
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
-import { getSales, getPreSales, getProducts, returnSale, getStores } from "@tadaima/api";
-import type { SaleDetail, PreSale, Product, Store as StoreType } from "@tadaima/api";
+import { getSales, getPreSaleOrders, getProducts, returnSale, getStores } from "@tadaima/api";
+import type { SaleDetail, PreSaleOrder, Product, Store as StoreType } from "@tadaima/api";
 import { useAuth } from "@tadaima/auth";
 import { toast } from "sonner";
 
@@ -342,8 +342,8 @@ export function SalesPage() {
   const isGerente = user?.roles?.some(r => r.toLowerCase() === "gerente") ?? false;
   const canPickStore = isAdmin;
 
-  const [sales, setSales]       = useState<SaleDetail[]>([]);
-  const [preSales, setPreSales] = useState<PreSale[]>([]);
+  const [sales, setSales]             = useState<SaleDetail[]>([]);
+  const [preSaleOrders, setPreSaleOrders] = useState<PreSaleOrder[]>([]);
   const [productMap, setProductMap] = useState<Record<string, ProductInfo>>({});
   const [loading, setLoading]   = useState(true);
   const [chartOpen, setChartOpen] = useState(false);
@@ -407,17 +407,19 @@ export function SalesPage() {
       if (from)    salesParams.from = from;
       if (to)      salesParams.to   = to;
 
-      const preSalesParams: Record<string, unknown> = {};
-      if (storeId) preSalesParams.store_id = storeId;
+      const preSaleOrdersParams: Record<string, unknown> = { per_page: 500, status: 'pending,ready' };
+      if (storeId) preSaleOrdersParams.store_id = storeId;
+      if (from)    preSaleOrdersParams.from = from;
+      if (to)      preSaleOrdersParams.to   = to;
 
-      const [salesRes, preSalesRes, productsRes] = await Promise.all([
+      const [salesRes, preSaleOrdersRes, productsRes] = await Promise.all([
         getSales(salesParams as Parameters<typeof getSales>[0]),
-        getPreSales(preSalesParams as Parameters<typeof getPreSales>[0]),
+        getPreSaleOrders(preSaleOrdersParams as Parameters<typeof getPreSaleOrders>[0]),
         getProducts(),
       ]);
 
       setSales(salesRes.data);
-      setPreSales(preSalesRes.data);
+      setPreSaleOrders(preSaleOrdersRes.data);
 
       const map: Record<string, ProductInfo> = {};
       productsRes.data.forEach((p: Product) => {
@@ -452,8 +454,8 @@ export function SalesPage() {
 
   const filteredPreSales = useMemo(() => {
     if (filterMethod !== "all" && filterMethod !== "varios") return [];
-    return preSales.filter(p => p.status !== "cancelled");
-  }, [preSales, filterMethod]);
+    return preSaleOrders.filter(p => p.status === 'pending' || p.status === 'ready');
+  }, [preSaleOrders, filterMethod]);
 
   // ── Métricas ──────────────────────────────────────────────────────────────
   const totalSalesRevenue = useMemo(() => filteredSales.reduce((a, s) => a + s.total, 0), [filteredSales]);
@@ -465,11 +467,11 @@ export function SalesPage() {
     const today = new Date().toISOString().split("T")[0]!;
     return (
       sales.filter(s => (s.sold_at || s.created_at).startsWith(today)).reduce((a, s) => a + s.total, 0) +
-      preSales
-        .filter(p => p.status !== "cancelled" && p.created_at.startsWith(today))
+      preSaleOrders
+        .filter(p => (p.status === 'pending' || p.status === 'ready') && p.created_at.startsWith(today))
         .reduce((a, p) => a + (p.paid_amount ?? 0), 0)
     );
-  }, [sales, preSales, filterStartDate, filterEndDate, totalRevenue]);
+  }, [sales, preSaleOrders, filterStartDate, filterEndDate, totalRevenue]);
 
   const pendingPreSales = useMemo(
     () => filteredPreSales.reduce((a, p) => a + (p.balance ?? 0), 0),

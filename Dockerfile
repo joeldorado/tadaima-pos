@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1.7
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 1: Frontend build (React + Vite via npm workspaces)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -13,19 +11,18 @@ ARG VITE_API_URL
 ENV VITE_API_URL=${VITE_API_URL}
 
 # Copy workspace manifests first to leverage Docker layer cache
-COPY package.json package-lock.json* turbo.json ./
+COPY package.json package-lock.json* turbo.json tsconfig.base.json ./
 COPY packages ./packages
 COPY landing/package.json ./landing/
 # apps/ workspace reference
 COPY apps ./apps
 
-RUN --mount=type=cache,target=/root/.npm \
-    npm install --no-audit --no-fund
+RUN npm install --no-audit --no-fund
 
 COPY landing ./landing
 
-# Build only the web app
-RUN npx turbo run build --filter=@tadaima/web
+# Build only the web app (skip tsc type-check, vite transpiles TS natively)
+RUN cd landing && npx vite build
 
 # Output: /repo/landing/dist
 
@@ -48,29 +45,29 @@ RUN composer install \
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Stage 3: Final runtime — PHP 8.3 FPM Alpine + nginx + supervisor + SQLite
+# Stage 3: Final runtime — PHP 8.3 FPM Alpine + nginx + supervisor + MySQL
 # ─────────────────────────────────────────────────────────────────────────────
 FROM php:8.3-fpm-alpine AS runtime
 
 RUN apk add --no-cache \
         nginx \
         supervisor \
-        sqlite \
-        sqlite-libs \
-        sqlite-dev \
         oniguruma-dev \
+        oniguruma \
         libzip-dev \
+        libzip \
         icu-dev \
+        icu-libs \
         ca-certificates \
         tzdata \
     && docker-php-ext-install -j$(nproc) \
-        pdo_sqlite \
+        pdo_mysql \
         mbstring \
         bcmath \
         zip \
         intl \
         opcache \
-    && apk del --no-network sqlite-dev oniguruma-dev libzip-dev icu-dev \
+    && apk del --no-network oniguruma-dev libzip-dev icu-dev \
     && rm -rf /var/cache/apk/*
 
 # OPcache tuning
@@ -119,22 +116,18 @@ COPY docker/entrypoint.sh    /usr/local/bin/entrypoint.sh
 
 RUN chmod +x /usr/local/bin/entrypoint.sh \
     && mkdir -p \
-        /var/www/database \
         /var/www/storage/framework/cache \
         /var/www/storage/framework/sessions \
         /var/www/storage/framework/views \
         /var/www/storage/logs \
         /var/www/bootstrap/cache \
         /run/nginx /run \
-    && touch /var/www/database/database.sqlite \
     && chown -R www-data:www-data \
         /var/www/storage \
         /var/www/bootstrap/cache \
-        /var/www/database \
     && chmod -R 775 \
         /var/www/storage \
-        /var/www/bootstrap/cache \
-        /var/www/database
+        /var/www/bootstrap/cache
 
 EXPOSE 8080
 

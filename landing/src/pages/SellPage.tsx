@@ -510,7 +510,7 @@ export function SellPage() {
             ...(m.isPreventa ? { depositAmount: unitPrice * quantity } : {}),
           }];
 
-      const willHaveCashOnly = newItems.some(i => i.product.payment_restriction === "cash_only") || m.isPreventa;
+      const willHaveCashOnly = newItems.some(i => i.product.payment_restriction === "cash_only");
       let newPaymentMethod = m.paymentMethod;
       if (willHaveCashOnly && !["Efectivo", "Dólares"].includes(m.paymentMethod)) {
         newPaymentMethod = "Efectivo";
@@ -726,13 +726,7 @@ export function SellPage() {
     const turningOn = !activeMesa.isPreventa;
     updMesa(activeMesa.id, m => {
       const nextVal = !m.isPreventa;
-      let nextPayment = m.paymentMethod;
-      if (nextVal && !["Efectivo", "Dólares"].includes(m.paymentMethod)) {
-        nextPayment = "Efectivo";
-        toast.info("Modo Preventa: Se ha cambiado el pago a Efectivo", {
-          icon: <Tag size={16} className="text-amber-500" />
-        });
-      }
+      const nextPayment = m.paymentMethod;
       // Reset items that don't have preventa stock if turning ON
       const nextItems = nextVal
         ? m.items.filter(i => (i.product.stock_details?.preventa || 0) > 0)
@@ -819,7 +813,7 @@ export function SellPage() {
     
   const totalUSD       = tc > 0 ? currentPayAmount / tc : 0;
 
-  const hasCashOnly = activeMesa.items.some(i => i.product.payment_restriction === "cash_only") || activeMesa.isPreventa;
+  const hasCashOnly = activeMesa.items.some(i => i.product.payment_restriction === "cash_only");
   const payBlocked  = hasCashOnly && !["Efectivo", "Dólares"].includes(activeMesa.paymentMethod);
 
   const hasCatalogItems = activeMesa.items.some(i => i.sellingCatalogId != null);
@@ -1214,12 +1208,25 @@ export function SellPage() {
         return new Date(dateB).getTime() - new Date(dateA).getTime();
       });
 
-      // Auto-detect mixed pairs: a PreSaleOrder and a Sale created within 30s
-      // of each other are almost certainly from the same mixed checkout action.
+      // Build pairs using the persisted linked_sale_id from the database.
+      // Fall back to the 30s timestamp heuristic for legacy orders that
+      // pre-date the linked_sale_id column.
+      const linkedSaleIds = new Set<number>();
       const detectedPairs: Array<{ preSaleOrderId: number; saleId: number }> = [];
-      const usedSaleIds = new Set<number>();
+
       for (const entry of entries) {
         if (entry.type !== 'presale') continue;
+        if (entry.data.linked_sale_id != null) {
+          detectedPairs.push({ preSaleOrderId: entry.data.id, saleId: entry.data.linked_sale_id });
+          linkedSaleIds.add(entry.data.linked_sale_id);
+        }
+      }
+
+      // Heuristic fallback for legacy orders without linked_sale_id
+      const usedSaleIds = new Set<number>(linkedSaleIds);
+      for (const entry of entries) {
+        if (entry.type !== 'presale') continue;
+        if (entry.data.linked_sale_id != null) continue;
         const orderTime = new Date(entry.data.created_at).getTime();
         for (const other of entries) {
           if (other.type !== 'sale') continue;
@@ -1232,6 +1239,7 @@ export function SellPage() {
           }
         }
       }
+
       setMixedPairs(detectedPairs);
       setHistorialEntries(entries);
     } catch { /* silently fail */ } finally {
@@ -1374,19 +1382,8 @@ export function SellPage() {
         // Deposit for catalog items only
         const catalogDeposit = catalogItems.reduce((s, i) => s + (i.depositAmount ?? 0), 0);
 
-        const order = await createPreSaleOrder({
-          store_id: activeStore.id,
-          customer_id: Number(activeMesa.customerId),
-          items: catalogItems.map(item => ({
-            catalog_id: item.sellingCatalogId!,
-            quantity: item.quantity,
-            price_level: priceLevelMap[item.priceLevel],
-          })),
-          ...(catalogDeposit > 0 ? { advance_amount: catalogDeposit, payment_method_id: payMethodId } : {}),
-        });
-
-        // If there are regular products alongside the preventa, sell them as a normal sale
-        let mixedSaleId: number | undefined;
+        // Create regular sale first so we can link it to the pre-sale order
+        let regularSaleId: number | undefined;
         if (regularItems.length > 0) {
           const mesaId = activeMesa.id;
           const draftId = draftStore.getDraftId(mesaId);
@@ -1396,13 +1393,25 @@ export function SellPage() {
               draft_id: draftId,
               payments: [{ payment_method_id: payMethodId, amount: regularSubtotal }],
             });
-            mixedSaleId = saleResult?.id;
+            regularSaleId = saleResult?.id;
           }
         }
 
-        // Register the pair so the historial can group them as one entry
-        if (mixedSaleId != null) {
-          setMixedPairs(prev => [...prev, { preSaleOrderId: order.id, saleId: mixedSaleId! }]);
+        const order = await createPreSaleOrder({
+          store_id: activeStore.id,
+          customer_id: Number(activeMesa.customerId),
+          items: catalogItems.map(item => ({
+            catalog_id: item.sellingCatalogId!,
+            quantity: item.quantity,
+            price_level: priceLevelMap[item.priceLevel],
+          })),
+          ...(catalogDeposit > 0 ? { advance_amount: catalogDeposit, payment_method_id: payMethodId } : {}),
+          ...(regularSaleId != null ? { linked_sale_id: regularSaleId } : {}),
+        });
+
+        // Keep in-memory pair for historial grouping in the same session
+        if (regularSaleId != null) {
+          setMixedPairs(prev => [...prev, { preSaleOrderId: order.id, saleId: regularSaleId! }]);
         }
 
         const mesaId = activeMesa.id;
@@ -1466,8 +1475,10 @@ export function SellPage() {
       return;
     }
 
-    if (!["Efectivo", "Dólares"].includes(activeMesa.paymentMethod)) {
-      toast.error(`Pago con ${activeMesa.paymentMethod} aún no disponible. Cambia a Efectivo o Dólares.`);
+    if (activeMesa.paymentMethod === "Tarjeta" && !activeTerminal) {
+      toast.error("Selecciona una terminal antes de cobrar con tarjeta.", {
+        style: { background: '#1a0a00', color: '#fbbf24', border: '1px solid #78350f' },
+      });
       return;
     }
 

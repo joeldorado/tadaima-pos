@@ -18,10 +18,16 @@ return [
         'http://localhost:3000',
         'http://127.0.0.1:5173',
         'http://127.0.0.1:3000',
-        env('APP_URL'),  // Cloud Run URL — se inyecta en producción
+        'https://tadaima.poslite.com.mx',
+        env('APP_URL'),           // Cloud Run URL — se inyecta en producción
+        env('CORS_ORIGIN'),       // override puntual si se necesita
     ]),
 
-    'allowed_origins_patterns' => [],
+    'allowed_origins_patterns' => [
+        '#^https://tadaima-[a-z0-9]+-uc\.a\.run\.app$#',
+        '#^https://tadaima-[0-9]+-[a-z0-9-]+\.run\.app$#',
+        '#^https://[a-z0-9-]+\.poslite\.com\.mx$#',  // subdominos poslite
+    ],
 
     'allowed_headers' => ['*'],
 

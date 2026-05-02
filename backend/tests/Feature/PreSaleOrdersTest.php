@@ -218,6 +218,9 @@ class PreSaleOrdersTest extends TestCase
         $catalog = $this->makePublishedCatalog();
         $order   = $this->createPendingOrder($catalog);
 
+        // Catalog must be arrived so items can be marked delivered on liquidation
+        $catalog->update(['status' => PreSaleCatalog::STATUS_ARRIVED]);
+
         // Transition to ready first
         $this->actingAs($this->user)
             ->patchJson("/api/v1/pre-sale-orders/{$order->id}/status", ['status' => 'ready'])

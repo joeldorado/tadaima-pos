@@ -7,16 +7,15 @@ return new class extends Migration
 {
     public function up(): void
     {
-        // Guard: do nothing in SQLite test environments where company_id is
-        // required by the unique(['company_id','key']) constraint and no
-        // company row exists yet at migration time.
-        if (DB::getDriverName() === 'sqlite') {
+        // Skip if no company exists yet — seeder handles this after companies are created.
+        $companyId = DB::table('companies')->value('id');
+        if (!$companyId) {
             return;
         }
 
         DB::table('system_settings')->upsert(
-            [['key' => 'points_multiplier', 'value' => '0.001']],
-            ['key'],
+            [['company_id' => $companyId, 'key' => 'points_multiplier', 'value' => '0.001']],
+            ['company_id', 'key'],
             ['value']
         );
     }

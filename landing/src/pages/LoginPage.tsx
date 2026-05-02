@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '@tadaima/auth'
-import { Loader2 } from 'lucide-react'
+import { Loader2, Eye, EyeOff } from 'lucide-react'
 
 const BG  = 'linear-gradient(150deg, #09090e 0%, #140303 55%, #080710 100%)'
 const RED = '#E0221A'
@@ -11,10 +11,11 @@ export function LoginPage(): React.JSX.Element {
   const navigate   = useNavigate()
   const location   = useLocation()
 
-  const [email, setEmail]       = useState('')
-  const [password, setPassword] = useState('')
-  const [error, setError]       = useState<string | null>(null)
-  const [loading, setLoading]   = useState(false)
+  const [email, setEmail]         = useState('')
+  const [password, setPassword]   = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [error, setError]         = useState<string | null>(null)
+  const [loading, setLoading]     = useState(false)
 
   // Redirect to the page the user was trying to access, or to / by default
   const from = (location.state as { from?: { pathname: string } } | null)?.from?.pathname ?? '/'
@@ -110,26 +111,49 @@ export function LoginPage(): React.JSX.Element {
             >
               Contraseña
             </label>
-            <input
-              id="password"
-              type="password"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={e => { setPassword(e.target.value) }}
-              disabled={loading}
-              style={{
-                background: 'rgba(255,255,255,0.05)',
-                border: '1px solid rgba(255,255,255,0.1)',
-                borderRadius: 10,
-                padding: '10px 14px',
-                color: 'rgba(255,255,255,0.88)',
-                fontSize: 14,
-                outline: 'none',
-              }}
-              onFocus={e => { e.currentTarget.style.border = `1px solid ${RED}` }}
-              onBlur={e => { e.currentTarget.style.border = '1px solid rgba(255,255,255,0.1)' }}
-            />
+            <div style={{ position: 'relative' }}>
+              <input
+                id="password"
+                type={showPassword ? 'text' : 'password'}
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={e => { setPassword(e.target.value) }}
+                disabled={loading}
+                style={{
+                  width: '100%',
+                  background: 'rgba(255,255,255,0.05)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: 10,
+                  padding: '10px 40px 10px 14px',
+                  color: 'rgba(255,255,255,0.88)',
+                  fontSize: 14,
+                  outline: 'none',
+                  boxSizing: 'border-box',
+                }}
+                onFocus={e => { e.currentTarget.style.border = `1px solid ${RED}` }}
+                onBlur={e => { e.currentTarget.style.border = '1px solid rgba(255,255,255,0.1)' }}
+              />
+              <button
+                type="button"
+                onClick={() => { setShowPassword(v => !v) }}
+                style={{
+                  position: 'absolute',
+                  right: 12,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: 'rgba(255,255,255,0.35)',
+                  padding: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                }}
+              >
+                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
           </div>
 
           {/* Error */}

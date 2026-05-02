@@ -1,0 +1,80 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+
+class Sale extends Model
+{
+    public $timestamps = false;
+
+    const STATUS_COMPLETED = 'completed';
+    const STATUS_CANCELLED = 'cancelled';
+    const STATUS_RETURNED  = 'returned';
+
+    protected $fillable = [
+        'store_id',
+        'register_session_id',
+        'user_id',
+        'customer_id',
+        'terminal_id',
+        'draft_id',
+        'subtotal',
+        'discount',
+        'total',
+        'commission_amount',
+        'status',
+    ];
+
+    protected $casts = [
+        'subtotal'          => 'float',
+        'discount'          => 'float',
+        'total'             => 'float',
+        'commission_amount' => 'float',
+        'sold_at'           => 'datetime',
+        'created_at'        => 'datetime',
+    ];
+
+    protected static function booted(): void
+    {
+        static::creating(static function (self $sale): void {
+            $sale->sold_at    ??= now();
+            $sale->created_at ??= now();
+            $sale->status     ??= self::STATUS_COMPLETED;
+        });
+    }
+
+    // ─── Relations ────────────────────────────────────────────────────────────
+
+    public function items(): HasMany
+    {
+        return $this->hasMany(SaleItem::class);
+    }
+
+    public function payments(): HasMany
+    {
+        return $this->hasMany(Payment::class);
+    }
+
+    public function customer(): BelongsTo
+    {
+        return $this->belongsTo(Customer::class);
+    }
+
+    public function store(): BelongsTo
+    {
+        return $this->belongsTo(Store::class);
+    }
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    public function draft(): BelongsTo
+    {
+        return $this->belongsTo(SalesDraft::class, 'draft_id');
+    }
+}

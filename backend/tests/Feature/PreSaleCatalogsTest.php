@@ -8,7 +8,7 @@ use App\Models\PreSaleCatalog;
 use App\Models\Store;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class PreSaleCatalogsTest extends TestCase
@@ -29,6 +29,18 @@ class PreSaleCatalogsTest extends TestCase
             'password'   => bcrypt('password'),
             'company_id' => $company->id,
             'store_id'   => $store->id,
+        ]);
+
+        $roleId = DB::table('roles')->insertGetId([
+            'name'       => 'admin',
+            'guard_name' => 'api',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('model_has_roles')->insert([
+            'role_id'    => $roleId,
+            'model_type' => User::class,
+            'model_id'   => $this->user->id,
         ]);
     }
 

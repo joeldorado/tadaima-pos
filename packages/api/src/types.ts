@@ -693,6 +693,7 @@ export interface PreSaleOrder {
   id: number
   code: string
   status: PreSaleOrderStatus
+  linked_sale_id: number | null
   pickup_deadline: string | null
   notes: string | null
   created_at: string
@@ -726,7 +727,7 @@ export interface GetPreSaleOrdersParams {
   store_id?: number
   customer_id?: number
   catalog_id?: number
-  status?: PreSaleOrderStatus
+  status?: PreSaleOrderStatus | string  // supports CSV e.g. "pending,ready"
   code?: string
   from?: string
   to?: string
@@ -744,6 +745,7 @@ export interface CreatePreSaleOrderInput {
   }>
   advance_amount?: number
   payment_method_id?: number
+  linked_sale_id?: number
   notes?: string
 }
 

@@ -1,7 +1,7 @@
 # MASTERLOG — Tadaima POS
 
 > Registro maestro del proyecto: arquitectura, evolución, decisiones clave y estado actual.
-> Actualizado: 2026-04-29
+> Actualizado: 2026-05-02
 
 ---
 
@@ -9,12 +9,13 @@
 
 | Componente | Estado | Notas |
 |-----------|--------|-------|
-| Backend API (Laravel) | ✅ Funcional | Preventas nuevo esquema + permisos corregidos |
-| Landing / Web (React) | ✅ Funcional | SellPage refactorizado, historial, ticket, venta mixta |
+| Backend API (Laravel) | ✅ En producción | revision 00017, URL: tadaima-987277625193.us-central1.run.app |
+| Landing / Web (React) | ✅ En producción | Email folio, historial mixto, Tarjeta/Transferencia habilitados |
 | App móvil (Expo) | ⏳ Pendiente | Estructura base existe en `apps/`, sin paridad de features |
-| Deploy / Docker | ✅ Listo para submit | Docker configurado, solo falta ejecutar deploy |
-| QA API preventas | ✅ Ejecutado 2026-04-23 | 5 bugs encontrados, todos corregidos |
-| QA UI preventas | ⏳ Pendiente | Flujo desde navegador post-correcciones |
+| Deploy / Cloud Run | ✅ Operacional | gcloud run deploy --source ., región us-central1 |
+| DB Producción | ✅ Operacional | MySQL pos-lite-db, todas las migraciones aplicadas (incl. linked_sale_id) |
+| Bucket GCS | ✅ Configurado | gs://tadaima-media, FILESYSTEM_DISK=gcs en producción |
+| Dominio custom | ⏳ Pendiente | tadaima.poslite.com.mx — asignar en Cloud Run domain mappings |
 
 ---
 
@@ -414,6 +415,155 @@ docker compose up --build -d
 ---
 
 ## 11. Historial de sesiones de desarrollo
+
+### Sesión 2026-05-01 — Migración a Cloud SQL MySQL + GCS + Bug Fixes
+
+**Objetivo**: Reemplazar SQLite efímero por Cloud SQL MySQL persistente, agregar GCS para imágenes, y cerrar bugs #2 y #3 del backlog.
+
+**Estado**: Código implementado — pendiente que el usuario ejecute Fase 1 (comandos gcloud) y luego `./deploy.sh`.
+
+#### Infraestructura a crear (usuario ejecuta Fase 1)
+
+Ver comandos completos en la sesión del chat. Resumen:
+- `gcloud sql databases create tadaimaposlite --instance=pos-lite-db`
+- Usuario MySQL `tadaima_app` con GRANT solo sobre `tadaimaposlite`
+- Secret Manager: `tadaima-db-password`
+- Bucket: `gs://tadaima-media` (público, CORS configurado)
+- IAM: service account de Cloud Run con `cloudsql.client` + `storage.objectAdmin`
+
+#### Cambios en código (implementados en esta sesión)
+
+| Archivo | Cambio |
+|---------|--------|
+| `Dockerfile` | Reemplazado `pdo_sqlite` por `pdo_mysql`, eliminados paquetes sqlite |
+| `docker/entrypoint.sh` | Reescrito para MySQL: wait loop + seed condicional por users count |
+| `deploy.sh` | `--add-cloudsql-instances`, env vars MySQL/GCS, secret `tadaima-db-password` |
+| `backend/config/filesystems.php` | Disco `gcs` con `spatie/laravel-google-cloud-storage` |
+| `backend/composer.json` | `spatie/laravel-google-cloud-storage: ^2.4` instalado |
+| `backend/.env` | Actualizado a MySQL local (Cloud SQL Proxy) |
+| `backend/.env.example` | Documentado MySQL + GCS |
+| `backend/.env.production.example` | **NUEVO** — referencia completa para producción |
+| `docs/LOCAL_DEV_SETUP.md` | **NUEVO** — guía Cloud SQL Proxy local |
+| `backend/database/migrations/2026_05_01_000001_add_linked_sale_id_to_pre_sale_orders.php` | **NUEVA** — columna `linked_sale_id` FK a `sales` |
+| `backend/app/Models/PreSaleOrder.php` | `linked_sale_id` en fillable + relación `linkedSale()` |
+| `backend/app/Http/Requests/StorePreSaleOrderRequest.php` | Validación `linked_sale_id` |
+| `backend/app/Services/PreSaleOrderService.php` | `createOrder` acepta y persiste `linked_sale_id` |
+| `backend/app/Http/Resources/PreSaleOrderResource.php` | Expone `linked_sale_id` |
+| `backend/app/Http/Controllers/Api/PreSaleOrdersController.php` | Status CSV (`pending,ready`) en `index()` |
+| `packages/api/src/types.ts` | `linked_sale_id` en `PreSaleOrder` + `CreatePreSaleOrderInput`; status como `string` |
+| `landing/src/pages/SalesPage.tsx` | **Fix #3** — migrado de `getPreSales` a `getPreSaleOrders` con status `pending,ready` |
+| `landing/src/pages/SellPage.tsx` | **Fix #2** — venta mixta crea sale primero y pasa `linked_sale_id` al folio |
+
+#### Para ejecutar deploy después de Fase 1
+
+```bash
+# Obtener password del secret (para .env local)
+gcloud secrets versions access latest --secret=tadaima-db-password --project=impusodigitaldorado
+
+# Actualizar backend/.env con el password real
+
+# Deploy a producción
+./deploy.sh
+```
+
+#### QA a verificar post-deploy (Fase 4)
+
+1. Cold start conecta a Cloud SQL (buscar `[entrypoint] MySQL conectado` en logs)
+2. Crear preventa → sobrevive cold start (datos en MySQL no se borran)
+3. Subir imagen → URL `https://storage.googleapis.com/tadaima-media/...` accesible
+4. SalesPage "Por Cobrar" muestra suma correcta de folios `pending/ready`
+5. Venta mixta guarda `linked_sale_id` en BD
+
+---
+
+### Sesión 2026-04-30 — Deploy a Cloud Run + Fix Login Network Error
+
+**Objetivo**: Subir Tadaima POS a Google Cloud Run con Docker y dejarlo funcionando en producción.
+
+**Resultado**: ✅ App corriendo en `https://tadaima-hbsx563yua-uc.a.run.app` — login funcional, seed automático en cold start.
+
+---
+
+#### Infraestructura Docker
+
+| Componente | Decisión |
+|-----------|----------|
+| Base PHP | `php:8.3-fpm-alpine` |
+| Web server | nginx (puerto 8080) vía unix socket a php-fpm |
+| Proceso manager | supervisord |
+| DB | SQLite efímero — recreado en cada cold start con seed automático |
+| Build | Multi-stage: Node 20 Alpine (Vite) → Composer 2 → runtime PHP Alpine |
+| Deploy | `deploy.sh` → `docker build` → Artifact Registry → `gcloud run deploy` |
+
+**Archivos creados/configurados:**
+- `Dockerfile` — multi-stage, linux/amd64
+- `docker/nginx.conf` — puerto 8080, location `/api/` → php-fpm, `/` → SPA fallback `index.html`
+- `docker/supervisord.conf` — php-fpm priority=10, nginx priority=20, `fatal-exit` eventlistener
+- `docker/entrypoint.sh` — crea SQLite si no existe, migrations, seed solo en DB nueva, storage:link
+- `deploy.sh` — build + push + deploy automatizado con `IMAGE_TAG=gitsha-timestamp`
+
+---
+
+#### Bugs encontrados y corregidos
+
+| # | Síntoma | Causa raíz | Fix |
+|---|---------|-----------|-----|
+| #1 | **Network Error en login** (browser, no curl) | `import.meta['env']` (bracket notation) no es reemplazado por Vite en build time — `PROD` siempre `undefined` → cae a fallback `http://127.0.0.1:8000` | Cambiar a `import.meta.env.PROD` y `import.meta.env.VITE_API_URL` directo en `packages/api/src/client.ts` |
+| #2 | PHP extensions `intl` y `zip` no cargan en Cloud Run | `apk del icu-dev libzip-dev` removía también los runtime libs `icu-libs` y `libzip` | Agregar `icu-libs`, `libzip`, `oniguruma` explícitamente al `apk add` para que no sean auto-removidos |
+| #3 | Docker reusaba imagen vieja (mismo git hash `d0b591e`) | `IMAGE_TAG=$(git rev-parse --short HEAD)` nunca cambia sin commit nuevo | Cambiar a `IMAGE_TAG=gitsha-timestamp` (`d0b591e-1777520125`) para forzar nueva revisión siempre |
+| #4 | SQLite seeder nunca corría | `touch database.sqlite` en Dockerfile hacía que entrypoint creyera que la DB ya existía | Eliminar el `touch` del Dockerfile — entrypoint lo crea y detecta DB nueva |
+| #5 | Secret Manager Permission Denied | Service account de Cloud Run sin acceso a `tadaima-app-key` | `gcloud secrets add-iam-policy-binding ... --role=roles/secretmanager.secretAccessor` |
+| #6 | CORS rechaza URLs de Cloud Run | `allowed_origins` solo tenía `APP_URL` (URL regional) pero user accede por URL canónica `hbsx563yua` | Agregar `allowed_origins_patterns` con regex para ambas URLs de Cloud Run |
+
+---
+
+#### Cambios en archivos existentes
+
+| Archivo | Cambio |
+|---------|--------|
+| `packages/api/src/client.ts` | `import.meta.env.PROD` directo (no bracket notation) en `resolveBaseUrl()` y `storageUrl()` |
+| `landing/src/pages/LoginPage.tsx` | Eye toggle para ver/ocultar password (`showPassword` state + `Eye`/`EyeOff` de lucide) |
+| `landing/src/App.tsx` | `ErrorBoundary` class component wrapping toda la app — muestra stack trace en pantalla si hay crash |
+| `backend/config/cors.php` | `allowed_origins_patterns` con regex para `tadaima-*-uc.a.run.app` |
+| `backend/database/seeders/DatabaseSeeder.php` | Password cambiado de `password` a `devaccess` |
+| `deploy.sh` | Tag único con timestamp, `--build-arg VITE_API_URL=""` explícito |
+| `package.json` | `"packageManager": "npm@10.8.2"` (requerido por Turbo 2.9.6) |
+
+---
+
+#### Credenciales de producción (seed)
+
+| Usuario | Email | Password |
+|---------|-------|----------|
+| Admin | admin@tadaima.mx | devaccess |
+| Gerente T1 | gerente1@tadaima.mx | devaccess |
+| Gerente T2 | gerente2@tadaima.mx | devaccess |
+
+> Nota: SQLite se recrea en cada cold start de Cloud Run — las credenciales siempre quedan limpias del seed.
+
+---
+
+#### URLs de producción
+
+| URL | Tipo |
+|-----|------|
+| `https://tadaima-hbsx563yua-uc.a.run.app` | Canónica (usar esta) |
+| `https://tadaima-987277625193.us-central1.run.app` | Regional |
+| `https://tadaima.poslite.com.mx` | Dominio custom (en proceso — pendiente verificar `poslite.com.mx` con cuenta `joel@poslite.com`) |
+
+---
+
+#### Estado al cierre de sesión
+
+| Item | Estado |
+|------|--------|
+| Deploy automático con `./deploy.sh` | ✅ |
+| Login funcional en producción | ✅ |
+| SQLite + seed en cold start | ✅ |
+| PHP extensions (intl, zip) cargando | ✅ |
+| Dominio `tadaima.poslite.com.mx` | ⏳ Pendiente — verificar domain con `gcloud auth login joel@poslite.com` luego `gcloud beta run domain-mappings create --service=tadaima --domain=tadaima.poslite.com.mx --region=us-central1` |
+
+---
 
 ### Sesión 2026-04-29 (tarde)
 

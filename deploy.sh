@@ -3,17 +3,19 @@
 set -euo pipefail
 
 # ─── Config (sobreescribe con env vars si quieres) ────────────────────────────
-PROJECT_ID="${PROJECT_ID:-tadaima-pos}"
+PROJECT_ID="${PROJECT_ID:-impusodigitaldorado}"
 REGION="${REGION:-us-central1}"
 SERVICE="${SERVICE:-tadaima}"
 REPO="${REPO:-tadaima}"
-IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short HEAD 2>/dev/null || date +%Y%m%d-%H%M%S)}"
+IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short HEAD 2>/dev/null || echo local)-$(date +%s)}"
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${SERVICE}:${IMAGE_TAG}"
 IMAGE_LATEST="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${SERVICE}:latest"
 
 # URL pública del servicio (se conoce tras el primer deploy)
 PUBLIC_URL="${PUBLIC_URL:-https://${SERVICE}-${PROJECT_ID}.${REGION}.run.app}"
 VITE_API_URL="${VITE_API_URL:-${PUBLIC_URL}}"
+# Dominio custom — si está configurado se usa como APP_URL y en Sanctum
+CUSTOM_DOMAIN="${CUSTOM_DOMAIN:-}"
 
 echo "──────────────────────────────────────────────────────"
 echo " Project:      ${PROJECT_ID}"
@@ -23,6 +25,12 @@ echo " Image:        ${IMAGE}"
 echo " VITE_API_URL: ${VITE_API_URL}"
 echo "──────────────────────────────────────────────────────"
 
+# ─── Cloud SQL & Storage config ──────────────────────────────────────────────
+CLOUD_SQL_INSTANCE="${CLOUD_SQL_INSTANCE:-impusodigitaldorado:us-west1:pos-lite-db}"
+DB_NAME="${DB_NAME:-tadaimaposlite}"
+DB_USER="${DB_USER:-tadaima_app}"
+GCS_BUCKET="${GCS_BUCKET:-tadaima-media}"
+
 # ─── 1. Pre-flight ────────────────────────────────────────────────────────────
 gcloud config set project "${PROJECT_ID}" > /dev/null
 
@@ -30,7 +38,9 @@ gcloud services enable \
     run.googleapis.com \
     artifactregistry.googleapis.com \
     cloudbuild.googleapis.com \
-    secretmanager.googleapis.com > /dev/null
+    secretmanager.googleapis.com \
+    sqladmin.googleapis.com \
+    storage.googleapis.com > /dev/null
 
 # Crear Artifact Registry repo si no existe
 if ! gcloud artifacts repositories describe "${REPO}" --location="${REGION}" > /dev/null 2>&1; then
@@ -57,7 +67,7 @@ fi
 echo "[deploy] Construyendo imagen"
 docker build \
     --platform=linux/amd64 \
-    --build-arg "VITE_API_URL=${VITE_API_URL}" \
+    --build-arg VITE_API_URL="" \
     -t "${IMAGE}" \
     -t "${IMAGE_LATEST}" \
     .
@@ -78,13 +88,14 @@ gcloud run deploy "${SERVICE}" \
     --cpu=1 \
     --memory=512Mi \
     --min-instances=0 \
-    --max-instances=4 \
-    --concurrency=80 \
+    --max-instances=2 \
+    --concurrency=40 \
     --timeout=300 \
     --execution-environment=gen2 \
     --cpu-boost \
-    --set-env-vars="APP_ENV=production,APP_DEBUG=false,APP_URL=${PUBLIC_URL},LOG_CHANNEL=stderr,LOG_LEVEL=info,DB_CONNECTION=sqlite,DB_DATABASE=/var/www/database/database.sqlite,DB_FOREIGN_KEYS=true,SESSION_DRIVER=database,SESSION_SECURE_COOKIE=true,CACHE_STORE=database,QUEUE_CONNECTION=sync,FILESYSTEM_DISK=local,MAIL_MAILER=log,SANCTUM_STATEFUL_DOMAINS=${PUBLIC_URL#https://}" \
-    --set-secrets="APP_KEY=tadaima-app-key:latest"
+    --add-cloudsql-instances="${CLOUD_SQL_INSTANCE}" \
+    --set-env-vars="APP_ENV=production,APP_DEBUG=false,APP_URL=${CUSTOM_DOMAIN:-${PUBLIC_URL}},LOG_CHANNEL=stderr,LOG_LEVEL=info,DB_CONNECTION=mysql,DB_SOCKET=/cloudsql/${CLOUD_SQL_INSTANCE},DB_DATABASE=${DB_NAME},DB_USERNAME=${DB_USER},SESSION_DRIVER=database,SESSION_SECURE_COOKIE=true,CACHE_STORE=database,QUEUE_CONNECTION=sync,FILESYSTEM_DISK=gcs,GOOGLE_CLOUD_PROJECT_ID=${PROJECT_ID},GOOGLE_CLOUD_STORAGE_BUCKET=${GCS_BUCKET},MAIL_MAILER=log,SANCTUM_STATEFUL_DOMAINS=${CUSTOM_DOMAIN#https://}${CUSTOM_DOMAIN:+,}${PUBLIC_URL#https://}" \
+    --set-secrets="APP_KEY=tadaima-app-key:latest,DB_PASSWORD=tadaima-db-password:latest"
 
 # ─── 6. URL final ─────────────────────────────────────────────────────────────
 DEPLOYED_URL=$(gcloud run services describe "${SERVICE}" \
