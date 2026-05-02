@@ -146,7 +146,13 @@ class DatabaseSeeder extends Seeder
         }
         DB::table('store_payment_methods')->insert($rows);
 
-        // ── 11. Configuración del sistema ─────────────────────────────────────
+        // ── 11. Almacenes (1 por tienda — tienda = almacén para este negocio) ───
+        DB::table('warehouses')->insert([
+            ['company_id' => $companyId, 'store_id' => $storeCentroId, 'name' => 'Tienda 1 — Centro',     'type' => 'store', 'active' => true, 'created_at' => $now, 'updated_at' => $now],
+            ['company_id' => $companyId, 'store_id' => $storeMacroId,  'name' => 'Tienda 2 — Macroplaza', 'type' => 'store', 'active' => true, 'created_at' => $now, 'updated_at' => $now],
+        ]);
+
+        // ── 12. Configuración del sistema ─────────────────────────────────────
         DB::table('system_settings')->insert([
             ['company_id' => $companyId, 'key' => 'points_multiplier', 'value' => '0.001'],
         ]);
