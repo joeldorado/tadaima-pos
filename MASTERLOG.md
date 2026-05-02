@@ -9,7 +9,7 @@
 
 | Componente | Estado | Notas |
 |-----------|--------|-------|
-| Backend API (Laravel) | ✅ En producción | revision 00017, URL: tadaima-987277625193.us-central1.run.app |
+| Backend API (Laravel) | ✅ En producción | revision 00019, URL: tadaima-987277625193.us-central1.run.app |
 | Landing / Web (React) | ✅ En producción | Email folio, historial mixto, Tarjeta/Transferencia habilitados |
 | App móvil (Expo) | ⏳ Pendiente | Estructura base existe en `apps/`, sin paridad de features |
 | Deploy / Cloud Run | ✅ Operacional | gcloud run deploy --source ., región us-central1 |
@@ -19,17 +19,19 @@
 
 ---
 
-## BACKLOG PRIORIZADO — actualizado 2026-04-29
+## BACKLOG PRIORIZADO — actualizado 2026-05-02
 
 > Qué hay para trabajar, en orden de valor/impacto.
 
-### 🔴 Alta prioridad (bloquea operación o experiencia cajero)
+### ✅ Completado (sesión 2026-05-01/02)
 
-| # | Área | Feature / Fix | Detalle |
-|---|------|--------------|---------|
-| 1 | Caja | **Email folio preventa al cliente** | Cuando se crea un `PreSaleOrder` y el cliente tiene email, enviar correo con folio PREV-XXXXX + detalle anticipo. Entry point: `PreSaleOrdersController::store()` → `Mail::to()->send(FolioCreatedMailable)` |
-| 2 | Caja | **Historial mixto persiste entre sesiones** | El agrupamiento preventa+venta en historial usa estado local (`mixedPairs`) + heurística 30s. Solución real: columna `linked_sale_id` nullable en `pre_sale_orders`. |
-| 3 | Ventas | **SalesPage "Por Cobrar" usa API legacy** | El cálculo "Por Cobrar" llama `getPreSales` (sistema viejo). Migrar a `getPreSaleOrders` con `status=pending|ready` y sumar `balance`. |
+| # | Área | Feature | Estado |
+|---|------|---------|--------|
+| 1 | Caja | Email folio preventa al cliente | ✅ `FolioCreatedMail` + blade template |
+| 2 | Caja | Historial mixto persiste entre sesiones | ✅ `linked_sale_id` en `pre_sale_orders` |
+| 3 | Ventas | SalesPage "Por Cobrar" usa API legacy | ✅ Migrado a `getPreSaleOrders` |
+| 6 | Caja | Tarjeta y Transferencia en preventas | ✅ Habilitado, sin bloqueo hardcodeado |
+| 7 | Reportes | Reporte de preventas | ✅ `GET /reports/pre-sales` (UNION legacy+nuevo) |
 
 ### 🟡 Media prioridad (mejora flujo o datos)
 
@@ -37,9 +39,9 @@
 |---|------|--------------|---------|
 | 4 | Preventas | **PreSalesPage legacy → nuevo esquema** | La tab "Gestión" usa `/pre-sales` (esquema viejo). Migrar a vista de catálogos + folios del nuevo esquema o eliminar la tab si ya no se usa. |
 | 5 | Caja | **Escaneo de folios por código QR/barras** | Botón "Escanear código" en SellPage no implementado. Requiere integración con cámara o lector USB HID. |
-| 6 | Caja | **Tarjeta y Transferencia en venta regular** | Actualmente solo Efectivo y Dólares hacen checkout. Tarjeta/Transferencia muestra error toast. Habilitar cuando hay terminal configurada. |
-| 7 | Reportes | **Reporte de preventas en ReportsPage** | No hay tab/sección para ver recaudación de preventas (anticipo vs saldo). Agregar junto a ventas regulares. |
 | 8 | Admin | **Gestión de usuarios desde UI** | AdminPage/UsersPage permite ver usuarios pero no editar roles ni resetear contraseñas desde la interfaz. |
+| - | Deploy | **Dominio custom** | `tadaima.poslite.com.mx` pendiente asignar en Cloud Run domain mappings |
+| - | Email | **Activar envío real de emails** | `MAIL_MAILER=log` en producción. Configurar SMTP/Mailgun cuando haya cuenta de correo |
 
 ### 🟢 Baja prioridad (deuda técnica / cleanup)
 
@@ -415,6 +417,98 @@ docker compose up --build -d
 ---
 
 ## 11. Historial de sesiones de desarrollo
+
+### Sesión 2026-05-02 — Deploy a producción funcional + Bug crítico .gitignore + QA completo
+
+**Objetivo**: Completar el deploy a Cloud Run con MySQL, ejecutar migraciones en producción, y verificar que el sistema funciona end-to-end.
+
+**Resultado**: ✅ Sistema 100% operacional en producción. 14/14 endpoints QA pasando.
+
+---
+
+#### Bug crítico encontrado y resuelto — `backend/app/` excluido de Cloud Build
+
+**Síntoma**: Todos los endpoints devolvían `500 Server Error` con `Class "App\Http\Controllers\Api\AuthController" does not exist`.
+
+**Causa raíz**: El patrón `app/` (sin `/` inicial) en el `.gitignore` raíz del monorepo matcheaba recursivamente cualquier directorio llamado `app/` en cualquier nivel del árbol, incluyendo `backend/app/`. `gcloud run deploy --source .` usa Cloud Build, que respeta `.gitignore` al crear el tarball fuente. Resultado: el container se construía sin ningún archivo PHP de la aplicación (controllers, models, services, etc.).
+
+**Fix**: Cambiar `app/` → `/app/` en `.gitignore` (el `/` inicial ancla el patrón al directorio raíz del repositorio). Esto ignora la carpeta Expo en la raíz (`/app/`) sin afectar `backend/app/`.
+
+**Por qué no se detectó antes**: Los deploys anteriores con `./deploy.sh` hacían un `docker build` local, que usa el filesystem real (no git), por lo que incluía todos los archivos. Solo `gcloud run deploy --source .` (Cloud Build) es afectado por `.gitignore`.
+
+---
+
+#### Flujo de la sesión
+
+| Paso | Acción | Resultado |
+|------|--------|-----------|
+| 1 | Crear Cloud Run Job `tadaima-migrate` y ejecutar migraciones | `Nothing to migrate` — migraciones ya estaban aplicadas desde el deploy anterior |
+| 2 | Nuevo deploy `tadaima-00016-n7n` | `500` en todos los endpoints |
+| 3 | Rollback a revisión 00015 | También `500` — problema sistémico, no de esta revisión |
+| 4 | Debug job para inspeccionar filesystem del container | `FILE_MISSING` para `AuthController.php` |
+| 5 | Verificar git: `git ls-files --others backend/app/` | 175 archivos no trackeados |
+| 6 | Identificar causa: `app/` en `.gitignore` raíz | El patrón recursivo excluía `backend/app/` del source upload |
+| 7 | Fix `.gitignore`: `app/` → `/app/` | `backend/app/` ya no ignorado |
+| 8 | Deploy `tadaima-00017-tr4` | ✅ Login responde `200` |
+| 9 | QA smoke test 14 endpoints | 13/14 ✓ (report/pre-sales pendiente) |
+| 10 | Add método `preSales()` en ReportsController + ruta | Deploy `tadaima-00018` → 500 por usar accessors Eloquent |
+| 11 | Fix query: subqueries SQL en lugar de `.sum('total')` | Deploy `tadaima-00019` → ✅ 14/14 QA pass |
+
+---
+
+#### Commits de esta sesión
+
+| Hash | Mensaje |
+|------|---------|
+| `08ad0db` | `feat: track backend/app source, fix Cloud Build deploy, add production features` (201 archivos) |
+| `93974bc` | `feat: add GET /reports/pre-sales endpoint (UNION legacy + new schema)` |
+| `3a96600` | `fix: reports/pre-sales use SQL subqueries (total/paid_amount are Eloquent accessors)` |
+
+---
+
+#### QA resultados (producción, revisión 00019)
+
+| Endpoint | Resultado |
+|----------|-----------|
+| `POST /auth/login` | ✅ |
+| `GET /stores` | ✅ 2 tiendas |
+| `GET /payment-methods` | ✅ 4 métodos |
+| `GET /cash/session` | ✅ |
+| `GET /customers` | ✅ |
+| `GET /products` | ✅ |
+| `GET /pre-sale-catalogs` | ✅ |
+| `GET /pre-sale-orders` | ✅ |
+| `GET /sales` | ✅ |
+| `GET /reports/sales` | ✅ |
+| `GET /reports/cash` | ✅ |
+| `GET /reports/pre-sales` | ✅ |
+| `GET /reports/customers` | ✅ |
+| `GET /reports/top-products` | ✅ |
+| **Crear cliente** | ✅ |
+| **Crear catálogo preventa** | ✅ |
+| **Crear folio PREV-00001** | ✅ total=$8999, anticipo=$1500, saldo=$7499 |
+
+---
+
+#### Estado de producción al cierre
+
+| Item | Estado |
+|------|--------|
+| URL | `https://tadaima-987277625193.us-central1.run.app` |
+| Revisión activa | `tadaima-00019-k2c` |
+| DB | MySQL Cloud SQL `pos-lite-db` · todas las migraciones aplicadas |
+| GCS | `gs://tadaima-media` · `FILESYSTEM_DISK=gcs` |
+| Usuarios | 3 (admin, gerente×2) · password: `devaccess` |
+| Dominio custom | ⏳ `tadaima.poslite.com.mx` pendiente asignar |
+| Email real | ⏳ `MAIL_MAILER=log` (no envía, solo loguea) |
+
+---
+
+#### Lección aprendida — .gitignore con patrones sin `/` inicial
+
+Un patrón como `app/` en `.gitignore` aplica a CUALQUIER subdirectorio en el árbol, no solo en la raíz. Para ignorar solo el directorio raíz usar `/app/`. Esto afecta a Cloud Build, `git archive`, y cualquier herramienta que respete gitignore. Los `docker build` locales no se ven afectados porque usan el filesystem real.
+
+---
 
 ### Sesión 2026-05-01 — Migración a Cloud SQL MySQL + GCS + Bug Fixes
 
