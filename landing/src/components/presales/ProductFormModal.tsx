@@ -125,7 +125,7 @@ export function ProductFormModal({ preSale, onClose, onSuccess }: Props) {
           setP4(prod.prices?.price_4 ?? "");
           setP5(prod.prices?.price_5 ?? "");
           const firstImage = prod.images?.[0];
-          if (firstImage) setImagePreview(storageUrl(firstImage.image_path));
+          if (firstImage) setImagePreview(firstImage.url ?? storageUrl(firstImage.image_path));
         }).catch(() => toast.error("No se pudo cargar el producto")),
         getInventory({ product_id: pid }).then(items => {
           setWQtys(prev => {

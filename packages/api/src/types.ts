@@ -45,7 +45,7 @@ export interface Product {
   allow_card: boolean
   /** Sum of all warehouse quantities (precomputed by backend via withSum) */
   stock_total: number
-  images: Array<{ id: number; image_path: string; sort_order: number }>
+  images: Array<{ id: number; image_path: string; url: string; sort_order: number }>
   created_at: string
   updated_at: string
 }

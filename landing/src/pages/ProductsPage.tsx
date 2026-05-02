@@ -149,7 +149,7 @@ function apiProductToProducto(p: Product): Producto {
     precioA: getPrice(p, 1),
     ...(precioB > 0 ? { precioB } : {}),
     ...(precioC > 0 ? { precioC } : {}),
-    imagen: p.images[0]?.image_path ? storageUrl(p.images[0].image_path) : '',
+    imagen: p.images[0]?.url ?? '',
     stockUbicaciones: [],
     etiquetas: [],
     ventasTotales: 0,

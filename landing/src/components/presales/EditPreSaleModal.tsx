@@ -160,7 +160,7 @@ export function EditPreSaleModal({ preSale, onClose, onSuccess }: Props) {
       getProduct(preSale.product_id)
         .then(prod => {
           const img = prod.images?.[0];
-          if (img) setProductImage(storageUrl(img.image_path));
+          if (img) setProductImage(img.url ?? storageUrl(img.image_path));
         })
         .catch(() => {})
         .finally(() => setImageLoading(false));
