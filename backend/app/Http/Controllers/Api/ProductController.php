@@ -170,7 +170,12 @@ class ProductController extends Controller
             'image' => ['required', 'file', 'image', 'max:5120'],
         ]);
 
-        $path = $request->file('image')->store("products/{$product->id}");
+        try {
+            $path = $request->file('image')->store("products/{$product->id}", 'gcs');
+        } catch (\Throwable $e) {
+            \Log::error('GCS upload failed', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            return $this->error('GCS error: ' . $e->getMessage(), 500);
+        }
 
         if ($path === false) {
             return $this->error('No se pudo guardar la imagen en el almacenamiento.', 500);
