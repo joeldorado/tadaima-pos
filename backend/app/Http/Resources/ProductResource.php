@@ -61,11 +61,14 @@ class ProductResource extends JsonResource
 
             'images' => $this->when(
                 $this->relationLoaded('images'),
-                fn () => $this->images->map(fn ($img) => [
-                    'id'         => $img->id,
-                    'image_path' => $img->image_path,
-                    'sort_order' => $img->sort_order,
-                ])->values(),
+                fn () => $this->images
+                    ->filter(fn ($img) => $img->url !== '')
+                    ->map(fn ($img) => [
+                        'id'         => $img->id,
+                        'image_path' => $img->image_path,
+                        'url'        => $img->url,
+                        'sort_order' => $img->sort_order,
+                    ])->values(),
                 [],
             ),
 
