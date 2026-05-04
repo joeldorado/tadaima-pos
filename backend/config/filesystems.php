@@ -71,7 +71,7 @@ return [
             // Bucket has Uniform Bucket-Level Access — skip per-object ACLs on upload
             'visibilityHandler' => \App\Storage\UniformBucketVisibilityHandler::class,
             'metadata'         => ['cacheControl' => 'public, max-age=86400'],
-            'throw'            => false,
+            'throw'            => true,
         ],
 
     ],
