@@ -17,7 +17,7 @@ import { ImageWithFallback } from "@/components/figma/ImageWithFallback";
 import { useActiveStore } from "@/contexts/StoreContext";
 import { useAuth } from "@tadaima/auth";
 import { toast } from "sonner";
-import { getProducts, createProduct, updateProduct, deleteProduct, uploadProductImage, removeProductImage, getWarehouses, getInventory, updateInventory, getPrice, storageUrl, getMangas, getStores } from "@tadaima/api";
+import { getProducts, createProduct, updateProduct, deleteProduct, forceDeleteProduct, uploadProductImage, removeProductImage, getWarehouses, getInventory, updateInventory, getPrice, storageUrl, getMangas, getStores } from "@tadaima/api";
 import { ProductTypeSelectorModal } from "@/components/products/ProductTypeSelectorModal";
 import { MangaBatchModal } from "@/components/products/MangaBatchModal";
 import type { Product, Manga, Store } from "@tadaima/api";
@@ -1016,23 +1016,36 @@ export function ProductsPage() {
 
   const [deleteTarget, setDeleteTarget] = React.useState<Producto | null>(null);
   const [deleteLoading, setDeleteLoading] = React.useState(false);
+  const [forceMode, setForceMode] = React.useState(false);
 
-  const handleDeleteProduct = async (): Promise<void> => {
+  const handleDeleteProduct = async (force = false): Promise<void> => {
     if (!deleteTarget) return;
     setDeleteLoading(true);
     try {
-      await deleteProduct(deleteTarget.id);
+      if (force) {
+        await forceDeleteProduct(deleteTarget.id);
+      } else {
+        await deleteProduct(deleteTarget.id);
+      }
       setProducts(prev => prev.filter(p => p.id !== deleteTarget.id));
       setIsModalOpen(false);
       setEditingProduct(undefined);
       setDeleteTarget(null);
+      setForceMode(false);
       toast.success('Producto eliminado.');
       void refreshProductCount();
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
         ?? 'No se pudo eliminar el producto.';
-      toast.error(msg);
-      setDeleteTarget(null);
+      if (!force) {
+        // Offer force delete when blocked
+        setForceMode(true);
+        toast.error(msg);
+      } else {
+        toast.error(msg);
+        setDeleteTarget(null);
+        setForceMode(false);
+      }
     } finally {
       setDeleteLoading(false);
     }
@@ -1710,41 +1723,61 @@ export function ProductsPage() {
 
       {deleteTarget && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => !deleteLoading && setDeleteTarget(null)} />
-          <div className="relative w-full max-w-sm rounded-2xl p-6 shadow-2xl" style={{ background: '#1a1a1a', border: '1px solid rgba(239,68,68,0.3)' }}>
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => { if (!deleteLoading) { setDeleteTarget(null); setForceMode(false); } }} />
+          <div className="relative w-full max-w-sm rounded-2xl p-6 shadow-2xl transition-all" style={{ background: '#1a1a1a', border: `1px solid ${forceMode ? 'rgba(239,68,68,0.7)' : 'rgba(239,68,68,0.3)'}` }}>
             <div className="flex items-start gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-red-500/10 flex items-center justify-center shrink-0">
+              <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ background: forceMode ? 'rgba(239,68,68,0.2)' : 'rgba(239,68,68,0.1)' }}>
                 <AlertTriangle size={20} className="text-red-400" />
               </div>
               <div>
-                <h3 className="font-bold text-white text-base">¿Eliminar producto?</h3>
+                <h3 className="font-bold text-white text-base">
+                  {forceMode ? '⚠️ Borrado total forzado' : '¿Eliminar producto?'}
+                </h3>
                 <p className="text-sm text-gray-400 mt-1">Esta acción <span className="text-red-400 font-semibold">no se puede deshacer</span>.</p>
               </div>
             </div>
-            <div className="rounded-xl p-3 mb-5 text-sm space-y-1" style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)' }}>
+
+            <div className="rounded-xl p-3 mb-5 text-sm space-y-1" style={{ background: forceMode ? 'rgba(239,68,68,0.1)' : 'rgba(239,68,68,0.06)', border: `1px solid ${forceMode ? 'rgba(239,68,68,0.3)' : 'rgba(239,68,68,0.15)'}` }}>
               <p className="font-bold text-gray-300 mb-2">{deleteTarget.nombre}</p>
-              <p className="text-gray-400">Se eliminarán permanentemente:</p>
-              <ul className="text-gray-400 list-disc list-inside space-y-0.5 mt-1">
-                <li>Imágenes del bucket de almacenamiento</li>
-                <li>Registros de inventario</li>
-                <li>Precios configurados</li>
-              </ul>
-              <p className="text-yellow-400 text-xs mt-2">Si el producto tiene ventas registradas no se podrá eliminar — desactívalo en su lugar.</p>
+              {forceMode ? (
+                <>
+                  <p className="text-red-400 font-semibold">Esto borrará también:</p>
+                  <ul className="text-gray-300 list-disc list-inside space-y-0.5 mt-1">
+                    <li>Ventas históricas vinculadas</li>
+                    <li>Apartados activos</li>
+                    <li>Traspasos relacionados</li>
+                    <li>Imágenes, inventario y precios</li>
+                  </ul>
+                  <p className="text-red-400 text-xs font-bold mt-2">Los datos de ventas se perderán para siempre.</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-gray-400">Se eliminarán permanentemente:</p>
+                  <ul className="text-gray-400 list-disc list-inside space-y-0.5 mt-1">
+                    <li>Imágenes del bucket de almacenamiento</li>
+                    <li>Registros de inventario</li>
+                    <li>Precios configurados</li>
+                  </ul>
+                  <p className="text-yellow-400 text-xs mt-2">Si tiene ventas o apartados activos se ofrecerá la opción de borrado forzado.</p>
+                </>
+              )}
             </div>
+
             <div className="flex gap-3 justify-end">
               <button
-                onClick={() => setDeleteTarget(null)}
+                onClick={() => { setDeleteTarget(null); setForceMode(false); }}
                 disabled={deleteLoading}
                 className="px-5 py-2 rounded-full text-sm font-bold text-gray-400 hover:bg-white/5 transition-all"
               >
                 Cancelar
               </button>
               <button
-                onClick={handleDeleteProduct}
+                onClick={() => handleDeleteProduct(forceMode)}
                 disabled={deleteLoading}
-                className="px-5 py-2 rounded-full text-sm font-bold bg-red-500 hover:bg-red-600 text-white transition-all disabled:opacity-50"
+                className="px-5 py-2 rounded-full text-sm font-bold text-white transition-all disabled:opacity-50"
+                style={{ background: forceMode ? '#b91c1c' : '#ef4444' }}
               >
-                {deleteLoading ? 'Eliminando…' : 'Sí, eliminar'}
+                {deleteLoading ? 'Eliminando…' : forceMode ? '🗑 Borrar TODO' : 'Sí, eliminar'}
               </button>
             </div>
           </div>

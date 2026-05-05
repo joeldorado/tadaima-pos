@@ -110,6 +110,10 @@ export async function deleteProduct(id: number): Promise<void> {
   await apiClient.delete(`/products/${id}`)
 }
 
+export async function forceDeleteProduct(id: number): Promise<void> {
+  await apiClient.delete(`/products/${id}/force`)
+}
+
 export async function removeProductImage(productId: number, imageId: number): Promise<void> {
   await apiClient.delete(`/products/${productId}/images/${imageId}`)
 }

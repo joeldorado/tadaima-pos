@@ -90,6 +90,7 @@ Route::middleware('auth:sanctum')->group(function () {
     ]);
 
     Route::prefix('products/{product}')->group(function () {
+        Route::delete('force',                   [ProductController::class, 'forceDestroy']);
         // Images
         Route::post('images/upload',             [ProductController::class, 'uploadImage']);
         Route::post('images',                    [ProductController::class, 'addImage']);

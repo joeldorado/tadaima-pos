@@ -170,6 +170,28 @@ class ProductController extends Controller
         return $this->success(null, 'Producto eliminado.');
     }
 
+    /**
+     * DELETE /products/{product}/force
+     * Elimina el producto sin importar ventas ni apartados.
+     * Limpia manualmente las tablas sin cascade antes de borrar.
+     */
+    public function forceDestroy(Product $product): JsonResponse
+    {
+        DB::transaction(function () use ($product) {
+            // Delete GCS images
+            foreach ($product->images as $image) {
+                Storage::disk('gcs')->delete($image->image_path);
+            }
+
+            // Manually handle tables without cascade
+            DB::table('layaways')->where('product_id', $product->id)->delete();
+
+            $product->delete();
+        });
+
+        return $this->success(null, 'Producto eliminado forzosamente.');
+    }
+
     // ─── Images ───────────────────────────────────────────────────────────────
 
     /**
