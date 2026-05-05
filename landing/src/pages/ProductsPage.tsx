@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import type { CSSProperties } from "react";
 import {
   Search, Plus,
@@ -156,6 +156,21 @@ function apiProductToProducto(p: Product): Producto {
     allowCash: p.allow_cash ?? true,
     allowCard: p.allow_card ?? true,
   }
+}
+
+function ProductThumb({ src, alt }: { src: string; alt: string }) {
+  const [failed, setFailed] = React.useState(false);
+  React.useEffect(() => { setFailed(false); }, [src]);
+  if (failed) return null;
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className="w-10 h-10 rounded-xl object-cover shrink-0"
+      style={{ minWidth: 40 }}
+      onError={() => setFailed(true)}
+    />
+  );
 }
 
 const columnHelper = createColumnHelper<Producto>();
@@ -1028,15 +1043,7 @@ export function ProductsPage() {
         const img = info.row.original.imagen;
         return (
           <div className="flex items-center gap-3">
-            {img && (
-              <img
-                src={img}
-                alt={info.getValue()}
-                className="w-10 h-10 rounded-xl object-cover shrink-0"
-                style={{ minWidth: 40 }}
-                onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
-              />
-            )}
+            {img && <ProductThumb src={img} alt={info.getValue()} />}
             <div className="min-w-0">
               <p className="text-sm font-bold truncate max-w-[200px]" style={{ color: T.textPrimary }}>{info.getValue()}</p>
               <p className="text-[10px] font-mono" style={{ color: T.textMuted }}>{info.row.original.sku}</p>
