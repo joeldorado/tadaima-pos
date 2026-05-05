@@ -229,6 +229,7 @@ class ProductController extends Controller
             return $this->error('La imagen no pertenece a este producto.', 403);
         }
 
+        Storage::disk('gcs')->delete($image->image_path);
         $image->delete();
 
         return $this->success(null, 'Imagen eliminada.');

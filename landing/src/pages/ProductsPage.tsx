@@ -17,7 +17,7 @@ import { ImageWithFallback } from "@/components/figma/ImageWithFallback";
 import { useActiveStore } from "@/contexts/StoreContext";
 import { useAuth } from "@tadaima/auth";
 import { toast } from "sonner";
-import { getProducts, createProduct, updateProduct, uploadProductImage, getWarehouses, getInventory, updateInventory, getPrice, storageUrl, getMangas, getStores } from "@tadaima/api";
+import { getProducts, createProduct, updateProduct, uploadProductImage, removeProductImage, getWarehouses, getInventory, updateInventory, getPrice, storageUrl, getMangas, getStores } from "@tadaima/api";
 import { ProductTypeSelectorModal } from "@/components/products/ProductTypeSelectorModal";
 import { MangaBatchModal } from "@/components/products/MangaBatchModal";
 import type { Product, Manga, Store } from "@tadaima/api";
@@ -118,6 +118,7 @@ interface Producto {
   precioC?: number;
   porcentajeLibro?: number; // Para tipo libro
   imagen: string;
+  imageIds: number[];
   imagenesAdicionales?: string[];
   stockUbicaciones: StockUbicacion[];
   etiquetas: EtiquetaProducto[];
@@ -150,6 +151,7 @@ function apiProductToProducto(p: Product): Producto {
     ...(precioB > 0 ? { precioB } : {}),
     ...(precioC > 0 ? { precioC } : {}),
     imagen: p.images[0]?.url ?? '',
+    imageIds: p.images.map(img => img.id),
     stockUbicaciones: [],
     etiquetas: [],
     ventasTotales: 0,
@@ -223,7 +225,7 @@ function ProductModal({
       nombre: "", sku: "", categoria: "", proveedor: "",
       tipo: "normal", desactivado: false, costo: 0, precioA: 0, precioB: 0, precioC: 0,
       stockUbicaciones: [],
-      etiquetas: ["en bodega"], imagen: "",
+      etiquetas: ["en bodega"], imagen: "", imageIds: [],
       ventasTotales: 0,
       allowCash: true,
       allowCard: true,
@@ -971,9 +973,10 @@ export function ProductsPage() {
           ...(p.precioB !== undefined && p.precioB > 0 ? { price_2: p.precioB } : {}),
           ...(p.precioC !== undefined && p.precioC > 0 ? { price_3: p.precioC } : {}),
         },
-      }).then(() => {
-        // Upload new image if provided
+      }).then(async () => {
         if (imageFile) {
+          // Delete existing images before uploading the new one
+          await Promise.allSettled(p.imageIds.map(id => removeProductImage(p.id, id)));
           void uploadProductImage(p.id, imageFile)
             .catch(() => { toast.error('Producto actualizado, pero no se pudo subir la imagen.'); })
             .finally(() => void fetchProducts());

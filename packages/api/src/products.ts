@@ -106,6 +106,10 @@ export async function updateStorePrices(
  * Sube una imagen de producto y la asocia al mismo.
  * POST /products/{id}/images/upload (multipart/form-data)
  */
+export async function removeProductImage(productId: number, imageId: number): Promise<void> {
+  await apiClient.delete(`/products/${productId}/images/${imageId}`)
+}
+
 export async function uploadProductImage(
   productId: number,
   file: File
