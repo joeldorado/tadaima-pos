@@ -146,11 +146,16 @@ class ProductController extends Controller
      */
     public function destroy(Product $product): JsonResponse
     {
-        $salesCount = DB::table('sale_items')->where('product_id', $product->id)->count();
+        $salesCount    = DB::table('sale_items')->where('product_id', $product->id)->count();
+        $layawaysCount = DB::table('layaways')->where('product_id', $product->id)->count();
 
-        if ($salesCount > 0) {
+        if ($salesCount > 0 || $layawaysCount > 0) {
+            $reasons = [];
+            if ($salesCount > 0)    $reasons[] = "{$salesCount} venta(s)";
+            if ($layawaysCount > 0) $reasons[] = "{$layawaysCount} apartado(s) activo(s)";
+
             return $this->error(
-                "No se puede eliminar: el producto tiene {$salesCount} venta(s) registrada(s). Puedes desactivarlo.",
+                'No se puede eliminar: el producto tiene ' . implode(' y ', $reasons) . '. Puedes desactivarlo.',
                 422
             );
         }
