@@ -1,5 +1,5 @@
 import { apiClient } from './client'
-import type { Manga, CreateMangaInput, MangaInventoryItem } from './types'
+import type { Manga, CreateMangaInput, UpdateMangaInput, MangaInventoryItem } from './types'
 
 export interface GetMangasParams {
   store_id?: number
@@ -18,6 +18,15 @@ export async function getMangas(params?: GetMangasParams): Promise<Manga[]> {
 export async function createManga(input: CreateMangaInput): Promise<Manga> {
   const response = await apiClient.post<Manga>('/mangas', input)
   return response.data
+}
+
+export async function updateManga(id: number, input: UpdateMangaInput): Promise<Manga> {
+  const response = await apiClient.put<Manga>(`/mangas/${id}`, input)
+  return response.data
+}
+
+export async function deleteManga(id: number): Promise<void> {
+  await apiClient.delete(`/mangas/${id}`)
 }
 
 export async function uploadMangaImage(

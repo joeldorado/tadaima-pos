@@ -815,6 +815,22 @@ export interface CreateMangaInput {
   stock?: number
 }
 
+export interface UpdateMangaInput {
+  name?: string
+  volume_number?: number | null
+  editorial?: string | null
+  code?: string | null
+  genre?: string | null
+  public_price?: number
+  profit_margin_percent?: number
+  active?: boolean
+  price_1?: number | null
+  price_2?: number | null
+  price_3?: number | null
+  price_4?: number | null
+  price_5?: number | null
+}
+
 // ─── API Error ────────────────────────────────────────────────────────────────
 
 export interface ApiError {

@@ -11,15 +11,16 @@ import {
   MessageCircle, Check,
   Upload, Camera, Loader2,
   ArrowUp, ArrowDown, ArrowUpDown,
-  ChevronLeft, ChevronsLeft, ChevronsRight, Trash2,
+  ChevronLeft, ChevronsLeft, ChevronsRight, Trash2, Pencil,
 } from "lucide-react";
 import { ImageWithFallback } from "@/components/figma/ImageWithFallback";
 import { useActiveStore } from "@/contexts/StoreContext";
 import { useAuth } from "@tadaima/auth";
 import { toast } from "sonner";
-import { getProducts, createProduct, updateProduct, deleteProduct, forceDeleteProduct, uploadProductImage, removeProductImage, getWarehouses, getInventory, updateInventory, getPrice, storageUrl, getMangas, getStores } from "@tadaima/api";
+import { getProducts, createProduct, updateProduct, deleteProduct, forceDeleteProduct, uploadProductImage, removeProductImage, getWarehouses, getInventory, updateInventory, getPrice, storageUrl, getMangas, deleteManga, getStores } from "@tadaima/api";
 import { ProductTypeSelectorModal } from "@/components/products/ProductTypeSelectorModal";
 import { MangaBatchModal } from "@/components/products/MangaBatchModal";
+import { MangaEditModal } from "@/components/products/MangaEditModal";
 import type { Product, Manga, Store } from "@tadaima/api";
 import {
   useReactTable,
@@ -844,6 +845,9 @@ export function ProductsPage() {
   const [editingProduct, setEditingProduct] = useState<Producto | undefined>(undefined);
   const [showTypeSelector, setShowTypeSelector] = useState(false);
   const [showMangaModal, setShowMangaModal] = useState(false);
+  const [editingManga, setEditingManga] = useState<Manga | null>(null);
+  const [deleteMangaTarget, setDeleteMangaTarget] = useState<Manga | null>(null);
+  const [deleteMangaLoading, setDeleteMangaLoading] = useState(false);
   const [showTopSellers, setShowTopSellers] = useState(false);
   const [showLowStock, setShowLowStock] = useState(false);
   const [showNoCost, setShowNoCost] = useState(false);
@@ -1048,6 +1052,21 @@ export function ProductsPage() {
       }
     } finally {
       setDeleteLoading(false);
+    }
+  };
+
+  const handleDeleteManga = async (): Promise<void> => {
+    if (!deleteMangaTarget) return;
+    setDeleteMangaLoading(true);
+    try {
+      await deleteManga(deleteMangaTarget.id);
+      setMangas(prev => prev.filter(m => m.id !== deleteMangaTarget.id));
+      setDeleteMangaTarget(null);
+      toast.success('Tomo eliminado.');
+    } catch {
+      toast.error('No se pudo eliminar el tomo.');
+    } finally {
+      setDeleteMangaLoading(false);
     }
   };
 
@@ -1281,7 +1300,33 @@ export function ProductsPage() {
         );
       },
     }),
-  ], [canViewCost]);
+    mangaColumnHelper.display({
+      id: 'acciones',
+      header: '',
+      cell: info => (
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            onClick={e => { e.stopPropagation(); setEditingManga(info.row.original); }}
+            className="p-1.5 rounded-xl hover:bg-white/10 transition-all"
+            title="Editar"
+            style={{ color: T.textMuted }}
+          >
+            <Pencil size={13} />
+          </button>
+          {isAdmin && (
+            <button
+              onClick={e => { e.stopPropagation(); setDeleteMangaTarget(info.row.original); }}
+              className="p-1.5 rounded-xl hover:bg-red-500/20 transition-all"
+              title="Eliminar"
+              style={{ color: T.redBright }}
+            >
+              <Trash2 size={13} />
+            </button>
+          )}
+        </div>
+      ),
+    }),
+  ], [canViewCost, isAdmin]);
 
   const filteredMangas = useMemo(() => {
     if (!mangaSearch.trim()) return mangas;
@@ -1927,6 +1972,59 @@ export function ProductsPage() {
           locations={locations}
           canViewCost={canViewCost}
         />
+      )}
+
+      {editingManga && (
+        <MangaEditModal
+          manga={editingManga}
+          onClose={() => setEditingManga(null)}
+          onSuccess={updated => {
+            setMangas(prev => prev.map(m => m.id === updated.id ? updated : m));
+            setEditingManga(null);
+            toast.success('Tomo actualizado.');
+          }}
+          canViewCost={canViewCost}
+        />
+      )}
+
+      {deleteMangaTarget && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => !deleteMangaLoading && setDeleteMangaTarget(null)} />
+          <div className="relative w-full max-w-sm rounded-2xl p-6 shadow-2xl" style={{ background: '#1a1a1a', border: '1px solid rgba(239,68,68,0.3)' }}>
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-red-500/10 flex items-center justify-center shrink-0">
+                <AlertTriangle size={20} className="text-red-400" />
+              </div>
+              <div>
+                <h3 className="font-bold text-white text-base">¿Eliminar tomo?</h3>
+                <p className="text-sm text-gray-400 mt-1">Esta acción <span className="text-red-400 font-semibold">no se puede deshacer</span>.</p>
+              </div>
+            </div>
+            <div className="rounded-xl p-3 mb-5 text-sm" style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)' }}>
+              <p className="font-bold text-gray-300">{deleteMangaTarget.name}{deleteMangaTarget.volume_number != null ? ` Vol. ${deleteMangaTarget.volume_number}` : ''}</p>
+              <p className="text-gray-400 text-xs mt-1">Se eliminará el registro e inventario del tomo.</p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setDeleteMangaTarget(null)}
+                disabled={deleteMangaLoading}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold transition-all hover:bg-white/10"
+                style={{ color: '#9ca3af', border: '1px solid rgba(255,255,255,0.08)' }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleDeleteManga}
+                disabled={deleteMangaLoading}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2"
+                style={{ background: 'linear-gradient(135deg,#991b1b,#dc2626)', color: '#fff', border: '1px solid rgba(239,68,68,0.3)' }}
+              >
+                {deleteMangaLoading ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={14} />}
+                Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
