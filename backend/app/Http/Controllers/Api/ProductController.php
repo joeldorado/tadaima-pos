@@ -146,10 +146,18 @@ class ProductController extends Controller
      */
     public function destroy(Product $product): JsonResponse
     {
-        $hasSales = DB::table('sale_items')->where('product_id', $product->id)->exists();
+        $salesCount = DB::table('sale_items')->where('product_id', $product->id)->count();
 
-        if ($hasSales) {
-            return $this->error('No se puede eliminar el producto porque tiene ventas registradas. Puedes desactivarlo.', 422);
+        if ($salesCount > 0) {
+            return $this->error(
+                "No se puede eliminar: el producto tiene {$salesCount} venta(s) registrada(s). Puedes desactivarlo.",
+                422
+            );
+        }
+
+        // Delete GCS images before removing DB records
+        foreach ($product->images as $image) {
+            Storage::disk('gcs')->delete($image->image_path);
         }
 
         $product->delete();
