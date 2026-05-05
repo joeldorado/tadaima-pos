@@ -20,6 +20,11 @@ export async function createManga(input: CreateMangaInput): Promise<Manga> {
   return response.data
 }
 
+export async function getMangaInventory(mangaId: number): Promise<MangaInventoryItem[]> {
+  const response = await apiClient.get<{ data: MangaInventoryItem[] }>('/manga-inventory', { params: { manga_id: mangaId } })
+  return response.data.data
+}
+
 export async function updateManga(id: number, input: UpdateMangaInput): Promise<Manga> {
   const response = await apiClient.put<Manga>(`/mangas/${id}`, input)
   return response.data
