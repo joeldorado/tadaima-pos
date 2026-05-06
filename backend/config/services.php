@@ -35,4 +35,9 @@ return [
         ],
     ],
 
+    'tadaima_loyalty' => [
+        'url'         => env('TADAIMA_SUPABASE_URL'),
+        'service_key' => env('TADAIMA_SUPABASE_SERVICE_KEY'),
+    ],
+
 ];
