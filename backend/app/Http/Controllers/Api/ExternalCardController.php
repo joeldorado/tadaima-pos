@@ -67,9 +67,11 @@ class ExternalCardController extends Controller
         }
 
         $socio   = $rows[0];
-        $usuario = is_array($socio['usuarios'] ?? null)
-            ? ($socio['usuarios'][0] ?? $socio['usuarios'] ?? [])
-            : [];
+        // Supabase devuelve el objeto relacionado directamente (no array) en join 1-1
+        $rawUsuario = $socio['usuarios'] ?? [];
+        $usuario = is_array($rawUsuario) && array_is_list($rawUsuario)
+            ? ($rawUsuario[0] ?? [])
+            : (array) $rawUsuario;
 
         return $this->success($this->mapSocio($socio, $usuario));
     }
@@ -104,27 +106,19 @@ class ExternalCardController extends Controller
      */
     private function mapSocio(array $socio, array $usuario): array
     {
-        // Nombre: intentar varias combinaciones de columnas posibles
-        $nombre   = $socio['nombre']   ?? $socio['name']  ?? $usuario['nombre'] ?? $usuario['name']  ?? '';
-        $apellido = $socio['apellido'] ?? $socio['last_name'] ?? $usuario['apellido'] ?? $usuario['last_name'] ?? '';
+        // Schema confirmado: nombre/apellidos en usuarios, id_socio/nivel/activo/vigencia en socios
+        $nombre   = $usuario['nombre']   ?? '';
+        $apellido = $usuario['apellidos'] ?? '';
         $fullName = trim("{$nombre} {$apellido}") ?: ($socio['id_socio'] ?? '');
-
-        $email = $socio['correo_electronico'] ?? $socio['email']
-               ?? $usuario['correo_electronico'] ?? $usuario['email']
-               ?? '';
-
-        $phone = $socio['telefono'] ?? $socio['phone']
-               ?? $usuario['telefono'] ?? $usuario['phone']
-               ?? null;
 
         return [
             'external_member_id' => (string) ($socio['id_socio'] ?? ''),
             'name'               => $fullName,
-            'email'              => (string) $email,
-            'phone'              => $phone ? (string) $phone : null,
-            // Extra fields — ignorados por el frontend actual pero útiles a futuro
-            'estatus'            => $socio['estatus'] ?? null,
-            'vigencia'           => $socio['vigencia'] ?? null,
+            'email'              => (string) ($usuario['email'] ?? ''),
+            'phone'              => isset($usuario['telefono']) ? (string) $usuario['telefono'] : null,
+            'estatus'            => $socio['activo'] ? 'ACTIVO' : 'INACTIVO',
+            'vigencia'           => $socio['fecha_vencimiento_membresia'] ?? null,
+            'nivel'              => $socio['nivel_membresia'] ?? null,
         ];
     }
 

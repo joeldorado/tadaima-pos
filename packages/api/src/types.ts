@@ -523,6 +523,7 @@ export interface ExternalCardLookup {
   phone: string | null
   estatus?: string | null
   vigencia?: string | null
+  nivel?: string | null
 }
 
 // ─── Notifications ────────────────────────────────────────────────────────────
