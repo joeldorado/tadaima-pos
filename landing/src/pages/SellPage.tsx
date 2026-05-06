@@ -15,7 +15,7 @@ import { PreSaleDifusionPanel } from "@/components/presales/PreSaleDifusionPanel
 const tadaimaLogo = null // TODO: replace with real logo asset
 import { toast } from "sonner";
 import { getProducts, getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, createSale, getPrice, getActiveSession, openSession, closeSession, getCashRegisters, createLayaway, getPaymentMethods, getCustomers, createCustomer, lookupCardCode, getSystemSettings, getInventory, getPreSaleCatalogs, getPreSaleOrders, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getSales, getTerminals } from "@tadaima/api";
-import type { CashSession, CashRegisterInfo, PaymentMethod as ApiPaymentMethod, PreSaleCatalog, PreSaleOrder, PreSaleOrderItem, SaleDetail, Terminal } from "@tadaima/api";
+import type { CashSession, CashRegisterInfo, PaymentMethod as ApiPaymentMethod, PreSaleCatalog, PreSaleOrder, PreSaleOrderItem, SaleDetail, Terminal, ExternalCardLookup } from "@tadaima/api";
 type HistorialEntry = { type: 'sale'; data: SaleDetail } | { type: 'presale'; data: PreSaleOrder };
 import { useCartDraftStore } from "@/stores/cartDraftStore";
 import { useActiveStore } from "@/contexts/StoreContext";
@@ -58,6 +58,7 @@ interface Customer {
   name: string;
   phone?: string;
   points?: number;
+  external_member_id?: string;
 }
 
 interface CartItem {
@@ -250,6 +251,7 @@ export function SellPage() {
   const [showCustDrop, setShowCustDrop]     = useState(false);
   const [requireCustomerFlash, setRequireCustomerFlash] = useState(false);
   const [isRegisteringCustomer, setIsRegisteringCustomer] = useState(false);
+  const [pendingExtCust, setPendingExtCust] = useState<ExternalCardLookup | null>(null);
   const [isWide, setIsWide]         = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [cashReceived, setCashReceived] = useState("");
@@ -431,6 +433,7 @@ export function SellPage() {
 
   // Live customer search with 300ms debounce — falls back to Supabase if no POS match
   useEffect(() => {
+    setPendingExtCust(null);
     if (!customerSearch.trim()) {
       setCustomers([]);
       return;
@@ -445,34 +448,48 @@ export function SellPage() {
             name: c.name,
             phone: c.phone ?? undefined,
             points: c.points,
+            external_member_id: c.external_member_id ?? undefined,
           })));
           return;
         }
-        // No POS match — try Supabase (only for codes that look like member IDs)
+        // No POS match — try Supabase
         const code = customerSearch.trim().toUpperCase();
         if (code.length < 4) return;
         const ext = await lookupCardCode(code);
-        if (!ext) return;
-        // Auto-create in POS so future searches find them
-        const newCust = await createCustomer({
-          name:               ext.name ?? code,
-          phone:              ext.phone ?? undefined,
-          email:              ext.email || undefined,
-          external_member_id: code,
-          loyalty_tier:       ext.nivel ?? undefined,
-        });
-        setCustomers([{
-          id: String(newCust.id),
-          name: newCust.name,
-          phone: newCust.phone ?? undefined,
-          points: newCust.points,
-        }]);
+        if (ext) setPendingExtCust(ext);
       } catch {
-        // silent — POS search failing shouldn't break the UI
+        // silent
       }
     }, 300);
     return () => clearTimeout(t);
   }, [customerSearch]);
+
+  const handleAddPendingExtCust = async () => {
+    if (!pendingExtCust) return;
+    const code = customerSearch.trim().toUpperCase();
+    try {
+      const newCust = await createCustomer({
+        name:               pendingExtCust.name ?? code,
+        phone:              pendingExtCust.phone ?? undefined,
+        email:              pendingExtCust.email || undefined,
+        external_member_id: code,
+        loyalty_tier:       pendingExtCust.nivel ?? undefined,
+      });
+      const custObj: Customer = {
+        id: String(newCust.id),
+        name: newCust.name,
+        phone: newCust.phone ?? undefined,
+        points: newCust.points,
+        external_member_id: code,
+      };
+      setCustomers([custObj]);
+      setCustomer(custObj);
+      setPendingExtCust(null);
+      toast.success(`Socio Tadaima agregado: ${newCust.name}`);
+    } catch {
+      toast.error("No se pudo agregar al socio");
+    }
+  };
 
   const updMesa = useCallback((id: string, fn: (m: Mesa) => Mesa) =>
     setMesas(prev => prev.map(m => m.id === id ? fn(m) : m)), []);
@@ -1080,7 +1097,10 @@ export function SellPage() {
 
   const filteredCusts = useMemo(() => {
     const q = customerSearch.toLowerCase();
-    return customers.filter(c => (c.name ?? "").toLowerCase().includes(q));
+    return customers.filter(c =>
+      (c.name ?? "").toLowerCase().includes(q) ||
+      (c.external_member_id ?? "").toLowerCase().includes(q)
+    );
   }, [customers, customerSearch]);
 
   const handleOpenCash = async () => {
@@ -2052,6 +2072,22 @@ export function SellPage() {
                           {filteredCusts.length === 0 ? (
                             <div className="p-4 flex flex-col items-center gap-3">
                               <p className="text-xs text-white/30 font-bold uppercase tracking-widest text-center">No se encontró al cliente</p>
+                              {pendingExtCust && (
+                                <button
+                                  onClick={handleAddPendingExtCust}
+                                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-red-600/10 border border-red-500/25 hover:bg-red-600/20 transition-all text-left"
+                                >
+                                  <div className="w-8 h-8 rounded-full bg-red-600/20 border border-red-500/30 flex items-center justify-center text-[10px] font-black text-red-400 shrink-0">
+                                    {(pendingExtCust.name ?? "?").charAt(0).toUpperCase()}
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-xs font-black text-white/60 uppercase tracking-widest">Socio Tadaima encontrado</p>
+                                    <p className="text-sm font-black text-white truncate">{pendingExtCust.name}</p>
+                                    {pendingExtCust.phone && <p className="text-[10px] text-white/40">{pendingExtCust.phone}</p>}
+                                  </div>
+                                  <span className="text-[10px] font-black text-red-400 uppercase tracking-widest shrink-0">Agregar</span>
+                                </button>
+                              )}
                               {activeMesa.isPreventa && (
                                 <button 
                                   onClick={() => {
