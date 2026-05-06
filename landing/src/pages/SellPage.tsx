@@ -14,7 +14,7 @@ import { ProductCatalogModal } from "@/components/ProductCatalogModal";
 import { PreSaleDifusionPanel } from "@/components/presales/PreSaleDifusionPanel";
 const tadaimaLogo = null // TODO: replace with real logo asset
 import { toast } from "sonner";
-import { getProducts, getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, createSale, getPrice, getActiveSession, openSession, closeSession, getCashRegisters, createLayaway, getPaymentMethods, getCustomers, createCustomer, getSystemSettings, getInventory, getPreSaleCatalogs, getPreSaleOrders, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getSales, getTerminals } from "@tadaima/api";
+import { getProducts, getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, createSale, getPrice, getActiveSession, openSession, closeSession, getCashRegisters, createLayaway, getPaymentMethods, getCustomers, createCustomer, lookupCardCode, getSystemSettings, getInventory, getPreSaleCatalogs, getPreSaleOrders, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getSales, getTerminals } from "@tadaima/api";
 import type { CashSession, CashRegisterInfo, PaymentMethod as ApiPaymentMethod, PreSaleCatalog, PreSaleOrder, PreSaleOrderItem, SaleDetail, Terminal } from "@tadaima/api";
 type HistorialEntry = { type: 'sale'; data: SaleDetail } | { type: 'presale'; data: PreSaleOrder };
 import { useCartDraftStore } from "@/stores/cartDraftStore";
@@ -429,24 +429,47 @@ export function SellPage() {
     setShowCustDrop(false);
   }, [activeMesaId]);
 
-  // Live customer search with 300ms debounce
+  // Live customer search with 300ms debounce — falls back to Supabase if no POS match
   useEffect(() => {
     if (!customerSearch.trim()) {
       setCustomers([]);
       return;
     }
-    const t = setTimeout(() => {
-      getCustomers({ search: customerSearch, per_page: 10 })
-        .then(res => {
-          const list = Array.isArray(res) ? res : (res as { data: any[] }).data ?? [];
+    const t = setTimeout(async () => {
+      try {
+        const res = await getCustomers({ search: customerSearch, per_page: 10 });
+        const list = Array.isArray(res) ? res : (res as { data: any[] }).data ?? [];
+        if (list.length > 0) {
           setCustomers(list.map((c: any) => ({
             id: String(c.id),
             name: c.name,
             phone: c.phone ?? undefined,
             points: c.points,
           })));
-        })
-        .catch(() => {});
+          return;
+        }
+        // No POS match — try Supabase (only for codes that look like member IDs)
+        const code = customerSearch.trim().toUpperCase();
+        if (code.length < 4) return;
+        const ext = await lookupCardCode(code);
+        if (!ext) return;
+        // Auto-create in POS so future searches find them
+        const newCust = await createCustomer({
+          name:               ext.name ?? code,
+          phone:              ext.phone ?? undefined,
+          email:              ext.email || undefined,
+          external_member_id: code,
+          loyalty_tier:       ext.nivel ?? undefined,
+        });
+        setCustomers([{
+          id: String(newCust.id),
+          name: newCust.name,
+          phone: newCust.phone ?? undefined,
+          points: newCust.points,
+        }]);
+      } catch {
+        // silent — POS search failing shouldn't break the UI
+      }
     }, 300);
     return () => clearTimeout(t);
   }, [customerSearch]);

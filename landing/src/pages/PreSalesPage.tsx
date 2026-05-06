@@ -75,6 +75,7 @@ interface CustomerUI {
   name: string;
   phone?: string;
   email?: string;
+  external_member_id?: string;
 }
 
 interface ProductUI {
@@ -139,6 +140,7 @@ function normalizeApiCustomer(c: ApiCustomer): CustomerUI {
     name: c.name,
     phone: c.phone ?? undefined,
     email: c.email ?? undefined,
+    external_member_id: c.external_member_id ?? undefined,
   };
 }
 
@@ -179,6 +181,9 @@ export function PreSalesPage() {
   const [scanInput, setScanInput]           = useState("");
   const [newCustName, setNewCustName]       = useState("");
   const [newCustPhone, setNewCustPhone]     = useState("");
+  const [newCustEmail, setNewCustEmail]     = useState("");
+  const [pendingExtId,  setPendingExtId]    = useState<string | null>(null);
+  const [pendingExtNivel, setPendingExtNivel] = useState<string | null>(null);
   const [prodSearch, setProdSearch]         = useState("");
   const [showProdDrop, setShowProdDrop]     = useState(false);
   const [cartItems, setCartItems]           = useState<CartItem[]>([]);
@@ -420,9 +425,11 @@ export function PreSalesPage() {
 
   const processScan = async (code: string) => {
     if (!code.trim()) return;
+    const trimmed = code.trim().toUpperCase();
 
-    // Check local list first (phone or id)
+    // 1. Match local list by external_member_id first, then phone/id
     const localFound = customers.find(c =>
+      (c.external_member_id && c.external_member_id.toUpperCase() === trimmed) ||
       c.phone === code.trim() ||
       String(c.id) === code.trim()
     );
@@ -435,18 +442,18 @@ export function PreSalesPage() {
       return;
     }
 
-    // Try external card lookup (Tadaima card system)
-    const ext = await lookupCardCode(code.trim());
+    // 2. Lookup in Supabase via backend
+    const ext = await lookupCardCode(trimmed);
     setIsScanning(false);
     setScanInput("");
 
     if (!ext) {
-      toast.error("Código no encontrado — registra al cliente como nuevo");
+      toast.error("Membresía no encontrada — registra al cliente como nuevo");
       setCustMode("new");
       return;
     }
 
-    // Match by email if already in local list
+    // 3. Match by email in local list
     const byEmail = ext.email
       ? customers.find(c => c.email?.toLowerCase() === ext.email!.toLowerCase())
       : null;
@@ -454,12 +461,33 @@ export function PreSalesPage() {
       setSelectedCustomer(byEmail);
       setCustSearch(byEmail.name);
       toast.success(`Tarjeta Tadaima: ${byEmail.name}`);
-    } else {
-      // Pre-fill new customer form with external data
+      return;
+    }
+
+    // 4. New member — auto-create in POS and select immediately
+    try {
+      const newCust = await createCustomer({
+        name:               ext.name ?? trimmed,
+        phone:              ext.phone ?? undefined,
+        email:              ext.email || undefined,
+        external_member_id: trimmed,
+        loyalty_tier:       ext.nivel ?? undefined,
+      });
+      const ui = normalizeApiCustomer(newCust);
+      setCustomers(prev => [ui, ...prev]);
+      setSelectedCustomer(ui);
+      setCustSearch(ui.name);
+      setCustMode("search");
+      toast.success(`Socio Tadaima registrado: ${ui.name}`);
+    } catch {
+      // Auto-create failed (e.g. duplicate key) — pre-fill form as fallback
       setCustMode("new");
       setNewCustName(ext.name ?? "");
       setNewCustPhone(ext.phone ?? "");
-      toast.info("Cliente externo detectado — confirma sus datos para registrarlo");
+      setNewCustEmail(ext.email ?? "");
+      setPendingExtId(trimmed);
+      setPendingExtNivel(ext.nivel ?? null);
+      toast.info("Completa los datos del cliente para continuar");
     }
   };
 
@@ -551,11 +579,16 @@ export function PreSalesPage() {
       let customerId = selectedCustomer?.id;
       if (custMode === "new" && newCustName.trim()) {
         const newCust = await createCustomer({
-          name:  newCustName.trim(),
-          phone: newCustPhone.trim() || undefined,
+          name:               newCustName.trim(),
+          phone:              newCustPhone.trim() || undefined,
+          email:              newCustEmail.trim() || undefined,
+          external_member_id: pendingExtId ?? undefined,
+          loyalty_tier:       pendingExtNivel ?? undefined,
         });
         customerId = newCust.id;
         setCustomers(prev => [normalizeApiCustomer(newCust), ...prev]);
+        setPendingExtId(null);
+        setPendingExtNivel(null);
         toast.success(`Cliente "${newCustName}" registrado`);
       }
 

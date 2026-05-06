@@ -164,6 +164,8 @@ export interface CreateCustomerInput {
   email?: string
   address?: string
   notes?: string
+  external_member_id?: string
+  loyalty_tier?: string
 }
 
 export interface UpdateCustomerInput {
