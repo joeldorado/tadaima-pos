@@ -20,6 +20,22 @@ export async function lookupCardCode(code: string): Promise<ExternalCardLookup |
 }
 
 /**
+ * Busca socios en Supabase por id_socio, nombre, apellidos o email.
+ * GET /external/customers?q={term}
+ */
+export async function searchExternalCustomers(q: string): Promise<ExternalCardLookup[]> {
+  if (!q || q.trim().length < 2) return []
+  try {
+    const response = await apiClient.get<ExternalCardLookup[]>('/external/customers', {
+      params: { q: q.trim() },
+    })
+    return Array.isArray(response.data) ? response.data : []
+  } catch {
+    return []
+  }
+}
+
+/**
  * STUB — registra al cliente en el sistema externo (echo para testing).
  * POST /external/customer
  */

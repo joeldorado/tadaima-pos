@@ -77,6 +77,80 @@ class ExternalCardController extends Controller
     }
 
     /**
+     * GET /external/customers?q={term}
+     *
+     * Busca socios por id_socio, nombre, apellidos o email.
+     * Devuelve hasta 10 resultados.
+     */
+    public function search(Request $request): JsonResponse
+    {
+        $q = trim((string) $request->query('q', ''));
+
+        if (mb_strlen($q) < 2) {
+            return $this->success([]);
+        }
+
+        $supabaseUrl = rtrim((string) config('services.tadaima_loyalty.url'), '/');
+        $serviceKey  = (string) config('services.tadaima_loyalty.service_key');
+
+        if (empty($supabaseUrl) || empty($serviceKey)) {
+            return $this->success($this->stubSearch($q));
+        }
+
+        $headers = [
+            'apikey'        => $serviceKey,
+            'Authorization' => 'Bearer ' . $serviceKey,
+        ];
+
+        $results = [];
+        $seenIds = [];
+
+        // 1. Buscar por id_socio (partial match)
+        $sociosRes = Http::withHeaders($headers)->get("{$supabaseUrl}/rest/v1/socios", [
+            'select'   => '*,usuarios(*)',
+            'id_socio' => 'ilike.*' . $q . '*',
+            'limit'    => '10',
+        ]);
+
+        if ($sociosRes->successful()) {
+            foreach ($sociosRes->json() as $row) {
+                $rawU   = $row['usuarios'] ?? [];
+                $usuario = is_array($rawU) && array_is_list($rawU) ? ($rawU[0] ?? []) : (array) $rawU;
+                $mapped  = $this->mapSocio($row, $usuario);
+                $id      = $mapped['external_member_id'];
+                if ($id && ! in_array($id, $seenIds, true)) {
+                    $seenIds[] = $id;
+                    $results[] = $mapped;
+                }
+            }
+        }
+
+        // 2. Buscar por nombre / apellidos / correo vía tabla usuarios
+        $usuariosRes = Http::withHeaders($headers)->get("{$supabaseUrl}/rest/v1/usuarios", [
+            'select' => 'id,nombre,apellidos,email,telefono,socios(*)',
+            'or'     => "(nombre.ilike.*{$q}*,apellidos.ilike.*{$q}*,email.ilike.*{$q}*)",
+            'limit'  => '10',
+        ]);
+
+        if ($usuariosRes->successful()) {
+            foreach ($usuariosRes->json() as $usuario) {
+                $socioRaw  = $usuario['socios'] ?? [];
+                $socioList = is_array($socioRaw) && array_is_list($socioRaw) ? $socioRaw : [(array) $socioRaw];
+                if (empty($socioList) || empty($socioList[0])) continue;
+
+                $socio = $socioList[0];
+                $id    = (string) ($socio['id_socio'] ?? '');
+                if (! $id || in_array($id, $seenIds, true)) continue;
+
+                $seenIds[] = $id;
+                $results[] = $this->mapSocio($socio, $usuario);
+            }
+        }
+
+        return $this->success(array_values(array_slice($results, 0, 10)));
+    }
+
+    /**
      * POST /external/customer
      *
      * Registra un cliente en el sistema externo (not implemented yet).
@@ -120,6 +194,35 @@ class ExternalCardController extends Controller
             'vigencia'           => $socio['fecha_vencimiento_membresia'] ?? null,
             'nivel'              => $socio['nivel_membresia'] ?? null,
         ];
+    }
+
+    /**
+     * Stub de búsqueda para desarrollo local.
+     */
+    private function stubSearch(string $q): array
+    {
+        $names = [
+            ['Ana García',       'TAD10000001', 'ana.garcia@stub.local',   '5510000001'],
+            ['Luis Martínez',    'TAD10000002', 'luis.martinez@stub.local','5510000002'],
+            ['María López',      'TAD10000003', 'maria.lopez@stub.local',  '5510000003'],
+            ['Carlos Rodríguez', 'TAD10000004', 'carlos.r@stub.local',     '5510000004'],
+            ['Sofia Hernández',  'TAD10000005', 'sofia.h@stub.local',      '5510000005'],
+        ];
+
+        $q = strtolower($q);
+        return array_values(array_filter(array_map(fn ($n) => [
+            'external_member_id' => $n[1],
+            'name'               => $n[0],
+            'email'              => $n[2],
+            'phone'              => $n[3],
+            'estatus'            => 'ACTIVO',
+            'vigencia'           => null,
+            'nivel'              => null,
+        ], $names), fn ($r) =>
+            str_contains(strtolower($r['name']), $q) ||
+            str_contains(strtolower($r['external_member_id']), $q) ||
+            str_contains(strtolower($r['email']), $q)
+        ));
     }
 
     /**

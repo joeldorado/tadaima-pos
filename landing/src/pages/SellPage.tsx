@@ -14,7 +14,7 @@ import { ProductCatalogModal } from "@/components/ProductCatalogModal";
 import { PreSaleDifusionPanel } from "@/components/presales/PreSaleDifusionPanel";
 const tadaimaLogo = null // TODO: replace with real logo asset
 import { toast } from "sonner";
-import { getProducts, getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, createSale, getPrice, getActiveSession, openSession, closeSession, getCashRegisters, createLayaway, getPaymentMethods, getCustomers, createCustomer, lookupCardCode, getSystemSettings, getInventory, getPreSaleCatalogs, getPreSaleOrders, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getSales, getTerminals } from "@tadaima/api";
+import { getProducts, getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, createSale, getPrice, getActiveSession, openSession, closeSession, getCashRegisters, createLayaway, getPaymentMethods, getCustomers, createCustomer, searchExternalCustomers, getSystemSettings, getInventory, getPreSaleCatalogs, getPreSaleOrders, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getSales, getTerminals } from "@tadaima/api";
 import type { CashSession, CashRegisterInfo, PaymentMethod as ApiPaymentMethod, PreSaleCatalog, PreSaleOrder, PreSaleOrderItem, SaleDetail, Terminal, ExternalCardLookup } from "@tadaima/api";
 type HistorialEntry = { type: 'sale'; data: SaleDetail } | { type: 'presale'; data: PreSaleOrder };
 import { useCartDraftStore } from "@/stores/cartDraftStore";
@@ -251,7 +251,7 @@ export function SellPage() {
   const [showCustDrop, setShowCustDrop]     = useState(false);
   const [requireCustomerFlash, setRequireCustomerFlash] = useState(false);
   const [isRegisteringCustomer, setIsRegisteringCustomer] = useState(false);
-  const [pendingExtCust, setPendingExtCust] = useState<ExternalCardLookup | null>(null);
+  const [extSearchResults, setExtSearchResults] = useState<ExternalCardLookup[]>([]);
   const [isWide, setIsWide]         = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [cashReceived, setCashReceived] = useState("");
@@ -433,7 +433,7 @@ export function SellPage() {
 
   // Live customer search with 300ms debounce — falls back to Supabase if no POS match
   useEffect(() => {
-    setPendingExtCust(null);
+    setExtSearchResults([]);
     if (!customerSearch.trim()) {
       setCustomers([]);
       return;
@@ -452,11 +452,10 @@ export function SellPage() {
           })));
           return;
         }
-        // No POS match — try Supabase
-        const code = customerSearch.trim().toUpperCase();
-        if (code.length < 4) return;
-        const ext = await lookupCardCode(code);
-        if (ext) setPendingExtCust(ext);
+        // No POS match — buscar en Supabase por nombre/ID/correo
+        if (customerSearch.trim().length < 2) return;
+        const exts = await searchExternalCustomers(customerSearch.trim());
+        setExtSearchResults(exts);
       } catch {
         // silent
       }
@@ -464,27 +463,25 @@ export function SellPage() {
     return () => clearTimeout(t);
   }, [customerSearch]);
 
-  const handleAddPendingExtCust = async () => {
-    if (!pendingExtCust) return;
-    const code = customerSearch.trim().toUpperCase();
+  const handleAddExtCust = async (ext: ExternalCardLookup) => {
     try {
       const newCust = await createCustomer({
-        name:               pendingExtCust.name ?? code,
-        phone:              pendingExtCust.phone ?? undefined,
-        email:              pendingExtCust.email || undefined,
-        external_member_id: code,
-        loyalty_tier:       pendingExtCust.nivel ?? undefined,
+        name:               ext.name ?? ext.external_member_id,
+        phone:              ext.phone ?? undefined,
+        email:              ext.email || undefined,
+        external_member_id: ext.external_member_id,
+        loyalty_tier:       ext.nivel ?? undefined,
       });
       const custObj: Customer = {
         id: String(newCust.id),
         name: newCust.name,
         phone: newCust.phone ?? undefined,
         points: newCust.points,
-        external_member_id: code,
+        external_member_id: ext.external_member_id,
       };
       setCustomers([custObj]);
+      setExtSearchResults([]);
       setCustomer(custObj);
-      setPendingExtCust(null);
       toast.success(`Socio Tadaima agregado: ${newCust.name}`);
     } catch {
       toast.error("No se pudo agregar al socio");
@@ -2071,22 +2068,30 @@ export function SellPage() {
                         >
                           {filteredCusts.length === 0 ? (
                             <div className="p-4 flex flex-col items-center gap-3">
-                              <p className="text-xs text-white/30 font-bold uppercase tracking-widest text-center">No se encontró al cliente</p>
-                              {pendingExtCust && (
-                                <button
-                                  onClick={handleAddPendingExtCust}
-                                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-red-600/10 border border-red-500/25 hover:bg-red-600/20 transition-all text-left"
-                                >
-                                  <div className="w-8 h-8 rounded-full bg-red-600/20 border border-red-500/30 flex items-center justify-center text-[10px] font-black text-red-400 shrink-0">
-                                    {(pendingExtCust.name ?? "?").charAt(0).toUpperCase()}
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    <p className="text-xs font-black text-white/60 uppercase tracking-widest">Socio Tadaima encontrado</p>
-                                    <p className="text-sm font-black text-white truncate">{pendingExtCust.name}</p>
-                                    {pendingExtCust.phone && <p className="text-[10px] text-white/40">{pendingExtCust.phone}</p>}
-                                  </div>
-                                  <span className="text-[10px] font-black text-red-400 uppercase tracking-widest shrink-0">Agregar</span>
-                                </button>
+                              {extSearchResults.length === 0 && (
+                                <p className="text-xs text-white/30 font-bold uppercase tracking-widest text-center">No se encontró al cliente</p>
+                              )}
+                              {extSearchResults.length > 0 && (
+                                <div className="w-full space-y-1">
+                                  <p className="text-[9px] font-black text-red-400/70 uppercase tracking-widest px-1 pb-1">Socios Tadaima</p>
+                                  {extSearchResults.map(ext => (
+                                    <button
+                                      key={ext.external_member_id}
+                                      type="button"
+                                      onClick={() => handleAddExtCust(ext)}
+                                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-red-600/8 border border-red-500/20 hover:bg-red-600/18 transition-all text-left"
+                                    >
+                                      <div className="w-8 h-8 rounded-full bg-red-600/20 border border-red-500/30 flex items-center justify-center text-[10px] font-black text-red-400 shrink-0">
+                                        {(ext.name ?? "?").charAt(0).toUpperCase()}
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-black text-white truncate">{ext.name}</p>
+                                        <p className="text-[10px] text-white/35">{ext.external_member_id}{ext.phone ? ` · ${ext.phone}` : ""}</p>
+                                      </div>
+                                      <span className="text-[10px] font-black text-red-400 uppercase tracking-wider shrink-0">Agregar</span>
+                                    </button>
+                                  ))}
+                                </div>
                               )}
                               {activeMesa.isPreventa && (
                                 <button 

@@ -15,7 +15,7 @@ import { toast } from "sonner";
 import {
   getPreSales, getPreSalePayments, createPreSale, addPreSalePayment,
   updatePreSaleStatus, getCustomers, createCustomer, getProducts,
-  lookupCardCode, getPreSaleOrders, getPreSaleCatalogs,
+  lookupCardCode, searchExternalCustomers, getPreSaleOrders, getPreSaleCatalogs,
 } from "@tadaima/api";
 import type { PreSaleCatalog, ExternalCardLookup } from "@tadaima/api";
 import { LiquidateModal } from "@/components/presales/LiquidateModal";
@@ -184,7 +184,7 @@ export function PreSalesPage() {
   const [newCustEmail, setNewCustEmail]     = useState("");
   const [pendingExtId,  setPendingExtId]    = useState<string | null>(null);
   const [pendingExtNivel, setPendingExtNivel] = useState<string | null>(null);
-  const [pendingExtSearch, setPendingExtSearch] = useState<ExternalCardLookup | null>(null);
+  const [extSearchResults, setExtSearchResults] = useState<ExternalCardLookup[]>([]);
   const [prodSearch, setProdSearch]         = useState("");
   const [showProdDrop, setShowProdDrop]     = useState(false);
   const [cartItems, setCartItems]           = useState<CartItem[]>([]);
@@ -410,37 +410,33 @@ export function PreSalesPage() {
 
   // Supabase fallback cuando el buscador de clientes no encuentra en POS
   useEffect(() => {
-    setPendingExtSearch(null);
+    setExtSearchResults([]);
     const q = custSearch.trim();
-    if (!q || filteredCustomers.length > 0) return;
+    if (!q || q.length < 2 || filteredCustomers.length > 0) return;
     const t = setTimeout(async () => {
       try {
-        const code = q.toUpperCase();
-        if (code.length < 4) return;
-        const ext = await lookupCardCode(code);
-        if (ext) setPendingExtSearch(ext);
+        const exts = await searchExternalCustomers(q);
+        setExtSearchResults(exts);
       } catch { /* silencioso */ }
     }, 400);
     return () => clearTimeout(t);
   }, [custSearch, filteredCustomers.length]);
 
-  const handleAddExtSearchCustomer = async () => {
-    if (!pendingExtSearch) return;
-    const code = custSearch.trim().toUpperCase();
+  const handleAddExtSearchCustomer = async (ext: ExternalCardLookup) => {
     try {
       const newCust = await createCustomer({
-        name:               pendingExtSearch.name ?? code,
-        phone:              pendingExtSearch.phone ?? undefined,
-        email:              pendingExtSearch.email || undefined,
-        external_member_id: code,
-        loyalty_tier:       pendingExtSearch.nivel ?? undefined,
+        name:               ext.name ?? ext.external_member_id,
+        phone:              ext.phone ?? undefined,
+        email:              ext.email || undefined,
+        external_member_id: ext.external_member_id,
+        loyalty_tier:       ext.nivel ?? undefined,
       });
       const ui = normalizeApiCustomer(newCust);
       setCustomers(prev => [ui, ...prev]);
       setSelectedCustomer(ui);
       setCustSearch(ui.name);
       setShowCustDrop(false);
-      setPendingExtSearch(null);
+      setExtSearchResults([]);
       toast.success(`Socio Tadaima agregado: ${ui.name}`);
     } catch {
       toast.error("No se pudo agregar al socio");
@@ -1226,27 +1222,33 @@ export function PreSalesPage() {
                             </div>
 
                             <AnimatePresence>
-                              {pendingExtSearch && !isScanning && (
+                              {extSearchResults.length > 0 && !isScanning && (
                                 <Motion.div
                                   initial={{ height: 0, opacity: 0 }}
                                   animate={{ height: "auto", opacity: 1 }}
                                   exit={{ height: 0, opacity: 0 }}
                                   className="overflow-hidden"
                                 >
-                                  <button
-                                    onClick={handleAddExtSearchCustomer}
-                                    className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl border border-red-500/25 bg-red-600/8 hover:bg-red-600/15 transition-all text-left"
-                                  >
-                                    <div className="w-9 h-9 rounded-full bg-red-600/20 border border-red-500/30 flex items-center justify-center text-[11px] font-black text-red-400 shrink-0">
-                                      {(pendingExtSearch.name ?? "?").charAt(0).toUpperCase()}
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                      <p className="text-[9px] font-black text-red-400/70 uppercase tracking-widest">Socio Tadaima encontrado</p>
-                                      <p className="text-sm font-black text-white truncate">{pendingExtSearch.name}</p>
-                                      {pendingExtSearch.phone && <p className="text-[10px] text-white/40">{pendingExtSearch.phone}</p>}
-                                    </div>
-                                    <span className="px-3 py-1.5 rounded-xl bg-red-600 text-white text-[10px] font-black uppercase tracking-wider shrink-0">Agregar</span>
-                                  </button>
+                                  <div className="space-y-1.5">
+                                    <p className="text-[9px] font-black text-red-400/70 uppercase tracking-widest px-1">Socios Tadaima</p>
+                                    {extSearchResults.map(ext => (
+                                      <button
+                                        key={ext.external_member_id}
+                                        type="button"
+                                        onClick={() => handleAddExtSearchCustomer(ext)}
+                                        className="w-full flex items-center gap-3 px-4 py-2.5 rounded-2xl border border-red-500/20 bg-red-600/8 hover:bg-red-600/15 transition-all text-left"
+                                      >
+                                        <div className="w-8 h-8 rounded-full bg-red-600/20 border border-red-500/30 flex items-center justify-center text-[10px] font-black text-red-400 shrink-0">
+                                          {(ext.name ?? "?").charAt(0).toUpperCase()}
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                          <p className="text-sm font-black text-white truncate">{ext.name}</p>
+                                          <p className="text-[10px] text-white/35">{ext.external_member_id}{ext.phone ? ` · ${ext.phone}` : ""}</p>
+                                        </div>
+                                        <span className="px-3 py-1.5 rounded-xl bg-red-600 text-white text-[10px] font-black uppercase tracking-wider shrink-0">Agregar</span>
+                                      </button>
+                                    ))}
+                                  </div>
                                 </Motion.div>
                               )}
                             </AnimatePresence>

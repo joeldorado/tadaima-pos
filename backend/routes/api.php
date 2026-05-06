@@ -177,6 +177,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // ── External card stub (replace with real Tadaima loyalty API) ───────────
     Route::get('external/card/{code}',  [ExternalCardController::class, 'lookup']);
+    Route::get('external/customers',    [ExternalCardController::class, 'search']);
     Route::post('external/customer',    [ExternalCardController::class, 'register']);
 
     // ── Notifications ─────────────────────────────────────────────────────────
