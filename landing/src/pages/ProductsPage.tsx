@@ -1930,6 +1930,10 @@ export function ProductsPage() {
           onSelectNormal={() => {
             setShowTypeSelector(false);
             setEditingProduct(undefined);
+            // El form de Producto Normal vive dentro del fragmento de pageSection==='productos'.
+            // Si el cajero abrió el modal desde el tab Tomos, hay que cambiar de tab para que
+            // el form se renderice. Sin esto, setIsModalOpen(true) corre pero el JSX no monta.
+            setPageSection('productos');
             setIsModalOpen(true);
           }}
           onSelectManga={() => {

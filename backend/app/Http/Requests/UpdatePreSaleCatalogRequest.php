@@ -28,7 +28,7 @@ class UpdatePreSaleCatalogRequest extends FormRequest
             'advance_payment' => ['nullable', 'numeric', 'min:0'],
             'preorder_limit'  => ['nullable', 'integer', 'min:1'],
             'arrival_date'    => ['nullable', 'date'],
-            'pickup_deadline' => ['nullable', 'date'],
+            'pickup_deadline' => ['nullable', 'date', 'after_or_equal:arrival_date'],
         ];
     }
 }

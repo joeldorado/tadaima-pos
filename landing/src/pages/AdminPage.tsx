@@ -14,7 +14,7 @@ import {
 import { toast } from "sonner";
 import {
   getStores, createStore, updateStore,
-  getWarehouses, createWarehouse,
+  getWarehouses, createWarehouse, updateWarehouse,
   getInventory, updateInventory, getProducts,
   getUsers, createUser, updateUser, assignRole,
   getCategories, createCategory, updateCategory, deleteCategory,
@@ -196,7 +196,7 @@ function TabSucursales() {
         toast.success("Sucursal actualizada");
       } else {
         const created = await createStore({
-          company_id: 0, // TODO: inject from auth context
+          // company_id lo deriva el backend desde el user autenticado
           name: d.name,
           address: d.address || undefined,
           phone: d.phone || undefined,
@@ -297,18 +297,24 @@ function TabSucursales() {
 
 // ─── TAB: Bodegas ─────────────────────────────────────────────────────────────
 interface WarehouseFormData {
+  id?: number;
   name: string;
   type: 'central' | 'store';
   description: string;
   active: boolean;
+  store_id?: number;
 }
+
+const EMPTY_WAREHOUSE: WarehouseFormData = {
+  name: "", type: "store", description: "", active: true,
+};
 
 function TabBodegas() {
   const [warehouses, setWarehouses] = useState<ApiWarehouse[]>([]);
   const [stores, setStores] = useState<ApiStore[]>([]);
-  const [modal, setModal] = useState<{ open: boolean; data: WarehouseFormData & { store_id?: number } }>({
+  const [modal, setModal] = useState<{ open: boolean; data: WarehouseFormData }>({
     open: false,
-    data: { name: "", type: "store", description: "", active: true },
+    data: EMPTY_WAREHOUSE,
   });
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -333,16 +339,28 @@ function TabBodegas() {
     if (!d.name.trim()) { toast.error("El nombre es requerido"); return; }
     setSaving(true);
     try {
-      const created = await createWarehouse({
-        company_id: 0, // TODO: inject from auth context
-        store_id: d.store_id ?? null,
-        name: d.name,
-        type: d.type,
-        active: d.active,
-      });
-      setWarehouses(prev => [...prev, created]);
-      toast.success("Bodega creada");
-      setModal({ open: false, data: { name: "", type: "store", description: "", active: true } });
+      if (d.id) {
+        const updated = await updateWarehouse(d.id, {
+          name: d.name,
+          type: d.type,
+          description: d.description || undefined,
+          active: d.active,
+        });
+        setWarehouses(prev => prev.map(w => w.id === updated.id ? updated : w));
+        toast.success("Bodega actualizada");
+      } else {
+        const created = await createWarehouse({
+          // company_id lo deriva el backend desde el user autenticado
+          store_id: d.store_id ?? null,
+          name: d.name,
+          type: d.type,
+          description: d.description || undefined,
+          active: d.active,
+        });
+        setWarehouses(prev => [...prev, created]);
+        toast.success("Bodega creada");
+      }
+      setModal({ open: false, data: EMPTY_WAREHOUSE });
     } catch {
       toast.error("Error al guardar la bodega");
     } finally {
@@ -354,7 +372,7 @@ function TabBodegas() {
     <div>
       <SectionHeader icon={Warehouse} title="Bodegas" sub="Ubicaciones de inventario · WAREHOUSES"
         action={
-          <Btn variant="red" onClick={() => setModal({ open: true, data: { name: "", type: "store", description: "", active: true } })} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <Btn variant="red" onClick={() => setModal({ open: true, data: EMPTY_WAREHOUSE })} style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <Plus size={14} />Nueva Bodega
           </Btn>
         }
@@ -368,7 +386,7 @@ function TabBodegas() {
               <div style={{ width: 42, height: 42, borderRadius: 12, background: "var(--td-panel-bg)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                 <Warehouse size={18} color={w.active ? "#4499FF" : TM} />
               </div>
-              <div style={{ flex: 1 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" as const }}>
                   <p style={{ color: TP, fontWeight: 900, fontSize: 14, margin: 0 }}>{w.name}</p>
                   <Badge color={w.active ? (w.type === "central" ? "purple" : "blue") : "red"}>
@@ -378,13 +396,26 @@ function TabBodegas() {
                 </div>
                 {w.description && <p style={{ color: TS, fontSize: 11, margin: "3px 0 0 0" }}>{w.description}</p>}
               </div>
+              <Btn onClick={() => setModal({
+                open: true,
+                data: {
+                  id: w.id,
+                  name: w.name,
+                  type: w.type,
+                  description: w.description ?? "",
+                  active: w.active,
+                  store_id: w.store?.id,
+                },
+              })}>
+                <Edit2 size={12} />
+              </Btn>
             </div>
           ))}
           {warehouses.length === 0 && <div style={{ textAlign: "center", padding: 40, color: TM, fontSize: 13 }}>No hay bodegas registradas</div>}
         </div>
       )}
       {modal.open && (
-        <Modal title="Nueva Bodega" onClose={() => setModal({ open: false, data: { name: "", type: "store", description: "", active: true } })}>
+        <Modal title={modal.data.id ? "Editar Bodega" : "Nueva Bodega"} onClose={() => setModal({ open: false, data: EMPTY_WAREHOUSE })}>
           <div style={{ display: "grid", gap: 14 }}>
             <Field label="Nombre">
               <input type="text" value={modal.data.name}
@@ -416,10 +447,10 @@ function TabBodegas() {
             </label>
           </div>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>
-            <Btn onClick={() => setModal({ open: false, data: { name: "", type: "store", description: "", active: true } })}>Cancelar</Btn>
+            <Btn onClick={() => setModal({ open: false, data: EMPTY_WAREHOUSE })}>Cancelar</Btn>
             <Btn variant="red" onClick={save} disabled={saving} style={{ display: "flex", alignItems: "center", gap: 7 }}>
               {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
-              Guardar
+              {modal.data.id ? "Guardar" : "Crear Bodega"}
             </Btn>
           </div>
         </Modal>

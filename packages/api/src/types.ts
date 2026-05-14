@@ -349,7 +349,10 @@ export interface GetPreSalesParams {
 
 export interface Draft {
   id: number
-  status: 'open' | 'completed' | 'cancelled'
+  status: 'open' | 'suspended' | 'completed' | 'cancelled'
+  /** Subtotal calculado en backend (suma de items.total). Solo presente si items se cargaron. */
+  subtotal?: number | null
+  items_count?: number | null
   created_at: string
 }
 

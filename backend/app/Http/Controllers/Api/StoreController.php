@@ -31,10 +31,19 @@ class StoreController extends Controller
 
     /**
      * POST /stores
+     * Si no se envía company_id, se deriva del usuario autenticado para evitar
+     * que el cliente tenga que conocer/inyectar el id de su company.
      */
     public function store(CreateStoreRequest $request): JsonResponse
     {
-        $store = Store::create($request->validated());
+        $data = $request->validated();
+        $data['company_id'] ??= $request->user()?->company_id;
+
+        if (empty($data['company_id'])) {
+            return $this->error('No se pudo determinar la empresa para crear la tienda.', 422);
+        }
+
+        $store = Store::create($data);
         $store->refresh()->load(['company', 'manager']);
 
         return $this->success(new StoreResource($store), 'Tienda creada.', 201);

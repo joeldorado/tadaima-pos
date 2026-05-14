@@ -7,7 +7,8 @@ export interface GetStoresParams {
 }
 
 export interface CreateStoreInput {
-  company_id: number
+  /** Opcional: si no se envía, el backend lo deriva del usuario autenticado. */
+  company_id?: number
   name: string
   address?: string
   phone?: string

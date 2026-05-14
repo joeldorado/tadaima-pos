@@ -9,8 +9,9 @@ export interface GetWarehousesParams {
 }
 
 export interface CreateWarehouseInput {
-  company_id: number
-  store_id?: number
+  /** Opcional: si no se envía, el backend lo deriva del usuario autenticado. */
+  company_id?: number
+  store_id?: number | null
   name: string
   type?: 'central' | 'store'
   description?: string

@@ -13,6 +13,14 @@ interface CartDraftState {
   /** Map from mesa ID → product ID (string) → server-assigned draft item ID */
   draftItemIds: Record<string, Record<string, number>>
 
+  /**
+   * Snapshot serializable de las mesas (carrito completo) para sobrevivir
+   * navegación entre pantallas dentro del SPA. SellPage hidrata desde aquí
+   * en mount y sincroniza en cada cambio.
+   */
+  mesasSnapshot: unknown[] | null
+  activeMesaIdSnapshot: string | null
+
   setDraftId(mesaId: string, draftId: number): void
   clearDraft(mesaId: string): void
   getDraftId(mesaId: string): number | undefined
@@ -22,6 +30,9 @@ interface CartDraftState {
   clearDraftItem(mesaId: string, productId: string): void
   /** Clears all item ID entries for a mesa (call after sale completes) */
   clearDraftItems(mesaId: string): void
+
+  setMesasSnapshot(mesas: unknown[], activeId: string): void
+  clearMesasSnapshot(): void
 }
 
 export const useCartDraftStore = create<CartDraftState>()(
@@ -29,6 +40,14 @@ export const useCartDraftStore = create<CartDraftState>()(
     (set, get) => ({
       draftIds: {},
       draftItemIds: {},
+      mesasSnapshot: null,
+      activeMesaIdSnapshot: null,
+
+      setMesasSnapshot: (mesas, activeId) =>
+        set({ mesasSnapshot: mesas, activeMesaIdSnapshot: activeId }),
+
+      clearMesasSnapshot: () =>
+        set({ mesasSnapshot: null, activeMesaIdSnapshot: null }),
 
       setDraftId: (mesaId, draftId) =>
         set(state => ({ draftIds: { ...state.draftIds, [mesaId]: draftId } })),
@@ -74,6 +93,8 @@ export const useCartDraftStore = create<CartDraftState>()(
       partialize: (state) => ({
         draftIds: state.draftIds,
         draftItemIds: state.draftItemIds,
+        mesasSnapshot: state.mesasSnapshot,
+        activeMesaIdSnapshot: state.activeMesaIdSnapshot,
       }),
     },
   ),

@@ -157,6 +157,13 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog }: Props) {
     if (!name.trim()) { toast.error("Nombre del producto es requerido"); setTab("general"); return; }
     if (!price1 || Number(price1) <= 0) { toast.error("El precio base (P1) es requerido"); setTab("precios"); return; }
 
+    // La fecha límite de retiro debe ser igual o posterior a la fecha de llegada.
+    if (arrivalDate && pickupDate && new Date(pickupDate) < new Date(arrivalDate)) {
+      toast.error("La fecha límite de retiro no puede ser anterior a la fecha de llegada");
+      setTab("general");
+      return;
+    }
+
     setSaving(true);
     try {
       const payload = {

@@ -11,7 +11,8 @@ class StoreWarehouseRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'company_id'  => ['required', 'integer', 'exists:companies,id'],
+            // Opcional: si no se envía, el controller lo deriva del usuario autenticado.
+            'company_id'  => ['nullable', 'integer', 'exists:companies,id'],
             'store_id'    => ['nullable', 'integer', 'exists:stores,id'],
             'name'        => ['required', 'string', 'max:150'],
             'type'        => ['nullable', 'in:central,store'],

@@ -72,6 +72,8 @@ interface CartItem {
   preSaleOrderItemId?: number; // id del PreSaleOrderItem en backend
   preSaleItemDelivered?: boolean;
   sellingCatalogId?: number; // ID del PreSaleCatalog que se está reservando
+  unitLimit?: number; // límite de unidades por cliente (catálogo.preorder_limit)
+  syncError?: boolean; // true si addDraftItem/updateDraftItem falló — bloquea checkout
 }
 
 interface Mesa {
@@ -88,6 +90,8 @@ interface Mesa {
   isPreventa: boolean;
   depositAmount: number;
   selectedTerminalId?: number;
+  // La tienda SIEMPRE absorbe la comisión de tarjeta — campo conservado
+  // por compatibilidad con código viejo, pero ya no se usa en cálculos.
   absorbCommission?: boolean;
   loadedPreSaleOrderId?: number; // folio de preventa cargado para liquidar en caja
   loadedPreSaleOrderCode?: string; // código PREV-XXXXX del folio cargado, para ticket
@@ -192,7 +196,7 @@ const makeMesa = (n?: number): Mesa => ({
   paymentMethod: "Efectivo",
   isPreventa: false,
   depositAmount: 0,
-  absorbCommission: false,
+  absorbCommission: true, // tienda siempre absorbe — nunca se cobra al cliente
 });
 
 // ─── Design tokens ─────────────────────────────────────────────────────────────
@@ -216,8 +220,21 @@ export function SellPage() {
   const isAdmin = user?.roles?.includes("admin") ?? false;
   const { activeStore, stores, setActiveStore, isLoading: storeLoading } = useActiveStore();
 
-  const initialMesas = useRef<Mesa[]>([makeMesa(1)]);
   const draftStore = useCartDraftStore();
+  // Hidratar mesas desde snapshot persistido (sobrevive navegación entre páginas).
+  // Si el snapshot está vacío/corrupto, arrancar con una mesa nueva.
+  const initialMesas = useRef<Mesa[]>(
+    (() => {
+      const snap = draftStore.mesasSnapshot;
+      if (Array.isArray(snap) && snap.length > 0) {
+        return snap as Mesa[];
+      }
+      return [makeMesa(1)];
+    })()
+  );
+  const initialActiveId = useRef<string>(
+    draftStore.activeMesaIdSnapshot ?? initialMesas.current[0].id
+  );
   // Prevents concurrent createDraft calls for the same mesa
   const pendingDraftRef = useRef<Record<string, Promise<number>>>({});
   // Prevents double-submit on checkout
@@ -237,7 +254,14 @@ export function SellPage() {
   const [terminals, setTerminals]     = useState<Terminal[]>([]);
   const [loading, setLoading]         = useState(true);
   const [mesas, setMesas]             = useState<Mesa[]>(initialMesas.current);
-  const [activeMesaId, setActiveMesaId] = useState(initialMesas.current[0].id);
+  const [activeMesaId, setActiveMesaId] = useState(initialActiveId.current);
+
+  // Sincroniza el snapshot de mesas con localStorage en cada cambio.
+  // Permite recuperar el carrito al navegar a otra página y volver.
+  // Usa getState() en lugar de la instancia subscrita para evitar loop infinito.
+  useEffect(() => {
+    useCartDraftStore.getState().setMesasSnapshot(mesas, activeMesaId);
+  }, [mesas, activeMesaId]);
 
   const [tc, setTc]           = useState(15.50);
   const [showTc, setShowTc]   = useState(false);
@@ -617,10 +641,25 @@ export function SellPage() {
         });
         draftStore.setDraftItemId(mesaId, product.id, item.id);
       }
+      // Limpia syncError si el item ya está sincronizado correctamente
+      updMesa(mesaId, m => ({
+        ...m,
+        items: m.items.map(i =>
+          i.product.id === product.id && i.syncError ? { ...i, syncError: false } : i
+        ),
+      }));
     } catch (err: unknown) {
       const msg = err && typeof err === "object" && "message" in err
         ? String((err as { message: unknown }).message) : "Error al sincronizar carrito";
-      toast.error(`⚠️ ${msg} — no podrás cobrar hasta que el carrito esté sincronizado.`, {
+      // Marca el item con syncError para que checkout pueda bloquear si quedan
+      // items desincronizados. Evita el bug de "pagos no coinciden con el total".
+      updMesa(mesaId, m => ({
+        ...m,
+        items: m.items.map(i =>
+          i.product.id === product.id ? { ...i, syncError: true } : i
+        ),
+      }));
+      toast.error(`⚠️ ${msg} — el producto no se sincronizó. Elimínalo y vuelve a agregarlo.`, {
         duration: 8000,
         style: { background: '#2d0a00', color: '#fff', border: '1px solid rgba(224,34,26,0.4)', borderRadius: '16px' },
       });
@@ -670,6 +709,12 @@ export function SellPage() {
         toast.error(`Límite de preventa: ${maxStock} unidad(es)`);
         return;
       }
+    }
+
+    // Validate per-item unit limit (catálogo.preorder_limit) — solo aplica al subir cantidad
+    if (d > 0 && currentItem.unitLimit !== undefined && newQty > currentItem.unitLimit) {
+      toast.error(`Límite por cliente alcanzado: ${currentItem.unitLimit} unidad(es)`);
+      return;
     }
 
     // Optimistic UI update — in preventa, scale deposit with quantity change
@@ -791,7 +836,7 @@ export function SellPage() {
     updMesa(activeMesa.id, m => ({
       ...m, items: [], customerId: undefined, customerName: undefined,
       customerPhone: "", customerEmail: "", isNewCustomer: false, discount: 0, depositAmount: 0,
-      selectedTerminalId: undefined, absorbCommission: false,
+      selectedTerminalId: undefined, absorbCommission: true,
       isPreventa: false, loadedPreSaleOrderId: undefined, loadedPreSaleOrderCode: undefined,
     }));
     setCustomerSearch("");
@@ -822,32 +867,37 @@ export function SellPage() {
     [activeMesa.items]
   );
   
+  // Comisión interna: se calcula y se manda al backend para reportes,
+  // pero NUNCA se suma al total que paga el cliente. La tienda absorbe siempre.
   const commissionAmt = useMemo(() => {
     if (activeMesa.paymentMethod !== "Tarjeta" || !activeTerminal) return 0;
     const baseAmount = activeMesa.isPreventa ? totalDeposit : totalBeforeComm;
     return baseAmount * (activeTerminal.commission_percent / 100);
   }, [activeMesa.paymentMethod, activeTerminal, totalBeforeComm, activeMesa.isPreventa, totalDeposit]);
 
-  const total = activeMesa.paymentMethod === "Tarjeta" && activeTerminal && !activeMesa.absorbCommission
-    ? (activeMesa.isPreventa ? totalBeforeComm : totalBeforeComm + commissionAmt)
-    : totalBeforeComm;
-    
-  // El monto real a cobrar en la transacción actual (incluyendo comisión si no se absorbe)
+  // Total a cobrar al cliente = subtotal − descuento. SIN comisión.
+  const total = totalBeforeComm;
+
+  // El monto real a cobrar en la transacción actual (sin comisión, la tienda absorbe).
+  // Mixed cart (catálogo + regular sin modo preventa explícito): cobra regular + anticipos.
   const currentPayAmount = useMemo(() => {
-    let base: number;
     if (activeMesa.loadedPreSaleOrderId) {
       // Items de preventa ya vienen con precio proporcional al saldo → subtotal = balance + items nuevos
-      base = totalBeforeComm;
-    } else if (activeMesa.isPreventa) {
-      base = totalDeposit;
-    } else {
-      base = totalBeforeComm;
+      return totalBeforeComm;
     }
-    if (activeMesa.paymentMethod === "Tarjeta" && activeTerminal && !activeMesa.absorbCommission) {
-      return base + commissionAmt;
+    if (activeMesa.isPreventa) {
+      // Modo preventa explícito: solo se cobran los anticipos.
+      return totalDeposit;
     }
-    return base;
-  }, [activeMesa.loadedPreSaleOrderId, activeMesa.depositAmount, newItemsSubtotal, activeMesa.isPreventa, totalDeposit, totalBeforeComm, activeMesa.paymentMethod, activeTerminal, activeMesa.absorbCommission, commissionAmt]);
+    // Cart mixto sin modo preventa: regular full price + anticipos de catálogo.
+    const regularSubtotal = activeMesa.items
+      .filter(i => i.sellingCatalogId == null)
+      .reduce((s, i) => s + getItemPrice(i) * i.quantity, 0);
+    const catalogDeposit = activeMesa.items
+      .filter(i => i.sellingCatalogId != null)
+      .reduce((s, i) => s + (i.depositAmount ?? 0), 0);
+    return regularSubtotal + catalogDeposit;
+  }, [activeMesa.loadedPreSaleOrderId, activeMesa.isPreventa, activeMesa.items, totalDeposit, totalBeforeComm]);
     
   const totalUSD       = tc > 0 ? currentPayAmount / tc : 0;
 
@@ -1027,12 +1077,14 @@ export function SellPage() {
       priceLevel,
       depositAmount: anticipo,
       sellingCatalogId: catalog.id,
+      ...(catalog.preorder_limit != null ? { unitLimit: catalog.preorder_limit } : {}),
     };
 
+    // NO setear isPreventa: true a nivel mesa — el item ya viene con sellingCatalogId
+    // y su propio depositAmount, así no contamina con anticipo a productos regulares.
     updMesa(activeMesa.id, m => ({
       ...m,
       items: [...m.items, item],
-      isPreventa: true,
     }));
     setShowPreSalesModal(false);
     toast.success(`${catalog.product_name} al carrito · Anticipo mín.: ${fmt(anticipo)}`);
@@ -1297,6 +1349,19 @@ export function SellPage() {
   const handleCheckout = async () => {
     if (!activeMesa.items.length) return;
 
+    // Bug 10/15: bloquear checkout si algún item no se sincronizó con el backend.
+    // Sin esto, el usuario verá un total en pantalla pero el draft del backend tiene
+    // un subtotal distinto y el checkout fallará con "Los pagos no coinciden con el total".
+    const desync = activeMesa.items.filter(i => i.syncError);
+    if (desync.length > 0) {
+      const names = desync.map(i => i.product.name).join(", ");
+      toast.error(`Productos sin sincronizar: ${names}. Elimínalos y vuelve a agregarlos antes de cobrar.`, {
+        duration: 7000,
+        style: { background: '#2d0a00', color: '#fff', border: '1px solid rgba(224,34,26,0.4)', borderRadius: '16px' },
+      });
+      return;
+    }
+
     // ── LIQUIDAR PREVENTA CARGADA (con o sin productos nuevos / nuevas preventas) ──
     if (activeMesa.loadedPreSaleOrderId) {
       if (isCheckoutLockedRef.current) return;
@@ -1327,7 +1392,12 @@ export function SellPage() {
           if (draftId) {
             const saleResult = await createSale({
               draft_id: draftId,
-              payments: [{ payment_method_id: payMethodId, amount: regularSubtotal }],
+              payments: [{
+                payment_method_id: payMethodId,
+                amount: regularSubtotal,
+                ...(activeMesa.paymentMethod === "Tarjeta" && activeMesa.selectedTerminalId
+                  ? { terminal_id: activeMesa.selectedTerminalId } : {}),
+              }],
             });
             regularSaleId = saleResult?.id;
           }
@@ -1430,7 +1500,9 @@ export function SellPage() {
     }
 
     // ── NUEVA PREVENTA (desde catálogo publicado) ─────────────────────────────
-    if (activeMesa.isPreventa) {
+    // Se entra aquí si la mesa está en modo preventa explícito (toggle Preventa)
+    // o si el carrito tiene items de catálogo aunque la mesa no esté marcada.
+    if (activeMesa.isPreventa || hasCatalogItems) {
       if (!activeStore) return;
       if (isCheckoutLockedRef.current) return;
       isCheckoutLockedRef.current = true;
@@ -1512,7 +1584,12 @@ export function SellPage() {
           if (draftId && regularSubtotal > 0) {
             const saleResult = await createSale({
               draft_id: draftId,
-              payments: [{ payment_method_id: payMethodId, amount: regularSubtotal }],
+              payments: [{
+                payment_method_id: payMethodId,
+                amount: regularSubtotal,
+                ...(activeMesa.paymentMethod === "Tarjeta" && activeMesa.selectedTerminalId
+                  ? { terminal_id: activeMesa.selectedTerminalId } : {}),
+              }],
             });
             regularSaleId = saleResult?.id;
           }
@@ -1606,13 +1683,65 @@ export function SellPage() {
     // Guard: prevent double-submit while a sale request is in flight
     if (isCheckoutLockedRef.current) return;
 
-    const draftId = draftStore.getDraftId(activeMesa.id);
+    let draftId = draftStore.getDraftId(activeMesa.id);
+
+    // Auto-recovery: si el draft fue limpiado en backend (cleanup, restart, etc.)
+    // pero el carrito en memoria tiene items, recrear draft + reañadir items.
+    // Evita el "carrito no sincronizado" que reportó QA cuando el snapshot
+    // sobrevive en localStorage pero el draft del servidor ya no existe.
+    if (!draftId && activeMesa.items.length > 0) {
+      try {
+        toast("Recuperando carrito…", { duration: 1500 });
+        const newDraft = await createDraft(activeStore?.id ?? 0, cashSession?.id);
+        draftStore.setDraftId(activeMesa.id, newDraft.id);
+        for (const ci of activeMesa.items) {
+          // Catalog items no son products reales — los saltamos (van por createPreSaleOrder).
+          if (ci.sellingCatalogId != null) continue;
+          if (ci.isFromPreSale) continue;
+          const productIdNum = parseInt(ci.product.id, 10);
+          if (Number.isNaN(productIdNum)) continue;
+          const resolvedPrice = ci.damagedPrice ?? getItemPrice(ci);
+          const created = await addDraftItem(newDraft.id, {
+            product_id: productIdNum,
+            quantity: ci.quantity,
+            price: resolvedPrice,
+            // PriceLevel allows a..e, DraftPriceLevel solo a..c. Clamp d/e a 'a' (precio base).
+            price_level: (["a", "b", "c"].includes(ci.priceLevel) ? ci.priceLevel : "a") as "a" | "b" | "c",
+          });
+          draftStore.setDraftItemId(activeMesa.id, ci.product.id, created.id);
+        }
+        draftId = newDraft.id;
+      } catch (recoverErr: unknown) {
+        const msg = recoverErr && typeof recoverErr === "object" && "message" in recoverErr
+          ? String((recoverErr as { message: unknown }).message) : "No se pudo recuperar el carrito";
+        toast.error(`${msg}. Elimina los productos y vuelve a agregarlos.`, {
+          duration: 6000,
+          style: { background: '#2d0a00', color: '#fff', border: '1px solid rgba(224,34,26,0.4)', borderRadius: '16px' },
+        });
+        return;
+      }
+    }
+
     if (!draftId) {
-      toast.error("El carrito no está sincronizado con el servidor. Elimina los productos y vuelve a agregarlos.", {
-        duration: 6000,
-        style: { background: '#2d0a00', color: '#fff', border: '1px solid rgba(224,34,26,0.4)', borderRadius: '16px' },
-      });
+      toast.error("El carrito está vacío.", { duration: 3000 });
       return;
+    }
+
+    // Verificación final pre-checkout: el subtotal del draft en backend debe
+    // coincidir con el `total` que ve el cajero. Si no, abortar antes de cobrar
+    // para evitar el error "Los pagos no coinciden con el total".
+    try {
+      const serverDraft = await getDraft(draftId);
+      const serverSubtotal = serverDraft.subtotal ?? 0;
+      if (Math.abs(serverSubtotal - total) > 0.01) {
+        toast.error(
+          `El carrito no está sincronizado: pantalla muestra ${fmt(total)} pero el servidor tiene ${fmt(serverSubtotal)}. Elimina los productos y vuelve a agregarlos.`,
+          { duration: 8000, style: { background: '#2d0a00', color: '#fff', border: '1px solid rgba(224,34,26,0.4)', borderRadius: '16px' } },
+        );
+        return;
+      }
+    } catch {
+      // Si no se pudo verificar, dejamos pasar — el backend hará la validación final.
     }
 
     isCheckoutLockedRef.current = true;
@@ -1641,7 +1770,12 @@ export function SellPage() {
 
       const saleResult = await createSale({
         draft_id: draftId,
-        payments: [{ payment_method_id: paymentMethodId, amount: total }],
+        payments: [{
+          payment_method_id: paymentMethodId,
+          amount: total,
+          ...(activeMesa.paymentMethod === "Tarjeta" && activeMesa.selectedTerminalId
+            ? { terminal_id: activeMesa.selectedTerminalId } : {}),
+        }],
       });
 
       toast.success(`¡Venta registrada! ${fmt(total)}`);
@@ -2016,8 +2150,8 @@ export function SellPage() {
                 </div>
               )}
 
-              {/* ── Formulario Cliente Nuevo (ancho completo, fuera del flex con escáner) ── */}
-              {activeMesa.isPreventa && (activeMesa.isNewCustomer ? (
+              {/* ── Búsqueda de cliente (siempre visible) o formulario Cliente Nuevo (solo en Preventa) ── */}
+              {(activeMesa.isPreventa && activeMesa.isNewCustomer) ? (
                 <div className="flex flex-col gap-2 w-full">
                   <div className="flex gap-2">
                     <div className="relative flex-1">
@@ -2120,7 +2254,7 @@ export function SellPage() {
                     <input
                       ref={customerSearchRef}
                       type="text"
-                      placeholder={requireCustomerFlash ? "Escribe nombre o teléfono del cliente…" : "Nombre, teléfono o código de tarjeta..."}
+                      placeholder={requireCustomerFlash ? "Escribe nombre o teléfono del cliente…" : "Nombre, teléfono, folio o código de tarjeta..."}
                       value={customerSearch}
                       onChange={e => { setCustomerSearch(e.target.value); setShowCustDrop(true); }}
                       onFocus={() => { setShowCustDrop(true); setRequireCustomerFlash(false); }}
@@ -2216,7 +2350,7 @@ export function SellPage() {
                   </div>
                 )}
                 </div>
-              ))}
+              )}
 
             </div>
 
@@ -2226,12 +2360,22 @@ export function SellPage() {
                 <div className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20">
                   <Plus size={16} />
                 </div>
-                <input 
+                <input
                   ref={prodInputRef}
                   type="text"
-                  placeholder="Añadir producto por nombre o SKU..."
+                  placeholder="Añadir producto por nombre, SKU o escanear código..."
                   value={search}
                   onChange={e => setSearch(e.target.value)}
+                  onKeyDown={e => {
+                    // Enter en escaneo / búsqueda: si hay un único match exacto, lo agrega y limpia.
+                    if (e.key !== "Enter") return;
+                    if (filteredProds.length === 0) return;
+                    e.preventDefault();
+                    const exact = filteredProds.find(p => p.sku === search.trim()) ?? (filteredProds.length === 1 ? filteredProds[0] : null);
+                    if (!exact) return;
+                    void addToCart(exact, "a");
+                    setSearch("");
+                  }}
                   className="w-full bg-white/[0.04] border border-white/10 rounded-2xl pl-12 pr-4 py-2.5 text-sm font-bold text-white placeholder:text-white/20 focus:border-white/20 focus:bg-white/[0.06] outline-none transition-all shadow-inner"
                 />
                 
@@ -2244,7 +2388,17 @@ export function SellPage() {
                       filteredProds.map(p => (
                         <div
                           key={p.id}
-                          className="w-full px-5 py-4 border-b border-white/5 flex items-center gap-5 group"
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => { void addToCart(p, "a"); setSearch(""); }}
+                          onKeyDown={e => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              void addToCart(p, "a");
+                              setSearch("");
+                            }
+                          }}
+                          className="w-full px-5 py-4 border-b border-white/5 flex items-center gap-5 group cursor-pointer hover:bg-white/[0.04] transition-colors"
                           style={{ borderBottom: "1px solid var(--td-panel-border)" }}
                         >
                           <ImageWithFallback src={p.image || ""} className="w-16 h-16 rounded-xl object-cover bg-black shrink-0 shadow-lg" />
@@ -2274,10 +2428,10 @@ export function SellPage() {
                             </div>
                           </div>
 
-                          {/* Price buttons — click each to add at that level */}
+                          {/* Price buttons — click each to add at that level. stopPropagation evita doble-fire del onClick del row. */}
                           <div className="flex flex-col gap-1 items-end shrink-0">
                             <button
-                              onClick={() => { void addToCart(p, "a"); setSearch(""); }}
+                              onClick={e => { e.stopPropagation(); void addToCart(p, "a"); setSearch(""); }}
                               className="flex items-center gap-2 px-2.5 py-1 rounded-lg hover:bg-white/10 transition-colors text-right"
                             >
                               <span className="text-[8px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-ghost)" }}>Precio A</span>
@@ -2285,7 +2439,7 @@ export function SellPage() {
                             </button>
                             {p.price_b && p.price_b > 0 && (
                               <button
-                                onClick={() => { void addToCart(p, "b"); setSearch(""); }}
+                                onClick={e => { e.stopPropagation(); void addToCart(p, "b"); setSearch(""); }}
                                 className="flex items-center gap-2 px-2.5 py-1 rounded-lg hover:bg-amber-500/10 transition-colors text-right"
                               >
                                 <span className="text-[8px] font-black uppercase tracking-widest text-amber-500/50">Precio B</span>
@@ -2294,7 +2448,7 @@ export function SellPage() {
                             )}
                             {p.price_c && p.price_c > 0 && (
                               <button
-                                onClick={() => { void addToCart(p, "c"); setSearch(""); }}
+                                onClick={e => { e.stopPropagation(); void addToCart(p, "c"); setSearch(""); }}
                                 className="flex items-center gap-2 px-2.5 py-1 rounded-lg hover:bg-blue-500/10 transition-colors text-right"
                               >
                                 <span className="text-[8px] font-black uppercase tracking-widest text-blue-500/40">Precio C</span>
@@ -2468,8 +2622,8 @@ export function SellPage() {
                         )}
                       </div>
 
-                      {/* ── Anticipo individual (preventa) ── */}
-                      {activeMesa.isPreventa && (() => {
+                      {/* ── Anticipo individual (solo items de preventa: catálogo o ya cargados de orden) ── */}
+                      {(item.sellingCatalogId != null || item.isFromPreSale) && (() => {
                         const itemTotal = getItemPrice(item) * item.quantity;
                         const dep = item.depositAmount ?? 0;
                         const full = dep >= itemTotal && itemTotal > 0;
@@ -2639,12 +2793,13 @@ export function SellPage() {
                         <button
                           onClick={() => setShowTerminalModal(true)}
                           className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest text-white/30 hover:text-white transition-colors"
+                          title="Comisión interna — la tienda absorbe, no se cobra al cliente"
                         >
                           <Smartphone size={9} className="text-emerald-500" />
-                          {activeTerminal.commission_percent}% <ChevronDown size={9} />
+                          Comisión {activeTerminal.commission_percent}% <ChevronDown size={9} />
                         </button>
-                        <p className={`text-sm font-black ${activeMesa.absorbCommission ? 'text-white/20 line-through' : 'text-emerald-500'}`}>
-                          +{fmt(commissionAmt)}
+                        <p className="text-[10px] font-bold text-white/30 italic">
+                          {fmt(commissionAmt)} interna
                         </p>
                       </div>
                     )}
@@ -3063,17 +3218,11 @@ export function SellPage() {
               </div>
 
               <div className="mt-8 pt-6 border-t border-white/5">
-                <div className="flex items-center justify-between p-4 rounded-2xl bg-white/[0.02] border border-white/5">
-                  <div className="space-y-1">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Absorber Comisión</p>
-                    <p className="text-[8px] font-bold text-white/20 uppercase tracking-widest">El cliente no paga el % adicional</p>
-                  </div>
-                  <button 
-                    onClick={() => updMesa(activeMesa.id, m => ({ ...m, absorbCommission: !m.absorbCommission }))}
-                    className={`w-12 h-6 rounded-full relative transition-all ${activeMesa.absorbCommission ? 'bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.3)]' : 'bg-white/10'}`}
-                  >
-                    <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${activeMesa.absorbCommission ? 'left-7' : 'left-1'}`} />
-                  </button>
+                <div className="p-4 rounded-2xl bg-emerald-500/[0.04] border border-emerald-500/10">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-emerald-400/70">Política de comisión</p>
+                  <p className="text-[9px] font-bold text-white/40 mt-1 leading-relaxed">
+                    La tienda absorbe la comisión de tarjeta. El cliente solo paga el subtotal del carrito. La comisión se registra internamente para reportes.
+                  </p>
                 </div>
               </div>
             </Motion.div>

@@ -11,7 +11,8 @@ class CreateStoreRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'company_id' => ['required', 'integer', 'exists:companies,id'],
+            // Opcional: si no se envía, el controller lo deriva del usuario autenticado.
+            'company_id' => ['nullable', 'integer', 'exists:companies,id'],
             'name'       => ['required', 'string', 'max:150'],
             'address'    => ['nullable', 'string', 'max:255'],
             'phone'      => ['nullable', 'string', 'max:20'],

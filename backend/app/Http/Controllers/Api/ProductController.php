@@ -160,9 +160,9 @@ class ProductController extends Controller
             );
         }
 
-        // Delete GCS images before removing DB records
+        // Delete images from default storage (gcs en prod, public/local en dev)
         foreach ($product->images as $image) {
-            Storage::disk('gcs')->delete($image->image_path);
+            Storage::delete($image->image_path);
         }
 
         $product->delete();
@@ -178,9 +178,9 @@ class ProductController extends Controller
     public function forceDestroy(Product $product): JsonResponse
     {
         DB::transaction(function () use ($product) {
-            // Delete GCS images
+            // Delete images from default storage (gcs en prod, public/local en dev)
             foreach ($product->images as $image) {
-                Storage::disk('gcs')->delete($image->image_path);
+                Storage::delete($image->image_path);
             }
 
             // Manually handle tables without cascade
@@ -205,11 +205,17 @@ class ProductController extends Controller
             'image' => ['required', 'file', 'image', 'max:5120'],
         ]);
 
+        // Usa el disco por default: 'gcs' en prod (deploy.sh inyecta FILESYSTEM_DISK=gcs),
+        // 'public' en local (sin credenciales GCP) — el dev solo necesita storage:link.
         try {
-            $path = $request->file('image')->store("products/{$product->id}", 'gcs');
+            $path = $request->file('image')->store("products/{$product->id}");
         } catch (\Throwable $e) {
-            \Log::error('GCS upload failed', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
-            return $this->error('GCS error: ' . $e->getMessage(), 500);
+            \Log::error('Image upload failed', [
+                'disk'  => config('filesystems.default'),
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            return $this->error('Error al subir imagen: ' . $e->getMessage(), 500);
         }
 
         if ($path === false) {
@@ -264,7 +270,7 @@ class ProductController extends Controller
             return $this->error('La imagen no pertenece a este producto.', 403);
         }
 
-        Storage::disk('gcs')->delete($image->image_path);
+        Storage::delete($image->image_path);
         $image->delete();
 
         return $this->success(null, 'Imagen eliminada.');

@@ -31,10 +31,18 @@ class WarehouseController extends Controller
 
     /**
      * POST /warehouses
+     * Si no se envía company_id, se deriva del usuario autenticado.
      */
     public function store(StoreWarehouseRequest $request): JsonResponse
     {
-        $warehouse = Warehouse::create($request->validated());
+        $data = $request->validated();
+        $data['company_id'] ??= $request->user()?->company_id;
+
+        if (empty($data['company_id'])) {
+            return $this->error('No se pudo determinar la empresa para crear la bodega.', 422);
+        }
+
+        $warehouse = Warehouse::create($data);
         $warehouse->refresh()->load('store');
 
         return $this->success(new WarehouseResource($warehouse), 'Bodega creada.', 201);
