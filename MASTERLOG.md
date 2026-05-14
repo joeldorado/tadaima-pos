@@ -1,7 +1,7 @@
 # MASTERLOG — Tadaima POS
 
 > Registro maestro del proyecto: arquitectura, evolución, decisiones clave y estado actual.
-> Actualizado: 2026-05-02
+> Actualizado: 2026-05-12
 
 ---
 
@@ -9,29 +9,37 @@
 
 | Componente | Estado | Notas |
 |-----------|--------|-------|
-| Backend API (Laravel) | ✅ En producción | revision 00019, URL: tadaima-987277625193.us-central1.run.app |
-| Landing / Web (React) | ✅ En producción | Email folio, historial mixto, Tarjeta/Transferencia habilitados |
+| Backend API (Laravel) | ✅ En producción | revision `tadaima-00034-ghr`, URL: tadaima-987277625193.us-central1.run.app |
+| Landing / Web (React) | ✅ En producción | Email folio, historial mixto, Tarjeta/Transferencia, checkout mixto con liquidación+regular+nueva preventa |
 | App móvil (Expo) | ⏳ Pendiente | Estructura base existe en `apps/`, sin paridad de features |
-| Deploy / Cloud Run | ✅ Operacional | gcloud run deploy --source ., región us-central1 |
-| DB Producción | ✅ Operacional | MySQL pos-lite-db, todas las migraciones aplicadas (incl. linked_sale_id) |
-| Bucket GCS | ✅ Configurado | gs://tadaima-media, FILESYSTEM_DISK=gcs en producción |
-| Dominio custom | ⏳ Pendiente | tadaima.poslite.com.mx — asignar en Cloud Run domain mappings |
+| Deploy / Cloud Run | ✅ Operacional | `gcloud run deploy --source .`, región us-central1. Build remoto en Cloud Build (no requiere Docker local) |
+| DB Producción | ✅ Operacional | MySQL `pos-lite-db` en us-west1, vía Cloud SQL Proxy en local o `DB_SOCKET` en Cloud Run |
+| Bucket GCS | ✅ Configurado | `gs://tadaima-media`, FILESYSTEM_DISK=gcs en producción |
+| Dominio custom | ✅ Activo | `tadaima.poslite.com.mx` mapeado a `tadaima` us-central1 |
+| Loyalty Supabase | 🟡 Parcial | Código integrado (`external/card`, `external/customers`). Funciona en local con `.env`. Faltan `TADAIMA_SUPABASE_URL`/`SERVICE_KEY` en Cloud Run prod |
+| Servicio duplicado | ⚠️ Limpieza | `tadaima` us-west1 sin tráfico ni dominio — candidato a borrar |
 
 ---
 
-## BACKLOG PRIORIZADO — actualizado 2026-05-02
+## BACKLOG PRIORIZADO — actualizado 2026-05-12
 
 > Qué hay para trabajar, en orden de valor/impacto.
 
-### ✅ Completado (sesión 2026-05-01/02)
+### ✅ Completado recientemente
 
-| # | Área | Feature | Estado |
+| # | Área | Feature | Sesión |
 |---|------|---------|--------|
-| 1 | Caja | Email folio preventa al cliente | ✅ `FolioCreatedMail` + blade template |
-| 2 | Caja | Historial mixto persiste entre sesiones | ✅ `linked_sale_id` en `pre_sale_orders` |
-| 3 | Ventas | SalesPage "Por Cobrar" usa API legacy | ✅ Migrado a `getPreSaleOrders` |
-| 6 | Caja | Tarjeta y Transferencia en preventas | ✅ Habilitado, sin bloqueo hardcodeado |
-| 7 | Reportes | Reporte de preventas | ✅ `GET /reports/pre-sales` (UNION legacy+nuevo) |
+| 1 | Caja | Email folio preventa al cliente | 2026-05-01/02 |
+| 2 | Caja | Historial mixto persiste entre sesiones (`linked_sale_id`) | 2026-05-01/02 |
+| 3 | Ventas | SalesPage "Por Cobrar" migrado a `getPreSaleOrders` | 2026-05-01/02 |
+| 6 | Caja | Tarjeta y Transferencia habilitados en preventas | 2026-05-01/02 |
+| 7 | Reportes | `GET /reports/pre-sales` (UNION legacy+nuevo) | 2026-05-01/02 |
+| 13 | Productos | Force-delete admin con cleanup GCS cascada | 2026-05-04 |
+| 14 | Productos | Replace image GCS+DB; cleanup huérfanas | 2026-05-04 |
+| 15 | Mangas | Edit/delete mangas+tomos; modal con diseño Alta de Tomos | 2026-05-04 |
+| 16 | Loyalty | Integración Supabase `external/card` + `external/customers` (lookup, search, auto-sync, card "Socio encontrado") | 2026-05-05 |
+| 17 | Caja | **Fix bug checkout mixto** — liquidación + regular + nueva preventa ahora funciona y dispara ticket | 2026-05-12 |
+| - | Deploy | **Dominio custom activo** `tadaima.poslite.com.mx` | 2026-05-05 |
 
 ### 🟡 Media prioridad (mejora flujo o datos)
 
@@ -40,7 +48,8 @@
 | 4 | Preventas | **PreSalesPage legacy → nuevo esquema** | La tab "Gestión" usa `/pre-sales` (esquema viejo). Migrar a vista de catálogos + folios del nuevo esquema o eliminar la tab si ya no se usa. |
 | 5 | Caja | **Escaneo de folios por código QR/barras** | Botón "Escanear código" en SellPage no implementado. Requiere integración con cámara o lector USB HID. |
 | 8 | Admin | **Gestión de usuarios desde UI** | AdminPage/UsersPage permite ver usuarios pero no editar roles ni resetear contraseñas desde la interfaz. |
-| - | Deploy | **Dominio custom** | `tadaima.poslite.com.mx` pendiente asignar en Cloud Run domain mappings |
+| 18 | Loyalty | **Activar Supabase en Cloud Run prod** | Agregar `TADAIMA_SUPABASE_URL` y `TADAIMA_SUPABASE_SERVICE_KEY` como env vars (o Secret Manager) en servicio `tadaima` us-central1. Sin esto, `external/card` retorna "servicio no configurado" en prod. |
+| 19 | Infra | **Borrar duplicado `tadaima` us-west1** | Sin tráfico, sin dominio. Confirmar que no tenga revisión activa con `min-instances >= 1` antes de eliminar. NO TOCAR `pos` us-west1 (otro cliente). |
 | - | Email | **Activar envío real de emails** | `MAIL_MAILER=log` en producción. Configurar SMTP/Mailgun cuando haya cuenta de correo |
 
 ### 🟢 Baja prioridad (deuda técnica / cleanup)
@@ -51,6 +60,8 @@
 | 10 | Cleanup | **Eliminar `preSales.ts` de packages/api** | Solo se usa en PreSalesPage. Al migrar esa página, remover el módulo y sus exports de `index.ts`. |
 | 11 | App móvil | **Paridad de features Expo** | La app móvil en `apps/` no tiene flujo de caja, preventas ni ventas. Prioritario si hay usuarios en campo. |
 | 12 | Tests | **E2E post-refactor** | Los TCs del Bloque 12 (TC-78→TC-85) no cubren el historial mixto ni el ticket de impresión. Agregar casos. |
+| 20 | Tests | **E2E checkout mixto** | Cubrir el escenario nuevo: folio cargado + producto regular + catálogo nueva preventa en una sola transacción. |
+| 21 | Infra | **Secretizar Supabase keys** | Mover `TADAIMA_SUPABASE_SERVICE_KEY` de env var plana a Secret Manager. |
 
 ---
 
@@ -362,6 +373,9 @@ El endpoint `POST /pre-sale-orders` crea el folio Y registra el anticipo inicial
 | Tablas legacy pre_sales | Baja | Una vez migrado PreSalesPage, crear migración `drop_pre_sales_tables`. |
 | App móvil | Alta | Expo app no tiene paridad de features con web. |
 | Escaneo de folios en caja | Media | Botón "Escanear código" en SellPage aún no implementado. |
+| Supabase keys en prod | Media | Faltan `TADAIMA_SUPABASE_URL` y `TADAIMA_SUPABASE_SERVICE_KEY` en Cloud Run `tadaima` us-central1. Sin esto, lookup de socios falla en prod. Sugerencia: pasarlas vía Secret Manager, no env var plana. |
+| Duplicado Cloud Run | Baja | `tadaima` us-west1 abandonado. Borrar después de confirmar 0 tráfico sostenido. |
+| Rollback en checkout mixto | Baja | Si `addPreSaleOrderPayment` o `updatePreSaleOrderStatus` falla DESPUÉS de `createSale`+`createPreSaleOrder` exitosos, queda venta sin liquidación. Mover a transacción server-side cuando se priorice. |
 
 ---
 
@@ -417,6 +431,83 @@ docker compose up --build -d
 ---
 
 ## 11. Historial de sesiones de desarrollo
+
+### Sesión 2026-05-12 — Fix bug checkout mixto + deploy a prod
+
+**Objetivo**: Arreglar un bug donde una venta que mezclaba (a) liquidación de un folio cargado, (b) un producto regular y (c) una nueva preventa con anticipo, registraba la liquidación pero **no generaba ticket** y descartaba silenciosamente la nueva preventa.
+
+**Diagnóstico** (`landing/src/pages/SellPage.tsx`):
+- La rama 1 de `handleCheckout` (`activeMesa.loadedPreSaleOrderId`) tenía 3 bugs:
+  1. `newItemsSubtotal` (línea 819) incluía catálogos de preventa nuevos como si fueran regulares → `createSale` enviaba un monto que no cuadraba con el draft del backend → trono silencioso.
+  2. La rama nunca llamaba a `createPreSaleOrder` → la nueva preventa se descartaba.
+  3. No había `triggerPrintFlow` → liquidación quedaba sin ticket.
+- Orden problemático: `addPreSaleOrderPayment` + `updatePreSaleOrderStatus(delivered)` se ejecutaban **antes** del `createSale`, así que cuando trono no hubo rollback.
+
+**Fix aplicado**:
+- Nuevo campo `loadedPreSaleOrderCode?: string` en Mesa interface (persistir el código del folio cargado para mostrarlo en el ticket).
+- Reescritura de rama 1: split del carrito en 3 grupos (`liquidationItems` / `regularItems` / `newCatalogItems`) y orden seguro de operaciones:
+  1. `createSale` con regulares (si falla, no se ha tocado el folio cargado)
+  2. `createPreSaleOrder` con catálogos nuevos (con `linked_sale_id` si hay venta regular)
+  3. `addPreSaleOrderPayment` + `updatePreSaleOrderStatus(delivered)` (al final)
+  4. `triggerPrintFlow` con ticket mixto (items entregados con folio entre paréntesis + productos regulares + sección de nueva preventa con anticipo)
+
+**Deploy**:
+- Build remoto vía `gcloud run deploy tadaima --source . --region=us-central1 --project=impusodigitaldorado` (no requiere Docker local; Cloud Build construye y publica la imagen).
+- Revisión nueva: `tadaima-00034-ghr` en us-central1, 100% del tráfico.
+- Smoke test: `tadaima.poslite.com.mx` HTTP 200; `/api/v1/auth/login` HTTP 422 (validación correcta).
+
+**Hallazgos secundarios**:
+- Hay **3 servicios** en Cloud Run del proyecto: `pos` us-west1 (otro cliente, NO TOCAR), `tadaima` us-west1 (duplicado sin tráfico, candidato a borrar), `tadaima` us-central1 (el real con dominio).
+- El servicio prod **NO tiene** `TADAIMA_SUPABASE_URL` / `TADAIMA_SUPABASE_SERVICE_KEY` configuradas, así que la integración loyalty (introducida en sesión 2026-05-05) solo funciona en local. Usuario va a agregarlas manualmente.
+
+**Resultado**: ✅ Fix en prod. Pendiente: usuario agrega Supabase vars en Cloud Run + valida flujo mixto end-to-end.
+
+---
+
+### Sesión 2026-05-05 — Integración Tadaima Loyalty (Supabase) en lookup de socios
+
+**Objetivo**: Conectar el lookup de tarjetas externas (escanear / buscar por nombre / email / ID) con la base de datos de socios Tadaima alojada en Supabase. Sincronizar el socio encontrado al modelo `customers` del POS sin duplicar registros.
+
+**Endpoints implementados** (`backend/app/Http/Controllers/Api/ExternalCardController.php`):
+- `GET /api/v1/external/card/{code}` — lookup por código exacto.
+- `GET /api/v1/external/customers?query=...` — búsqueda por nombre/email/ID con lista de coincidencias.
+- `POST /api/v1/external/customer` — register/sync explícito al hacer click en "Agregar".
+
+**Config**:
+- `backend/config/services.php` lee `TADAIMA_SUPABASE_URL` y `TADAIMA_SUPABASE_SERVICE_KEY` desde env.
+- Mapper de columnas Supabase confirmado: `nombre`, `apellidos`, `telefono`, `email`, `id`.
+- Si las vars están vacías → controlador retorna error "servicio no configurado" sin tronar.
+
+**Cambios de UX (landing)**:
+- Al escanear código: ya no auto-crea customer. Muestra card "Socio encontrado" con datos y botón **Agregar**.
+- Búsqueda por nombre/email/ID en `ClientsPage` y `SellPage` con lista de resultados (no solo match exacto).
+
+**Política definida** (memoria persistente):
+- Supabase es **solo lectura** desde el POS. NO modificar tablas Supabase, NO crear migraciones del lado loyalty, NO escribir puntos. Cualquier cambio se hace solo del lado POS (MySQL) hasta aprobación explícita.
+
+**Commits**: `87ac7dd bb15a9f dc54599 732b924 cc010d0`.
+
+**Resultado**: ✅ Funciona en local con `php artisan serve`. Pendiente activar vars en Cloud Run prod (ver sesión 2026-05-12).
+
+---
+
+### Sesión 2026-05-04 — Productos, mangas e imágenes
+
+**Objetivo**: Cerrar varios pendientes del módulo de productos: gestión de imágenes en GCS, edición/borrado de mangas y tomos, force-delete administrativo.
+
+**Cambios principales**:
+- **Force-delete admin** de producto (`ProductController`): cleanup en cascada de ventas, layaways, inventory, product_images y archivos GCS. Confirmación con dialog. Bloqueado si tiene layaways activos (sin force).
+- **Replace image**: al editar producto, borra archivo anterior de GCS + fila DB antes de subir el nuevo. Evita huérfanos.
+- **Migración `clean_corrupt_product_images`**: limpia filas que apuntan a archivos inexistentes en GCS.
+- **`ProductThumb`**: reset de estado de error cuando cambia `src` (evita placeholder permanente tras una imagen rota).
+- **CSP**: agregado `storage.googleapis.com` a `img-src` en config (las imágenes ahora se sirven directo desde GCS, no del backend).
+- **Mangas**: modal de edición con el mismo diseño del modal "Alta de Tomos" (consistencia visual). Endpoints edit/delete para `mangas` y `tomos`.
+
+**Commits**: `74c4fd0 a9623a3 a1e3f96 a24fc23 85e452b 682c890 030ff0a 768d9a0 70c429e 9f90ffa`.
+
+**Resultado**: ✅ Productos y mangas con CRUD completo + cleanup robusto de imágenes.
+
+---
 
 ### Sesión 2026-05-02 — Deploy a producción funcional + Bug crítico .gitignore + QA completo
 

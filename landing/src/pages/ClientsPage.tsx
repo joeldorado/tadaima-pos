@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import {
   Search, Mail, Phone, MapPin, History,
   User, UserPlus, Star, Zap, Award,
@@ -10,7 +10,9 @@ import {
   getCustomers,
   createCustomer,
   updateCustomer,
+  searchExternalCustomers,
   type Customer,
+  type ExternalCardLookup,
 } from "@tadaima/api";
 
 // ─── Paleta Tadaima ───────────────────────────────────────────────────────────
@@ -80,6 +82,8 @@ export function ClientsPage() {
   const [selectedId, setSelectedId]   = useState<number | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [form, setForm]               = useState<EditingCustomer>(EMPTY_FORM);
+  const [extResults, setExtResults]   = useState<ExternalCardLookup[]>([]);
+  const [addingExt, setAddingExt]     = useState<string | null>(null);
 
   // ── Cargar clientes ────────────────────────────────────────────────────────
   const fetchCustomers = async () => {
@@ -164,10 +168,44 @@ export function ClientsPage() {
     customers.filter(c =>
       c.name.toLowerCase().includes(search.toLowerCase()) ||
       (c.email?.toLowerCase().includes(search.toLowerCase())) ||
-      (c.phone?.includes(search))
+      (c.phone?.includes(search)) ||
+      (c.external_member_id?.toLowerCase().includes(search.toLowerCase()))
     ),
     [customers, search]
   );
+
+  // Supabase fallback cuando no hay resultados en POS
+  useEffect(() => {
+    setExtResults([]);
+    if (!search.trim() || search.trim().length < 2 || filtered.length > 0) return;
+    const t = setTimeout(async () => {
+      const exts = await searchExternalCustomers(search.trim());
+      setExtResults(exts);
+    }, 400);
+    return () => clearTimeout(t);
+  }, [search, filtered.length]);
+
+  const handleAddExtCustomer = useCallback(async (ext: ExternalCardLookup) => {
+    setAddingExt(ext.external_member_id);
+    try {
+      const newCust = await createCustomer({
+        name:               ext.name ?? ext.external_member_id,
+        phone:              ext.phone ?? undefined,
+        email:              ext.email || undefined,
+        external_member_id: ext.external_member_id,
+        loyalty_tier:       ext.nivel ?? undefined,
+      });
+      setCustomers(prev => [newCust, ...prev]);
+      setSelectedId(newCust.id);
+      setExtResults([]);
+      setSearch("");
+      toast.success(`Socio ${newCust.name} agregado`);
+    } catch {
+      toast.error("No se pudo agregar al socio");
+    } finally {
+      setAddingExt(null);
+    }
+  }, []);
 
   const selected = customers.find(c => c.id === selectedId);
 
@@ -243,11 +281,40 @@ export function ClientsPage() {
                 <p className="text-xs font-black uppercase tracking-widest text-white/20">Cargando clientes...</p>
               </div>
             ) : filtered.length === 0 ? (
-              <div className="flex flex-col items-center justify-center p-20 gap-4">
+              <div className="flex flex-col items-center justify-center p-10 gap-4">
                 <Users size={40} className="text-white/10" />
                 <p className="text-xs font-black uppercase tracking-widest text-white/20">
-                  {search ? "Sin resultados" : "No hay clientes registrados"}
+                  {search ? "Sin resultados en el POS" : "No hay clientes registrados"}
                 </p>
+                {extResults.length > 0 && (
+                  <div className="w-full mt-2 space-y-2">
+                    <p className="text-[9px] font-black text-red-400/70 uppercase tracking-widest text-center">Socios Tadaima</p>
+                    {extResults.map(ext => (
+                      <div
+                        key={ext.external_member_id}
+                        className="flex items-center gap-4 px-5 py-4 rounded-[20px] bg-white/[0.03] border border-red-500/15 hover:border-red-500/30 transition-all"
+                      >
+                        <div className="w-11 h-11 rounded-xl flex items-center justify-center text-base font-black italic shrink-0"
+                          style={{ background: "linear-gradient(135deg,#CC2200,#000)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                          {(ext.name ?? "?").charAt(0)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-black text-white truncate uppercase tracking-tight">{ext.name}</p>
+                          <p className="text-[10px] font-black text-white/20 uppercase tracking-widest">{ext.external_member_id}{ext.email ? ` · ${ext.email}` : ""}</p>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={addingExt === ext.external_member_id}
+                          onClick={() => handleAddExtCustomer(ext)}
+                          className="px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider text-white transition-all disabled:opacity-50"
+                          style={{ background: "linear-gradient(135deg,#CC2200,#FF4422)" }}
+                        >
+                          {addingExt === ext.external_member_id ? "..." : "Agregar"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ) : filtered.map(c => {
               const tier = resolveTier(c);

@@ -90,6 +90,7 @@ interface Mesa {
   selectedTerminalId?: number;
   absorbCommission?: boolean;
   loadedPreSaleOrderId?: number; // folio de preventa cargado para liquidar en caja
+  loadedPreSaleOrderCode?: string; // código PREV-XXXXX del folio cargado, para ticket
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -791,7 +792,7 @@ export function SellPage() {
       ...m, items: [], customerId: undefined, customerName: undefined,
       customerPhone: "", customerEmail: "", isNewCustomer: false, discount: 0, depositAmount: 0,
       selectedTerminalId: undefined, absorbCommission: false,
-      isPreventa: false, loadedPreSaleOrderId: undefined,
+      isPreventa: false, loadedPreSaleOrderId: undefined, loadedPreSaleOrderCode: undefined,
     }));
     setCustomerSearch("");
   };
@@ -995,6 +996,7 @@ export function SellPage() {
       ...m,
       items: [...balancedItems, ...m.items.filter(i => !i.isFromPreSale)],
       loadedPreSaleOrderId: order.id,
+      loadedPreSaleOrderCode: order.code,
       depositAmount: balance,
       customerId: order.customer ? String(order.customer.id) : m.customerId,
       customerName: order.customer?.name ?? m.customerName,
@@ -1295,7 +1297,7 @@ export function SellPage() {
   const handleCheckout = async () => {
     if (!activeMesa.items.length) return;
 
-    // ── LIQUIDAR PREVENTA CARGADA (con o sin productos nuevos) ────────────────
+    // ── LIQUIDAR PREVENTA CARGADA (con o sin productos nuevos / nuevas preventas) ──
     if (activeMesa.loadedPreSaleOrderId) {
       if (isCheckoutLockedRef.current) return;
       isCheckoutLockedRef.current = true;
@@ -1304,37 +1306,116 @@ export function SellPage() {
         "Efectivo": 1, "Dólares": 1, "Tarjeta": 2, "Transferencia": 4,
       };
       const payMethodId = PM_IDS[activeMesa.paymentMethod] ?? 1;
+      const priceLevelMap: Record<PriceLevel, 1 | 2 | 3 | 4 | 5> = { a: 1, b: 2, c: 3, d: 4, e: 5 };
+
+      // Split en 3 grupos: items a liquidar / productos regulares / catálogos de preventa nueva
+      const liquidationItems = activeMesa.items.filter(i => i.isFromPreSale);
+      const newCatalogItems  = activeMesa.items.filter(i => i.sellingCatalogId != null);
+      const regularItems     = activeMesa.items.filter(i => !i.isFromPreSale && i.sellingCatalogId == null);
+
+      const liquidationAmount = activeMesa.depositAmount || 0;
+      const regularSubtotal   = regularItems.reduce((s, i) => s + getItemPrice(i) * i.quantity, 0);
+      const newPreventaDeposit = newCatalogItems.reduce((s, i) => s + (i.depositAmount ?? 0), 0);
 
       try {
         setIsProcessing(true);
-        const preSaleAmount = activeMesa.depositAmount || 0;
-        if (preSaleAmount > 0) {
+
+        // 1. Crear venta regular primero (si aplica). Si truena, no se liquida la preventa.
+        let regularSaleId: number | undefined;
+        if (regularItems.length > 0 && regularSubtotal > 0) {
+          const draftId = draftStore.getDraftId(activeMesa.id);
+          if (draftId) {
+            const saleResult = await createSale({
+              draft_id: draftId,
+              payments: [{ payment_method_id: payMethodId, amount: regularSubtotal }],
+            });
+            regularSaleId = saleResult?.id;
+          }
+        }
+
+        // 2. Crear nuevo folio de preventa (si aplica). Mismo principio: si truena, no liquidamos.
+        let newOrderCode: string | undefined;
+        if (newCatalogItems.length > 0) {
+          if (!activeStore) throw new Error("Tienda no seleccionada");
+          if (!activeMesa.customerId) throw new Error("Falta cliente para la nueva preventa");
+          const newOrder = await createPreSaleOrder({
+            store_id: activeStore.id,
+            customer_id: Number(activeMesa.customerId),
+            items: newCatalogItems.map(item => ({
+              catalog_id: item.sellingCatalogId!,
+              quantity: item.quantity,
+              price_level: priceLevelMap[item.priceLevel],
+            })),
+            ...(newPreventaDeposit > 0 ? { advance_amount: newPreventaDeposit, payment_method_id: payMethodId } : {}),
+            ...(regularSaleId != null ? { linked_sale_id: regularSaleId } : {}),
+          });
+          newOrderCode = newOrder.code;
+        }
+
+        // 3. Liquidar la preventa cargada (al final → si algo trona arriba, queda sin liquidar)
+        if (liquidationAmount > 0) {
           await addPreSaleOrderPayment(activeMesa.loadedPreSaleOrderId, {
-            amount: preSaleAmount,
+            amount: liquidationAmount,
             payment_method_id: payMethodId,
           });
         }
         await updatePreSaleOrderStatus(activeMesa.loadedPreSaleOrderId, { status: "delivered" });
 
-        // Si hay productos nuevos en el carrito, crear venta regular para ellos
-        const mesaId = activeMesa.id;
-        if (newItemsSubtotal > 0) {
-          const draftId = draftStore.getDraftId(mesaId);
-          if (draftId) {
-            await createSale({
-              draft_id: draftId,
-              payments: [{ payment_method_id: payMethodId, amount: newItemsSubtotal }],
-            });
-          }
-        }
+        // Snapshots para ticket antes de limpiar
+        const mesaId             = activeMesa.id;
+        const customerNameSnap   = activeMesa.customerName;
+        const payMethodSnap      = activeMesa.paymentMethod;
+        const liquidatedCodeSnap = activeMesa.loadedPreSaleOrderCode;
+        const cashReceivedSnap   = parseFloat(cashReceived) || 0;
 
         setCashReceived("");
         clearCart();
         draftStore.clearDraft(mesaId);
         draftStore.clearDraftItems(mesaId);
 
-        const newMsg = newItemsSubtotal > 0 ? ` · Venta ${fmt(newItemsSubtotal)}` : "";
-        toast.success(`Preventa liquidada · ${fmt(preSaleAmount)}${newMsg}`, {
+        // 4. Ticket: items entregados (liquidados) + productos regulares
+        const ticketTotal = liquidationAmount + regularSubtotal + newPreventaDeposit;
+        const deliveredAndRegular = [
+          ...liquidationItems.map(i => ({
+            name: liquidatedCodeSnap ? `${i.product.name} (Folio ${liquidatedCodeSnap})` : i.product.name,
+            quantity: i.quantity,
+            price: getItemPrice(i),
+          })),
+          ...regularItems.map(i => ({
+            name: i.product.name,
+            quantity: i.quantity,
+            price: getItemPrice(i),
+          })),
+        ];
+
+        const mixedTicket: CompletedSaleData = {
+          total: ticketTotal,
+          paymentMethod: payMethodSnap,
+          customerName: customerNameSnap,
+          items: deliveredAndRegular,
+          soldAt: new Date().toISOString(),
+          storeName: activeStore?.name,
+          cashierName: user?.name,
+          amountReceived: cashReceivedSnap > 0 ? cashReceivedSnap : undefined,
+          change: cashReceivedSnap > ticketTotal ? cashReceivedSnap - ticketTotal : undefined,
+          ...(newOrderCode ? {
+            preSaleCode: newOrderCode,
+            preSaleItems: newCatalogItems.map(i => ({
+              name: i.product.name,
+              quantity: i.quantity,
+              unitPrice: getItemPrice(i),
+            })),
+            preSaleAnticipo: newPreventaDeposit,
+          } : {}),
+        };
+
+        setHistorialEntries([]);
+        triggerPrintFlow(mixedTicket);
+
+        const parts: string[] = [`Preventa liquidada · ${fmt(liquidationAmount)}`];
+        if (regularSubtotal > 0) parts.push(`Venta ${fmt(regularSubtotal)}`);
+        if (newOrderCode) parts.push(`Nuevo folio ${newOrderCode} · Anticipo ${fmt(newPreventaDeposit)}`);
+        toast.success(parts.join(" · "), {
           style: { background: '#064e3b', color: '#fff', border: '1px solid #10b981', borderRadius: '16px' }
         });
       } catch (err: unknown) {
