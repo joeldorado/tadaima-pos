@@ -18,6 +18,18 @@ import { useActiveStore } from "@/contexts/StoreContext";
 import { useAuth } from "@tadaima/auth";
 import { toast } from "sonner";
 import { getProducts, createProduct, updateProduct, deleteProduct, forceDeleteProduct, uploadProductImage, removeProductImage, getWarehouses, getInventory, updateInventory, getPrice, storageUrl, getMangas, getStores } from "@tadaima/api";
+import type { ApiError } from "@tadaima/api";
+
+function formatApiError(err: unknown, fallback: string): { title: string; detail: string } {
+  const apiErr = err as ApiError;
+  if (apiErr?.errors && typeof apiErr.errors === "object") {
+    const detail = Object.entries(apiErr.errors)
+      .map(([field, msgs]) => `${field}: ${msgs.join(", ")}`)
+      .join("\n");
+    if (detail) return { title: apiErr.message || fallback, detail };
+  }
+  return { title: fallback, detail: apiErr?.message ?? "" };
+}
 import { ProductTypeSelectorModal } from "@/components/products/ProductTypeSelectorModal";
 import { MangaBatchModal } from "@/components/products/MangaBatchModal";
 import { MangaEditModal } from "@/components/products/MangaEditModal";
@@ -837,7 +849,9 @@ export function ProductsPage() {
   const { user } = useAuth();
   const isAdmin     = user?.roles?.some(r => ["admin", "super_admin", "owner", "dueño"].includes(r.toLowerCase())) ?? false;
   const isGerente   = user?.roles?.some(r => r.toLowerCase() === "gerente") ?? false;
-  const canViewCost = (isAdmin && (user?.can_view_cost ?? true)) || false;
+  // Admin (admin/owner/super_admin/dueño) siempre ve costos.
+  // Gerente/cajero solo si admin les activó el flag desde Inicio → Permisos.
+  const canViewCost = isAdmin || !!user?.can_view_cost;
   // gerente puede ver/usar la mayoría del panel pero sin costos reales
   const canManage   = isAdmin || isGerente;
 
@@ -967,8 +981,8 @@ export function ProductsPage() {
         void refreshProductCount();
         void fetchProducts();
       }).catch((err: unknown) => {
-        const msg = (err as { message?: string }).message ?? 'Error al crear producto';
-        alert(`No se pudo guardar: ${msg}`);
+        const { title, detail } = formatApiError(err, 'No se pudo crear el producto');
+        toast.error(title, { description: detail || undefined, duration: 8000 });
         setProducts(prev => prev.filter(item => item.id !== p.id));
       });
     } else {
@@ -1221,16 +1235,26 @@ export function ProductsPage() {
         const m = info.row.original;
         return (
           <div className="flex items-center gap-3">
-            <div className="shrink-0 w-10 h-10 rounded-xl flex flex-col items-center justify-center" style={{ background: 'linear-gradient(135deg,#990000,#CC2200)', minWidth: 40 }}>
-              {m.volume_number != null ? (
-                <>
-                  <span style={{ fontSize: 7, fontWeight: 700, color: 'rgba(255,255,255,0.7)', lineHeight: 1 }}>VOL</span>
-                  <span style={{ fontSize: 13, fontWeight: 900, color: '#fff', lineHeight: 1.1 }}>{m.volume_number}</span>
-                </>
-              ) : (
-                <BookOpen size={14} color="rgba(255,255,255,0.7)" />
-              )}
-            </div>
+            {m.image_url ? (
+              <img
+                src={m.image_url}
+                alt={m.name}
+                className="shrink-0 w-10 h-10 rounded-xl object-cover"
+                style={{ minWidth: 40, border: '1px solid rgba(255,255,255,0.08)' }}
+                onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+              />
+            ) : (
+              <div className="shrink-0 w-10 h-10 rounded-xl flex flex-col items-center justify-center" style={{ background: 'linear-gradient(135deg,#990000,#CC2200)', minWidth: 40 }}>
+                {m.volume_number != null ? (
+                  <>
+                    <span style={{ fontSize: 7, fontWeight: 700, color: 'rgba(255,255,255,0.7)', lineHeight: 1 }}>VOL</span>
+                    <span style={{ fontSize: 13, fontWeight: 900, color: '#fff', lineHeight: 1.1 }}>{m.volume_number}</span>
+                  </>
+                ) : (
+                  <BookOpen size={14} color="rgba(255,255,255,0.7)" />
+                )}
+              </div>
+            )}
             <div className="min-w-0">
               <p className="text-sm font-bold truncate max-w-[200px]" style={{ color: T.textPrimary }}>{info.getValue()}</p>
               {m.code && <p className="text-[10px] font-mono" style={{ color: T.textMuted }}>{m.code}</p>}
@@ -1722,23 +1746,6 @@ export function ProductsPage() {
         </div>
       )}
 
-      {isModalOpen && (
-        <ProductModal
-          isAdmin={isAdmin}
-          canViewCost={canViewCost}
-          canManage={canManage}
-          onClose={() => { setIsModalOpen(false); setEditingProduct(undefined); }}
-          onSave={handleSaveProduct}
-          onDelete={(p) => setDeleteTarget(p)}
-          {...(editingProduct !== undefined ? { product: editingProduct } : {})}
-          categorias={categorias}
-          onAddCategoria={(c) => setCategorias(prev => [...prev, c])}
-          proveedores={proveedores}
-          onAddProveedor={(p) => setProveedores(prev => [...prev, p])}
-          locations={locations}
-        />
-      )}
-
       {deleteTarget && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => { if (!deleteLoading) { setDeleteTarget(null); setForceMode(false); } }} />
@@ -1930,16 +1937,29 @@ export function ProductsPage() {
           onSelectNormal={() => {
             setShowTypeSelector(false);
             setEditingProduct(undefined);
-            // El form de Producto Normal vive dentro del fragmento de pageSection==='productos'.
-            // Si el cajero abrió el modal desde el tab Tomos, hay que cambiar de tab para que
-            // el form se renderice. Sin esto, setIsModalOpen(true) corre pero el JSX no monta.
-            setPageSection('productos');
             setIsModalOpen(true);
           }}
           onSelectManga={() => {
             setShowTypeSelector(false);
             setShowMangaModal(true);
           }}
+        />
+      )}
+
+      {isModalOpen && (
+        <ProductModal
+          isAdmin={isAdmin}
+          canViewCost={canViewCost}
+          canManage={canManage}
+          onClose={() => { setIsModalOpen(false); setEditingProduct(undefined); }}
+          onSave={handleSaveProduct}
+          onDelete={(p) => setDeleteTarget(p)}
+          {...(editingProduct !== undefined ? { product: editingProduct } : {})}
+          categorias={categorias}
+          onAddCategoria={(c) => setCategorias(prev => [...prev, c])}
+          proveedores={proveedores}
+          onAddProveedor={(p) => setProveedores(prev => [...prev, p])}
+          locations={locations}
         />
       )}
 

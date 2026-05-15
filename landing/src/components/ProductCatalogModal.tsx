@@ -28,6 +28,16 @@ interface Props {
   onClose: () => void;
   title?: string;
   preventaMode?: boolean;
+  /**
+   * Stock real disponible para la caja actual (stock total − reservado en otras cajas).
+   * Si está presente, sobrescribe el badge de stock por producto.
+   */
+  availableStock?: Record<string, number>;
+  /**
+   * Mapa productId → lista de "N elegidos en Caja X" de OTRAS cajas.
+   * Permite al cajero ver qué está reservado en otra caja antes de elegir.
+   */
+  reservedByMesa?: Record<string, Array<{ mesaName: string; qty: number }>>;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -48,14 +58,15 @@ const fmt = (n: number) =>
   }).format(n || 0);
 
 function stockBadge(stock: number | undefined): { label: string; color: string; bg: string } {
-  if (stock === undefined) return { label: "—",       color: "var(--td-text-ghost)", bg: "transparent" };
-  if (stock === 0)         return { label: "Agotado", color: "#FF4422",              bg: "rgba(255,68,34,0.15)" };
-  if (stock <= 3)          return { label: `×${stock}`, color: "#F59E0B",            bg: "rgba(245,158,11,0.15)" };
-  return                          { label: `×${stock}`, color: "#22C55E",            bg: "rgba(34,197,94,0.12)" };
+  // Colores sólidos con texto blanco — visibles en cualquier tema (claro u oscuro).
+  if (stock === undefined) return { label: "—",       color: "#FFFFFF", bg: "rgba(0,0,0,0.55)" };
+  if (stock === 0)         return { label: "Agotado", color: "#FFFFFF", bg: "#DC2626" };
+  if (stock <= 3)          return { label: `×${stock}`, color: "#FFFFFF", bg: "#F59E0B" };
+  return                          { label: `×${stock}`, color: "#FFFFFF", bg: "#16A34A" };
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
-export function ProductCatalogModal({ products, onSelect, onClose, title = "Catálogo de Productos", preventaMode = false }: Props) {
+export function ProductCatalogModal({ products, onSelect, onClose, title = "Catálogo de Productos", preventaMode = false, availableStock, reservedByMesa }: Props) {
   const [query, setQuery]       = useState("");
   const [category, setCategory] = useState("Todos");
   const [page, setPage]         = useState(1);
@@ -220,10 +231,13 @@ export function ProductCatalogModal({ products, onSelect, onClose, title = "Cat�
             gap: 10,
           }}>
             {paginated.map(p => {
-              const stock    = p.stock_details?.tienda ?? p.stock;
+              const totalStock = p.stock_details?.tienda ?? p.stock;
+              // Stock efectivo para esta caja = stock − reservado en otras cajas.
+              const stock    = availableStock?.[p.id] ?? totalStock;
               const badge    = stockBadge(stock);
               const isCashOnly = p.payment_restriction === "cash_only";
               const hasStock = stock === undefined || stock > 0;
+              const otherCajaReservations = reservedByMesa?.[p.id] ?? [];
 
               // Collect active price levels (always include "a", add b-e if > 0)
               const activePrices = PRICE_META.filter(m => {
@@ -252,19 +266,18 @@ export function ProductCatalogModal({ products, onSelect, onClose, title = "Cat�
                     }}
                   >
                     {/* Image */}
-                    <div style={{ position: "relative", aspectRatio: "2/1", background: "var(--td-panel-bg)" }}>
+                    <div style={{ position: "relative", width: "100%", paddingTop: "100%", background: "var(--td-panel-bg)", overflow: "hidden" }}>
                       <ImageWithFallback
                         src={p.image || ""}
-                        style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", display: "block", padding: 6 }}
                       />
                       {/* Stock badge */}
                       <div style={{
-                        position: "absolute", top: 5, right: 5,
-                        padding: "2px 6px", borderRadius: 6,
-                        fontSize: 9, fontWeight: 900,
+                        position: "absolute", top: 6, right: 6,
+                        padding: "3px 8px", borderRadius: 8,
+                        fontSize: 11, fontWeight: 900, letterSpacing: "0.04em",
                         color: badge.color, background: badge.bg,
-                        backdropFilter: "blur(4px)",
-                        border: `1px solid ${badge.color}30`,
+                        boxShadow: "0 2px 6px rgba(0,0,0,0.35)",
                       }}>
                         {badge.label}
                       </div>
@@ -293,6 +306,24 @@ export function ProductCatalogModal({ products, onSelect, onClose, title = "Cat�
                         WebkitBoxOrient: "vertical", overflow: "hidden",
                       }}>{p.name}</p>
                       <p style={{ margin: 0, fontSize: 9, fontWeight: 700, color: "var(--td-text-ghost)", fontFamily: "monospace", textTransform: "uppercase" }}>{p.sku}</p>
+                      {otherCajaReservations.length > 0 && (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 2 }}>
+                          {otherCajaReservations.map(r => (
+                            <span
+                              key={r.mesaName}
+                              title={`${r.qty} unidad(es) ya en ${r.mesaName}`}
+                              style={{
+                                fontSize: 8, fontWeight: 900, padding: "2px 5px", borderRadius: 5,
+                                color: "#F59E0B", background: "rgba(245,158,11,0.12)",
+                                border: "1px solid rgba(245,158,11,0.25)",
+                                textTransform: "uppercase", letterSpacing: "0.04em",
+                              }}
+                            >
+                              {r.qty} en {r.mesaName}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
 
                     {/* ── Preventa: price level selector (highlighted when active) ── */}
@@ -443,19 +474,18 @@ export function ProductCatalogModal({ products, onSelect, onClose, title = "Cat�
                   }}
                 >
                   {/* Image */}
-                  <div style={{ position: "relative", aspectRatio: "2/1", background: "var(--td-panel-bg)" }}>
+                  <div style={{ position: "relative", width: "100%", paddingTop: "100%", background: "var(--td-panel-bg)", overflow: "hidden" }}>
                     <ImageWithFallback
                       src={p.image || ""}
-                      style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", display: "block", padding: 6 }}
                     />
                     {/* Stock badge */}
                     <div style={{
-                      position: "absolute", top: 5, right: 5,
-                      padding: "2px 6px", borderRadius: 6,
-                      fontSize: 9, fontWeight: 900,
+                      position: "absolute", top: 6, right: 6,
+                      padding: "3px 8px", borderRadius: 8,
+                      fontSize: 11, fontWeight: 900, letterSpacing: "0.04em",
                       color: badge.color, background: badge.bg,
-                      backdropFilter: "blur(4px)",
-                      border: `1px solid ${badge.color}30`,
+                      boxShadow: "0 2px 6px rgba(0,0,0,0.35)",
                     }}>
                       {badge.label}
                     </div>

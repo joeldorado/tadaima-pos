@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { toast } from "sonner";
 import {
-  getPreSaleCatalogs, updatePreSaleCatalogStatus,
+  getPreSaleCatalogs, updatePreSaleCatalogStatus, storageUrl,
 } from "@tadaima/api";
 import type { PreSaleCatalog, PreSaleCatalogStatus } from "@tadaima/api";
 import {
@@ -213,10 +213,24 @@ export function PreSaleCatalogsPanel() {
       accessorFn: r => r.product_name,
       meta: { tdStyle: { padding: "12px 14px" } },
       cell: ({ row: { original: c } }: CellContext<PreSaleCatalog, unknown>) => (
-        <>
-          <div style={{ fontSize: 12, fontWeight: 800, color: TP }}>{c.product_name}</div>
-          <div style={{ fontSize: 9, color: TM, marginTop: 2 }}>#{String(c.id).padStart(5, "0")}</div>
-        </>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {c.image_path ? (
+            <img
+              src={storageUrl(c.image_path)}
+              alt={c.product_name}
+              style={{ width: 36, height: 36, borderRadius: 8, objectFit: "cover", flexShrink: 0, border: "1px solid rgba(255,255,255,0.08)" }}
+              onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+            />
+          ) : (
+            <div style={{ width: 36, height: 36, borderRadius: 8, flexShrink: 0, background: "rgba(255,255,255,0.04)", border: "1px dashed rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Package size={14} style={{ color: TM }} />
+            </div>
+          )}
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: TP }}>{c.product_name}</div>
+            <div style={{ fontSize: 9, color: TM, marginTop: 2 }}>#{String(c.id).padStart(5, "0")}</div>
+          </div>
+        </div>
       ),
     },
     {
@@ -233,13 +247,13 @@ export function PreSaleCatalogsPanel() {
     },
     {
       id: "price",
-      header: "P1 / Anticipo",
-      accessorFn: r => r.price_1 ?? 0,
+      header: "Anticipo · Precio",
+      accessorFn: r => r.advance_payment ?? 0,
       meta: { tdStyle: { padding: "12px 14px" } },
       cell: ({ row: { original: c } }: CellContext<PreSaleCatalog, unknown>) => (
         <>
-          <div style={{ fontSize: 12, fontWeight: 800, color: TP }}>{fmt(c.price_1)}</div>
-          <div style={{ fontSize: 10, color: TM }}>Anticipo: {fmt(c.advance_payment)}</div>
+          <div style={{ fontSize: 12, fontWeight: 800, color: TP }}>{fmt(c.advance_payment)}</div>
+          <div style={{ fontSize: 10, color: TM }}>Precio: {fmt(c.price_1)}</div>
         </>
       ),
     },

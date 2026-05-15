@@ -154,8 +154,8 @@ function CatalogRow({ catalog }: CatalogRowProps) {
                       transition: "all 0.15s",
                     }}
                   >
-                    {/* Checkbox notificado */}
-                    <button
+                    {/* Checkbox notificado — pendiente de wire-up al backend (sin persistencia hoy) */}
+                    {/* <button
                       onClick={() => toggleNotified(order.id)}
                       title={isNotified ? "Marcar como no notificado" : "Marcar como notificado"}
                       style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", flexShrink: 0 }}
@@ -164,7 +164,7 @@ function CatalogRow({ catalog }: CatalogRowProps) {
                         ? <CheckSquare size={16} style={{ color: "#22C55E" }} />
                         : <Square size={16} style={{ color: TM }} />
                       }
-                    </button>
+                    </button> */}
 
                     {/* Info cliente */}
                     <div style={{ flex: 1, minWidth: 0 }}>

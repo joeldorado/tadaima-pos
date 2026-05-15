@@ -30,12 +30,13 @@ export function StoreProvider({ children }: { children: React.ReactNode }): Reac
     setIsLoading(true)
     try {
       const list = await getStores({ active: true })
-      // Admins and owners see all stores; users with an assigned store see only theirs
       const adminRoles = ['admin', 'super_admin', 'owner', 'dueño']
       const userIsAdmin = user.roles?.some(r => adminRoles.includes(r.toLowerCase()))
-      const visible = (!userIsAdmin && user.store_id != null)
-        ? list.filter(s => s.id === user.store_id)
-        : list
+      // Show all stores when admin OR when user has no assigned store.
+      // Only filter by store_id when we are sure the user is a non-admin with a real assigned store.
+      const visible = (userIsAdmin || user.store_id == null)
+        ? list
+        : list.filter(s => s.id === user.store_id)
       setStores(visible)
       // Auto-select only when there's exactly one option (single-store cashier)
       // Admins with multiple stores must pick explicitly in Caja

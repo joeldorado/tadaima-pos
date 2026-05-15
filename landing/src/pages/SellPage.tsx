@@ -14,7 +14,7 @@ import { ProductCatalogModal } from "@/components/ProductCatalogModal";
 import { PreSaleDifusionPanel } from "@/components/presales/PreSaleDifusionPanel";
 const tadaimaLogo = null // TODO: replace with real logo asset
 import { toast } from "sonner";
-import { getProducts, getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, createSale, getPrice, getActiveSession, openSession, closeSession, getCashRegisters, createLayaway, getPaymentMethods, getCustomers, createCustomer, searchExternalCustomers, getSystemSettings, getInventory, getPreSaleCatalogs, getPreSaleOrders, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getSales, getTerminals } from "@tadaima/api";
+import { getProducts, getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, createSale, getPrice, getActiveSession, openSession, closeSession, getCashRegisters, createLayaway, getPaymentMethods, getCustomers, createCustomer, searchExternalCustomers, getSystemSettings, getInventory, getPreSaleCatalogs, getPreSaleOrders, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getSales, getTerminals, storageUrl } from "@tadaima/api";
 import type { CashSession, CashRegisterInfo, PaymentMethod as ApiPaymentMethod, PreSaleCatalog, PreSaleOrder, PreSaleOrderItem, SaleDetail, Terminal, ExternalCardLookup } from "@tadaima/api";
 type HistorialEntry = { type: 'sale'; data: SaleDetail } | { type: 'presale'; data: PreSaleOrder };
 import { useCartDraftStore } from "@/stores/cartDraftStore";
@@ -237,6 +237,10 @@ export function SellPage() {
   );
   // Prevents concurrent createDraft calls for the same mesa
   const pendingDraftRef = useRef<Record<string, Promise<number>>>({});
+  // Trackea addDraftItem en vuelo por mesa+producto. changeQty espera estos antes
+  // de leer el itemId — evita el toast "Sincronizando…" cuando el usuario clickea
+  // "+" rápido tras agregar el producto (race entre optimistic UI y respuesta server).
+  const pendingItemAddRef = useRef<Record<string, Promise<number>>>({});
   // Prevents double-submit on checkout
   const isCheckoutLockedRef = useRef(false);
 
@@ -392,19 +396,24 @@ export function SellPage() {
     getProducts({ active: true })
       .then(paginated => {
         // Adapt API Product → local Product shape used by SellPage UI
-        const adapted = paginated.data.map(p => ({
-          id: String(p.id),
-          name: p.name,
-          sku: p.sku,
-          category: String(p.category_id ?? ""),
-          price_a: getPrice(p, 1),
-          price_b: getPrice(p, 2) > 0 ? getPrice(p, 2) : undefined,
-          price_c: getPrice(p, 3) > 0 ? getPrice(p, 3) : undefined,
-          price_d: getPrice(p, 4) > 0 ? getPrice(p, 4) : undefined,
-          price_e: getPrice(p, 5) > 0 ? getPrice(p, 5) : undefined,
-          stock: undefined,
-          active: p.active,
-        }));
+        const adapted = paginated.data.map(p => {
+          const firstImage = p.images?.[0];
+          const image = firstImage?.url ?? (firstImage?.image_path ? storageUrl(firstImage.image_path) : "");
+          return {
+            id: String(p.id),
+            name: p.name,
+            sku: p.sku,
+            category: String(p.category_id ?? ""),
+            image,
+            price_a: getPrice(p, 1),
+            price_b: getPrice(p, 2) > 0 ? getPrice(p, 2) : undefined,
+            price_c: getPrice(p, 3) > 0 ? getPrice(p, 3) : undefined,
+            price_d: getPrice(p, 4) > 0 ? getPrice(p, 4) : undefined,
+            price_e: getPrice(p, 5) > 0 ? getPrice(p, 5) : undefined,
+            stock: typeof p.stock_total === "number" ? p.stock_total : undefined,
+            active: p.active,
+          };
+        });
         setProducts(adapted);
       })
       .catch((err: unknown) => {
@@ -517,10 +526,36 @@ export function SellPage() {
     setMesas(prev => prev.map(m => m.id === id ? fn(m) : m)), []);
 
   const addMesa = () => {
+    // La caja main (1ra) es la principal — cada caja extra es una sub-caja para
+    // vender a otro cliente. No tiene sentido abrir otra si la actual está vacía.
+    if (!activeMesa || activeMesa.items.length === 0) {
+      toast.warning("Agrega al menos un producto a la caja actual antes de abrir otra.", {
+        icon: <ShoppingBag className="text-amber-500" size={16} />,
+        style: { background: '#1a1400', color: '#fbbf24', border: '1px solid #78350f' },
+      });
+      return;
+    }
     const m = makeMesa();
     setMesas(prev => [...prev, m]);
     setActiveMesaId(m.id);
   };
+
+  // ─── Stock compartido entre cajas (client-side) ─────────────────────────────
+  // Cuenta unidades del producto reservadas en otras cajas (excluye catálogos de
+  // preventa, que no descuentan stock real porque aún no se ha hecho el pedido).
+  const reservedInOtherMesas = useCallback((productId: string, excludeMesaId: string): number =>
+    mesas
+      .filter(m => m.id !== excludeMesaId)
+      .reduce((s, m) => s + m.items
+        .filter(i => i.product.id === productId && i.sellingCatalogId == null && !i.isFromPreSale)
+        .reduce((q, i) => q + i.quantity, 0), 0), [mesas]);
+
+  // Stock real disponible para la caja actual = stock total − reservado en otras cajas.
+  const availableStockFor = useCallback((product: Product, currentMesaId: string): number | undefined => {
+    const total = product.stock_details?.tienda ?? product.stock;
+    if (total === undefined) return undefined;
+    return Math.max(0, total - reservedInOtherMesas(product.id, currentMesaId));
+  }, [reservedInOtherMesas]);
 
   const removeMesa = (id: string) => {
     if (mesas.length <= 1) return;
@@ -536,6 +571,20 @@ export function SellPage() {
     const mesaId = activeMesa.id;
     const preItem = activeMesa.items.find(i => i.product.id === product.id);
     const newQty = (preItem?.quantity ?? 0) + quantity;
+
+    // Stock cross-caja: si otra caja ya reservó parte del stock, no permitir pasarse.
+    if (!activeMesa.isPreventa) {
+      const available = availableStockFor(product, mesaId);
+      if (available !== undefined && newQty > available) {
+        const reserved = reservedInOtherMesas(product.id, mesaId);
+        toast.error(
+          reserved > 0
+            ? `Stock insuficiente: ${available} disponible(s) (${reserved} reservado(s) en otra caja).`
+            : `Stock insuficiente: solo quedan ${available} disponible(s).`,
+        );
+        return;
+      }
+    }
 
     // Unit price for deposit auto-fill
     const unitPrice =
@@ -624,6 +673,7 @@ export function SellPage() {
 
       // Check if this product already has a draft item on the server
       const existingItemId = draftStore.getDraftItemId(mesaId, product.id);
+      const pendingKey = `${mesaId}:${product.id}`;
       if (existingItemId !== undefined) {
         // Use pre-captured newQty — deterministic, not read from stale mesas[] snapshot
         const updated = await updateDraftItem(draftId, existingItemId, {
@@ -633,13 +683,26 @@ export function SellPage() {
         });
         draftStore.setDraftItemId(mesaId, product.id, updated.id);
       } else {
-        const item = await addDraftItem(draftId, {
+        // Registramos el promise en el ref para que changeQty (botón +/−) pueda
+        // esperar a que termine antes de leer el itemId. Sin esto, clics rápidos
+        // disparaban el toast "Sincronizando…" porque el itemId aún no existía.
+        const addPromise = addDraftItem(draftId, {
           product_id: parseInt(product.id, 10),
           quantity,
           price: resolvedPrice,
           price_level: priceLevel,
+        }).then(item => {
+          draftStore.setDraftItemId(mesaId, product.id, item.id);
+          return item.id;
         });
-        draftStore.setDraftItemId(mesaId, product.id, item.id);
+        pendingItemAddRef.current[pendingKey] = addPromise;
+        try {
+          await addPromise;
+        } finally {
+          if (pendingItemAddRef.current[pendingKey] === addPromise) {
+            delete pendingItemAddRef.current[pendingKey];
+          }
+        }
       }
       // Limpia syncError si el item ya está sincronizado correctamente
       updMesa(mesaId, m => ({
@@ -674,9 +737,9 @@ export function SellPage() {
     // Optimistic removal
     updMesa(mesaId, m => ({ ...m, items: m.items.filter(i => i.product.id !== pid) }));
 
-    // HIGH #2: missing IDs must be surfaced — silent skip leaves the server draft desynchronized
+    // Item nunca llegó al server draft (catálogo de preventa, folio cargado, syncError previo,
+    // o draft expirado). La eliminación local es suficiente — no hay nada que sincronizar.
     if (draftId === undefined || itemId === undefined) {
-      toast.warning("No se pudo sincronizar la eliminación. El carrito puede estar desincronizado.");
       return;
     }
 
@@ -700,7 +763,9 @@ export function SellPage() {
     // so any variable mutated inside the updater is still at its initial value after the call.
     const currentItem = activeMesa.items.find(i => i.product.id === pid);
     if (!currentItem) return;
-    const newQty = currentItem.quantity + d;
+    const oldQty = currentItem.quantity;
+    const oldDeposit = currentItem.depositAmount;
+    const newQty = oldQty + d;
 
     // Validate preventa limit before optimistic update (only if stock data is available)
     if (activeMesa.isPreventa) {
@@ -715,6 +780,20 @@ export function SellPage() {
     if (d > 0 && currentItem.unitLimit !== undefined && newQty > currentItem.unitLimit) {
       toast.error(`Límite por cliente alcanzado: ${currentItem.unitLimit} unidad(es)`);
       return;
+    }
+
+    // Stock cross-caja: bloquear si otra caja ya reservó stock que no alcanza para el incremento.
+    if (d > 0 && !activeMesa.isPreventa && currentItem.sellingCatalogId == null && !currentItem.isFromPreSale) {
+      const available = availableStockFor(currentItem.product, mesaId);
+      if (available !== undefined && newQty > available) {
+        const reserved = reservedInOtherMesas(currentItem.product.id, mesaId);
+        toast.error(
+          reserved > 0
+            ? `Stock insuficiente: ${available} disponible(s) (${reserved} reservado(s) en otra caja).`
+            : `Stock insuficiente: solo quedan ${available} disponible(s).`,
+        );
+        return;
+      }
     }
 
     // Optimistic UI update — in preventa, scale deposit with quantity change
@@ -736,9 +815,44 @@ export function SellPage() {
         .filter(i => i.quantity > 0),
     }));
 
+    // Rollback helper — restaura cantidad y deposit del item a su estado previo
+    const rollback = (markSyncError: boolean) => {
+      updMesa(mesaId, m => ({
+        ...m,
+        items: m.items
+          .map(i => i.product.id === pid
+            ? {
+                ...i,
+                quantity: oldQty,
+                ...(oldDeposit !== undefined ? { depositAmount: oldDeposit } : {}),
+                ...(markSyncError ? { syncError: true } : {}),
+              }
+            : i)
+          .filter(i => i.quantity > 0),
+      }));
+    };
+
+    // Si hay un addDraftItem en vuelo para este producto (usuario clickeó "+" justo
+    // después de agregarlo desde el catálogo), esperar a que termine antes de leer
+    // el itemId. Sin esto, el usuario ve el toast "Sincronizando…" en cada click rápido.
+    const pendingAdd = pendingItemAddRef.current[`${mesaId}:${pid}`];
+    if (pendingAdd) {
+      try { await pendingAdd; } catch { /* el catch de addToCart ya marcó syncError */ }
+    }
+
     const draftId = draftStore.getDraftId(mesaId);
     const itemId  = draftStore.getDraftItemId(mesaId, pid);
-    if (draftId === undefined || itemId === undefined) return;
+    if (draftId === undefined || itemId === undefined) {
+      // Si el usuario está eliminando (newQty <= 0) un item que nunca llegó al server
+      // (catálogo de preventa, folio cargado, syncError previo), la eliminación local
+      // basta — el optimistic update ya filtró el item.
+      if (newQty <= 0) return;
+      // Si quiere incrementar/decrementar pero el item no está sincronizado, revertir
+      // y avisar (probable race con createDraft en flight).
+      rollback(false);
+      toast.info("Sincronizando con el servidor… intenta de nuevo en un segundo.");
+      return;
+    }
 
     // Price captured from stable pre-update snapshot (MEDIUM #5)
     const price = getItemPrice(currentItem);
@@ -752,9 +866,12 @@ export function SellPage() {
         await updateDraftItem(draftId, itemId, { quantity: newQty, price, price_level: level });
       }
     } catch (err: unknown) {
+      // Rollback optimistic UI y marca syncError para que checkout bloquee si quedan
+      // items desincronizados — evita el toast "carrito no sincronizado" en checkout.
+      rollback(true);
       const msg = err && typeof err === "object" && "message" in err
         ? String((err as { message: unknown }).message) : "Error al actualizar cantidad";
-      toast.error(msg);
+      toast.error(`${msg}. Cantidad revertida.`);
     }
   };
 
@@ -855,6 +972,33 @@ export function SellPage() {
   };
 
   const activeTerminal = useMemo(() => terminals.find(t => t.id === activeMesa.selectedTerminalId), [terminals, activeMesa.selectedTerminalId]);
+
+  // Mapas para el catálogo: stock disponible ajustado por reservas de otras cajas,
+  // y desglose de qué está reservado en qué caja (para mostrar "2 en Caja 3" en cada card).
+  const catalogAvailableStock = useMemo<Record<string, number>>(() => {
+    const map: Record<string, number> = {};
+    for (const p of products) {
+      const total = p.stock_details?.tienda ?? p.stock;
+      if (total === undefined) continue;
+      map[p.id] = Math.max(0, total - reservedInOtherMesas(p.id, activeMesa.id));
+    }
+    return map;
+  }, [products, mesas, activeMesa.id, reservedInOtherMesas]);
+
+  const catalogReservedByMesa = useMemo<Record<string, Array<{ mesaName: string; qty: number }>>>(() => {
+    const map: Record<string, Array<{ mesaName: string; qty: number }>> = {};
+    for (const m of mesas) {
+      if (m.id === activeMesa.id) continue;
+      for (const item of m.items) {
+        if (item.sellingCatalogId != null || item.isFromPreSale) continue;
+        const list = map[item.product.id] ?? (map[item.product.id] = []);
+        const existing = list.find(e => e.mesaName === m.name);
+        if (existing) existing.qty += item.quantity;
+        else list.push({ mesaName: m.name, qty: item.quantity });
+      }
+    }
+    return map;
+  }, [mesas, activeMesa.id]);
   
   const subtotal       = useMemo(() => activeMesa.items.reduce((s, i) => s + getItemPrice(i) * i.quantity, 0), [activeMesa.items]);
   const discountAmt    = subtotal * (activeMesa.discount / 100);
@@ -1728,14 +1872,18 @@ export function SellPage() {
     }
 
     // Verificación final pre-checkout: el subtotal del draft en backend debe
-    // coincidir con el `total` que ve el cajero. Si no, abortar antes de cobrar
-    // para evitar el error "Los pagos no coinciden con el total".
+    // coincidir con el subtotal de los items que SE sincronizan al draft
+    // (excluyendo catálogos de preventa nueva, folios cargados, e items con syncError
+    // — esos viajan por createPreSaleOrder/addPreSaleOrderPayment, no por createSale).
     try {
       const serverDraft = await getDraft(draftId);
       const serverSubtotal = serverDraft.subtotal ?? 0;
-      if (Math.abs(serverSubtotal - total) > 0.01) {
+      const expectedServerSubtotal = activeMesa.items
+        .filter(i => !i.isFromPreSale && i.sellingCatalogId == null && !i.syncError)
+        .reduce((s, i) => s + getItemPrice(i) * i.quantity, 0);
+      if (Math.abs(serverSubtotal - expectedServerSubtotal) > 0.01) {
         toast.error(
-          `El carrito no está sincronizado: pantalla muestra ${fmt(total)} pero el servidor tiene ${fmt(serverSubtotal)}. Elimina los productos y vuelve a agregarlos.`,
+          `El carrito no está sincronizado: pantalla muestra ${fmt(expectedServerSubtotal)} pero el servidor tiene ${fmt(serverSubtotal)}. Elimina los productos y vuelve a agregarlos.`,
           { duration: 8000, style: { background: '#2d0a00', color: '#fff', border: '1px solid rgba(224,34,26,0.4)', borderRadius: '16px' } },
         );
         return;
@@ -2711,9 +2859,24 @@ export function SellPage() {
                     )}
 
                     <div className="text-right min-w-[100px]">
-                      <p className={`text-sm font-black ${item.isDamaged ? "text-orange-400" : item.isFromPreSale ? "text-amber-400/70" : "text-white"}`}>
-                        {fmt(getItemPrice(item) * item.quantity)}
-                      </p>
+                      {item.sellingCatalogId != null ? (() => {
+                        const anticipo = item.depositAmount ?? 0;
+                        const lineTotal = getItemPrice(item) * item.quantity;
+                        return (
+                          <>
+                            <p className="text-sm font-black text-amber-300" title="Anticipo a cobrar ahora">
+                              {fmt(anticipo)}
+                            </p>
+                            <p className="text-[9px] font-black text-white/30 mt-0.5">
+                              de {fmt(lineTotal)}
+                            </p>
+                          </>
+                        );
+                      })() : (
+                        <p className={`text-sm font-black ${item.isDamaged ? "text-orange-400" : item.isFromPreSale ? "text-amber-400/70" : "text-white"}`}>
+                          {fmt(getItemPrice(item) * item.quantity)}
+                        </p>
+                      )}
                       {item.isDamaged && (() => {
                         const { product: p, priceLevel } = item;
                         let base = p.price_a || 0;
@@ -3754,6 +3917,8 @@ export function SellPage() {
           onClose={() => setShowCatalog(false)}
           title={activeStore ? `Catálogo · ${activeStore.name}` : "Catálogo de Productos"}
           preventaMode={activeMesa.isPreventa}
+          availableStock={catalogAvailableStock}
+          reservedByMesa={catalogReservedByMesa}
         />
       )}
 

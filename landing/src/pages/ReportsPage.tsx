@@ -117,6 +117,8 @@ export function ReportsPage() {
   const isAdmin   = user?.roles?.some(r => ["admin","super_admin","owner","dueño"].includes(r.toLowerCase())) ?? false;
   const isGerente = user?.roles?.some(r => r.toLowerCase() === "gerente") ?? false;
   const canManage = isAdmin || isGerente;
+  // Ganancia / costo real: admin siempre, otros solo si admin les activó el permiso.
+  const canViewCost = isAdmin || !!user?.can_view_cost;
 
   const [activeTab, setActiveTab] = useState<TabId>("ventas");
   const [loading, setLoading]     = useState(false);
@@ -371,18 +373,20 @@ export function ReportsPage() {
 
                 {/* ── KPI Cards ── */}
                 {/* Row 1: Ganancia bruta (prominent) + Ingresos + Anticipos */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {/* Ganancia bruta — el número que importa al gerente */}
-                  <div style={{ ...GLASS, borderRadius: 24, padding: "22px 26px", border: `1px solid ${gananciaBruta >= 0 ? "rgba(0,204,102,0.25)" : "rgba(255,68,34,0.25)"}` }}>
-                    <div className="flex items-center justify-between mb-3">
-                      <TrendingUp size={20} style={{ color: gananciaBruta >= 0 ? "#00CC66" : RED }} />
-                      <span className="text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full" style={{ background: "rgba(0,204,102,0.1)", color: "#00CC66" }}>
-                        Ventas + Anticipos − Desc. − Com.
-                      </span>
+                <div className={`grid grid-cols-1 ${canViewCost ? "md:grid-cols-3" : "md:grid-cols-2"} gap-4`}>
+                  {/* Ganancia bruta — solo visible para usuarios con permiso de ver costos */}
+                  {canViewCost && (
+                    <div style={{ ...GLASS, borderRadius: 24, padding: "22px 26px", border: `1px solid ${gananciaBruta >= 0 ? "rgba(0,204,102,0.25)" : "rgba(255,68,34,0.25)"}` }}>
+                      <div className="flex items-center justify-between mb-3">
+                        <TrendingUp size={20} style={{ color: gananciaBruta >= 0 ? "#00CC66" : RED }} />
+                        <span className="text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full" style={{ background: "rgba(0,204,102,0.1)", color: "#00CC66" }}>
+                          Ventas + Anticipos − Desc. − Com.
+                        </span>
+                      </div>
+                      <p className="text-[9px] font-black uppercase tracking-widest mb-1" style={{ color: TM }}>Ganancia bruta del período</p>
+                      <p className="text-3xl font-black italic" style={{ color: gananciaBruta >= 0 ? "#00CC66" : RED }}>{fmt(gananciaBruta)}</p>
                     </div>
-                    <p className="text-[9px] font-black uppercase tracking-widest mb-1" style={{ color: TM }}>Ganancia bruta del período</p>
-                    <p className="text-3xl font-black italic" style={{ color: gananciaBruta >= 0 ? "#00CC66" : RED }}>{fmt(gananciaBruta)}</p>
-                  </div>
+                  )}
 
                   {/* Ingresos ventas regulares */}
                   <div style={{ ...GLASS, borderRadius: 24, padding: "22px 26px" }}>

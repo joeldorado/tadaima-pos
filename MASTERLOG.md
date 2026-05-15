@@ -1,7 +1,7 @@
 # MASTERLOG — Tadaima POS
 
 > Registro maestro del proyecto: arquitectura, evolución, decisiones clave y estado actual.
-> Actualizado: 2026-05-12
+> Actualizado: 2026-05-14
 
 ---
 
@@ -39,6 +39,16 @@
 | 15 | Mangas | Edit/delete mangas+tomos; modal con diseño Alta de Tomos | 2026-05-04 |
 | 16 | Loyalty | Integración Supabase `external/card` + `external/customers` (lookup, search, auto-sync, card "Socio encontrado") | 2026-05-05 |
 | 17 | Caja | **Fix bug checkout mixto** — liquidación + regular + nueva preventa ahora funciona y dispara ticket | 2026-05-12 |
+| 22 | Caja | **Fix admin "Sin tiendas asignadas"** — StoreContext defensivo | 2026-05-14 |
+| 23 | Productos | **Fix 422 mensaje genérico** — toast con field errors de Laravel | 2026-05-14 |
+| 24 | Productos | **Fix modal Productos↔Tomos/Mangas se cerraba** — modal fuera del fragmento | 2026-05-14 |
+| 25 | Mangas | **Fix TypeError 'length' al ver inventario** — doble unwrap en getMangaInventory | 2026-05-14 |
+| 26 | Preventas | **Swap anticipo/precio en columna catálogos** + copy dinámico toggle "Publicar ahora" | 2026-05-14 |
+| 27 | Caja | **Imágenes en catálogo de productos** (ratio 1:1, objectFit contain) | 2026-05-14 |
+| 28 | Caja | **Fix carrito no sincronizado en Caja 2+** — rollback optimistic en changeQty | 2026-05-14 |
+| 29 | Caja | **Item de preventa muestra anticipo (no precio)** en lado derecho del carrito | 2026-05-14 |
+| 30 | Permisos | **Permisos de costo se respetan** — gerente/cajero ven costos solo si admin activa flag | 2026-05-14 |
+| 31 | Reports | **Ganancia bruta gateada por canViewCost** — no visible a usuarios sin permiso | 2026-05-14 |
 | - | Deploy | **Dominio custom activo** `tadaima.poslite.com.mx` | 2026-05-05 |
 
 ### 🟡 Media prioridad (mejora flujo o datos)
@@ -376,6 +386,10 @@ El endpoint `POST /pre-sale-orders` crea el folio Y registra el anticipo inicial
 | Supabase keys en prod | Media | Faltan `TADAIMA_SUPABASE_URL` y `TADAIMA_SUPABASE_SERVICE_KEY` en Cloud Run `tadaima` us-central1. Sin esto, lookup de socios falla en prod. Sugerencia: pasarlas vía Secret Manager, no env var plana. |
 | Duplicado Cloud Run | Baja | `tadaima` us-west1 abandonado. Borrar después de confirmar 0 tráfico sostenido. |
 | Rollback en checkout mixto | Baja | Si `addPreSaleOrderPayment` o `updatePreSaleOrderStatus` falla DESPUÉS de `createSale`+`createPreSaleOrder` exitosos, queda venta sin liquidación. Mover a transacción server-side cuando se priorice. |
+| Migrar a React Query (TanStack Query) | Media | `@tanstack/react-query@^5.80.7` ya está en `landing/package.json` pero ningún componente lo usa — todo es `useState + useEffect + try/catch`. Migración incremental en 4 PRs (~10 hrs total): (1) setup `QueryClientProvider` + `getStores`; (2) `getProducts` + `getCustomers`; (3) `getPreSaleCatalogs` + `getPreSaleOrders` con invalidaciones cruzadas; (4) mutations con optimistic updates en SellPage. Beneficio: cache compartido entre páginas, refetch automático al navegar, rollback transparente. Cuidar separación server-state (cache) vs client-state (carrito, mesas, formularios → siguen siendo `useState`). |
+| Permisos granulares (`product_scope`, `store_access`) | Media | El TabPermisos guarda JSON en `system_settings.price_permissions` pero NADIE lo lee. Hoy solo el flag `users.can_view_cost` se respeta (fix 2026-05-14). Implementar lectores: filtros de productos visibles en SellPage/ProductsPage, scope de tiendas en gerentes/cajeros, defensa server-side en `ProductController::index`, `ReportsController`, etc. Sprint dedicado. |
+| Imagen en perfil de cliente | Baja | Sugerencia QA Ruben 2026-05-14. `customers` no tiene columna `image_path`. Requiere: migración + endpoint upload + UI con widget. Defer a sprint dedicado. |
+| `preorder_limit` flexible post-arrived | Baja | Sugerencia QA Ruben — permitir admin subir (no bajar) el límite si llegan más unidades de las esperadas. Decisión Joel 2026-05-14: déjalo así por ahora. |
 
 ---
 
@@ -431,6 +445,55 @@ docker compose up --build -d
 ---
 
 ## 11. Historial de sesiones de desarrollo
+
+### Sesión 2026-05-14 — QA Ruben: 12 fixes + plan de pruebas + permisos costos
+
+**Contexto:** QA Ruben subió PDF (`QA - Tadaima Web.pdf`) con bugs en prod: "no puede vender". Joel reactivó proxy Cloud SQL y Laravel local. Cliente final aún no usa el sistema → fase de test, OK ensuciar prod.
+
+**Decisión de entorno** (memoria persistente `project_prod_test_phase.md`): QA se hace directo contra MySQL prod vía Cloud SQL Proxy. No SQLite, no DB separada. Los datos creados durante QA se quedan.
+
+**Bugs fixeados (12 cambios):**
+
+| # | Origen del bug | Archivo | Fix |
+|---|----------------|---------|-----|
+| 1 | Admin "Sin tiendas asignadas" bloqueaba caja en prod | `StoreContext.tsx:34-38` | Lógica defensiva — admin u user sin store_id ven todas las tiendas. Hipótesis original: combinación rara de `user.roles` vacío + `store_id` apuntando a tienda inactiva. |
+| 2 | `POST /products → 422` mostraba "Datos no válidos" genérico | `ProductsPage.tsx:20-32, 970` + `CatalogToProductModal.tsx:173` | `alert()` reemplazado por toast que extrae `errors` por campo de la respuesta Laravel. Causa más probable del 422 era SKU duplicado oculto. |
+| 3 | Modal Productos↔Tomos/Mangas se cerraba al cambiar tab | `ProductsPage.tsx` | Modal mount movido fuera del fragmento `{pageSection === 'productos' && <>...}`. Antes vivía dentro y no se renderizaba al switchear desde Tomos. |
+| 4 | `TypeError: Cannot read properties of undefined (reading 'length')` al ver inventario de manga | `packages/api/src/mangas.ts:23-26` + `MangaEditModal.tsx:98-109` | `getMangaInventory` hacía `response.data.data` pero el interceptor ya unwrapea `{data: ...}` → segundo `.data` daba undefined. Fix: `return response.data ?? []`. Defensive: `Array.isArray(items) ? items : []` en consumer. |
+| 5 | Columna `P1 / Anticipo` en lista de catálogos mostraba precio prominente y anticipo chico — confuso | `PreSaleCatalogsPanel.tsx:234-245` | Swap visual: Anticipo prominente arriba, "Precio: $X" chico abajo. Header → "Anticipo · Precio". |
+| 6 | Toggle "Publicar ahora" sin contexto al usuario | `NewPreSaleCatalogModal.tsx:300-322` | Copy dinámico según estado: ON → "Se podrá vender en Caja al guardar." · OFF → "Queda como borrador — NO aparecerá en Caja hasta que lo publiques." |
+| 7 | Check "Notificado" en Difusión sin persistencia backend | `PreSaleDifusionPanel.tsx:157-167` | Comentado. Decisión: agregar persistencia en sprint dedicado (columna `notified_at` o entrada en `pre_sale_order_logs`). |
+| 8 | Imágenes no aparecían en catálogo de Caja | `SellPage.tsx:17, 391-410` | Adapter de `getProducts → forma local SellPage` no mapeaba `image`. Agregado `firstImage?.url ?? storageUrl(firstImage?.image_path)`. |
+| 9 | Imágenes parejas en catálogo (algunas se cortaban, otras dejaban espacios) | `ProductCatalogModal.tsx:255, 446` | Ratio cambiado de `2/1` (banner ancho) a `1/1` cuadrado + `objectFit: contain` con padding 6px. Estándar de productos. |
+| 10 | Caja 2+: "carrito no sincronizado: pantalla muestra $2,000 pero servidor tiene $1,000" | `SellPage.tsx changeQty` | Dos bugs: (a) si el `addDraftItem` inicial aún no termina y el user clickea `+`, `itemId` undefined → early return SIN rollback; (b) si `updateDraftItem` falla, solo toast.error sin revertir UI. Fix: rollback de cantidad + depositAmount en ambos casos, marca `syncError` para bloquear checkout. |
+| 11 | Item de preventa nueva en carrito mostraba precio×cantidad ($1,100) en lugar de anticipo ($100) | `SellPage.tsx:2718-2738` | Items con `sellingCatalogId != null` ahora muestran `item.depositAmount` prominente (ámbar) + `de $1,100` chico. Items regulares y de folio cargado sin cambios. |
+| 12 | Imágenes thumbnail en listas de mangas y preventas | `ProductsPage.tsx:1237-1253` + `PreSaleCatalogsPanel.tsx:210-225` | Mangas: thumbnail 40×40 si hay `image_url`, sino fallback al badge de volumen. Preventas: thumbnail 36×36 si hay `image_path` (via storageUrl), sino placeholder con icon Package. |
+
+**Permisos de costo — enforcement real:**
+
+Encontrado: el `TabPermisos` (`Inicio → Permisos` PRICE_PERMISSIONS) existe y **guarda** datos (`users.can_view_cost` + JSON en `system_settings.price_permissions`) pero **nadie lee** esos datos fuera del editor.
+
+- Fix aplicado: `ProductsPage.tsx:852` cambiado de `(isAdmin && (user?.can_view_cost ?? true)) || false` → `isAdmin || !!user?.can_view_cost`. Ahora gerente/cajero ven costos solo si admin les activa el toggle desde Permisos.
+- Fix aplicado: `ReportsPage.tsx:117-120` añadido `canViewCost` + gate en KPI "Ganancia bruta" (líneas 376-388 del bloque ventas).
+- Pendiente: los permisos granulares (`product_scope: specific|all` + `store_access: assigned|specific|all` + `extra_store_ids` + `product_ids`) **siguen sin enforcement**. Sprint dedicado.
+
+**Plan QA generado:** `docs/QA_PLAN_2026-05-14.md` (30+ casos en bloques A-G, prioridades P0/P1/P2, comandos, criterios de aceptación). Para Ruben ejecutar cuando todo esté deployado.
+
+**Memoria nueva guardada:** `project_prod_test_phase.md` — durante fase de test, QA va directo contra MySQL prod, no migrar a SQLite.
+
+**Decisiones del producto (Joel):**
+- Lock de `preorder_limit` post-arrived: dejar como está, no permitir subir aunque llegue stock de más.
+- Límite por tienda: no implementar, sin límite por tienda (lo que entra es el límite).
+- Imagen en perfil cliente: requiere migración nueva + endpoint, defer a sprint dedicado.
+- Roles: dueño/admin ven todo, gerente y cajero ven solo su tienda asignada. Gerente puede vender + gestionar pero NO ve costos reales/finanzas a menos que admin le active el flag.
+- Comisiones de terminal nunca al cliente (regla ya cableada).
+
+**Pendientes inmediatos al cierre:**
+- QA: Joel está probando en local (vite + Laravel local + MySQL prod). Va a reportar bugs encontrados.
+- Deploy: commit + push + `gcloud run deploy tadaima` cuando termine el smoke test local.
+- Ruben: no está probando ahora — esperará al deploy para probar contra `tadaima.poslite.com.mx`.
+
+---
 
 ### Sesión 2026-05-12 — Fix bug checkout mixto + deploy a prod
 

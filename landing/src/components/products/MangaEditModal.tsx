@@ -99,9 +99,10 @@ export function MangaEditModal({
     setInvLoading(true)
     getMangaInventory(manga.id)
       .then(items => {
-        setInventory(items)
+        const list = Array.isArray(items) ? items : []
+        setInventory(list)
         const init: Record<number, string> = {}
-        items.forEach(i => { init[i.warehouse_id] = String(i.quantity) })
+        list.forEach(i => { init[i.warehouse_id] = String(i.quantity) })
         setQuantities(init)
       })
       .catch(() => {})

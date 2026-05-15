@@ -171,7 +171,16 @@ export function CatalogToProductModal({ catalog, onClose, onSuccess }: Props) {
       toast.success(`"${product.name}" creado y vinculado`);
       onSuccess(product.id);
     } catch (err: unknown) {
-      toast.error((err as { message?: string }).message ?? "Error al crear el producto");
+      const apiErr = err as { message?: string; errors?: Record<string, string[]> };
+      const detail = apiErr?.errors
+        ? Object.entries(apiErr.errors)
+            .map(([field, msgs]) => `${field}: ${msgs.join(", ")}`)
+            .join("\n")
+        : undefined;
+      toast.error(apiErr?.message ?? "No se pudo crear el producto", {
+        description: detail,
+        duration: 8000,
+      });
     } finally {
       setSaving(false);
     }

@@ -316,7 +316,11 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog }: Props) {
                   </div>
                   <div>
                     <span style={{ fontSize: 12, fontWeight: 800, color: TP }}>Publicar ahora</span>
-                    <p style={{ fontSize: 10, color: TM, margin: 0 }}>Visible para ventas en caja al guardar</p>
+                    <p style={{ fontSize: 10, color: TM, margin: 0 }}>
+                      {publishNow
+                        ? "Se podrá vender en Caja al guardar."
+                        : "Queda como borrador — NO aparecerá en Caja hasta que lo publiques."}
+                    </p>
                   </div>
                 </label>
               )}
