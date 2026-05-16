@@ -1,11 +1,15 @@
 import React from 'react'
 import { RouterProvider } from 'react-router-dom'
+import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client'
 import { AuthProvider } from '@tadaima/auth'
 import { StoreProvider } from '@/contexts/StoreContext'
 import { ThemeProvider } from '@/contexts/ThemeContext'
 import { router } from '@/router'
 import { localStorageTokenStorage } from '@/lib/tokenStorage'
+import { queryClient, queryPersister } from '@/lib/queryClient'
 import { Toaster } from 'sonner'
+
+const ONE_DAY_MS = 24 * 60 * 60_000
 
 interface ErrorBoundaryState { error: Error | null }
 
@@ -32,26 +36,31 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, Error
 function App(): React.JSX.Element {
   return (
     <ErrorBoundary>
-      <ThemeProvider>
-        <AuthProvider storage={localStorageTokenStorage}>
-          <StoreProvider>
-            <RouterProvider router={router} />
-            <Toaster
-              position="top-right"
-              toastOptions={{
-                style: {
-                  background: '#1e293b',
-                  color: '#f1f5f9',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  borderRadius: '14px',
-                  fontSize: '13px',
-                  fontWeight: 600,
-                },
-              }}
-            />
-          </StoreProvider>
-        </AuthProvider>
-      </ThemeProvider>
+      <PersistQueryClientProvider
+        client={queryClient}
+        persistOptions={{ persister: queryPersister, maxAge: ONE_DAY_MS }}
+      >
+        <ThemeProvider>
+          <AuthProvider storage={localStorageTokenStorage}>
+            <StoreProvider>
+              <RouterProvider router={router} />
+              <Toaster
+                position="top-right"
+                toastOptions={{
+                  style: {
+                    background: '#1e293b',
+                    color: '#f1f5f9',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    borderRadius: '14px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                  },
+                }}
+              />
+            </StoreProvider>
+          </AuthProvider>
+        </ThemeProvider>
+      </PersistQueryClientProvider>
     </ErrorBoundary>
   )
 }

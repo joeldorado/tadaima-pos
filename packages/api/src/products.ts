@@ -8,6 +8,68 @@ export interface GetProductsParams {
   category_id?: number
   active?: boolean
   store_id?: number
+  /**
+   * 'top' ordena por count de sale_items en los últimos 30 días (desc).
+   * Útil para pre-cargar el cache con los productos que el cajero más usa.
+   */
+  sort?: 'top'
+}
+
+/**
+ * Slim product shape returned by GET /products?light=1.
+ * Drops barcode, description, cost, category object, images array, timestamps.
+ * Only first image URL is included as the flat `image` field.
+ */
+export interface ProductLight {
+  id: number
+  name: string
+  sku: string
+  active: boolean
+  category_id: number | null
+  prices: {
+    price_1: number | null
+    price_2: number | null
+    price_3: number | null
+    price_4: number | null
+    price_5: number | null
+  }
+  image: string | null
+  allow_cash: boolean
+  allow_card: boolean
+  stock_total: number
+}
+
+/**
+ * Obtiene la lista de productos en formato slim para Caja.
+ * ~60% más pequeño que getProducts(). Útil cuando hay miles de productos
+ * que el cajero necesita cachear localmente.
+ */
+export async function getProductsLight(
+  params?: Omit<GetProductsParams, 'page' | 'per_page'>
+): Promise<PaginatedResponse<ProductLight>> {
+  const response = await apiClient.get<PaginatedResponse<ProductLight> | ProductLight[]>('/products', {
+    params: { ...params, light: 1, per_page: 0 },
+  })
+  const raw = response.data
+  if (Array.isArray(raw)) {
+    return {
+      data: raw,
+      current_page: 1,
+      last_page: 1,
+      per_page: raw.length,
+      total: raw.length,
+    }
+  }
+  return raw
+}
+
+/**
+ * Reads price_N from a ProductLight's prices object. Same logic as getPrice
+ * for regular Product. Returns 0 if the level is null/undefined.
+ */
+export function getLightPrice(product: ProductLight, level: 1 | 2 | 3 | 4 | 5 = 1): number {
+  const key = `price_${level}` as keyof ProductLight['prices']
+  return Number(product.prices?.[key] ?? 0) || 0
 }
 
 /**

@@ -7,10 +7,14 @@ import {
 import { motion } from "motion/react";
 import { toast } from "sonner";
 import {
-  getTransfers, createTransfer, completeTransfer, cancelTransfer,
-  getWarehouses, getProducts, getInventory,
+  createTransfer, completeTransfer, cancelTransfer,
+  getProducts, getInventory,
 } from "@tadaima/api";
 import type { InventoryItem, Transfer, Warehouse } from "@tadaima/api";
+import { useQueryClient } from "@tanstack/react-query";
+import { useTransfersQuery } from "@/hooks/queries/useTransfers";
+import { useWarehousesQuery } from "@/hooks/queries/useWarehouses";
+import { queryKeys } from "@/lib/queryKeys";
 
 // ─── Paleta Tadaima ───────────────────────────────────────────────────────────
 const T = {
@@ -96,9 +100,13 @@ function getStatusInfo(status: Transfer["status"]) {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export function TransfersPage() {
-  const [transfers, setTransfers]       = useState<Transfer[]>([]);
-  const [warehouses, setWarehouses]     = useState<Warehouse[]>([]);
-  const [loading, setLoading]           = useState(true);
+  const queryClient = useQueryClient();
+  const transfersQuery = useTransfersQuery({ per_page: 100 });
+  const warehousesQuery = useWarehousesQuery({ active: true });
+  const transfers: Transfer[] = transfersQuery.data?.data ?? [];
+  const warehouses: Warehouse[] = warehousesQuery.data ?? [];
+  const loading = transfersQuery.isPending || warehousesQuery.isPending;
+  const invalidateTransfers = () => queryClient.invalidateQueries({ queryKey: queryKeys.transfers.all });
   const [isModalOpen, setIsModalOpen]   = useState(false);
   const [saving, setSaving]             = useState(false);
   const [actionLoading, setActionLoading] = useState<Record<number, boolean>>({});
@@ -129,30 +137,20 @@ export function TransfersPage() {
     [items],
   );
 
-  // ─── Data loading ──────────────────────────────────────────────────────────
-  const load = async () => {
-    setLoading(true);
-    try {
-      const [res, whs] = await Promise.all([
-        getTransfers({ per_page: 100 }),
-        getWarehouses({ active: true }),
-      ]);
-      setTransfers(res.data);
-      setWarehouses(whs);
-      if (whs.length >= 2) {
-        setFromWhId(String(whs[0]!.id));
-        setToWhId(String(whs[1]!.id));
-      } else if (whs.length === 1) {
-        setFromWhId(String(whs[0]!.id));
-      }
-    } catch {
+  useEffect(() => {
+    if (transfersQuery.error || warehousesQuery.error) {
       toast.error("Error al cargar transferencias");
-    } finally {
-      setLoading(false);
     }
-  };
+  }, [transfersQuery.error, warehousesQuery.error]);
 
-  useEffect(() => { void load(); }, []);
+  // Auto-pick first two warehouses once they load (if not already set)
+  useEffect(() => {
+    if (warehouses.length === 0) return;
+    setFromWhId(prev => prev || String(warehouses[0]!.id));
+    if (warehouses.length >= 2) {
+      setToWhId(prev => prev || String(warehouses[1]!.id));
+    }
+  }, [warehouses]);
 
   // ─── Product search (debounced) ────────────────────────────────────────────
   const handleProductSearchChange = (val: string) => {
@@ -414,17 +412,17 @@ export function TransfersPage() {
         items:             items.map(i => ({ product_id: i.product_id, quantity: Math.max(1, Number(i.quantityInput) || i.quantity) })),
       });
 
-      const finalTransfer = transferMode === "complete"
-        ? await completeTransfer(createdTransfer.id)
-        : createdTransfer;
+      if (transferMode === "complete") {
+        await completeTransfer(createdTransfer.id);
+      }
 
-      setTransfers(prev => [finalTransfer, ...prev.filter(t => t.id !== finalTransfer.id)]);
+      void invalidateTransfers();
       toast.success(transferMode === "complete" ? "Transferencia completada" : "Transferencia creada");
       setIsModalOpen(false);
       resetModal();
     } catch {
       if (createdTransfer) {
-        setTransfers(prev => [createdTransfer!, ...prev.filter(t => t.id !== createdTransfer!.id)]);
+        void invalidateTransfers();
         toast.error("La transferencia se creó, pero no se pudo completar automáticamente");
       } else {
         toast.error(transferMode === "complete" ? "Error al completar transferencia" : "Error al crear transferencia");
@@ -437,8 +435,8 @@ export function TransfersPage() {
   const handleComplete = async (id: number) => {
     setActionLoading(prev => ({ ...prev, [id]: true }));
     try {
-      const updated = await completeTransfer(id);
-      setTransfers(prev => prev.map(t => t.id === id ? updated : t));
+      await completeTransfer(id);
+      void invalidateTransfers();
       toast.success("Transferencia completada — inventario actualizado");
     } catch {
       toast.error("Error al completar transferencia");
@@ -450,8 +448,8 @@ export function TransfersPage() {
   const handleCancel = async (id: number) => {
     setActionLoading(prev => ({ ...prev, [id]: true }));
     try {
-      const updated = await cancelTransfer(id);
-      setTransfers(prev => prev.map(t => t.id === id ? updated : t));
+      await cancelTransfer(id);
+      void invalidateTransfers();
       toast.success("Transferencia cancelada");
     } catch {
       toast.error("Error al cancelar transferencia");

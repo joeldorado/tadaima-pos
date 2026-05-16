@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { toast } from "sonner";
-import { getPreSaleCatalogs, getPreSaleOrders } from "@tadaima/api";
 import type { PreSaleCatalog, PreSaleOrder } from "@tadaima/api";
+import { usePreSaleCatalogsQuery, usePreSaleOrdersQuery } from "@/hooks/queries/usePreSales";
 import {
   Truck, ChevronDown, ChevronRight, Loader2,
   MessageCircle, Mail, Phone, CheckSquare, Square,
@@ -52,29 +52,22 @@ interface CatalogRowProps {
 
 function CatalogRow({ catalog }: CatalogRowProps) {
   const [open, setOpen] = useState(false);
-  const [orders, setOrders] = useState<PreSaleOrder[]>([]);
-  const [loading, setLoading] = useState(false);
   const [notified, setNotified] = useState<Set<number>>(new Set());
 
   const dl = deadlineInfo(catalog.pickup_deadline);
 
-  const load = useCallback(async () => {
-    if (orders.length > 0) return;
-    setLoading(true);
-    try {
-      const res = await getPreSaleOrders({ catalog_id: catalog.id, per_page: 200 });
-      setOrders(res.data.filter(o => o.status !== "cancelled"));
-    } catch {
-      toast.error("No se pudieron cargar los folios");
-    } finally {
-      setLoading(false);
-    }
-  }, [catalog.id, orders.length]);
+  const ordersQuery = usePreSaleOrdersQuery(
+    { catalog_id: catalog.id, per_page: 200 },
+    { enabled: open }
+  );
+  const orders: PreSaleOrder[] = (ordersQuery.data?.data ?? []).filter(o => o.status !== "cancelled");
+  const loading = open && ordersQuery.isPending;
 
-  const toggle = () => {
-    if (!open) void load();
-    setOpen(v => !v);
-  };
+  useEffect(() => {
+    if (ordersQuery.error) toast.error("No se pudieron cargar los folios");
+  }, [ordersQuery.error]);
+
+  const toggle = () => setOpen(v => !v);
 
   const toggleNotified = (orderId: number) =>
     setNotified(prev => {
@@ -230,15 +223,13 @@ function CatalogRow({ catalog }: CatalogRowProps) {
 }
 
 export function PreSaleDifusionPanel() {
-  const [catalogs, setCatalogs] = useState<PreSaleCatalog[]>([]);
-  const [loading, setLoading] = useState(true);
+  const catalogsQuery = usePreSaleCatalogsQuery({ status: "arrived", per_page: 200 });
+  const catalogs: PreSaleCatalog[] = catalogsQuery.data?.data ?? [];
+  const loading = catalogsQuery.isPending;
 
   useEffect(() => {
-    getPreSaleCatalogs({ status: "arrived", per_page: 200 })
-      .then(res => setCatalogs(res.data))
-      .catch(() => toast.error("Error al cargar catálogos"))
-      .finally(() => setLoading(false));
-  }, []);
+    if (catalogsQuery.error) toast.error("Error al cargar catálogos");
+  }, [catalogsQuery.error]);
 
   return (
     <div style={{ ...GLASS, borderRadius: 24, padding: 24 }}>

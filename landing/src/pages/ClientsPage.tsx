@@ -7,13 +7,15 @@ import {
 import { motion } from "motion/react";
 import { toast } from "sonner";
 import {
-  getCustomers,
   createCustomer,
   updateCustomer,
   searchExternalCustomers,
   type Customer,
   type ExternalCardLookup,
 } from "@tadaima/api";
+import { useQueryClient } from "@tanstack/react-query";
+import { useCustomersQuery } from "@/hooks/queries/useCustomers";
+import { queryKeys } from "@/lib/queryKeys";
 
 // ─── Paleta Tadaima ───────────────────────────────────────────────────────────
 const T = {
@@ -75,8 +77,6 @@ type EditingCustomer = {
 const EMPTY_FORM: EditingCustomer = { name: "", phone: "", email: "", address: "", notes: "" };
 
 export function ClientsPage() {
-  const [customers, setCustomers]     = useState<Customer[]>([]);
-  const [loading, setLoading]         = useState(true);
   const [saving, setSaving]           = useState(false);
   const [search, setSearch]           = useState("");
   const [selectedId, setSelectedId]   = useState<number | null>(null);
@@ -85,23 +85,24 @@ export function ClientsPage() {
   const [extResults, setExtResults]   = useState<ExternalCardLookup[]>([]);
   const [addingExt, setAddingExt]     = useState<string | null>(null);
 
-  // ── Cargar clientes ────────────────────────────────────────────────────────
-  const fetchCustomers = async () => {
-    try {
-      setLoading(true);
-      const paginated = await getCustomers();
-      setCustomers(paginated.data);
-      if (paginated.data.length > 0 && selectedId === null) {
-        setSelectedId(paginated.data[0].id);
-      }
-    } catch {
-      toast.error("Error al cargar clientes");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const queryClient = useQueryClient();
+  const customersQuery = useCustomersQuery();
+  const customers: Customer[] = customersQuery.data?.data ?? [];
+  const loading = customersQuery.isPending;
 
-  useEffect(() => { void fetchCustomers(); }, []);
+  useEffect(() => {
+    if (customersQuery.error) toast.error("Error al cargar clientes");
+  }, [customersQuery.error]);
+
+  useEffect(() => {
+    const first = customers[0];
+    if (selectedId === null && first) setSelectedId(first.id);
+  }, [customers, selectedId]);
+
+  const invalidateCustomers = useCallback(
+    () => queryClient.invalidateQueries({ queryKey: queryKeys.customers.all }),
+    [queryClient]
+  );
 
   // ── Guardar (crear o actualizar) ───────────────────────────────────────────
   const handleSave = async () => {
@@ -124,13 +125,12 @@ export function ClientsPage() {
 
       if (form.id) {
         saved = await updateCustomer(form.id, payload);
-        setCustomers(prev => prev.map(c => c.id === saved.id ? saved : c));
         toast.success("Cliente actualizado");
       } else {
         saved = await createCustomer(payload);
-        setCustomers(prev => [saved, ...prev]);
         toast.success("Cliente registrado");
       }
+      void invalidateCustomers();
 
       setSelectedId(saved.id);
       setIsModalOpen(false);
@@ -195,7 +195,7 @@ export function ClientsPage() {
         external_member_id: ext.external_member_id,
         loyalty_tier:       ext.nivel ?? undefined,
       });
-      setCustomers(prev => [newCust, ...prev]);
+      void invalidateCustomers();
       setSelectedId(newCust.id);
       setExtResults([]);
       setSearch("");

@@ -13,13 +13,13 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import {
-  getStores, createStore, updateStore,
+  createStore, updateStore,
   getWarehouses, createWarehouse, updateWarehouse,
   getInventory, updateInventory, getProducts,
-  getUsers, createUser, updateUser, assignRole,
-  getCategories, createCategory, updateCategory, deleteCategory,
+  createUser, updateUser, deleteUser, assignRole,
+  createCategory, updateCategory, deleteCategory,
   getTerminals, createTerminal, updateTerminal, deleteTerminal,
-  getRoles, createRole, getPermissions, assignRolePermissions,
+  createRole, getPermissions, assignRolePermissions,
   getStorePrices, updateStorePrices,
 } from "@tadaima/api";
 import type {
@@ -28,6 +28,13 @@ import type {
   User as ApiUser, ProductCategory, Terminal,
   Role, Permission, StorePriceRow,
 } from "@tadaima/api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useStoresQuery } from "@/hooks/queries/useStores";
+import { useWarehousesQuery } from "@/hooks/queries/useWarehouses";
+import { useUsersQuery } from "@/hooks/queries/useUsers";
+import { useRolesQuery } from "@/hooks/queries/useRoles";
+import { useCategoriesQuery } from "@/hooks/queries/useCategories";
+import { queryKeys } from "@/lib/queryKeys";
 
 // ─── Design tokens (coherente con resto del sistema) ─────────────────────────
 const BG   = "var(--td-page-bg)";
@@ -158,26 +165,21 @@ interface StoreFormData {
 }
 
 function TabSucursales() {
-  const [stores, setStores] = useState<ApiStore[]>([]);
+  const queryClient = useQueryClient();
+  const storesQuery = useStoresQuery();
+  const stores: ApiStore[] = storesQuery.data ?? [];
+  const loading = storesQuery.isPending;
   const [modal, setModal] = useState<{ open: boolean; data: StoreFormData }>({
     open: false,
     data: { name: "", address: "", phone: "", email: "", active: true },
   });
   const [saving, setSaving] = useState(false);
-  const [loading, setLoading] = useState(true);
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      setStores(await getStores());
-    } catch {
-      toast.error("Error al cargar sucursales");
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    if (storesQuery.error) toast.error("Error al cargar sucursales");
+  }, [storesQuery.error]);
 
-  useEffect(() => { void load(); }, []);
+  const invalidateStores = () => queryClient.invalidateQueries({ queryKey: queryKeys.stores.all });
 
   const save = async () => {
     const d = modal.data;
@@ -185,17 +187,16 @@ function TabSucursales() {
     setSaving(true);
     try {
       if (d.id) {
-        const updated = await updateStore(d.id, {
+        await updateStore(d.id, {
           name: d.name,
           address: d.address || undefined,
           phone: d.phone || undefined,
           email: d.email || undefined,
           active: d.active,
         });
-        setStores(prev => prev.map(s => s.id === updated.id ? updated : s));
         toast.success("Sucursal actualizada");
       } else {
-        const created = await createStore({
+        await createStore({
           // company_id lo deriva el backend desde el user autenticado
           name: d.name,
           address: d.address || undefined,
@@ -203,9 +204,9 @@ function TabSucursales() {
           email: d.email || undefined,
           active: d.active,
         });
-        setStores(prev => [...prev, created]);
         toast.success("Sucursal creada");
       }
+      void invalidateStores();
       setModal({ open: false, data: { name: "", address: "", phone: "", email: "", active: true } });
     } catch {
       toast.error("Error al guardar la sucursal");
@@ -310,29 +311,23 @@ const EMPTY_WAREHOUSE: WarehouseFormData = {
 };
 
 function TabBodegas() {
-  const [warehouses, setWarehouses] = useState<ApiWarehouse[]>([]);
-  const [stores, setStores] = useState<ApiStore[]>([]);
+  const queryClient = useQueryClient();
+  const warehousesQuery = useWarehousesQuery();
+  const storesQuery = useStoresQuery();
+  const warehouses: ApiWarehouse[] = warehousesQuery.data ?? [];
+  const stores: ApiStore[] = storesQuery.data ?? [];
+  const loading = warehousesQuery.isPending || storesQuery.isPending;
   const [modal, setModal] = useState<{ open: boolean; data: WarehouseFormData }>({
     open: false,
     data: EMPTY_WAREHOUSE,
   });
   const [saving, setSaving] = useState(false);
-  const [loading, setLoading] = useState(true);
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      const [whs, sts] = await Promise.all([getWarehouses(), getStores()]);
-      setWarehouses(whs);
-      setStores(sts);
-    } catch {
-      toast.error("Error al cargar bodegas");
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    if (warehousesQuery.error || storesQuery.error) toast.error("Error al cargar bodegas");
+  }, [warehousesQuery.error, storesQuery.error]);
 
-  useEffect(() => { void load(); }, []);
+  const invalidateWarehouses = () => queryClient.invalidateQueries({ queryKey: ['warehouses'] });
 
   const save = async () => {
     const d = modal.data;
@@ -340,16 +335,15 @@ function TabBodegas() {
     setSaving(true);
     try {
       if (d.id) {
-        const updated = await updateWarehouse(d.id, {
+        await updateWarehouse(d.id, {
           name: d.name,
           type: d.type,
           description: d.description || undefined,
           active: d.active,
         });
-        setWarehouses(prev => prev.map(w => w.id === updated.id ? updated : w));
         toast.success("Bodega actualizada");
       } else {
-        const created = await createWarehouse({
+        await createWarehouse({
           // company_id lo deriva el backend desde el user autenticado
           store_id: d.store_id ?? null,
           name: d.name,
@@ -357,9 +351,9 @@ function TabBodegas() {
           description: d.description || undefined,
           active: d.active,
         });
-        setWarehouses(prev => [...prev, created]);
         toast.success("Bodega creada");
       }
+      void invalidateWarehouses();
       setModal({ open: false, data: EMPTY_WAREHOUSE });
     } catch {
       toast.error("Error al guardar la bodega");
@@ -472,28 +466,25 @@ interface UserFormData {
 }
 
 function TabUsuarios() {
-  const [users, setUsers]   = useState<ApiUser[]>([]);
-  const [stores, setStores] = useState<ApiStore[]>([]);
-  const [roles, setRoles]   = useState<Role[]>([]);
+  const { user: currentUser } = useAuth();
+  const queryClient = useQueryClient();
+  const usersQuery = useUsersQuery();
+  const storesQuery = useStoresQuery();
+  const rolesQuery = useRolesQuery();
+  const users: ApiUser[] = usersQuery.data ?? [];
+  const stores: ApiStore[] = storesQuery.data ?? [];
+  const roles: Role[] = rolesQuery.data ?? [];
+  const loading = usersQuery.isPending || storesQuery.isPending || rolesQuery.isPending;
   const [modal, setModal]   = useState<{ open: boolean; data: UserFormData } | null>(null);
   const [saving, setSaving] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<ApiUser | null>(null);
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      const [us, sts, rls] = await Promise.all([getUsers(), getStores(), getRoles()]);
-      setUsers(us);
-      setStores(sts);
-      setRoles(rls);
-    } catch {
-      toast.error("Error al cargar usuarios");
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    if (usersQuery.error || storesQuery.error || rolesQuery.error) toast.error("Error al cargar usuarios");
+  }, [usersQuery.error, storesQuery.error, rolesQuery.error]);
 
-  useEffect(() => { void load(); }, []);
+  const invalidateUsers = () => queryClient.invalidateQueries({ queryKey: queryKeys.users.all });
 
   const openCreate = () => setModal({ open: true, data: { name: "", email: "", password: "", phone: "", active: true, store_id: undefined, role_id: undefined } });
   const openEdit = (u: ApiUser) => {
@@ -509,7 +500,7 @@ function TabUsuarios() {
     setSaving(true);
     try {
       if (d.id) {
-        const updated = await updateUser(d.id, {
+        await updateUser(d.id, {
           name: d.name,
           email: d.email,
           phone: d.phone || undefined,
@@ -520,12 +511,10 @@ function TabUsuarios() {
         if (d.role_id) {
           await assignRole(d.id, d.role_id);
         }
-        const roleName = d.role_id ? (roles.find(r => r.id === d.role_id)?.name ?? "") : "";
-        setUsers(prev => prev.map(u => u.id === updated.id ? { ...updated, roles: d.role_id ? [roleName] : updated.roles } : u));
         toast.success("Usuario actualizado");
       } else {
         if (!d.password.trim()) { toast.error("La contraseña es requerida"); setSaving(false); return; }
-        const created = await createUser({
+        await createUser({
           name: d.name,
           email: d.email,
           password: d.password,
@@ -534,9 +523,9 @@ function TabUsuarios() {
           store_id: d.store_id,
           role_id: d.role_id,
         });
-        setUsers(prev => [...prev, created]);
         toast.success("Usuario creado");
       }
+      void invalidateUsers();
       closeModal();
     } catch {
       toast.error("Error al guardar usuario");
@@ -547,6 +536,30 @@ function TabUsuarios() {
 
   const setField = (key: keyof UserFormData, value: string | boolean | number | undefined) =>
     setModal(m => m ? { ...m, data: { ...m.data, [key]: value } } : m);
+
+  const askDelete = (u: ApiUser) => {
+    if (currentUser?.id === u.id) {
+      toast.error("No puedes eliminar tu propio usuario");
+      return;
+    }
+    setConfirmDelete(u);
+  };
+
+  const confirmDeleteUser = async () => {
+    if (!confirmDelete) return;
+    const u = confirmDelete;
+    setDeletingId(u.id);
+    try {
+      await deleteUser(u.id);
+      void invalidateUsers();
+      toast.success("Usuario eliminado");
+      setConfirmDelete(null);
+    } catch {
+      toast.error("Error al eliminar usuario");
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   return (
     <div>
@@ -578,7 +591,18 @@ function TabUsuarios() {
                   {u.store && <Badge color="blue">{u.store.name}</Badge>}
                 </div>
               </div>
-              <Btn onClick={() => openEdit(u)}><Edit2 size={12} /></Btn>
+              <div style={{ display: "flex", gap: 6 }}>
+                <Btn onClick={() => openEdit(u)}><Edit2 size={12} /></Btn>
+                <span title={currentUser?.id === u.id ? "No puedes eliminar tu propio usuario" : "Eliminar usuario"}>
+                  <Btn
+                    onClick={() => askDelete(u)}
+                    disabled={deletingId === u.id || currentUser?.id === u.id}
+                    style={{ color: currentUser?.id === u.id ? TM : "#FF6B6B" }}
+                  >
+                    {deletingId === u.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                  </Btn>
+                </span>
+              </div>
             </div>
           ))}
           {users.length === 0 && <div style={{ textAlign: "center", padding: 40, color: TM, fontSize: 13 }}>No hay usuarios registrados</div>}
@@ -642,38 +666,70 @@ function TabUsuarios() {
           </div>
         </Modal>
       )}
+      {confirmDelete && (
+        <Modal title="Eliminar usuario" onClose={() => deletingId === null && setConfirmDelete(null)} width={460}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+            <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
+              <div style={{ width: 44, height: 44, borderRadius: 14, background: "rgba(255,107,107,0.12)", border: "1px solid rgba(255,107,107,0.25)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <AlertTriangle size={20} color="#FF6B6B" />
+              </div>
+              <div style={{ flex: 1 }}>
+                <p style={{ color: TP, fontSize: 14, fontWeight: 700, margin: 0, marginBottom: 6 }}>
+                  ¿Eliminar a "{confirmDelete.name}"?
+                </p>
+                <p style={{ color: TS, fontSize: 12, margin: 0, lineHeight: 1.5 }}>
+                  El usuario será desactivado y no podrá iniciar sesión. Sus ventas y registros históricos se conservan.
+                </p>
+              </div>
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <Btn onClick={() => setConfirmDelete(null)} disabled={deletingId !== null}>Cancelar</Btn>
+              <Btn
+                variant="red"
+                onClick={() => void confirmDeleteUser()}
+                disabled={deletingId !== null}
+                style={{ display: "flex", alignItems: "center", gap: 7 }}
+              >
+                {deletingId !== null ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                Eliminar
+              </Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
 
 // ─── TAB: Roles & Permisos ────────────────────────────────────────────────────
 function TabRoles() {
-  const [roles, setRoles]               = useState<Role[]>([]);
-  const [allPerms, setAllPerms]         = useState<Permission[]>([]);
-  const [loading, setLoading]           = useState(true);
+  const queryClient = useQueryClient();
+  const rolesQuery = useRolesQuery();
+  const permsQuery = useQuery({
+    queryKey: ['permissions', 'list'],
+    queryFn: () => getPermissions(),
+  });
+  const roles: Role[] = rolesQuery.data ?? [];
+  const allPerms: Permission[] = permsQuery.data ?? [];
+  const loading = rolesQuery.isPending || permsQuery.isPending;
   const [newRoleName, setNewRoleName]   = useState("");
   const [creatingRole, setCreatingRole] = useState(false);
   const [permModal, setPermModal]       = useState<Role | null>(null);
   const [selected, setSelected]         = useState<number[]>([]);
   const [savingPerms, setSavingPerms]   = useState(false);
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      const [r, p] = await Promise.all([getRoles(), getPermissions()]);
-      setRoles(r); setAllPerms(p);
-    } catch { toast.error("Error al cargar roles"); }
-    finally { setLoading(false); }
-  };
+  useEffect(() => {
+    if (rolesQuery.error || permsQuery.error) toast.error("Error al cargar roles");
+  }, [rolesQuery.error, permsQuery.error]);
 
-  useEffect(() => { void load(); }, []);
+  const invalidateRoles = () => queryClient.invalidateQueries({ queryKey: queryKeys.roles.all });
 
   const handleCreateRole = async () => {
     if (!newRoleName.trim()) return;
     setCreatingRole(true);
     try {
       const role = await createRole(newRoleName.trim());
-      setRoles(r => [...r, role]);
+      void invalidateRoles();
       setNewRoleName("");
       toast.success(`Rol "${role.name}" creado`);
     } catch { toast.error("Error al crear rol"); }
@@ -689,8 +745,8 @@ function TabRoles() {
     if (!permModal) return;
     setSavingPerms(true);
     try {
-      const updated = await assignRolePermissions(permModal.id, selected);
-      setRoles(r => r.map(x => x.id === updated.id ? updated : x));
+      await assignRolePermissions(permModal.id, selected);
+      void invalidateRoles();
       setPermModal(null);
       toast.success("Permisos actualizados");
     } catch { toast.error("Error al guardar permisos"); }
@@ -784,23 +840,18 @@ interface CategoryFormData {
 }
 
 function TabCategorias() {
-  const [categories, setCategories] = useState<ProductCategory[]>([]);
+  const queryClient = useQueryClient();
+  const categoriesQuery = useCategoriesQuery();
+  const categories: ProductCategory[] = categoriesQuery.data ?? [];
+  const loading = categoriesQuery.isPending;
   const [modal, setModal] = useState<{ open: boolean; data: CategoryFormData } | null>(null);
   const [saving, setSaving] = useState(false);
-  const [loading, setLoading] = useState(true);
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      setCategories(await getCategories());
-    } catch {
-      toast.error("Error al cargar categorías");
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    if (categoriesQuery.error) toast.error("Error al cargar categorías");
+  }, [categoriesQuery.error]);
 
-  useEffect(() => { void load(); }, []);
+  const invalidateCategories = () => queryClient.invalidateQueries({ queryKey: queryKeys.categories.all });
 
   const openCreate = () => setModal({ open: true, data: { name: "", description: "", active: true } });
   const openEdit = (c: ProductCategory) => setModal({ open: true, data: { id: c.id, name: c.name, description: c.description ?? "", active: c.active } });
@@ -813,14 +864,13 @@ function TabCategorias() {
     setSaving(true);
     try {
       if (d.id) {
-        const updated = await updateCategory(d.id, { name: d.name, description: d.description || undefined, active: d.active });
-        setCategories(prev => prev.map(c => c.id === updated.id ? updated : c));
+        await updateCategory(d.id, { name: d.name, description: d.description || undefined, active: d.active });
         toast.success("Categoría actualizada");
       } else {
-        const created = await createCategory({ name: d.name, description: d.description || undefined, active: d.active });
-        setCategories(prev => [...prev, created]);
+        await createCategory({ name: d.name, description: d.description || undefined, active: d.active });
         toast.success("Categoría creada");
       }
+      void invalidateCategories();
       closeModal();
     } catch {
       toast.error("Error al guardar categoría");
@@ -832,7 +882,7 @@ function TabCategorias() {
   const remove = async (id: number) => {
     try {
       await deleteCategory(id);
-      setCategories(prev => prev.filter(c => c.id !== id));
+      void invalidateCategories();
       toast.success("Categoría eliminada");
     } catch {
       toast.error("Error al eliminar categoría");
@@ -1049,26 +1099,23 @@ interface TerminalFormData {
 }
 
 function TabTerminales() {
-  const [terminals, setTerminals] = useState<Terminal[]>([]);
-  const [stores, setStores] = useState<ApiStore[]>([]);
+  const queryClient = useQueryClient();
+  const storesQuery = useStoresQuery();
+  const terminalsQuery = useQuery({
+    queryKey: ['terminals', 'list'],
+    queryFn: () => getTerminals(),
+  });
+  const terminals: Terminal[] = terminalsQuery.data ?? [];
+  const stores: ApiStore[] = storesQuery.data ?? [];
+  const loading = terminalsQuery.isPending || storesQuery.isPending;
   const [modal, setModal] = useState<{ open: boolean; data: TerminalFormData } | null>(null);
   const [saving, setSaving] = useState(false);
-  const [loading, setLoading] = useState(true);
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      const [terms, sts] = await Promise.all([getTerminals(), getStores()]);
-      setTerminals(terms);
-      setStores(sts);
-    } catch {
-      toast.error("Error al cargar terminales");
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    if (terminalsQuery.error || storesQuery.error) toast.error("Error al cargar terminales");
+  }, [terminalsQuery.error, storesQuery.error]);
 
-  useEffect(() => { void load(); }, []);
+  const invalidateTerminals = () => queryClient.invalidateQueries({ queryKey: ['terminals'] });
 
   const openCreate = () => setModal({ open: true, data: { name: "", store_id: stores[0] ? String(stores[0].id) : "", commission_percent: "0", active: true } });
   const openEdit = (t: Terminal) => setModal({ open: true, data: { id: t.id, name: t.name, store_id: String(t.store_id), commission_percent: String(t.commission_percent), active: t.active } });
@@ -1083,14 +1130,13 @@ function TabTerminales() {
     setSaving(true);
     try {
       if (d.id) {
-        const updated = await updateTerminal(d.id, { name: d.name, commission_percent: commPct, active: d.active });
-        setTerminals(prev => prev.map(t => t.id === updated.id ? updated : t));
+        await updateTerminal(d.id, { name: d.name, commission_percent: commPct, active: d.active });
         toast.success("Terminal actualizada");
       } else {
-        const created = await createTerminal({ store_id: Number(d.store_id), name: d.name, commission_percent: commPct, active: d.active });
-        setTerminals(prev => [...prev, created]);
+        await createTerminal({ store_id: Number(d.store_id), name: d.name, commission_percent: commPct, active: d.active });
         toast.success("Terminal creada");
       }
+      void invalidateTerminals();
       closeModal();
     } catch {
       toast.error("Error al guardar terminal");
@@ -1102,7 +1148,7 @@ function TabTerminales() {
   const remove = async (id: number) => {
     try {
       await deleteTerminal(id);
-      setTerminals(prev => prev.filter(t => t.id !== id));
+      void invalidateTerminals();
       toast.success("Terminal eliminada");
     } catch {
       toast.error("Error al eliminar terminal");

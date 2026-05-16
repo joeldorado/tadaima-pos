@@ -1,8 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@tadaima/auth";
 import { useActiveStore } from "@/contexts/StoreContext";
-import { getWarehouses, getLayaways, getSalesReport, getInventoryReport, getUsers } from "@tadaima/api";
+import { getLayaways, getSalesReport, getInventoryReport, getUsers } from "@tadaima/api";
+import { useQuery } from "@tanstack/react-query";
+import { useWarehousesQuery } from "@/hooks/queries/useWarehouses";
+import { queryKeys } from "@/lib/queryKeys";
 import type { Store } from "@tadaima/api";
 import {
   ShoppingCart, Package, Store as StoreIcon, AlertTriangle, LayoutDashboard,
@@ -301,46 +304,51 @@ export function DashboardPage() {
   const { activeStore, stores, setActiveStore, isLoading: storesLoading, productCount } = useActiveStore();
 
   const [showPicker, setShowPicker]         = useState(false);
-  const [warehouseCount, setWarehouseCount] = useState<number | null>(null);
-  const [userCount, setUserCount]           = useState<number | null>(null);
-  const [kpi, setKpi]                       = useState<KPIData | null>(null);
-  const [kpiLoading, setKpiLoading]         = useState(false);
 
   const isAdmin     = user?.roles?.includes("admin") ?? false;
   const firstName   = user?.name?.split(" ")[0] ?? "Usuario";
   const hasStores   = !storesLoading && stores.length > 0;
   const hasProducts = (productCount ?? 0) > 0;
+
+  const warehousesQuery = useWarehousesQuery({ active: true });
+  const warehouseCount = isAdmin ? (warehousesQuery.data?.length ?? null) : null;
   const hasWarehouses = warehouseCount !== null && warehouseCount > 0;
-  const showSetup   = isAdmin && !hasStores;
 
-  // Load warehouse and user counts (admin only)
-  useEffect(() => {
-    if (!isAdmin) return;
-    getWarehouses({ active: true })
-      .then(list => setWarehouseCount(list.length))
-      .catch(() => setWarehouseCount(0));
-    getUsers()
-      .then(list => setUserCount(list.length))
-      .catch(() => setUserCount(0));
-  }, [isAdmin]);
+  const usersQuery = useQuery({
+    queryKey: queryKeys.users.list(),
+    queryFn: () => getUsers(),
+    enabled: isAdmin,
+  });
+  const userCount = usersQuery.data?.length ?? null;
 
-  // Load KPIs when active store is known
-  useEffect(() => {
-    if (!activeStore) return;
-    setKpiLoading(true);
-    Promise.allSettled([
-      getSalesReport({ from: today as string, to: today as string, store_id: activeStore.id }),
-      getLayaways({ status: "active", store_id: activeStore.id, per_page: 1 }),
-      getInventoryReport({ store_id: activeStore.id, low_stock: true, threshold: 5 }),
-    ]).then(([sales, layaways, inventory]) => {
-      setKpi({
-        salesCount:     sales.status    === "fulfilled" ? sales.value.summary.total_count   : 0,
-        salesRevenue:   sales.status    === "fulfilled" ? sales.value.summary.total_revenue  : 0,
-        activeLayaways: layaways.status === "fulfilled" ? layaways.value.pagination.total    : 0,
-        lowStockCount:  inventory.status=== "fulfilled" ? inventory.value.summary.total_skus : 0,
-      });
-    }).finally(() => setKpiLoading(false));
-  }, [activeStore]);
+  const showSetup = isAdmin && !hasStores;
+
+  // KPI sub-queries — cached per active store
+  const kpiStoreId = activeStore?.id;
+  const salesKpiQuery = useQuery({
+    queryKey: ['dashboard', 'kpi', 'sales', kpiStoreId, today],
+    queryFn: () => getSalesReport({ from: today as string, to: today as string, store_id: kpiStoreId! }),
+    enabled: !!kpiStoreId,
+  });
+  const layawaysKpiQuery = useQuery({
+    queryKey: ['dashboard', 'kpi', 'layaways', kpiStoreId],
+    queryFn: () => getLayaways({ status: "active", store_id: kpiStoreId!, per_page: 1 }),
+    enabled: !!kpiStoreId,
+  });
+  const lowStockKpiQuery = useQuery({
+    queryKey: ['dashboard', 'kpi', 'lowStock', kpiStoreId],
+    queryFn: () => getInventoryReport({ store_id: kpiStoreId!, low_stock: true, threshold: 5 }),
+    enabled: !!kpiStoreId,
+  });
+  const kpi: KPIData | null = activeStore
+    ? {
+        salesCount:     salesKpiQuery.data?.summary.total_count    ?? 0,
+        salesRevenue:   salesKpiQuery.data?.summary.total_revenue  ?? 0,
+        activeLayaways: layawaysKpiQuery.data?.pagination.total    ?? 0,
+        lowStockCount:  lowStockKpiQuery.data?.summary.total_skus  ?? 0,
+      }
+    : null;
+  const kpiLoading = !!activeStore && (salesKpiQuery.isPending || layawaysKpiQuery.isPending || lowStockKpiQuery.isPending);
 
   function handleCaja() {
     if (activeStore) navigate("/caja");

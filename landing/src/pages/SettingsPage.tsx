@@ -10,12 +10,15 @@ import {
 import { motion as Motion, AnimatePresence } from "motion/react";
 import { toast } from "sonner";
 import {
-  getSystemSettings, batchUpdateSystemSettings,
+  batchUpdateSystemSettings,
   getSystemLogs, getCatalogSettings, updateCatalogSettings,
   getCompanies, updateCompany,
 } from "@tadaima/api";
 import type { SystemSettingsMap, SystemLog, CatalogSettings, Company } from "@tadaima/api";
 import { useActiveStore } from "@/contexts/StoreContext";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSystemSettingsQuery } from "@/hooks/queries/useSystemSettings";
+import { queryKeys } from "@/lib/queryKeys";
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const BG = "var(--td-page-bg)";
@@ -46,19 +49,25 @@ export function SettingsPage() {
 
   const [activeTab, setActiveTab] = useState<Tab>("empresa");
 
+  const queryClient = useQueryClient();
+
   // ── Empresa ───────────────────────────────────────────────────────────────
-  const [company, setCompany]       = useState<Company | null>(null);
+  const companiesQuery = useQuery({
+    queryKey: ['companies', 'list'],
+    queryFn: () => getCompanies(),
+  });
+  const company: Company | null = companiesQuery.data?.[0] ?? null;
+  const companyLoading = companiesQuery.isPending;
   const [companyDraft, setCompanyDraft] = useState<Partial<Company>>({});
-  const [companyLoading, setCompanyL]   = useState(true);
   const [companySaving, setCompanyS]    = useState(false);
 
   useEffect(() => {
-    setCompanyL(true);
-    getCompanies()
-      .then(list => { if (list[0]) { setCompany(list[0]); setCompanyDraft(list[0]); } })
-      .catch(() => toast.error("Error al cargar empresa"))
-      .finally(() => setCompanyL(false));
-  }, []);
+    if (company) setCompanyDraft(company);
+  }, [company]);
+
+  useEffect(() => {
+    if (companiesQuery.error) toast.error("Error al cargar empresa");
+  }, [companiesQuery.error]);
 
   const saveCompany = async () => {
     if (!company) return;
@@ -71,8 +80,8 @@ export function SettingsPage() {
         phone: companyDraft.phone ?? undefined,
         email: companyDraft.email ?? undefined,
       });
-      setCompany(updated);
       setCompanyDraft(updated);
+      void queryClient.invalidateQueries({ queryKey: ['companies'] });
       toast.success("Empresa actualizada");
     } catch {
       toast.error("Error al guardar empresa");
@@ -82,10 +91,19 @@ export function SettingsPage() {
   };
 
   // ── General Settings ──────────────────────────────────────────────────────
-  const [settings, setSettings]     = useState<SystemSettingsMap>({});
-  const [settingsDraft, setDraft]   = useState<SystemSettingsMap>({});
-  const [settingsLoading, setSL]    = useState(true);
-  const [settingsSaving, setSS]     = useState(false);
+  const settingsQuery = useSystemSettingsQuery();
+  const settings: SystemSettingsMap = settingsQuery.data ?? {};
+  const settingsLoading = settingsQuery.isPending;
+  const [settingsDraft, setDraft] = useState<SystemSettingsMap>({});
+  const [settingsSaving, setSS]   = useState(false);
+
+  useEffect(() => {
+    if (settingsQuery.data) setDraft(settingsQuery.data);
+  }, [settingsQuery.data]);
+
+  useEffect(() => {
+    if (settingsQuery.error) toast.error("Error al cargar configuración");
+  }, [settingsQuery.error]);
 
   // ── Catalog Settings ──────────────────────────────────────────────────────
   const [catalog, setCatalog]       = useState<CatalogSettings | null>(null);
@@ -100,15 +118,6 @@ export function SettingsPage() {
   const [logsTotalPages, setLTP]    = useState(1);
   const [logsTotal, setLogsTotal]   = useState(0);
   const [logSearch, setLogSearch]   = useState("");
-
-  // ── Load general settings ─────────────────────────────────────────────────
-  useEffect(() => {
-    setSL(true);
-    getSystemSettings()
-      .then(map => { setSettings(map); setDraft(map); })
-      .catch(() => toast.error("Error al cargar configuración"))
-      .finally(() => setSL(false));
-  }, []);
 
   // ── Load catalog settings when tab becomes active ─────────────────────────
   useEffect(() => {
@@ -143,8 +152,11 @@ export function SettingsPage() {
     setSS(true);
     try {
       const updated = await batchUpdateSystemSettings(settingsDraft);
-      setSettings(updated);
       setDraft(updated);
+      // Invalidate both the general settings map and the derived exchange rate
+      // so cashiers see the new value within the next poll window or immediately
+      // if they're on the same client.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.systemSettings.all });
       toast.success("Configuración guardada");
     } catch {
       toast.error("Error al guardar configuración");

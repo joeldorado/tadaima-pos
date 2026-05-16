@@ -8,29 +8,38 @@ import {
   Settings, Sun, Moon,
 } from "lucide-react";
 import { NotificationBadge } from "@/components/notifications/NotificationBadge";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { primaryRole, type PageKey } from "@/lib/permisos";
+import { useQueryClient } from "@tanstack/react-query";
+import { getProductsLight } from "@tadaima/api";
+import { queryKeys } from "@/lib/queryKeys";
 
-const adminNavItems = [
-  { to: "/",          label: "Inicio",    icon: Home,          exact: true },
-  { to: "/products",  label: "Productos", icon: Package },
-  { to: "/sales",     label: "Ventas",    icon: Receipt },
-  { to: "/clients",   label: "Clientes",  icon: UserCircle2 },
-  { to: "/pre-sales", label: "Preventas", icon: ClipboardList },
-  { to: "/transfers", label: "Traslados", icon: ArrowLeftRight },
-  { to: "/reports",   label: "Reportes",  icon: BarChart2 },
+interface NavItem {
+  to: string;
+  label: string;
+  icon: typeof Home;
+  page: PageKey;
+  exact?: boolean;
+}
+
+const ALL_NAV_ITEMS: NavItem[] = [
+  { to: "/",          label: "Inicio",    icon: Home,            page: "inicio",    exact: true },
+  { to: "/stores",    label: "Tiendas",   icon: Store,           page: "stores"    },
+  { to: "/products",  label: "Productos", icon: Package,         page: "products"  },
+  { to: "/sales",     label: "Ventas",    icon: Receipt,         page: "sales"     },
+  { to: "/clients",   label: "Clientes",  icon: UserCircle2,     page: "clients"   },
+  { to: "/pre-sales", label: "Preventas", icon: ClipboardList,   page: "presales"  },
+  { to: "/transfers", label: "Traslados", icon: ArrowLeftRight,  page: "transfers" },
+  { to: "/reports",   label: "Reportes",  icon: BarChart2,       page: "reports"   },
+  { to: "/settings",  label: "Config",    icon: Settings,        page: "settings"  },
 ];
 
-const staffNavItems = [
-  { to: "/",          label: "Inicio",    icon: Home,          exact: true },
-  { to: "/stores",    label: "Tiendas",   icon: Store },
-  { to: "/products",  label: "Productos", icon: Package },
-  { to: "/sales",     label: "Ventas",    icon: Receipt },
-  { to: "/clients",   label: "Clientes",  icon: UserCircle2 },
-  { to: "/pre-sales", label: "Preventas", icon: ClipboardList },
-  { to: "/transfers", label: "Traslados", icon: ArrowLeftRight },
-  { to: "/reports",   label: "Reportes",  icon: BarChart2 },
-  { to: "/settings",  label: "Config",    icon: Settings },
-];
+const NAV_BY_ROLE: Record<string, PageKey[]> = {
+  admin:   ["inicio", "products", "sales", "clients", "presales", "transfers", "reports"],
+  gerente: ["inicio", "stores", "products", "sales", "clients", "presales", "transfers", "reports"],
+  cajero:  ["inicio", "stores", "products", "sales"],
+  unknown: ["inicio"],
+};
 
 export function Layout() {
   const navigate  = useNavigate();
@@ -38,10 +47,21 @@ export function Layout() {
   const { user, logout }  = useAuth();
   const { theme, toggleTheme } = useTheme();
 
-  const isAdmin = user?.roles?.some(r =>
-    ["admin","super_admin","owner","dueño"].includes(r.toLowerCase())
-  ) ?? false;
-  const navItems = isAdmin ? adminNavItems : staffNavItems;
+  const role = primaryRole(user?.roles);
+  const allowedPages = NAV_BY_ROLE[role] ?? NAV_BY_ROLE.unknown;
+  const navItems = ALL_NAV_ITEMS.filter(item => allowedPages.includes(item.page));
+
+  // Prefetch top 200 productos light en cuanto hay sesión, antes de que el
+  // cajero navegue a Caja. Cuando llegue allí ya está cacheado.
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    if (!user) return;
+    void queryClient.prefetchQuery({
+      queryKey: [...queryKeys.products.all, 'light', 'top', { active: true, sort: 'top' }],
+      queryFn: () => getProductsLight({ active: true, sort: 'top', per_page: 200, page: 1 } as Parameters<typeof getProductsLight>[0]),
+      staleTime: 24 * 60 * 60_000,
+    });
+  }, [user, queryClient]);
 
   const [showUserMenu, setShowUserMenu] = useState(false);
 

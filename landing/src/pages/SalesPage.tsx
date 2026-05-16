@@ -8,7 +8,13 @@ import {
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
-import { getSales, getPreSaleOrders, getProducts, returnSale, getStores } from "@tadaima/api";
+import { returnSale } from "@tadaima/api";
+import { useQueryClient } from "@tanstack/react-query";
+import { useSalesQuery } from "@/hooks/queries/useSales";
+import { usePreSaleOrdersQuery } from "@/hooks/queries/usePreSales";
+import { useProductsQuery } from "@/hooks/queries/useProducts";
+import { useStoresQuery } from "@/hooks/queries/useStores";
+import { queryKeys } from "@/lib/queryKeys";
 import type { SaleDetail, PreSaleOrder, Product, Store as StoreType } from "@tadaima/api";
 import { useAuth } from "@tadaima/auth";
 import { toast } from "sonner";
@@ -342,15 +348,8 @@ export function SalesPage() {
   const isGerente = user?.roles?.some(r => r.toLowerCase() === "gerente") ?? false;
   const canPickStore = isAdmin;
 
-  const [sales, setSales]             = useState<SaleDetail[]>([]);
-  const [preSaleOrders, setPreSaleOrders] = useState<PreSaleOrder[]>([]);
-  const [productMap, setProductMap] = useState<Record<string, ProductInfo>>({});
-  const [loading, setLoading]   = useState(true);
   const [chartOpen, setChartOpen] = useState(false);
-
-  const [stores, setStores]               = useState<StoreType[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
-
   const effectiveStoreId: number | null = canPickStore ? selectedStoreId : (user?.store_id ?? null);
 
   const [filterStartDate, setFilterStartDate] = useState("");
@@ -389,62 +388,52 @@ export function SalesPage() {
 
   const gradientId = useMemo(() => `grad-${Math.random().toString(36).slice(2, 8)}`, []);
 
+  const queryClient = useQueryClient();
+  const storesQuery = useStoresQuery({ active: true, enabled: canPickStore });
+  const stores: StoreType[] = storesQuery.data ?? [];
+
+  const salesParams: Record<string, unknown> = { per_page: 500 };
+  if (effectiveStoreId) salesParams.store_id = effectiveStoreId;
+  if (filterStartDate) salesParams.from = filterStartDate;
+  if (filterEndDate)   salesParams.to   = filterEndDate;
+
+  const preSaleOrdersParams: Record<string, unknown> = { per_page: 500, status: 'pending,ready' };
+  if (effectiveStoreId) preSaleOrdersParams.store_id = effectiveStoreId;
+  if (filterStartDate) preSaleOrdersParams.from = filterStartDate;
+  if (filterEndDate)   preSaleOrdersParams.to   = filterEndDate;
+
+  const salesQuery = useSalesQuery(salesParams as Parameters<typeof useSalesQuery>[0]);
+  const preSaleOrdersQuery = usePreSaleOrdersQuery(preSaleOrdersParams as Parameters<typeof usePreSaleOrdersQuery>[0]);
+  const productsQuery = useProductsQuery();
+
+  const sales: SaleDetail[] = salesQuery.data?.data ?? [];
+  const preSaleOrders: PreSaleOrder[] = preSaleOrdersQuery.data?.data ?? [];
+  const productMap: Record<string, ProductInfo> = useMemo(() => {
+    const map: Record<string, ProductInfo> = {};
+    (productsQuery.data?.data ?? []).forEach((p: Product) => {
+      if (p.id) {
+        map[String(p.id)] = { name: p.name || "", sku: p.sku || "", imagen: "" };
+      }
+    });
+    return map;
+  }, [productsQuery.data]);
+  const loading = salesQuery.isPending || preSaleOrdersQuery.isPending || productsQuery.isPending;
+
+  useEffect(() => {
+    if (salesQuery.error || preSaleOrdersQuery.error || productsQuery.error) {
+      toast.error("Error al cargar datos financieros");
+    }
+  }, [salesQuery.error, preSaleOrdersQuery.error, productsQuery.error]);
+
   const handleReturn = async (saleId: number) => {
     try {
-      const updated = await returnSale(saleId);
-      setSales(prev => prev.map(s => s.id === updated.id ? { ...s, status: updated.status } : s));
+      await returnSale(saleId);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all });
       toast.success("Devolución registrada. Inventario restaurado.");
     } catch {
       toast.error("Error al procesar la devolución");
     }
   };
-
-  const fetchData = async (storeId?: number | null, from?: string, to?: string) => {
-    try {
-      setLoading(true);
-      const salesParams: Record<string, unknown> = { per_page: 500 };
-      if (storeId) salesParams.store_id = storeId;
-      if (from)    salesParams.from = from;
-      if (to)      salesParams.to   = to;
-
-      const preSaleOrdersParams: Record<string, unknown> = { per_page: 500, status: 'pending,ready' };
-      if (storeId) preSaleOrdersParams.store_id = storeId;
-      if (from)    preSaleOrdersParams.from = from;
-      if (to)      preSaleOrdersParams.to   = to;
-
-      const [salesRes, preSaleOrdersRes, productsRes] = await Promise.all([
-        getSales(salesParams as Parameters<typeof getSales>[0]),
-        getPreSaleOrders(preSaleOrdersParams as Parameters<typeof getPreSaleOrders>[0]),
-        getProducts(),
-      ]);
-
-      setSales(salesRes.data);
-      setPreSaleOrders(preSaleOrdersRes.data);
-
-      const map: Record<string, ProductInfo> = {};
-      productsRes.data.forEach((p: Product) => {
-        if (p.id) {
-          map[String(p.id)] = { name: p.name || "", sku: p.sku || "", imagen: "" };
-        }
-      });
-      setProductMap(map);
-    } catch {
-      toast.error("Error al cargar datos financieros");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Load stores for admin picker
-  useEffect(() => {
-    if (!canPickStore) return;
-    getStores({ active: true }).then(setStores).catch(() => {});
-  }, [canPickStore]);
-
-  // Re-fetch when store or dates change
-  useEffect(() => {
-    void fetchData(effectiveStoreId, filterStartDate || undefined, filterEndDate || undefined);
-  }, [effectiveStoreId, filterStartDate, filterEndDate]);
 
   // ── Filtrado (method only, dates now server-side) ─────────────────────────
   const filteredSales = useMemo(() => {
@@ -655,7 +644,7 @@ export function SalesPage() {
               )}
             </div>
 
-            <button onClick={() => fetchData(effectiveStoreId, filterStartDate || undefined, filterEndDate || undefined)}
+            <button onClick={() => { void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all }); void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all }); }}
               className="flex items-center justify-center gap-2 px-5 h-[36px] font-black text-[9px] uppercase tracking-widest transition-all hover:scale-105 active:scale-95"
               style={T.btnRed}>
               <TrendingUp size={13} strokeWidth={3} />

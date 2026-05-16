@@ -11,14 +11,21 @@ import {
   MessageCircle, Check,
   Upload, Camera, Loader2,
   ArrowUp, ArrowDown, ArrowUpDown,
-  ChevronLeft, ChevronsLeft, ChevronsRight, Trash2, Pencil,
+  ChevronLeft, ChevronsLeft, ChevronsRight, Trash2, Pencil, RefreshCw,
 } from "lucide-react";
 import { ImageWithFallback } from "@/components/figma/ImageWithFallback";
 import { useActiveStore } from "@/contexts/StoreContext";
 import { useAuth } from "@tadaima/auth";
+import { isAdmin as isAdminRole, isManager as isManagerRole } from "@/lib/permisos";
 import { toast } from "sonner";
-import { getProducts, createProduct, updateProduct, deleteProduct, forceDeleteProduct, uploadProductImage, removeProductImage, getWarehouses, getInventory, updateInventory, getPrice, storageUrl, getMangas, getStores } from "@tadaima/api";
+import { createProduct, updateProduct, deleteProduct, forceDeleteProduct, uploadProductImage, removeProductImage, getInventory, updateInventory, getPrice } from "@tadaima/api";
 import type { ApiError } from "@tadaima/api";
+import { useQueryClient } from "@tanstack/react-query";
+import { useProductsQuery } from "@/hooks/queries/useProducts";
+import { useMangasQuery } from "@/hooks/queries/useMangas";
+import { useStoresQuery } from "@/hooks/queries/useStores";
+import { useWarehousesQuery } from "@/hooks/queries/useWarehouses";
+import { queryKeys } from "@/lib/queryKeys";
 
 function formatApiError(err: unknown, fallback: string): { title: string; detail: string } {
   const apiErr = err as ApiError;
@@ -33,7 +40,7 @@ function formatApiError(err: unknown, fallback: string): { title: string; detail
 import { ProductTypeSelectorModal } from "@/components/products/ProductTypeSelectorModal";
 import { MangaBatchModal } from "@/components/products/MangaBatchModal";
 import { MangaEditModal } from "@/components/products/MangaEditModal";
-import type { Product, Manga, Store } from "@tadaima/api";
+import type { Product, Manga } from "@tadaima/api";
 import {
   useReactTable,
   getCoreRowModel,
@@ -825,16 +832,10 @@ function ProductModal({
 // ─── App Principal ────────────────────────────────────────────────────────────
 export function ProductsPage() {
   const [pageSection, setPageSection] = useState<'productos' | 'tomos'>('productos');
-  const [products, setProducts] = useState<Producto[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [mangas, setMangas] = useState<Manga[]>([]);
-  const [mangasLoading, setMangasLoading] = useState(false);
   const [categorias, setCategorias] = useState(["Todo", "Funko Pop", "Pokémon", "Naruto", "Dragon Ball", "Manga", "Figuras"]);
   const [proveedores, setProveedores] = useState(["Funko Corp", "Panini", "Nintendo", "Bandai", "Good Smile"]);
-  const [locations, setLocations] = useState<{warehouseId: number, name: string, store: string, type: 'central' | 'store'}[]>([]);
   const [search, setSearch] = useState("");
   const [selectedCat, setSelectedCat] = useState("Todo");
-  const [stores, setStores] = useState<Store[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<"grid" | "list">(
     () => (localStorage.getItem('tadaima-products-view') ?? 'list') as "grid" | "list"
@@ -847,13 +848,16 @@ export function ProductsPage() {
   
   const { refreshProductCount } = useActiveStore();
   const { user } = useAuth();
-  const isAdmin     = user?.roles?.some(r => ["admin", "super_admin", "owner", "dueño"].includes(r.toLowerCase())) ?? false;
-  const isGerente   = user?.roles?.some(r => r.toLowerCase() === "gerente") ?? false;
+  const isAdmin     = isAdminRole(user?.roles);
+  const isGerente   = isManagerRole(user?.roles);
   // Admin (admin/owner/super_admin/dueño) siempre ve costos.
   // Gerente/cajero solo si admin les activó el flag desde Inicio → Permisos.
   const canViewCost = isAdmin || !!user?.can_view_cost;
   // gerente puede ver/usar la mayoría del panel pero sin costos reales
   const canManage   = isAdmin || isGerente;
+  // Cajero puede dar de alta productos nuevos, pero no editar existentes ni borrar
+  const canEdit     = canManage; // admin + gerente
+  const canDelete   = isAdmin;
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Producto | undefined>(undefined);
@@ -865,78 +869,46 @@ export function ProductsPage() {
   const [showNoCost, setShowNoCost] = useState(false);
   const [selectedForWhatsapp, setSelectedForWhatsapp] = useState<number[]>([]);
 
-  const [apiError, setApiError] = useState<string | null>(null);
-  // productId → total quantity across all warehouses, from GET /inventory
-  const [stockMap, setStockMap] = useState<Map<number, number>>(new Map());
+  const queryClient = useQueryClient();
+  const productsQuery = useProductsQuery(selectedStoreId);
+  const mangasQuery = useMangasQuery(selectedStoreId, { enabled: pageSection === 'tomos' });
+  const storesQuery = useStoresQuery({ active: true, enabled: isAdmin });
+  const warehousesQuery = useWarehousesQuery({ active: true });
 
-  const fetchLocations = async (): Promise<void> => {
-    try {
-      const warehouses = await getWarehouses({ active: true })
-      setLocations(
-        warehouses.map(w => ({
-          warehouseId: w.id,
-          name: w.name,
-          store: w.store?.name ?? '',
-          type: w.type,
-        }))
-      )
-    } catch {
-      // Silently fail — locations are optional; stock tab will show "no almacenes"
-    }
-  };
+  const products = useMemo(
+    () => productsQuery.data?.data.map(apiProductToProducto) ?? [],
+    [productsQuery.data]
+  );
+  const stockMap = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const p of productsQuery.data?.data ?? []) map.set(p.id, p.stock_total);
+    return map;
+  }, [productsQuery.data]);
+  const mangas = mangasQuery.data ?? [];
+  const stores = storesQuery.data ?? [];
+  const locations = useMemo(
+    () => (warehousesQuery.data ?? []).map(w => ({
+      warehouseId: w.id,
+      name: w.name,
+      store: w.store?.name ?? '',
+      type: w.type,
+    })),
+    [warehousesQuery.data]
+  );
+  const loading = productsQuery.isPending;
+  const mangasLoading = pageSection === 'tomos' && mangasQuery.isPending;
+  const apiError = productsQuery.error
+    ? ((productsQuery.error as { message?: string }).message ?? 'Error al cargar productos')
+    : null;
 
-  const fetchProducts = async (storeId?: number | null): Promise<void> => {
-    try {
-      setLoading(true);
-      setApiError(null);
-      const paginated = await getProducts(storeId ? { store_id: storeId } : undefined);
-      const prods = paginated.data;
-      setProducts(prods.map(apiProductToProducto));
-      // stock_total is precomputed by backend (withSum) — no extra inventory request needed
-      const map = new Map<number, number>();
-      for (const p of prods) {
-        map.set(p.id, p.stock_total);
-      }
-      setStockMap(map);
-    } catch (err) {
-      const message = (err as { message?: string }).message ?? 'Error al cargar productos';
-      setApiError(message);
-      setProducts([]);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchStores = async (): Promise<void> => {
-    try {
-      const list = await getStores({ active: true });
-      setStores(list);
-    } catch {
-      // silent
-    }
-  };
-
-  const fetchMangas = async (storeId?: number | null): Promise<void> => {
-    try {
-      setMangasLoading(true);
-      const list = await getMangas(storeId ? { store_id: storeId } : undefined);
-      setMangas(list);
-    } catch {
-      // silent — tomos tab shows empty state
-    } finally {
-      setMangasLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void fetchLocations();
-    if (isAdmin) void fetchStores();
-  }, [isAdmin]);
-
-  useEffect(() => {
-    void fetchProducts(selectedStoreId);
-    if (pageSection === 'tomos') void fetchMangas(selectedStoreId);
-  }, [selectedStoreId]);
+  const invalidateProducts = useCallback(
+    () => queryClient.invalidateQueries({ queryKey: queryKeys.products.all }),
+    [queryClient]
+  );
+  const invalidateMangas = useCallback(
+    () => queryClient.invalidateQueries({ queryKey: queryKeys.mangas.all }),
+    [queryClient]
+  );
 
   const handleSaveProduct = (p: Producto, imageFile?: File): void => {
     const isNew = !products.some(item => item.id === p.id);
@@ -945,9 +917,6 @@ export function ProductsPage() {
     setEditingProduct(undefined);
 
     if (isNew) {
-      // Optimistic add so the UI feels instant (temp id = Date.now())
-      setProducts(prev => [p, ...prev]);
-
       createProduct({
         name: p.nombre,
         sku: p.sku,
@@ -979,16 +948,13 @@ export function ProductsPage() {
           )
         );
         void refreshProductCount();
-        void fetchProducts();
+        void invalidateProducts();
       }).catch((err: unknown) => {
         const { title, detail } = formatApiError(err, 'No se pudo crear el producto');
         toast.error(title, { description: detail || undefined, duration: 8000 });
-        setProducts(prev => prev.filter(item => item.id !== p.id));
+        void invalidateProducts();
       });
     } else {
-      // Update local UI state immediately
-      setProducts(prev => prev.map(item => item.id === p.id ? p : item));
-
       // Persist product field changes to backend
       void updateProduct(p.id, {
         name: p.nombre,
@@ -1008,12 +974,14 @@ export function ProductsPage() {
           await Promise.allSettled(p.imageIds.map(id => removeProductImage(p.id, id)));
           void uploadProductImage(p.id, imageFile)
             .catch(() => { toast.error('Producto actualizado, pero no se pudo subir la imagen.'); })
-            .finally(() => void fetchProducts());
+            .finally(() => void invalidateProducts());
+        } else {
+          void invalidateProducts();
         }
       }).catch((err: unknown) => {
         const msg = (err as { message?: string }).message ?? 'Error al actualizar producto';
         toast.error(msg);
-        void fetchProducts(); // Revert optimistic update by reloading
+        void invalidateProducts();
       });
 
       // Persist inventory changes per warehouse to backend
@@ -1043,7 +1011,7 @@ export function ProductsPage() {
       } else {
         await deleteProduct(deleteTarget.id);
       }
-      setProducts(prev => prev.filter(p => p.id !== deleteTarget.id));
+      void invalidateProducts();
       setIsModalOpen(false);
       setEditingProduct(undefined);
       setDeleteTarget(null);
@@ -1185,7 +1153,7 @@ export function ProductsPage() {
       id: 'acciones',
       header: '',
       enableSorting: false,
-      cell: info => (
+      cell: info => canEdit ? (
         <button
           onClick={e => { e.stopPropagation(); handleEdit(info.row.original); }}
           className="px-3 py-1.5 rounded-xl text-[10px] font-black transition-all hover:bg-white/10"
@@ -1193,9 +1161,9 @@ export function ProductsPage() {
         >
           Editar
         </button>
-      ),
+      ) : null,
     }),
-  ], [handleEdit, getTotalStock]);
+  ], [handleEdit, getTotalStock, canEdit]);
 
 
   // Memoize filtered so the array reference is stable between renders that don't change
@@ -1310,7 +1278,7 @@ export function ProductsPage() {
     mangaColumnHelper.display({
       id: 'acciones',
       header: '',
-      cell: info => (
+      cell: info => canEdit ? (
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
           <button
             onClick={e => { e.stopPropagation(); setEditingManga(info.row.original); }}
@@ -1321,9 +1289,9 @@ export function ProductsPage() {
             <Pencil size={13} />
           </button>
         </div>
-      ),
+      ) : null,
     }),
-  ], [canViewCost]);
+  ], [canViewCost, canEdit]);
 
   const filteredMangas = useMemo(() => {
     if (!mangaSearch.trim()) return mangas;
@@ -1421,6 +1389,23 @@ export function ProductsPage() {
               </>
             );
           })()}
+          {/* Buscar nuevos — visible para gerente y cajero. Admin no lo necesita
+              (sus mutations ya invalidan automáticamente el cache). */}
+          {!isAdmin && (
+            <button
+              onClick={() => {
+                void invalidateProducts();
+                void invalidateMangas();
+                toast.success("Buscando productos nuevos…");
+              }}
+              className="flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-bold transition-all hover:scale-[1.02] active:scale-95 shrink-0"
+              style={{ ...T.glassMd, color: T.textMuted, borderRadius: 14 }}
+              title="Forzar refresh para ver productos nuevos cargados por admin"
+            >
+              <RefreshCw size={14} />
+              Buscar nuevos
+            </button>
+          )}
           <button
             onClick={handleCreateNew}
             className="flex items-center justify-center gap-2 px-5 py-2.5 text-sm font-bold transition-all hover:scale-[1.02] active:scale-95 shadow-xl shadow-red-500/20 shrink-0"
@@ -1442,7 +1427,7 @@ export function ProductsPage() {
             key={s.id}
             onClick={() => {
               setPageSection(s.id);
-              if (s.id === 'tomos' && mangas.length === 0) void fetchMangas(selectedStoreId);
+              if (s.id === 'tomos' && mangas.length === 0) void invalidateMangas();
             }}
             className="flex items-center gap-2 px-5 py-2.5 rounded-2xl text-sm font-bold transition-all"
             style={pageSection === s.id ? T.chipActive : { ...T.glassMd, color: T.textMuted }}
@@ -1537,8 +1522,11 @@ export function ProductsPage() {
             return (
               <div
                 key={p.id}
-                onClick={() => showLowStock ? handleToggleWhatsappSelection(p.id) : handleEdit(p)}
-                className={`group relative rounded-[32px] overflow-hidden transition-all hover:translate-y-[-6px] cursor-pointer ${p.desactivado ? 'grayscale opacity-60' : ''} ${showLowStock && selectedForWhatsapp.includes(p.id) ? 'ring-4 ring-green-500' : ''}`}
+                onClick={() => {
+                  if (showLowStock) return handleToggleWhatsappSelection(p.id);
+                  if (canEdit) return handleEdit(p);
+                }}
+                className={`group relative rounded-[32px] overflow-hidden transition-all hover:translate-y-[-6px] ${(canEdit || showLowStock) ? 'cursor-pointer' : ''} ${p.desactivado ? 'grayscale opacity-60' : ''} ${showLowStock && selectedForWhatsapp.includes(p.id) ? 'ring-4 ring-green-500' : ''}`}
                 style={T.glassMd}
               >
                 {p.imagen ? (
@@ -1650,8 +1638,8 @@ export function ProductsPage() {
                   table.getRowModel().rows.map(row => (
                     <tr
                       key={row.id}
-                      onClick={() => handleEdit(row.original)}
-                      className="group transition-colors hover:bg-white/[0.03] cursor-pointer"
+                      onClick={canEdit ? () => handleEdit(row.original) : undefined}
+                      className={`group transition-colors hover:bg-white/[0.03] ${canEdit ? 'cursor-pointer' : ''}`}
                       style={{ borderBottom: "1px solid rgba(255,255,255,0.03)" }}
                     >
                       {row.getVisibleCells().map(cell => (
@@ -1966,7 +1954,7 @@ export function ProductsPage() {
       {showMangaModal && (
         <MangaBatchModal
           onClose={() => setShowMangaModal(false)}
-          onSuccess={() => { void fetchMangas(selectedStoreId); toast.success('Tomos registrados correctamente'); setPageSection('tomos'); }}
+          onSuccess={() => { void invalidateMangas(); toast.success('Tomos registrados correctamente'); setPageSection('tomos'); }}
           locations={locations}
           canViewCost={canViewCost}
         />
@@ -1976,13 +1964,13 @@ export function ProductsPage() {
         <MangaEditModal
           manga={editingManga}
           onClose={() => setEditingManga(null)}
-          onSuccess={updated => {
-            setMangas(prev => prev.map(m => m.id === updated.id ? updated : m));
+          onSuccess={_updated => {
+            void invalidateMangas();
             setEditingManga(null);
             toast.success('Tomo actualizado.');
           }}
           onDeleted={() => {
-            setMangas(prev => prev.filter(m => m.id !== editingManga.id));
+            void invalidateMangas();
             setEditingManga(null);
             toast.success('Tomo eliminado.');
           }}

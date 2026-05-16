@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreProductRequest;
 use App\Http\Requests\UpdateProductRequest;
+use App\Http\Resources\ProductLightResource;
 use App\Http\Resources\ProductResource;
 use App\Models\Product;
 use App\Models\ProductImage;
@@ -28,9 +29,14 @@ class ProductController extends Controller
     public function index(Request $request): JsonResponse
     {
         $storeId = $request->filled('store_id') ? (int) $request->store_id : null;
+        $light = $request->boolean('light');
 
-        $query = Product::query()
-            ->with(['category', 'price', 'images', 'paymentMethod']);
+        // Light mode: drop category eager-load (only category_id is sent).
+        $query = Product::query()->with(
+            $light
+                ? ['price', 'images', 'paymentMethod']
+                : ['category', 'price', 'images', 'paymentMethod']
+        );
 
         // Scope the stock sum to the selected store's warehouses when filtering
         if ($storeId) {
@@ -59,15 +65,31 @@ class ProductController extends Controller
             );
         }
 
+        // Order by top sellers (last 30 days) when ?sort=top. The withCount
+        // counts sale_items joined within the last 30 days; we order desc by
+        // that count, then by id desc as a stable tie-breaker (newest wins).
+        // Useful for warming the cache with the most-likely-needed products
+        // before the cashier opens Caja.
+        if ($request->get('sort') === 'top') {
+            $since = now()->subDays(30);
+            $query->withCount(['saleItems as recent_sales_count' => function ($q) use ($since) {
+                $q->whereHas('sale', fn ($sq) => $sq->where('created_at', '>=', $since));
+            }])->orderByDesc('recent_sales_count')->orderByDesc('id');
+        }
+
         $perPage = (int) $request->get('per_page', 100);
 
         $products = $perPage > 0
             ? $query->paginate($perPage)
             : $query->get();
 
-        return $this->success(
-            ProductResource::collection($perPage > 0 ? $products->items() : $products)
-        );
+        $items = $perPage > 0 ? $products->items() : $products;
+
+        $collection = $light
+            ? ProductLightResource::collection($items)
+            : ProductResource::collection($items);
+
+        return $this->success($collection);
     }
 
     /**

@@ -3,14 +3,17 @@ import {
   FileText, TrendingUp, Package, Users, BarChart3,
   Loader2, DollarSign, ArrowUpRight,
   ShoppingBag, Star, Calendar, Printer, Store,
-  ChevronDown, ChevronRight, Receipt, Clock,
+  ChevronDown, ChevronRight, Receipt, Clock, RefreshCw,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@tadaima/auth";
 import {
   getSalesReport, getInventoryReport, getTopProductsReport, getCustomersReport,
 } from "@tadaima/api";
-import { getSales, getStores } from "@tadaima/api";
+import { getSales } from "@tadaima/api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useStoresQuery } from "@/hooks/queries/useStores";
+import { queryKeys } from "@/lib/queryKeys";
 import type { SalesReport, InventoryReport, TopProductsReport, CustomersReport } from "@tadaima/api";
 import type { SaleDetail, Store as StoreType } from "@tadaima/api";
 
@@ -120,8 +123,8 @@ export function ReportsPage() {
   // Ganancia / costo real: admin siempre, otros solo si admin les activó el permiso.
   const canViewCost = isAdmin || !!user?.can_view_cost;
 
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<TabId>("ventas");
-  const [loading, setLoading]     = useState(false);
 
   const today         = new Date().toISOString().split("T")[0]!;
   const firstOfMonth  = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split("T")[0]!;
@@ -130,95 +133,70 @@ export function ReportsPage() {
   const [to, setTo]     = useState(today);
 
   // Store filter — admin can pick, others are locked to their store
-  const [stores, setStores]               = useState<StoreType[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
   const effectiveStoreId = isAdmin ? selectedStoreId : (user?.store_id ?? null);
 
-  // Report data
-  const [salesReport,  setSalesReport]  = useState<SalesReport | null>(null);
-  const [sales,        setSales]        = useState<SaleDetail[]>([]);
-  const [invReport,    setInvReport]    = useState<InventoryReport | null>(null);
-  const [topReport,    setTopReport]    = useState<TopProductsReport | null>(null);
-  const [custReport,   setCustReport]   = useState<CustomersReport | null>(null);
   const [lowStockOnly, setLowStockOnly] = useState(false);
   const [expandedId,   setExpandedId]   = useState<number | null>(null);
   const [expandedDay,  setExpandedDay]  = useState<string | null>(null);
 
-  useEffect(() => {
-    if (isAdmin) {
-      void getStores({ active: true }).then(setStores).catch(() => {});
-    }
-  }, [isAdmin]);
+  const storesQuery = useStoresQuery({ active: true, enabled: isAdmin });
+  const stores: StoreType[] = storesQuery.data ?? [];
 
-  // ─── Loaders ────────────────────────────────────────────────────────────────
-  const loadSales = async () => {
-    setLoading(true);
-    try {
-      const params = { from, to, ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}) };
-      const [r, sl] = await Promise.all([
-        getSalesReport(params),
-        getSales({ ...params, per_page: 100, status: "completed" }),
-      ]);
-      setSalesReport(r);
-      setSales(sl.data);
-    } catch {
-      toast.error("Error al cargar reporte de ventas");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const baseParams = { from, to, ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}) };
 
-  const loadInventory = async () => {
-    setLoading(true);
-    try {
-      const r = await getInventoryReport({
-        low_stock: lowStockOnly,
-        ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}),
-      });
-      setInvReport(r);
-    } catch {
-      toast.error("Error al cargar inventario");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const salesReportQuery = useQuery({
+    queryKey: queryKeys.reports.sales(baseParams),
+    queryFn: () => getSalesReport(baseParams),
+    enabled: activeTab === "ventas",
+  });
+  const salesListParams = { ...baseParams, per_page: 100, status: "completed" as const };
+  const salesListQuery = useQuery({
+    queryKey: queryKeys.sales.list(salesListParams),
+    queryFn: () => getSales(salesListParams),
+    enabled: activeTab === "ventas",
+  });
+  const invParams = { low_stock: lowStockOnly, ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}) };
+  const invQuery = useQuery({
+    queryKey: queryKeys.reports.inventory(invParams),
+    queryFn: () => getInventoryReport(invParams),
+    enabled: activeTab === "inventario",
+  });
+  const topParams = { from, to, limit: 25, ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}) };
+  const topQuery = useQuery({
+    queryKey: queryKeys.reports.topProducts(topParams),
+    queryFn: () => getTopProductsReport(topParams),
+    enabled: activeTab === "productos",
+  });
+  const custQuery = useQuery({
+    queryKey: queryKeys.reports.customers(topParams),
+    queryFn: () => getCustomersReport(topParams),
+    enabled: activeTab === "clientes",
+  });
 
-  const loadTop = async () => {
-    setLoading(true);
-    try {
-      const r = await getTopProductsReport({
-        from, to, limit: 25,
-        ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}),
-      });
-      setTopReport(r);
-    } catch {
-      toast.error("Error al cargar top productos");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadCustomers = async () => {
-    setLoading(true);
-    try {
-      const r = await getCustomersReport({
-        from, to, limit: 25,
-        ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}),
-      });
-      setCustReport(r);
-    } catch {
-      toast.error("Error al cargar clientes");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const salesReport: SalesReport | null = salesReportQuery.data ?? null;
+  const sales: SaleDetail[] = salesListQuery.data?.data ?? [];
+  const invReport: InventoryReport | null = invQuery.data ?? null;
+  const topReport: TopProductsReport | null = topQuery.data ?? null;
+  const custReport: CustomersReport | null = custQuery.data ?? null;
+  const loading =
+    (activeTab === "ventas"     && (salesReportQuery.isFetching || salesListQuery.isFetching)) ||
+    (activeTab === "inventario" && invQuery.isFetching) ||
+    (activeTab === "productos"  && topQuery.isFetching) ||
+    (activeTab === "clientes"   && custQuery.isFetching);
 
   useEffect(() => {
-    if (activeTab === "ventas")     void loadSales();
-    if (activeTab === "inventario") void loadInventory();
-    if (activeTab === "productos")  void loadTop();
-    if (activeTab === "clientes")   void loadCustomers();
-  }, [activeTab, from, to, lowStockOnly, effectiveStoreId]);
+    if (salesReportQuery.error || salesListQuery.error) toast.error("Error al cargar reporte de ventas");
+  }, [salesReportQuery.error, salesListQuery.error]);
+  useEffect(() => {
+    if (invQuery.error) toast.error("Error al cargar inventario");
+  }, [invQuery.error]);
+  useEffect(() => {
+    if (topQuery.error) toast.error("Error al cargar top productos");
+  }, [topQuery.error]);
+  useEffect(() => {
+    if (custQuery.error) toast.error("Error al cargar clientes");
+  }, [custQuery.error]);
 
   // Merge by_day + pre_sale_by_day for the daily breakdown table
   const mergedByDay = useMemo(() => {
@@ -276,23 +254,52 @@ export function ReportsPage() {
           </p>
         </div>
 
-        {/* ── Tabs ────────────────────────────────────────────────────────── */}
-        <div className="flex gap-2 p-1.5 rounded-2xl bg-white/5 border border-white/5 w-fit">
-          {([
-            { id: "ventas",     label: "Ventas",        icon: TrendingUp },
-            { id: "inventario", label: "Inventario",    icon: Package    },
-            { id: "productos",  label: "Top Productos", icon: Star       },
-            { id: "clientes",   label: "Top Clientes",  icon: Users      },
-          ] as { id: TabId; label: string; icon: React.ElementType }[]).map(tab => (
-            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
-              style={activeTab === tab.id
-                ? { background: "linear-gradient(135deg,#CC2200,#FF4422)", color: "#fff" }
-                : { color: TM }}
-            >
-              <tab.icon size={13} />{tab.label}
-            </button>
-          ))}
+        {/* ── Tabs + refresh ──────────────────────────────────────────────── */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex gap-2 p-1.5 rounded-2xl bg-white/5 border border-white/5 w-fit">
+            {([
+              { id: "ventas",     label: "Ventas",        icon: TrendingUp },
+              { id: "inventario", label: "Inventario",    icon: Package    },
+              { id: "productos",  label: "Top Productos", icon: Star       },
+              { id: "clientes",   label: "Top Clientes",  icon: Users      },
+            ] as { id: TabId; label: string; icon: React.ElementType }[]).map(tab => (
+              <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
+                style={activeTab === tab.id
+                  ? { background: "linear-gradient(135deg,#CC2200,#FF4422)", color: "#fff" }
+                  : { color: TM }}
+              >
+                <tab.icon size={13} />{tab.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Botón refresh manual — invalida el dominio del tab activo.
+              No hay polling: admin entra → fresh; vuelve al tab → fresh
+              (refetchOnWindowFocus). Si quiere ver lo último mientras está
+              en la pantalla, click acá. */}
+          <button
+            onClick={() => {
+              if (activeTab === "ventas") {
+                void queryClient.invalidateQueries({ queryKey: queryKeys.reports.sales() });
+                void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all });
+              } else if (activeTab === "inventario") {
+                void queryClient.invalidateQueries({ queryKey: queryKeys.reports.inventory() });
+              } else if (activeTab === "productos") {
+                void queryClient.invalidateQueries({ queryKey: queryKeys.reports.topProducts() });
+              } else if (activeTab === "clientes") {
+                void queryClient.invalidateQueries({ queryKey: queryKeys.reports.customers() });
+              }
+              toast.success("Actualizando reporte…");
+            }}
+            disabled={loading}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-50"
+            style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: TM }}
+            title="Forzar refresh del reporte actual"
+          >
+            <RefreshCw size={13} className={loading ? "animate-spin" : ""} />
+            Actualizar
+          </button>
         </div>
 
         {/* ── Filter bar ──────────────────────────────────────────────────── */}

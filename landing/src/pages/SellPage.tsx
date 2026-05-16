@@ -6,15 +6,25 @@ import {
   AlertTriangle, ArrowLeftRight, Maximize2, LayoutGrid,
   Tag, ChevronDown, ChevronUp, ChevronRight, ArrowLeft,
   Users, UserPlus, User, Phone, AlertCircle,
+  Mail,
   TriangleAlert, PackageX, Bookmark, Calendar, PackageCheck, ClipboardList, Banknote,
-  Truck, CheckCircle2, Printer, History, Receipt,
+  Truck, CheckCircle2, Printer, History, Receipt, RefreshCw,
 } from "lucide-react";
 import { ImageWithFallback } from "@/components/figma/ImageWithFallback";
 import { ProductCatalogModal } from "@/components/ProductCatalogModal";
 import { PreSaleDifusionPanel } from "@/components/presales/PreSaleDifusionPanel";
+import { CameraScannerModal } from "@/components/CameraScannerModal";
+import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
 const tadaimaLogo = null // TODO: replace with real logo asset
 import { toast } from "sonner";
-import { getProducts, getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, createSale, getPrice, getActiveSession, openSession, closeSession, getCashRegisters, createLayaway, getPaymentMethods, getCustomers, createCustomer, searchExternalCustomers, getSystemSettings, getInventory, getPreSaleCatalogs, getPreSaleOrders, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getSales, getTerminals, storageUrl } from "@tadaima/api";
+import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, createSale, getPrice, openSession, closeSession, createLayaway, getCustomers, createCustomer, searchExternalCustomers, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getPreSaleOrders, getSales, getProductsLight, storageUrl } from "@tadaima/api";
+import { useQueryClient } from "@tanstack/react-query";
+import { useProductsLightQuery, useProductsSearchQuery, useBackgroundProductsPrefetch } from "@/hooks/queries/useProducts";
+import { usePaymentMethodsQuery } from "@/hooks/queries/usePaymentMethods";
+import { useTerminalsQuery } from "@/hooks/queries/useTerminals";
+import { useActiveSessionQuery, useCashRegistersQuery } from "@/hooks/queries/useCashSession";
+import { useExchangeRateQuery } from "@/hooks/queries/useSystemSettings";
+import { queryKeys } from "@/lib/queryKeys";
 import type { CashSession, CashRegisterInfo, PaymentMethod as ApiPaymentMethod, PreSaleCatalog, PreSaleOrder, PreSaleOrderItem, SaleDetail, Terminal, ExternalCardLookup } from "@tadaima/api";
 type HistorialEntry = { type: 'sale'; data: SaleDetail } | { type: 'presale'; data: PreSaleOrder };
 import { useCartDraftStore } from "@/stores/cartDraftStore";
@@ -57,6 +67,7 @@ interface Customer {
   id: string;
   name: string;
   phone?: string;
+  email?: string;
   points?: number;
   external_member_id?: string;
 }
@@ -244,8 +255,47 @@ export function SellPage() {
   // Prevents double-submit on checkout
   const isCheckoutLockedRef = useRef(false);
 
-  const [cashSession, setCashSession]       = useState<CashSession | null>(null);
-  const [cashRegisters, setCashRegisters]   = useState<CashRegisterInfo[]>([]);
+  const queryClient = useQueryClient();
+  const productsQuery       = useProductsLightQuery(null);
+  // Once the top 200 are cached, gradually pull pages 2..6 in background
+  // (during requestIdleCallback) so subsequent searches feel instant.
+  useBackgroundProductsPrefetch(!!productsQuery.data);
+  const paymentMethodsQuery = usePaymentMethodsQuery({ active: true });
+  const terminalsQuery      = useTerminalsQuery(
+    activeStore?.id ? { store_id: activeStore.id, active: true } : undefined,
+    { enabled: !!activeStore?.id }
+  );
+  const activeSessionQuery  = useActiveSessionQuery();
+  const cashSession: CashSession | null = activeSessionQuery.data ?? null;
+  const cashRegistersQuery  = useCashRegistersQuery(activeStore?.id, { enabled: !cashSession });
+  const cashRegisters: CashRegisterInfo[] = cashRegistersQuery.data ?? [];
+  const paymentMethods: ApiPaymentMethod[] = paymentMethodsQuery.data ?? [];
+  const terminals: Terminal[] = terminalsQuery.data ?? [];
+
+  const topProducts: Product[] = useMemo(() => {
+    const list = productsQuery.data?.data ?? [];
+    const priceAt = (p: typeof list[number], level: 1 | 2 | 3 | 4 | 5): number =>
+      Number(p.prices?.[`price_${level}` as keyof typeof p.prices] ?? 0) || 0;
+    return list
+      .filter(p => p.active)
+      .map(p => {
+        return {
+          id: String(p.id),
+          name: p.name,
+          sku: p.sku,
+          category: String(p.category_id ?? ""),
+          image: p.image ?? "",
+          price_a: priceAt(p, 1),
+          price_b: priceAt(p, 2) > 0 ? priceAt(p, 2) : undefined,
+          price_c: priceAt(p, 3) > 0 ? priceAt(p, 3) : undefined,
+          price_d: priceAt(p, 4) > 0 ? priceAt(p, 4) : undefined,
+          price_e: priceAt(p, 5) > 0 ? priceAt(p, 5) : undefined,
+          stock: typeof p.stock_total === "number" ? p.stock_total : undefined,
+          active: p.active,
+        } as Product;
+      });
+  }, [productsQuery.data]);
+
   const [showOpenCashModal, setShowOpenCashModal] = useState(false);
   const [openCashRegisterId, setOpenCashRegisterId] = useState<number | "">("");
   const [openCashAmount, setOpenCashAmount] = useState("");
@@ -253,10 +303,26 @@ export function SellPage() {
   const [showCloseCashModal, setShowCloseCashModal] = useState(false);
   const [closeCashAmount, setCloseCashAmount] = useState("");
   const [closingCashLoading, setClosingCashLoading] = useState(false);
-  const [products, setProducts]       = useState<Product[]>([]);
   const [customers, setCustomers]     = useState<Customer[]>([]);
-  const [terminals, setTerminals]     = useState<Terminal[]>([]);
-  const [loading, setLoading]         = useState(true);
+  const loading = productsQuery.isPending;
+
+  useEffect(() => {
+    if (productsQuery.error) {
+      const msg = (productsQuery.error as { message?: string }).message ?? "Error al cargar productos";
+      toast.error(msg);
+    }
+  }, [productsQuery.error]);
+
+  useEffect(() => {
+    if (terminalsQuery.error) toast.error("Error al cargar terminales");
+  }, [terminalsQuery.error]);
+
+  // Auto-select first available cash register when registers load
+  useEffect(() => {
+    if (!cashSession && cashRegisters[0] && openCashRegisterId === "") {
+      setOpenCashRegisterId(cashRegisters[0].id);
+    }
+  }, [cashSession, cashRegisters, openCashRegisterId]);
   const [mesas, setMesas]             = useState<Mesa[]>(initialMesas.current);
   const [activeMesaId, setActiveMesaId] = useState(initialActiveId.current);
 
@@ -273,6 +339,41 @@ export function SellPage() {
   const [tcDraft, setTcDraft] = useState("15.50");
 
   const [search, setSearch]         = useState("");
+  // Debounce the search so we don't fire a backend request on every keystroke.
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 250);
+    return () => clearTimeout(t);
+  }, [search]);
+  const productsSearchQuery = useProductsSearchQuery(debouncedSearch);
+
+  // Merge top 200 + search results into a single dedupe'd pool. Search results
+  // bring in products that aren't in the top — they get filtered locally by
+  // `filteredProds` along with the cached ones.
+  const products: Product[] = useMemo(() => {
+    const seen = new Set(topProducts.map(p => p.id));
+    const searchData = productsSearchQuery.data?.data ?? [];
+    const priceAt = (p: typeof searchData[number], level: 1 | 2 | 3 | 4 | 5): number =>
+      Number(p.prices?.[`price_${level}` as keyof typeof p.prices] ?? 0) || 0;
+    const extra: Product[] = searchData
+      .filter(p => p.active && !seen.has(String(p.id)))
+      .map(p => ({
+        id: String(p.id),
+        name: p.name,
+        sku: p.sku,
+        category: String(p.category_id ?? ""),
+        image: p.image ?? "",
+        price_a: priceAt(p, 1),
+        price_b: priceAt(p, 2) > 0 ? priceAt(p, 2) : undefined,
+        price_c: priceAt(p, 3) > 0 ? priceAt(p, 3) : undefined,
+        price_d: priceAt(p, 4) > 0 ? priceAt(p, 4) : undefined,
+        price_e: priceAt(p, 5) > 0 ? priceAt(p, 5) : undefined,
+        stock: typeof p.stock_total === "number" ? p.stock_total : undefined,
+        active: p.active,
+      }) as Product);
+    return extra.length > 0 ? [...topProducts, ...extra] : topProducts;
+  }, [topProducts, productsSearchQuery.data]);
+
   const [showCatalog, setShowCatalog] = useState(false);
   const [selectedCat, setSelectedCat] = useState("Todo");
   const [showDiscount, setShowDiscount] = useState(false);
@@ -288,6 +389,8 @@ export function SellPage() {
   // ── Ticket / Historial ────────────────────────────────────────────────
   interface CompletedSaleData {
     id?: number; total: number; paymentMethod: string; customerName?: string;
+    customerPhone?: string;
+    customerEmail?: string;
     items: Array<{ name: string; quantity: number; price: number }>;
     soldAt: string;
     // contexto del punto de venta
@@ -333,40 +436,15 @@ export function SellPage() {
   const [apartarExpiresAt, setApartarExpiresAt] = useState("");
   const [apartarNotes, setApartarNotes] = useState("");
   const [apartarProcessing, setApartarProcessing] = useState(false);
-  const [paymentMethods, setPaymentMethods] = useState<ApiPaymentMethod[]>([]);
+
+  // ── Escáner (lector USB HID + cámara) ──
+  const [showCameraScanner, setShowCameraScanner] = useState(false);
 
   const tcRef              = useRef<HTMLDivElement>(null);
   const custRef            = useRef<HTMLDivElement>(null);
   const customerSearchRef  = useRef<HTMLInputElement>(null);
   const prodInputRef       = useRef<HTMLInputElement>(null);
   const cashInputRef       = useRef<HTMLInputElement>(null);
-
-  // Load active cash register session; if none, load available registers
-  // Load global TC from system settings (reference only, cashier can override per session)
-  useEffect(() => {
-    getSystemSettings()
-      .then(s => {
-        const rate = parseFloat(s["exchange_rate"] ?? "");
-        if (!isNaN(rate) && rate > 0) { setTc(rate); setTcDraft(rate.toString()); }
-      })
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    getActiveSession()
-      .then(session => {
-        setCashSession(session);
-        if (!session) {
-          getCashRegisters(activeStore?.id)
-            .then(regs => {
-              setCashRegisters(regs);
-              if (regs[0]) setOpenCashRegisterId(regs[0].id);
-            })
-            .catch(() => {});
-        }
-      })
-      .catch(() => {});
-  }, [activeStore?.id]);
 
   // Auto-select store from active session when admin navigates to Caja with
   // an already-open session (stores and session may load in any order).
@@ -377,52 +455,33 @@ export function SellPage() {
     }
   }, [cashSession, stores, activeStore]);
 
-  // Load payment methods for the layaway-from-POS modal
-  useEffect(() => {
-    getPaymentMethods({ active: true })
-      .then(pm => setPaymentMethods(pm))
-      .catch(() => {});
-  }, []);
-
-  // Load terminals — refreshes when the active store changes
-  useEffect(() => {
-    if (!activeStore?.id) { setTerminals([]); return; }
-    getTerminals({ store_id: activeStore.id, active: true })
-      .then(setTerminals)
-      .catch(() => toast.error("Error al cargar terminales"));
-  }, [activeStore?.id]);
+  // ── Exchange rate (USD→MXN) with live polling.
+  // The query polls every 30s. When admin changes the rate from Settings on
+  // another device, the cashier sees it within one poll window. We also
+  // automatically update the in-use `tc` so that the cart recalculates live —
+  // unless the cashier currently has the edit popover open.
+  const exchangeRateQuery = useExchangeRateQuery();
+  const exchangeRateServer = exchangeRateQuery.data ?? null;
+  const lastSyncedRateRef = useRef<number | null>(null);
 
   useEffect(() => {
-    getProducts({ active: true })
-      .then(paginated => {
-        // Adapt API Product → local Product shape used by SellPage UI
-        const adapted = paginated.data.map(p => {
-          const firstImage = p.images?.[0];
-          const image = firstImage?.url ?? (firstImage?.image_path ? storageUrl(firstImage.image_path) : "");
-          return {
-            id: String(p.id),
-            name: p.name,
-            sku: p.sku,
-            category: String(p.category_id ?? ""),
-            image,
-            price_a: getPrice(p, 1),
-            price_b: getPrice(p, 2) > 0 ? getPrice(p, 2) : undefined,
-            price_c: getPrice(p, 3) > 0 ? getPrice(p, 3) : undefined,
-            price_d: getPrice(p, 4) > 0 ? getPrice(p, 4) : undefined,
-            price_e: getPrice(p, 5) > 0 ? getPrice(p, 5) : undefined,
-            stock: typeof p.stock_total === "number" ? p.stock_total : undefined,
-            active: p.active,
-          };
-        });
-        setProducts(adapted);
-      })
-      .catch((err: unknown) => {
-        const msg = err && typeof err === "object" && "message" in err
-          ? String((err as { message: unknown }).message) : "Error al cargar productos";
-        toast.error(msg);
-      })
-      .finally(() => setLoading(false));
-  }, []);
+    if (exchangeRateServer == null) return;
+    // Don't disturb the cashier while they're editing the rate locally.
+    if (showTc) return;
+    // First sync ever — silent.
+    if (lastSyncedRateRef.current === null) {
+      setTc(exchangeRateServer);
+      setTcDraft(exchangeRateServer.toString());
+      lastSyncedRateRef.current = exchangeRateServer;
+      return;
+    }
+    if (Math.abs(exchangeRateServer - lastSyncedRateRef.current) > 0.0001) {
+      setTc(exchangeRateServer);
+      setTcDraft(exchangeRateServer.toString());
+      lastSyncedRateRef.current = exchangeRateServer;
+      toast.info(`Tipo de cambio actualizado: $${exchangeRateServer.toFixed(2)}`);
+    }
+  }, [exchangeRateServer, showTc]);
 
   // Validate persisted draft IDs on mount — clear stale entries (completed/cancelled/404)
   useEffect(() => {
@@ -481,6 +540,7 @@ export function SellPage() {
             id: String(c.id),
             name: c.name,
             phone: c.phone ?? undefined,
+            email: c.email ?? undefined,
             points: c.points,
             external_member_id: c.external_member_id ?? undefined,
           })));
@@ -510,6 +570,7 @@ export function SellPage() {
         id: String(newCust.id),
         name: newCust.name,
         phone: newCust.phone ?? undefined,
+        email: newCust.email ?? ext.email ?? undefined,
         points: newCust.points,
         external_member_id: ext.external_member_id,
       };
@@ -944,7 +1005,14 @@ export function SellPage() {
     updMesa(activeMesa.id, m => ({ ...m, discount: m.discount === d ? 0 : d }));
 
   const setCustomer = (c: Customer) => {
-    updMesa(activeMesa.id, m => ({ ...m, customerId: c.id, customerName: c.name, customerPhone: c.phone, isNewCustomer: false }));
+    updMesa(activeMesa.id, m => ({
+      ...m,
+      customerId: c.id,
+      customerName: c.name,
+      customerPhone: c.phone ?? "",
+      customerEmail: c.email ?? "",
+      isNewCustomer: false,
+    }));
     setCustomerSearch(c.name);
     setShowCustDrop(false);
   };
@@ -972,6 +1040,7 @@ export function SellPage() {
   };
 
   const activeTerminal = useMemo(() => terminals.find(t => t.id === activeMesa.selectedTerminalId), [terminals, activeMesa.selectedTerminalId]);
+  const hasAssignedCustomer = !!activeMesa.customerName?.trim();
 
   // Mapas para el catálogo: stock disponible ajustado por reservas de otras cajas,
   // y desglose de qué está reservado en qué caja (para mostrar "2 en Caja 3" en cada card).
@@ -1114,6 +1183,65 @@ export function SellPage() {
     }
   };
 
+  // Maneja un código escaneado (USB HID o cámara). Rutea PREV-* → folio, sino → producto por SKU.
+  const handleScannedCode = async (raw: string) => {
+    const code = raw.trim();
+    if (!code) return;
+    if (/^PREV-\d+/i.test(code)) {
+      toast.info(`Cargando folio ${code.toUpperCase()}…`);
+      await searchByFolio(code.toUpperCase());
+      return;
+    }
+    // 1. Try local cache first (top 200 + background 1000 + previous searches)
+    const local = products.find(p => p.sku.toLowerCase() === code.toLowerCase());
+    if (local) {
+      void addToCart(local, "a");
+      toast.success(`Agregado: ${local.name}`);
+      return;
+    }
+    // 2. Cache miss → hit backend directly (no debounce, scanner is an
+    //    explicit action). Use the search query cache so a re-scan of the
+    //    same SKU within 60s doesn't refetch.
+    try {
+      const fresh = await queryClient.fetchQuery({
+        queryKey: [...queryKeys.products.all, 'light', 'search', code],
+        queryFn: () => getProductsLight({ search: code, per_page: 5, active: true } as Parameters<typeof getProductsLight>[0]),
+        staleTime: 60_000,
+      });
+      const exact = fresh.data.find(p => p.sku.toLowerCase() === code.toLowerCase());
+      if (exact) {
+        const adapted: Product = {
+          id: String(exact.id),
+          name: exact.name,
+          sku: exact.sku,
+          category: String(exact.category_id ?? ""),
+          image: exact.image ?? "",
+          price_a: Number(exact.prices?.price_1 ?? 0) || 0,
+          price_b: Number(exact.prices?.price_2 ?? 0) > 0 ? Number(exact.prices.price_2) : undefined,
+          price_c: Number(exact.prices?.price_3 ?? 0) > 0 ? Number(exact.prices.price_3) : undefined,
+          price_d: Number(exact.prices?.price_4 ?? 0) > 0 ? Number(exact.prices.price_4) : undefined,
+          price_e: Number(exact.prices?.price_5 ?? 0) > 0 ? Number(exact.prices.price_5) : undefined,
+          stock: typeof exact.stock_total === "number" ? exact.stock_total : undefined,
+          active: exact.active,
+        } as Product;
+        void addToCart(adapted, "a");
+        toast.success(`Agregado: ${adapted.name}`);
+        return;
+      }
+    } catch {
+      // Network error — fall through to the "not found" path.
+    }
+    setSearch(code);
+    toast.warning(`Sin coincidencias para "${code}"`);
+  };
+
+  // Lector USB HID activo siempre que estemos en SellPage y no haya un modal de form abierto.
+  // El modal de cámara desactiva el HID para evitar doble lectura.
+  useBarcodeScanner({
+    onScan: code => { void handleScannedCode(code); },
+    enabled: !showCameraScanner && !showCatalog && !showApartarModal && !showOpenCashModal && !showCloseCashModal,
+  });
+
   const loadPreSaleOrderIntoCart = async (order: PreSaleOrder) => {
     if (!order.items?.length) {
       toast.error("Esta preventa no tiene productos para cargar");
@@ -1194,6 +1322,8 @@ export function SellPage() {
       depositAmount: balance,
       customerId: order.customer ? String(order.customer.id) : m.customerId,
       customerName: order.customer?.name ?? m.customerName,
+      customerPhone: order.customer?.phone ?? m.customerPhone,
+      customerEmail: order.customer?.email ?? m.customerEmail,
     }));
 
     setShowPreSalesModal(false);
@@ -1264,6 +1394,8 @@ export function SellPage() {
       });
       // Remove the layawayed item from the cart
       await removeFromCart(item.product.id);
+      // Stock changed → refresh products so next read is fresh.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
       setShowApartarModal(false);
       toast.success(`Apartado creado · Folio ${layaway.code ?? layaway.id}`, {
         style: { background: '#1a0a00', color: '#fff', border: '1px solid rgba(245,158,11,0.4)', borderRadius: '16px' }
@@ -1294,7 +1426,9 @@ export function SellPage() {
     const q = customerSearch.toLowerCase();
     return customers.filter(c =>
       (c.name ?? "").toLowerCase().includes(q) ||
-      (c.external_member_id ?? "").toLowerCase().includes(q)
+      (c.external_member_id ?? "").toLowerCase().includes(q) ||
+      (c.phone ?? "").toLowerCase().includes(q) ||
+      (c.email ?? "").toLowerCase().includes(q)
     );
   }, [customers, customerSearch]);
 
@@ -1307,8 +1441,10 @@ export function SellPage() {
     const amount = parseFloat(openCashAmount) || 0;
     setOpeningCash(true);
     try {
-      const session = await openSession(registerId, amount);
-      setCashSession(session);
+      await openSession(registerId, amount);
+      void queryClient.invalidateQueries({ queryKey: ['cash'] });
+      // Force fresh exchange rate at the start of the cashier's day.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.systemSettings.exchangeRate() });
       setShowOpenCashModal(false);
       toast.success(`Caja abierta · $${amount.toFixed(0)} inicial`);
     } catch (err: unknown) {
@@ -1326,16 +1462,12 @@ export function SellPage() {
     setClosingCashLoading(true);
     try {
       await closeSession(amount);
-      setCashSession(null);
+      void queryClient.invalidateQueries({ queryKey: ['cash'] });
       setShowCloseCashModal(false);
       setCloseCashAmount("");
       toast.success("Caja cerrada — corte registrado");
       if (isAdmin) {
         setActiveStore(null);
-      } else {
-        getCashRegisters(activeStore?.id)
-          .then(regs => { setCashRegisters(regs); if (regs[0]) setOpenCashRegisterId(regs[0].id); })
-          .catch(() => {});
       }
     } catch {
       toast.error("Error al cerrar la caja");
@@ -1407,6 +1539,8 @@ export function SellPage() {
       ${sale.storeName ? `<div>Sucursal: ${sale.storeName}</div>` : ""}
       ${sale.cashierName ? `<div>Cajero: ${sale.cashierName}</div>` : ""}
       ${sale.customerName ? `<div>Cliente: ${sale.customerName}</div>` : ""}
+      ${sale.customerPhone ? `<div>Tel: ${sale.customerPhone}</div>` : ""}
+      ${sale.customerEmail ? `<div>Correo: ${sale.customerEmail}</div>` : ""}
     </div>
     ${preSaleSection}${regularSection}${grandTotal}
     <div class="divider"></div>
@@ -1506,6 +1640,11 @@ export function SellPage() {
       return;
     }
 
+    // Tipo de cambio: ya está cacheado por 24h, fetched al abrir caja. No revalidamos
+    // aquí para no gastar llamadas por cada venta — el admin actualiza por la noche
+    // y el cajero lee al inicio del día. Si el admin necesita un cambio urgente en
+    // medio del día puede reabrir caja o el cajero cerrar/abrir sesión.
+
     // ── LIQUIDAR PREVENTA CARGADA (con o sin productos nuevos / nuevas preventas) ──
     if (activeMesa.loadedPreSaleOrderId) {
       if (isCheckoutLockedRef.current) return;
@@ -1578,6 +1717,8 @@ export function SellPage() {
         // Snapshots para ticket antes de limpiar
         const mesaId             = activeMesa.id;
         const customerNameSnap   = activeMesa.customerName;
+        const customerPhoneSnap  = activeMesa.customerPhone;
+        const customerEmailSnap  = activeMesa.customerEmail;
         const payMethodSnap      = activeMesa.paymentMethod;
         const liquidatedCodeSnap = activeMesa.loadedPreSaleOrderCode;
         const cashReceivedSnap   = parseFloat(cashReceived) || 0;
@@ -1606,6 +1747,8 @@ export function SellPage() {
           total: ticketTotal,
           paymentMethod: payMethodSnap,
           customerName: customerNameSnap,
+          ...(customerPhoneSnap ? { customerPhone: customerPhoneSnap } : {}),
+          ...(customerEmailSnap ? { customerEmail: customerEmailSnap } : {}),
           items: deliveredAndRegular,
           soldAt: new Date().toISOString(),
           storeName: activeStore?.name,
@@ -1624,6 +1767,12 @@ export function SellPage() {
         };
 
         setHistorialEntries([]);
+        // Sale + folios changed stock and reservation counts → refresh cached data
+        // so the next time the cashier opens the catalog the numbers are correct.
+        void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleCatalogs.all });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all });
         triggerPrintFlow(mixedTicket);
 
         const parts: string[] = [`Preventa liquidada · ${fmt(liquidationAmount)}`];
@@ -1758,6 +1907,8 @@ export function SellPage() {
 
         const mesaId = activeMesa.id;
         const customerNameSnap = activeMesa.customerName;
+        const customerPhoneSnap = activeMesa.customerPhone;
+        const customerEmailSnap = activeMesa.customerEmail;
         const payMethodSnap    = activeMesa.paymentMethod;
         const regularSubtotalFinal = regularItems.reduce((s, i) => s + getItemPrice(i) * i.quantity, 0);
 
@@ -1779,6 +1930,8 @@ export function SellPage() {
           total: mixedTotal,
           paymentMethod: payMethodSnap,
           customerName: customerNameSnap,
+          ...(customerPhoneSnap ? { customerPhone: customerPhoneSnap } : {}),
+          ...(customerEmailSnap ? { customerEmail: customerEmailSnap } : {}),
           items: regularItems.map(i => ({
             name: i.product.name,
             quantity: i.quantity,
@@ -1797,6 +1950,10 @@ export function SellPage() {
           })),
           preSaleAnticipo: catalogDeposit,
         };
+        void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleCatalogs.all });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all });
         triggerPrintFlow(mixedTicket);
       } catch (err: unknown) {
         const msg = err && typeof err === "object" && "message" in err
@@ -1912,6 +2069,8 @@ export function SellPage() {
         price: ci.damagedPrice ?? ci.product[`price_${ci.priceLevel}` as keyof Product] as number ?? ci.product.price_a,
       }));
       const customerNameSnapshot = activeMesa.customerName;
+      const customerPhoneSnapshot = activeMesa.customerPhone;
+      const customerEmailSnapshot = activeMesa.customerEmail;
       const payMethodSnapshot = activeMesa.paymentMethod;
       const receivedSnapshot = parseFloat(cashReceived) || 0;
       const changeSnapshot = receivedSnapshot > 0 ? receivedSnapshot - total : 0;
@@ -1939,6 +2098,8 @@ export function SellPage() {
         total,
         paymentMethod: payMethodSnapshot,
         customerName: customerNameSnapshot,
+        ...(customerPhoneSnapshot ? { customerPhone: customerPhoneSnapshot } : {}),
+        ...(customerEmailSnapshot ? { customerEmail: customerEmailSnapshot } : {}),
         items: cartSnapshot,
         soldAt: new Date().toISOString(),
         storeName: activeStore?.name,
@@ -1947,6 +2108,8 @@ export function SellPage() {
         change: changeSnapshot > 0 ? changeSnapshot : undefined,
       };
       setHistorialEntries([]); // invalidate cache
+      void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all });
       triggerPrintFlow(completedSale);
     } catch (err: unknown) {
       const msg = err && typeof err === "object" && "message" in err
@@ -2278,228 +2441,318 @@ export function SellPage() {
           {/* Buscadores Principales */}
           <div className="p-4 space-y-3">
             <div className="flex flex-col gap-3">
-              {/* Selector de tipo de cliente (Solo en Preventa) */}
-              {activeMesa.isPreventa && (
-                <div className="flex bg-white/[0.04] p-1 rounded-2xl border border-white/10 w-fit">
-                  <button 
-                    onClick={() => updMesa(activeMesa.id, m => ({ ...m, isNewCustomer: false }))}
-                    className={`flex items-center gap-2 px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${!activeMesa.isNewCustomer ? 'bg-[#E0221A] text-white shadow-lg' : 'text-white/40 hover:text-white'}`}
-                  >
-                    <Users size={14} />
-                    Cliente Existente
-                  </button>
-                  <button 
-                    onClick={() => updMesa(activeMesa.id, m => ({ ...m, isNewCustomer: true, customerId: undefined, customerPhone: m.customerPhone || "" }))}
-                    className={`flex items-center gap-2 px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeMesa.isNewCustomer ? 'bg-amber-500 text-black shadow-lg' : 'text-white/40 hover:text-white'}`}
-                  >
-                    <UserPlus size={14} />
-                    Cliente Nuevo
-                  </button>
-                </div>
-              )}
-
-              {/* ── Búsqueda de cliente (siempre visible) o formulario Cliente Nuevo (solo en Preventa) ── */}
-              {(activeMesa.isPreventa && activeMesa.isNewCustomer) ? (
-                <div className="flex flex-col gap-2 w-full">
-                  <div className="flex gap-2">
-                    <div className="relative flex-1">
-                      <div className="absolute left-4 top-1/2 -translate-y-1/2 text-amber-500/60">
+              <div className={`rounded-[24px] border px-4 py-4 transition-all ${
+                activeMesa.isPreventa
+                  ? hasAssignedCustomer
+                    ? "border-emerald-500/20 bg-emerald-500/[0.05]"
+                    : "border-amber-500/25 bg-amber-500/[0.05]"
+                  : "border-white/10 bg-white/[0.03]"
+              }`}>
+                <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-8 h-8 rounded-2xl flex items-center justify-center border ${
+                        activeMesa.isPreventa
+                          ? hasAssignedCustomer
+                            ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-300"
+                            : "border-amber-400/30 bg-amber-500/10 text-amber-300"
+                          : "border-white/10 bg-white/[0.05] text-white/70"
+                      }`}>
                         <User size={15} />
                       </div>
-                      <input
-                        type="text"
-                        placeholder="Nombre Completo *"
-                        value={activeMesa.customerName || ""}
-                        onChange={e => updMesa(activeMesa.id, m => ({ ...m, customerName: e.target.value }))}
-                        className="w-full bg-amber-500/5 border border-amber-500/30 rounded-2xl pl-11 pr-4 py-2.5 text-sm font-bold text-white placeholder:text-amber-500/30 focus:border-amber-500/50 outline-none transition-all"
-                      />
-                    </div>
-                    <div className="relative flex-1">
-                      <div className="absolute left-4 top-1/2 -translate-y-1/2 text-amber-500/60">
-                        <Phone size={15} />
+                      <div className="min-w-0">
+                        <p className="text-[11px] font-black uppercase tracking-[0.18em] text-white">
+                          {activeMesa.isPreventa ? "Paso 1 · Cliente de la preventa" : "Cliente del ticket"}
+                        </p>
+                        <p className="text-[11px] text-white/45 font-bold mt-0.5">
+                          {activeMesa.isPreventa
+                            ? "Busca, escanea o registra al cliente antes de cobrar el anticipo."
+                            : "Opcional para la venta regular, útil para historial y ticket."}
+                        </p>
                       </div>
-                      <input
-                        type="tel"
-                        placeholder="WhatsApp / Teléfono"
-                        value={activeMesa.customerPhone || ""}
-                        onChange={e => updMesa(activeMesa.id, m => ({ ...m, customerPhone: e.target.value }))}
-                        className="w-full bg-amber-500/5 border border-amber-500/30 rounded-2xl pl-11 pr-4 py-2.5 text-sm font-bold text-white placeholder:text-amber-500/30 focus:border-amber-500/50 outline-none transition-all"
-                      />
                     </div>
-                    <button
-                      onClick={() => {
-                        updMesa(activeMesa.id, m => ({ ...m, isNewCustomer: false, customerName: undefined, customerPhone: "", customerEmail: "" }));
-                        setCustomerSearch("");
-                      }}
-                      className="flex items-center justify-center px-3 rounded-2xl bg-white/[0.04] border border-white/10 text-white/30 hover:text-white hover:bg-white/10 transition-all"
-                      title="Cancelar registro"
-                    >
-                      <X size={15} />
-                    </button>
-                  </div>
-                  <div className="flex gap-2">
-                    <div className="relative flex-1">
-                      <div className="absolute left-4 top-1/2 -translate-y-1/2 text-amber-500/40">
-                        <span className="text-[10px] font-black">@</span>
-                      </div>
-                      <input
-                        type="email"
-                        placeholder="Email (opcional)"
-                        value={activeMesa.customerEmail || ""}
-                        onChange={e => updMesa(activeMesa.id, m => ({ ...m, customerEmail: e.target.value }))}
-                        className="w-full bg-amber-500/5 border border-amber-500/20 rounded-2xl pl-9 pr-4 py-2.5 text-sm font-bold text-white placeholder:text-amber-500/25 focus:border-amber-500/40 outline-none transition-all"
-                      />
-                    </div>
-                    <button
-                      disabled={isRegisteringCustomer || !activeMesa.customerName?.trim()}
-                      onClick={async () => {
-                        if (!activeMesa.customerName?.trim()) return;
-                        setIsRegisteringCustomer(true);
-                        try {
-                          const newCust = await createCustomer({
-                            name: activeMesa.customerName.trim(),
-                            phone: activeMesa.customerPhone?.trim() || undefined,
-                            email: activeMesa.customerEmail?.trim() || undefined,
-                          });
-                          updMesa(activeMesa.id, m => ({
-                            ...m,
-                            customerId: String(newCust.id),
-                            customerName: newCust.name,
-                            customerPhone: newCust.phone ?? "",
-                            customerEmail: "",
-                            isNewCustomer: false,
-                          }));
-                          setCustomerSearch("");
-                          toast.success(`Cliente registrado: ${newCust.name}`, {
-                            style: {
-                              background: '#052e16',
-                              color: '#86efac',
-                              border: '1px solid rgba(74,222,128,0.3)',
-                              borderRadius: '14px',
-                            },
-                          });
-                        } catch {
-                          toast.error("No se pudo registrar el cliente");
-                        } finally {
-                          setIsRegisteringCustomer(false);
-                        }
-                      }}
-                      className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-amber-500 text-black text-[11px] font-black uppercase tracking-widest hover:bg-amber-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
-                    >
-                      {isRegisteringCustomer ? <Loader2 size={13} className="animate-spin" /> : <UserPlus size={13} />}
-                      {isRegisteringCustomer ? "Guardando…" : "Agregar"}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                /* ── Búsqueda de cliente existente ── */
-                <div className="flex flex-col gap-1.5">
-                <div className="flex gap-3">
-                  <div className="relative flex-1" ref={custRef}>
-                    <div className={`absolute left-4 top-1/2 -translate-y-1/2 transition-colors ${requireCustomerFlash ? "text-amber-400" : "text-white/20"}`}>
-                      <Search size={16} />
-                    </div>
-                    <input
-                      ref={customerSearchRef}
-                      type="text"
-                      placeholder={requireCustomerFlash ? "Escribe nombre o teléfono del cliente…" : "Nombre, teléfono, folio o código de tarjeta..."}
-                      value={customerSearch}
-                      onChange={e => { setCustomerSearch(e.target.value); setShowCustDrop(true); }}
-                      onFocus={() => { setShowCustDrop(true); setRequireCustomerFlash(false); }}
-                      className={`w-full rounded-2xl pl-12 pr-4 py-2.5 text-sm font-bold text-white outline-none transition-all ${
-                        requireCustomerFlash
-                          ? "bg-amber-400/8 border-2 border-amber-400 ring-4 ring-amber-400/20 placeholder:text-amber-400/60 animate-pulse"
-                          : "bg-white/[0.04] border border-white/10 focus:border-white/20 focus:bg-white/[0.06] placeholder:text-white/20 shadow-inner"
-                      }`}
-                    />
-                    {activeMesa.customerName && (
-                      <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2 bg-black/40 px-3 py-1.5 rounded-xl border border-white/10">
-                        <span className="text-[10px] font-black text-white uppercase truncate max-w-[120px]">{activeMesa.customerName}</span>
-                        <button onClick={() => { updMesa(activeMesa.id, m => ({ ...m, customerId: undefined, customerName: undefined })); setCustomerSearch(""); }} className="text-white/40 hover:text-white"><X size={14} /></button>
-                      </div>
-                    )}
-                    
-                    {/* Dropdown Clientes Existentes */}
-                    <AnimatePresence>
-                      {showCustDrop && customerSearch.length > 0 && (
-                        <Motion.div 
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: 10 }}
-                          className="absolute top-full left-0 right-0 mt-2 z-[100] border border-white/10 rounded-2xl overflow-hidden shadow-2xl max-h-[300px] overflow-y-auto no-scrollbar"
-                          style={{ background: "var(--td-popup-bg)" }}
-                        >
-                          {filteredCusts.length === 0 ? (
-                            <div className="p-4 flex flex-col items-center gap-3">
-                              {extSearchResults.length === 0 && (
-                                <p className="text-xs text-white/30 font-bold uppercase tracking-widest text-center">No se encontró al cliente</p>
-                              )}
-                              {extSearchResults.length > 0 && (
-                                <div className="w-full space-y-1">
-                                  <p className="text-[9px] font-black text-red-400/70 uppercase tracking-widest px-1 pb-1">Socios Tadaima</p>
-                                  {extSearchResults.map(ext => (
-                                    <button
-                                      key={ext.external_member_id}
-                                      type="button"
-                                      onClick={() => handleAddExtCust(ext)}
-                                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-red-600/8 border border-red-500/20 hover:bg-red-600/18 transition-all text-left"
-                                    >
-                                      <div className="w-8 h-8 rounded-full bg-red-600/20 border border-red-500/30 flex items-center justify-center text-[10px] font-black text-red-400 shrink-0">
-                                        {(ext.name ?? "?").charAt(0).toUpperCase()}
-                                      </div>
-                                      <div className="flex-1 min-w-0">
-                                        <p className="text-sm font-black text-white truncate">{ext.name}</p>
-                                        <p className="text-[10px] text-white/35">{ext.external_member_id}{ext.phone ? ` · ${ext.phone}` : ""}</p>
-                                      </div>
-                                      <span className="text-[10px] font-black text-red-400 uppercase tracking-wider shrink-0">Agregar</span>
-                                    </button>
-                                  ))}
-                                </div>
-                              )}
-                              {activeMesa.isPreventa && (
-                                <button 
-                                  onClick={() => {
-                                    updMesa(activeMesa.id, m => ({ ...m, isNewCustomer: true, customerName: customerSearch, customerPhone: "" }));
-                                    setShowCustDrop(false);
-                                  }}
-                                  className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-500 font-black text-[10px] uppercase tracking-widest hover:bg-amber-500/20 transition-all"
-                                >
-                                  <UserPlus size={14} />
-                                  Registrar como Nuevo
-                                </button>
-                              )}
-                            </div>
-                          ) : (
-                            filteredCusts.map(c => (
-                              <button
-                                key={c.id}
-                                onClick={() => setCustomer(c)}
-                                className="w-full text-left px-5 py-4 border-b border-white/5 hover:bg-white/5 transition-colors group"
-                              >
-                                <div className="flex items-center justify-between">
-                                  <span className="text-sm font-black text-white group-hover:text-[#E0221A] transition-colors">{c.name}</span>
-                                  <span className="text-[10px] text-white/30">{c.phone || "Sin tel."}</span>
-                                </div>
-                              </button>
-                            ))
-                          )}
-                        </Motion.div>
-                      )}
-                    </AnimatePresence>
                   </div>
 
+                  <div className={`shrink-0 px-3 py-1.5 rounded-xl border text-[10px] font-black uppercase tracking-widest ${
+                    activeMesa.isPreventa
+                      ? hasAssignedCustomer
+                        ? "border-emerald-400/20 bg-emerald-500/10 text-emerald-300"
+                        : "border-amber-400/25 bg-amber-500/10 text-amber-300"
+                      : hasAssignedCustomer
+                        ? "border-white/15 bg-white/[0.06] text-white"
+                        : "border-white/10 bg-white/[0.04] text-white/35"
+                  }`}>
+                    {activeMesa.isPreventa
+                      ? hasAssignedCustomer ? "Cliente asignado" : "Requerido"
+                      : hasAssignedCustomer ? "Cliente seleccionado" : "Sin cliente"}
+                  </div>
                 </div>
-                {requireCustomerFlash && (
-                  <div className="flex items-center gap-2 px-1">
-                    <AlertCircle size={12} className="text-amber-400 shrink-0" />
-                    <span className="text-[11px] font-black text-amber-400 animate-pulse">
-                      Busca o registra al cliente antes de apartar
-                    </span>
+
+                {activeMesa.isPreventa && (
+                  <div className="flex bg-black/20 p-1 rounded-2xl border border-white/10 w-fit mb-3">
+                    <button 
+                      onClick={() => updMesa(activeMesa.id, m => ({ ...m, isNewCustomer: false }))}
+                      className={`flex items-center gap-2 px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${!activeMesa.isNewCustomer ? 'bg-[#E0221A] text-white shadow-lg' : 'text-white/40 hover:text-white'}`}
+                    >
+                      <Users size={14} />
+                      Buscar existente
+                    </button>
+                    <button 
+                      onClick={() => updMesa(activeMesa.id, m => ({ ...m, isNewCustomer: true, customerId: undefined, customerPhone: m.customerPhone || "" }))}
+                      className={`flex items-center gap-2 px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeMesa.isNewCustomer ? 'bg-amber-500 text-black shadow-lg' : 'text-white/40 hover:text-white'}`}
+                    >
+                      <UserPlus size={14} />
+                      Dar de alta
+                    </button>
                   </div>
                 )}
-                </div>
-              )}
 
+                {(activeMesa.isPreventa && activeMesa.isNewCustomer) ? (
+                  <div className="flex flex-col gap-2.5 w-full">
+                    <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-2">
+                      <div className="relative">
+                        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-amber-500/60">
+                          <User size={15} />
+                        </div>
+                        <input
+                          type="text"
+                          placeholder="Nombre completo *"
+                          value={activeMesa.customerName || ""}
+                          onChange={e => updMesa(activeMesa.id, m => ({ ...m, customerName: e.target.value }))}
+                          className="w-full bg-amber-500/5 border border-amber-500/30 rounded-2xl pl-11 pr-4 py-2.5 text-sm font-bold text-white placeholder:text-amber-500/30 focus:border-amber-500/50 outline-none transition-all"
+                        />
+                      </div>
+                      <div className="relative">
+                        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-amber-500/60">
+                          <Phone size={15} />
+                        </div>
+                        <input
+                          type="tel"
+                          placeholder="WhatsApp / teléfono"
+                          value={activeMesa.customerPhone || ""}
+                          onChange={e => updMesa(activeMesa.id, m => ({ ...m, customerPhone: e.target.value }))}
+                          className="w-full bg-amber-500/5 border border-amber-500/30 rounded-2xl pl-11 pr-4 py-2.5 text-sm font-bold text-white placeholder:text-amber-500/30 focus:border-amber-500/50 outline-none transition-all"
+                        />
+                      </div>
+                      <button
+                        onClick={() => {
+                          updMesa(activeMesa.id, m => ({ ...m, isNewCustomer: false, customerName: undefined, customerPhone: "", customerEmail: "" }));
+                          setCustomerSearch("");
+                        }}
+                        className="flex items-center justify-center px-3 rounded-2xl bg-white/[0.04] border border-white/10 text-white/30 hover:text-white hover:bg-white/10 transition-all"
+                        title="Cancelar registro"
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
+                      <div className="relative">
+                        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-amber-500/40">
+                          <Mail size={14} />
+                        </div>
+                        <input
+                          type="email"
+                          placeholder="Correo electrónico (opcional)"
+                          value={activeMesa.customerEmail || ""}
+                          onChange={e => updMesa(activeMesa.id, m => ({ ...m, customerEmail: e.target.value }))}
+                          className="w-full bg-amber-500/5 border border-amber-500/20 rounded-2xl pl-10 pr-4 py-2.5 text-sm font-bold text-white placeholder:text-amber-500/25 focus:border-amber-500/40 outline-none transition-all"
+                        />
+                      </div>
+                      <button
+                        disabled={isRegisteringCustomer || !activeMesa.customerName?.trim()}
+                        onClick={async () => {
+                          if (!activeMesa.customerName?.trim()) return;
+                          setIsRegisteringCustomer(true);
+                          try {
+                            const newCust = await createCustomer({
+                              name: activeMesa.customerName.trim(),
+                              phone: activeMesa.customerPhone?.trim() || undefined,
+                              email: activeMesa.customerEmail?.trim() || undefined,
+                            });
+                            updMesa(activeMesa.id, m => ({
+                              ...m,
+                              customerId: String(newCust.id),
+                              customerName: newCust.name,
+                              customerPhone: newCust.phone ?? "",
+                              customerEmail: newCust.email ?? "",
+                              isNewCustomer: false,
+                            }));
+                            setCustomerSearch(newCust.name);
+                            toast.success(`Cliente registrado: ${newCust.name}`, {
+                              style: {
+                                background: '#052e16',
+                                color: '#86efac',
+                                border: '1px solid rgba(74,222,128,0.3)',
+                                borderRadius: '14px',
+                              },
+                            });
+                          } catch {
+                            toast.error("No se pudo registrar el cliente");
+                          } finally {
+                            setIsRegisteringCustomer(false);
+                          }
+                        }}
+                        className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-amber-500 text-black text-[11px] font-black uppercase tracking-widest hover:bg-amber-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+                      >
+                        {isRegisteringCustomer ? <Loader2 size={13} className="animate-spin" /> : <UserPlus size={13} />}
+                        {isRegisteringCustomer ? "Guardando…" : "Guardar cliente"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    <div className="relative flex-1" ref={custRef}>
+                      <div className={`absolute left-4 top-1/2 -translate-y-1/2 transition-colors ${requireCustomerFlash ? "text-amber-400" : "text-white/20"}`}>
+                        <Search size={16} />
+                      </div>
+                      <input
+                        ref={customerSearchRef}
+                        type="text"
+                        placeholder={requireCustomerFlash ? "Escribe nombre o teléfono del cliente…" : "Busca por nombre, teléfono, correo o código de tarjeta…"}
+                        value={customerSearch}
+                        onChange={e => { setCustomerSearch(e.target.value); setShowCustDrop(true); }}
+                        onFocus={() => { setShowCustDrop(true); setRequireCustomerFlash(false); }}
+                        className={`w-full rounded-2xl pl-12 pr-4 py-3 text-sm font-bold text-white outline-none transition-all ${
+                          requireCustomerFlash
+                            ? "bg-amber-400/8 border-2 border-amber-400 ring-4 ring-amber-400/20 placeholder:text-amber-400/60 animate-pulse"
+                            : "bg-white/[0.04] border border-white/10 focus:border-white/20 focus:bg-white/[0.06] placeholder:text-white/20 shadow-inner"
+                        }`}
+                      />
+
+                      <AnimatePresence>
+                        {showCustDrop && customerSearch.length > 0 && (
+                          <Motion.div 
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: 10 }}
+                            className="absolute top-full left-0 right-0 mt-2 z-[100] border border-white/10 rounded-2xl overflow-hidden shadow-2xl max-h-[300px] overflow-y-auto no-scrollbar"
+                            style={{ background: "var(--td-popup-bg)" }}
+                          >
+                            {filteredCusts.length === 0 ? (
+                              <div className="p-4 flex flex-col items-center gap-3">
+                                {extSearchResults.length === 0 && (
+                                  <p className="text-xs text-white/30 font-bold uppercase tracking-widest text-center">No se encontró en la base local</p>
+                                )}
+                                {extSearchResults.length > 0 && (
+                                  <div className="w-full space-y-1">
+                                    <p className="text-[9px] font-black text-red-400/70 uppercase tracking-widest px-1 pb-1">Socios Tadaima</p>
+                                    {extSearchResults.map(ext => (
+                                      <button
+                                        key={ext.external_member_id}
+                                        type="button"
+                                        onClick={() => handleAddExtCust(ext)}
+                                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-red-600/8 border border-red-500/20 hover:bg-red-600/18 transition-all text-left"
+                                      >
+                                        <div className="w-8 h-8 rounded-full bg-red-600/20 border border-red-500/30 flex items-center justify-center text-[10px] font-black text-red-400 shrink-0">
+                                          {(ext.name ?? "?").charAt(0).toUpperCase()}
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                          <p className="text-sm font-black text-white truncate">{ext.name}</p>
+                                          <p className="text-[10px] text-white/35">{ext.external_member_id}{ext.phone ? ` · ${ext.phone}` : ""}{ext.email ? ` · ${ext.email}` : ""}</p>
+                                        </div>
+                                        <span className="text-[10px] font-black text-red-400 uppercase tracking-wider shrink-0">Agregar</span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                                {activeMesa.isPreventa && (
+                                  <button 
+                                    onClick={() => {
+                                      updMesa(activeMesa.id, m => ({ ...m, isNewCustomer: true, customerName: customerSearch, customerPhone: "" }));
+                                      setShowCustDrop(false);
+                                    }}
+                                    className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-500 font-black text-[10px] uppercase tracking-widest hover:bg-amber-500/20 transition-all"
+                                  >
+                                    <UserPlus size={14} />
+                                    Registrar como nuevo
+                                  </button>
+                                )}
+                              </div>
+                            ) : (
+                              filteredCusts.map(c => (
+                                <button
+                                  key={c.id}
+                                  onClick={() => setCustomer(c)}
+                                  className="w-full text-left px-5 py-4 border-b border-white/5 hover:bg-white/5 transition-colors group"
+                                >
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <p className="text-sm font-black text-white group-hover:text-[#E0221A] transition-colors truncate">{c.name}</p>
+                                      <p className="text-[10px] text-white/30 truncate">
+                                        {c.phone || "Sin tel."}
+                                        {c.email ? ` · ${c.email}` : ""}
+                                      </p>
+                                    </div>
+                                    {c.external_member_id && (
+                                      <span className="text-[9px] font-black text-red-400/70 uppercase tracking-widest shrink-0">
+                                        Socio
+                                      </span>
+                                    )}
+                                  </div>
+                                </button>
+                              ))
+                            )}
+                          </Motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+
+                    <p className="text-[10px] font-bold text-white/35 px-1">
+                      Primero busca en tu base local; si no existe, intentamos encontrarlo en socios Tadaima o lo damos de alta aquí mismo.
+                    </p>
+
+                    {requireCustomerFlash && (
+                      <div className="flex items-center gap-2 px-1">
+                        <AlertCircle size={12} className="text-amber-400 shrink-0" />
+                        <span className="text-[11px] font-black text-amber-400 animate-pulse">
+                          Busca o registra al cliente antes de apartar
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {hasAssignedCustomer && (
+                  <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-[9px] font-black uppercase tracking-[0.16em] text-white/35">
+                          Cliente asignado a esta {activeMesa.isPreventa ? "preventa" : "venta"}
+                        </p>
+                        <p className="text-sm font-black text-white mt-1 truncate">
+                          {activeMesa.customerName}
+                        </p>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-[10px] text-white/50 font-bold">
+                          {activeMesa.customerPhone && <span className="flex items-center gap-1"><Phone size={11} /> {activeMesa.customerPhone}</span>}
+                          {activeMesa.customerEmail && <span className="flex items-center gap-1"><Mail size={11} /> {activeMesa.customerEmail}</span>}
+                          {activeMesa.customerId && <span className="text-emerald-400/70">Registrado</span>}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => {
+                            customerSearchRef.current?.focus();
+                            setShowCustDrop(true);
+                          }}
+                          className="px-3 py-2 rounded-xl border border-white/10 bg-white/[0.04] text-[10px] font-black uppercase tracking-widest text-white/60 hover:text-white hover:bg-white/[0.07] transition-all"
+                        >
+                          Cambiar
+                        </button>
+                        <button
+                          onClick={() => {
+                            updMesa(activeMesa.id, m => ({ ...m, customerId: undefined, customerName: undefined, customerPhone: "", customerEmail: "" }));
+                            setCustomerSearch("");
+                          }}
+                          className="px-3 py-2 rounded-xl border border-red-500/20 bg-red-500/10 text-[10px] font-black uppercase tracking-widest text-red-300 hover:bg-red-500/15 transition-all"
+                        >
+                          Quitar
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Buscador de Productos (Manual) */}
@@ -2635,16 +2888,31 @@ export function SellPage() {
                 Preventas
               </button>
 
-              {/* Botón Escanear Producto */}
+              {/* Botón Escanear (cámara) — el lector USB HID está activo siempre */}
               <button
-                onClick={() => {
-                  prodInputRef.current?.focus();
-                  toast.info("Escáner de producto activo. Lea el código de barras.");
-                }}
+                onClick={() => setShowCameraScanner(true)}
                 className="flex items-center gap-3 px-6 rounded-2xl bg-[#E0221A]/[0.08] border border-[#E0221A]/20 text-[#E0221A] hover:bg-[#E0221A]/[0.12] transition-all font-black uppercase tracking-widest text-[10px]"
+                title="Escanear con cámara (folio PREV o SKU)"
               >
                 <ScanLine size={18} />
                 Escanear
+              </button>
+
+              {/* Botón Sincronizar — fuerza refresh de productos + catálogos + folios.
+                  Útil si admin acaba de subir productos o preventas y el cajero quiere verlos sin esperar. */}
+              <button
+                onClick={() => {
+                  void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+                  void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleCatalogs.all });
+                  void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all });
+                  void queryClient.invalidateQueries({ queryKey: queryKeys.systemSettings.exchangeRate() });
+                  toast.success("Sincronizando catálogo y preventas…");
+                }}
+                className="flex items-center gap-3 px-6 rounded-2xl bg-white/[0.05] border border-white/10 text-white/70 hover:bg-white/[0.08] transition-all font-black uppercase tracking-widest text-[10px]"
+                title="Buscar nuevos productos, catálogos y folios"
+              >
+                <RefreshCw size={16} />
+                Sincronizar
               </button>
             </div>
           </div>
@@ -2676,6 +2944,11 @@ export function SellPage() {
             ) : (
               <div className="space-y-3">
                 {activeMesa.items.map((item, idx) => (
+                  (() => {
+                    const hasItemImage = !!item.product.image?.trim();
+                    const shouldHideImageSlot = (item.sellingCatalogId != null || item.isFromPreSale) && !hasItemImage;
+
+                    return (
                   <Motion.div 
                     layout
                     initial={{ opacity: 0, x: -10 }}
@@ -2689,15 +2962,17 @@ export function SellPage() {
                           : "bg-white/[0.03] border-white/5 hover:bg-white/[0.06]"
                     }`}
                   >
-                    {/* Imagen con badge dañado */}
-                    <div className="relative shrink-0">
-                      <ImageWithFallback src={item.product.image || ""} className="w-14 h-14 rounded-xl object-cover bg-black" />
-                      {item.isDamaged && (
-                        <div className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-orange-500 flex items-center justify-center shadow-lg">
-                          <TriangleAlert size={10} className="text-white" strokeWidth={3} />
-                        </div>
-                      )}
-                    </div>
+                    {/* Las preventas nuevas suelen no tener imagen; si no existe, no reservamos ese espacio */}
+                    {!shouldHideImageSlot && (
+                      <div className="relative shrink-0">
+                        <ImageWithFallback src={item.product.image || ""} className="w-14 h-14 rounded-xl object-cover bg-black" />
+                        {item.isDamaged && (
+                          <div className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-orange-500 flex items-center justify-center shadow-lg">
+                            <TriangleAlert size={10} className="text-white" strokeWidth={3} />
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     <div className="flex-1 min-w-0">
                       <h3 className="text-sm font-black text-white truncate">{item.product.name}</h3>
@@ -2920,6 +3195,8 @@ export function SellPage() {
                       )}
                     </div>
                   </Motion.div>
+                    );
+                  })()
                 ))}
               </div>
             )}
@@ -2976,6 +3253,21 @@ export function SellPage() {
                   </p>
                   <p className="text-[2rem] font-black text-white leading-none">{fmt(currentPayAmount)}</p>
                 </div>
+
+                {hasAssignedCustomer && (
+                  <div className="pt-1 border-t border-white/[0.06]">
+                    <p className="text-[9px] font-black uppercase tracking-widest text-white/30">
+                      Cliente
+                    </p>
+                    <p className="text-sm font-black text-white truncate mt-0.5">
+                      {activeMesa.customerName}
+                    </p>
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1 text-[9px] font-bold text-white/40">
+                      {activeMesa.customerPhone && <span>{activeMesa.customerPhone}</span>}
+                      {activeMesa.customerEmail && <span>{activeMesa.customerEmail}</span>}
+                    </div>
+                  </div>
+                )}
 
                 {/* New preventa: anticipo + saldo */}
                 {!activeMesa.loadedPreSaleOrderId && activeMesa.isPreventa && activeMesa.items.length > 0 && (
@@ -3909,6 +4201,16 @@ export function SellPage() {
         )}
       </AnimatePresence>
 
+      {/* ── Escáner de Cámara ──────────────────────────────────────────────── */}
+      <CameraScannerModal
+        open={showCameraScanner}
+        onClose={() => setShowCameraScanner(false)}
+        onDetected={code => {
+          setShowCameraScanner(false);
+          void handleScannedCode(code);
+        }}
+      />
+
       {/* ── Catálogo de Productos ──────────────────────────────────────────── */}
       {showCatalog && (
         <ProductCatalogModal
@@ -4079,7 +4381,7 @@ export function SellPage() {
                             </div>
                           </div>
                           <span style={{ fontSize: 14, fontWeight: 900, color: "var(--td-text-hi)", flexShrink: 0 }}>{fmt(sale.total)}</span>
-                          <div onClick={e => { e.stopPropagation(); doPrintTicket({ id: sale.id, total: sale.total, paymentMethod: method, customerName: sale.customer?.name, items: (sale.items || []).map(i => ({ name: i.product?.name || String(i.product_id), quantity: i.quantity, price: i.price })), soldAt: dateStr }); }}
+                          <div onClick={e => { e.stopPropagation(); doPrintTicket({ id: sale.id, total: sale.total, paymentMethod: method, ...(sale.customer?.name ? { customerName: sale.customer.name } : {}), items: (sale.items || []).map(i => ({ name: i.product?.name || String(i.product_id), quantity: i.quantity, price: i.price })), soldAt: dateStr }); }}
                             role="button" title="Reimprimir ticket"
                             style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 9, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--td-text-lo)" }}
                             onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = "rgba(224,34,26,0.1)"; (e.currentTarget as HTMLDivElement).style.borderColor = "rgba(224,34,26,0.3)"; (e.currentTarget as HTMLDivElement).style.color = "#E0221A"; }}
@@ -4161,7 +4463,9 @@ export function SellPage() {
                             doPrintTicket({
                               total: isMixed ? grandTotal : paidAmt,
                               paymentMethod: isMixed ? regularMethod : (order.payments?.[0]?.payment_method?.name ?? "Efectivo"),
-                              customerName: order.customer?.name,
+                              ...(order.customer?.name ? { customerName: order.customer.name } : {}),
+                              ...(order.customer?.phone ? { customerPhone: order.customer.phone } : {}),
+                              ...(order.customer?.email ? { customerEmail: order.customer.email } : {}),
                               items: isMixed ? regularItems.map(i => ({ name: i.product?.name || String(i.product_id), quantity: i.quantity, price: i.price })) : [],
                               soldAt: order.created_at,
                               preSaleCode: order.code,

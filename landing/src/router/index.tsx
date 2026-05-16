@@ -16,6 +16,7 @@ import { SettingsPage } from '@/pages/SettingsPage'
 import { StoresPage } from '@/pages/StoresPage'
 import { AdminPage } from '@/pages/AdminPage'
 import { LayawaysPage } from '@/pages/LayawaysPage'
+import { OnlineCatalogPage } from '@/pages/OnlineCatalogPage'
 
 function IndexPage() {
   const { user } = useAuth()
@@ -29,6 +30,14 @@ export const router = createBrowserRouter([
     Component: LoginPage,
   },
   {
+    path: '/catalogo/:catalogUrl',
+    Component: OnlineCatalogPage,
+  },
+  {
+    path: '/tienda-online/:catalogUrl',
+    Component: OnlineCatalogPage,
+  },
+  {
     path: '/',
     element: (
       <ProtectedRoute>
@@ -38,16 +47,16 @@ export const router = createBrowserRouter([
     children: [
       { index: true, Component: IndexPage },
       { path: 'caja', Component: SellPage },
-      { path: 'sales', Component: SalesPage },
-      { path: 'products', Component: ProductsPage },
-      { path: 'transfers', Component: TransfersPage },
-      { path: 'clients', Component: ClientsPage },
-      { path: 'pre-sales', Component: PreSalesPage },
-      { path: 'reports', Component: ReportsPage },
-      { path: 'settings', Component: SettingsPage },
-      { path: 'stores', Component: StoresPage },
-      { path: 'admin', Component: AdminPage },
-      { path: 'layaways', Component: LayawaysPage },
+      { path: 'sales',     element: <ProtectedRoute requiresPage="sales"><SalesPage /></ProtectedRoute> },
+      { path: 'products',  element: <ProtectedRoute requiresPage="products"><ProductsPage /></ProtectedRoute> },
+      { path: 'transfers', element: <ProtectedRoute requiresPage="transfers"><TransfersPage /></ProtectedRoute> },
+      { path: 'clients',   element: <ProtectedRoute requiresPage="clients"><ClientsPage /></ProtectedRoute> },
+      { path: 'pre-sales', element: <ProtectedRoute requiresPage="presales"><PreSalesPage /></ProtectedRoute> },
+      { path: 'reports',   element: <ProtectedRoute requiresPage="reports"><ReportsPage /></ProtectedRoute> },
+      { path: 'settings',  element: <ProtectedRoute requiresPage="settings"><SettingsPage /></ProtectedRoute> },
+      { path: 'stores',    element: <ProtectedRoute requiresPage="stores"><StoresPage /></ProtectedRoute> },
+      { path: 'admin',     element: <ProtectedRoute requiresPage="admin"><AdminPage /></ProtectedRoute> },
+      { path: 'layaways',  Component: LayawaysPage },
     ],
   },
 ])

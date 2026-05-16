@@ -57,6 +57,11 @@ class Product extends Model
         return $this->hasMany(Layaway::class);
     }
 
+    public function saleItems(): HasMany
+    {
+        return $this->hasMany(SaleItem::class);
+    }
+
     public function storePrices(): HasMany
     {
         return $this->hasMany(ProductStorePrice::class)->orderBy('store_id')->orderBy('price_level');
@@ -71,10 +76,42 @@ class Product extends Model
 
     public function scopeSearch(Builder $query, string $term): Builder
     {
+        $term = trim($term);
+        if ($term === '') {
+            return $query;
+        }
+
+        // FULLTEXT MATCH AGAINST (BOOLEAN MODE) requires the term to be at
+        // least innodb_ft_min_token_size chars (default 3). For shorter
+        // terms (e.g. 2-char SKU prefixes), fall back to LIKE prefix match
+        // which still hits the per-column index on sku/barcode.
+        $driver = $query->getConnection()->getDriverName();
+        if ($driver === 'mysql' && mb_strlen($term) >= 3) {
+            $boolean = $this->buildFulltextBooleanTerm($term);
+            return $query->whereRaw(
+                'MATCH(name, sku, barcode) AGAINST(? IN BOOLEAN MODE)',
+                [$boolean]
+            );
+        }
+
         return $query->where(function (Builder $q) use ($term) {
             $q->where('name', 'like', "%{$term}%")
               ->orWhere('sku', 'like', "%{$term}%")
               ->orWhere('barcode', 'like', "%{$term}%");
         });
+    }
+
+    /**
+     * Builds a BOOLEAN MODE search expression. Escapes the operator chars
+     * MySQL FULLTEXT treats specially (+ - > < ( ) ~ * " @) and adds a
+     * trailing * to each token so partial-word matches still work
+     * ("iPho" matches "iPhone").
+     */
+    private function buildFulltextBooleanTerm(string $term): string
+    {
+        $sanitized = preg_replace('/[+\-><()~*"@]+/u', ' ', $term) ?? '';
+        $tokens = preg_split('/\s+/u', trim($sanitized)) ?: [];
+        $expr = array_map(static fn (string $t) => $t === '' ? '' : '+' . $t . '*', $tokens);
+        return implode(' ', array_filter($expr));
     }
 }

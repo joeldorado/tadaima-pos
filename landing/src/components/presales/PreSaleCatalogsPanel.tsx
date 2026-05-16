@@ -1,9 +1,10 @@
 import { useState, useEffect, useMemo } from "react";
 import { toast } from "sonner";
-import {
-  getPreSaleCatalogs, updatePreSaleCatalogStatus, storageUrl,
-} from "@tadaima/api";
+import { updatePreSaleCatalogStatus, storageUrl } from "@tadaima/api";
 import type { PreSaleCatalog, PreSaleCatalogStatus } from "@tadaima/api";
+import { useQueryClient } from "@tanstack/react-query";
+import { usePreSaleCatalogsQuery } from "@/hooks/queries/usePreSales";
+import { queryKeys } from "@/lib/queryKeys";
 import {
   Package, Plus, Loader2, Search, X, ChevronLeft, ChevronRight,
   BookOpen, CheckCircle2, Archive, Ban, Pencil, Truck, Boxes, AlertTriangle, Star,
@@ -142,8 +143,11 @@ function CompletedBlockModal({ catalog, onClose }: { catalog: PreSaleCatalog; on
 
 // ─── Panel ────────────────────────────────────────────────────────────────────
 export function PreSaleCatalogsPanel() {
-  const [catalogs, setCatalogs]   = useState<PreSaleCatalog[]>([]);
-  const [loading, setLoading]     = useState(true);
+  const queryClient = useQueryClient();
+  const catalogsQuery = usePreSaleCatalogsQuery({ per_page: 200 });
+  const catalogs: PreSaleCatalog[] = catalogsQuery.data?.data ?? [];
+  const loading = catalogsQuery.isPending;
+  const invalidateCatalogs = () => queryClient.invalidateQueries({ queryKey: queryKeys.preSaleCatalogs.all });
   const [showNew, setShowNew]     = useState(false);
   const [editCatalog, setEditCatalog]       = useState<PreSaleCatalog | null>(null);
   const [convertCatalog, setConvertCatalog] = useState<PreSaleCatalog | null>(null);
@@ -155,14 +159,9 @@ export function PreSaleCatalogsPanel() {
   const [confirmPending, setConfirmPending] = useState<{ catalog: PreSaleCatalog; to: PreSaleCatalogStatus } | null>(null);
   const [blockedCatalog, setBlockedCatalog] = useState<PreSaleCatalog | null>(null);
 
-  const load = () => {
-    setLoading(true);
-    getPreSaleCatalogs({ per_page: 200 })
-      .then(res => setCatalogs(res.data))
-      .catch(() => toast.error("Error al cargar catálogos"))
-      .finally(() => setLoading(false));
-  };
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (catalogsQuery.error) toast.error("Error al cargar catálogos");
+  }, [catalogsQuery.error]);
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
@@ -188,8 +187,8 @@ export function PreSaleCatalogsPanel() {
   const handleTransition = async (catalog: PreSaleCatalog, to: PreSaleCatalogStatus) => {
     setTrans(catalog.id);
     try {
-      const updated = await updatePreSaleCatalogStatus(catalog.id, { status: to });
-      setCatalogs(prev => prev.map(c => c.id === updated.id ? updated : c));
+      await updatePreSaleCatalogStatus(catalog.id, { status: to });
+      void invalidateCatalogs();
       toast.success(`"${catalog.product_name}" → ${STATUS_CFG[to].label}`);
     } catch (err: unknown) {
       toast.error((err as { message?: string })?.message ?? "Error al actualizar");
@@ -528,7 +527,7 @@ export function PreSaleCatalogsPanel() {
         {showNew && (
           <NewPreSaleCatalogModal
             onClose={() => setShowNew(false)}
-            onSuccess={catalog => { setCatalogs(prev => [catalog, ...prev]); setShowNew(false); }}
+            onSuccess={_catalog => { void invalidateCatalogs(); setShowNew(false); }}
           />
         )}
         {editCatalog && (
@@ -536,7 +535,7 @@ export function PreSaleCatalogsPanel() {
             catalog={editCatalog}
             onClose={() => setEditCatalog(null)}
             onSuccess={updated => {
-              setCatalogs(prev => prev.map(c => c.id === updated.id ? updated : c));
+              void invalidateCatalogs();
               setEditCatalog(null);
               toast.success(`"${updated.product_name}" actualizado`);
             }}
@@ -549,10 +548,8 @@ export function PreSaleCatalogsPanel() {
           <CatalogToProductModal
             catalog={convertCatalog}
             onClose={() => setConvertCatalog(null)}
-            onSuccess={productId => {
-              setCatalogs(prev => prev.map(c =>
-                c.id === convertCatalog.id ? { ...c, product: { id: productId, name: c.product_name } } : c
-              ));
+            onSuccess={_productId => {
+              void invalidateCatalogs();
               setConvertCatalog(null);
               toast.success("Producto creado y vinculado al catálogo");
             }}

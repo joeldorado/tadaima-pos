@@ -1,9 +1,11 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { toast } from "sonner";
-import { getPreSaleOrders } from "@tadaima/api";
 import type { PreSaleOrder, PreSaleOrderStatus } from "@tadaima/api";
 import { useAuth } from "@tadaima/auth";
 import { useActiveStore } from "@/contexts/StoreContext";
+import { useQueryClient } from "@tanstack/react-query";
+import { usePreSaleOrdersQuery } from "@/hooks/queries/usePreSales";
+import { queryKeys } from "@/lib/queryKeys";
 import {
   Search, Loader2, RefreshCw, ChevronLeft, ChevronRight,
   Package, User, Calendar, Banknote, Clock, CheckCircle2,
@@ -30,34 +32,27 @@ export function PreSaleOrdersPanel() {
   const { stores } = useActiveStore();
   const isAdmin = user?.roles?.includes("admin") || user?.roles?.includes("gerente");
 
-  const [orders, setOrders] = useState<PreSaleOrder[]>([]);
-  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<PreSaleOrderStatus | "all">("all");
   const [storeFilter, setStoreFilter] = useState<number | "all">("all");
   const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
 
-  const fetchOrders = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params: Record<string, unknown> = { per_page: PAGE_SIZE, page };
-      if (statusFilter !== "all") params.status = statusFilter;
-      if (!isAdmin && user?.store_id) params.store_id = user.store_id;
-      else if (isAdmin && storeFilter !== "all") params.store_id = storeFilter;
-      if (search.trim()) params.code = search.trim();
+  const queryClient = useQueryClient();
+  const params: Record<string, unknown> = { per_page: PAGE_SIZE, page };
+  if (statusFilter !== "all") params.status = statusFilter;
+  if (!isAdmin && user?.store_id) params.store_id = user.store_id;
+  else if (isAdmin && storeFilter !== "all") params.store_id = storeFilter;
+  if (search.trim()) params.code = search.trim();
 
-      const res = await getPreSaleOrders(params as Parameters<typeof getPreSaleOrders>[0]);
-      setOrders(res.data);
-      setTotal(res.pagination.total);
-    } catch {
-      toast.error("No se pudieron cargar los folios");
-    } finally {
-      setLoading(false);
-    }
-  }, [page, statusFilter, storeFilter, search, isAdmin, user?.store_id]);
+  const ordersQuery = usePreSaleOrdersQuery(params as Parameters<typeof usePreSaleOrdersQuery>[0]);
+  const orders: PreSaleOrder[] = ordersQuery.data?.data ?? [];
+  const total = ordersQuery.data?.pagination.total ?? 0;
+  const loading = ordersQuery.isPending;
+  const fetchOrders = () => queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all });
 
-  useEffect(() => { void fetchOrders(); }, [fetchOrders]);
+  useEffect(() => {
+    if (ordersQuery.error) toast.error("No se pudieron cargar los folios");
+  }, [ordersQuery.error]);
 
   const lastPage = Math.ceil(total / PAGE_SIZE);
 
