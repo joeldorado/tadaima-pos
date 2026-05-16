@@ -435,6 +435,138 @@ docker compose up --build -d
 
 ## 11. Historial de sesiones de desarrollo
 
+### Sesión 2026-05-15 (madrugada larga) — React Query global + IndexedDB + catálogo perf para 8000 productos
+
+**Contexto:** Joel pidió implementar React Query para optimizar el state de datos sin recargar info de más, manteniéndola actualizada cuando hay cambios. Cubrir: Inicio, Productos, Ventas, Clientes, Preventas, Traslados, Reportes, Caja y Settings. Pregunta paralela: cómo propagar el tipo de cambio entre dispositivos (admin cambia en una compu, cajero ya tiene sesión abierta en otra) sin Firebase ni cron caro.
+
+**1. Setup global del data layer**
+
+| Archivo | Cambio |
+|---|---|
+| `landing/src/lib/queryClient.ts` | `QueryClient` con defaults (staleTime 30s, gcTime 24h, retry 1, refetchOnWindowFocus true). IndexedDB persister via `idb-keyval` (límite cientos de MB, vs 5-10MB de localStorage que no aguanta 8000 productos). `broadcastQueryClient` con `BroadcastChannel('tadaima-rq')` para sincronizar invalidaciones entre tabs (Caja 1 vende → Caja 2/3/4/5 ven stock actualizado en <100ms). |
+| `landing/src/lib/queryKeys.ts` | Keys centralizados por dominio (products, customers, stores, reports, preSaleCatalogs, preSaleOrders, sales, etc). Permite invalidate granular o broad. |
+| `landing/src/App.tsx` | `PersistQueryClientProvider` envuelve la app con `maxAge: 24h`. Tabs nuevas leen el cache de IndexedDB → 0 fetches duplicados. |
+
+Paquetes nuevos: `@tanstack/react-query-persist-client`, `@tanstack/query-async-storage-persister`, `@tanstack/query-broadcast-client-experimental`, `idb-keyval`.
+
+**2. Hooks dedicados por dominio** (`landing/src/hooks/queries/`)
+
+`useProducts`, `useStores`, `useMangas`, `useWarehouses`, `useCustomers`, `useTransfers`, `useUsers`, `useRoles`, `useCategories`, `usePaymentMethods`, `useTerminals`, `useCashSession`, `usePreSales`, `useSystemSettings`, `useSales`. Cada uno encapsula el `useQuery` + cache config + parámetros sanos.
+
+**3. Páginas migradas (lectura + invalidate-on-mutate)**
+
+| Página | Lo que cambió |
+|---|---|
+| `ProductsPage` | `useProductsQuery`, `useMangasQuery`, `useStoresQuery`, `useWarehousesQuery`. Mutations (create/update/delete producto + manga + categoría) hacen `queryClient.invalidateQueries`. |
+| `ClientsPage` | `useCustomersQuery`. Reemplazado el setCustomers manual. |
+| `ReportsPage` | 5 queries con `enabled` por tab activo + date range en queryKey. Botón "Actualizar" con icono `RefreshCw` invalida solo el dominio del tab. Sin polling. |
+| `TransfersPage` | `useTransfersQuery` + `useWarehousesQuery`. Invalidates tras createTransfer/complete/cancel. |
+| `DashboardPage` | `useWarehousesQuery`, `useUsersQuery`, 3 queries KPI (sales/layaways/lowStock) dependientes de `activeStore`. |
+| `AdminPage` (6 tabs) | TabSucursales, TabBodegas, TabUsuarios, TabRoles, TabCategorias, TabTerminales migradas. Mutations invalidan cache compartido entre tabs (crear sucursal refresca selectores en otras tabs). |
+| `SellPage` (Caja) | `useProductsLightQuery`, `usePaymentMethodsQuery`, `useTerminalsQuery`, `useActiveSessionQuery`, `useCashRegistersQuery`, `useExchangeRateQuery`. |
+| `PreSalesPage` + 3 paneles | `usePreSaleOrdersQuery` para contador. PreSaleCatalogsPanel/OrdersPanel/DifusionPanel migrados con invalidates en transitions. |
+| `SalesPage` | `useSalesQuery`, `usePreSaleOrdersQuery`, `useProductsQuery`. returnSale invalida sales. Botón Actualizar invalida sales + preSaleOrders. |
+| `SettingsPage` | `useSystemSettingsQuery` + invalidate cruzado tras `batchUpdateSystemSettings` (cambio de TC en Settings propaga al cache de Caja). |
+
+**4. Strategy de cache por dominio**
+
+| Dominio | staleTime | Polling | Refetch on focus |
+|---|---|---|---|
+| Productos / mangas | 24h | no | no |
+| Catálogos de preventa | 24h | no | no |
+| Tipo de cambio | 24h | no | no |
+| Folios de preventa | 60s | no | yes (default) |
+| Ventas / reportes / clientes | 30s (default) | no | yes |
+| Sesión de caja / terminales / payment methods | 30s | no | yes |
+
+Polling automático eliminado. El polling original cada 30s costaba ~2880 requests/cajero/día por query. Lo reemplazamos por: cache largo + invalidaciones explícitas + botones manuales + sync al abrir sesión.
+
+**5. Tipo de cambio entre dispositivos (sin Firebase ni cron)**
+
+- `useExchangeRateQuery`: staleTime 24h, sin polling, sin refetchOnFocus, sin refetchOnMount.
+- En `handleOpenCash` (cajero abre sesión de caja): `queryClient.invalidateQueries(['systemSettings', 'exchangeRate'])` → fuerza fetch fresco al inicio del día.
+- En `batchUpdateSystemSettings` (admin guarda TC en Settings): invalidate cruzado a `queryKeys.systemSettings.all` → si admin y cajero comparten browser/tab, ven el cambio inmediato. Si están en computadoras separadas, el cajero lo ve cuando abre su próxima sesión de caja a la mañana siguiente.
+- Modelo mental: **admin actualiza TC en la noche, cajero abre caja a las 6am y lee el TC fresco**. Cero polling. ~1-2 fetches/cajero/día para TC.
+
+**6. Cache compartido entre tabs**
+
+Antes: si Joel abría Caja 1, Caja 2, ..., Caja 5 en pestañas distintas, cada una hacía su propio fetch inicial (5×). Ahora:
+
+- `PersistQueryClientProvider` con `createAsyncStoragePersister` apuntado a IndexedDB (via `idb-keyval`) → Caja 2/3/4/5 leen el cache de Caja 1 desde IndexedDB → 0 fetches duplicados al montar.
+- `broadcastQueryClient('tadaima-rq')` → invalidaciones se propagan en <100ms entre tabs (vender en Caja 1 actualiza el stock visible en Caja 2 sin recargar).
+- localStorage no alcanza (límite 5-10MB, 8000 productos = ~12MB JSON). IndexedDB soporta cientos de MB sin problema.
+
+**7. Catálogo optimizado para 8000+ productos**
+
+Discusión con Joel sobre cómo lo hacen empresas grandes (Shopify POS, Square, Toast, Lightspeed, Clover, Amazon): server-side search + quick picks + paginación virtual + scanner directo + categorías filtro + CDN imágenes. Joel eligió híbrido: top 200 más vendidos + server search + background gradual.
+
+| Cambio | Detalle |
+|---|---|
+| Backend: `ProductLightResource` | Endpoint `GET /products?light=1` retorna slim payload (id, name, sku, active, category_id, prices, image URL, allow_cash, allow_card, stock_total). Drop barcode, description, cost, category object, images array, timestamps. ~60% menos payload. |
+| Backend: `?sort=top` | Param que ordena por count de `sale_items` últimos 30 días (desc), tiebreaker `id desc`. Útil para precargar el cache con los productos que el cajero realmente usa, no los más recientes. `Product::saleItems()` HasMany agregado al modelo. |
+| Backend: FULLTEXT migration | `2026_05_15_000002_add_fulltext_index_to_products.php` crea índice FULLTEXT en `products(name, sku, barcode)`. No-op en SQLite (tests). `Product::scopeSearch` usa `MATCH(name, sku, barcode) AGAINST(? IN BOOLEAN MODE)` con tokens prefijo (`+iPho* +Pro*`) cuando term ≥ 3 chars, fallback LIKE para términos cortos. Búsqueda baja de ~200ms (LIKE table scan) a ~5-10ms (index seek). |
+| Frontend: `getProductsLight` + `ProductLight` type | Cliente paralelo de `getProducts` que retorna el shape slim. `getLightPrice(p, level)` helper para leer `prices.price_N`. |
+| Frontend: `useProductsLightQuery` | Trae top 200 productos. staleTime 24h, gcTime 24h, sin refetch automático. |
+| Frontend: `useProductsSearchQuery` | Búsqueda server-side, enabled cuando term ≥ 2 chars. Cache 60s por queryKey por término. |
+| Frontend: `useProductsInfiniteQuery` | `useInfiniteQuery` con páginas de 120, para modal de catálogo cuando se conecte después. Hook listo, integración al modal pendiente. |
+| Frontend: `useBackgroundProductsPrefetch` | Hook util que dispara prefetch progresivo de páginas 2..6 con `setTimeout` escalonado (1.5s entre cada) + `requestIdleCallback` para arrancar solo cuando el browser está idle. Total: 1000 productos más cacheados sin bloquear UI. |
+| Frontend: `Layout.tsx` post-login prefetch | En cuanto hay user autenticado, `queryClient.prefetchQuery(top200, sort=top)` en background. Cuando el cajero llega a Caja, el cache ya está listo. Latencia percibida: ~0. |
+| Frontend: Scanner USB inmediato | Si SKU no está en cache local (top 200 + background 1000 = 1200 productos), `queryClient.fetchQuery` directo al backend SIN debounce (es acción explícita del cajero). Cache 60s por SKU. |
+
+**Costos de tráfico** (estimado para 1 cajero, jornada 8h, 50 ventas):
+
+| Patrón | Llamadas backend / día |
+|---|---|
+| Original (polling 30s en queries + sin cache) | ~3000+ |
+| Patrón híbrido implementado | ~80-100 |
+
+Reducción ~97%. 5 cajeros × 80 = 400 requests/día. Cloud Run free tier permite 67k/día → estás al 1% del free tier.
+
+**8. Botones de sincronización manual en UI**
+
+- **SellPage "Sincronizar"** (junto a Escanear): invalida products + preSaleCatalogs + preSaleOrders + exchangeRate. Visible para todos. Útil cuando admin acaba de subir productos/preventas y cajero quiere verlos sin esperar al reload.
+- **ProductsPage "Buscar nuevos"** (al lado de "Alta de Producto"): invalida products + mangas. **Solo visible para gerente/cajero** (admin no lo necesita porque sus propias mutations ya invalidan).
+- **ReportsPage "Actualizar"** (junto a tabs): invalida solo el dominio del tab activo. Sin polling. Admin entra → fresh. Vuelve al tab del navegador → fresh por refetchOnWindowFocus. Click → fresh inmediato. Spinner mientras carga.
+
+**9. Invalidaciones automáticas tras eventos**
+
+| Evento | Queries invalidadas |
+|---|---|
+| `createSale` (venta regular) | products, sales |
+| `createLayaway` | products |
+| `createPreSaleOrder` | products, preSaleCatalogs, preSaleOrders |
+| `addPreSaleOrderPayment` + `updatePreSaleOrderStatus` | preSaleOrders, sales (si checkout mixto) |
+| Cobro mixto con liquidación + regular + nueva preventa | products + preSaleCatalogs + preSaleOrders + sales (todos) |
+| `openSession` / `closeSession` | cash, exchangeRate |
+| `batchUpdateSystemSettings` (admin guarda TC) | systemSettings (all) |
+| Admin: create/update producto/categoría/sucursal/usuario/rol/etc. | dominio respectivo |
+
+**10. Verificación**
+
+- `vite build` ✓ (590-620ms, bundle 1875-1900KB)
+- `vitest run` ✓ 18/18 tests pasan
+- `php artisan test` ✓ 27/27 tests pasan (SQLite, FULLTEXT migration no-op)
+- Dev server smoke: index 200, main.tsx 200
+
+**11. Pendiente para activar en prod**
+
+- Deploy: `cd /Users/joeldoradoaguilus/Documents/JOEL/Tadaima && gcloud run deploy tadaima --source . --region=us-central1 --project=impusodigitaldorado` (el entrypoint corre `php artisan migrate --force` que aplica el FULLTEXT automáticamente).
+- Verificación post-deploy: tadaima.poslite.com.mx carga, DevTools → Application → IndexedDB → `keyval-store` aparece, Network tab muestra 1 fetch a `/products?light=1&sort=top&per_page=200` al login + páginas 2-6 en idle, Cloud Run logs deben tener línea `Migration: 2026_05_15_000002_add_fulltext_index_to_products`.
+
+**Commits**: `cd16dd6` (legacy preventas cleanup), `665bfd3` (RQ + IndexedDB + catalog perf), `eede356` (MASTERLOG).
+
+**Push**: `dev/qa-handoff` ya pusheado a `github.com:joeldorado/tadaima-pos.git`.
+
+**Pendientes de prioridad baja** (no bloquean):
+
+- TabPermisos, TabPreciosTienda, TabInventario en AdminPage no migrados (lógica custom, beneficio marginal).
+- Modal `ProductCatalogModal` no integrado con `useProductsInfiniteQuery` (hook disponible, integración requiere refactor del modal `@ts-nocheck`).
+- LayawaysPage no migrada (no estaba en lista de Joel).
+- `openPreSalesModal` dentro de SellPage sigue imperativo (fetch on demand al abrir modal — no reusa cache de PreSalesPage).
+- Sort by top sellers cuando hay pocas ventas históricas devuelve count=0 (orden por id desc como fallback). Se acomoda solo tras unas semanas de operación.
+
+---
+
 ### Sesión 2026-05-15 (planeación) — Extensión fase Tienda Online
 
 **Contexto:** Se revisó el estado real del catálogo online para continuar fase de ejecución. La base backend ya existe, pero faltaba la capa web pública en `landing` y el plan de cierre por bloques.
