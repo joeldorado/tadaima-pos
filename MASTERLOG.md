@@ -1,7 +1,7 @@
 # MASTERLOG — Tadaima POS
 
 > Registro maestro del proyecto: arquitectura, evolución, decisiones clave y estado actual.
-> Actualizado: 2026-05-14
+> Actualizado: 2026-05-15 (plan fase Tienda Online preparado)
 
 ---
 
@@ -10,14 +10,14 @@
 | Componente | Estado | Notas |
 |-----------|--------|-------|
 | Backend API (Laravel) | ✅ En producción | revision `tadaima-00034-ghr`, URL: tadaima-987277625193.us-central1.run.app |
-| Landing / Web (React) | ✅ En producción | Email folio, historial mixto, Tarjeta/Transferencia, checkout mixto con liquidación+regular+nueva preventa |
+| Landing / Web (React) | ✅ En producción | Email folio, historial mixto, Tarjeta/Transferencia, checkout mixto con liquidación+regular+nueva preventa, módulo cliente reforzado en Caja para preventas |
 | App móvil (Expo) | ⏳ Pendiente | Estructura base existe en `apps/`, sin paridad de features |
 | Deploy / Cloud Run | ✅ Operacional | `gcloud run deploy --source .`, región us-central1. Build remoto en Cloud Build (no requiere Docker local) |
 | DB Producción | ✅ Operacional | MySQL `pos-lite-db` en us-west1, vía Cloud SQL Proxy en local o `DB_SOCKET` en Cloud Run |
 | Bucket GCS | ✅ Configurado | `gs://tadaima-media`, FILESYSTEM_DISK=gcs en producción |
 | Dominio custom | ✅ Activo | `tadaima.poslite.com.mx` mapeado a `tadaima` us-central1 |
-| Loyalty Supabase | 🟡 Parcial | Código integrado (`external/card`, `external/customers`). Funciona en local con `.env`. Faltan `TADAIMA_SUPABASE_URL`/`SERVICE_KEY` en Cloud Run prod |
-| Servicio duplicado | ⚠️ Limpieza | `tadaima` us-west1 sin tráfico ni dominio — candidato a borrar |
+| Loyalty Supabase | ✅ Activo en prod | `TADAIMA_SUPABASE_URL` + `SERVICE_KEY` configuradas en Cloud Run `tadaima` us-central1. Lookup de socios funciona end-to-end (verificado 2026-05-15) |
+| Servicio duplicado | ✅ Borrado | `tadaima` us-west1 eliminado 2026-05-15. Solo queda `tadaima` us-central1 (real) y `pos` us-west1 (otro cliente) |
 
 ---
 
@@ -49,29 +49,34 @@
 | 29 | Caja | **Item de preventa muestra anticipo (no precio)** en lado derecho del carrito | 2026-05-14 |
 | 30 | Permisos | **Permisos de costo se respetan** — gerente/cajero ven costos solo si admin activa flag | 2026-05-14 |
 | 31 | Reports | **Ganancia bruta gateada por canViewCost** — no visible a usuarios sin permiso | 2026-05-14 |
+| 32 | Loyalty | **Supabase activado en Cloud Run prod** — `TADAIMA_SUPABASE_URL` + `SERVICE_KEY` configuradas, lookup de socios funcional end-to-end | 2026-05-15 |
+| 33 | Infra | **Borrado duplicado `tadaima` us-west1** — sin tráfico desde 2026-05-02, sin dominio. Solo queda servicio real us-central1 | 2026-05-15 |
+| 34 | Preventas | **Eliminado flujo legacy de PreSalesPage** — tab "Gestión" removido, página reducida 2,172 → 110 líneas, borrados 8 modales/paneles legacy (`LiquidateModal`, `PreSalesOpsPanel`, `NewPreSaleModal`, `EditPreSaleModal`, `ArrivalModal`, `ProductFormModal`, `CreateProductFromPreSaleModal`, `AdminStoreFilter`), borrado `preSales.ts` de `packages/api` + 7 tipos legacy, borrado `lib/presales.ts`+test. Solo quedan Catálogos/Folios/Difusión. | 2026-05-15 |
+| 35 | Backend | **Drop completo de esquema legacy `pre_sales`** en MySQL prod — tablas borradas: `pre_sales`, `pre_sale_items`, `pre_sale_payments`, `pre_sale_logs`. Borrado: `PreSalesController`, 4 modelos, 3 FormRequests, 3 Resources, `PreSaleService`, rutas `/pre-sales`, UNIONs legacy de `ReportsController` (sales+pre-sales), relación `Supplier::preSales()`. Migración `2026_05_15_000001_drop_legacy_pre_sales_tables`. 27/27 tests PHPUnit pasan. | 2026-05-15 |
+| 37 | Caja | **Escaneo de folios y SKU en SellPage** — lector USB HID global (`useBarcodeScanner` hook con heurística de ráfaga rápida) + modal de cámara (`CameraScannerModal` con `html5-qrcode`, soporta QR + Code128 + EAN13). Routing automático: `PREV-\d+` → `searchByFolio`, SKU exacto → `addToCart`, sino → rellena input. | 2026-05-15 |
+| 38 | RBAC | **Gating por rol en UI** — `lib/permisos.ts` extendido con `isAdmin/isManager/isCashier/primaryRole/canAccessPage/canEditProducts`. Nav lateral (`Layout.tsx`) ahora distingue 3 roles (antes admin vs todo). `ProtectedRoute` con prop `requiresPage` redirige a `/` si el rol no tiene acceso (router protege sales/products/transfers/clients/pre-sales/reports/settings/stores/admin). ProductsPage: cajero solo "Alta de Producto", no editar filas (`canEdit = admin\|gerente`). 18/18 tests permisos pasan, `vite build` ✓. | 2026-05-15 |
+| 39 | Admin | **Borrar usuario desde UI** — `TabUsuarios` (`AdminPage.tsx`) ahora tiene botón Trash2 rojo al lado del Edit. Llama `deleteUser(id)` (soft-delete backend: `UserController::destroy` ya existía, desactiva sin borrar físicamente). Modal de confirmación con estilo glass del sistema (`AlertTriangle` rojo + nombre del usuario + descripción). Guard: el admin no puede borrarse a sí mismo (botón disabled + tooltip + toast si llega a dispararse). Durante request: botón Cancelar disabled, spinner en botón Eliminar. Cierra modal automáticamente al éxito. `vite build` ✓. | 2026-05-15 |
+| 40 | Caja | **UX cliente reforzada en SellPage** — bloque “Paso 1 · Cliente de la preventa” en la misma zona superior, estado visual `Requerido/Cliente asignado`, tabs “Buscar existente / Dar de alta”, helper copy, resumen compacto del cliente (nombre/teléfono/correo) y espejo breve junto al total. Ticket y reimpresión ahora incluyen nombre + teléfono + correo cuando existan. | 2026-05-15 |
+| 41 | Perf | **React Query + IndexedDB + multi-tab broadcast** — migración completa del data layer: `QueryClientProvider` global, IndexedDB persister (via `idb-keyval`) que sobrevive entre tabs/reloads, `BroadcastChannel` para sincronizar invalidaciones entre Caja 1/2/3/N. 15 hooks dedicados (`hooks/queries/`). Páginas migradas: Productos, Clientes, Reportes, Traslados, Inicio, Admin (6 tabs), Caja, Preventas (3 paneles), Ventas, Settings. Strategy: 24h productos/catálogos/TC, 60s folios, 30s default ventas/reportes/clientes. Polling eliminado (era cada 30s). Botones manuales "Sincronizar" en Caja, "Buscar nuevos" en Productos (gerente/cajero), "Actualizar" en Reportes. | 2026-05-15 |
+| 42 | Perf | **Catálogo optimizado para 8000+ productos** — endpoint `GET /products?light=1` (`ProductLightResource`, ~60% menos payload), `?sort=top` (orden por sale_items últimos 30 días). Migración FULLTEXT index en `products(name, sku, barcode)` + `Product::scopeSearch` usa `MATCH AGAINST BOOLEAN MODE` con tokens prefijo cuando term ≥ 3 chars (fallback LIKE para SQLite y términos cortos). Búsqueda ~5-10ms vs ~200ms LIKE table scan. Patrón híbrido: top 200 prefetched al login (Layout), background pages 2-6 (1000 más) en `requestIdleCallback`, server search debounced 250ms, scanner USB hits backend directo sin debounce cuando SKU no está en cache. Tipo de cambio cache 24h, refetch explícito al `handleOpenCash` (cajero abre caja → fresh rate). Reducción de tráfico Cloud Run del orden 95-98% vs setup con polling. | 2026-05-15 |
 | - | Deploy | **Dominio custom activo** `tadaima.poslite.com.mx` | 2026-05-05 |
 
 ### 🟡 Media prioridad (mejora flujo o datos)
 
 | # | Área | Feature / Fix | Detalle |
 |---|------|--------------|---------|
-| 4 | Preventas | **PreSalesPage legacy → nuevo esquema** | La tab "Gestión" usa `/pre-sales` (esquema viejo). Migrar a vista de catálogos + folios del nuevo esquema o eliminar la tab si ya no se usa. |
-| 5 | Caja | **Escaneo de folios por código QR/barras** | Botón "Escanear código" en SellPage no implementado. Requiere integración con cámara o lector USB HID. |
-| 8 | Admin | **Gestión de usuarios desde UI** | AdminPage/UsersPage permite ver usuarios pero no editar roles ni resetear contraseñas desde la interfaz. |
-| 18 | Loyalty | **Activar Supabase en Cloud Run prod** | Agregar `TADAIMA_SUPABASE_URL` y `TADAIMA_SUPABASE_SERVICE_KEY` como env vars (o Secret Manager) en servicio `tadaima` us-central1. Sin esto, `external/card` retorna "servicio no configurado" en prod. |
-| 19 | Infra | **Borrar duplicado `tadaima` us-west1** | Sin tráfico, sin dominio. Confirmar que no tenga revisión activa con `min-instances >= 1` antes de eliminar. NO TOCAR `pos` us-west1 (otro cliente). |
+| 41 | Tienda Online | **Fase catálogo público por tienda** | Plan en `docs/PLAN_FASE_CATALOGO_ONLINE_2026-05-15.md`. **Estado:** ejecución iniciada (Bloque A+B). Ya existe cliente API `packages/api/src/catalog.ts` y ruta web pública `/catalogo/:catalogUrl` + `/tienda-online/:catalogUrl` con `OnlineCatalogPage` base. Pendiente Bloques C-E (integración completa, CTA WhatsApp, QA). |
 | - | Email | **Activar envío real de emails** | `MAIL_MAILER=log` en producción. Configurar SMTP/Mailgun cuando haya cuenta de correo |
 
 ### 🟢 Baja prioridad (deuda técnica / cleanup)
 
 | # | Área | Feature / Fix | Detalle |
 |---|------|--------------|---------|
-| 9 | Cleanup | **Eliminar tablas legacy `pre_sales`** | Una vez que PreSalesPage migre al nuevo esquema, crear migración `drop_legacy_pre_sales_tables`. |
-| 10 | Cleanup | **Eliminar `preSales.ts` de packages/api** | Solo se usa en PreSalesPage. Al migrar esa página, remover el módulo y sus exports de `index.ts`. |
 | 11 | App móvil | **Paridad de features Expo** | La app móvil en `apps/` no tiene flujo de caja, preventas ni ventas. Prioritario si hay usuarios en campo. |
 | 12 | Tests | **E2E post-refactor** | Los TCs del Bloque 12 (TC-78→TC-85) no cubren el historial mixto ni el ticket de impresión. Agregar casos. |
 | 20 | Tests | **E2E checkout mixto** | Cubrir el escenario nuevo: folio cargado + producto regular + catálogo nueva preventa en una sola transacción. |
 | 21 | Infra | **Secretizar Supabase keys** | Mover `TADAIMA_SUPABASE_SERVICE_KEY` de env var plana a Secret Manager. |
+| 36 | Tests | **Borrar Bloque 5 E2E legacy** | TC-23 a TC-26 cubrían el endpoint `/pre-sales` y modales viejos ya eliminados. Borrar de `tests/e2e/tadaima.spec.ts` o reescribir contra el esquema único actual. |
 
 ---
 
@@ -144,15 +149,13 @@ Ventas
   sales_drafts → sales_draft_items → sales
   sale_items | payments
 
-PREVENTAS — Nuevo esquema (ADR-010)
+PREVENTAS (ADR-010) — esquema único actual
   pre_sale_catalogs   ← admin define producto disponible para reserva
   pre_sale_orders     ← cajero crea folio cuando cliente reserva
   pre_sale_order_items
   pre_sale_order_payments
   pre_sale_order_logs
-
-PREVENTAS — Esquema heredado (legacy, sin borrar aún)
-  pre_sales | pre_sale_items | pre_sale_payments | pre_sale_logs
+  (esquema legacy `pre_sales`+items+payments+logs eliminado 2026-05-15)
 
 Apartados (Layaways)
   layaways | layaway_payments | layaway_logs
@@ -169,9 +172,8 @@ Soporte
 | Controller | Ruta base | Notas |
 |-----------|-----------|-------|
 | AuthController | `/auth` | login, logout, me |
-| PreSaleCatalogsController | `/pre-sale-catalogs` | nuevo esquema |
-| PreSaleOrdersController | `/pre-sale-orders` | nuevo esquema |
-| PreSalesController | `/pre-sales` | legacy — aún activo (PreSalesPage lo usa) |
+| PreSaleCatalogsController | `/pre-sale-catalogs` | catálogos admin |
+| PreSaleOrdersController | `/pre-sale-orders` | folios PREV-XXXXX |
 | SalesController | `/sales` | ventas finales |
 | SalesDraftController | `/sales-drafts` | borrador de venta |
 | CashRegisterController | `/cash` | sesiones de caja |
@@ -190,9 +192,9 @@ Soporte
 
 | Página | Ruta | Estado |
 |--------|------|--------|
-| SellPage | `/sell` | ✅ Refactorizado — nuevo esquema preventas |
-| PreSalesPage | `/pre-sales` | ⚠️ Usa esquema legacy (pendiente migrar) |
-| SalesPage | `/sales` | ⚠️ Usa `getPreSales` legacy para reporte |
+| SellPage | `/sell` | ✅ Esquema único de preventas (catalogs+orders) |
+| PreSalesPage | `/pre-sales` | ✅ Shell de 3 tabs (Catálogos/Folios/Difusión) — legacy eliminado 2026-05-15 |
+| SalesPage | `/sales` | ✅ Activo (migrado a `getPreSaleOrders`) |
 | ReportsPage | `/reports` | ✅ Activo |
 | ProductsPage | `/products` | ✅ Activo |
 | ClientsPage | `/clients` | ✅ Activo |
@@ -309,15 +311,7 @@ updatePreSaleOrderStatus(id, input)  → PreSaleOrder
 markPreSaleOrderItemDelivered(orderId, itemId, status) → PreSaleOrderItem
 ```
 
-### Esquema legacy (no usar en código nuevo)
-
-```typescript
-// packages/api/src/preSales.ts — solo usado aún por PreSalesPage.tsx y SalesPage.tsx
-getPreSales | getPreSale | createPreSale | updatePreSale | deletePreSale
-addPreSalePayment | getPreSalePayments | updatePreSaleStatus
-assignPreSaleInventory | createProductFromPreSale
-uploadPreSaleImage | expirePreSaleToInventory | markPreSaleItemDelivered
-```
+> Módulo `packages/api/src/preSales.ts` y todos sus exports legacy fueron eliminados 2026-05-15. Si ves referencias en sesiones históricas, son del flujo viejo ya borrado.
 
 ---
 
@@ -332,9 +326,9 @@ uploadPreSaleImage | expirePreSaleToInventory | markPreSaleItemDelivered
 | Bloque 2 — Usuarios y Roles | TC-09, TC-10, TC-12 | Cajero, gerente, rol supervisor |
 | Bloque 3 — Productos e Inventario | TC-13 a TC-16 | Crear producto, stock, precios por tienda |
 | Bloque 4 — Caja y Ventas | TC-18 a TC-21 | Selector tienda, sesión caja, venta API |
-| Bloque 5 — Pre-ventas (legacy) | TC-23 a TC-26 | Cliente, preventa, abono, completar |
+| Bloque 5 — Pre-ventas (legacy) | TC-23 a TC-26 | ⚠️ Obsoletos — el esquema y endpoint que cubrían fue eliminado 2026-05-15. Pendiente borrar/migrar. |
 | Bloque 6-11 | TC-27 a TC-77 | Layaways, transfers, reports, UI flows |
-| Bloque 12 — Preventas Nuevo Esquema | TC-78 a TC-85 | Catálogos, folios, límites, toggle ítem |
+| Bloque 12 — Preventas | TC-78 a TC-85 | Catálogos, folios, límites, toggle ítem (esquema único actual) |
 
 ### Tests backend (PHPUnit)
 
@@ -377,14 +371,9 @@ El endpoint `POST /pre-sale-orders` crea el folio Y registra el anticipo inicial
 
 | Ítem | Prioridad | Descripción |
 |------|-----------|-------------|
-| PreSalesPage legacy | Alta | Aún usa esquema viejo (`/pre-sales`). Necesita migrar a catalogs+orders. |
-| SalesPage legacy | Media | Usa `getPreSales` para cálculo "Por Cobrar". Actualizar a `getPreSaleOrders`. |
-| preSales.ts en packages/api | Media | Sigue exportado en index.ts. Cuando PreSalesPage migre, eliminar. |
-| Tablas legacy pre_sales | Baja | Una vez migrado PreSalesPage, crear migración `drop_pre_sales_tables`. |
 | App móvil | Alta | Expo app no tiene paridad de features con web. |
 | Escaneo de folios en caja | Media | Botón "Escanear código" en SellPage aún no implementado. |
-| Supabase keys en prod | Media | Faltan `TADAIMA_SUPABASE_URL` y `TADAIMA_SUPABASE_SERVICE_KEY` en Cloud Run `tadaima` us-central1. Sin esto, lookup de socios falla en prod. Sugerencia: pasarlas vía Secret Manager, no env var plana. |
-| Duplicado Cloud Run | Baja | `tadaima` us-west1 abandonado. Borrar después de confirmar 0 tráfico sostenido. |
+| Supabase keys en prod (secretizar) | Baja | ✅ Variables ya activas en Cloud Run prod (verificado 2026-05-15) como env var plana. Pendiente sólo mover a Secret Manager por higiene (ver fila #21 del backlog). |
 | Rollback en checkout mixto | Baja | Si `addPreSaleOrderPayment` o `updatePreSaleOrderStatus` falla DESPUÉS de `createSale`+`createPreSaleOrder` exitosos, queda venta sin liquidación. Mover a transacción server-side cuando se priorice. |
 | Migrar a React Query (TanStack Query) | Media | `@tanstack/react-query@^5.80.7` ya está en `landing/package.json` pero ningún componente lo usa — todo es `useState + useEffect + try/catch`. Migración incremental en 4 PRs (~10 hrs total): (1) setup `QueryClientProvider` + `getStores`; (2) `getProducts` + `getCustomers`; (3) `getPreSaleCatalogs` + `getPreSaleOrders` con invalidaciones cruzadas; (4) mutations con optimistic updates en SellPage. Beneficio: cache compartido entre páginas, refetch automático al navegar, rollback transparente. Cuidar separación server-state (cache) vs client-state (carrito, mesas, formularios → siguen siendo `useState`). |
 | Permisos granulares (`product_scope`, `store_access`) | Media | El TabPermisos guarda JSON en `system_settings.price_permissions` pero NADIE lo lee. Hoy solo el flag `users.can_view_cost` se respeta (fix 2026-05-14). Implementar lectores: filtros de productos visibles en SellPage/ProductsPage, scope de tiendas en gerentes/cajeros, defensa server-side en `ProductController::index`, `ReportsController`, etc. Sprint dedicado. |
@@ -445,6 +434,268 @@ docker compose up --build -d
 ---
 
 ## 11. Historial de sesiones de desarrollo
+
+### Sesión 2026-05-15 (planeación) — Extensión fase Tienda Online
+
+**Contexto:** Se revisó el estado real del catálogo online para continuar fase de ejecución. La base backend ya existe, pero faltaba la capa web pública en `landing` y el plan de cierre por bloques.
+
+**Hallazgos clave:**
+- Backend listo para catálogo público por URL: `GET /api/v1/public/catalog/{catalogUrl}` y CRUD admin en `/api/v1/catalog/*`.
+- `packages/api` solo cubría `catalog/settings`; no tenía helpers de `catalog/products` ni `public/catalog`.
+- `landing` no tiene ruta/página pública para catálogo (`/tienda-online` o equivalente).
+
+**Decisiones de esta sesión:**
+- Ruta principal recomendada: `/catalogo/:catalogUrl`
+- Alias opcional: `/tienda-online/:catalogUrl` (redirección)
+- Alcance MVP: lista de productos por tienda + búsqueda/filtro básico + CTA WhatsApp (sin carrito online)
+
+**Documento nuevo de ejecución:**
+- `docs/PLAN_FASE_CATALOGO_ONLINE_2026-05-15.md`
+
+**Estado al cierre:** Planeación completada; lista para arrancar implementación por bloques (API client, routing + página pública, integración, QA).
+
+---
+
+### Sesión 2026-05-15 (ejecución parcial) — Arranque fase Tienda Online (Bloque A+B)
+
+**Objetivo de arranque:** convertir la planeación en base técnica ejecutable sin romper el flujo actual del POS.
+
+**Implementado en esta sesión:**
+- `packages/api/src/catalog.ts` **nuevo** con helpers:
+  - `getCatalogProducts`
+  - `addCatalogProduct`
+  - `updateCatalogProduct`
+  - `removeCatalogProduct`
+  - `getPublicCatalog`
+- `packages/api/src/index.ts` exporta módulo `catalog`.
+- `landing/src/pages/OnlineCatalogPage.tsx` **nueva**:
+  - consume `getPublicCatalog(catalogUrl)`
+  - render lista de productos (imagen, nombre, categoría)
+  - respeta flags `show_price` / `show_stock`
+  - búsqueda local básica
+  - estados loading / vacío / error
+- Router actualizado en `landing/src/router/index.tsx`:
+  - `/catalogo/:catalogUrl`
+  - `/tienda-online/:catalogUrl` (alias temporal mismo componente)
+
+**Pendiente exacto para continuar (siguiente corte):**
+1. Bloque C:
+   - CTA WhatsApp por producto con mensaje prellenado por tienda/producto.
+   - Filtro por categoría (UI + query param opcional).
+2. Bloque D:
+   - tracking mínimo (`catalog_view`, `product_click`, `whatsapp_click`, `search_used`, `filter_used`).
+3. Bloque E:
+   - QA matrix del MVP + pruebas manuales mobile.
+
+**Checkpoint de continuidad (si la sesión se corta):**
+- Punto de reentrada recomendado: `landing/src/pages/OnlineCatalogPage.tsx`
+- Luego conectar Settings/Admin para gestionar URL pública y difusión.
+
+**Estimación de presupuesto de sesión (tokens):**
+- Presupuesto estimado de ejecución fase arranque: ~8k-10k tokens.
+- Consumo aproximado en este corte: ~4k-5k tokens.
+- Restante estimado para cerrar Bloques C-E: ~5k-7k tokens.
+
+**Update de avance (mismo día):**
+- `landing/src/pages/OnlineCatalogPage.tsx` ya incluye:
+  - filtro por categoría en UI (dropdown)
+  - CTA `Pedir por WhatsApp` por producto con texto prellenado (tienda + producto + precio/estado cuando aplica)
+- Tracking mínimo MVP agregado en la misma página:
+  - `catalog_view`, `product_click`, `whatsapp_click`, `search_used`, `filter_used`
+  - emisión por `window.dispatchEvent('tadaima:catalog-event')`
+  - buffer temporal en `sessionStorage['tadaima_catalog_events']` (últimos 200)
+- QA documentado:
+  - `docs/testcases/QA-04-tienda-online-catalogo-publico.md`
+- Estado de bloques:
+  - Bloque A: ✅
+  - Bloque B: ✅
+  - Bloque C: ✅ base funcional
+  - Bloque D: ✅ base funcional (tracking mínimo)
+  - Bloque E: ✅ plan QA documentado, pendiente ejecución manual
+
+---
+
+### Sesión 2026-05-15 (nocturna 2) — UX cliente en Caja + ticket con contacto
+
+**Contexto:** Después del ajuste visual para ocultar el slot de imagen en preventas sin foto, Joel pidió reforzar la experiencia de cliente dentro de Caja sin moverla de lugar. El objetivo era que el cliente se sintiera como paso obligatorio de preventa, no como input secundario, y que el ticket imprimiera mejor el contacto asociado.
+
+**Cambios** (`landing/src/pages/SellPage.tsx`):
+
+| Cambio | Detalle |
+|---|---|
+| Módulo cliente | La franja superior se rehízo como bloque visual con jerarquía clara. En preventa muestra `Paso 1 · Cliente de la preventa`, helper text y badge de estado `Requerido` / `Cliente asignado`. |
+| Selector de flujo | Se mantuvo en la misma zona el switch `Buscar existente` / `Dar de alta`, pero con copy más claro y mejor separación visual. |
+| Búsqueda | El input ahora comunica mejor que busca por nombre/teléfono/correo/código de tarjeta. El helper explica que primero intenta en BD local y luego en socios Tadaima. |
+| Alta rápida | El formulario de cliente nuevo sigue inline, pero quedó más limpio: nombre, teléfono, correo y CTA `Guardar cliente`. |
+| Resumen del cliente | Cuando ya hay cliente asignado, aparece una tarjeta compacta con nombre, teléfono, correo y acciones `Cambiar` / `Quitar`. Esto reduce duda al cobrar y deja claro a quién pertenece la preventa/venta. |
+| Footer de cobro | Junto al bloque del total se agregó un resumen breve del cliente seleccionado para que el cajero no tenga que volver a subir la vista antes de cobrar. |
+| Ticket / reimpresión | `CompletedSaleData` se extendió para arrastrar `customerPhone` y `customerEmail`. `doPrintTicket()` ahora imprime nombre, teléfono y correo cuando existan. También se actualizó la reimpresión desde historial de ventas/preventas para pasar esos datos cuando el payload los trae. |
+| Data wiring | `setCustomer`, carga de folio existente y alta desde socio/cliente local ahora preservan mejor `customerPhone` y `customerEmail` en el estado de la mesa. |
+
+**Verificación:** revisión visual del JSX en `SellPage.tsx` OK. `npm run build:web` sigue fallando, pero por deuda TypeScript pre-existente en múltiples pantallas (`AdminPage`, `CatalogToProductModal`, `TransfersPage`, etc.). Se corrigieron los errores nuevos que había introducido la reimpresión del historial.
+
+**Resultado:** Caja comunica mucho mejor el paso de cliente en preventas sin mover el flujo principal, y el ticket ya sale más útil para seguimiento posterior.
+
+---
+
+### Sesión 2026-05-15 (nocturna) — Borrar usuario desde UI (admin)
+
+**Contexto:** Backlog #8 indicaba que TabUsuarios ya tenía CRUD completo excepto el botón de eliminar. Joel pidió cerrar ese gap y luego que el confirm nativo se reemplazara por modal glass del sistema.
+
+**Cambios** (`landing/src/pages/AdminPage.tsx` — solo TabUsuarios):
+
+| Cambio | Detalle |
+|---|---|
+| Import | `deleteUser` agregado al import de `@tadaima/api`. |
+| Estado | `confirmDelete: ApiUser \| null` (qué usuario está por borrarse) y `deletingId: number \| null` (request en vuelo). |
+| `useAuth` | Hook agregado para detectar usuario actual y bloquear auto-borrado. |
+| `askDelete(u)` | Abre modal. Si `currentUser.id === u.id` → toast rojo "No puedes eliminar tu propio usuario" sin abrir. |
+| `confirmDeleteUser()` | Llama `deleteUser(id)` (soft-delete backend), filtra el usuario de la lista, toast verde, cierra modal. |
+| Botón Trash2 | Al lado del Edit en cada fila. Color `#FF6B6B` o gris si es self. Spinner Loader2 durante request. Wrapper `<span title>` para tooltip (el componente `Btn` no acepta `title`). |
+| Modal confirmación | Component `Modal` existente del archivo (mismo glass + backdrop blur). Header: `AlertTriangle` rojo en círculo glass. Cuerpo: pregunta con nombre + nota "será desactivado, no podrá iniciar sesión, ventas se conservan". Botones: Cancelar (ghost) + Eliminar (rojo). Ambos disabled durante request. |
+
+**Backend:** `UserController::destroy()` (`/users/{id}`) ya hacía soft-delete (desactiva, no borra físicamente) — no se tocó nada del backend.
+
+**Verificación:** `vite build` ✓ verde. Errores TS restantes (3) son pre-existentes en TabCategorias y TabProductos (no relacionados).
+
+**Pendiente al cierre:** commit + push único de toda la jornada 2026-05-15 (matutina + vespertina + nocturna), deploy a Cloud Run.
+
+---
+
+### Sesión 2026-05-15 (vespertina) — Escaneo QR/barras en Caja + RBAC por rol
+
+**Contexto:** Después del cleanup matutino del esquema legacy, Joel quiso cerrar dos pendientes de prioridad media del backlog: escaneo de folios en caja y gestión de visibilidad por rol. La auditoría inicial mostró que CRUD de usuarios + asignación de tienda + reset password + permisos granulares (`can_view_cost`, `store_access`, `product_scope`) **ya estaban implementados** pero nadie los enforzaba en UI. Lo que faltaba era el gating real por rol en pantallas.
+
+**1. Escaneo QR/barras (USB HID + cámara) en SellPage**
+
+| Archivo | Cambio |
+|---------|--------|
+| `landing/src/hooks/useBarcodeScanner.ts` | **NUEVO** — Listener global de `keydown` con heurística HID: intervalos < 35ms entre teclas, mínimo 4 chars, termina en Enter o flush a 100ms. Captura via `window.addEventListener('keydown', ..., { capture: true })` y dispara `preventDefault` en todos los eventos del scan cuando detecta ráfaga (evita que el código quede "tipeado" en el input enfocado). |
+| `landing/src/components/CameraScannerModal.tsx` | **NUEVO** — Modal con `html5-qrcode` (soporta QR + Code128 + EAN13 + más). Cámara trasera por default (`facingMode: environment`), 12 fps, qrbox 260×260. Cleanup correcto al cerrar (stop + nullify ref). |
+| `landing/package.json` | Dep añadida: `html5-qrcode` |
+| `landing/src/pages/SellPage.tsx` | Import del hook y modal. Estado `showCameraScanner`. Handler `handleScannedCode(raw)`: si matchea `/^PREV-\d+/i` → `searchByFolio(code)`; sino busca SKU exacto en `products` → `addToCart`; sino → rellena `search` + toast warning. `useBarcodeScanner` activo siempre que no haya un modal de form abierto (catalog/apartar/cash). Botón "Escanear" ahora abre el modal de cámara en lugar de solo enfocar el input. |
+
+**Cómo funciona:**
+- **Lector USB HID**: el cajero conecta un lector tipo teclado, escanea cualquier código → ráfaga de teclas + Enter → el hook detecta velocidad de máquina, captura el buffer y dispara `handleScannedCode` sin necesidad de focus en input. Si el usuario tipea manualmente un SKU, el intervalo natural (>100ms) impide el match.
+- **Cámara**: botón "Escanear" → modal con preview de cámara → autodetect → cierra y procesa el código.
+
+**2. RBAC visibility por rol (admin/gerente/cajero)**
+
+Hoy `Layout.tsx:41-44` solo distinguía admin vs todo lo demás → gerente y cajero veían el mismo nav. Joel definió reglas concretas:
+
+| Pantalla | Admin | Gerente | Cajero |
+|---|---|---|---|
+| Inicio | AdminPage | Dashboard | Dashboard |
+| Tiendas (caja) | — | ✅ | ✅ |
+| Productos | ✅ edit + costo | ✅ edit, sin costo | ✅ solo alta, sin costo |
+| Ventas (tickets) | ✅ | ✅ | ✅ |
+| Clientes | ✅ | ✅ | ❌ (solo desde Caja) |
+| Preventas | ✅ | ✅ sin costo | ❌ |
+| Traslados | ✅ | ✅ | ❌ |
+| Reportes | ✅ ganancia bruta | ✅ sin ganancia bruta | ❌ |
+| Config | ✅ | ❌ | ❌ |
+
+| Archivo | Cambio |
+|---------|--------|
+| `landing/src/lib/permisos.ts` | Extendido con: `isAdmin/isManager/isCashier` (helpers de rol), `primaryRole` (precedencia admin > gerente > cajero), tipo `PageKey`, `canAccessPage(roles, page)` con registry `PAGE_ACCESS` por rol, `canEditProducts/canCreateProducts/canDeleteProducts/canSeeGrossProfit`. Centraliza todas las reglas — antes estaban hardcoded en cada página. |
+| `landing/src/layouts/Layout.tsx` | Reescrito el nav: `ALL_NAV_ITEMS` único con `page: PageKey`, filtra por `NAV_BY_ROLE[primaryRole(user.roles)]`. Eliminados los arrays separados `adminNavItems` y `staffNavItems`. |
+| `landing/src/components/ProtectedRoute.tsx` | Nuevo prop opcional `requiresPage`. Si el usuario no tiene acceso, redirige a `/` (no a `/login`). |
+| `landing/src/router/index.tsx` | Todas las rutas sensibles envueltas con `<ProtectedRoute requiresPage="...">`: sales, products, transfers, clients, pre-sales, reports, settings, stores, admin. Cajero que tipee `/reports` en URL → rebota a `/`. |
+| `landing/src/pages/ProductsPage.tsx` | Reemplazado cálculo manual de `isAdmin/isGerente` por helpers de `permisos`. Añadidos `canEdit = admin\|gerente` y `canDelete = admin`. Columna "Editar" en tabla productos: renderiza `null` para cajero. Row onClick: solo handleEdit si `canEdit`. Card grid: cursor-pointer solo si puede editar. Misma lógica para columna Manga. |
+
+**3. Auditoría completa de UsersPage + TabPermisos**
+
+Confirmado que el módulo ya está completo:
+- `TabUsuarios` (`AdminPage.tsx:474`): CRUD — crear, editar nombre/email/teléfono, asignar rol, asignar tienda, password (campo opcional al editar = reset), active toggle.
+- `TabPermisos`: toggle `can_view_cost` por usuario, radio buttons para `store_access` (assigned/specific/all), checkboxes de `product_scope` (all/specific). Persiste en `users.can_view_cost` + `system_settings.price_permissions`.
+
+Solo falta: botón de borrar usuario desde UI (hoy no existe — Joel decidió que no es prioritario). Backlog actualizado.
+
+**Verificación:**
+- `vite build` ✓ verde
+- `vitest run src/lib/permisos.test.ts` → 18/18 tests pasan (preservados los originales + helpers nuevos)
+- Errores TS pre-existentes (322) sin cambio — los archivos nuevos (`useBarcodeScanner`, `CameraScannerModal`, `permisos.ts`) sin errores
+
+**Pendiente al cierre:**
+- Pruebas en dev server con cuentas de cada rol (Joel/QA).
+- Commit + push (Joel prefiere un push único al final).
+- Deploy a Cloud Run.
+
+---
+
+### Sesión 2026-05-15 (matutina) — Verificación deuda técnica + extinción total del esquema legacy de preventas
+
+**Contexto:** Joel revisó el MASTERLOG y notó que varias tareas marcadas como pendientes ya estaban resueltas o eran candidatas a cierre. Sesión dedicada a verificación y cleanup definitivo.
+
+**1. Supabase loyalty en Cloud Run prod — ya estaba activado**
+- Verificación: `gcloud run services describe tadaima --region=us-central1` → `TADAIMA_SUPABASE_URL` + `TADAIMA_SUPABASE_SERVICE_KEY` presentes.
+- Smoke test confirmó lookup de socios funcional en prod.
+- Estado en MASTERLOG actualizado de 🟡 a ✅.
+
+**2. Servicio duplicado `tadaima` us-west1 — borrado**
+- Verificación de tráfico (últimos 30 días): 1 hit aislado el 2026-05-02, sin domain mapping.
+- Comando ejecutado: `gcloud run services delete tadaima --region=us-west1 --project=impusodigitaldorado --quiet`.
+- Quedan solo `tadaima` us-central1 (real) y `pos` us-west1 (otro cliente, no tocar).
+
+**3. Frontend — eliminado todo el flujo legacy de preventas**
+
+Decisión Joel: "deberíamos quitar todo ese flujo para no confundir con lo que tenemos en preventas catálogos/folios/difusión, funciona bien el flujo con todo lo nuevo".
+
+| Archivo | Cambio |
+|---------|--------|
+| `landing/src/pages/PreSalesPage.tsx` | Reescrito de 2,172 → 110 líneas. Ahora es shell que solo renderiza 3 tabs: Catálogos, Folios, Difusión. |
+| `landing/src/components/presales/LiquidateModal.tsx` | **Borrado** |
+| `landing/src/components/presales/PreSalesOpsPanel.tsx` | **Borrado** |
+| `landing/src/components/presales/NewPreSaleModal.tsx` | **Borrado** |
+| `landing/src/components/presales/EditPreSaleModal.tsx` | **Borrado** |
+| `landing/src/components/presales/ArrivalModal.tsx` | **Borrado** |
+| `landing/src/components/presales/ProductFormModal.tsx` | **Borrado** |
+| `landing/src/components/presales/CreateProductFromPreSaleModal.tsx` | **Borrado** |
+| `landing/src/components/presales/AdminStoreFilter.tsx` | **Borrado** |
+| `landing/src/lib/presales.ts` + `.test.ts` | **Borrados** (sin consumidores) |
+| `packages/api/src/preSales.ts` | **Borrado** (180 líneas, 13 funciones legacy) |
+| `packages/api/src/index.ts` | Eliminado `export * from './preSales'` |
+| `packages/api/src/types.ts` | Eliminados 7 tipos: `PreSale`, `PreSaleItem`, `PreSalePayment`, `PreSaleStatus`, `CreatePreSaleInput`, `AddPreSalePaymentInput`, `UpdatePreSaleStatusInput`, `GetPreSalesParams` |
+
+**Verificación frontend:** `vite build` ✅ pasa. Errores TS pre-existentes bajaron de 401 → 322 (79 errores muertos eliminados).
+
+**4. Backend — drop total del esquema legacy**
+
+Después de auditoría completa, decisión Joel: "drop directo, no importan" sobre datos legacy en prod + "quitar las queries legacy" del ReportsController.
+
+| Archivo | Cambio |
+|---------|--------|
+| `backend/app/Http/Controllers/Api/PreSalesController.php` | **Borrado** |
+| `backend/app/Models/PreSale.php` | **Borrado** |
+| `backend/app/Models/PreSaleItem.php` | **Borrado** |
+| `backend/app/Models/PreSalePayment.php` | **Borrado** |
+| `backend/app/Models/PreSaleLog.php` | **Borrado** |
+| `backend/app/Http/Requests/StorePreSaleRequest.php` | **Borrado** |
+| `backend/app/Http/Requests/UpdatePreSaleRequest.php` | **Borrado** |
+| `backend/app/Http/Requests/UpdatePreSaleStatusRequest.php` | **Borrado** |
+| `backend/app/Http/Resources/PreSaleResource.php` | **Borrado** |
+| `backend/app/Http/Resources/PreSaleItemResource.php` | **Borrado** |
+| `backend/app/Http/Resources/PreSalePaymentResource.php` | **Borrado** |
+| `backend/app/Services/PreSaleService.php` | **Borrado** (605 líneas) |
+| `backend/app/Models/Supplier.php` | Removida relación `preSales(): HasMany` |
+| `backend/routes/api.php` | Eliminado bloque `/pre-sales` (10 rutas) + import |
+| `backend/app/Http/Controllers/Api/ReportsController.php` | Removidos UNION legacy en `/reports/sales` (feed pre_sale_payments) y `/reports/pre-sales` (~70 líneas). Reportes ahora solo consultan esquema nuevo. |
+| `backend/database/migrations/2026_05_15_000001_drop_legacy_pre_sales_tables.php` | **NUEVA** — drop ordenado por FKs: `pre_sale_logs` → `pre_sale_payments` → `pre_sale_items` → `pre_sales`. `down()` intencionalmente vacío. |
+
+**Tablas dropeadas en MySQL prod** (Cloud SQL Proxy local apuntaba a `tadaimaposlite` en `pos-lite-db`): `pre_sales`, `pre_sale_items`, `pre_sale_payments`, `pre_sale_logs`. Verificado con `Schema::hasTable()` post-migración.
+
+**Verificación backend:** `php artisan test` → 27/27 PHPUnit pasan. `php artisan route:list --path=pre-sale` → solo rutas del esquema nuevo.
+
+**Métricas finales del cleanup:**
+- **6,977 líneas eliminadas, 40 nuevas** en 31 archivos (frontend + backend + package + migración).
+- Deuda técnica legacy pre_sales: completamente cerrada (4 ítems → 0).
+- Backlog filas #4, #9, #10, #19 eliminadas.
+
+**Estado pendiente al cierre:**
+- Commit + push de toda la sesión (Joel prefiere un único push al final).
+- Deploy a Cloud Run con `gcloud run deploy tadaima --source . --region=us-central1`.
+
+---
 
 ### Sesión 2026-05-14 — QA Ruben: 12 fixes + plan de pruebas + permisos costos
 
