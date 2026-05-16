@@ -19,7 +19,6 @@ use App\Http\Controllers\Api\LayawayController;
 use App\Http\Controllers\Api\PaymentMethodController;
 use App\Http\Controllers\Api\PreSaleCatalogsController;
 use App\Http\Controllers\Api\PreSaleOrdersController;
-use App\Http\Controllers\Api\PreSalesController;
 use App\Http\Controllers\Api\ProductCategoryController;
 use App\Http\Controllers\Api\SuppliersController;
 use App\Http\Controllers\Api\ProductController;
@@ -122,27 +121,6 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('items',                    [SalesDraftController::class, 'addItem']);
             Route::put('items/{salesDraftItem}',    [SalesDraftController::class, 'updateItem']);
             Route::delete('items/{salesDraftItem}', [SalesDraftController::class, 'removeItem']);
-        });
-    });
-
-    // ── Pre-Sales ─────────────────────────────────────────────────────────────
-    Route::prefix('pre-sales')->group(function () {
-        Route::get('/',  [PreSalesController::class, 'index']);
-        Route::post('/', [PreSalesController::class, 'store']);
-
-        Route::prefix('{preSale}')->group(function () {
-            Route::get('/',         [PreSalesController::class, 'show']);
-            Route::put('/',         [PreSalesController::class, 'update']);
-            Route::patch('status',  [PreSalesController::class, 'updateStatus']);
-            Route::post('payments', [PreSalesController::class, 'addPayment']);
-            Route::get('payments',  [PreSalesController::class, 'payments']);
-            Route::patch('items/{item}/deliver', [PreSalesController::class, 'deliverItem']);
-            // Phase 2 — arrival workflow
-            Route::delete('/',                  [PreSalesController::class, 'destroy']);
-            Route::patch('assign-inventory',    [PreSalesController::class, 'assignInventory']);
-            Route::post('create-product',       [PreSalesController::class, 'createProductFromPreSale']);
-            Route::patch('expire-to-inventory', [PreSalesController::class, 'expireToInventory']);
-            Route::post('image/upload',         [PreSalesController::class, 'uploadImage']);
         });
     });
 

@@ -74,38 +74,22 @@ class ReportsController extends Controller
                 ->get();
         }
 
-        // ── Pre-sale payments — UNION of legacy + new-schema tables ──────────
-        // Legacy: pre_sale_payments → pre_sales.store_id
-        // New:    pre_sale_order_payments → pre_sale_orders.store_id
-        $legacyPsp = DB::table('pre_sale_payments')
-            ->join('pre_sales', 'pre_sales.id', '=', 'pre_sale_payments.pre_sale_id')
-            ->whereDate('pre_sale_payments.created_at', '>=', $from)
-            ->whereDate('pre_sale_payments.created_at', '<=', $to)
-            ->when($storeId, fn ($q) => $q->where('pre_sales.store_id', $storeId))
-            ->selectRaw("pre_sale_payments.created_at as paid_at,
-                         pre_sale_payments.pre_sale_id as folio_id,
-                         pre_sale_payments.amount");
-
-        $newPsp = DB::table('pre_sale_order_payments')
+        // ── Pre-sale payments (esquema nuevo) ───────────────────────────────
+        $preSaleSummary = DB::table('pre_sale_order_payments')
             ->join('pre_sale_orders', 'pre_sale_orders.id', '=', 'pre_sale_order_payments.pre_sale_order_id')
             ->whereDate('pre_sale_order_payments.created_at', '>=', $from)
             ->whereDate('pre_sale_order_payments.created_at', '<=', $to)
             ->when($storeId, fn ($q) => $q->where('pre_sale_orders.store_id', $storeId))
-            ->selectRaw("pre_sale_order_payments.created_at as paid_at,
-                         pre_sale_order_payments.pre_sale_order_id as folio_id,
-                         pre_sale_order_payments.amount");
-
-        $allPsp = $legacyPsp->unionAll($newPsp);
-
-        $preSaleSummary = DB::table(DB::raw("({$allPsp->toSql()}) as psp"))
-            ->mergeBindings($allPsp)
-            ->selectRaw('COUNT(*) as total_count, COALESCE(SUM(amount), 0) as total_amount')
+            ->selectRaw('COUNT(*) as total_count, COALESCE(SUM(pre_sale_order_payments.amount), 0) as total_amount')
             ->first();
 
-        $preSaleByDay = DB::table(DB::raw("({$allPsp->toSql()}) as psp"))
-            ->mergeBindings($allPsp)
-            ->selectRaw("date(paid_at) as date, COUNT(*) as count, COALESCE(SUM(amount), 0) as amount")
-            ->groupByRaw('date(paid_at)')
+        $preSaleByDay = DB::table('pre_sale_order_payments')
+            ->join('pre_sale_orders', 'pre_sale_orders.id', '=', 'pre_sale_order_payments.pre_sale_order_id')
+            ->whereDate('pre_sale_order_payments.created_at', '>=', $from)
+            ->whereDate('pre_sale_order_payments.created_at', '<=', $to)
+            ->when($storeId, fn ($q) => $q->where('pre_sale_orders.store_id', $storeId))
+            ->selectRaw("date(pre_sale_order_payments.created_at) as date, COUNT(*) as count, COALESCE(SUM(pre_sale_order_payments.amount), 0) as amount")
+            ->groupByRaw('date(pre_sale_order_payments.created_at)')
             ->orderBy('date')
             ->get();
 
@@ -457,53 +441,23 @@ class ReportsController extends Controller
             ->when($storeId, fn ($q) => $q->where('pre_sale_orders.store_id', $storeId))
             ->sum('pre_sale_order_payments.amount');
 
-        // Legacy schema totals
-        $legacyOrders = DB::table('pre_sales')
-            ->whereDate('created_at', '>=', $from)
-            ->whereDate('created_at', '<=', $to)
-            ->when($storeId, fn ($q) => $q->where('store_id', $storeId))
-            ->count();
-
-        $legacyCollected = DB::table('pre_sale_payments')
-            ->join('pre_sales', 'pre_sales.id', '=', 'pre_sale_payments.pre_sale_id')
-            ->whereDate('pre_sale_payments.created_at', '>=', $from)
-            ->whereDate('pre_sale_payments.created_at', '<=', $to)
-            ->when($storeId, fn ($q) => $q->where('pre_sales.store_id', $storeId))
-            ->sum('pre_sale_payments.amount');
-
-        // Daily breakdown — UNION both schemas
-        $legacySql = DB::table('pre_sale_payments')
-            ->join('pre_sales', 'pre_sales.id', '=', 'pre_sale_payments.pre_sale_id')
-            ->whereDate('pre_sale_payments.created_at', '>=', $from)
-            ->whereDate('pre_sale_payments.created_at', '<=', $to)
-            ->when($storeId, fn ($q) => $q->where('pre_sales.store_id', $storeId))
-            ->selectRaw('DATE(pre_sale_payments.created_at) as day, SUM(pre_sale_payments.amount) as collected')
-            ->groupBy(DB::raw('DATE(pre_sale_payments.created_at)'));
-
-        $newSql = DB::table('pre_sale_order_payments')
+        // Daily breakdown (esquema nuevo)
+        $daily = DB::table('pre_sale_order_payments')
             ->join('pre_sale_orders', 'pre_sale_orders.id', '=', 'pre_sale_order_payments.pre_sale_order_id')
             ->whereDate('pre_sale_order_payments.created_at', '>=', $from)
             ->whereDate('pre_sale_order_payments.created_at', '<=', $to)
             ->when($storeId, fn ($q) => $q->where('pre_sale_orders.store_id', $storeId))
             ->selectRaw('DATE(pre_sale_order_payments.created_at) as day, SUM(pre_sale_order_payments.amount) as collected')
-            ->groupBy(DB::raw('DATE(pre_sale_order_payments.created_at)'));
-
-        $daily = DB::table(
-            DB::raw("({$legacySql->toSql()} UNION ALL {$newSql->toSql()}) as psp")
-        )
-            ->mergeBindings($legacySql)
-            ->mergeBindings($newSql)
-            ->selectRaw('day, SUM(collected) as collected')
-            ->groupBy('day')
+            ->groupBy(DB::raw('DATE(pre_sale_order_payments.created_at)'))
             ->orderBy('day')
             ->get();
 
         return $this->success([
             'period'  => ['from' => $from, 'to' => $to],
             'summary' => [
-                'total_orders'    => $newOrders + $legacyOrders,
+                'total_orders'    => $newOrders,
                 'total_revenue'   => round((float) $newRevenue, 2),
-                'total_collected' => round((float) ($newCollected + $legacyCollected), 2),
+                'total_collected' => round((float) $newCollected, 2),
                 'total_pending'   => round((float) ($newRevenue - $newCollected), 2),
             ],
             'daily'   => $daily->map(fn ($r) => [
