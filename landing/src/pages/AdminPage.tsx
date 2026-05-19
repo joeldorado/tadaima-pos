@@ -1130,7 +1130,7 @@ function TabTerminales() {
     setSaving(true);
     try {
       if (d.id) {
-        await updateTerminal(d.id, { name: d.name, commission_percent: commPct, active: d.active });
+        await updateTerminal(d.id, { store_id: Number(d.store_id), name: d.name, commission_percent: commPct, active: d.active });
         toast.success("Terminal actualizada");
       } else {
         await createTerminal({ store_id: Number(d.store_id), name: d.name, commission_percent: commPct, active: d.active });
@@ -1202,14 +1202,12 @@ function TabTerminales() {
             <Field label="Nombre *">
               <input type="text" style={INPUT} value={modal.data.name} onChange={e => setField("name", e.target.value)} placeholder="ej. Terminal 1" />
             </Field>
-            {!modal.data.id && (
-              <Field label="Sucursal *">
-                <select value={modal.data.store_id} onChange={e => setField("store_id", e.target.value)} style={{ ...INPUT, appearance: "none" as const }}>
-                  <option value="">Seleccionar sucursal…</option>
-                  {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
-              </Field>
-            )}
+            <Field label="Sucursal *">
+              <select value={modal.data.store_id} onChange={e => setField("store_id", e.target.value)} style={{ ...INPUT, appearance: "none" as const }}>
+                <option value="">Seleccionar sucursal…</option>
+                {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </Field>
             <Field label="Comisión (%)">
               <input type="number" min={0} max={100} step={0.01} style={INPUT} value={modal.data.commission_percent} onChange={e => setField("commission_percent", e.target.value)} placeholder="0.00" />
             </Field>

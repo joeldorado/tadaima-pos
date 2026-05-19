@@ -1347,10 +1347,19 @@ export function SellPage() {
     }
   };
 
+  // Dedupe: ignora el mismo código si llega dentro de los 500ms del último escaneo.
+  // Cubre doble-lectura del HID, StrictMode y rebote físico del lector.
+  const lastScanRef = useRef<{ code: string; at: number }>({ code: '', at: 0 });
+
   // Maneja un código escaneado (USB HID o cámara). Rutea PREV-* → folio, sino → producto por SKU.
   const handleScannedCode = async (raw: string) => {
     const code = raw.trim();
     if (!code) return;
+    const now = Date.now();
+    if (lastScanRef.current.code === code && now - lastScanRef.current.at < 500) {
+      return;
+    }
+    lastScanRef.current = { code, at: now };
     if (/^PREV-\d+/i.test(code)) {
       toast.info(`Cargando folio ${code.toUpperCase()}…`);
       await searchByFolio(code.toUpperCase());

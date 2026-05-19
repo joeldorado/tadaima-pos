@@ -864,6 +864,14 @@ export function ProductsPage() {
   const canEdit     = canManage; // admin + gerente
   const canDelete   = isAdmin;
 
+  // Cajero/no-admin: forzar filtro a su tienda asignada (no debe ver productos de otras sucursales)
+  useEffect(() => {
+    if (!user) return;
+    if (!isAdmin && user.store_id != null && selectedStoreId !== user.store_id) {
+      setSelectedStoreId(user.store_id);
+    }
+  }, [user, isAdmin]);
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Producto | undefined>(undefined);
   const [showTypeSelector, setShowTypeSelector] = useState(false);

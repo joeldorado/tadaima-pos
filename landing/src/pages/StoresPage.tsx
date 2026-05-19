@@ -250,9 +250,10 @@ function StoreModal({ store, companyId, onSave, onClose }: StoreModalProps) {
 interface StoreCardProps {
   store: ApiStore;
   onEdit: (store: ApiStore) => void;
+  canEdit?: boolean;
 }
 
-function StoreCard({ store, onEdit }: StoreCardProps) {
+function StoreCard({ store, onEdit, canEdit = true }: StoreCardProps) {
   return (
     <div
       className="glass-dark rounded-2xl p-5 flex flex-col gap-3"
@@ -282,13 +283,15 @@ function StoreCard({ store, onEdit }: StoreCardProps) {
             )}
           </div>
         </div>
-        <button
-          onClick={() => onEdit(store)}
-          className="w-8 h-8 rounded-lg flex items-center justify-center transition-all hover:bg-white/10"
-          style={{ border: "1px solid var(--td-panel-border)", color: "var(--td-icon-inactive)" }}
-        >
-          <Edit2 size={13} />
-        </button>
+        {canEdit && (
+          <button
+            onClick={() => onEdit(store)}
+            className="w-8 h-8 rounded-lg flex items-center justify-center transition-all hover:bg-white/10"
+            style={{ border: "1px solid var(--td-panel-border)", color: "var(--td-icon-inactive)" }}
+          >
+            <Edit2 size={13} />
+          </button>
+        )}
       </div>
 
       {/* Details */}
@@ -329,12 +332,23 @@ export function StoresPage() {
   const [showModal, setShowModal] = useState(false);
 
   const companyId = user?.company_id;
+  // Permisos: solo admin (y opcionalmente gerente) puede crear/editar tiendas.
+  // Cajero solo VE su propia tienda — no puede editar ni ver otras.
+  const isAdminUser = user?.roles?.some(r => ["admin", "super_admin", "owner", "dueño"].includes(r.toLowerCase())) ?? false;
+  const isGerenteUser = user?.roles?.some(r => r.toLowerCase() === "gerente") ?? false;
+  const canEditStores = isAdminUser; // solo admin
+  const canSeeAllStores = isAdminUser || isGerenteUser; // admin y gerente; cajero solo la suya
 
   async function load() {
     setLoading(true);
     try {
       const list = await getStores();
-      setStores(list);
+      // Cajero solo ve SU tienda asignada. Sin store_id retornamos lista vacía
+      // (caso defensivo: admin sin tienda asignada vería todas porque canSeeAllStores=true).
+      const filtered = canSeeAllStores
+        ? list
+        : list.filter(s => user?.store_id != null && s.id === user.store_id);
+      setStores(filtered);
     } catch {
       toast.error("Error al cargar tiendas");
     } finally {
@@ -389,7 +403,7 @@ export function StoresPage() {
           </p>
         </div>
 
-        {companyId && (
+        {companyId && canEditStores && (
           <button
             onClick={openNew}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm transition-all hover:opacity-90"
@@ -424,7 +438,7 @@ export function StoresPage() {
               Crea tu primera tienda o sucursal para poder configurar el sistema.
             </p>
           </div>
-          {companyId && (
+          {companyId && canEditStores && (
             <button
               onClick={openNew}
               className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm"
@@ -443,7 +457,7 @@ export function StoresPage() {
       ) : (
         <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
           {stores.map(s => (
-            <StoreCard key={s.id} store={s} onEdit={openEdit} />
+            <StoreCard key={s.id} store={s} onEdit={openEdit} canEdit={canEditStores} />
           ))}
         </div>
       )}

@@ -19,6 +19,7 @@ export interface CreateTerminalPayload {
 }
 
 export interface UpdateTerminalPayload {
+  store_id?: number
   name?: string
   commission_percent?: number
   active?: boolean
