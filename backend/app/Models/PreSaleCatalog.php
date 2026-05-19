@@ -69,6 +69,42 @@ class PreSaleCatalog extends Model
         return $this->hasMany(PreSaleOrderItem::class, 'pre_sale_catalog_id');
     }
 
+    /** Límites por tienda (opcional). Si está vacío, fallback al preorder_limit global. */
+    public function storeLimits(): HasMany
+    {
+        return $this->hasMany(PreSaleCatalogStoreLimit::class, 'catalog_id');
+    }
+
+    /**
+     * Retorna el límite de unidades para la tienda dada. Prioridad:
+     *  1. Si hay registros en store_limits y existe uno para esta tienda → usar ese.
+     *  2. Si hay store_limits pero NO incluye esta tienda → 0 (la tienda no participa).
+     *  3. Si no hay store_limits → fallback al preorder_limit global (null = sin límite).
+     */
+    public function limitForStore(int $storeId): ?int
+    {
+        $limits = $this->relationLoaded('storeLimits') ? $this->storeLimits : $this->storeLimits()->get();
+        if ($limits->isEmpty()) {
+            return $this->preorder_limit;
+        }
+        $row = $limits->firstWhere('store_id', $storeId);
+        return $row ? (int) $row->limit_qty : 0;
+    }
+
+    /**
+     * Cantidad ya reservada/activa POR TIENDA (pending + ready).
+     * Usado en CatalogCard de Caja y en validación de createOrder.
+     */
+    public function reservedCountForStore(int $storeId): int
+    {
+        return (int) $this->orderItems()
+            ->whereHas('order', fn ($q) => $q
+                ->whereIn('status', [PreSaleOrder::STATUS_PENDING, PreSaleOrder::STATUS_READY])
+                ->where('store_id', $storeId)
+            )
+            ->sum('quantity');
+    }
+
     /** Items belonging to active (pending or ready) orders only. */
     public function activeOrderItems(): HasMany
     {

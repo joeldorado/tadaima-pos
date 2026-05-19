@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { X, Search, Package, ChevronLeft, ChevronRight, LayoutGrid, Zap } from "lucide-react";
+import { X, Search, Package, ChevronLeft, ChevronRight, LayoutGrid, Zap, RefreshCw } from "lucide-react";
 import { ImageWithFallback } from "@/components/figma/ImageWithFallback";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -38,6 +38,10 @@ interface Props {
    * Permite al cajero ver qué está reservado en otra caja antes de elegir.
    */
   reservedByMesa?: Record<string, Array<{ mesaName: string; qty: number }>>;
+  /** Callback para refrescar productos desde el backend (botón "Actualizar"). */
+  onRefresh?: () => void;
+  /** True cuando hay un refetch en vuelo — anima el icono y deshabilita el botón. */
+  isRefreshing?: boolean;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -66,7 +70,7 @@ function stockBadge(stock: number | undefined): { label: string; color: string; 
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
-export function ProductCatalogModal({ products, onSelect, onClose, title = "Catálogo de Productos", preventaMode = false, availableStock, reservedByMesa }: Props) {
+export function ProductCatalogModal({ products, onSelect, onClose, title = "Catálogo de Productos", preventaMode = false, availableStock, reservedByMesa, onRefresh, isRefreshing }: Props) {
   const [query, setQuery]       = useState("");
   const [category, setCategory] = useState("Todos");
   const [page, setPage]         = useState(1);
@@ -181,6 +185,25 @@ export function ProductCatalogModal({ products, onSelect, onClose, title = "Cat�
             </button>
           )}
         </div>
+
+        {onRefresh && (
+          <button
+            onClick={onRefresh}
+            disabled={isRefreshing}
+            style={{
+              height: 36, padding: "0 14px", borderRadius: 10, flexShrink: 0,
+              background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)",
+              cursor: isRefreshing ? "default" : "pointer", display: "flex",
+              alignItems: "center", gap: 6, color: "var(--td-text-lo)",
+              fontSize: 11, fontWeight: 900, textTransform: "uppercase",
+              letterSpacing: "0.08em", opacity: isRefreshing ? 0.5 : 1,
+            }}
+            title="Buscar nuevos productos"
+          >
+            <RefreshCw size={14} className={isRefreshing ? "animate-spin" : ""} />
+            Actualizar
+          </button>
+        )}
 
         <button onClick={onClose} style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--td-text-lo)" }}>
           <X size={16} />

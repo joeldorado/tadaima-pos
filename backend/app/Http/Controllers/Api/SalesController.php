@@ -55,17 +55,36 @@ class SalesController extends Controller
     }
 
     /**
-     * POST /sales  — checkout: convierte un draft en venta real
+     * POST /sales  — checkout.
+     *
+     * Soporta dos modos:
+     *   A) Legacy: {draft_id, payments, discount} — convierte draft existente en venta.
+     *   B) Direct (client-authoritative cart, ADR-014): {items, store_id,
+     *      register_session_id, customer_id?, payments, discount} — crea draft+items
+     *      y la venta en una sola transacción. Usado cuando el carrito vive solo
+     *      en frontend hasta el cobro.
      */
     public function store(CheckoutRequest $request): JsonResponse
     {
         try {
-            $sale = $this->checkoutService->checkout(
-                draftId:      $request->integer('draft_id'),
-                paymentsData: $request->input('payments'),
-                discount:     (float) ($request->input('discount', 0)),
-                userId:       $request->user()->id,
-            );
+            if ($request->has('items')) {
+                $sale = $this->checkoutService->checkoutDirect(
+                    storeId:           (int) $request->input('store_id'),
+                    registerSessionId: (int) $request->input('register_session_id'),
+                    customerId:        $request->input('customer_id') ? (int) $request->input('customer_id') : null,
+                    items:             $request->input('items'),
+                    paymentsData:      $request->input('payments'),
+                    discount:          (float) ($request->input('discount', 0)),
+                    userId:            $request->user()->id,
+                );
+            } else {
+                $sale = $this->checkoutService->checkout(
+                    draftId:      $request->integer('draft_id'),
+                    paymentsData: $request->input('payments'),
+                    discount:     (float) ($request->input('discount', 0)),
+                    userId:       $request->user()->id,
+                );
+            }
         } catch (\DomainException $e) {
             return $this->error($e->getMessage(), 422);
         }

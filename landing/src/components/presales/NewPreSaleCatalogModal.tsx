@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react";
-import { X, Package, DollarSign, Loader2, Check, ChevronRight, Plus } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { X, Package, DollarSign, Loader2, Check, ChevronRight, Plus, Image as ImageIcon, Trash2 } from "lucide-react";
 import { motion as Motion } from "motion/react";
 import { toast } from "sonner";
-import { getCategories, getSuppliers, createSupplier, createCategory, createPreSaleCatalog, updatePreSaleCatalog } from "@tadaima/api";
-import type { ProductCategory, Supplier, PreSaleCatalog } from "@tadaima/api";
+import { getCategories, getSuppliers, getStores, createSupplier, createCategory, createPreSaleCatalog, updatePreSaleCatalog, uploadPreSaleCatalogImage, removePreSaleCatalogImage } from "@tadaima/api";
+import type { ProductCategory, Supplier, PreSaleCatalog, Store } from "@tadaima/api";
 
 interface Props {
   onClose: () => void;
@@ -11,7 +11,7 @@ interface Props {
   catalog?: PreSaleCatalog;
 }
 
-type Tab = "general" | "precios";
+type Tab = "general" | "precios" | "stock";
 
 const TP  = "var(--td-text-hi)";
 const TS  = "var(--td-text-md)";
@@ -109,6 +109,28 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog }: Props) {
   const [cost, setCost]               = useState(catalog?.cost != null ? String(catalog.cost) : "");
   const [publishNow, setPublishNow]   = useState(false);
 
+  // Imagen: file pendiente de subir (después de save), preview del file, o URL existente del catálogo.
+  // `removeExisting` true cuando el cajero quita la imagen actual en edición — se procesa al save.
+  const [imageFile, setImageFile]       = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(catalog?.image_url ?? null);
+  const [removeExisting, setRemoveExisting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Stock por tienda: store_limits = entradas asignadas (mapa storeId → "qty").
+  // El cajero las agrega una a una con un selector + input qty.
+  const [stores, setStores] = useState<Store[]>([]);
+  const [storeLimits, setStoreLimits] = useState<Record<number, string>>(() => {
+    const init: Record<number, string> = {};
+    (catalog?.store_limits ?? []).forEach(sl => { init[sl.store_id] = String(sl.limit_qty); });
+    return init;
+  });
+  // Selector "Agregar tienda": qué tienda se va a sumar a la lista
+  const [pendingStoreId, setPendingStoreId] = useState<number | "">("");
+  const [pendingQty, setPendingQty]         = useState("");
+  // Tienda en modo edición de qty (para mostrar input inline en lugar del valor)
+  const [editingStoreId, setEditingStoreId] = useState<number | null>(null);
+  const [editingQty, setEditingQty]         = useState("");
+
   // Price fields
   const [price1, setPrice1] = useState(catalog?.price_1 != null ? String(catalog.price_1) : "");
   const [price2, setPrice2] = useState(catalog?.price_2 != null ? String(catalog.price_2) : "");
@@ -117,10 +139,11 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog }: Props) {
   const [price5, setPrice5] = useState(catalog?.price_5 != null ? String(catalog.price_5) : "");
 
   useEffect(() => {
-    Promise.all([getCategories(), getSuppliers()])
-      .then(([cats, supps]) => {
+    Promise.all([getCategories(), getSuppliers(), getStores({ active: true })])
+      .then(([cats, supps, sts]) => {
         setCategories(cats);
         setSuppliers(supps);
+        setStores(sts);
       })
       .catch(() => toast.error("Error cargando datos"));
   }, []);
@@ -166,6 +189,14 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog }: Props) {
 
     setSaving(true);
     try {
+      // Store limits: solo enviar entradas con valor numérico ≥ 0. Si el cajero deja
+      // un input vacío, esa tienda NO se incluye (el límite por tienda no existe).
+      // Si el array queda vacío y NO había limites previos, no se manda el campo
+      // (preserva preorder_limit como fallback global).
+      const validStoreLimits = Object.entries(storeLimits)
+        .filter(([, v]) => v !== "" && !Number.isNaN(Number(v)))
+        .map(([sid, v]) => ({ store_id: Number(sid), limit_qty: Math.max(0, Number(v)) }));
+
       const payload = {
         product_name:    name.trim(),
         category_id:     categoryId !== "" ? Number(categoryId) : null,
@@ -180,11 +211,27 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog }: Props) {
         preorder_limit:  limit ? Number(limit) : null,
         arrival_date:    arrivalDate || null,
         pickup_deadline: pickupDate || null,
+        // Enviar siempre (puede ser [] para borrar todos los límites existentes).
+        store_limits:    validStoreLimits,
       };
 
-      const result = isEdit
+      let result = isEdit
         ? await updatePreSaleCatalog(catalog!.id, payload)
         : await createPreSaleCatalog({ ...payload, status: publishNow ? "published" : "draft" });
+
+      // Procesa cambios de imagen (después del save para tener el ID del catálogo).
+      if (isEdit && removeExisting && !imageFile) {
+        try { await removePreSaleCatalogImage(result.id); result = { ...result, image_path: null, image_url: null }; }
+        catch { toast.warning("No se pudo quitar la imagen previa"); }
+      }
+      if (imageFile) {
+        try {
+          const uploaded = await uploadPreSaleCatalogImage(result.id, imageFile);
+          result = { ...result, image_path: uploaded.image_path, image_url: uploaded.image_url };
+        } catch {
+          toast.warning("El catálogo se guardó pero no se pudo subir la imagen");
+        }
+      }
 
       toast.success(
         isEdit
@@ -239,7 +286,7 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog }: Props) {
 
         {/* Tabs */}
         <div style={{ display: "flex", gap: 6, padding: "12px 22px 0", flexShrink: 0 }}>
-          {(["general", "precios"] as Tab[]).map(t => (
+          {(["general", "precios", "stock"] as Tab[]).map(t => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -250,7 +297,7 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog }: Props) {
                 color: tab === t ? "#fff" : TM,
               }}
             >
-              {t === "general" ? "General" : "Precios"}
+              {t === "general" ? "General" : t === "precios" ? "Precios" : "Stock"}
             </button>
           ))}
         </div>
@@ -259,6 +306,65 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog }: Props) {
         <div style={{ flex: 1, overflowY: "auto", padding: "18px 22px" }}>
           {tab === "general" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {/* Imagen del producto — opcional, ayuda al cajero a identificarlo en Caja */}
+              <div>
+                <Label>Imagen del producto</Label>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  style={{ display: "none" }}
+                  onChange={e => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    if (file.size > 5 * 1024 * 1024) { toast.error("La imagen no puede pesar más de 5MB"); return; }
+                    setImageFile(file);
+                    setRemoveExisting(false);
+                    const reader = new FileReader();
+                    reader.onload = ev => setImagePreview((ev.target?.result as string) ?? null);
+                    reader.readAsDataURL(file);
+                  }}
+                />
+                {imagePreview ? (
+                  <div style={{ position: "relative", width: 140, height: 140, borderRadius: 16, overflow: "hidden", border: "1px solid var(--td-input-border)", background: "var(--td-input-bg)" }}>
+                    <img src={imagePreview} alt="preview" style={{ width: "100%", height: "100%", objectFit: "cover" }} loading="lazy" decoding="async" />
+                    <div style={{ position: "absolute", top: 6, right: 6, display: "flex", gap: 6 }}>
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        style={{ width: 30, height: 30, borderRadius: 8, background: "rgba(0,0,0,0.6)", border: "1px solid rgba(255,255,255,0.2)", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+                        title="Cambiar imagen"
+                      >
+                        <ImageIcon size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setImageFile(null);
+                          setImagePreview(null);
+                          if (isEdit && catalog?.image_url) setRemoveExisting(true);
+                          if (fileInputRef.current) fileInputRef.current.value = "";
+                        }}
+                        style={{ width: 30, height: 30, borderRadius: 8, background: "rgba(224,34,26,0.7)", border: "1px solid rgba(224,34,26,0.4)", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+                        title="Quitar imagen"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    style={{ width: 140, height: 140, borderRadius: 16, border: "1px dashed var(--td-input-border)", background: "var(--td-input-bg)", color: TM, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 11, fontWeight: 700 }}
+                  >
+                    <ImageIcon size={28} />
+                    <span style={{ fontSize: 10, textTransform: "uppercase" as const, letterSpacing: "0.1em" }}>Subir imagen</span>
+                    <span style={{ fontSize: 9, color: TM }}>PNG/JPG · máx 5MB</span>
+                  </button>
+                )}
+              </div>
+
               <div>
                 <Label>Nombre del producto *</Label>
                 <input value={name} onChange={e => setName(e.target.value)} placeholder="Ej. Figura Dragon Ball Z Edición Especial" style={inputStyle} />
@@ -386,6 +492,162 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog }: Props) {
               )}
             </div>
           )}
+
+          {tab === "stock" && (() => {
+            // Tiendas que aún no tienen stock asignado (disponibles para agregar).
+            const availableStores = stores.filter(s => !(s.id in storeLimits));
+            // Tiendas ya asignadas (con stock definido).
+            const assignedEntries = Object.entries(storeLimits).map(([sid, qty]) => {
+              const store = stores.find(s => s.id === Number(sid));
+              return { storeId: Number(sid), storeName: store?.name ?? `Tienda ${sid}`, qty };
+            });
+            const totalUnits = assignedEntries.reduce((s, e) => s + (Number(e.qty) || 0), 0);
+            const canAdd = pendingStoreId !== "" && pendingQty !== "" && Number(pendingQty) >= 0;
+
+            const handleAdd = () => {
+              if (!canAdd) return;
+              setStoreLimits(prev => ({ ...prev, [Number(pendingStoreId)]: pendingQty }));
+              setPendingStoreId("");
+              setPendingQty("");
+            };
+
+            const handleEditSave = (sid: number) => {
+              if (editingQty === "" || Number(editingQty) < 0) return;
+              setStoreLimits(prev => ({ ...prev, [sid]: editingQty }));
+              setEditingStoreId(null);
+              setEditingQty("");
+            };
+
+            return (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <div style={{ padding: "10px 14px", borderRadius: 14, background: "rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.18)" }}>
+                  <p style={{ fontSize: 10, fontWeight: 700, color: "#F59E0B", margin: 0, lineHeight: 1.5 }}>
+                    Agrega tienda por tienda el stock de preventa disponible. Tiendas sin entrada aquí <strong>no podrán vender</strong> este catálogo. Si no agregas ninguna, se usa el <strong>Límite general</strong> del tab General.
+                  </p>
+                </div>
+
+                {/* Selector: agregar tienda + qty */}
+                <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+                  <div style={{ flex: 1 }}>
+                    <Label>Tienda</Label>
+                    <div style={{ position: "relative" }}>
+                      <select
+                        value={pendingStoreId}
+                        onChange={e => setPendingStoreId(e.target.value === "" ? "" : Number(e.target.value))}
+                        disabled={availableStores.length === 0}
+                        style={{ ...inputStyle, paddingRight: 32, appearance: "none" as const, opacity: availableStores.length === 0 ? 0.5 : 1 }}
+                      >
+                        <option value="">{availableStores.length === 0 ? "Todas las tiendas asignadas" : "Selecciona una tienda…"}</option>
+                        {availableStores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                      <ChevronRight size={12} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%) rotate(90deg)", color: TM, pointerEvents: "none" }} />
+                    </div>
+                  </div>
+                  <div style={{ width: 100 }}>
+                    <Label>Stock</Label>
+                    <input
+                      type="number" min="0"
+                      value={pendingQty}
+                      onChange={e => setPendingQty(e.target.value)}
+                      onKeyDown={e => e.key === "Enter" && handleAdd()}
+                      placeholder="0"
+                      disabled={pendingStoreId === ""}
+                      style={{ ...inputStyle, padding: "11px 12px", textAlign: "center", fontWeight: 800 }}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAdd}
+                    disabled={!canAdd}
+                    style={{ padding: "11px 16px", borderRadius: 14, border: "none", background: canAdd ? RED : "var(--td-input-bg)", color: canAdd ? "#fff" : TM, fontSize: 11, fontWeight: 900, cursor: canAdd ? "pointer" : "not-allowed", textTransform: "uppercase" as const, letterSpacing: "0.08em", display: "flex", alignItems: "center", gap: 6 }}
+                  >
+                    <Plus size={13} />
+                    Agregar
+                  </button>
+                </div>
+
+                {/* Tabla de tiendas asignadas */}
+                {assignedEntries.length === 0 ? (
+                  <div style={{ padding: "24px 16px", textAlign: "center", color: TM, fontSize: 12, border: "1px dashed var(--td-input-border)", borderRadius: 14 }}>
+                    Sin tiendas asignadas — el catálogo usará el límite general del tab General.
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {assignedEntries.map(({ storeId, storeName, qty }) => {
+                      const isEditing = editingStoreId === storeId;
+                      const isZero = !isEditing && qty !== "" && Number(qty) === 0;
+                      return (
+                        <div key={storeId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 14, border: `1px solid ${isZero ? "rgba(220,38,38,0.3)" : "var(--td-input-border)"}`, background: "var(--td-input-bg)" }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: TP }}>{storeName}</p>
+                            {isZero && (
+                              <p style={{ margin: "2px 0 0", fontSize: 9, color: "#DC2626", fontWeight: 700 }}>Stock 0 — no podrá vender</p>
+                            )}
+                          </div>
+                          {isEditing ? (
+                            <>
+                              <input
+                                type="number" min="0" autoFocus
+                                value={editingQty}
+                                onChange={e => setEditingQty(e.target.value)}
+                                onKeyDown={e => { if (e.key === "Enter") handleEditSave(storeId); if (e.key === "Escape") { setEditingStoreId(null); setEditingQty(""); } }}
+                                style={{ width: 80, padding: "6px 10px", borderRadius: 8, border: "1px solid rgba(224,34,26,0.4)", background: "var(--td-popup-bg)", color: TP, fontSize: 13, fontWeight: 800, textAlign: "center", outline: "none" }}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleEditSave(storeId)}
+                                style={{ padding: "6px 10px", borderRadius: 8, background: "#10b981", border: "none", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center" }}
+                                title="Guardar"
+                              >
+                                <Check size={12} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => { setEditingStoreId(null); setEditingQty(""); }}
+                                style={{ padding: "6px 10px", borderRadius: 8, background: "transparent", border: "1px solid var(--td-input-border)", color: TM, cursor: "pointer", display: "flex", alignItems: "center" }}
+                                title="Cancelar"
+                              >
+                                <X size={12} />
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <span style={{ fontSize: 14, fontWeight: 900, color: TP, minWidth: 30, textAlign: "right" }}>{qty || 0}</span>
+                              <span style={{ fontSize: 10, fontWeight: 700, color: TM, textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>uds</span>
+                              <button
+                                type="button"
+                                onClick={() => { setEditingStoreId(storeId); setEditingQty(qty); }}
+                                style={{ padding: "6px 10px", borderRadius: 8, background: "transparent", border: "1px solid var(--td-input-border)", color: TM, cursor: "pointer", fontSize: 10, fontWeight: 900, textTransform: "uppercase" as const, letterSpacing: "0.08em" }}
+                                title="Editar stock"
+                              >
+                                Editar
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setStoreLimits(prev => { const n = { ...prev }; delete n[storeId]; return n; })}
+                                style={{ padding: "6px 10px", borderRadius: 8, background: "rgba(224,34,26,0.08)", border: "1px solid rgba(224,34,26,0.3)", color: "#fca5a5", cursor: "pointer", display: "flex", alignItems: "center" }}
+                                title="Quitar tienda"
+                              >
+                                <Trash2 size={11} />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {assignedEntries.length > 0 && (
+                  <div style={{ padding: "10px 14px", borderRadius: 14, background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.18)" }}>
+                    <p style={{ fontSize: 10, fontWeight: 700, color: "#10b981", margin: 0 }}>
+                      Stock total entre tiendas: <strong>{totalUnits}</strong> unidades en <strong>{assignedEntries.length}</strong> tienda{assignedEntries.length === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
 
         {/* Footer */}

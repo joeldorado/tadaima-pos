@@ -6,6 +6,7 @@ import {
 import { updateManga, deleteManga, uploadMangaImage, getMangaInventory, updateMangaInventory } from '@tadaima/api'
 import type { Manga, MangaInventoryItem } from '@tadaima/api'
 import { EDITORIALS, MANGA_GENRES } from './mangaConstants'
+import { toast } from 'sonner'
 
 // ─── Design tokens (same as MangaBatchModal) ──────────────────────────────────
 const T = {
@@ -176,14 +177,19 @@ export function MangaEditModal({
     }
   }, [nombre, volNum, editorial, isbn, genero, precioPublico, margenPct, active, prices, quantities, imageFile, manga.id, nombreOk, precioOk, onSuccess])
 
+  const [deleteConfirmText, setDeleteConfirmText] = useState("")
   const handleDelete = async () => {
     setDeleting(true)
     try {
       await deleteManga(manga.id)
       onDeleted()
-    } catch {
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+        ?? 'No se pudo eliminar el tomo (puede tener ventas/apartados activos)'
+      toast.error(msg)
       setDeleting(false)
       setShowDeleteDialog(false)
+      setDeleteConfirmText("")
     }
   }
 
@@ -518,27 +524,55 @@ export function MangaEditModal({
         </div>
       </div>
 
-      {/* ── Delete dialog ──────────────────────────────────────────────────── */}
-      {showDeleteDialog && (
+      {/* ── Delete dialog (super alert con confirmación tipeada) ───────────── */}
+      {showDeleteDialog && (() => {
+        const fullName = `${manga.name}${manga.volume_number != null ? ` Vol. ${manga.volume_number}` : ''}`;
+        const confirmed = deleteConfirmText.trim().toLowerCase() === fullName.trim().toLowerCase();
+        return (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => !deleting && setShowDeleteDialog(false)} />
-          <div className="relative w-full max-w-sm rounded-2xl p-6 shadow-2xl" style={{ background: '#1a1a1a', border: '1px solid rgba(239,68,68,0.3)' }}>
+          <div className="absolute inset-0 bg-black/85 backdrop-blur-md" onClick={() => { if (!deleting) { setShowDeleteDialog(false); setDeleteConfirmText(""); } }} />
+          <div className="relative w-full max-w-md rounded-2xl p-6 shadow-2xl" style={{ background: '#1a1a1a', border: '1px solid rgba(239,68,68,0.5)' }}>
             <div className="flex items-start gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-red-500/10 flex items-center justify-center shrink-0">
-                <AlertTriangle size={20} className="text-red-400" />
+              <div className="w-12 h-12 rounded-full bg-red-500/20 flex items-center justify-center shrink-0 animate-pulse">
+                <AlertTriangle size={26} className="text-red-400" />
               </div>
               <div>
-                <h3 className="font-bold text-white text-base">¿Eliminar tomo?</h3>
-                <p className="text-sm text-gray-400 mt-1">Esta acción <span className="text-red-400 font-semibold">no se puede deshacer</span>.</p>
+                <h3 className="font-black text-white text-lg uppercase tracking-wider">⚠️ Eliminar tomo</h3>
+                <p className="text-xs text-gray-400 mt-1">Esta acción <span className="text-red-400 font-bold">NO se puede deshacer</span>.</p>
               </div>
             </div>
-            <div className="rounded-xl p-3 mb-5 text-sm" style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)' }}>
-              <p className="font-bold text-gray-300">{manga.name}{manga.volume_number != null ? ` Vol. ${manga.volume_number}` : ''}</p>
-              <p className="text-gray-400 text-xs mt-1">Se eliminará el registro, imagen e inventario del tomo.</p>
+            <div className="rounded-xl p-3 mb-4" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
+              <p className="font-bold text-white text-sm">{fullName}</p>
+              {manga.code && <p className="text-[10px] text-gray-400 mt-0.5">Código: {manga.code}</p>}
             </div>
+            <div className="rounded-xl p-3 mb-4 text-xs space-y-1" style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)' }}>
+              <p className="text-red-400 font-bold">Se eliminará:</p>
+              <ul className="text-gray-300 list-disc list-inside space-y-0.5">
+                <li>Registro del tomo</li>
+                <li>Imagen del bucket</li>
+                <li>Inventario en todas las tiendas</li>
+              </ul>
+              <p className="text-amber-400 text-[11px] mt-2">Si tiene ventas o apartados activos, el backend rechazará. No hay borrado forzado para tomos.</p>
+            </div>
+
+            <div className="mb-4">
+              <p className="text-[11px] font-bold text-red-400 mb-2 uppercase tracking-wider">
+                Para confirmar, tipea el nombre completo:
+              </p>
+              <input
+                type="text"
+                value={deleteConfirmText}
+                onChange={e => setDeleteConfirmText(e.target.value)}
+                placeholder={fullName}
+                disabled={deleting}
+                className="w-full px-3 py-2 rounded-xl text-sm font-bold bg-black/40 border outline-none transition-all"
+                style={{ borderColor: confirmed ? '#10b981' : 'rgba(239,68,68,0.4)', color: confirmed ? '#10b981' : '#fff' }}
+              />
+            </div>
+
             <div className="flex gap-3">
               <button
-                onClick={() => setShowDeleteDialog(false)}
+                onClick={() => { setShowDeleteDialog(false); setDeleteConfirmText(""); }}
                 disabled={deleting}
                 className="flex-1 py-2.5 rounded-xl text-sm font-bold transition-all hover:bg-white/10"
                 style={{ color: '#9ca3af', border: '1px solid rgba(255,255,255,0.08)' }}
@@ -547,8 +581,8 @@ export function MangaEditModal({
               </button>
               <button
                 onClick={handleDelete}
-                disabled={deleting}
-                className="flex-1 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2"
+                disabled={deleting || !confirmed}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
                 style={{ background: 'linear-gradient(135deg,#991b1b,#dc2626)', color: '#fff', border: '1px solid rgba(239,68,68,0.3)' }}
               >
                 {deleting ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={14} />}
@@ -557,7 +591,8 @@ export function MangaEditModal({
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
     </>
   )
 }

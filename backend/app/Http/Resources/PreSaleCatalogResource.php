@@ -4,6 +4,7 @@ namespace App\Http\Resources;
 
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Support\Facades\Storage;
 
 class PreSaleCatalogResource extends JsonResource
 {
@@ -14,6 +15,8 @@ class PreSaleCatalogResource extends JsonResource
             'status'          => $this->status,
             'product_name'    => $this->product_name,
             'image_path'      => $this->image_path,
+            // URL pública lista para usar en <img>. null si no hay imagen.
+            'image_url'       => $this->image_path ? Storage::url($this->image_path) : null,
             'cost'            => $this->cost,
             'margin_percent'  => $this->margin_percent,
             'price_1'         => $this->price_1,
@@ -48,6 +51,16 @@ class PreSaleCatalogResource extends JsonResource
             'reserved_count'  => $this->when(
                 $this->relationLoaded('activeOrderItems'),
                 fn () => $this->reserved_count
+            ),
+
+            // Límites por tienda (si están definidos). Frontend admin los edita en el
+            // tab "Tiendas" del modal de catálogo.
+            'store_limits' => $this->when(
+                $this->relationLoaded('storeLimits'),
+                fn () => $this->storeLimits->map(fn ($sl) => [
+                    'store_id'  => (int) $sl->store_id,
+                    'limit_qty' => (int) $sl->limit_qty,
+                ])->values()
             ),
             'sold_count'      => $this->when(
                 $this->relationLoaded('soldOrderItems'),

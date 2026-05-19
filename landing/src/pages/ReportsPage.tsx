@@ -308,37 +308,64 @@ export function ReportsPage() {
             <Calendar size={15} style={{ color: RED }} />
 
             {/* Quick presets */}
-            {[
-              { label: "Hoy",    fn: () => { setFrom(today); setTo(today); } },
-              { label: "7 días", fn: () => { setFrom(new Date(Date.now()-6*86400000).toISOString().split("T")[0]!); setTo(today); } },
-              { label: "Este mes", fn: () => { setFrom(firstOfMonth); setTo(today); } },
-            ].map(p => {
-              const active = p.label === "Hoy" && from === today && to === today;
-              return (
-                <button key={p.label} onClick={p.fn}
-                  className="px-4 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all hover:scale-105 active:scale-95"
-                  style={active
-                    ? { background: "linear-gradient(135deg,#CC2200,#FF4422)", color: "#fff", border: "1px solid rgba(255,120,90,0.3)" }
-                    : { background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)", color: TS }
-                  }>
-                  {p.label}
-                </button>
-              );
-            })}
+            {(() => {
+              const todayD = new Date();
+              const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0]!;
+              const sevenAgo = new Date(Date.now() - 6 * 86400000).toISOString().split("T")[0]!;
+              const thirtyAgo = new Date(Date.now() - 29 * 86400000).toISOString().split("T")[0]!;
+              const firstOfLastMonth = new Date(todayD.getFullYear(), todayD.getMonth() - 1, 1).toISOString().split("T")[0]!;
+              const lastOfLastMonth = new Date(todayD.getFullYear(), todayD.getMonth(), 0).toISOString().split("T")[0]!;
+              const firstOfYear = new Date(todayD.getFullYear(), 0, 1).toISOString().split("T")[0]!;
+              const presets = [
+                { label: "Hoy",         from: today,            to: today },
+                { label: "Ayer",        from: yesterday,        to: yesterday },
+                { label: "7 días",      from: sevenAgo,         to: today },
+                { label: "30 días",     from: thirtyAgo,        to: today },
+                { label: "Este mes",    from: firstOfMonth,     to: today },
+                { label: "Mes pasado",  from: firstOfLastMonth, to: lastOfLastMonth },
+                { label: "Este año",    from: firstOfYear,      to: today },
+              ];
+              return presets.map(p => {
+                const active = from === p.from && to === p.to;
+                return (
+                  <button key={p.label} onClick={() => { setFrom(p.from); setTo(p.to); }}
+                    className="px-3 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all hover:scale-105 active:scale-95"
+                    style={active
+                      ? { background: "linear-gradient(135deg,#CC2200,#FF4422)", color: "#fff", border: "1px solid rgba(255,120,90,0.3)" }
+                      : { background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)", color: TS }
+                    }>
+                    {p.label}
+                  </button>
+                );
+              });
+            })()}
 
             <div className="w-px h-5 mx-1" style={{ background: "var(--td-divider)" }} />
 
-            {/* Date inputs */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl" style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)" }}>
-              <input type="date" value={from} onChange={e => setFrom(e.target.value)}
-                className="text-sm font-bold outline-none bg-transparent"
-                style={{ color: TP, minWidth: 130 }} />
-            </div>
-            <span className="text-xs font-black" style={{ color: TM }}>→</span>
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl" style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)" }}>
-              <input type="date" value={to} onChange={e => setTo(e.target.value)}
-                className="text-sm font-bold outline-none bg-transparent"
-                style={{ color: TP, minWidth: 130 }} />
+            {/* Date range — Inicio / Fin con labels visibles */}
+            <div className="flex items-end gap-2">
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[9px] font-black uppercase tracking-widest" style={{ color: TM }}>Inicio</label>
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl" style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)" }}>
+                  <Calendar size={12} style={{ color: TM }} />
+                  <input type="date" value={from} onChange={e => setFrom(e.target.value)}
+                    max={to}
+                    className="text-sm font-bold outline-none bg-transparent"
+                    style={{ color: TP, minWidth: 130 }} />
+                </div>
+              </div>
+              <span className="text-xs font-black pb-2" style={{ color: TM }}>→</span>
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[9px] font-black uppercase tracking-widest" style={{ color: TM }}>Fin</label>
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl" style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)" }}>
+                  <Calendar size={12} style={{ color: TM }} />
+                  <input type="date" value={to} onChange={e => setTo(e.target.value)}
+                    min={from}
+                    max={today}
+                    className="text-sm font-bold outline-none bg-transparent"
+                    style={{ color: TP, minWidth: 130 }} />
+                </div>
+              </div>
             </div>
 
             {/* Store select — admin only */}

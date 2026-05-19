@@ -29,6 +29,12 @@ class UpdatePreSaleCatalogRequest extends FormRequest
             'preorder_limit'  => ['nullable', 'integer', 'min:1'],
             'arrival_date'    => ['nullable', 'date'],
             'pickup_deadline' => ['nullable', 'date', 'after_or_equal:arrival_date'],
+
+            // Límites por tienda — opcional. Si se manda, reemplaza al preorder_limit
+            // global como fuente de truth (ver PreSaleCatalog::limitForStore).
+            'store_limits'              => ['nullable', 'array'],
+            'store_limits.*.store_id'   => ['required_with:store_limits', 'integer', 'exists:stores,id'],
+            'store_limits.*.limit_qty'  => ['required_with:store_limits', 'integer', 'min:0'],
         ];
     }
 }

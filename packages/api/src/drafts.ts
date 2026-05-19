@@ -54,3 +54,59 @@ export async function updateDraftItem(
 export async function removeDraftItem(draftId: number, itemId: number): Promise<void> {
   await apiClient.delete(`/sales-drafts/${draftId}/items/${itemId}`)
 }
+
+/**
+ * Soft-cancels a draft (status → cancelled). Used by "Vaciar carrito" so the
+ * server doesn't keep accumulating items from prior sessions on the same draftId.
+ * DELETE /sales-drafts/:draftId
+ */
+export async function cancelDraft(draftId: number): Promise<void> {
+  await apiClient.delete(`/sales-drafts/${draftId}`)
+}
+
+/**
+ * Reservas de stock por producto en una tienda. Suma quantities de todos los
+ * drafts open (de todos los cajeros) agrupado por product_id.
+ * GET /sales-drafts/reserved-stock?store_id=X
+ */
+export interface ReservedStockResponse {
+  reservations: Record<string | number, number>
+  as_of: string
+}
+export async function getReservedStock(storeId: number): Promise<ReservedStockResponse> {
+  const response = await apiClient.get<ReservedStockResponse>('/sales-drafts/reserved-stock', {
+    params: { store_id: storeId },
+  })
+  return response.data
+}
+
+/**
+ * Drafts del usuario actual que el job marcó como "por vencer". El frontend
+ * muestra un modal top-priority cuando esta lista no está vacía.
+ * GET /sales-drafts/expiring
+ */
+export interface ExpiringDraft {
+  id: number
+  store_id: number
+  store_name: string | null
+  customer_name: string | null
+  subtotal: number
+  item_count: number
+  warned_at: string
+  cancels_at: string
+  seconds_remaining: number
+}
+export async function getExpiringDrafts(): Promise<ExpiringDraft[]> {
+  const response = await apiClient.get<ExpiringDraft[]>('/sales-drafts/expiring')
+  return response.data
+}
+
+/**
+ * Resetea el reloj del draft: expires_at = now + 5min, warned_at = null.
+ * Llamado desde el modal "Mantener carrito".
+ * POST /sales-drafts/:draftId/extend
+ */
+export async function extendDraft(draftId: number): Promise<{ id: number; expires_at: string }> {
+  const response = await apiClient.post<{ id: number; expires_at: string }>(`/sales-drafts/${draftId}/extend`)
+  return response.data
+}

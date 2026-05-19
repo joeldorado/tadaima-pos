@@ -21,7 +21,7 @@ class PreSaleCatalogsController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $query = PreSaleCatalog::with(['category', 'supplier', 'product', 'orderItems', 'activeOrderItems', 'soldOrderItems', 'deliveredOrderItems'])
+        $query = PreSaleCatalog::with(['category', 'supplier', 'product', 'orderItems', 'activeOrderItems', 'soldOrderItems', 'deliveredOrderItems', 'storeLimits'])
             ->when($request->filled('status'),      fn ($q) => $q->where('status',      $request->status))
             ->when($request->filled('category_id'), fn ($q) => $q->where('category_id', $request->category_id))
             ->when($request->filled('supplier_id'), fn ($q) => $q->where('supplier_id', $request->supplier_id))
@@ -75,10 +75,29 @@ class PreSaleCatalogsController extends Controller
             'status'          => $data['status'] ?? PreSaleCatalog::STATUS_DRAFT,
         ]);
 
+        $this->syncStoreLimits($catalog, $data['store_limits'] ?? null);
+
         return $this->success(
-            new PreSaleCatalogResource($catalog->load(['category', 'supplier', 'product', 'createdBy'])),
+            new PreSaleCatalogResource($catalog->load(['category', 'supplier', 'product', 'createdBy', 'storeLimits'])),
             201
         );
+    }
+
+    /**
+     * Replace-all sync de límites por tienda. Recibe array [{store_id, limit_qty}, ...]
+     * o null para no tocar. Si recibe array vacío [], borra todos los límites
+     * (vuelve a usar el preorder_limit global).
+     */
+    private function syncStoreLimits(PreSaleCatalog $catalog, ?array $limits): void
+    {
+        if ($limits === null) return;
+        $catalog->storeLimits()->delete();
+        foreach ($limits as $l) {
+            $catalog->storeLimits()->create([
+                'store_id'  => (int) $l['store_id'],
+                'limit_qty' => (int) $l['limit_qty'],
+            ]);
+        }
     }
 
     /**
@@ -86,7 +105,7 @@ class PreSaleCatalogsController extends Controller
      */
     public function show(int $id): JsonResponse
     {
-        $catalog = PreSaleCatalog::with(['category', 'supplier', 'product', 'createdBy', 'orderItems', 'activeOrderItems'])
+        $catalog = PreSaleCatalog::with(['category', 'supplier', 'product', 'createdBy', 'orderItems', 'activeOrderItems', 'storeLimits'])
             ->findOrFail($id);
 
         return $this->success(new PreSaleCatalogResource($catalog));
@@ -109,13 +128,82 @@ class PreSaleCatalogsController extends Controller
         $data = $request->validated();
         // Once merchandise has arrived (or later), the preorder limit is frozen
         if (in_array($catalog->status, [PreSaleCatalog::STATUS_ARRIVED, PreSaleCatalog::STATUS_CLOSED, PreSaleCatalog::STATUS_CANCELLED])) {
-            unset($data['preorder_limit']);
+            unset($data['preorder_limit'], $data['store_limits']);
         }
+        $storeLimits = $data['store_limits'] ?? null;
+        unset($data['store_limits']);
         $catalog->update($data);
+        $this->syncStoreLimits($catalog, $storeLimits);
 
         return $this->success(
-            new PreSaleCatalogResource($catalog->load(['category', 'supplier', 'product', 'createdBy', 'orderItems', 'activeOrderItems', 'soldOrderItems', 'deliveredOrderItems']))
+            new PreSaleCatalogResource($catalog->load(['category', 'supplier', 'product', 'createdBy', 'orderItems', 'activeOrderItems', 'soldOrderItems', 'deliveredOrderItems', 'storeLimits']))
         );
+    }
+
+    /**
+     * POST /pre-sale-catalogs/{id}/image
+     *
+     * Sube una imagen para el catálogo de preventa. Reusa el patrón de productos:
+     * mismo disco default (gcs en prod, public en local), borra la imagen previa
+     * si existía, y devuelve el image_url listo para usar.
+     * Body: multipart/form-data con campo "image" (max 5MB, tipos image/*).
+     */
+    public function uploadImage(\Illuminate\Http\Request $request, int $id): JsonResponse
+    {
+        if (!$request->user()->hasRole('admin') && !$request->user()->hasRole('gerente')) {
+            return $this->error('Sin permisos para gestionar catálogos.', 403);
+        }
+
+        $request->validate([
+            'image' => ['required', 'file', 'image', 'max:5120'],
+        ]);
+
+        $catalog = PreSaleCatalog::findOrFail($id);
+
+        // Borrar imagen previa (si existía) para no dejar huérfanos en el bucket.
+        if ($catalog->image_path) {
+            try { \Storage::delete($catalog->image_path); } catch (\Throwable) { /* ignore */ }
+        }
+
+        try {
+            $path = $request->file('image')->store("pre-sale-catalogs/{$catalog->id}");
+        } catch (\Throwable $e) {
+            \Log::error('Pre-sale catalog image upload failed', [
+                'disk'  => config('filesystems.default'),
+                'error' => $e->getMessage(),
+            ]);
+            return $this->error('Error al subir imagen: ' . $e->getMessage(), 500);
+        }
+
+        if ($path === false) {
+            return $this->error('No se pudo guardar la imagen en el almacenamiento.', 500);
+        }
+
+        $catalog->update(['image_path' => $path]);
+
+        return $this->success([
+            'id'         => $catalog->id,
+            'image_path' => $path,
+            'image_url'  => \Storage::url($path),
+        ], 'Imagen subida.');
+    }
+
+    /**
+     * DELETE /pre-sale-catalogs/{id}/image
+     * Quita la imagen del catálogo (file + DB).
+     */
+    public function removeImage(\Illuminate\Http\Request $request, int $id): JsonResponse
+    {
+        if (!$request->user()->hasRole('admin') && !$request->user()->hasRole('gerente')) {
+            return $this->error('Sin permisos para gestionar catálogos.', 403);
+        }
+
+        $catalog = PreSaleCatalog::findOrFail($id);
+        if ($catalog->image_path) {
+            try { \Storage::delete($catalog->image_path); } catch (\Throwable) { /* ignore */ }
+            $catalog->update(['image_path' => null]);
+        }
+        return $this->success(null, 'Imagen eliminada.');
     }
 
     /**

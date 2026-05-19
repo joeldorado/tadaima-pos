@@ -1,7 +1,7 @@
 # MASTERLOG — Tadaima POS
 
 > Registro maestro del proyecto: arquitectura, evolución, decisiones clave y estado actual.
-> Actualizado: 2026-05-15 (plan fase Tienda Online preparado)
+> Actualizado: 2026-05-18 (refactor mayor de Caja a client-authoritative cart + UX polish)
 
 ---
 
@@ -10,7 +10,7 @@
 | Componente | Estado | Notas |
 |-----------|--------|-------|
 | Backend API (Laravel) | ✅ En producción | revision `tadaima-00034-ghr`, URL: tadaima-987277625193.us-central1.run.app |
-| Landing / Web (React) | ✅ En producción | Email folio, historial mixto, Tarjeta/Transferencia, checkout mixto con liquidación+regular+nueva preventa, módulo cliente reforzado en Caja para preventas |
+| Landing / Web (React) | ✅ En producción | Email folio, historial mixto, Tarjeta/Transferencia, checkout mixto. **ADR-014 (2026-05-18): client-authoritative cart** (carrito vive en localStorage, backend solo se entera al cobrar). Dropdown UP método de pago, total en USD cuando Dólares, scanner detecta socios TAD, modal Clientes en toolbar, cache de imágenes 3 capas con Service Worker. |
 | App móvil (Expo) | ⏳ Pendiente | Estructura base existe en `apps/`, sin paridad de features |
 | Deploy / Cloud Run | ✅ Operacional | `gcloud run deploy --source .`, región us-central1. Build remoto en Cloud Build (no requiere Docker local) |
 | DB Producción | ✅ Operacional | MySQL `pos-lite-db` en us-west1, vía Cloud SQL Proxy en local o `DB_SOCKET` en Cloud Run |
@@ -59,6 +59,20 @@
 | 40 | Caja | **UX cliente reforzada en SellPage** — bloque “Paso 1 · Cliente de la preventa” en la misma zona superior, estado visual `Requerido/Cliente asignado`, tabs “Buscar existente / Dar de alta”, helper copy, resumen compacto del cliente (nombre/teléfono/correo) y espejo breve junto al total. Ticket y reimpresión ahora incluyen nombre + teléfono + correo cuando existan. | 2026-05-15 |
 | 41 | Perf | **React Query + IndexedDB + multi-tab broadcast** — migración completa del data layer: `QueryClientProvider` global, IndexedDB persister (via `idb-keyval`) que sobrevive entre tabs/reloads, `BroadcastChannel` para sincronizar invalidaciones entre Caja 1/2/3/N. 15 hooks dedicados (`hooks/queries/`). Páginas migradas: Productos, Clientes, Reportes, Traslados, Inicio, Admin (6 tabs), Caja, Preventas (3 paneles), Ventas, Settings. Strategy: 24h productos/catálogos/TC, 60s folios, 30s default ventas/reportes/clientes. Polling eliminado (era cada 30s). Botones manuales "Sincronizar" en Caja, "Buscar nuevos" en Productos (gerente/cajero), "Actualizar" en Reportes. | 2026-05-15 |
 | 42 | Perf | **Catálogo optimizado para 8000+ productos** — endpoint `GET /products?light=1` (`ProductLightResource`, ~60% menos payload), `?sort=top` (orden por sale_items últimos 30 días). Migración FULLTEXT index en `products(name, sku, barcode)` + `Product::scopeSearch` usa `MATCH AGAINST BOOLEAN MODE` con tokens prefijo cuando term ≥ 3 chars (fallback LIKE para SQLite y términos cortos). Búsqueda ~5-10ms vs ~200ms LIKE table scan. Patrón híbrido: top 200 prefetched al login (Layout), background pages 2-6 (1000 más) en `requestIdleCallback`, server search debounced 250ms, scanner USB hits backend directo sin debounce cuando SKU no está en cache. Tipo de cambio cache 24h, refetch explícito al `handleOpenCash` (cajero abre caja → fresh rate). Reducción de tráfico Cloud Run del orden 95-98% vs setup con polling. | 2026-05-15 |
+| 43 | Caja | **ADR-014: client-authoritative cart** — refactor mayor: carrito vive 100% en memoria + localStorage (zustand snapshot), backend solo se entera al detonar el cobro. Endpoint `POST /sales` acepta `items[]` directos. Cero requests por `+`/`-`. Stock validado solo al cobrar (`reserveStock` con `lockForUpdate`). Si conflicto, auto-ajusta qty en UI y muestra toast. | 2026-05-18 |
+| 44 | Backend | **Stock fixes críticos** — `reserveStock` ordena por `product_id` para evitar deadlock entre cajeros simultáneos. Validación nueva resta drafts open de otros cajeros + scoping por tienda (antes vendía a negativo). `checkStock` ahora filtra inventario por store del draft. | 2026-05-18 |
+| 45 | Caja | **Dropdown UP método de pago** — grid 2×2 reemplazado por botón único del activo + menu hacia arriba con inactivos. Comisión oculta a no-admin (3 sitios). Terminal cambiable mientras Tarjeta activa. Total en USD prominente cuando Dólares + cambio bilingüe USD/MXN. Overlay full-screen bloqueante durante checkout. | 2026-05-18 |
+| 46 | Caja | **Acceso rápido a Clientes** — modal del toolbar con buscador + tabla expandible (tickets/preventas). Botón "Cliente" toolbar con popup asignar (manual + scan TAD\d+ auto-detect socio Tadaima vía `lookupCardCode`). Form "+ Crear cliente nuevo" inline. Auto-abre popup al agregar preventa sin cliente. Cache RQ `useCustomersAllQuery` (1h, 500 clientes) con filtro client-side instantáneo + leyenda "Buscando en socios Tadaima..." cuando cae a Supabase. Nueva columna footer muestra datos del cliente asignado (📞 ✉️ 🏅 con iconos lucide). | 2026-05-18 |
+| 47 | Perf | **Cache de imágenes 3 capas** — A: bucket GCS con `Cache-Control: max-age=31536000, immutable` (17 objetos existentes + futuras subidas vía `filesystems.php`). B: `vite-plugin-pwa` con Service Worker `CacheFirst` para `storage.googleapis.com/tadaima-media/*.{png,jpg,webp}` (2000 entries, 1 año). C: `loading="lazy" decoding="async"` en `ImageWithFallback` + `ProductThumb`. Cache busting automático vía filename hash. | 2026-05-18 |
+| 48 | Caja | **Reducción de tráfico backend en Caja** — preventas (catalogs + orders) ahora cacheadas con `usePreSaleCatalogsQuery` + `usePreSaleOrdersQuery` (antes refetch en cada apertura del modal). Botones "Actualizar" granulares dentro de modales Catálogo y Preventas (en lugar del global del toolbar). Notificaciones polling apagado (no había escritores backend). Cliente popup busca local instantáneo + Supabase fallback. | 2026-05-18 |
+| 49 | Caja | **UX polish del footer** — copy "Carrito" → "Venta" (consistente con POS profesionales). "Cancelar Venta" condicional (solo visible con items) ubicado junto a Escanear. Columna unificada Total+Dropdown (Col 1+2) + nueva columna cliente cuando hay asignado. Más espacio horizontal (`min-w-[300px]`). Botón "Buscar Preventa" del footer comentado (folio se carga via scanner o modal Preventas → Apartadas). Bloque "Cliente del Ticket" oculto en venta regular (visible solo en preventa). Warning "Quedan N disponibles" en items cuando stock ≤5. | 2026-05-18 |
+| 50 | Reportes | **Filtro de fechas pro** — 7 presets (Hoy, Ayer, 7 días, 30 días, Este mes, Mes pasado, Este año), preset activo auto-detectado. Labels Inicio/Fin con icono Calendar dentro. Constraints `max={to}` y `min={from} max={today}` impiden rangos inválidos | 2026-05-18 |
+| 51 | Preventas | **Imagen del producto en catálogo** — endpoint `POST/DELETE /pre-sale-catalogs/{id}/image` (5MB, GCS, borra previa). Resource expone `image_url`. Modal de catálogo con zona 140×140 (preview + cambiar/quitar). Thumbnail rápido visible en panel admin (lazy) y en CatalogCard de Caja (solo si tiene imagen, sin reservar espacio sin) + en items del carrito vía `addCatalogToCart` que propaga image | 2026-05-18 |
+| 52 | Preventas | **Stock por tienda (cambio de schema)** — nueva tabla `pre_sale_catalog_store_limits` (`catalog_id`, `store_id`, `limit_qty`). Modelo + relación + helpers `limitForStore()` / `reservedCountForStore()`. Validación en `createOrder` respeta store_limits, fallback a `preorder_limit` global. Tab nuevo **"Stock"** en modal de catálogo: selector "Agregar tienda" (filtra ya asignadas) + qty editable inline (Editar/Eliminar) + footer suma. Migración `2026_05_18_000003` | 2026-05-18 |
+| 53 | Preventas | **CatalogCard "Agotado"** — calcula `remaining = preorder_limit - reserved_count`, bloquea click y muestra badge rojo cuando ≤0. Botones de precio individuales disabled. `openPreSalesModal` invalida preSaleCatalogs+preSaleOrders al abrir → reserved_count fresh. `handleCheckoutError` parsea error de preventa y auto-ajusta qty del item (preserva proporción del depositAmount) | 2026-05-18 |
+| 54 | Caja | **Bug crítico stock global vs por tienda** — `useProductsLightQuery(activeStore?.id)` (antes `null`). El endpoint `/products?light=1` retornaba stock global cuando no se mandaba `store_id`, así que UI mostraba 10 y backend rechazaba con "0 disponible" en otra tienda. Fix también aplicado a `useProductsSearchQuery`, `useBackgroundProductsPrefetch` y scanner directo. Auto-invalida `products.all` al abrir modal Catálogo → siempre stock fresh | 2026-05-18 |
+| 55 | Caja | **Idempotencia addCatalogToCart** — doble click en catálogo ya no duplica fila; suma quantity + acumula depositAmount. Respeta preorder_limit | 2026-05-18 |
+| 56 | Productos | **Modal QuickStockModal** — botón "📦 Stock" en columna acciones (tabla) y flotante en grid card (hover). Selector "Agregar tienda" + qty + edit inline + 🗑. Diff vs estado inicial al guardar → PUT por cada cambio en paralelo (registra movimiento de ajuste en backend). Reusa endpoint existente `PUT /inventory/{productId}/{warehouseId}` | 2026-05-18 |
 | - | Deploy | **Dominio custom activo** `tadaima.poslite.com.mx` | 2026-05-05 |
 
 ### 🟡 Media prioridad (mejora flujo o datos)
@@ -434,6 +448,326 @@ docker compose up --build -d
 ---
 
 ## 11. Historial de sesiones de desarrollo
+
+### Sesión 2026-05-18 (continuación) — Reportes con calendario, imagen + límites por tienda en preventa, stock por tienda en productos
+
+**Contexto:** Después del refactor ADR-014, sesión continua para pulir flujos de Reportes, Preventas y Productos. Tres bloques principales: filtro de fechas pro en Reportes, soporte completo de imagen y stock por tienda en catálogos de preventa, modal rápido de stock por tienda en Productos.
+
+---
+
+#### 1. Reportes — filtro de rango de fechas mejorado
+
+| Archivo | Cambio |
+|---|---|
+| `landing/src/pages/ReportsPage.tsx` | Presets ampliados de 3 a 7: **Hoy · Ayer · 7 días · 30 días · Este mes · Mes pasado · Este año**. Preset activo se resalta auto-detectando coincidencia de rango. Labels **INICIO / FIN** arriba de cada `<input type="date">` con icono `Calendar` adentro. Constraint `max={to}` en INICIO y `min={from} max={today}` en FIN para impedir rangos inválidos. Aplica a tabs Ventas / Productos / Clientes |
+
+---
+
+#### 2. Catálogos de preventa — imagen del producto
+
+**Backend:** la columna `pre_sale_catalogs.image_path` ya existía. Faltaba endpoint de upload + URL pública.
+
+| Archivo | Cambio |
+|---|---|
+| `backend/app/Http/Resources/PreSaleCatalogResource.php` | Expone `image_url` (via `Storage::url`) además de `image_path` |
+| `backend/app/Http/Controllers/Api/PreSaleCatalogsController.php` | `POST /pre-sale-catalogs/{id}/image` (multipart, max 5MB) + `DELETE /pre-sale-catalogs/{id}/image`. Borra imagen previa del bucket antes de subir nueva. Solo admin/gerente. |
+| `backend/routes/api.php` | Rutas nuevas registradas |
+| `packages/api/src/preSaleCatalogs.ts` | `uploadPreSaleCatalogImage(id, file)` + `removePreSaleCatalogImage(id)` |
+| `packages/api/src/types.ts` | `PreSaleCatalog.image_url?` agregado |
+| `landing/src/components/presales/NewPreSaleCatalogModal.tsx` | Zona de imagen 140×140 arriba del tab General. Sin imagen → botón punteado "Subir imagen". Con imagen → preview + botones cambiar/quitar. Validación max 5MB. Al guardar: si hay `imageFile` → `POST /image` después del save. Si en edición se quitó la imagen → `DELETE /image` |
+
+---
+
+#### 3. Thumbnail del catálogo en admin y Caja
+
+| Archivo | Cambio |
+|---|---|
+| `landing/src/components/presales/PreSaleCatalogsPanel.tsx` | Tabla de catálogos: si no hay imagen, no muestra placeholder (antes mostraba cuadro punteado con icono Package). Lazy/async en `<img>`. Prefiere `image_url` sobre `storageUrl(image_path)` |
+| `landing/src/pages/SellPage.tsx` | `CatalogCard` (modal Preventas → tab Disponibles) ahora muestra thumbnail cuadrado 1:1 con `objectFit:cover` SOLO si hay imagen. Sin imagen no se reserva espacio. `addCatalogToCart` propaga `image_url ?? storageUrl(image_path)` al `item.product.image` para que el item del carrito (vía `ImageWithFallback`) muestre el thumbnail |
+
+---
+
+#### 4. Cache RQ — auto-refresh de catálogos al volver a Caja
+
+**Bug detectado:** después de subir imagen en admin, Caja seguía mostrando la versión vieja sin imagen.
+
+| Archivo | Cambio |
+|---|---|
+| `landing/src/hooks/queries/usePreSales.ts` | Quitado `refetchOnMount: false` de `usePreSaleCatalogsQuery`. Ahora usa el default `true` (refetch al montar SOLO si está stale). Con `staleTime: 24h`, navegar entre pantallas no dispara fetch, pero `invalidateQueries` desde admin SÍ provoca refetch en Caja al volver |
+
+---
+
+#### 5. Idempotencia + auto-popup en addCatalogToCart
+
+**Bug detectado:** doble click en card del catálogo en Caja creaba 2 filas separadas del mismo item.
+
+| Archivo | Cambio |
+|---|---|
+| `landing/src/pages/SellPage.tsx` (`addCatalogToCart`) | Si ya existe un item con el mismo `sellingCatalogId`, suma `quantity` y acumula `depositAmount` en lugar de duplicar la fila. Respeta `preorder_limit`. Image del catálogo se propaga al item.product.image. Si la mesa no tiene cliente, abre auto-popup de cliente con 150ms delay (preserva flujo existente) |
+
+---
+
+#### 6. Stock por tienda real en endpoints de productos (bug crítico)
+
+**Bug detectado:** Joel reportó "ETB 151 Ingles" mostrado con stock=10 en Caja, pero al cobrar el backend rechazaba con "Disponible 0". Causa raíz: el endpoint `/products?light=1` retornaba `stock_total` GLOBAL (sumando todas las tiendas) cuando se llamaba sin `store_id`. Frontend pasaba `null`.
+
+| Archivo | Cambio |
+|---|---|
+| `landing/src/pages/SellPage.tsx` | `useProductsLightQuery(activeStore?.id)` (antes `null`). `useProductsSearchQuery(debouncedSearch, activeStore?.id)`. Scanner directo `queryClient.fetchQuery` también pasa `store_id` |
+| `landing/src/hooks/queries/useProducts.ts` | `useProductsSearchQuery` y `useBackgroundProductsPrefetch` aceptan `storeId` opcional. Lo agregan al queryKey para que cambiar de tienda invalide cache local automáticamente |
+
+Backend ya tenía la lógica de filtrar por `store_id` cuando se manda — solo faltaba que el frontend lo enviara.
+
+---
+
+#### 7. Auto-refresh del catálogo al abrir modal
+
+Para complementar el fix anterior, al abrir el modal Catálogo de Caja se invalida `products.all` → refetch automático en background. El cajero siempre ve stock fresh sin tener que clickear "Actualizar" manualmente.
+
+---
+
+#### 8. CatalogCard "Agotado" + auto-ajuste en checkout
+
+| Archivo | Cambio |
+|---|---|
+| `landing/src/pages/SellPage.tsx` (`CatalogCard`) | Calcula `remaining = preorder_limit - reserved_count`. Si `remaining ≤ 0`: opacity 0.55, borde rojo, badge **"Agotado"** rojo, cursor not-allowed, click bloqueado. Si remaining > 0: badge **"N disponibles"** ámbar. Botones de precio individuales también disabled cuando agotado |
+| `landing/src/pages/SellPage.tsx` (`openPreSalesModal`) | Invalida `preSaleCatalogs.all` + `preSaleOrders.all` al abrir → reserved_count fresh |
+| `landing/src/pages/SellPage.tsx` (`handleCheckoutError`) | Parsea error de preventa: `"'X' solo tiene N unidades disponibles (límite: M)."` → auto-ajusta qty del item (preserva proporción del depositAmount) + invalida `preSaleCatalogs.all` + toast amigable. Si `availableNum=0`, quita el item del carrito |
+
+---
+
+#### 9. Límite por tienda en catálogos de preventa (cambio de schema)
+
+Joel pidió que `preorder_limit` no sea global sino por tienda (3 en Centro, 2 en Macroplaza, etc.).
+
+**Backend:**
+
+| Archivo | Cambio |
+|---|---|
+| `backend/database/migrations/2026_05_18_000003_create_pre_sale_catalog_store_limits_table.php` | **NUEVA** tabla `pre_sale_catalog_store_limits` con `catalog_id`, `store_id`, `limit_qty`, unique compound, FK cascade delete |
+| `backend/app/Models/PreSaleCatalogStoreLimit.php` | **NUEVO** modelo |
+| `backend/app/Models/PreSaleCatalog.php` | Relación `storeLimits()` HasMany. Helpers `limitForStore($storeId)` (prioridad: store_limits entry → si tabla tiene filas pero esa tienda no, return 0; sino fallback `preorder_limit` global) y `reservedCountForStore($storeId)` (cuenta solo folios pending/ready de esa tienda) |
+| `backend/app/Http/Requests/StorePreSaleCatalogRequest.php` + `UpdatePreSaleCatalogRequest.php` | Validación `store_limits.*.store_id` + `.limit_qty` |
+| `backend/app/Http/Controllers/Api/PreSaleCatalogsController.php` | Método privado `syncStoreLimits()` replace-all. Cargada relación `storeLimits` en index/show/store/update. Reset bloqueado cuando catalog status es arrived/closed/cancelled |
+| `backend/app/Http/Resources/PreSaleCatalogResource.php` | Expone `store_limits: [{store_id, limit_qty}]` |
+| `backend/app/Services/PreSaleOrderService.php` | `createOrder` usa `limitForStore($storeId)` + `reservedCountForStore($storeId)`. Fallback al `preorder_limit` global si no hay store_limits |
+
+**Frontend:**
+
+| Archivo | Cambio |
+|---|---|
+| `packages/api/src/types.ts` | Tipo `PreSaleCatalogStoreLimit` + `store_limits?` en `PreSaleCatalog` |
+| `landing/src/components/presales/NewPreSaleCatalogModal.tsx` | Tab nuevo **"Stock"** (renombrado de "Tiendas" tras feedback). Selector dropdown "Agregar tienda" (filtra las ya asignadas) + input qty + botón Agregar. Lista de tiendas asignadas con qty editable inline (Editar → input + ✓/✕), botón 🗑 quitar. Badge rojo si qty=0. Footer verde "Stock total: N uds en M tiendas". Empty state si no hay tiendas asignadas → catálogo usa `preorder_limit` global como fallback |
+
+---
+
+#### 10. Modal rápido de stock por tienda en Productos
+
+Patrón equivalente al de catálogos de preventa, ahora para productos regulares.
+
+| Archivo | Cambio |
+|---|---|
+| `landing/src/components/products/QuickStockModal.tsx` | **NUEVO** componente. Carga `getInventory({ product_id })` + `getWarehouses({ active: true })`. Lista solo warehouses con `quantity > 0`. Selector "Agregar" filtra los ya asignados. Editar inline + botón 🗑 (pone qty=0, registra ajuste en backend). Footer verde con suma. Botón **Guardar cambios** hace diff vs estado inicial y PUT por cada cambio en paralelo |
+| `landing/src/pages/ProductsPage.tsx` | Botón **"📦 Stock"** en columna acciones de tabla (junto a Editar). Botón flotante absoluto en grid card (visible en hover, verde, bottom-left). State `stockModalProduct`. Modal montado al final del JSX. Al guardar invalida `products.all` + `inventory.all` |
+
+**Backend:** ningún cambio. Reusa `PUT /inventory/{productId}/{warehouseId}` que crea/actualiza y registra movimiento de ajuste.
+
+---
+
+#### Permisos confirmados
+
+| Área | Admin | Gerente | Cajero |
+|------|-------|---------|--------|
+| Productos: edit + stock por tienda | ✅ | ✅ | ❌ |
+| Preventas: catálogos + imagen + stock por tienda | ✅ | ✅ | ❌ |
+| Preventas: vender folios en Caja | ✅ | ✅ | ✅ |
+| Reportes: ver con filtro de fechas | ✅ | ✅ | ❌ |
+
+Sin cambios en permisos. Decisión pendiente de Joel si restringir a solo admin.
+
+---
+
+#### Verificación
+
+- ✅ `vite build` verde con `dist/sw.js` actualizado
+- ✅ 27/27 PHPUnit tests pasan
+- ✅ Migración `2026_05_18_000003` aplicada
+- ✅ Pruebas manuales en local: subir imagen, ver thumbnail en Caja, agotado en preventa con auto-ajuste, modal stock por tienda en productos
+
+---
+
+### Sesión 2026-05-18 — Refactor mayor de Caja: ADR-014 client-authoritative cart + UX polish completo
+
+**Contexto:** Joel reportó bug crítico en Caja del QA de Ruben: "el carrito no está sincronizado: pantalla muestra $X pero el servidor tiene $Y" + "Los pagos no coinciden con el total". Diagnóstico inicial con 4 agentes en paralelo (architect, code-architect, database-reviewer, performance-optimizer) reveló múltiples capas del problema. La sesión escaló a un refactor arquitectónico completo del flujo de carrito + decenas de mejoras de UX en Caja.
+
+---
+
+#### 1. Bug crítico carrito desincronizado (3 fixes inmediatos)
+
+**Causa raíz:** `clearCart()` solo limpiaba el state local del UI pero NO cancelaba el draft del servidor → el siguiente `addToCart` empilaba items sobre un draft sucio con líneas de sesión previa → al cobrar el backend rechazaba con "pagos no coinciden". Hallazgo extra: 10 drafts huérfanos colgados en MySQL prod ($35,600 acumulados en uno solo).
+
+| Fix | Archivo | Cambio |
+|---|---|---|
+| A | `landing/src/pages/SellPage.tsx:1065` | `clearCart` ahora llama `cancelDraft(draftId)` + `draftStore.clearDraft(mesaId)` |
+| B | `landing/src/pages/SellPage.tsx:736-758` | Lock por producto en `addToCart` antes del check `existingItemId` (race condition de doble click) + `mesasRef` para releer qty actualizada |
+| D | `landing/src/pages/SellPage.tsx:281-296` | `stock_details.tienda` poblado desde `stock_total` del endpoint `?light=1` (display mostraba "TIENDA: 0" cuando había 10) |
+| API | `packages/api/src/drafts.ts` | Agregada `cancelDraft(draftId)` que pega a `DELETE /sales-drafts/{id}` |
+
+Smoke test E2E completo con `curl` validó el fix. Cancelados los 10 drafts huérfanos.
+
+---
+
+#### 2. Plan inicial server-authoritative (revertido)
+
+Después del fix inmediato, Joel quiso una solución robusta para multi-cajero. Los 4 agentes propusieron polling de React Query + endpoint agregado de reservas + modal "por vencer" cuando draft inactivo.
+
+**Implementado y luego revertido en favor de ADR-014:**
+- Migración `2026_05_18_000001_add_expire_and_indexes_to_sales_drafts` (columnas `expires_at`, `warned_at` + índices `(draft_id, product_id)` + `(store_id, active)`)
+- `SalesDraftActivityObserver` que actualizaba `expires_at` con cada actividad
+- Comandos scheduler: `drafts:warn-expiring` + `drafts:expire-warned` (cada 1 min)
+- Endpoints `/sales-drafts/reserved-stock` (con `Cache::remember(3s)`) + `/sales-drafts/expiring` + `POST /{id}/extend`
+- Hooks RQ `useReservedStockQuery` (poll 10s) + `useExpiringDraftsQuery` (poll 20s)
+- `<ExpiringDraftsModal />` con countdown 60s y botones Mantener/Cancelar
+
+**Hallazgos bonus detectados por los agentes:**
+- **Deadlock potencial en `CheckoutService::reserveStock`**: iteraba items en orden de `$draftItems` → dos cajeros con orden distinto causaban deadlock MySQL. Fix: `$draftItems->sortBy('product_id')` antes del foreach.
+- **Validación de stock ignoraba drafts open de otros**: si dos cajeros cobraban el último iPhone simultáneo, ambos pasaban la validación y se descontaba a negativo. Fix: nueva subquery que considera reservas de otros drafts open + scoping por tienda en `checkStock`.
+
+---
+
+#### 3. ADR-014 — Pivote a client-authoritative cart
+
+Tras la implementación, Joel argumentó que el patrón correcto para su POS era **client-side cart** (como Amazon checkout, Stripe checkout, mayoría de e-commerce). Razón: cero requests por `+`/`-`, sin race conditions, sin drafts huérfanos, código más simple. Tradeoff aceptado: doble venta posible (manejada con error claro al cobrar) y sin visibilidad cross-caja durante el armado.
+
+**Backend cambios:**
+
+| Archivo | Cambio |
+|---|---|
+| `backend/app/Http/Requests/CheckoutRequest.php` | Acepta dos shapes: `{draft_id}` (legacy) o `{items, store_id, register_session_id, customer_id?}` (nuevo flujo direct) |
+| `backend/app/Http/Controllers/Api/SalesController.php` | `store()` distingue por `has('items')` y delega a `checkout()` o `checkoutDirect()` |
+| `backend/app/Services/CheckoutService.php` | Nuevo método `checkoutDirect()` que crea draft + items + sale en una transacción atómica. Si falla por stock, todo rollback |
+| `backend/app/Providers/AppServiceProvider.php` | `SalesDraftActivityObserver::observe` comentado (no hay drafts en vivo) |
+| `backend/routes/console.php` | Schedules `warn-expiring` + `expire-warned` comentados |
+| `backend/routes/api.php` | Endpoints `reserved-stock` / `expiring` / `extend` comentados |
+| `backend/database/migrations/2026_05_18_000002_cancel_legacy_open_drafts.php` | One-shot que cancela todos los `sales_drafts.status='open'` al deployar (cleanup del cutover) |
+
+**Frontend cambios:**
+
+| Archivo | Cambio |
+|---|---|
+| `landing/src/pages/SellPage.tsx` | `addToCart` / `changeQty` / `removeFromCart` / `clearCart` reescritos para tocar solo state local. Quitados `pendingDraftRef`, `pendingItemAddRef`, `mesasRef` y toda la lógica de sync server. Toast "Sincronizando con el servidor…" eliminado de raíz. |
+| `landing/src/pages/SellPage.tsx` | `handleCheckout` (3 ramas: regular, mixto, preventa) envía `items[]` directos en lugar de `draft_id`. Helper `handleCheckoutError` parsea "Stock insuficiente para 'X'. Disponible: N" → auto-ajusta qty en UI + invalida cache + toast amigable |
+| `landing/src/layouts/Layout.tsx` | `<ExpiringDraftsModal />` comentado (sin drafts en vivo) |
+| `landing/src/pages/SellPage.tsx` | `useReservedStockQuery` removido. `reservedInOtherMesas` vuelve a leer solo de `mesas[]` local (multi-tab del mismo browser sigue funcionando vía zustand persist) |
+| `packages/api/src/types.ts` | `CreateSaleInput` extendido con `items?`, `store_id?`, `register_session_id?`, `customer_id?` |
+
+Verificación: 27/27 PHPUnit + 18/18 vitest + smoke E2E (POST /sales con items directos crea draft+items+sale en una transacción, descuenta inventario, deja 0 drafts open al final).
+
+---
+
+#### 4. Stock UX en Caja
+
+- **Warning "Quedan N"** en items del carrito cuando `availableStockFor - currentQty ≤ 5` (ámbar) / `=0` (rojo "Sin más stock"). Solo para venta regular.
+- **Refresh productos al `handleOpenCash`** (junto con TC + preventas) para que el cajero arranque su turno con stock fresco.
+- **Auto-recovery al rechazo de stock** en checkout: si server dice "Disponible: N", baja qty del item a N, invalida products, toast "Stock actualizado a N — revisa y cobra de nuevo". Si N=0, lo quita del carrito.
+
+---
+
+#### 5. UX cliente y socios Tadaima
+
+**Detección automática TAD\d+ en scanner.** Códigos de socios Supabase tienen formato `TAD00207715`. `handleScannedCode` agrega rama:
+
+```ts
+if (/^TAD\d+$/i.test(code)) {
+  if (activeMesa.customerId) { toast.info("Ya tiene cliente"); return; }
+  await openCustomerScanPopup(code.toUpperCase());
+  return;
+}
+```
+
+`openCustomerScanPopup(code)` busca primero en BD local por `external_member_id`, si no consulta `lookupCardCode(code)` a Supabase, abre `<AssignCustomerModal />` con datos + botón **"Asignar a esta venta"** (verde grande). Si es externo y se asigna, lo crea en BD local primero.
+
+**Modo manual del popup** (botón "Cliente" del toolbar):
+- Buscador autofocus con debounce 300ms
+- Resultados locales (azul) + socios Tadaima (ámbar)
+- Botón **"+ Crear cliente nuevo"** con form inline (nombre/teléfono/correo) — pre-llena nombre con la query si tenía texto
+
+**Auto-abre popup al agregar preventa sin cliente** (`addCatalogToCart` + 150ms timeout para que el modal de Preventas cierre antes).
+
+**Modal "Clientes" del toolbar** (botón nuevo entre Historial y Cerrar Caja):
+- Header con contador "N locales · N socios Tadaima"
+- Buscador autofocus
+- Lista con expand-on-click: muestra Tickets + Preventas del cliente (lazy fetch)
+- Botón "Agregar" para socios Tadaima → crea en BD local + invalida cache RQ
+
+**Cache RQ de clientes locales (`useCustomersAllQuery(500)`):**
+- staleTime 1h, gcTime 24h, sin refetch on focus/mount
+- Helper `filterLocalCustomers(query)` filtra client-side instantáneo por nombre/teléfono/correo/`external_member_id`
+- Si filtro local da 0 + query ≥2 chars → fallback Supabase con leyenda visible **"Buscando en socios Tadaima…"** (banner ámbar con spinner)
+- Aplicado en 3 sitios: popup Cliente (manual), modal Clientes (toolbar), header de preventa
+
+**Ocultar zona "Cliente del Ticket"** del header de Caja en venta regular (solo visible en preventa donde es required). Cliente ahora se asigna desde el botón del toolbar o el auto-popup.
+
+---
+
+#### 6. Cache de imágenes (3 capas)
+
+| Capa | Archivo | Cambio |
+|---|---|---|
+| A | `gsutil setmeta` aplicado a `gs://tadaima-media/**` + `backend/config/filesystems.php` | `Cache-Control: public, max-age=31536000, immutable` (1 año, sin revalidación) en 17 objetos existentes y subidas futuras. Cache busting automático vía filename hash |
+| B | `landing/vite.config.ts` + `landing/package.json` | `vite-plugin-pwa` con Service Worker `CacheFirst` para `^https://storage.googleapis.com/tadaima-media/.+\.(png\|jpg\|jpeg\|webp\|gif\|svg)$`. 2000 entries, 1 año. Sobrevive hard reload y limpia de cache del browser |
+| C | `landing/src/components/figma/ImageWithFallback.tsx` + `ProductsPage.tsx` (`ProductThumb`) | `loading="lazy" decoding="async"` — solo descarga imágenes en viewport, decode fuera del main thread |
+
+---
+
+#### 7. Polish UI del footer de Caja
+
+- **Dropdown UP del método de pago**: grid 2×2 (Efectivo/Dólares/Tarjeta/Transferencia) reemplazado por botón único del activo + menu hacia arriba con los inactivos. Click outside cierra (`paymentMenuRef`). Conserva editor de TC (`SlidersHorizontal`) cuando Dólares + admin. Chip de terminal clickeable abre modal de selección.
+- **Total en USD cuando Dólares**: muestra `$77.42 USD` prominente en emerald + `$1,200 MXN · TC 16.50` debajo. Cambio bilingüe `$25.00 USD ≈ $412.50 MXN`. Mismo formato en ticket impreso.
+- **Bug fix**: `setPayment("Tarjeta"|"Transferencia")` limpia `cashReceived` (antes un `100` USD escrito en Dólares se colaba al ticket como "Recibido $100" con Tarjeta). Defensa extra en `handleCheckout`: `receivedSnapshot = 0` si no es Efectivo/Dólares.
+- **Comisión oculta a no-admin** (3 sitios): bloque subtotal "Comisión X%", chip del dropdown "(X%)", modal de terminales (incluye banner "Política de comisión"). Admin sigue viendo todo igual.
+- **Overlay full-screen bloqueante** durante checkout (`z-1000` con backdrop blur + Loader2 + texto "Procesando venta · No cierres ni cambies de pantalla").
+
+---
+
+#### 8. Reorganización del layout
+
+- **Columna unificada Col 1+2**: TOTAL arriba + dropdown del método abajo (en lugar de lado a lado). `min-w-[300px]` con `gap-4`. Separador entre cols eliminado.
+- **Nueva columna cliente** (visible solo si `hasAssignedCustomer`): avatar User verde + nombre + datos secundarios (Phone/Mail/Bookmark icons en lugar de emojis). El código TAD en ámbar destaca al socio Tadaima.
+- **Bloque "Buscar Preventa"** del footer comentado (folio se carga via scanner `PREV-N` o modal Preventas → Apartadas).
+- **Copy "Carrito" → "Venta"** en 9 lugares de UI (header, empty state, toasts). Variables JS sin cambio.
+- **"Cancelar Venta"** reubicado del toolbar superior a la barra de buscadores, **condicional** (solo visible si `items.length > 0`). Hover rojo + icono X.
+
+---
+
+#### 9. Cache de preventas + actualizar granular
+
+`openPreSalesModal` antes hacía 2 fetches en cada apertura. Ahora:
+- `usePreSaleCatalogsQuery({status:'published'}, per_page:200)` y `usePreSaleOrdersQuery(per_page:200)` activos al montar SellPage
+- `useEffect` sincroniza state local (`preSaleCatalogs`, `preSaleOrdersPending/Delivered/Expired`) desde el cache RQ
+- Click en "Preventas" → modal abre sin fetch
+- **Botones "Actualizar" granulares** dentro de cada modal:
+  - Modal Catálogo → invalida solo `products.all`
+  - Modal Preventas (Disponibles/Difusión) → invalida solo `preSaleCatalogs.all`
+  - Modal Preventas (Apartadas/Liquidadas/Vencidas) → invalida solo `preSaleOrders.all`
+- Botón global "Actualizar" del toolbar de Caja **removido** (estaba al lado de Escanear y refrescaba todo)
+- `handleOpenCash` invalida productos + preventas + TC al inicio del turno
+
+**Bonus:** Notificaciones (`NotificationBadge`) — polling cada 30s deshabilitado porque no hay generadores backend. Mantiene fetch inicial al login. 4,800 requests/día menos por 5 cajeros.
+
+---
+
+#### Verificación final
+
+- ✅ `vite build` verde (incluido nuevo `dist/sw.js` del PWA)
+- ✅ `vitest run` 18/18 pasan
+- ✅ `php artisan test` 27/27 pasan
+- ✅ Smoke E2E directo checkout con `curl`: stock cross-caja respetado, deadlock prevenido, validación correcta
+- ✅ Deploy pendiente — toda la sesión en local + commits sin push (Joel prefiere push único al final)
+
+**Memoria nueva esperada:** `project_cart_architecture.md` — Tadaima POS usa client-authoritative cart (ADR-014) desde 2026-05-18, no server-authoritative. Carrito vive en localStorage. Stock se valida solo al cobrar.
+
+---
 
 ### Sesión 2026-05-15 (madrugada larga) — React Query global + IndexedDB + catálogo perf para 8000 productos
 

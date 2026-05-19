@@ -76,3 +76,30 @@ export async function updatePreSaleCatalogStatus(
   )
   return response.data
 }
+
+/**
+ * Sube una imagen para el catálogo de preventa. Reemplaza la imagen previa
+ * si existía (backend hace cleanup en GCS).
+ * POST /pre-sale-catalogs/:id/image (multipart/form-data, campo "image", max 5MB)
+ */
+export async function uploadPreSaleCatalogImage(
+  id: number,
+  file: File
+): Promise<{ id: number; image_path: string; image_url: string }> {
+  const form = new FormData()
+  form.append('image', file)
+  const response = await apiClient.post<{ id: number; image_path: string; image_url: string }>(
+    `/pre-sale-catalogs/${id}/image`,
+    form,
+    { headers: { 'Content-Type': 'multipart/form-data' } }
+  )
+  return response.data
+}
+
+/**
+ * Elimina la imagen del catálogo (file + DB).
+ * DELETE /pre-sale-catalogs/:id/image
+ */
+export async function removePreSaleCatalogImage(id: number): Promise<void> {
+  await apiClient.delete(`/pre-sale-catalogs/${id}/image`)
+}

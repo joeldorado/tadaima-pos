@@ -12,6 +12,8 @@ use App\Models\SalesDraft;
 use App\Models\SalesDraftItem;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 class SalesDraftController extends Controller
 {
@@ -217,6 +219,101 @@ class SalesDraftController extends Controller
         return $this->success(null, 'Venta cancelada');
     }
 
+    /**
+     * GET /sales-drafts/reserved-stock?store_id=X
+     *
+     * Devuelve el mapa { product_id: cantidad_reservada } para todos los drafts
+     * open de la tienda. Cacheado 3s para soportar polling de múltiples cajas
+     * sin pegar a MySQL en cada request.
+     */
+    public function reservedStock(Request $request): JsonResponse
+    {
+        $storeId = (int) $request->query('store_id');
+        if ($storeId <= 0) {
+            return $this->error('store_id es requerido.', 422);
+        }
+
+        $map = Cache::remember(
+            "drafts:reserved-stock:store:{$storeId}",
+            3,
+            fn () => DB::table('sales_draft_items as sdi')
+                ->join('sales_drafts as sd', 'sd.id', '=', 'sdi.draft_id')
+                ->where('sd.store_id', $storeId)
+                ->where('sd.status', SalesDraft::STATUS_OPEN)
+                ->groupBy('sdi.product_id')
+                ->selectRaw('sdi.product_id, SUM(sdi.quantity) as reserved')
+                ->pluck('reserved', 'product_id')
+                ->map(fn ($v) => (float) $v)
+                ->toArray()
+        );
+
+        return $this->success([
+            'reservations' => $map,
+            'as_of'        => now()->toIso8601String(),
+        ]);
+    }
+
+    /**
+     * GET /sales-drafts/expiring
+     *
+     * Lista los drafts del usuario actual que ya fueron marcados como "por vencer".
+     * El frontend lee esto cada 20s y dispara modal top-priority cuando hay resultados.
+     * Incluye `seconds_remaining` para countdown UI.
+     */
+    public function expiring(Request $request): JsonResponse
+    {
+        $userId = $request->user()->id;
+        $graceCutoff = now()->subMinutes(SalesDraft::WARNING_GRACE_MINUTES);
+
+        $drafts = SalesDraft::query()
+            ->with(['items.product', 'customer', 'store'])
+            ->where('user_id', $userId)
+            ->where('status', SalesDraft::STATUS_OPEN)
+            ->whereNotNull('warned_at')
+            ->where('warned_at', '>', $graceCutoff)  // aún en grace, no canceladas todavía
+            ->whereHas('items')
+            ->get()
+            ->map(function (SalesDraft $d) {
+                $expiresAt = $d->warned_at->addMinutes(SalesDraft::WARNING_GRACE_MINUTES);
+                return [
+                    'id'                  => $d->id,
+                    'store_id'            => $d->store_id,
+                    'store_name'          => $d->store?->name,
+                    'customer_name'       => $d->customer?->name,
+                    'subtotal'            => $d->subtotal,
+                    'item_count'          => $d->items->sum('quantity'),
+                    'warned_at'           => $d->warned_at->toIso8601String(),
+                    'cancels_at'          => $expiresAt->toIso8601String(),
+                    'seconds_remaining'   => max(0, (int) now()->diffInSeconds($expiresAt, false)),
+                ];
+            });
+
+        return $this->success($drafts);
+    }
+
+    /**
+     * POST /sales-drafts/{draft}/extend
+     *
+     * Resetea el reloj del draft: expires_at = now() + EXPIRE_MINUTES y warned_at = null.
+     * Llamado desde el modal "Mantener carrito" cuando el cajero confirma que sigue activo.
+     */
+    public function extend(SalesDraft $salesDraft): JsonResponse
+    {
+        if ($salesDraft->status !== SalesDraft::STATUS_OPEN) {
+            return $this->error('Solo se pueden extender ventas abiertas.', 422);
+        }
+
+        $salesDraft->update([
+            'expires_at' => now()->addMinutes(SalesDraft::EXPIRE_MINUTES),
+            'warned_at'  => null,
+        ]);
+
+        return $this->success([
+            'id'         => $salesDraft->id,
+            'expires_at' => $salesDraft->fresh()->expires_at?->toIso8601String(),
+        ], 'Carrito mantenido');
+    }
+
     // ─── Private helpers ──────────────────────────────────────────────────────
 
     /**
@@ -250,12 +347,26 @@ class SalesDraftController extends Controller
         float $qtyRequested,
         int $excludeItemId = 0
     ): array {
-        $totalStock = (float) Inventory::where('product_id', $productId)->sum('quantity');
+        // Stock + reservas SCOPED al store del draft. Sin scoping, un cajero
+        // podía apartar más unidades de las que físicamente existen en su tienda
+        // (porque sumaba inventario de otras tiendas) y al cobrar la validación
+        // de reserveStock lo rechazaba — pero ya tarde, con UI desincronizada.
+        $draft = SalesDraft::find($currentDraftId);
+        $storeId = $draft?->store_id;
+
+        $totalStock = (float) Inventory::query()
+            ->where('product_id', $productId)
+            ->when($storeId, fn ($q) => $q->whereHas('warehouse', fn ($w) =>
+                $w->where('store_id', $storeId)->where('active', true)
+            ))
+            ->sum('quantity');
 
         $reservedInDrafts = (float) SalesDraftItem::query()
             ->where('product_id', $productId)
             ->when($excludeItemId, fn ($q) => $q->where('id', '!=', $excludeItemId))
-            ->whereHas('draft', fn ($q) => $q->active())
+            ->whereHas('draft', fn ($q) => $q->active()
+                ->when($storeId, fn ($s) => $s->where('store_id', $storeId))
+            )
             ->sum('quantity');
 
         $available = $totalStock - $reservedInDrafts;

@@ -36,6 +36,8 @@ class SalesDraftResource extends JsonResource
                 fn () => SalesDraftItemResource::collection($this->items),
             ),
 
+            'expires_at' => $this->expires_at?->toISOString(),
+            'warned_at'  => $this->warned_at?->toISOString(),
             'created_at' => $this->created_at?->toISOString(),
             'updated_at' => $this->updated_at?->toISOString(),
         ];

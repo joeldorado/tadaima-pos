@@ -52,12 +52,17 @@ export function useProductsLightQuery(storeId?: number | null) {
  * Solo se activa cuando hay un search term >= 2 chars. Para cadenas cortas
  * o vacías el componente debería usar el cache local de useProductsLightQuery.
  */
-export function useProductsSearchQuery(search: string, options?: { enabled?: boolean }) {
+export function useProductsSearchQuery(search: string, storeId?: number | null, options?: { enabled?: boolean }) {
   const trimmed = search.trim()
   const isLong = trimmed.length >= 2
   return useQuery({
-    queryKey: [...queryKeys.products.all, 'light', 'search', trimmed],
-    queryFn: () => getProductsLight({ search: trimmed, per_page: 20, active: true } as Parameters<typeof getProductsLight>[0]),
+    queryKey: [...queryKeys.products.all, 'light', 'search', trimmed, storeId ?? null],
+    queryFn: () => getProductsLight({
+      search: trimmed,
+      per_page: 20,
+      active: true,
+      ...(storeId ? { store_id: storeId } : {}),
+    } as Parameters<typeof getProductsLight>[0]),
     enabled: isLong && (options?.enabled ?? true),
     staleTime: 60_000,
     gcTime: 5 * 60_000,
@@ -98,7 +103,7 @@ export function useProductsInfiniteQuery(storeId?: number | null, options?: { en
  * saturar el backend ni la UI, y dentro usa requestIdleCallback para
  * arrancar solo cuando el browser está idle.
  */
-export function useBackgroundProductsPrefetch(enabled: boolean) {
+export function useBackgroundProductsPrefetch(enabled: boolean, storeId?: number | null) {
   const queryClient = useQueryClient()
   useEffect(() => {
     if (!enabled) return
@@ -110,8 +115,11 @@ export function useBackgroundProductsPrefetch(enabled: boolean) {
         const idle = (window as unknown as { requestIdleCallback?: (cb: () => void) => number }).requestIdleCallback
         const run = () => {
           void queryClient.prefetchQuery({
-            queryKey: [...queryKeys.products.all, 'light', 'bg', page],
-            queryFn: () => getProductsLight({ active: true, sort: 'top', per_page: TOP_PAGE_SIZE, page } as Parameters<typeof getProductsLight>[0]),
+            queryKey: [...queryKeys.products.all, 'light', 'bg', page, storeId ?? null],
+            queryFn: () => getProductsLight({
+              active: true, sort: 'top', per_page: TOP_PAGE_SIZE, page,
+              ...(storeId ? { store_id: storeId } : {}),
+            } as Parameters<typeof getProductsLight>[0]),
             staleTime: ONE_DAY_MS,
             gcTime: ONE_DAY_MS,
           })

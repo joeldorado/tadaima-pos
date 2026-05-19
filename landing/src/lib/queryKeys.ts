@@ -38,6 +38,11 @@ export const queryKeys = {
     all: ['inventory'] as const,
     byProduct: (productId: number) => ['inventory', 'byProduct', productId] as const,
   },
+  salesDrafts: {
+    all: ['salesDrafts'] as const,
+    reservedStock: (storeId?: number | null) => ['salesDrafts', 'reservedStock', storeId ?? 0] as const,
+    expiring: () => ['salesDrafts', 'expiring'] as const,
+  },
   preSaleCatalogs: {
     all: ['preSaleCatalogs'] as const,
     list: (params?: Record<string, unknown>) => ['preSaleCatalogs', 'list', params ?? {}] as const,

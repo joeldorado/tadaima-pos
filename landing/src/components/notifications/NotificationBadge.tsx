@@ -4,7 +4,12 @@ import { getNotifications, markNotificationRead } from "@tadaima/api";
 import type { Notification } from "@tadaima/api";
 import { motion as Motion, AnimatePresence } from "motion/react";
 
-const POLL_INTERVAL = 30_000;
+// Polling desactivado: hoy ningún flujo backend crea AppNotification, así que
+// el endpoint siempre retorna []. Mantenemos el fetch inicial al montar por si
+// en el futuro se generan notificaciones (stock bajo, cierre de caja, etc.) —
+// el cajero las verá al recargar la página. Reactivar el setInterval cuando
+// haya escritores reales.
+// const POLL_INTERVAL = 30_000;
 
 export function NotificationBadge() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -25,8 +30,8 @@ export function NotificationBadge() {
 
   useEffect(() => {
     fetchNotifications();
-    const id = setInterval(fetchNotifications, POLL_INTERVAL);
-    return () => clearInterval(id);
+    // setInterval(fetchNotifications, POLL_INTERVAL) desactivado — sin escritores
+    // backend hoy. Reactivar cuando haya generadores reales de notificaciones.
   }, []);
 
   useEffect(() => {

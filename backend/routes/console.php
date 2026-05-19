@@ -14,3 +14,9 @@ Schedule::command('drafts:cleanup')
     ->hourly()
     ->withoutOverlapping()
     ->runInBackground();
+
+// ADR-014: client-authoritative cart. Sin drafts en vivo no hay nada que
+// expirar — los drafts solo existen al cobrar. Comandos quedan en el repo
+// por si volvemos al modelo server-authoritative.
+// Schedule::command('drafts:warn-expiring')->everyMinute()->withoutOverlapping();
+// Schedule::command('drafts:expire-warned')->everyMinute()->withoutOverlapping();

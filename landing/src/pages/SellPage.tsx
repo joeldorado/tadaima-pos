@@ -17,13 +17,16 @@ import { CameraScannerModal } from "@/components/CameraScannerModal";
 import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
 const tadaimaLogo = null // TODO: replace with real logo asset
 import { toast } from "sonner";
-import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, createSale, getPrice, openSession, closeSession, createLayaway, getCustomers, createCustomer, searchExternalCustomers, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getPreSaleOrders, getSales, getProductsLight, storageUrl } from "@tadaima/api";
+import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, closeSession, createLayaway, getCustomers, createCustomer, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getPreSaleOrders, getSales, getProductsLight, storageUrl } from "@tadaima/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { useProductsLightQuery, useProductsSearchQuery, useBackgroundProductsPrefetch } from "@/hooks/queries/useProducts";
+// ADR-014: useReservedStockQuery removido — carrito client-side, sin polling.
 import { usePaymentMethodsQuery } from "@/hooks/queries/usePaymentMethods";
 import { useTerminalsQuery } from "@/hooks/queries/useTerminals";
 import { useActiveSessionQuery, useCashRegistersQuery } from "@/hooks/queries/useCashSession";
 import { useExchangeRateQuery } from "@/hooks/queries/useSystemSettings";
+import { usePreSaleCatalogsQuery, usePreSaleOrdersQuery } from "@/hooks/queries/usePreSales";
+import { useCustomersAllQuery } from "@/hooks/queries/useCustomers";
 import { queryKeys } from "@/lib/queryKeys";
 import type { CashSession, CashRegisterInfo, PaymentMethod as ApiPaymentMethod, PreSaleCatalog, PreSaleOrder, PreSaleOrderItem, SaleDetail, Terminal, ExternalCardLookup } from "@tadaima/api";
 type HistorialEntry = { type: 'sale'; data: SaleDetail } | { type: 'presale'; data: PreSaleOrder };
@@ -256,11 +259,50 @@ export function SellPage() {
   const isCheckoutLockedRef = useRef(false);
 
   const queryClient = useQueryClient();
-  const productsQuery       = useProductsLightQuery(null);
+  // IMPORTANTE: pasar activeStore.id para que el endpoint retorne stock POR TIENDA.
+  // Sin esto, `stock_total` viene global (sumando todas las tiendas) y el cajero ve
+  // 10 unidades en el catálogo cuando en su tienda hay 0 — al cobrar el backend
+  // rechaza con "Stock insuficiente: Disponible 0".
+  const productsQuery       = useProductsLightQuery(activeStore?.id);
   // Once the top 200 are cached, gradually pull pages 2..6 in background
   // (during requestIdleCallback) so subsequent searches feel instant.
-  useBackgroundProductsPrefetch(!!productsQuery.data);
+  useBackgroundProductsPrefetch(!!productsQuery.data, activeStore?.id);
   const paymentMethodsQuery = usePaymentMethodsQuery({ active: true });
+
+  // Preventas cacheadas con React Query — antes openPreSalesModal hacía 2 fetches
+  // cada vez que el cajero clickeaba "Preventas". Ahora se cargan una vez (al
+  // montar SellPage) y se mantienen en cache. Botón "Actualizar" del SellPage
+  // y handleOpenCash invalidan para forzar refetch.
+  const preSaleCatalogsQuery = usePreSaleCatalogsQuery({ status: 'published', per_page: 200 });
+  const preSaleOrdersQuery   = usePreSaleOrdersQuery({ per_page: 200 });
+
+  // Clientes locales cacheados 1h. Filtro local instantáneo, Supabase como fallback.
+  const customersAllQuery = useCustomersAllQuery(500);
+  const allLocalCustomers = customersAllQuery.data ?? [];
+
+  // Adapter: raw API → Customer del UI. Memoizado para no recrear array en cada render.
+  const localCustomersUi: Customer[] = useMemo(() =>
+    allLocalCustomers.map(c => ({
+      id: String(c.id),
+      name: c.name,
+      phone: c.phone ?? undefined,
+      email: c.email ?? undefined,
+      points: c.points,
+      external_member_id: c.external_member_id ?? undefined,
+    })),
+  [allLocalCustomers]);
+
+  // Filtro client-side por nombre/teléfono/correo/external_member_id.
+  const filterLocalCustomers = useCallback((q: string): Customer[] => {
+    const term = q.trim().toLowerCase();
+    if (!term) return localCustomersUi.slice(0, 50);
+    return localCustomersUi.filter(c =>
+      c.name.toLowerCase().includes(term) ||
+      (c.phone ?? "").toLowerCase().includes(term) ||
+      (c.email ?? "").toLowerCase().includes(term) ||
+      (c.external_member_id ?? "").toLowerCase().includes(term)
+    );
+  }, [localCustomersUi]);
   const terminalsQuery      = useTerminalsQuery(
     activeStore?.id ? { store_id: activeStore.id, active: true } : undefined,
     { enabled: !!activeStore?.id }
@@ -291,6 +333,12 @@ export function SellPage() {
           price_d: priceAt(p, 4) > 0 ? priceAt(p, 4) : undefined,
           price_e: priceAt(p, 5) > 0 ? priceAt(p, 5) : undefined,
           stock: typeof p.stock_total === "number" ? p.stock_total : undefined,
+          // El endpoint /products?light=1 solo devuelve stock_total (escalar). Sin
+          // este mapeo, el render del catálogo en SellPage muestra siempre
+          // "TIENDA: 0 · PREVENTA: 0" porque lee `stock_details.tienda`.
+          stock_details: typeof p.stock_total === "number"
+            ? { tienda: p.stock_total, bodega: 0, preventa: 0, dañado: 0 }
+            : undefined,
           active: p.active,
         } as Product;
       });
@@ -326,6 +374,12 @@ export function SellPage() {
   const [mesas, setMesas]             = useState<Mesa[]>(initialMesas.current);
   const [activeMesaId, setActiveMesaId] = useState(initialActiveId.current);
 
+  // Ref con el snapshot más reciente de mesas. Permite que callbacks async (ej.
+  // addToCart después de awaitar un inFlight) lean la qty actual del UI sin
+  // depender del closure capturado al inicio de la llamada (que ya está stale).
+  const mesasRef = useRef<Mesa[]>(mesas);
+  useEffect(() => { mesasRef.current = mesas; }, [mesas]);
+
   // Sincroniza el snapshot de mesas con localStorage en cada cambio.
   // Permite recuperar el carrito al navegar a otra página y volver.
   // Usa getState() en lugar de la instancia subscrita para evitar loop infinito.
@@ -345,7 +399,7 @@ export function SellPage() {
     const t = setTimeout(() => setDebouncedSearch(search), 250);
     return () => clearTimeout(t);
   }, [search]);
-  const productsSearchQuery = useProductsSearchQuery(debouncedSearch);
+  const productsSearchQuery = useProductsSearchQuery(debouncedSearch, activeStore?.id);
 
   // Merge top 200 + search results into a single dedupe'd pool. Search results
   // bring in products that aren't in the top — they get filtered locally by
@@ -369,6 +423,9 @@ export function SellPage() {
         price_d: priceAt(p, 4) > 0 ? priceAt(p, 4) : undefined,
         price_e: priceAt(p, 5) > 0 ? priceAt(p, 5) : undefined,
         stock: typeof p.stock_total === "number" ? p.stock_total : undefined,
+        stock_details: typeof p.stock_total === "number"
+          ? { tienda: p.stock_total, bodega: 0, preventa: 0, dañado: 0 }
+          : undefined,
         active: p.active,
       }) as Product);
     return extra.length > 0 ? [...topProducts, ...extra] : topProducts;
@@ -411,6 +468,33 @@ export function SellPage() {
   const [historialEntries, setHistorialEntries]     = useState<HistorialEntry[]>([]);
   const [historialLoading, setHistorialLoading]     = useState(false);
   const [expandedEntryKey, setExpandedEntryKey]     = useState<string | null>(null);
+
+  // ── Popup asignar cliente (escanear TAD\d+ o botón "Cliente" del toolbar) ──
+  // Se abre cuando el scanner detecta un código TAD o cuando el cajero clickea
+  // el botón User. Muestra datos del cliente y un solo botón "Asignar". Si la
+  // mesa ya tiene cliente asignado, el scanner skipea silenciosamente.
+  const [assignCustomerPopup, setAssignCustomerPopup] = useState<{
+    mode: 'scan' | 'manual';
+    candidate: { type: 'local'; customer: Customer } | { type: 'external'; ext: ExternalCardLookup } | null;
+    search: string;
+    searching: boolean;
+    searchResults: { locales: Customer[]; externos: ExternalCardLookup[] };
+    assigning: boolean;
+    // Modo "crear nuevo cliente" dentro del popup manual
+    createForm: { open: boolean; name: string; phone: string; email: string; saving: boolean };
+  } | null>(null);
+
+  // ── Modal acceso rápido a Clientes ──
+  // Buscador local + fallback Supabase. Cada fila expande para mostrar ventas
+  // y preventas del cliente (lazy fetch on expand para no traer todo al abrir).
+  const [showClientsModal, setShowClientsModal]     = useState(false);
+  const [clientsSearch, setClientsSearch]           = useState("");
+  const [clientsLocal, setClientsLocal]             = useState<Customer[]>([]);
+  const [clientsExternal, setClientsExternal]       = useState<ExternalCardLookup[]>([]);
+  const [clientsSearching, setClientsSearching]     = useState(false);
+  const [expandedClientId, setExpandedClientId]     = useState<number | null>(null);
+  const [clientDetail, setClientDetail]             = useState<{ sales: SaleDetail[]; preSales: PreSaleOrder[]; loading: boolean } | null>(null);
+  const [addingExternalId, setAddingExternalId]     = useState<string | null>(null);
   // Tracks mixed-checkout pairs: presale order + regular sale created in the same transaction
   const [mixedPairs, setMixedPairs] = useState<Array<{ preSaleOrderId: number; saleId: number }>>([]);
 
@@ -442,6 +526,8 @@ export function SellPage() {
 
   const tcRef              = useRef<HTMLDivElement>(null);
   const custRef            = useRef<HTMLDivElement>(null);
+  const paymentMenuRef     = useRef<HTMLDivElement>(null);
+  const [paymentMenuOpen, setPaymentMenuOpen] = useState(false);
   const customerSearchRef  = useRef<HTMLInputElement>(null);
   const prodInputRef       = useRef<HTMLInputElement>(null);
   const cashInputRef       = useRef<HTMLInputElement>(null);
@@ -506,6 +592,7 @@ export function SellPage() {
     const fn = (e: MouseEvent) => {
       if (tcRef.current   && !tcRef.current.contains(e.target as Node))   setShowTc(false);
       if (custRef.current && !custRef.current.contains(e.target as Node)) setShowCustDrop(false);
+      if (paymentMenuRef.current && !paymentMenuRef.current.contains(e.target as Node)) setPaymentMenuOpen(false);
     };
     document.addEventListener("mousedown", fn);
     return () => document.removeEventListener("mousedown", fn);
@@ -524,38 +611,270 @@ export function SellPage() {
     setShowCustDrop(false);
   }, [activeMesaId]);
 
-  // Live customer search with 300ms debounce — falls back to Supabase if no POS match
+  // Live customer search (header preventa). Filtra local del cache RQ instant,
+  // si no hay match y query ≥2 chars consulta Supabase como fallback.
+  const [headerSearchingExternal, setHeaderSearchingExternal] = useState(false);
   useEffect(() => {
     setExtSearchResults([]);
-    if (!customerSearch.trim()) {
-      setCustomers([]);
+    const local = filterLocalCustomers(customerSearch);
+    setCustomers(local);
+    if (local.length > 0 || customerSearch.trim().length < 2) {
+      setHeaderSearchingExternal(false);
       return;
     }
+    // 0 locales + query específica → consultar Supabase con leyenda visible.
+    setHeaderSearchingExternal(true);
     const t = setTimeout(async () => {
       try {
-        const res = await getCustomers({ search: customerSearch, per_page: 10 });
-        const list = Array.isArray(res) ? res : (res as { data: any[] }).data ?? [];
-        if (list.length > 0) {
-          setCustomers(list.map((c: any) => ({
-            id: String(c.id),
-            name: c.name,
-            phone: c.phone ?? undefined,
-            email: c.email ?? undefined,
-            points: c.points,
-            external_member_id: c.external_member_id ?? undefined,
-          })));
-          return;
-        }
-        // No POS match — buscar en Supabase por nombre/ID/correo
-        if (customerSearch.trim().length < 2) return;
         const exts = await searchExternalCustomers(customerSearch.trim());
         setExtSearchResults(exts);
       } catch {
         // silent
+      } finally {
+        setHeaderSearchingExternal(false);
       }
     }, 300);
     return () => clearTimeout(t);
-  }, [customerSearch]);
+  }, [customerSearch, filterLocalCustomers]);
+
+  // ── Modal Clientes (acceso rápido) ─────────────────────────────────────────
+  const openClientsModal = () => {
+    setShowClientsModal(true);
+    setClientsSearch("");
+    setClientsLocal([]);
+    setClientsExternal([]);
+    setExpandedClientId(null);
+    setClientDetail(null);
+  };
+
+  // Búsqueda debounced 300ms. Igual que el customerSearch del header de Caja:
+  // local primero, si no hay match y la query es ≥2 chars dispara Supabase.
+  useEffect(() => {
+    if (!showClientsModal) return;
+    // Filtro local instantáneo desde el cache RQ.
+    const locales = filterLocalCustomers(clientsSearch);
+    setClientsLocal(locales);
+    setClientsExternal([]);
+    if (locales.length > 0 || clientsSearch.trim().length < 2) {
+      setClientsSearching(false);
+      return;
+    }
+    // 0 locales + query específica → Supabase con leyenda.
+    setClientsSearching(true);
+    const t = setTimeout(async () => {
+      try {
+        const exts = await searchExternalCustomers(clientsSearch.trim());
+        setClientsExternal(exts);
+      } catch {
+        // silent
+      } finally {
+        setClientsSearching(false);
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [clientsSearch, showClientsModal, filterLocalCustomers]);
+
+  /** Expande un cliente y trae sus ventas + preventas (lazy). */
+  const expandClient = async (cust: Customer) => {
+    const idNum = Number(cust.id);
+    if (expandedClientId === idNum) {
+      setExpandedClientId(null);
+      setClientDetail(null);
+      return;
+    }
+    setExpandedClientId(idNum);
+    setClientDetail({ sales: [], preSales: [], loading: true });
+    try {
+      const [salesRes, preSalesRes] = await Promise.allSettled([
+        getSales({ customer_id: idNum, per_page: 20 } as Parameters<typeof getSales>[0]),
+        getPreSaleOrders({ customer_id: idNum, per_page: 20 } as Parameters<typeof getPreSaleOrders>[0]),
+      ]);
+      setClientDetail({
+        sales: salesRes.status === 'fulfilled' ? salesRes.value.data : [],
+        preSales: preSalesRes.status === 'fulfilled' ? preSalesRes.value.data : [],
+        loading: false,
+      });
+    } catch {
+      setClientDetail({ sales: [], preSales: [], loading: false });
+    }
+  };
+
+  /** Agrega un cliente externo (Supabase) a la BD local sin asignarlo al carrito. */
+  const addExternalToDb = async (ext: ExternalCardLookup) => {
+    setAddingExternalId(ext.external_member_id);
+    try {
+      const newCust = await createCustomer({
+        name:               ext.name ?? ext.external_member_id,
+        phone:              ext.phone ?? undefined,
+        email:              ext.email || undefined,
+        external_member_id: ext.external_member_id,
+        loyalty_tier:       ext.nivel ?? undefined,
+      });
+      toast.success(`Cliente agregado: ${newCust.name}`);
+      // Refresca la lista local mostrándolo arriba.
+      setClientsLocal(prev => [{
+        id: String(newCust.id), name: newCust.name,
+        phone: newCust.phone ?? undefined, email: newCust.email ?? ext.email ?? undefined,
+        points: newCust.points, external_member_id: ext.external_member_id,
+      }, ...prev]);
+      setClientsExternal(prev => prev.filter(e => e.external_member_id !== ext.external_member_id));
+      void queryClient.invalidateQueries({ queryKey: queryKeys.customers.all });
+    } catch {
+      toast.error("No se pudo agregar al cliente");
+    } finally {
+      setAddingExternalId(null);
+    }
+  };
+
+  // ── Popup asignar cliente (TAD scan o botón User toolbar) ──────────────────
+
+  /**
+   * Abre el popup en modo "scan": llega un código TAD del scanner. Busca
+   * primero en BD local (por external_member_id), si no está consulta Supabase.
+   * Si encuentra, muestra tarjeta + botón "Asignar". Si no, toast error.
+   */
+  const openCustomerScanPopup = async (code: string) => {
+    setAssignCustomerPopup({
+      mode: 'scan', candidate: null, search: code, searching: true,
+      searchResults: { locales: [], externos: [] }, assigning: false,
+      createForm: { open: false, name: "", phone: "", email: "", saving: false },
+    });
+    try {
+      // Primero busca local por external_member_id (no recreates cliente existente).
+      const localRes = await getCustomers({ search: code, per_page: 5 });
+      const localList = Array.isArray(localRes) ? localRes : (localRes as { data: any[] }).data ?? [];
+      const localMatch = localList.find((c: any) => c.external_member_id === code);
+      if (localMatch) {
+        const cust: Customer = {
+          id: String(localMatch.id), name: localMatch.name,
+          phone: localMatch.phone ?? undefined, email: localMatch.email ?? undefined,
+          points: localMatch.points, external_member_id: code,
+        };
+        setAssignCustomerPopup(p => p ? { ...p, candidate: { type: 'local', customer: cust }, searching: false } : null);
+        return;
+      }
+      // No en local → busca Supabase.
+      const ext = await lookupCardCode(code);
+      if (ext) {
+        setAssignCustomerPopup(p => p ? { ...p, candidate: { type: 'external', ext }, searching: false } : null);
+      } else {
+        toast.error(`Tarjeta ${code} no encontrada en socios Tadaima.`);
+        setAssignCustomerPopup(null);
+      }
+    } catch {
+      toast.error("Error al consultar al socio. Reintenta.");
+      setAssignCustomerPopup(null);
+    }
+  };
+
+  /** Abre el popup en modo manual: cajero clickea botón User del toolbar. */
+  const openCustomerManualPopup = () => {
+    if (activeMesa.customerId) {
+      toast.info("Esta venta ya tiene cliente. Quítalo desde el resumen si quieres cambiarlo.");
+      return;
+    }
+    setAssignCustomerPopup({
+      mode: 'manual', candidate: null, search: "", searching: false,
+      searchResults: { locales: [], externos: [] }, assigning: false,
+      createForm: { open: false, name: "", phone: "", email: "", saving: false },
+    });
+  };
+
+  /** Búsqueda debounced del popup en modo manual. Local instant + Supabase fallback. */
+  useEffect(() => {
+    if (!assignCustomerPopup || assignCustomerPopup.mode !== 'manual') return;
+    const q = assignCustomerPopup.search;
+    // Filtro local instantáneo desde el cache RQ.
+    const locales = filterLocalCustomers(q);
+    setAssignCustomerPopup(p => p ? {
+      ...p,
+      searchResults: { locales, externos: [] },
+      searching: false,
+    } : null);
+
+    if (locales.length > 0 || q.trim().length < 2) return;
+
+    // 0 locales + query específica → Supabase con leyenda visible.
+    setAssignCustomerPopup(p => p ? { ...p, searching: true } : null);
+    const t = setTimeout(async () => {
+      try {
+        const externos = await searchExternalCustomers(q.trim());
+        setAssignCustomerPopup(p => p ? {
+          ...p,
+          searchResults: { ...p.searchResults, externos },
+          searching: false,
+        } : null);
+      } catch {
+        setAssignCustomerPopup(p => p ? { ...p, searching: false } : null);
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [assignCustomerPopup?.search, assignCustomerPopup?.mode, filterLocalCustomers]);
+
+  /** Asigna el candidato al mesa actual. Si es externo, primero lo crea en BD. */
+  const confirmAssignCustomer = async (candidate: { type: 'local'; customer: Customer } | { type: 'external'; ext: ExternalCardLookup }) => {
+    setAssignCustomerPopup(p => p ? { ...p, assigning: true } : null);
+    try {
+      if (candidate.type === 'local') {
+        setCustomer(candidate.customer);
+        toast.success(`Cliente asignado: ${candidate.customer.name}`);
+      } else {
+        const ext = candidate.ext;
+        const newCust = await createCustomer({
+          name:               ext.name ?? ext.external_member_id,
+          phone:              ext.phone ?? undefined,
+          email:              ext.email || undefined,
+          external_member_id: ext.external_member_id,
+          loyalty_tier:       ext.nivel ?? undefined,
+        });
+        const cust: Customer = {
+          id: String(newCust.id), name: newCust.name,
+          phone: newCust.phone ?? undefined, email: newCust.email ?? ext.email ?? undefined,
+          points: newCust.points, external_member_id: ext.external_member_id,
+        };
+        setCustomer(cust);
+        toast.success(`Socio Tadaima agregado y asignado: ${newCust.name}`);
+        void queryClient.invalidateQueries({ queryKey: queryKeys.customers.all });
+      }
+      setAssignCustomerPopup(null);
+    } catch {
+      toast.error("No se pudo asignar al cliente.");
+      setAssignCustomerPopup(p => p ? { ...p, assigning: false } : null);
+    }
+  };
+
+  /** Crea un cliente nuevo desde el form inline del popup manual + lo asigna a la mesa. */
+  const submitCreateCustomer = async () => {
+    const p = assignCustomerPopup;
+    if (!p) return;
+    const name = p.createForm.name.trim();
+    if (!name) {
+      toast.error("Nombre requerido");
+      return;
+    }
+    setAssignCustomerPopup(prev => prev ? { ...prev, createForm: { ...prev.createForm, saving: true } } : null);
+    try {
+      const newCust = await createCustomer({
+        name,
+        phone: p.createForm.phone.trim() || undefined,
+        email: p.createForm.email.trim() || undefined,
+      });
+      const cust: Customer = {
+        id: String(newCust.id), name: newCust.name,
+        phone: newCust.phone ?? undefined, email: newCust.email ?? undefined,
+        points: newCust.points,
+      };
+      setCustomer(cust);
+      toast.success(`Cliente creado y asignado: ${newCust.name}`);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.customers.all });
+      setAssignCustomerPopup(null);
+    } catch (err: unknown) {
+      const msg = err && typeof err === "object" && "message" in err
+        ? String((err as { message: unknown }).message) : "No se pudo crear el cliente";
+      toast.error(msg);
+      setAssignCustomerPopup(prev => prev ? { ...prev, createForm: { ...prev.createForm, saving: false } } : null);
+    }
+  };
 
   const handleAddExtCust = async (ext: ExternalCardLookup) => {
     try {
@@ -601,9 +920,11 @@ export function SellPage() {
     setActiveMesaId(m.id);
   };
 
-  // ─── Stock compartido entre cajas (client-side) ─────────────────────────────
-  // Cuenta unidades del producto reservadas en otras cajas (excluye catálogos de
-  // preventa, que no descuentan stock real porque aún no se ha hecho el pedido).
+  // ─── Stock cross-caja (solo tabs del mismo browser, ADR-014) ────────────────
+  // Lee el state local mesas[]. Tabs distintas del mismo browser comparten state
+  // vía zustand persist + storage events. Cajeros en máquinas distintas NO se
+  // ven entre sí durante el armado — la garantía real ocurre en el backend al
+  // detonar el cobro (CheckoutService::reserveStock con lockForUpdate).
   const reservedInOtherMesas = useCallback((productId: string, excludeMesaId: string): number =>
     mesas
       .filter(m => m.id !== excludeMesaId)
@@ -627,13 +948,21 @@ export function SellPage() {
     });
   };
 
-  const addToCart = async (product: Product, priceLevel: PriceLevel = "a", quantity: number = 1) => {
-    // Capture pre-update quantity BEFORE updMesa — used for deterministic PATCH qty (HIGH #3)
+  /**
+   * Agregar producto al carrito (ADR-014: client-authoritative cart).
+   * Solo toca el state local `mesas[]` (persiste a localStorage vía zustand
+   * snapshot). El backend se entera del carrito al detonar el cobro en
+   * handleCheckout, no antes. Resultado: cero requests por click, sin race
+   * conditions, multi-tab del mismo browser sigue sincronizando vía
+   * BroadcastChannel del zustand persist.
+   */
+  const addToCart = (product: Product, priceLevel: PriceLevel = "a", quantity: number = 1) => {
     const mesaId = activeMesa.id;
     const preItem = activeMesa.items.find(i => i.product.id === product.id);
     const newQty = (preItem?.quantity ?? 0) + quantity;
 
-    // Stock cross-caja: si otra caja ya reservó parte del stock, no permitir pasarse.
+    // Stock cross-caja (solo tabs del mismo browser): si otra caja ya tiene
+    // este producto en su carrito, no pasarse del stock_total del catálogo.
     if (!activeMesa.isPreventa) {
       const available = availableStockFor(product, mesaId);
       if (available !== undefined && newQty > available) {
@@ -647,7 +976,6 @@ export function SellPage() {
       }
     }
 
-    // Unit price for deposit auto-fill
     const unitPrice =
       priceLevel === "b" && product.price_b ? product.price_b :
       priceLevel === "c" && product.price_c ? product.price_c :
@@ -655,7 +983,6 @@ export function SellPage() {
       priceLevel === "e" && product.price_e ? product.price_e :
       product.price_a || 0;
 
-    // 1. Optimistic UI update
     updMesa(mesaId, m => {
       const ex = m.items.find(i => i.product.id === product.id);
 
@@ -672,13 +999,11 @@ export function SellPage() {
             ? {
                 ...i,
                 quantity: i.quantity + quantity,
-                // In preventa: grow deposit proportionally with the added units
                 ...(m.isPreventa ? { depositAmount: (i.depositAmount ?? 0) + unitPrice * quantity } : {}),
               }
             : i)
         : [...m.items, {
             product, quantity, priceLevel,
-            // In preventa: deposit = full price × qty (mandatory initial payment)
             ...(m.isPreventa ? { depositAmount: unitPrice * quantity } : {}),
           }];
 
@@ -694,141 +1019,28 @@ export function SellPage() {
 
       return { ...m, items: newItems, paymentMethod: newPaymentMethod };
     });
-
-    // Resolve unit price for the chosen level
-    const resolvePrice = (p: Product, lv: PriceLevel) =>
-      lv === "b" && p.price_b ? p.price_b :
-      lv === "c" && p.price_c ? p.price_c :
-      lv === "d" && p.price_d ? p.price_d :
-      lv === "e" && p.price_e ? p.price_e :
-      p.price_a || 0;
-    const resolvedPrice = resolvePrice(product, priceLevel);
-    // When updating an existing item keep its original price level
-    const existingLevel: PriceLevel = preItem?.priceLevel ?? priceLevel;
-    const existingPrice = resolvePrice(product, existingLevel);
-
-    // 2. Sync with backend: create draft on first item, then add/update item
-    try {
-      let draftId = draftStore.getDraftId(mesaId);
-
-      if (draftId === undefined) {
-        // Guard against concurrent draft creation for the same mesa
-        if (!pendingDraftRef.current[mesaId]) {
-          const storeId = activeStore?.id ?? 0;
-          pendingDraftRef.current[mesaId] = createDraft(storeId, cashSession?.id)
-            .then(d => {
-              draftStore.setDraftId(mesaId, d.id);
-              delete pendingDraftRef.current[mesaId];
-              return d.id;
-            })
-            .catch((err: unknown) => {
-              // Allow retry on next addToCart call — without this the mesa
-              // gets stuck: the rejected promise stays truthy in the ref and
-              // every subsequent await re-throws the same error.
-              delete pendingDraftRef.current[mesaId];
-              return Promise.reject(err);
-            });
-        }
-        draftId = await pendingDraftRef.current[mesaId];
-      }
-
-      // Check if this product already has a draft item on the server
-      const existingItemId = draftStore.getDraftItemId(mesaId, product.id);
-      const pendingKey = `${mesaId}:${product.id}`;
-      if (existingItemId !== undefined) {
-        // Use pre-captured newQty — deterministic, not read from stale mesas[] snapshot
-        const updated = await updateDraftItem(draftId, existingItemId, {
-          quantity: newQty,
-          price: existingPrice,
-          price_level: existingLevel,
-        });
-        draftStore.setDraftItemId(mesaId, product.id, updated.id);
-      } else {
-        // Registramos el promise en el ref para que changeQty (botón +/−) pueda
-        // esperar a que termine antes de leer el itemId. Sin esto, clics rápidos
-        // disparaban el toast "Sincronizando…" porque el itemId aún no existía.
-        const addPromise = addDraftItem(draftId, {
-          product_id: parseInt(product.id, 10),
-          quantity,
-          price: resolvedPrice,
-          price_level: priceLevel,
-        }).then(item => {
-          draftStore.setDraftItemId(mesaId, product.id, item.id);
-          return item.id;
-        });
-        pendingItemAddRef.current[pendingKey] = addPromise;
-        try {
-          await addPromise;
-        } finally {
-          if (pendingItemAddRef.current[pendingKey] === addPromise) {
-            delete pendingItemAddRef.current[pendingKey];
-          }
-        }
-      }
-      // Limpia syncError si el item ya está sincronizado correctamente
-      updMesa(mesaId, m => ({
-        ...m,
-        items: m.items.map(i =>
-          i.product.id === product.id && i.syncError ? { ...i, syncError: false } : i
-        ),
-      }));
-    } catch (err: unknown) {
-      const msg = err && typeof err === "object" && "message" in err
-        ? String((err as { message: unknown }).message) : "Error al sincronizar carrito";
-      // Marca el item con syncError para que checkout pueda bloquear si quedan
-      // items desincronizados. Evita el bug de "pagos no coinciden con el total".
-      updMesa(mesaId, m => ({
-        ...m,
-        items: m.items.map(i =>
-          i.product.id === product.id ? { ...i, syncError: true } : i
-        ),
-      }));
-      toast.error(`⚠️ ${msg} — el producto no se sincronizó. Elimínalo y vuelve a agregarlo.`, {
-        duration: 8000,
-        style: { background: '#2d0a00', color: '#fff', border: '1px solid rgba(224,34,26,0.4)', borderRadius: '16px' },
-      });
-    }
   };
 
-  const removeFromCart = async (pid: string) => {
+  /**
+   * Quitar producto del carrito (ADR-014: solo state local, sin sync server).
+   */
+  const removeFromCart = (pid: string) => {
     const mesaId = activeMesa.id;
-    const draftId = draftStore.getDraftId(mesaId);
-    const itemId  = draftStore.getDraftItemId(mesaId, pid);
-
-    // Optimistic removal
     updMesa(mesaId, m => ({ ...m, items: m.items.filter(i => i.product.id !== pid) }));
-
-    // Item nunca llegó al server draft (catálogo de preventa, folio cargado, syncError previo,
-    // o draft expirado). La eliminación local es suficiente — no hay nada que sincronizar.
-    if (draftId === undefined || itemId === undefined) {
-      return;
-    }
-
-    try {
-      await removeDraftItem(draftId, itemId);
-      draftStore.clearDraftItem(mesaId, pid);
-    } catch (err: unknown) {
-      // Rollback: restore the item to the cart
-      const removedItem = activeMesa.items.find(i => i.product.id === pid);
-      if (removedItem) updMesa(mesaId, m => ({ ...m, items: [...m.items, removedItem] }));
-      const msg = err && typeof err === "object" && "message" in err
-        ? String((err as { message: unknown }).message) : "Error al eliminar del carrito";
-      toast.error(msg);
-    }
   };
 
-  const changeQty = async (pid: string, d: number) => {
+  /**
+   * Cambiar cantidad de un item (+ / − en el carrito). ADR-014: solo state local.
+   * Sin más toast "Sincronizando…" porque no hay nada que sincronizar — el server
+   * se entera del carrito completo al detonar el cobro.
+   */
+  const changeQty = (pid: string, d: number) => {
     const mesaId = activeMesa.id;
-
-    // CRITICAL #1: read current item BEFORE updMesa — setState updaters run asynchronously,
-    // so any variable mutated inside the updater is still at its initial value after the call.
     const currentItem = activeMesa.items.find(i => i.product.id === pid);
     if (!currentItem) return;
     const oldQty = currentItem.quantity;
-    const oldDeposit = currentItem.depositAmount;
     const newQty = oldQty + d;
 
-    // Validate preventa limit before optimistic update (only if stock data is available)
     if (activeMesa.isPreventa) {
       const maxStock = currentItem.product.stock_details?.preventa;
       if (maxStock !== undefined && newQty > maxStock) {
@@ -837,13 +1049,12 @@ export function SellPage() {
       }
     }
 
-    // Validate per-item unit limit (catálogo.preorder_limit) — solo aplica al subir cantidad
     if (d > 0 && currentItem.unitLimit !== undefined && newQty > currentItem.unitLimit) {
       toast.error(`Límite por cliente alcanzado: ${currentItem.unitLimit} unidad(es)`);
       return;
     }
 
-    // Stock cross-caja: bloquear si otra caja ya reservó stock que no alcanza para el incremento.
+    // Stock cross-tab (mismo browser): respeta lo que tienen otras cajas/mesas locales.
     if (d > 0 && !activeMesa.isPreventa && currentItem.sellingCatalogId == null && !currentItem.isFromPreSale) {
       const available = availableStockFor(currentItem.product, mesaId);
       if (available !== undefined && newQty > available) {
@@ -857,10 +1068,10 @@ export function SellPage() {
       }
     }
 
-    // Optimistic UI update — in preventa, scale deposit with quantity change
     const unitPrice = currentItem.depositAmount != null && currentItem.quantity > 0
       ? currentItem.depositAmount / currentItem.quantity
       : getItemPrice(currentItem);
+
     updMesa(mesaId, m => ({
       ...m,
       items: m.items
@@ -875,65 +1086,6 @@ export function SellPage() {
           : i)
         .filter(i => i.quantity > 0),
     }));
-
-    // Rollback helper — restaura cantidad y deposit del item a su estado previo
-    const rollback = (markSyncError: boolean) => {
-      updMesa(mesaId, m => ({
-        ...m,
-        items: m.items
-          .map(i => i.product.id === pid
-            ? {
-                ...i,
-                quantity: oldQty,
-                ...(oldDeposit !== undefined ? { depositAmount: oldDeposit } : {}),
-                ...(markSyncError ? { syncError: true } : {}),
-              }
-            : i)
-          .filter(i => i.quantity > 0),
-      }));
-    };
-
-    // Si hay un addDraftItem en vuelo para este producto (usuario clickeó "+" justo
-    // después de agregarlo desde el catálogo), esperar a que termine antes de leer
-    // el itemId. Sin esto, el usuario ve el toast "Sincronizando…" en cada click rápido.
-    const pendingAdd = pendingItemAddRef.current[`${mesaId}:${pid}`];
-    if (pendingAdd) {
-      try { await pendingAdd; } catch { /* el catch de addToCart ya marcó syncError */ }
-    }
-
-    const draftId = draftStore.getDraftId(mesaId);
-    const itemId  = draftStore.getDraftItemId(mesaId, pid);
-    if (draftId === undefined || itemId === undefined) {
-      // Si el usuario está eliminando (newQty <= 0) un item que nunca llegó al server
-      // (catálogo de preventa, folio cargado, syncError previo), la eliminación local
-      // basta — el optimistic update ya filtró el item.
-      if (newQty <= 0) return;
-      // Si quiere incrementar/decrementar pero el item no está sincronizado, revertir
-      // y avisar (probable race con createDraft en flight).
-      rollback(false);
-      toast.info("Sincronizando con el servidor… intenta de nuevo en un segundo.");
-      return;
-    }
-
-    // Price captured from stable pre-update snapshot (MEDIUM #5)
-    const price = getItemPrice(currentItem);
-    const level = currentItem.priceLevel ?? "a";
-
-    try {
-      if (newQty <= 0) {
-        await removeDraftItem(draftId, itemId);
-        draftStore.clearDraftItem(mesaId, pid);
-      } else {
-        await updateDraftItem(draftId, itemId, { quantity: newQty, price, price_level: level });
-      }
-    } catch (err: unknown) {
-      // Rollback optimistic UI y marca syncError para que checkout bloquee si quedan
-      // items desincronizados — evita el toast "carrito no sincronizado" en checkout.
-      rollback(true);
-      const msg = err && typeof err === "object" && "message" in err
-        ? String((err as { message: unknown }).message) : "Error al actualizar cantidad";
-      toast.error(`${msg}. Cantidad revertida.`);
-    }
   };
 
   const changeDeposit = (val: number) => updMesa(activeMesa.id, m => ({ ...m, depositAmount: val }));
@@ -971,6 +1123,12 @@ export function SellPage() {
 
 
   const setPayment = (pm: PaymentMethod) => {
+    // Tarjeta y Transferencia no usan campo de efectivo recibido — limpiarlo para
+    // evitar que un monto residual (escrito antes en Dólares/Efectivo) se cuele al
+    // ticket como "Recibido $100" cuando realmente se cobró el total con tarjeta.
+    if (pm === "Tarjeta" || pm === "Transferencia") {
+      setCashReceived("");
+    }
     if (pm === "Tarjeta") {
       setShowTerminalModal(true);
     } else {
@@ -998,6 +1156,7 @@ export function SellPage() {
     // Auto-open catalog in preventa mode so user picks products immediately
     if (turningOn) {
       setShowCatalog(true);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
     }
   };
 
@@ -1017,8 +1176,13 @@ export function SellPage() {
     setShowCustDrop(false);
   };
 
+  /**
+   * Vaciar carrito (ADR-014: solo state local). zustand snapshot persistido se
+   * actualiza automáticamente vía el useEffect que escucha cambios de mesas[].
+   */
   const clearCart = () => {
-    updMesa(activeMesa.id, m => ({
+    const mesaId = activeMesa.id;
+    updMesa(mesaId, m => ({
       ...m, items: [], customerId: undefined, customerName: undefined,
       customerPhone: "", customerEmail: "", isNewCustomer: false, discount: 0, depositAmount: 0,
       selectedTerminalId: undefined, absorbCommission: true,
@@ -1123,44 +1287,44 @@ export function SellPage() {
 
   const apartarDisabled = activeMesa.items.length === 0 || !activeMesa.customerId || apartarProcessing;
 
-  const openPreSalesModal = async (tab: 'venta' | 'liquidar' | 'completadas' | 'vencidas' | 'difusion' = 'venta') => {
+  // Sincroniza el state local de preventas desde el cache RQ. Sin esto, abrir
+  // el modal disparaba 2 fetches cada vez. Ahora se hace 1 vez al montar y se
+  // refresca al "Actualizar" o handleOpenCash invalida.
+  useEffect(() => {
+    if (preSaleCatalogsQuery.data) {
+      setPreSaleCatalogs(preSaleCatalogsQuery.data.data);
+    }
+  }, [preSaleCatalogsQuery.data]);
+
+  useEffect(() => {
+    if (!preSaleOrdersQuery.data) return;
+    const orders = preSaleOrdersQuery.data.data;
+    const todayV = new Date(); todayV.setHours(0, 0, 0, 0);
+    const hasExpiredActiveItem = (o: PreSaleOrder) =>
+      (o.items ?? []).some(it =>
+        it.catalog?.pickup_deadline &&
+        it.catalog.status !== 'cancelled' &&
+        it.catalog.status !== 'closed' &&
+        it.catalog.status !== 'completed' &&
+        new Date(it.catalog.pickup_deadline) < todayV
+      );
+    setPreSaleOrdersPending(orders.filter(o => o.status === 'pending' || o.status === 'ready'));
+    setPreSaleOrdersDelivered(orders.filter(o => o.status === 'delivered'));
+    setPreSaleOrdersExpired(orders.filter(o =>
+      o.status !== 'delivered' && o.status !== 'cancelled' && hasExpiredActiveItem(o)
+    ));
+  }, [preSaleOrdersQuery.data]);
+
+  const openPreSalesModal = (tab: 'venta' | 'liquidar' | 'completadas' | 'vencidas' | 'difusion' = 'venta') => {
     setPickerSearch("");
     setPreSalesTab(tab);
     setShowPreSalesModal(true);
-    setPickerLoading(true);
-
-    const [catalogsResult, ordersResult] = await Promise.allSettled([
-      getPreSaleCatalogs({ status: 'published', per_page: 200 }),
-      getPreSaleOrders({ per_page: 200 }),
-    ]);
-
-    if (catalogsResult.status === 'fulfilled') {
-      setPreSaleCatalogs(catalogsResult.value.data);
-    } else {
-      toast.error("No se pudieron cargar los catálogos de preventa");
-    }
-
-    if (ordersResult.status === 'fulfilled') {
-      const orders = ordersResult.value.data;
-      const todayV = new Date(); todayV.setHours(0, 0, 0, 0);
-      const hasExpiredActiveItem = (o: PreSaleOrder) =>
-        (o.items ?? []).some(it =>
-          it.catalog?.pickup_deadline &&
-          it.catalog.status !== 'cancelled' &&
-          it.catalog.status !== 'closed' &&
-          it.catalog.status !== 'completed' &&
-          new Date(it.catalog.pickup_deadline) < todayV
-        );
-      setPreSaleOrdersPending(orders.filter(o => o.status === 'pending' || o.status === 'ready'));
-      setPreSaleOrdersDelivered(orders.filter(o => o.status === 'delivered'));
-      setPreSaleOrdersExpired(orders.filter(o =>
-        o.status !== 'delivered' && o.status !== 'cancelled' && hasExpiredActiveItem(o)
-      ));
-    } else {
-      toast.error("No se pudieron cargar los folios de preventa");
-    }
-
-    setPickerLoading(false);
+    // Loading visible solo si las queries aún están cargando por primera vez.
+    setPickerLoading(preSaleCatalogsQuery.isPending || preSaleOrdersQuery.isPending);
+    // Refresca catálogos + folios al abrir para que reserved_count sea fresh —
+    // evita el caso "card dice 1 disponible" pero backend rechaza con "0".
+    void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleCatalogs.all });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all });
   };
 
   const searchByFolio = async (code: string) => {
@@ -1192,6 +1356,17 @@ export function SellPage() {
       await searchByFolio(code.toUpperCase());
       return;
     }
+    // Socio Tadaima (códigos TAD + dígitos en tarjetas de lealtad).
+    if (/^TAD\d+$/i.test(code)) {
+      // Si la mesa ya tiene cliente asignado, skip silencioso para evitar abrir
+      // popup en cada re-escaneo accidental durante la misma venta.
+      if (activeMesa.customerId) {
+        toast.info("Esta venta ya tiene cliente asignado.");
+        return;
+      }
+      await openCustomerScanPopup(code.toUpperCase());
+      return;
+    }
     // 1. Try local cache first (top 200 + background 1000 + previous searches)
     const local = products.find(p => p.sku.toLowerCase() === code.toLowerCase());
     if (local) {
@@ -1204,8 +1379,13 @@ export function SellPage() {
     //    same SKU within 60s doesn't refetch.
     try {
       const fresh = await queryClient.fetchQuery({
-        queryKey: [...queryKeys.products.all, 'light', 'search', code],
-        queryFn: () => getProductsLight({ search: code, per_page: 5, active: true } as Parameters<typeof getProductsLight>[0]),
+        queryKey: [...queryKeys.products.all, 'light', 'search', code, activeStore?.id ?? null],
+        queryFn: () => getProductsLight({
+          search: code,
+          per_page: 5,
+          active: true,
+          ...(activeStore?.id ? { store_id: activeStore.id } : {}),
+        } as Parameters<typeof getProductsLight>[0]),
         staleTime: 60_000,
       });
       const exact = fresh.data.find(p => p.sku.toLowerCase() === code.toLowerCase());
@@ -1222,6 +1402,9 @@ export function SellPage() {
           price_d: Number(exact.prices?.price_4 ?? 0) > 0 ? Number(exact.prices.price_4) : undefined,
           price_e: Number(exact.prices?.price_5 ?? 0) > 0 ? Number(exact.prices.price_5) : undefined,
           stock: typeof exact.stock_total === "number" ? exact.stock_total : undefined,
+          stock_details: typeof exact.stock_total === "number"
+            ? { tienda: exact.stock_total, bodega: 0, preventa: 0, dañado: 0 }
+            : undefined,
           active: exact.active,
         } as Product;
         void addToCart(adapted, "a");
@@ -1298,7 +1481,7 @@ export function SellPage() {
     }
 
     if (skippedCount > 0) {
-      toast.warning(`${skippedCount} producto(s) sin stock en esta tienda — no se cargaron al carrito`);
+      toast.warning(`${skippedCount} producto(s) sin stock en esta tienda — no se agregaron a la venta`);
     }
 
     const balance = order.balance ?? order.total ?? 0;
@@ -1334,34 +1517,65 @@ export function SellPage() {
   // Adds a catalog item to the cart for reservation. Creates the PreSaleOrder at checkout.
   const addCatalogToCart = (catalog: PreSaleCatalog, priceLevel: PriceLevel = "a") => {
     const anticipo = catalog.advance_payment ?? 0;
-
-    const item: CartItem = {
-      product: {
-        id: `catalog-${catalog.id}`,
-        name: catalog.product_name,
-        sku: `PREV-${catalog.id}`,
-        category: catalog.category?.name ?? "Preventa",
-        price_a: catalog.price_1 ?? 0,
-        ...(catalog.price_2 != null ? { price_b: catalog.price_2 } : {}),
-        ...(catalog.price_3 != null ? { price_c: catalog.price_3 } : {}),
-        ...(catalog.price_4 != null ? { price_d: catalog.price_4 } : {}),
-        ...(catalog.price_5 != null ? { price_e: catalog.price_5 } : {}),
-      },
-      quantity: 1,
-      priceLevel,
-      depositAmount: anticipo,
-      sellingCatalogId: catalog.id,
-      ...(catalog.preorder_limit != null ? { unitLimit: catalog.preorder_limit } : {}),
-    };
+    const catalogImg = catalog.image_url ?? (catalog.image_path ? storageUrl(catalog.image_path) : "");
 
     // NO setear isPreventa: true a nivel mesa — el item ya viene con sellingCatalogId
     // y su propio depositAmount, así no contamina con anticipo a productos regulares.
-    updMesa(activeMesa.id, m => ({
-      ...m,
-      items: [...m.items, item],
-    }));
+    updMesa(activeMesa.id, m => {
+      // Idempotente: si ya existe un item con el mismo sellingCatalogId, sumar qty
+      // en lugar de duplicar la fila (bug típico al doble-click en la card del modal).
+      const existing = m.items.find(i => i.sellingCatalogId === catalog.id);
+      if (existing) {
+        // Respeta el unitLimit del catálogo si está definido
+        const limit = catalog.preorder_limit ?? Infinity;
+        if (existing.quantity + 1 > limit) {
+          toast.error(`Límite por cliente alcanzado: ${limit} unidad(es)`);
+          return m;
+        }
+        return {
+          ...m,
+          items: m.items.map(i => i.sellingCatalogId === catalog.id
+            ? { ...i, quantity: i.quantity + 1, depositAmount: (i.depositAmount ?? 0) + anticipo }
+            : i),
+        };
+      }
+
+      const item: CartItem = {
+        product: {
+          id: `catalog-${catalog.id}`,
+          name: catalog.product_name,
+          sku: `PREV-${catalog.id}`,
+          category: catalog.category?.name ?? "Preventa",
+          image: catalogImg,
+          price_a: catalog.price_1 ?? 0,
+          ...(catalog.price_2 != null ? { price_b: catalog.price_2 } : {}),
+          ...(catalog.price_3 != null ? { price_c: catalog.price_3 } : {}),
+          ...(catalog.price_4 != null ? { price_d: catalog.price_4 } : {}),
+          ...(catalog.price_5 != null ? { price_e: catalog.price_5 } : {}),
+        },
+        quantity: 1,
+        priceLevel,
+        depositAmount: anticipo,
+        sellingCatalogId: catalog.id,
+        ...(catalog.preorder_limit != null ? { unitLimit: catalog.preorder_limit } : {}),
+      };
+      return { ...m, items: [...m.items, item] };
+    });
     setShowPreSalesModal(false);
-    toast.success(`${catalog.product_name} al carrito · Anticipo mín.: ${fmt(anticipo)}`);
+    toast.success(`${catalog.product_name} agregado a la venta · Anticipo mín.: ${fmt(anticipo)}`);
+
+    // Preventa requiere cliente para cobrar. Si la mesa no tiene uno asignado,
+    // abrir el popup de cliente para que el cajero lo asigne ahora (no al cobrar).
+    if (!activeMesa.customerId) {
+      // Delay mínimo para que el modal de preventas se cierre antes de abrir el otro.
+      setTimeout(() => {
+        setAssignCustomerPopup({
+          mode: 'manual', candidate: null, search: "", searching: false,
+          searchResults: { locales: [], externos: [] }, assigning: false,
+          createForm: { open: false, name: "", phone: "", email: "", saving: false },
+        });
+      }, 150);
+    }
   };
 
   const openApartarModal = () => {
@@ -1394,8 +1608,10 @@ export function SellPage() {
       });
       // Remove the layawayed item from the cart
       await removeFromCart(item.product.id);
-      // Stock changed → refresh products so next read is fresh.
+      // Stock changed → refresh products + reservedStock para que otras cajas
+      // vean inmediatamente que ya no está reservado en este draft.
       void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.salesDrafts.all });
       setShowApartarModal(false);
       toast.success(`Apartado creado · Folio ${layaway.code ?? layaway.id}`, {
         style: { background: '#1a0a00', color: '#fff', border: '1px solid rgba(245,158,11,0.4)', borderRadius: '16px' }
@@ -1443,8 +1659,13 @@ export function SellPage() {
     try {
       await openSession(registerId, amount);
       void queryClient.invalidateQueries({ queryKey: ['cash'] });
-      // Force fresh exchange rate at the start of the cashier's day.
+      // Force fresh exchange rate + productos (stock) + preventas al inicio del
+      // turno. Sin esto el cajero puede entrar con cache de 24h y agregar al
+      // carrito cantidades que el server rechazará al cobrar.
       void queryClient.invalidateQueries({ queryKey: queryKeys.systemSettings.exchangeRate() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleCatalogs.all });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all });
       setShowOpenCashModal(false);
       toast.success(`Caja abierta · $${amount.toFixed(0)} inicial`);
     } catch (err: unknown) {
@@ -1519,7 +1740,7 @@ export function SellPage() {
     const paymentRows = `
       <tr><td>Método de pago</td><td style="text-align:right;font-weight:900">${sale.paymentMethod}</td></tr>
       ${sale.amountReceived != null ? `<tr><td>${sale.paymentMethod === "Dólares" ? "Recibido (USD)" : "Recibido"}</td><td style="text-align:right">${isCash && sale.paymentMethod !== "Dólares" ? fmt(sale.amountReceived) : `$${sale.amountReceived.toFixed(2)}`}</td></tr>` : ""}
-      ${sale.change != null && sale.change > 0 ? `<tr><td style="font-weight:900">Cambio</td><td style="text-align:right;font-weight:900">${sale.paymentMethod === "Dólares" ? `$${sale.change.toFixed(2)} USD` : fmt(sale.change)}</td></tr>` : ""}
+      ${sale.change != null && sale.change > 0 ? `<tr><td style="font-weight:900">Cambio</td><td style="text-align:right;font-weight:900">${sale.paymentMethod === "Dólares" ? `$${sale.change.toFixed(2)} USD <span style="font-weight:400;font-size:9px;color:#666">(≈ ${fmt(sale.change * tc)} MXN)</span>` : fmt(sale.change)}</td></tr>` : ""}
     `;
 
     win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Ticket</title>
@@ -1624,6 +1845,88 @@ export function SellPage() {
     if (historialEntries.length === 0) void fetchHistorial();
   };
 
+  /**
+   * Maneja errores del backend en checkout. Si el server retorna
+   * "Stock insuficiente para 'X'. Disponible: N, solicitado: M.", auto-ajusta
+   * la qty del item en el carrito al disponible real, invalida el cache de
+   * productos para refrescar stock display, y muestra toast amarillo amigable.
+   * Para otros errores, muestra toast.error genérico.
+   */
+  const handleCheckoutError = (msg: string) => {
+    const stockMatch = msg.match(/Stock insuficiente para '([^']+)'\. Disponible: ([\d.]+), solicitado/);
+    if (stockMatch) {
+      const productName = stockMatch[1];
+      const availableNum = Math.floor(parseFloat(stockMatch[2]));
+      const mesaId = activeMesa.id;
+
+      updMesa(mesaId, m => ({
+        ...m,
+        items: m.items
+          .map(i => i.product.name === productName
+            ? { ...i, quantity: availableNum }
+            : i)
+          .filter(i => i.quantity > 0),
+      }));
+
+      void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+
+      if (availableNum > 0) {
+        toast.warning(
+          `Stock de "${productName}" se actualizó a ${availableNum}. Ajustamos la venta — revisa y cobra de nuevo.`,
+          {
+            duration: 7000,
+            style: { background: '#1a1400', color: '#fbbf24', border: '1px solid #78350f', borderRadius: '16px' },
+          },
+        );
+      } else {
+        toast.error(
+          `"${productName}" sin stock disponible. Lo quitamos de la venta.`,
+          {
+            duration: 7000,
+            style: { background: '#2d0a00', color: '#fff', border: '1px solid rgba(224,34,26,0.4)', borderRadius: '16px' },
+          },
+        );
+      }
+      return;
+    }
+
+    // Preventa: el backend devuelve "'X' solo tiene N unidades disponibles (límite: M)."
+    // cuando el preorder_limit del catálogo ya se alcanzó. Auto-ajusta el item de
+    // preventa-catálogo en el carrito al disponible real, igual que con productos.
+    const presaleMatch = msg.match(/'([^']+)' solo tiene (\d+) unidades disponibles \(límite: \d+\)/);
+    if (presaleMatch) {
+      const productName = presaleMatch[1];
+      const availableNum = parseInt(presaleMatch[2], 10);
+      const mesaId = activeMesa.id;
+
+      updMesa(mesaId, m => ({
+        ...m,
+        items: m.items
+          .map(i => i.product.name === productName && i.sellingCatalogId != null
+            ? { ...i, quantity: availableNum, depositAmount: availableNum > 0 ? ((i.depositAmount ?? 0) / Math.max(i.quantity, 1)) * availableNum : 0 }
+            : i)
+          .filter(i => i.quantity > 0),
+      }));
+
+      void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleCatalogs.all });
+
+      if (availableNum > 0) {
+        toast.warning(
+          `"${productName}" — quedan ${availableNum} unidades. Ajustamos la venta — revisa y cobra de nuevo.`,
+          { duration: 7000, style: { background: '#1a1400', color: '#fbbf24', border: '1px solid #78350f', borderRadius: '16px' } },
+        );
+      } else {
+        toast.error(
+          `"${productName}" sin disponibilidad (límite alcanzado). Lo quitamos de la venta.`,
+          { duration: 7000, style: { background: '#2d0a00', color: '#fff', border: '1px solid rgba(224,34,26,0.4)', borderRadius: '16px' } },
+        );
+      }
+      return;
+    }
+
+    toast.error(msg);
+  };
+
   const handleCheckout = async () => {
     if (!activeMesa.items.length) return;
 
@@ -1671,10 +1974,21 @@ export function SellPage() {
         // 1. Crear venta regular primero (si aplica). Si truena, no se liquida la preventa.
         let regularSaleId: number | undefined;
         if (regularItems.length > 0 && regularSubtotal > 0) {
-          const draftId = draftStore.getDraftId(activeMesa.id);
-          if (draftId) {
+          const directItems = regularItems
+            .map(ci => ({
+              product_id: parseInt(ci.product.id, 10),
+              quantity: ci.quantity,
+              price: ci.damagedPrice ?? getItemPrice(ci),
+              price_level: (["a","b","c"].includes(ci.priceLevel) ? ci.priceLevel : "a") as "a" | "b" | "c",
+            }))
+            .filter(i => !Number.isNaN(i.product_id));
+
+          if (directItems.length > 0) {
             const saleResult = await createSale({
-              draft_id: draftId,
+              items: directItems,
+              store_id: activeStore?.id ?? 0,
+              register_session_id: cashSession?.id,
+              ...(activeMesa.customerId ? { customer_id: Number(activeMesa.customerId) } : {}),
               payments: [{
                 payment_method_id: payMethodId,
                 amount: regularSubtotal,
@@ -1770,6 +2084,7 @@ export function SellPage() {
         // Sale + folios changed stock and reservation counts → refresh cached data
         // so the next time the cashier opens the catalog the numbers are correct.
         void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.salesDrafts.all });
         void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleCatalogs.all });
         void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all });
         void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all });
@@ -1784,7 +2099,7 @@ export function SellPage() {
       } catch (err: unknown) {
         const msg = err && typeof err === "object" && "message" in err
           ? String((err as { message: unknown }).message) : "Error al liquidar la preventa";
-        toast.error(msg);
+        handleCheckoutError(msg);
       } finally {
         setIsProcessing(false);
         isCheckoutLockedRef.current = false;
@@ -1860,7 +2175,7 @@ export function SellPage() {
         const regularItems = activeMesa.items.filter(i => i.sellingCatalogId == null && !i.isFromPreSale);
 
         if (catalogItems.length === 0) {
-          toast.error("No hay artículos de catálogo de preventa en el carrito.");
+          toast.error("No hay artículos de catálogo de preventa en la venta.");
           isCheckoutLockedRef.current = false;
           return;
         }
@@ -1871,12 +2186,22 @@ export function SellPage() {
         // Create regular sale first so we can link it to the pre-sale order
         let regularSaleId: number | undefined;
         if (regularItems.length > 0) {
-          const mesaId = activeMesa.id;
-          const draftId = draftStore.getDraftId(mesaId);
           const regularSubtotal = regularItems.reduce((s, i) => s + getItemPrice(i) * i.quantity, 0);
-          if (draftId && regularSubtotal > 0) {
+          const directItems = regularItems
+            .map(ci => ({
+              product_id: parseInt(ci.product.id, 10),
+              quantity: ci.quantity,
+              price: ci.damagedPrice ?? getItemPrice(ci),
+              price_level: (["a","b","c"].includes(ci.priceLevel) ? ci.priceLevel : "a") as "a" | "b" | "c",
+            }))
+            .filter(i => !Number.isNaN(i.product_id));
+
+          if (directItems.length > 0 && regularSubtotal > 0) {
             const saleResult = await createSale({
-              draft_id: draftId,
+              items: directItems,
+              store_id: activeStore?.id ?? 0,
+              register_session_id: cashSession?.id,
+              ...(activeMesa.customerId ? { customer_id: Number(activeMesa.customerId) } : {}),
               payments: [{
                 payment_method_id: payMethodId,
                 amount: regularSubtotal,
@@ -1953,12 +2278,13 @@ export function SellPage() {
         void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
         void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleCatalogs.all });
         void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.salesDrafts.all });
         void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all });
         triggerPrintFlow(mixedTicket);
       } catch (err: unknown) {
         const msg = err && typeof err === "object" && "message" in err
           ? String((err as { message: unknown }).message) : "Error al registrar la preventa";
-        toast.error(msg);
+        handleCheckoutError(msg);
       } finally {
         setIsProcessing(false);
         isCheckoutLockedRef.current = false;
@@ -1984,76 +2310,14 @@ export function SellPage() {
     // Guard: prevent double-submit while a sale request is in flight
     if (isCheckoutLockedRef.current) return;
 
-    let draftId = draftStore.getDraftId(activeMesa.id);
-
-    // Auto-recovery: si el draft fue limpiado en backend (cleanup, restart, etc.)
-    // pero el carrito en memoria tiene items, recrear draft + reañadir items.
-    // Evita el "carrito no sincronizado" que reportó QA cuando el snapshot
-    // sobrevive en localStorage pero el draft del servidor ya no existe.
-    if (!draftId && activeMesa.items.length > 0) {
-      try {
-        toast("Recuperando carrito…", { duration: 1500 });
-        const newDraft = await createDraft(activeStore?.id ?? 0, cashSession?.id);
-        draftStore.setDraftId(activeMesa.id, newDraft.id);
-        for (const ci of activeMesa.items) {
-          // Catalog items no son products reales — los saltamos (van por createPreSaleOrder).
-          if (ci.sellingCatalogId != null) continue;
-          if (ci.isFromPreSale) continue;
-          const productIdNum = parseInt(ci.product.id, 10);
-          if (Number.isNaN(productIdNum)) continue;
-          const resolvedPrice = ci.damagedPrice ?? getItemPrice(ci);
-          const created = await addDraftItem(newDraft.id, {
-            product_id: productIdNum,
-            quantity: ci.quantity,
-            price: resolvedPrice,
-            // PriceLevel allows a..e, DraftPriceLevel solo a..c. Clamp d/e a 'a' (precio base).
-            price_level: (["a", "b", "c"].includes(ci.priceLevel) ? ci.priceLevel : "a") as "a" | "b" | "c",
-          });
-          draftStore.setDraftItemId(activeMesa.id, ci.product.id, created.id);
-        }
-        draftId = newDraft.id;
-      } catch (recoverErr: unknown) {
-        const msg = recoverErr && typeof recoverErr === "object" && "message" in recoverErr
-          ? String((recoverErr as { message: unknown }).message) : "No se pudo recuperar el carrito";
-        toast.error(`${msg}. Elimina los productos y vuelve a agregarlos.`, {
-          duration: 6000,
-          style: { background: '#2d0a00', color: '#fff', border: '1px solid rgba(224,34,26,0.4)', borderRadius: '16px' },
-        });
-        return;
-      }
-    }
-
-    if (!draftId) {
-      toast.error("El carrito está vacío.", { duration: 3000 });
-      return;
-    }
-
-    // Verificación final pre-checkout: el subtotal del draft en backend debe
-    // coincidir con el subtotal de los items que SE sincronizan al draft
-    // (excluyendo catálogos de preventa nueva, folios cargados, e items con syncError
-    // — esos viajan por createPreSaleOrder/addPreSaleOrderPayment, no por createSale).
-    try {
-      const serverDraft = await getDraft(draftId);
-      const serverSubtotal = serverDraft.subtotal ?? 0;
-      const expectedServerSubtotal = activeMesa.items
-        .filter(i => !i.isFromPreSale && i.sellingCatalogId == null && !i.syncError)
-        .reduce((s, i) => s + getItemPrice(i) * i.quantity, 0);
-      if (Math.abs(serverSubtotal - expectedServerSubtotal) > 0.01) {
-        toast.error(
-          `El carrito no está sincronizado: pantalla muestra ${fmt(expectedServerSubtotal)} pero el servidor tiene ${fmt(serverSubtotal)}. Elimina los productos y vuelve a agregarlos.`,
-          { duration: 8000, style: { background: '#2d0a00', color: '#fff', border: '1px solid rgba(224,34,26,0.4)', borderRadius: '16px' } },
-        );
-        return;
-      }
-    } catch {
-      // Si no se pudo verificar, dejamos pasar — el backend hará la validación final.
-    }
+    // ADR-014: el carrito vive client-side; mandamos items directos al server.
+    // No hay draft que recuperar/verificar. Si el server rechaza por stock o
+    // pago, el carrito queda intacto para que el cajero ajuste.
 
     isCheckoutLockedRef.current = true;
     try {
       setIsProcessing(true);
 
-      // Map UI payment method name → backend payment_method_id
       const PM_IDS: Record<string, number> = {
         "Efectivo":     1,
         "Dólares":      1,
@@ -2072,11 +2336,34 @@ export function SellPage() {
       const customerPhoneSnapshot = activeMesa.customerPhone;
       const customerEmailSnapshot = activeMesa.customerEmail;
       const payMethodSnapshot = activeMesa.paymentMethod;
-      const receivedSnapshot = parseFloat(cashReceived) || 0;
+      // Solo Efectivo/Dólares usan campo recibido. Tarjeta/Transferencia siempre 0
+      // (defensa por si quedó algo en cashReceived de un método anterior).
+      const isCashPay = activeMesa.paymentMethod === "Efectivo" || activeMesa.paymentMethod === "Dólares";
+      const receivedSnapshot = isCashPay ? (parseFloat(cashReceived) || 0) : 0;
       const changeSnapshot = receivedSnapshot > 0 ? receivedSnapshot - total : 0;
 
+      // Items reales (no preventa-catálogo, no folio cargado). En esta rama
+      // (venta regular sin folio cargado) todos los items son regulares.
+      const saleItems = activeMesa.items
+        .filter(i => i.sellingCatalogId == null && !i.isFromPreSale)
+        .map(ci => ({
+          product_id: parseInt(ci.product.id, 10),
+          quantity: ci.quantity,
+          price: ci.damagedPrice ?? getItemPrice(ci),
+          price_level: (["a","b","c"].includes(ci.priceLevel) ? ci.priceLevel : "a") as "a" | "b" | "c",
+        }))
+        .filter(i => !Number.isNaN(i.product_id));
+
+      if (saleItems.length === 0) {
+        toast.error("No hay productos válidos para cobrar.");
+        return;
+      }
+
       const saleResult = await createSale({
-        draft_id: draftId,
+        items: saleItems,
+        store_id: activeStore?.id ?? 0,
+        register_session_id: cashSession?.id,
+        ...(activeMesa.customerId ? { customer_id: Number(activeMesa.customerId) } : {}),
         payments: [{
           payment_method_id: paymentMethodId,
           amount: total,
@@ -2089,8 +2376,6 @@ export function SellPage() {
       const mesaId = activeMesa.id;
       setCashReceived("");
       clearCart();
-      draftStore.clearDraft(mesaId);
-      draftStore.clearDraftItems(mesaId);
 
       // Trigger print flow
       const completedSale: CompletedSaleData = {
@@ -2109,12 +2394,13 @@ export function SellPage() {
       };
       setHistorialEntries([]); // invalidate cache
       void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.salesDrafts.all });
       void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all });
       triggerPrintFlow(completedSale);
     } catch (err: unknown) {
       const msg = err && typeof err === "object" && "message" in err
         ? String((err as { message: unknown }).message) : "Error al procesar la venta";
-      toast.error(msg);
+      handleCheckoutError(msg);
     } finally {
       setIsProcessing(false);
       isCheckoutLockedRef.current = false;
@@ -2260,7 +2546,29 @@ export function SellPage() {
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden" style={{ background: BG, color: "var(--td-text-hi)", fontFamily: "inherit" }}>
+    <div className="flex flex-col h-full overflow-hidden relative" style={{ background: BG, color: "var(--td-text-hi)", fontFamily: "inherit" }}>
+
+      {/* Overlay de bloqueo total durante checkout. Tapa toda la Caja para evitar
+          doble click, cambios al carrito, o cambio de método mientras se cobra. */}
+      {isProcessing && (
+        <div
+          className="fixed inset-0 z-[1000] flex items-center justify-center"
+          style={{ background: "rgba(0,0,0,0.65)", backdropFilter: "blur(6px)" }}
+        >
+          <div
+            className="flex flex-col items-center gap-4 px-10 py-8 rounded-3xl"
+            style={{ background: "var(--td-popup-bg)", border: "1px solid var(--td-popup-border)", boxShadow: "0 30px 80px rgba(0,0,0,0.6)" }}
+          >
+            <div className="w-14 h-14 rounded-2xl bg-[#E0221A]/15 border border-[#E0221A]/40 flex items-center justify-center">
+              <Loader2 size={28} className="animate-spin text-[#E0221A]" />
+            </div>
+            <div className="text-center">
+              <p className="text-sm font-black uppercase tracking-widest text-white">Procesando venta</p>
+              <p className="text-[11px] font-bold text-white/40 mt-1">No cierres ni cambies de pantalla</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ══════════════════ TOP TABS (CAJAS) ══════════════════════════════════ */}
       <div
@@ -2269,7 +2577,7 @@ export function SellPage() {
       >
         <div className="flex items-center h-full px-6 border-r border-white/5 gap-3 shrink-0">
           <ShoppingBag size={18} className="text-[#E0221A]" />
-          <h2 className="text-[11px] font-black uppercase tracking-[0.2em] text-white">Carrito</h2>
+          <h2 className="text-[11px] font-black uppercase tracking-[0.2em] text-white">Venta</h2>
         </div>
 
         {mesas.map((m, idx) => (
@@ -2320,11 +2628,15 @@ export function SellPage() {
             Historial
           </button>
           <button
-            onClick={clearCart}
-            className="h-full px-5 text-[10px] font-black uppercase tracking-widest text-white/30 hover:text-white transition-colors border-r border-white/5"
+            onClick={openClientsModal}
+            className="h-full px-5 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-white/30 hover:text-white transition-colors border-r border-white/5"
+            title="Buscar clientes y ver sus tickets / preventas"
           >
-            Vaciar Carrito
+            <User size={13} />
+            Clientes
           </button>
+          {/* Cancelar Venta movido a la barra de buscadores (junto a Catálogo,
+              Preventas, Cliente, Escanear) y solo visible cuando hay productos. */}
           <button
             onClick={() => { setCloseCashAmount(""); setShowCloseCashModal(true); }}
             className="h-full px-5 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-colors"
@@ -2441,12 +2753,14 @@ export function SellPage() {
           {/* Buscadores Principales */}
           <div className="p-4 space-y-3">
             <div className="flex flex-col gap-3">
+              {/* Bloque cliente: solo visible en preventa (ahí es required).
+                  En venta regular se asigna desde el botón "Cliente" del toolbar
+                  o automáticamente al escanear código TAD\d+ de socio Tadaima. */}
+              {activeMesa.isPreventa && (
               <div className={`rounded-[24px] border px-4 py-4 transition-all ${
-                activeMesa.isPreventa
-                  ? hasAssignedCustomer
-                    ? "border-emerald-500/20 bg-emerald-500/[0.05]"
-                    : "border-amber-500/25 bg-amber-500/[0.05]"
-                  : "border-white/10 bg-white/[0.03]"
+                hasAssignedCustomer
+                  ? "border-emerald-500/20 bg-emerald-500/[0.05]"
+                  : "border-amber-500/25 bg-amber-500/[0.05]"
               }`}>
                 <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
                   <div className="min-w-0">
@@ -2631,7 +2945,15 @@ export function SellPage() {
                           >
                             {filteredCusts.length === 0 ? (
                               <div className="p-4 flex flex-col items-center gap-3">
-                                {extSearchResults.length === 0 && (
+                                {headerSearchingExternal && (
+                                  <div className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30">
+                                    <Loader2 size={14} className="animate-spin text-amber-400" />
+                                    <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest">
+                                      Buscando en socios Tadaima…
+                                    </p>
+                                  </div>
+                                )}
+                                {!headerSearchingExternal && extSearchResults.length === 0 && (
                                   <p className="text-xs text-white/30 font-bold uppercase tracking-widest text-center">No se encontró en la base local</p>
                                 )}
                                 {extSearchResults.length > 0 && (
@@ -2753,6 +3075,7 @@ export function SellPage() {
                   </div>
                 )}
               </div>
+              )}
             </div>
 
             {/* Buscador de Productos (Manual) */}
@@ -2864,9 +3187,13 @@ export function SellPage() {
                 )}
               </div>
 
-              {/* Botón Catálogo */}
+              {/* Botón Catálogo — al abrir, invalida products para traer stock fresco
+                  del backend. Evita el caso "UI dice 10, server dice 0". */}
               <button
-                onClick={() => setShowCatalog(true)}
+                onClick={() => {
+                  setShowCatalog(true);
+                  void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+                }}
                 className="flex items-center gap-2 px-5 rounded-2xl bg-white/[0.05] border border-white/10 text-white/50 hover:text-white hover:bg-white/[0.08] transition-all font-black uppercase tracking-widest text-[10px]"
                 title="Ver catálogo completo"
               >
@@ -2888,32 +3215,43 @@ export function SellPage() {
                 Preventas
               </button>
 
+              {/* Botón Cliente — asigna cliente a esta venta. Buscador manual o
+                  espera que el cajero escanee una tarjeta TAD (auto-asigna). */}
+              <button
+                onClick={openCustomerManualPopup}
+                className={`flex items-center gap-3 px-5 rounded-2xl border transition-all font-black uppercase tracking-widest text-[10px] ${
+                  activeMesa.customerId
+                    ? "bg-emerald-500/[0.08] border-emerald-500/25 text-emerald-300 hover:bg-emerald-500/[0.12]"
+                    : "bg-white/[0.05] border-white/10 text-white/70 hover:bg-white/[0.08]"
+                }`}
+                title={activeMesa.customerId ? `Asignado: ${activeMesa.customerName}` : "Asignar cliente o socio Tadaima"}
+              >
+                <User size={16} />
+                {activeMesa.customerId ? "Cliente ✓" : "Cliente"}
+              </button>
+
               {/* Botón Escanear (cámara) — el lector USB HID está activo siempre */}
               <button
                 onClick={() => setShowCameraScanner(true)}
                 className="flex items-center gap-3 px-6 rounded-2xl bg-[#E0221A]/[0.08] border border-[#E0221A]/20 text-[#E0221A] hover:bg-[#E0221A]/[0.12] transition-all font-black uppercase tracking-widest text-[10px]"
-                title="Escanear con cámara (folio PREV o SKU)"
+                title="Escanear con cámara (folio PREV, SKU o tarjeta TAD)"
               >
                 <ScanLine size={18} />
                 Escanear
               </button>
 
-              {/* Botón Sincronizar — fuerza refresh de productos + catálogos + folios.
-                  Útil si admin acaba de subir productos o preventas y el cajero quiere verlos sin esperar. */}
-              <button
-                onClick={() => {
-                  void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
-                  void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleCatalogs.all });
-                  void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all });
-                  void queryClient.invalidateQueries({ queryKey: queryKeys.systemSettings.exchangeRate() });
-                  toast.success("Sincronizando catálogo y preventas…");
-                }}
-                className="flex items-center gap-3 px-6 rounded-2xl bg-white/[0.05] border border-white/10 text-white/70 hover:bg-white/[0.08] transition-all font-black uppercase tracking-widest text-[10px]"
-                title="Buscar nuevos productos, catálogos y folios"
-              >
-                <RefreshCw size={16} />
-                Sincronizar
-              </button>
+              {/* Cancelar Venta — solo visible si hay productos. Vacía toda la venta:
+                  items, cliente, descuento, terminal, folio cargado. Sin pegar al backend. */}
+              {activeMesa.items.length > 0 && (
+                <button
+                  onClick={clearCart}
+                  className="flex items-center gap-2 px-5 rounded-2xl bg-white/[0.04] border border-white/10 text-white/50 hover:bg-red-500/[0.08] hover:border-red-500/30 hover:text-red-400 transition-all font-black uppercase tracking-widest text-[10px]"
+                  title="Vaciar todos los productos y el cliente de esta venta"
+                >
+                  <X size={14} />
+                  Cancelar Venta
+                </button>
+              )}
             </div>
           </div>
 
@@ -2937,8 +3275,8 @@ export function SellPage() {
                   <ShoppingBag size={40} />
                 </div>
                 <div className="text-center">
-                  <p className="text-sm font-black uppercase tracking-[0.2em]">Carrito Vacío</p>
-                  <p className="text-[10px] font-bold mt-1 text-white/50">Escané o busque un producto para comenzar</p>
+                  <p className="text-sm font-black uppercase tracking-[0.2em]">Sin productos</p>
+                  <p className="text-[10px] font-bold mt-1 text-white/50">Escanea o busca un producto para iniciar la venta</p>
                 </div>
               </div>
             ) : (
@@ -3152,6 +3490,24 @@ export function SellPage() {
                           {fmt(getItemPrice(item) * item.quantity)}
                         </p>
                       )}
+
+                      {/* Aviso de stock bajo (solo venta regular, ≤5 unidades restantes en la tienda). */}
+                      {item.sellingCatalogId == null && !item.isFromPreSale && !item.isDamaged && (() => {
+                        const available = availableStockFor(item.product, activeMesa.id);
+                        if (available === undefined) return null;
+                        const remaining = available - item.quantity;
+                        if (remaining < 0 || remaining > 5) return null;
+                        const isOut = remaining === 0;
+                        return (
+                          <p
+                            className={`text-[10px] font-black mt-0.5 ${isOut ? "text-[#E0221A]" : "text-amber-400"}`}
+                            title={isOut ? "No queda más stock en esta tienda" : "Pocas unidades disponibles"}
+                          >
+                            {isOut ? "Sin más stock" : `Quedan ${remaining}`}
+                          </p>
+                        );
+                      })()}
+
                       {item.isDamaged && (() => {
                         const { product: p, priceLevel } = item;
                         let base = p.price_a || 0;
@@ -3207,8 +3563,8 @@ export function SellPage() {
             {/* ── 3-col: amounts | payment | action ── */}
             <div className="flex items-stretch gap-0">
 
-              {/* ── Col 1: Money summary ── */}
-              <div className="flex flex-col justify-center gap-1.5 min-w-[170px] pr-4">
+              {/* ── Col 1+2: Money summary arriba + Payment dropdown abajo (en una columna) ── */}
+              <div className="flex flex-col justify-center gap-4 min-w-[300px] pr-6">
 
                 {/* Subtotal + modifiers — only when they differ from total */}
                 {(discountAmt > 0 || (activeMesa.paymentMethod === "Tarjeta" && activeTerminal)) && (
@@ -3228,7 +3584,7 @@ export function SellPage() {
                         <p className="text-sm font-black text-emerald-500">-{fmt(discountAmt)}</p>
                       </div>
                     )}
-                    {activeMesa.paymentMethod === "Tarjeta" && activeTerminal && (
+                    {activeMesa.paymentMethod === "Tarjeta" && activeTerminal && isAdmin && (
                       <div className="flex items-center justify-between gap-3">
                         <button
                           onClick={() => setShowTerminalModal(true)}
@@ -3246,28 +3602,30 @@ export function SellPage() {
                   </div>
                 )}
 
-                {/* Total — always, prominent */}
+                {/* Total — always, prominent. En Dólares muestra USD arriba y MXN debajo. */}
                 <div>
                   <p className="text-[9px] font-black uppercase tracking-widest text-white/30">
                     {activeMesa.loadedPreSaleOrderId ? "Total a Cobrar" : activeMesa.isPreventa ? "Total de la Venta" : "Total a Pagar"}
+                    {activeMesa.paymentMethod === "Dólares" && (
+                      <span className="ml-2 text-emerald-500/70">· en USD</span>
+                    )}
                   </p>
-                  <p className="text-[2rem] font-black text-white leading-none">{fmt(currentPayAmount)}</p>
+                  {activeMesa.paymentMethod === "Dólares" ? (
+                    <>
+                      <p className="text-[2rem] font-black text-emerald-400 leading-none">
+                        ${totalUSD.toFixed(2)} <span className="text-sm font-black text-emerald-500/60 ml-1">USD</span>
+                      </p>
+                      <p className="text-[10px] font-black text-white/35 mt-1">
+                        {fmt(currentPayAmount)} MXN · TC {tc.toFixed(2)}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-[2rem] font-black text-white leading-none">{fmt(currentPayAmount)}</p>
+                  )}
                 </div>
 
-                {hasAssignedCustomer && (
-                  <div className="pt-1 border-t border-white/[0.06]">
-                    <p className="text-[9px] font-black uppercase tracking-widest text-white/30">
-                      Cliente
-                    </p>
-                    <p className="text-sm font-black text-white truncate mt-0.5">
-                      {activeMesa.customerName}
-                    </p>
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1 text-[9px] font-bold text-white/40">
-                      {activeMesa.customerPhone && <span>{activeMesa.customerPhone}</span>}
-                      {activeMesa.customerEmail && <span>{activeMesa.customerEmail}</span>}
-                    </div>
-                  </div>
-                )}
+                {/* Bloque cliente movido a su propia columna del footer cuando hay
+                    cliente asignado — más legible y deja espacio para el total. */}
 
                 {/* New preventa: anticipo + saldo */}
                 {!activeMesa.loadedPreSaleOrderId && activeMesa.isPreventa && activeMesa.items.length > 0 && (
@@ -3320,152 +3678,207 @@ export function SellPage() {
                     <p className="text-lg font-black text-emerald-500 group-hover:text-emerald-400 transition-colors">{fmtUSD(totalUSD)}</p>
                   </div>
                 )} */}
-              </div>
 
-              <div className="w-px self-stretch bg-white/[0.06]" />
-
-              {/* ── Col 2: Payment methods ── */}
-              <div className="flex items-center px-4">
-                <div className="grid grid-cols-2 gap-1.5 w-[260px]">
-                  {(["Efectivo", "Dólares", "Tarjeta", "Transferencia"] as PaymentMethod[]).map(pm => {
-                    const isActive = activeMesa.paymentMethod === pm;
-                    const isBlocked = hasCashOnly && (pm === "Tarjeta" || pm === "Transferencia");
-
-                    if (pm === "Dólares") {
-                      return (
-                        <div key={pm} className="relative">
-                          <div className={`flex w-full h-[38px] rounded-xl border transition-all overflow-hidden ${
-                            isActive
-                              ? 'bg-[#E0221A] text-white border-transparent shadow-[0_0_20px_rgba(224,34,26,0.3)]'
-                              : 'bg-white/[0.03] text-white/40 border-white/5 hover:bg-white/[0.06] hover:text-white'
-                          } ${isBlocked ? 'opacity-20 cursor-not-allowed pointer-events-none' : ''}`}>
-                            <button
-                              onClick={() => !isBlocked && setPayment(pm)}
-                              disabled={isBlocked}
-                              className="flex-1 flex flex-col items-center justify-center gap-0.5 group"
-                            >
-                              <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-widest">
-                                {/* <span>$</span> */} DÓLARES
-                              </div>
-                              <span className={`text-[10px] font-black tracking-wider transition-all ${
-                                isActive ? 'text-emerald-300 drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'text-emerald-500/40'
-                              }`}>
-                                TC: {tc.toFixed(2)}
-                              </span>
-                            </button>
-                            {isAdmin && (
-                              <button
-                                onClick={() => {
-                                  if (isBlocked) return;
-                                  setTcDraft(tc.toString());
-                                  setShowTc(!showTc);
-                                }}
-                                disabled={isBlocked}
-                                className={`w-12 border-l flex items-center justify-center transition-all ${
-                                  isActive ? 'border-white/20 hover:bg-white/10' : 'border-white/5 hover:bg-white/5'
-                                }`}
-                              >
-                                <SlidersHorizontal size={14} className={isActive ? 'text-white' : 'text-white/20'} />
-                              </button>
-                            )}
-                          </div>
-
-                          {/* Popover Tipo de Cambio */}
-                          <AnimatePresence>
-                            {showTc && (
-                              <Motion.div
-                                initial={{ opacity: 0, y: 20, scale: 0.8 }}
-                                animate={{ opacity: 1, y: 0, scale: 1 }}
-                                exit={{ opacity: 0, y: 20, scale: 0.8 }}
-                                className="absolute bottom-full left-0 mb-6 z-[120] rounded-[40px] p-8 w-[320px] overflow-hidden"
-                                style={{
-                                  background: "var(--td-popup-bg)",
-                                  backdropFilter: "blur(40px) saturate(180%)",
-                                  WebkitBackdropFilter: "blur(40px) saturate(180%)",
-                                  border: "1px solid var(--td-panel-border)",
-                                  boxShadow: "0 40px 100px rgba(0,0,0,0.8), inset 0 0 0 1px var(--td-panel-border)",
-                                }}
-                              >
-                                <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-emerald-500/20 to-transparent" />
-                                <div className="relative z-10 space-y-6">
-                                  <div className="flex items-center justify-between">
-                                    <div className="space-y-1">
-                                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/30">Exchange Rate</p>
-                                      <h4 className="text-xs font-black text-emerald-500 uppercase tracking-widest">USD / MXN</h4>
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center gap-4">
-                                    <div className="flex-1 relative group">
-                                      <input
-                                        type="number"
-                                        step="0.01"
-                                        value={tcDraft}
-                                        onChange={e => setTcDraft(e.target.value)}
-                                        className="w-full bg-black/40 border-2 border-emerald-500/10 rounded-[24px] px-6 py-5 text-4xl font-black text-white outline-none focus:border-emerald-500/40 focus:bg-emerald-500/5 transition-all placeholder:text-white/5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none shadow-inner"
-                                        placeholder="0.00"
-                                        autoFocus
-                                      />
-                                      <div className="absolute right-4 top-1/2 -translate-y-1/2 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                                        <button onClick={() => setTcDraft(p => (parseFloat(p || "0") + 0.1).toFixed(2))} className="p-1 hover:text-emerald-500"><ChevronUp size={16} /></button>
-                                        <button onClick={() => setTcDraft(p => Math.max(0, parseFloat(p || "0") - 0.1).toFixed(2))} className="p-1 hover:text-emerald-500"><ChevronDown size={16} /></button>
-                                      </div>
-                                    </div>
-                                    <button
-                                      onClick={() => {
-                                        const val = parseFloat(tcDraft);
-                                        if (!isNaN(val) && val > 0) {
-                                          setTc(val);
-                                          setShowTc(false);
-                                          toast.success(`TC: ${val.toFixed(2)}`, {
-                                            style: { background: '#064e3b', color: '#fff', border: '1px solid #10b981', borderRadius: '16px' }
-                                          });
-                                        }
-                                      }}
-                                      className="w-20 h-20 shrink-0 bg-emerald-600 text-white rounded-[28px] flex items-center justify-center hover:bg-emerald-500 hover:scale-105 active:scale-95 transition-all shadow-[0_20px_40px_rgba(16,185,129,0.2)] group relative overflow-hidden"
-                                    >
-                                      <div className="absolute inset-0 bg-gradient-to-tr from-black/20 to-transparent" />
-                                      <Check size={36} strokeWidth={4} className="relative z-10 group-hover:scale-110 transition-transform" />
-                                    </button>
-                                  </div>
-                                  <div className="pt-2 flex justify-center">
-                                    <span className="text-[10px] font-black text-white/10 uppercase tracking-[0.4em]">Liquid Transaction</span>
-                                  </div>
-                                </div>
-                                <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-emerald-500/5 rounded-full blur-[60px]" />
-                                <div className="absolute -top-10 -left-10 w-40 h-40 bg-emerald-500/5 rounded-full blur-[60px]" />
-                              </Motion.div>
-                            )}
-                          </AnimatePresence>
-                        </div>
-                      );
-                    }
-
-                    return (
-                      <button
-                        key={pm}
-                        onClick={() => !isBlocked && setPayment(pm)}
-                        disabled={isBlocked}
-                        className={`relative h-[38px] px-4 rounded-xl border transition-all font-black uppercase tracking-widest text-[11px] flex flex-col items-center justify-center gap-0 overflow-hidden ${
-                          isActive
-                            ? 'bg-[#E0221A] text-white border-transparent shadow-[0_0_20px_rgba(224,34,26,0.3)]'
-                            : 'bg-white/[0.03] text-white/40 border-white/5 hover:bg-white/[0.06] hover:text-white'
-                        } ${isBlocked ? 'opacity-20 cursor-not-allowed grayscale' : ''}`}
-                      >
-                        <div className="flex items-center gap-2">
-                          {pm === "Efectivo" && <Zap size={14} className={isActive ? 'text-white' : 'text-[#E0221A]'} />}
-                          {isBlocked && <AlertTriangle size={12} className="text-amber-500 animate-pulse" />}
-                          {pm}
-                        </div>
-                        {isActive && pm === "Tarjeta" && activeTerminal && (
-                          <span className="text-[7px] font-black opacity-60 uppercase tracking-widest mt-0.5">
-                            {activeTerminal.name} ({activeTerminal.commission_percent}%)
-                          </span>
-                        )}
-                      </button>
+              {/* ── Payment dropdown (debajo del total, mismo wrapper de columna) ── */}
+              <div className="relative" ref={paymentMenuRef}>
+                <div className="w-full relative">
+                  {(() => {
+                    const active = activeMesa.paymentMethod;
+                    const allOptions: PaymentMethod[] = ["Efectivo", "Dólares", "Tarjeta", "Transferencia"];
+                    const renderLabel = (pm: PaymentMethod, isActive: boolean) => (
+                      <div className="flex items-center justify-center gap-2 text-[11px] font-black uppercase tracking-widest">
+                        {pm === "Efectivo" && <Zap size={14} className={isActive ? 'text-white' : 'text-[#E0221A]'} />}
+                        {pm}
+                        {pm === "Dólares" && <span className={`text-[9px] font-black ml-1 ${isActive ? 'text-emerald-300' : 'text-emerald-500/50'}`}>TC: {tc.toFixed(2)}</span>}
+                      </div>
                     );
-                  })}
+                    return (
+                      <>
+                        <div className="flex w-full h-[44px] rounded-xl border bg-[#E0221A] text-white border-transparent shadow-[0_0_20px_rgba(224,34,26,0.3)] overflow-hidden">
+                          <button
+                            onClick={() => setPaymentMenuOpen(o => !o)}
+                            className="flex-1 flex items-center justify-center gap-2 hover:bg-black/10 transition-all"
+                          >
+                            {renderLabel(active, true)}
+                            <ChevronUp size={12} className={`text-white/70 transition-transform ${paymentMenuOpen ? '' : 'rotate-180'}`} />
+                          </button>
+                          {active === "Dólares" && isAdmin && (
+                            <button
+                              onClick={() => { setTcDraft(tc.toString()); setShowTc(!showTc); }}
+                              className="w-11 border-l border-white/20 flex items-center justify-center hover:bg-white/10"
+                              title="Editar tipo de cambio"
+                            >
+                              <SlidersHorizontal size={14} className="text-white" />
+                            </button>
+                          )}
+                          {active === "Tarjeta" && activeTerminal && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPaymentMenuOpen(false);
+                                setShowTerminalModal(true);
+                              }}
+                              className="px-3 border-l border-white/20 flex items-center gap-1 text-[8px] font-black tracking-widest text-white/80 hover:bg-white/10 transition-colors"
+                              title="Cambiar terminal"
+                            >
+                              {activeTerminal.name}
+                              {isAdmin && ` (${activeTerminal.commission_percent}%)`}
+                              <ChevronDown size={10} className="text-white/60" />
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Dropdown UP con opciones inactivas */}
+                        <AnimatePresence>
+                          {paymentMenuOpen && (
+                            <Motion.div
+                              initial={{ opacity: 0, y: 8 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: 8 }}
+                              transition={{ duration: 0.12 }}
+                              className="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-xl border border-white/10 overflow-hidden"
+                              style={{ background: "var(--td-popup-bg)", backdropFilter: "blur(20px)" }}
+                            >
+                              {allOptions.filter(pm => pm !== active).map(pm => {
+                                const isBlocked = hasCashOnly && (pm === "Tarjeta" || pm === "Transferencia");
+                                return (
+                                  <button
+                                    key={pm}
+                                    onClick={() => { if (!isBlocked) { setPayment(pm); setPaymentMenuOpen(false); } }}
+                                    disabled={isBlocked}
+                                    className={`w-full h-[44px] px-4 flex items-center justify-center border-b border-white/5 last:border-b-0 transition-all ${
+                                      isBlocked
+                                        ? 'opacity-30 cursor-not-allowed text-white/30'
+                                        : 'text-white/70 hover:bg-[#E0221A]/[0.12] hover:text-white cursor-pointer'
+                                    }`}
+                                  >
+                                    {isBlocked && <AlertTriangle size={12} className="text-amber-500 mr-2" />}
+                                    {renderLabel(pm, false)}
+                                  </button>
+                                );
+                              })}
+                            </Motion.div>
+                          )}
+                        </AnimatePresence>
+                      </>
+                    );
+                  })()}
                 </div>
+                {/* Popover Tipo de Cambio (anclado al botón principal) */}
+                <AnimatePresence>
+                  {showTc && (
+                    <Motion.div
+                      initial={{ opacity: 0, y: 20, scale: 0.8 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 20, scale: 0.8 }}
+                      className="absolute bottom-full left-4 mb-3 z-[120] rounded-[40px] p-8 w-[320px] overflow-hidden"
+                      style={{
+                        background: "var(--td-popup-bg)",
+                        backdropFilter: "blur(40px) saturate(180%)",
+                        WebkitBackdropFilter: "blur(40px) saturate(180%)",
+                        border: "1px solid var(--td-panel-border)",
+                        boxShadow: "0 40px 100px rgba(0,0,0,0.8), inset 0 0 0 1px var(--td-panel-border)",
+                      }}
+                    >
+                      <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-emerald-500/20 to-transparent" />
+                      <div className="relative z-10 space-y-6">
+                        <div className="flex items-center justify-between">
+                          <div className="space-y-1">
+                            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/30">Exchange Rate</p>
+                            <h4 className="text-xs font-black text-emerald-500 uppercase tracking-widest">USD / MXN</h4>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <div className="flex-1 relative group">
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={tcDraft}
+                              onChange={e => setTcDraft(e.target.value)}
+                              className="w-full bg-black/40 border-2 border-emerald-500/10 rounded-[24px] px-6 py-5 text-4xl font-black text-white outline-none focus:border-emerald-500/40 focus:bg-emerald-500/5 transition-all placeholder:text-white/5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none shadow-inner"
+                              placeholder="0.00"
+                              autoFocus
+                            />
+                            <div className="absolute right-4 top-1/2 -translate-y-1/2 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                              <button onClick={() => setTcDraft(p => (parseFloat(p || "0") + 0.1).toFixed(2))} className="p-1 hover:text-emerald-500"><ChevronUp size={16} /></button>
+                              <button onClick={() => setTcDraft(p => Math.max(0, parseFloat(p || "0") - 0.1).toFixed(2))} className="p-1 hover:text-emerald-500"><ChevronDown size={16} /></button>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => {
+                              const val = parseFloat(tcDraft);
+                              if (!isNaN(val) && val > 0) {
+                                setTc(val);
+                                setShowTc(false);
+                                toast.success(`TC: ${val.toFixed(2)}`, {
+                                  style: { background: '#064e3b', color: '#fff', border: '1px solid #10b981', borderRadius: '16px' }
+                                });
+                              }
+                            }}
+                            className="w-20 h-20 shrink-0 bg-emerald-600 text-white rounded-[28px] flex items-center justify-center hover:bg-emerald-500 hover:scale-105 active:scale-95 transition-all shadow-[0_20px_40px_rgba(16,185,129,0.2)] group relative overflow-hidden"
+                          >
+                            <div className="absolute inset-0 bg-gradient-to-tr from-black/20 to-transparent" />
+                            <Check size={36} strokeWidth={4} className="relative z-10 group-hover:scale-110 transition-transform" />
+                          </button>
+                        </div>
+                        <div className="pt-2 flex justify-center">
+                          <span className="text-[10px] font-black text-white/10 uppercase tracking-[0.4em]">Liquid Transaction</span>
+                        </div>
+                      </div>
+                      <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-emerald-500/5 rounded-full blur-[60px]" />
+                      <div className="absolute -top-10 -left-10 w-40 h-40 bg-emerald-500/5 rounded-full blur-[60px]" />
+                    </Motion.div>
+                  )}
+                </AnimatePresence>
               </div>
+              {/* fin columna unificada Col 1+2 */}
+              </div>
+
+              {/* ── Col cliente: solo visible cuando hay cliente asignado a la venta ── */}
+              {hasAssignedCustomer && (
+                <>
+                  <div className="w-px self-stretch bg-white/[0.06]" />
+                  <div className="flex flex-col justify-center gap-1 min-w-[220px] max-w-[260px] px-4">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center flex-shrink-0">
+                        <User size={13} className="text-emerald-400" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[9px] font-black uppercase tracking-widest text-emerald-500/70">
+                          Cliente
+                        </p>
+                        <p className="text-sm font-black text-white truncate" title={activeMesa.customerName ?? ""}>
+                          {activeMesa.customerName}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-1 mt-1.5 pl-9">
+                      {activeMesa.customerPhone && (
+                        <div className="flex items-center gap-1.5 text-[10px] font-bold text-white/50 truncate" title={activeMesa.customerPhone}>
+                          <Phone size={10} className="text-white/30 flex-shrink-0" />
+                          <span className="truncate">{activeMesa.customerPhone}</span>
+                        </div>
+                      )}
+                      {activeMesa.customerEmail && (
+                        <div className="flex items-center gap-1.5 text-[10px] font-bold text-white/50 truncate" title={activeMesa.customerEmail}>
+                          <Mail size={10} className="text-white/30 flex-shrink-0" />
+                          <span className="truncate">{activeMesa.customerEmail}</span>
+                        </div>
+                      )}
+                      {(() => {
+                        // Código TAD del socio Tadaima (si existe)
+                        const ext = localCustomersUi.find(c => c.id === String(activeMesa.customerId))?.external_member_id;
+                        return ext ? (
+                          <div className="flex items-center gap-1.5 text-[10px] font-black text-amber-400/80 truncate" title={ext}>
+                            <Bookmark size={10} className="text-amber-400/60 flex-shrink-0" />
+                            <span className="truncate">{ext}</span>
+                          </div>
+                        ) : null;
+                      })()}
+                    </div>
+                  </div>
+                </>
+              )}
 
               <div className="w-px self-stretch bg-white/[0.06]" />
 
@@ -3524,52 +3937,40 @@ export function SellPage() {
                       </div>
                       {(() => {
                         const receivedNum = parseFloat(cashReceived) || 0;
-                        const totalInCurrency = activeMesa.paymentMethod === "Dólares" ? currentPayAmount / tc : currentPayAmount;
-                        const fmtChange = activeMesa.paymentMethod === "Dólares" ? fmtUSD : fmt;
+                        const isDollars = activeMesa.paymentMethod === "Dólares";
+                        const totalInCurrency = isDollars ? currentPayAmount / tc : currentPayAmount;
+                        const fmtChange = isDollars ? fmtUSD : fmt;
                         const cambio = receivedNum - totalInCurrency;
                         if (receivedNum <= 0) return null;
+                        const cambioAbs = Math.abs(cambio);
+                        // En Dólares también mostramos el equivalente en MXN al lado para que el
+                        // cajero sepa cuánto darle físicamente si entrega en pesos.
+                        const cambioMxn = isDollars ? cambioAbs * tc : 0;
                         return (
                           <div className={`rounded-lg px-3 py-1 flex items-center justify-between border ${cambio >= 0 ? "bg-emerald-500/10 border-emerald-500/20" : "bg-red-500/10 border-red-500/20"}`}>
                             <span className="text-[9px] font-black uppercase tracking-widest text-white/40">{cambio >= 0 ? "Cambio" : "Falta"}</span>
-                            <span className={`text-sm font-black ${cambio >= 0 ? "text-emerald-400" : "text-red-400"}`}>{fmtChange(Math.abs(cambio))}</span>
+                            <span className={`text-sm font-black ${cambio >= 0 ? "text-emerald-400" : "text-red-400"} flex items-baseline gap-1.5`}>
+                              {fmtChange(cambioAbs)}
+                              {isDollars && (
+                                <span className="text-[9px] font-black text-white/40 uppercase tracking-wider">
+                                  ≈ {fmt(cambioMxn)} MXN
+                                </span>
+                              )}
+                            </span>
                           </div>
                         );
                       })()}
                     </div>
                   )}
 
-                  {/* Folio / preventa search */}
-                  <div className="flex flex-col gap-1 flex-1">
+                  {/* Buscar preventa: comentado. El folio se carga via scanner (códigos
+                      PREV-N) o desde el modal Preventas → tab Apartadas. Mantenemos el
+                      state folioInput por si se reactiva más adelante. */}
+                  {/* <div className="flex flex-col gap-1 flex-1">
                     <p className="text-[9px] font-black uppercase tracking-widest text-white/30">Buscar preventa</p>
-                    <input
-                      type="text"
-                      value={folioInput}
-                      onChange={e => setFolioInput(e.target.value)}
-                      onKeyDown={e => { if (e.key === "Enter") { void searchByFolio(folioInput); } }}
-                      placeholder="Folio PS-XXXX"
-                      className="w-full rounded-xl py-2 px-3 text-[11px] font-black uppercase tracking-widest placeholder:normal-case placeholder:font-normal placeholder:tracking-normal focus:outline-none transition-all"
-                      style={{ background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", color: "var(--td-input-text)" }}
-                      onFocus={e => { e.currentTarget.style.border = "1px solid rgba(245,158,11,0.5)"; }}
-                      onBlur={e => { e.currentTarget.style.border = "1px solid var(--td-input-border)"; }}
-                    />
-                    <div className="flex gap-1.5">
-                      <button
-                        onClick={() => { void searchByFolio(folioInput); }}
-                        disabled={!folioInput.trim() || folioLoading}
-                        className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-xl border transition-all disabled:opacity-30 text-[10px] font-black uppercase tracking-widest"
-                        style={{ background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.25)", color: "#F59E0B" }}
-                      >
-                        {folioLoading ? <Loader2 size={12} className="animate-spin" /> : <ScanLine size={12} />}
-                        Buscar
-                      </button>
-                      <button
-                        onClick={() => { void openPreSalesModal('liquidar'); }}
-                        className="flex items-center justify-center px-3 py-1.5 rounded-xl border transition-all bg-white/[0.03] border-white/10 text-white/30 hover:text-white/60 hover:bg-white/[0.06]"
-                      >
-                        <PackageCheck size={13} />
-                      </button>
-                    </div>
-                  </div>
+                    <input type="text" value={folioInput} onChange={e => setFolioInput(e.target.value)} ... />
+                    <button onClick={() => { void searchByFolio(folioInput); }}>Buscar</button>
+                  </div> */}
                 </div>
 
                 {/* Checkout button — full width */}
@@ -3662,24 +4063,34 @@ export function SellPage() {
                         <p className="text-[9px] font-bold opacity-40 uppercase tracking-widest mt-1">{t.description || "Sin descripción"}</p>
                       </div>
                       <div className="text-right">
-                        <span className={`text-lg font-black ${activeMesa.selectedTerminalId === t.id ? 'text-emerald-500' : 'text-white/20 group-hover:text-emerald-500/50'} transition-colors`}>
-                          {t.commission_percent}%
-                        </span>
-                        <p className="text-[8px] font-bold opacity-20 uppercase tracking-[0.2em] mt-0.5">Comisión</p>
+                        {isAdmin ? (
+                          <>
+                            <span className={`text-lg font-black ${activeMesa.selectedTerminalId === t.id ? 'text-emerald-500' : 'text-white/20 group-hover:text-emerald-500/50'} transition-colors`}>
+                              {t.commission_percent}%
+                            </span>
+                            <p className="text-[8px] font-bold opacity-20 uppercase tracking-[0.2em] mt-0.5">Comisión</p>
+                          </>
+                        ) : (
+                          activeMesa.selectedTerminalId === t.id && (
+                            <span className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Seleccionada</span>
+                          )
+                        )}
                       </div>
                     </button>
                   ))
                 )}
               </div>
 
-              <div className="mt-8 pt-6 border-t border-white/5">
-                <div className="p-4 rounded-2xl bg-emerald-500/[0.04] border border-emerald-500/10">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-emerald-400/70">Política de comisión</p>
-                  <p className="text-[9px] font-bold text-white/40 mt-1 leading-relaxed">
-                    La tienda absorbe la comisión de tarjeta. El cliente solo paga el subtotal del carrito. La comisión se registra internamente para reportes.
-                  </p>
+              {isAdmin && (
+                <div className="mt-8 pt-6 border-t border-white/5">
+                  <div className="p-4 rounded-2xl bg-emerald-500/[0.04] border border-emerald-500/10">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-emerald-400/70">Política de comisión</p>
+                    <p className="text-[9px] font-bold text-white/40 mt-1 leading-relaxed">
+                      La tienda absorbe la comisión de tarjeta. El cliente solo paga el subtotal de la venta. La comisión se registra internamente para reportes.
+                    </p>
+                  </div>
                 </div>
-              </div>
+              )}
             </Motion.div>
           </div>
         )}
@@ -3754,21 +4165,59 @@ export function SellPage() {
               { price: catalog.price_5, level: "e" as PriceLevel },
             ].filter((x): x is { price: number; level: PriceLevel } => x.price != null && x.price > 0);
 
+            const imgSrc = catalog.image_url ?? (catalog.image_path ? storageUrl(catalog.image_path) : null);
+
+            // Disponibilidad: si el catálogo tiene preorder_limit, calcular cuánto queda
+            // (límite − reservados ya). Si remaining ≤ 0, agotado: bloquear click y
+            // marcar visualmente. Sin preorder_limit, ilimitado.
+            const reserved = catalog.reserved_count ?? 0;
+            const limit = catalog.preorder_limit;
+            const remaining = limit != null ? Math.max(0, limit - reserved) : null;
+            const isAgotado = remaining !== null && remaining <= 0;
+
             return (
               <button
-                onClick={() => addCatalogToCart(catalog)}
-                style={{ textAlign: "left", borderRadius: 14, background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", cursor: "pointer", padding: "14px", display: "flex", flexDirection: "column", gap: 8, transition: "border-color 0.15s, transform 0.1s" }}
-                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = `${ac}0.4)`; (e.currentTarget as HTMLButtonElement).style.transform = "translateY(-1px)"; }}
-                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--td-card-border)"; (e.currentTarget as HTMLButtonElement).style.transform = "translateY(0)"; }}
+                onClick={() => { if (!isAgotado) addCatalogToCart(catalog); }}
+                disabled={isAgotado}
+                style={{
+                  textAlign: "left", borderRadius: 14,
+                  background: isAgotado ? "rgba(224,34,26,0.03)" : "var(--td-card-bg)",
+                  border: `1px solid ${isAgotado ? "rgba(224,34,26,0.25)" : "var(--td-card-border)"}`,
+                  cursor: isAgotado ? "not-allowed" : "pointer",
+                  padding: "14px",
+                  display: "flex", flexDirection: "column", gap: 8,
+                  transition: "border-color 0.15s, transform 0.1s",
+                  opacity: isAgotado ? 0.55 : 1,
+                }}
+                onMouseEnter={e => { if (!isAgotado) { (e.currentTarget as HTMLButtonElement).style.borderColor = `${ac}0.4)`; (e.currentTarget as HTMLButtonElement).style.transform = "translateY(-1px)"; } }}
+                onMouseLeave={e => { if (!isAgotado) { (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--td-card-border)"; (e.currentTarget as HTMLButtonElement).style.transform = "translateY(0)"; } }}
               >
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
                   <span style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--td-text-ghost)" }}>
                     {catalog.category?.name ?? "Preventa"}
                   </span>
-                  <span style={{ fontSize: 9, fontWeight: 900, padding: "2px 7px", borderRadius: 20, color: "#F59E0B", background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.2)" }}>
-                    Disponible
-                  </span>
+                  {isAgotado ? (
+                    <span style={{ fontSize: 9, fontWeight: 900, padding: "2px 7px", borderRadius: 20, color: "#fff", background: "#DC2626", border: "1px solid rgba(220,38,38,0.5)" }}>
+                      Agotado
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 9, fontWeight: 900, padding: "2px 7px", borderRadius: 20, color: "#F59E0B", background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.2)" }}>
+                      {remaining !== null ? `${remaining} disponible${remaining === 1 ? "" : "s"}` : "Disponible"}
+                    </span>
+                  )}
                 </div>
+                {/* Thumbnail solo si hay imagen — cacheada por GCS (1 año immutable) +
+                    Service Worker (Cache API). Sin imagen no se reserva espacio. */}
+                {imgSrc && (
+                  <img
+                    src={imgSrc}
+                    alt={catalog.product_name}
+                    loading="lazy"
+                    decoding="async"
+                    style={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 10, border: "1px solid rgba(255,255,255,0.06)", background: "rgba(0,0,0,0.2)" }}
+                    onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                  />
+                )}
                 <p style={{ margin: 0, fontSize: 12, fontWeight: 800, lineHeight: 1.3, color: "var(--td-text-hi)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
                   {catalog.product_name}
                 </p>
@@ -3781,10 +4230,11 @@ export function SellPage() {
                   {prices.map((x, i) => (
                     <button
                       key={x.level}
-                      onClick={e => { e.stopPropagation(); addCatalogToCart(catalog, x.level); }}
-                      style={{ fontSize: 9, fontWeight: 800, padding: "3px 8px", borderRadius: 6, cursor: "pointer", background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.3)", color: "#F59E0B", transition: "background 0.12s" }}
-                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(245,158,11,0.25)"; }}
-                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "rgba(245,158,11,0.12)"; }}
+                      onClick={e => { e.stopPropagation(); if (!isAgotado) addCatalogToCart(catalog, x.level); }}
+                      disabled={isAgotado}
+                      style={{ fontSize: 9, fontWeight: 800, padding: "3px 8px", borderRadius: 6, cursor: isAgotado ? "not-allowed" : "pointer", background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.3)", color: "#F59E0B", transition: "background 0.12s", opacity: isAgotado ? 0.4 : 1 }}
+                      onMouseEnter={e => { if (!isAgotado) (e.currentTarget as HTMLElement).style.background = "rgba(245,158,11,0.25)"; }}
+                      onMouseLeave={e => { if (!isAgotado) (e.currentTarget as HTMLElement).style.background = "rgba(245,158,11,0.12)"; }}
                     >
                       P{i + 1} {fmt(x.price)}
                     </button>
@@ -3959,6 +4409,42 @@ export function SellPage() {
                   />
                   {pickerSearch && <button onClick={() => setPickerSearch("")} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "var(--td-text-lo)", display: "flex" }}><X size={13} /></button>}
                 </div>
+
+                {/* Botón Actualizar — refresca SOLO el dominio de la tab activa para
+                    minimizar tráfico. Disponibles/Difusión → catálogos. Apartadas/
+                    Liquidadas/Vencidas → folios. */}
+                {(() => {
+                  const isCatalogsTab = preSalesTab === 'venta' || preSalesTab === 'difusion';
+                  const isFetching = isCatalogsTab
+                    ? preSaleCatalogsQuery.isFetching
+                    : preSaleOrdersQuery.isFetching;
+                  return (
+                    <button
+                      onClick={() => {
+                        if (isCatalogsTab) {
+                          void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleCatalogs.all });
+                          toast.success("Actualizando catálogos…");
+                        } else {
+                          void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all });
+                          toast.success("Actualizando folios…");
+                        }
+                      }}
+                      disabled={isFetching}
+                      style={{
+                        height: 36, padding: "0 14px", borderRadius: 10, flexShrink: 0,
+                        background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)",
+                        cursor: isFetching ? "default" : "pointer", display: "flex",
+                        alignItems: "center", gap: 6, color: "var(--td-text-lo)",
+                        fontSize: 11, fontWeight: 900, textTransform: "uppercase",
+                        letterSpacing: "0.08em", opacity: isFetching ? 0.5 : 1,
+                      }}
+                      title={isCatalogsTab ? "Buscar nuevos catálogos" : "Buscar nuevos folios"}
+                    >
+                      <RefreshCw size={14} className={isFetching ? "animate-spin" : ""} />
+                      Actualizar
+                    </button>
+                  );
+                })()}
 
                 <button onClick={() => setShowPreSalesModal(false)} style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--td-text-lo)" }}>
                   <X size={16} />
@@ -4221,6 +4707,11 @@ export function SellPage() {
           preventaMode={activeMesa.isPreventa}
           availableStock={catalogAvailableStock}
           reservedByMesa={catalogReservedByMesa}
+          onRefresh={() => {
+            void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+            toast.success("Actualizando catálogo…");
+          }}
+          isRefreshing={productsQuery.isFetching}
         />
       )}
 
@@ -4302,6 +4793,374 @@ export function SellPage() {
                 Restablecer preferencia de impresión
               </button>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Popup: asignar cliente a la venta actual (scan TAD o botón User) ─ */}
+      {assignCustomerPopup && (() => {
+        const p = assignCustomerPopup;
+        const closePopup = () => setAssignCustomerPopup(null);
+        return (
+          <div style={{ position: "fixed", inset: 0, zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+            <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)" }} onClick={closePopup} />
+            <div style={{ position: "relative", background: "var(--td-popup-bg)", border: "1px solid var(--td-popup-border)", borderRadius: 24, width: "100%", maxWidth: 480, maxHeight: "85vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+              {/* Header */}
+              <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "18px 22px", borderBottom: "1px solid var(--td-card-border)" }}>
+                <div style={{ width: 38, height: 38, borderRadius: 12, background: "rgba(96,165,250,0.12)", border: "1px solid rgba(96,165,250,0.3)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <User size={18} color="#60A5FA" />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ margin: 0, fontSize: 13, fontWeight: 900, color: "var(--td-text-hi)" }}>
+                    {p.mode === 'scan' ? "Socio Tadaima detectado" : "Asignar cliente"}
+                  </p>
+                  <p style={{ margin: 0, fontSize: 10, color: "var(--td-text-ghost)", fontWeight: 700 }}>
+                    {p.mode === 'scan' ? `Tarjeta ${p.search}` : "Busca por nombre, teléfono, correo o tarjeta"}
+                  </p>
+                </div>
+                <button onClick={closePopup} style={{ width: 32, height: 32, borderRadius: 9, background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--td-text-lo)" }}>
+                  <X size={14} />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div style={{ flex: 1, overflowY: "auto", padding: "18px 22px" }}>
+                {p.mode === 'scan' && (
+                  <>
+                    {p.searching && (
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 32 }}>
+                        <Loader2 size={28} className="animate-spin" style={{ color: "#60A5FA" }} />
+                      </div>
+                    )}
+                    {!p.searching && p.candidate && (
+                      <div style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", borderRadius: 14, padding: 16 }}>
+                        <p style={{ margin: 0, fontSize: 16, fontWeight: 900, color: "var(--td-text-hi)" }}>
+                          {p.candidate.type === 'local' ? p.candidate.customer.name : (p.candidate.ext.name ?? p.candidate.ext.external_member_id)}
+                        </p>
+                        <div style={{ marginTop: 8, fontSize: 12, color: "var(--td-text-ghost)", lineHeight: 1.6 }}>
+                          {p.candidate.type === 'local' ? (
+                            <>
+                              {p.candidate.customer.phone && <div>📞 {p.candidate.customer.phone}</div>}
+                              {p.candidate.customer.email && <div>✉️ {p.candidate.customer.email}</div>}
+                              <div style={{ marginTop: 6, color: "#10b981", fontWeight: 700 }}>Ya registrado en tu base</div>
+                            </>
+                          ) : (
+                            <>
+                              {p.candidate.ext.phone && <div>📞 {p.candidate.ext.phone}</div>}
+                              {p.candidate.ext.email && <div>✉️ {p.candidate.ext.email}</div>}
+                              {p.candidate.ext.nivel && <div>🏅 Nivel: {p.candidate.ext.nivel}</div>}
+                              <div style={{ marginTop: 6, color: "#F59E0B", fontWeight: 700 }}>Se agregará a tu base al asignar</div>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {p.mode === 'manual' && (
+                  <>
+                    <div style={{ position: "relative", marginBottom: 14 }}>
+                      <Search size={14} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "var(--td-text-ghost)" }} />
+                      <input
+                        type="text"
+                        autoFocus
+                        value={p.search}
+                        onChange={e => setAssignCustomerPopup(prev => prev ? { ...prev, search: e.target.value } : null)}
+                        placeholder="Nombre, teléfono, correo o tarjeta…"
+                        style={{ width: "100%", boxSizing: "border-box", background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 12, outline: "none", padding: "10px 14px 10px 36px", fontSize: 13, fontWeight: 700, color: "var(--td-input-text)" }}
+                      />
+                    </div>
+                    {p.searching && (
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: 18, background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.2)", borderRadius: 12, marginBottom: 8 }}>
+                        <Loader2 size={16} className="animate-spin" style={{ color: "#F59E0B" }} />
+                        <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: "#F59E0B", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                          Buscando en socios Tadaima…
+                        </p>
+                      </div>
+                    )}
+                    {!p.searching && p.search.trim() && p.searchResults.locales.length === 0 && p.searchResults.externos.length === 0 && (
+                      <p style={{ textAlign: "center", color: "var(--td-text-ghost)", fontSize: 12, padding: 16 }}>Sin coincidencias en tu base ni en socios Tadaima</p>
+                    )}
+                    {p.searchResults.locales.map(c => (
+                      <button
+                        key={`local-${c.id}`}
+                        onClick={() => { void confirmAssignCustomer({ type: 'local', customer: c }); }}
+                        disabled={p.assigning}
+                        style={{ width: "100%", textAlign: "left", padding: "10px 12px", marginBottom: 6, background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", borderRadius: 12, cursor: p.assigning ? "default" : "pointer", color: "var(--td-text-hi)" }}
+                      >
+                        <p style={{ margin: 0, fontSize: 13, fontWeight: 900 }}>{c.name}</p>
+                        <p style={{ margin: 0, fontSize: 11, color: "var(--td-text-ghost)" }}>{[c.phone, c.email].filter(Boolean).join(" · ") || "—"}</p>
+                      </button>
+                    ))}
+                    {p.searchResults.externos.length > 0 && (
+                      <p style={{ margin: "14px 4px 6px", fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "#F59E0B" }}>
+                        Socios Tadaima
+                      </p>
+                    )}
+                    {p.searchResults.externos.map(ext => (
+                      <button
+                        key={`ext-${ext.external_member_id}`}
+                        onClick={() => { void confirmAssignCustomer({ type: 'external', ext }); }}
+                        disabled={p.assigning}
+                        style={{ width: "100%", textAlign: "left", padding: "10px 12px", marginBottom: 6, background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 12, cursor: p.assigning ? "default" : "pointer", color: "var(--td-text-hi)" }}
+                      >
+                        <p style={{ margin: 0, fontSize: 13, fontWeight: 900 }}>{ext.name ?? ext.external_member_id}</p>
+                        <p style={{ margin: 0, fontSize: 11, color: "var(--td-text-ghost)" }}>{[ext.phone, ext.email].filter(Boolean).join(" · ") || ext.external_member_id}</p>
+                      </button>
+                    ))}
+
+                    {/* Crear cliente nuevo — toggle a form inline */}
+                    {!p.createForm.open ? (
+                      <button
+                        onClick={() => setAssignCustomerPopup(prev => prev ? {
+                          ...prev,
+                          createForm: { ...prev.createForm, open: true, name: prev.search.trim() },
+                        } : null)}
+                        style={{ marginTop: 14, width: "100%", padding: "12px 14px", borderRadius: 12, background: "rgba(96,165,250,0.08)", border: "1px dashed rgba(96,165,250,0.4)", color: "#60A5FA", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontSize: 12, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em" }}
+                      >
+                        <UserPlus size={14} />
+                        Crear cliente nuevo
+                      </button>
+                    ) : (
+                      <div style={{ marginTop: 14, padding: 14, background: "var(--td-card-bg)", border: "1px solid rgba(96,165,250,0.3)", borderRadius: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+                        <p style={{ margin: "0 0 4px", fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "#60A5FA" }}>Nuevo cliente</p>
+                        <input
+                          autoFocus
+                          type="text"
+                          value={p.createForm.name}
+                          onChange={e => setAssignCustomerPopup(prev => prev ? { ...prev, createForm: { ...prev.createForm, name: e.target.value } } : null)}
+                          placeholder="Nombre completo *"
+                          style={{ background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 10, padding: "9px 12px", fontSize: 12, fontWeight: 700, color: "var(--td-input-text)", outline: "none" }}
+                        />
+                        <input
+                          type="tel"
+                          value={p.createForm.phone}
+                          onChange={e => setAssignCustomerPopup(prev => prev ? { ...prev, createForm: { ...prev.createForm, phone: e.target.value } } : null)}
+                          placeholder="Teléfono (opcional)"
+                          style={{ background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 10, padding: "9px 12px", fontSize: 12, fontWeight: 700, color: "var(--td-input-text)", outline: "none" }}
+                        />
+                        <input
+                          type="email"
+                          value={p.createForm.email}
+                          onChange={e => setAssignCustomerPopup(prev => prev ? { ...prev, createForm: { ...prev.createForm, email: e.target.value } } : null)}
+                          placeholder="Correo (opcional)"
+                          style={{ background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 10, padding: "9px 12px", fontSize: 12, fontWeight: 700, color: "var(--td-input-text)", outline: "none" }}
+                        />
+                        <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                          <button
+                            onClick={() => setAssignCustomerPopup(prev => prev ? { ...prev, createForm: { open: false, name: "", phone: "", email: "", saving: false } } : null)}
+                            disabled={p.createForm.saving}
+                            style={{ flex: 1, padding: "9px 12px", borderRadius: 10, background: "transparent", border: "1px solid var(--td-card-border)", color: "var(--td-text-lo)", fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em", cursor: p.createForm.saving ? "default" : "pointer" }}
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            onClick={() => { void submitCreateCustomer(); }}
+                            disabled={p.createForm.saving || !p.createForm.name.trim()}
+                            style={{ flex: 2, padding: "9px 12px", borderRadius: 10, background: "#10b981", border: "none", color: "#fff", fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em", cursor: p.createForm.saving ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, opacity: (p.createForm.saving || !p.createForm.name.trim()) ? 0.5 : 1 }}
+                          >
+                            {p.createForm.saving ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
+                            Crear y asignar
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+
+              {/* Footer (solo modo scan con candidato) */}
+              {p.mode === 'scan' && !p.searching && p.candidate && (
+                <div style={{ display: "flex", gap: 10, padding: "14px 22px", borderTop: "1px solid var(--td-card-border)" }}>
+                  <button
+                    onClick={closePopup}
+                    disabled={p.assigning}
+                    style={{ flex: 1, padding: "11px 14px", borderRadius: 11, background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", color: "var(--td-text-lo)", fontSize: 12, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em", cursor: p.assigning ? "default" : "pointer", opacity: p.assigning ? 0.5 : 1 }}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={() => { if (p.candidate) void confirmAssignCustomer(p.candidate); }}
+                    disabled={p.assigning}
+                    style={{ flex: 2, padding: "11px 14px", borderRadius: 11, background: "#10b981", border: "none", color: "#fff", fontSize: 12, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em", cursor: p.assigning ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, opacity: p.assigning ? 0.6 : 1 }}
+                  >
+                    {p.assigning ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                    Asignar a esta venta
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Modal: Clientes (acceso rápido desde toolbar) ─────────────────── */}
+      {showClientsModal && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)" }}
+            onClick={() => setShowClientsModal(false)} />
+          <div style={{ position: "relative", background: "var(--td-popup-bg)", border: "1px solid var(--td-popup-border)", borderRadius: 28, width: "100%", maxWidth: 720, maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
+            {/* Header */}
+            <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "20px 24px", borderBottom: "1px solid var(--td-card-border)" }}>
+              <div style={{ width: 40, height: 40, borderRadius: 12, background: "rgba(96,165,250,0.12)", border: "1px solid rgba(96,165,250,0.3)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Users size={20} color="#60A5FA" />
+              </div>
+              <div style={{ flex: 1 }}>
+                <p style={{ margin: 0, fontSize: 13, fontWeight: 900, color: "var(--td-text-hi)" }}>Clientes</p>
+                <p style={{ margin: 0, fontSize: 9, color: "var(--td-text-ghost)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em" }}>
+                  {clientsLocal.length} local{clientsLocal.length !== 1 ? "es" : ""}{clientsExternal.length > 0 ? ` · ${clientsExternal.length} socio${clientsExternal.length !== 1 ? "s" : ""} Tadaima` : ""}
+                </p>
+              </div>
+              <button onClick={() => setShowClientsModal(false)} style={{ width: 36, height: 36, borderRadius: 10, background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--td-text-lo)" }}>
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Search */}
+            <div style={{ padding: "14px 24px", borderBottom: "1px solid var(--td-card-border)" }}>
+              <div style={{ position: "relative" }}>
+                <Search size={14} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "var(--td-text-ghost)", pointerEvents: "none" }} />
+                <input
+                  type="text"
+                  value={clientsSearch}
+                  onChange={e => setClientsSearch(e.target.value)}
+                  placeholder="Buscar por nombre, teléfono, correo o código de tarjeta…"
+                  autoFocus
+                  style={{ width: "100%", boxSizing: "border-box", background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 12, outline: "none", padding: "11px 14px 11px 38px", fontSize: 13, fontWeight: 700, color: "var(--td-input-text)" }}
+                />
+                {clientsSearch && (
+                  <button onClick={() => setClientsSearch("")} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "var(--td-text-lo)", display: "flex" }}>
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+              <p style={{ margin: "6px 2px 0", fontSize: 10, color: "var(--td-text-ghost)" }}>
+                Primero busca en tu base local; si no encuentra y la query tiene 2+ caracteres, busca en socios Tadaima.
+              </p>
+            </div>
+
+            {/* List */}
+            <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px" }}>
+              {clientsSearching && clientsLocal.length === 0 && (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: 18, background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.2)", borderRadius: 12, marginBottom: 8 }}>
+                  <Loader2 size={16} className="animate-spin" style={{ color: "#F59E0B" }} />
+                  <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: "#F59E0B", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                    Buscando en socios Tadaima…
+                  </p>
+                </div>
+              )}
+
+              {!clientsSearching && clientsLocal.length === 0 && clientsExternal.length === 0 && (
+                <div style={{ textAlign: "center", padding: 40, color: "var(--td-text-ghost)", fontSize: 12 }}>
+                  {clientsSearch ? "Sin coincidencias en tu base ni en socios Tadaima" : "Sin clientes registrados"}
+                </div>
+              )}
+
+              {/* Clientes locales */}
+              {clientsLocal.map(c => {
+                const idNum = Number(c.id);
+                const isExpanded = expandedClientId === idNum;
+                return (
+                  <div key={`local-${c.id}`} style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", borderRadius: 14, marginBottom: 8, overflow: "hidden" }}>
+                    <button
+                      onClick={() => { void expandClient(c); }}
+                      style={{ width: "100%", padding: "12px 14px", background: "transparent", border: "none", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, color: "var(--td-text-hi)" }}
+                    >
+                      <div style={{ width: 36, height: 36, borderRadius: 10, background: "rgba(96,165,250,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        <User size={16} color="#60A5FA" />
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={{ margin: 0, fontSize: 13, fontWeight: 900 }}>{c.name}</p>
+                        <p style={{ margin: 0, fontSize: 11, color: "var(--td-text-ghost)" }}>
+                          {[c.phone, c.email].filter(Boolean).join(" · ") || "—"}
+                          {c.external_member_id ? " · Socio Tadaima" : ""}
+                        </p>
+                      </div>
+                      <ChevronDown size={14} style={{ color: "var(--td-text-ghost)", transform: isExpanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+                    </button>
+
+                    {isExpanded && clientDetail && (
+                      <div style={{ padding: "12px 14px", borderTop: "1px solid var(--td-card-border)", background: "rgba(0,0,0,0.18)" }}>
+                        {clientDetail.loading ? (
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+                            <Loader2 size={20} className="animate-spin" style={{ color: "#60A5FA" }} />
+                          </div>
+                        ) : (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                            <div>
+                              <p style={{ margin: "0 0 6px", fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--td-text-ghost)" }}>
+                                Tickets ({clientDetail.sales.length})
+                              </p>
+                              {clientDetail.sales.length === 0 ? (
+                                <p style={{ margin: 0, fontSize: 11, color: "var(--td-text-ghost)" }}>Sin tickets</p>
+                              ) : (
+                                clientDetail.sales.slice(0, 10).map(s => (
+                                  <div key={`s-${s.id}`} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 11, color: "var(--td-text-hi)" }}>
+                                    <span>#{s.id} · {new Date(s.created_at).toLocaleDateString("es-MX")}</span>
+                                    <span style={{ fontWeight: 900 }}>{fmt(s.total)}</span>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                            <div>
+                              <p style={{ margin: "0 0 6px", fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--td-text-ghost)" }}>
+                                Preventas ({clientDetail.preSales.length})
+                              </p>
+                              {clientDetail.preSales.length === 0 ? (
+                                <p style={{ margin: 0, fontSize: 11, color: "var(--td-text-ghost)" }}>Sin preventas</p>
+                              ) : (
+                                clientDetail.preSales.slice(0, 10).map(p => (
+                                  <div key={`p-${p.id}`} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 11, color: "var(--td-text-hi)" }}>
+                                    <span>{p.code} · {p.status}</span>
+                                    <span style={{ fontWeight: 900, color: "#F59E0B" }}>{fmt(p.total)}</span>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* Socios Tadaima externos (solo cuando no hay match local) */}
+              {clientsExternal.length > 0 && (
+                <div style={{ marginTop: 16 }}>
+                  <p style={{ margin: "0 0 8px 4px", fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "#F59E0B" }}>
+                    Socios Tadaima (no en tu base)
+                  </p>
+                  {clientsExternal.map(ext => {
+                    const adding = addingExternalId === ext.external_member_id;
+                    return (
+                      <div key={`ext-${ext.external_member_id}`} style={{ background: "rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.25)", borderRadius: 14, padding: "12px 14px", marginBottom: 8, display: "flex", alignItems: "center", gap: 12 }}>
+                        <div style={{ width: 36, height: 36, borderRadius: 10, background: "rgba(245,158,11,0.15)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                          <User size={16} color="#F59E0B" />
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <p style={{ margin: 0, fontSize: 13, fontWeight: 900, color: "var(--td-text-hi)" }}>
+                            {ext.name ?? ext.external_member_id}
+                          </p>
+                          <p style={{ margin: 0, fontSize: 11, color: "var(--td-text-ghost)" }}>
+                            {[ext.phone, ext.email].filter(Boolean).join(" · ") || ext.external_member_id}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => { void addExternalToDb(ext); }}
+                          disabled={adding}
+                          style={{ height: 32, padding: "0 14px", borderRadius: 10, background: "#F59E0B", border: "none", color: "#1a0a00", fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em", cursor: adding ? "default" : "pointer", display: "flex", alignItems: "center", gap: 6, opacity: adding ? 0.6 : 1 }}
+                        >
+                          {adding ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
+                          Agregar
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

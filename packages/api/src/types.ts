@@ -239,6 +239,10 @@ export interface Draft {
   /** Subtotal calculado en backend (suma de items.total). Solo presente si items se cargaron. */
   subtotal?: number | null
   items_count?: number | null
+  /** Presente cuando GET /sales-drafts/{id} (show) eager-carga items.product. */
+  items?: DraftItem[]
+  expires_at?: string | null
+  warned_at?: string | null
   created_at: string
 }
 
@@ -275,10 +279,27 @@ export interface SalePayment {
   terminal_id?: number
 }
 
+/**
+ * Checkout payload. Soporta dos modos (ADR-014):
+ *   A) Legacy: `draft_id` apunta a un draft ya creado en backend con items.
+ *   B) Direct: `items` + `store_id` + `register_session_id` (+ `customer_id`)
+ *      cuando el carrito vive solo en frontend hasta el cobro.
+ */
+export interface SaleDirectItem {
+  product_id: number
+  quantity: number
+  price: number
+  price_level?: 'a' | 'b' | 'c'
+}
 export interface CreateSaleInput {
-  draft_id: number
+  draft_id?: number
   discount?: number
   payments: SalePayment[]
+  // Modo B (direct checkout)
+  items?: SaleDirectItem[]
+  store_id?: number
+  register_session_id?: number
+  customer_id?: number | null
 }
 
 export interface Sale {
@@ -458,11 +479,18 @@ export interface ExpireToInventoryInput {
 
 export type PreSaleCatalogStatus = 'draft' | 'published' | 'arrived' | 'closed' | 'cancelled' | 'completed'
 
+export interface PreSaleCatalogStoreLimit {
+  store_id: number
+  limit_qty: number
+}
+
 export interface PreSaleCatalog {
   id: number
   status: PreSaleCatalogStatus
   product_name: string
   image_path: string | null
+  image_url?: string | null
+  store_limits?: PreSaleCatalogStoreLimit[]
   cost: number | null
   margin_percent: number | null
   price_1: number | null

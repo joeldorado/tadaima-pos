@@ -211,26 +211,27 @@ export function PreSaleCatalogsPanel() {
       header: "Producto",
       accessorFn: r => r.product_name,
       meta: { tdStyle: { padding: "12px 14px" } },
-      cell: ({ row: { original: c } }: CellContext<PreSaleCatalog, unknown>) => (
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          {c.image_path ? (
-            <img
-              src={storageUrl(c.image_path)}
-              alt={c.product_name}
-              style={{ width: 36, height: 36, borderRadius: 8, objectFit: "cover", flexShrink: 0, border: "1px solid rgba(255,255,255,0.08)" }}
-              onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-            />
-          ) : (
-            <div style={{ width: 36, height: 36, borderRadius: 8, flexShrink: 0, background: "rgba(255,255,255,0.04)", border: "1px dashed rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Package size={14} style={{ color: TM }} />
+      cell: ({ row: { original: c } }: CellContext<PreSaleCatalog, unknown>) => {
+        const imgSrc = c.image_url ?? (c.image_path ? storageUrl(c.image_path) : null);
+        return (
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {imgSrc && (
+              <img
+                src={imgSrc}
+                alt={c.product_name}
+                loading="lazy"
+                decoding="async"
+                style={{ width: 36, height: 36, borderRadius: 8, objectFit: "cover", flexShrink: 0, border: "1px solid rgba(255,255,255,0.08)" }}
+                onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+              />
+            )}
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: TP }}>{c.product_name}</div>
+              <div style={{ fontSize: 9, color: TM, marginTop: 2 }}>#{String(c.id).padStart(5, "0")}</div>
             </div>
-          )}
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: TP }}>{c.product_name}</div>
-            <div style={{ fontSize: 9, color: TM, marginTop: 2 }}>#{String(c.id).padStart(5, "0")}</div>
           </div>
-        </div>
-      ),
+        );
+      },
     },
     {
       id: "category",

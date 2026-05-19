@@ -34,7 +34,8 @@ class PreSaleOrderService
 
             // ── Validate catalogs and limits ──────────────────────────────────
             $catalogIds = array_column($items, 'catalog_id');
-            $catalogs = PreSaleCatalog::with('activeOrderItems')
+            $storeId    = (int) $data['store_id'];
+            $catalogs = PreSaleCatalog::with(['activeOrderItems', 'storeLimits'])
                 ->lockForUpdate()
                 ->findMany($catalogIds)
                 ->keyBy('id');
@@ -49,14 +50,19 @@ class PreSaleOrderService
                     );
                 }
 
-                if ($catalog->preorder_limit !== null) {
-                    $reserved = (int) $catalog->activeOrderItems->sum('quantity');
-                    $qty      = (int) $line['quantity'];
+                // Límite POR TIENDA si hay store_limits definidos, sino preorder_limit global.
+                // null = sin límite.
+                $limit = $catalog->limitForStore($storeId);
+                if ($limit !== null) {
+                    $reserved = $catalog->storeLimits->isNotEmpty()
+                        ? $catalog->reservedCountForStore($storeId)
+                        : (int) $catalog->activeOrderItems->sum('quantity');
+                    $qty = (int) $line['quantity'];
 
-                    if ($reserved + $qty > $catalog->preorder_limit) {
-                        $available = max(0, $catalog->preorder_limit - $reserved);
+                    if ($reserved + $qty > $limit) {
+                        $available = max(0, $limit - $reserved);
                         throw new \DomainException(
-                            "'{$catalog->product_name}' solo tiene {$available} unidades disponibles (límite: {$catalog->preorder_limit})."
+                            "'{$catalog->product_name}' solo tiene {$available} unidades disponibles (límite: {$limit})."
                         );
                     }
                 }

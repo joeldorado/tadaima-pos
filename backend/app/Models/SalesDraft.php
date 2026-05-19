@@ -14,9 +14,15 @@ class SalesDraft extends Model
     // (mostrador + celular). Cleanup automático evita que drafts huérfanos saturen.
     const MAX_OPEN = 10;
 
-    // TTL para cleanup automático (en horas)
+    // TTL para cleanup automático (en horas) — legacy, ahora usamos EXPIRE_MINUTES.
     const STALE_HOURS_EMPTY = 0.5; // drafts sin items > 30 min → cancelar
     const STALE_HOURS_WITH_ITEMS = 6; // drafts con items > 6 h → cancelar
+
+    // Reservas cross-caja: el draft vence 5 min después de la última actividad.
+    // Al llegar a esa hora, el job lo marca con warned_at (frontend dispara modal).
+    // Si el cajero no responde en WARNING_GRACE_MINUTES, el draft se cancela.
+    const EXPIRE_MINUTES = 5;
+    const WARNING_GRACE_MINUTES = 1;
 
     const STATUS_OPEN      = 'open';
     const STATUS_SUSPENDED = 'suspended';
@@ -31,9 +37,15 @@ class SalesDraft extends Model
         'user_id',
         'customer_id',
         'status',
+        'expires_at',
+        'warned_at',
     ];
 
-    protected $casts = ['status' => 'string'];
+    protected $casts = [
+        'status' => 'string',
+        'expires_at' => 'datetime',
+        'warned_at' => 'datetime',
+    ];
 
     // ─── Relations ────────────────────────────────────────────────────────────
 

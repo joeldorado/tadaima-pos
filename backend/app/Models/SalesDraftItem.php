@@ -41,6 +41,17 @@ class SalesDraftItem extends Model
         });
 
         static::updating($recalculate);
+
+        // Reservas cross-caja: cada cambio en items extiende la vida del draft padre.
+        // Sin esto, un cajero que está editando cantidades vería el modal "por vencer"
+        // a los 5 min aunque esté activamente trabajando.
+        $bumpDraft = static function (self $item): void {
+            \App\Observers\SalesDraftActivityObserver::bumpDraftFromItem($item);
+        };
+
+        static::created($bumpDraft);
+        static::updated($bumpDraft);
+        static::deleted($bumpDraft);
     }
 
     // ─── Relations ────────────────────────────────────────────────────────────

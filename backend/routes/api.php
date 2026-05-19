@@ -114,13 +114,20 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/',  [SalesDraftController::class, 'index']);
         Route::post('/', [SalesDraftController::class, 'store']);
 
+        // ADR-014: client-authoritative cart. Endpoints de drafts en vivo
+        // (reserved-stock, expiring, extend) quedan comentados. Solo se conserva
+        // show/cancel para inspección admin y compat con código legacy. addItem/
+        // updateItem/removeItem también comentados — el carrito vive en frontend.
+        // Route::get('reserved-stock', [SalesDraftController::class, 'reservedStock']);
+        // Route::get('expiring',       [SalesDraftController::class, 'expiring']);
+
         Route::prefix('{salesDraft}')->group(function () {
             Route::get('/',    [SalesDraftController::class, 'show']);
             Route::delete('/', [SalesDraftController::class, 'cancel']);
-
-            Route::post('items',                    [SalesDraftController::class, 'addItem']);
-            Route::put('items/{salesDraftItem}',    [SalesDraftController::class, 'updateItem']);
-            Route::delete('items/{salesDraftItem}', [SalesDraftController::class, 'removeItem']);
+            // Route::post('extend', [SalesDraftController::class, 'extend']);
+            // Route::post('items',                    [SalesDraftController::class, 'addItem']);
+            // Route::put('items/{salesDraftItem}',    [SalesDraftController::class, 'updateItem']);
+            // Route::delete('items/{salesDraftItem}', [SalesDraftController::class, 'removeItem']);
         });
     });
 
@@ -130,9 +137,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/',   [PreSaleCatalogsController::class, 'store']);
 
         Route::prefix('{id}')->group(function () {
-            Route::get('/',        [PreSaleCatalogsController::class, 'show']);
-            Route::patch('/',      [PreSaleCatalogsController::class, 'update']);
-            Route::patch('status', [PreSaleCatalogsController::class, 'updateStatus']);
+            Route::get('/',         [PreSaleCatalogsController::class, 'show']);
+            Route::patch('/',       [PreSaleCatalogsController::class, 'update']);
+            Route::patch('status',  [PreSaleCatalogsController::class, 'updateStatus']);
+            Route::post('image',    [PreSaleCatalogsController::class, 'uploadImage']);
+            Route::delete('image',  [PreSaleCatalogsController::class, 'removeImage']);
         });
     });
 

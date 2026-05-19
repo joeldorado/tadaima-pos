@@ -70,7 +70,10 @@ return [
             'visibility'       => 'public',
             // Bucket has Uniform Bucket-Level Access — skip per-object ACLs on upload
             'visibilityHandler' => \App\Storage\UniformBucketVisibilityHandler::class,
-            'metadata'         => ['cacheControl' => 'public, max-age=86400'],
+            // 1 año immutable: las imágenes nunca cambian (filename incluye hash
+            // random — al editar imagen se sube con path nuevo y se borra el viejo).
+            // Browser cachea 1 año sin revalidar → 0 requests al bucket en repeticiones.
+            'metadata'         => ['cacheControl' => 'public, max-age=31536000, immutable'],
             'throw'            => true,
         ],
 

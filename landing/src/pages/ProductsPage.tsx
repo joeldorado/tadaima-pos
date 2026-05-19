@@ -11,7 +11,7 @@ import {
   MessageCircle, Check,
   Upload, Camera, Loader2,
   ArrowUp, ArrowDown, ArrowUpDown,
-  ChevronLeft, ChevronsLeft, ChevronsRight, Trash2, Pencil, RefreshCw,
+  ChevronLeft, ChevronsLeft, ChevronsRight, Trash2, Pencil, RefreshCw, PackageX,
 } from "lucide-react";
 import { ImageWithFallback } from "@/components/figma/ImageWithFallback";
 import { useActiveStore } from "@/contexts/StoreContext";
@@ -40,6 +40,7 @@ function formatApiError(err: unknown, fallback: string): { title: string; detail
 import { ProductTypeSelectorModal } from "@/components/products/ProductTypeSelectorModal";
 import { MangaBatchModal } from "@/components/products/MangaBatchModal";
 import { MangaEditModal } from "@/components/products/MangaEditModal";
+import { QuickStockModal } from "@/components/products/QuickStockModal";
 import type { Product, Manga } from "@tadaima/api";
 import {
   useReactTable,
@@ -190,6 +191,8 @@ function ProductThumb({ src, alt }: { src: string; alt: string }) {
       alt={alt}
       className="w-10 h-10 rounded-xl object-cover shrink-0"
       style={{ minWidth: 40 }}
+      loading="lazy"
+      decoding="async"
       onError={() => setFailed(true)}
     />
   );
@@ -840,6 +843,8 @@ export function ProductsPage() {
   const [viewMode, setViewMode] = useState<"grid" | "list">(
     () => (localStorage.getItem('tadaima-products-view') ?? 'list') as "grid" | "list"
   );
+  // Modal rápido de stock por tienda (productos o tomos/mangas).
+  const [stockModalProduct, setStockModalProduct] = useState<{ id: number; name: string; kind?: "product" | "manga" } | null>(null);
   const [sorting, setSorting] = useState<SortingState>([]);
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 20 });
   const [mangaSearch, setMangaSearch] = useState('');
@@ -866,6 +871,7 @@ export function ProductsPage() {
   const [editingManga, setEditingManga] = useState<Manga | null>(null);
   const [showTopSellers, setShowTopSellers] = useState(false);
   const [showLowStock, setShowLowStock] = useState(false);
+  const [showOutStock, setShowOutStock] = useState(false);
   const [showNoCost, setShowNoCost] = useState(false);
   const [selectedForWhatsapp, setSelectedForWhatsapp] = useState<number[]>([]);
 
@@ -1000,13 +1006,17 @@ export function ProductsPage() {
 
   const [deleteTarget, setDeleteTarget] = React.useState<Producto | null>(null);
   const [deleteLoading, setDeleteLoading] = React.useState(false);
-  const [forceMode, setForceMode] = React.useState(false);
+  // Modo del delete: "soft" = borrar solo si no tiene ventas/apartados.
+  //                  "force" = borrar TODO incluyendo ventas, apartados, traspasos.
+  const [deleteMode, setDeleteMode] = React.useState<"soft" | "force">("soft");
+  // Confirmación extra para force: el cajero debe tipear el nombre del producto.
+  const [forceConfirmText, setForceConfirmText] = React.useState("");
 
-  const handleDeleteProduct = async (force = false): Promise<void> => {
+  const handleDeleteProduct = async (): Promise<void> => {
     if (!deleteTarget) return;
     setDeleteLoading(true);
     try {
-      if (force) {
+      if (deleteMode === "force") {
         await forceDeleteProduct(deleteTarget.id);
       } else {
         await deleteProduct(deleteTarget.id);
@@ -1015,21 +1025,15 @@ export function ProductsPage() {
       setIsModalOpen(false);
       setEditingProduct(undefined);
       setDeleteTarget(null);
-      setForceMode(false);
-      toast.success('Producto eliminado.');
+      setDeleteMode("soft");
+      setForceConfirmText("");
+      toast.success(deleteMode === "force" ? 'Producto y todo su historial eliminados.' : 'Producto eliminado.');
       void refreshProductCount();
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
         ?? 'No se pudo eliminar el producto.';
-      if (!force) {
-        // Offer force delete when blocked
-        setForceMode(true);
-        toast.error(msg);
-      } else {
-        toast.error(msg);
-        setDeleteTarget(null);
-        setForceMode(false);
-      }
+      // En modo soft, si el backend rechaza por relaciones, sugerimos cambiar a force.
+      toast.error(msg + (deleteMode === "soft" ? " Cambia a 'Borrar TODO' si quieres eliminarlo de todos modos." : ""));
     } finally {
       setDeleteLoading(false);
     }
@@ -1119,6 +1123,43 @@ export function ProductsPage() {
         },
       }
     ),
+    // Desglose por tienda — solo cuando admin ve "Todas las tiendas".
+    // Para gerente/cajero o admin con tienda filtrada no aparece (sería redundante).
+    ...(isAdmin && selectedStoreId === null ? [
+      columnHelper.display({
+        id: 'porTienda',
+        header: 'Por tienda',
+        cell: info => {
+          const ubicaciones = (info.row.original.stockUbicaciones ?? [])
+            .filter(u => u.ubicacion); // skip placeholders sin nombre
+          if (ubicaciones.length === 0) {
+            return <span className="text-[10px] font-bold" style={{ color: T.textMuted }}>—</span>;
+          }
+          return (
+            <div className="flex flex-wrap gap-1.5 max-w-[280px]">
+              {ubicaciones.map((u, idx) => {
+                const qty = u.quantity ?? 0;
+                const isOut = qty === 0;
+                const isLow = qty > 0 && qty <= 10;
+                const color = isOut ? T.redBright : isLow ? '#FFAA00' : '#00CC66';
+                const bg = isOut ? 'rgba(204,34,0,0.12)' : isLow ? 'rgba(255,170,0,0.10)' : 'rgba(0,180,90,0.10)';
+                return (
+                  <div
+                    key={`${u.warehouseId ?? idx}-${u.ubicacion}`}
+                    className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-black"
+                    style={{ background: bg, border: `1px solid ${color}33`, color }}
+                    title={`${u.ubicacion}: ${qty} unidades`}
+                  >
+                    <span style={{ opacity: 0.7, fontWeight: 700 }}>{u.ubicacion.replace(/^Tienda\s+\d+\s*[—-]?\s*/i, '')}</span>
+                    <span>{qty}</span>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        },
+      }),
+    ] : []),
     columnHelper.accessor(
       row => {
         if (row.desactivado) return 'inactivo';
@@ -1154,16 +1195,27 @@ export function ProductsPage() {
       header: '',
       enableSorting: false,
       cell: info => canEdit ? (
-        <button
-          onClick={e => { e.stopPropagation(); handleEdit(info.row.original); }}
-          className="px-3 py-1.5 rounded-xl text-[10px] font-black transition-all hover:bg-white/10"
-          style={{ color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
-        >
-          Editar
-        </button>
+        <div className="flex items-center gap-2 justify-end">
+          <button
+            onClick={e => { e.stopPropagation(); const p = info.row.original; setStockModalProduct({ id: p.id, name: p.nombre }); }}
+            className="px-3 py-1.5 rounded-xl text-[10px] font-black transition-all hover:bg-emerald-500/10 hover:text-emerald-300 flex items-center gap-1.5"
+            style={{ color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
+            title="Editar stock por tienda"
+          >
+            <Warehouse size={11} />
+            Stock
+          </button>
+          <button
+            onClick={e => { e.stopPropagation(); handleEdit(info.row.original); }}
+            className="px-3 py-1.5 rounded-xl text-[10px] font-black transition-all hover:bg-white/10"
+            style={{ color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
+          >
+            Editar
+          </button>
+        </div>
       ) : null,
     }),
-  ], [handleEdit, getTotalStock, canEdit]);
+  ], [handleEdit, getTotalStock, canEdit, isAdmin, selectedStoreId]);
 
 
   // Memoize filtered so the array reference is stable between renders that don't change
@@ -1171,7 +1223,8 @@ export function ProductsPage() {
   // TanStack's autoResetPageIndex fires → setPagination → infinite loop.
   const filtered = useMemo(() => {
     if (showTopSellers) return [...products].sort((a, b) => b.ventasTotales - a.ventasTotales).slice(0, 50);
-    if (showLowStock)   return products.filter(p => !p.esUnico && getTotalStock(p.id) < 10);
+    if (showOutStock)   return products.filter(p => !p.esUnico && getTotalStock(p.id) === 0);
+    if (showLowStock)   return products.filter(p => !p.esUnico && getTotalStock(p.id) > 0 && getTotalStock(p.id) <= 10);
     if (showNoCost)     return products.filter(p => !p.costo || p.costo <= 0);
     return products.filter(p => {
       const matchesSearch =
@@ -1180,7 +1233,7 @@ export function ProductsPage() {
       const matchesCat = selectedCat === 'Todo' || p.categoria === selectedCat;
       return matchesSearch && matchesCat;
     });
-  }, [products, search, selectedCat, showTopSellers, showLowStock, showNoCost, getTotalStock]);
+  }, [products, search, selectedCat, showTopSellers, showLowStock, showOutStock, showNoCost, getTotalStock]);
 
   // ─── TanStack Table (lista mode) ─────────────────────────────────────────────
   const table = useReactTable({
@@ -1279,14 +1332,24 @@ export function ProductsPage() {
       id: 'acciones',
       header: '',
       cell: info => canEdit ? (
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="flex items-center gap-2 justify-end">
+          <button
+            onClick={e => { e.stopPropagation(); const m = info.row.original; setStockModalProduct({ id: m.id, name: `${m.name}${m.volume_number != null ? ` Vol. ${m.volume_number}` : ""}`, kind: "manga" }); }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black transition-all hover:bg-emerald-500/10 hover:text-emerald-300"
+            style={{ color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
+            title="Editar stock por tienda"
+          >
+            <Warehouse size={11} />
+            Stock
+          </button>
           <button
             onClick={e => { e.stopPropagation(); setEditingManga(info.row.original); }}
-            className="p-1.5 rounded-xl hover:bg-white/10 transition-all"
-            title="Editar"
-            style={{ color: T.textMuted }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black transition-all hover:bg-white/10"
+            style={{ color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
+            title="Editar tomo"
           >
-            <Pencil size={13} />
+            <Pencil size={11} />
+            Editar
           </button>
         </div>
       ) : null,
@@ -1294,15 +1357,24 @@ export function ProductsPage() {
   ], [canViewCost, canEdit]);
 
   const filteredMangas = useMemo(() => {
-    if (!mangaSearch.trim()) return mangas;
+    let list = mangas;
+    // Tab "Por agotarse" / "Agotados" — solo aplica cuando estamos en sección tomos.
+    if (pageSection === 'tomos') {
+      if (showOutStock) {
+        list = list.filter(m => (m.stock ?? 0) === 0);
+      } else if (showLowStock) {
+        list = list.filter(m => (m.stock ?? 0) > 0 && (m.stock ?? 0) <= 10);
+      }
+    }
+    if (!mangaSearch.trim()) return list;
     const q = mangaSearch.toLowerCase();
-    return mangas.filter(m =>
+    return list.filter(m =>
       m.name.toLowerCase().includes(q) ||
       (m.editorial ?? '').toLowerCase().includes(q) ||
       (m.genre ?? '').toLowerCase().includes(q) ||
       (m.code ?? '').toLowerCase().includes(q)
     );
-  }, [mangas, mangaSearch]);
+  }, [mangas, mangaSearch, showLowStock, showOutStock, pageSection]);
 
   const mangaTable = useReactTable({
     data: filteredMangas,
@@ -1348,6 +1420,59 @@ export function ProductsPage() {
           <p className="text-sm mt-1" style={{ color: T.textSecondary }}>Gestión multi-ubicación y catálogo avanzado</p>
         </div>
         <div className="flex items-center gap-3">
+          {/* Tabs Por agotarse + Agotados — respetan el filtro de tienda activo
+              (selectedStoreId). Admin con "Todas las tiendas" ve totales globales;
+              al elegir una tienda específica el conteo y la tabla se filtran a ella. */}
+          {(() => {
+            const isProductos = pageSection === 'productos';
+            const lowStockCount = isProductos
+              ? products.filter(p => !p.esUnico && getTotalStock(p.id) > 0 && getTotalStock(p.id) <= 10).length
+              : mangas.filter(m => (m.stock ?? 0) > 0 && (m.stock ?? 0) <= 10).length;
+            const outStockCount = isProductos
+              ? products.filter(p => !p.esUnico && getTotalStock(p.id) === 0).length
+              : mangas.filter(m => (m.stock ?? 0) === 0).length;
+            return (
+              <>
+                {lowStockCount > 0 && (
+                  <button
+                    onClick={() => { setShowLowStock(v => !v); setShowOutStock(false); setShowTopSellers(false); setShowNoCost(false); }}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all hover:scale-[1.02] active:scale-95"
+                    style={{
+                      background: showLowStock ? "rgba(245,158,11,0.18)" : "rgba(245,158,11,0.08)",
+                      border: `1px solid ${showLowStock ? "rgba(245,158,11,0.6)" : "rgba(245,158,11,0.25)"}`,
+                      color: "#F59E0B",
+                    }}
+                    title={selectedStoreId
+                      ? `Productos con stock 1–10 en ${stores.find(s => s.id === selectedStoreId)?.name ?? "esta tienda"}`
+                      : "Productos con stock 1–10 (suma de todas las tiendas — selecciona una tienda específica para ver el detalle por tienda)"}
+                  >
+                    <AlertTriangle size={13} />
+                    Por agotarse
+                    <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-white">{lowStockCount}</span>
+                  </button>
+                )}
+                {outStockCount > 0 && (
+                  <button
+                    onClick={() => { setShowOutStock(v => !v); setShowLowStock(false); setShowTopSellers(false); setShowNoCost(false); }}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all hover:scale-[1.02] active:scale-95"
+                    style={{
+                      background: showOutStock ? "rgba(239,68,68,0.18)" : "rgba(239,68,68,0.08)",
+                      border: `1px solid ${showOutStock ? "rgba(239,68,68,0.6)" : "rgba(239,68,68,0.25)"}`,
+                      color: "#EF4444",
+                    }}
+                    title={selectedStoreId
+                      ? `Productos sin stock en ${stores.find(s => s.id === selectedStoreId)?.name ?? "esta tienda"}`
+                      : "Productos sin stock (en TODAS las tiendas — selecciona una tienda específica para ver agotados solo en ella)"}
+                  >
+                    <PackageX size={13} />
+                    Agotados
+                    <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-red-500 text-white">{outStockCount}</span>
+                  </button>
+                )}
+              </>
+            );
+          })()}
+
           {/* Cost stats visible only to users with can_view_cost */}
           {canViewCost && (() => {
             const noCostCount = products.filter(p => !p.costo || p.costo <= 0).length;
@@ -1356,7 +1481,7 @@ export function ProductsPage() {
               <>
                 {noCostCount > 0 && (
                   <button
-                    onClick={() => { setShowNoCost(v => !v); setShowTopSellers(false); setShowLowStock(false); }}
+                    onClick={() => { setShowNoCost(v => !v); setShowTopSellers(false); setShowLowStock(false); setShowOutStock(false); }}
                     className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all hover:scale-[1.02] active:scale-95"
                     style={{
                       background: showNoCost ? "rgba(239,68,68,0.15)" : "rgba(239,68,68,0.08)",
@@ -1371,7 +1496,7 @@ export function ProductsPage() {
                   </button>
                 )}
                 <button
-                  onClick={() => { setShowTopSellers(v => !v); setShowLowStock(false); setShowNoCost(false); }}
+                  onClick={() => { setShowTopSellers(v => !v); setShowLowStock(false); setShowOutStock(false); setShowNoCost(false); }}
                   className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all hover:scale-[1.02] active:scale-95"
                   style={{
                     background: showTopSellers ? "rgba(170,102,255,0.15)" : "rgba(170,102,255,0.08)",
@@ -1482,17 +1607,17 @@ export function ProductsPage() {
       {/* Result label + active filter chip */}
       <div className="flex items-center gap-3 mb-4">
         <p className="text-[10px] font-black uppercase tracking-[0.2em]" style={{ color: T.textMuted }}>
-          {showTopSellers ? `Top 50 Más Vendidos` : showLowStock ? "Bajo Stock" : showNoCost ? "Sin Costo" : `${filtered.length} Productos`}
+          {showTopSellers ? `Top 50 Más Vendidos` : showOutStock ? "Productos Agotados" : showLowStock ? "Por Agotarse" : showNoCost ? "Sin Costo" : `${filtered.length} Productos`}
         </p>
         {selectedStoreId && (
           <div className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider border" style={{ background: 'rgba(204,34,0,0.08)', border: '1px solid rgba(204,34,0,0.2)', color: T.redBright }}>
             {stores.find(s => s.id === selectedStoreId)?.name ?? 'Tienda'}
           </div>
         )}
-        {(showTopSellers || showLowStock || showNoCost) && (
+        {(showTopSellers || showLowStock || showOutStock || showNoCost) && (
           <div className="flex items-center gap-3">
             <button
-              onClick={() => { setShowTopSellers(false); setShowLowStock(false); setShowNoCost(false); setSelectedForWhatsapp([]); }}
+              onClick={() => { setShowTopSellers(false); setShowLowStock(false); setShowOutStock(false); setShowNoCost(false); setSelectedForWhatsapp([]); }}
               className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider bg-red-500/10 text-red-500 hover:bg-red-500/20 transition-all border border-red-500/20"
             >
               <X size={10} /> Quitar Filtro
@@ -1529,6 +1654,19 @@ export function ProductsPage() {
                 className={`group relative rounded-[32px] overflow-hidden transition-all hover:translate-y-[-6px] ${(canEdit || showLowStock) ? 'cursor-pointer' : ''} ${p.desactivado ? 'grayscale opacity-60' : ''} ${showLowStock && selectedForWhatsapp.includes(p.id) ? 'ring-4 ring-green-500' : ''}`}
                 style={T.glassMd}
               >
+                {/* Botón Stock — flotante, solo visible en hover. Detiene propagación
+                    para que no abra el modal de edición completo. */}
+                {canEdit && !showLowStock && (
+                  <button
+                    onClick={e => { e.stopPropagation(); setStockModalProduct({ id: p.id, name: p.nombre }); }}
+                    className="absolute bottom-2 left-2 z-20 flex items-center gap-1 px-2.5 py-1 rounded-xl text-[10px] font-black uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-all"
+                    style={{ background: "rgba(16,185,129,0.85)", color: "#fff", border: "1px solid rgba(16,185,129,0.4)" }}
+                    title="Editar stock por tienda"
+                  >
+                    <Warehouse size={11} />
+                    Stock
+                  </button>
+                )}
                 {p.imagen ? (
                   /* ── Con imagen ── */
                   <>
@@ -1734,68 +1872,107 @@ export function ProductsPage() {
         </div>
       )}
 
-      {deleteTarget && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => { if (!deleteLoading) { setDeleteTarget(null); setForceMode(false); } }} />
-          <div className="relative w-full max-w-sm rounded-2xl p-6 shadow-2xl transition-all" style={{ background: '#1a1a1a', border: `1px solid ${forceMode ? 'rgba(239,68,68,0.7)' : 'rgba(239,68,68,0.3)'}` }}>
-            <div className="flex items-start gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ background: forceMode ? 'rgba(239,68,68,0.2)' : 'rgba(239,68,68,0.1)' }}>
-                <AlertTriangle size={20} className="text-red-400" />
+      {deleteTarget && (() => {
+        const close = () => { if (!deleteLoading) { setDeleteTarget(null); setDeleteMode("soft"); setForceConfirmText(""); } };
+        const isForce = deleteMode === "force";
+        const forceConfirmed = !isForce || forceConfirmText.trim().toLowerCase() === deleteTarget.nombre.trim().toLowerCase();
+        return (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/85 backdrop-blur-md" onClick={close} />
+            <div className="relative w-full max-w-md rounded-2xl p-6 shadow-2xl transition-all" style={{ background: '#1a1a1a', border: `1px solid ${isForce ? 'rgba(239,68,68,0.7)' : 'rgba(239,68,68,0.3)'}` }}>
+              <div className="flex items-start gap-3 mb-4">
+                <div className="w-12 h-12 rounded-full flex items-center justify-center shrink-0 animate-pulse" style={{ background: isForce ? 'rgba(239,68,68,0.25)' : 'rgba(239,68,68,0.12)' }}>
+                  <AlertTriangle size={26} className="text-red-400" />
+                </div>
+                <div>
+                  <h3 className="font-black text-white text-lg uppercase tracking-wider">
+                    {isForce ? '⚠️ Borrado total' : 'Eliminar producto'}
+                  </h3>
+                  <p className="text-xs text-gray-400 mt-1">Esta acción <span className="text-red-400 font-bold">NO se puede deshacer</span>.</p>
+                </div>
               </div>
-              <div>
-                <h3 className="font-bold text-white text-base">
-                  {forceMode ? '⚠️ Borrado total forzado' : '¿Eliminar producto?'}
-                </h3>
-                <p className="text-sm text-gray-400 mt-1">Esta acción <span className="text-red-400 font-semibold">no se puede deshacer</span>.</p>
-              </div>
-            </div>
 
-            <div className="rounded-xl p-3 mb-5 text-sm space-y-1" style={{ background: forceMode ? 'rgba(239,68,68,0.1)' : 'rgba(239,68,68,0.06)', border: `1px solid ${forceMode ? 'rgba(239,68,68,0.3)' : 'rgba(239,68,68,0.15)'}` }}>
-              <p className="font-bold text-gray-300 mb-2">{deleteTarget.nombre}</p>
-              {forceMode ? (
-                <>
-                  <p className="text-red-400 font-semibold">Esto borrará también:</p>
-                  <ul className="text-gray-300 list-disc list-inside space-y-0.5 mt-1">
-                    <li>Ventas históricas vinculadas</li>
-                    <li>Apartados activos</li>
-                    <li>Traspasos relacionados</li>
-                    <li>Imágenes, inventario y precios</li>
-                  </ul>
-                  <p className="text-red-400 text-xs font-bold mt-2">Los datos de ventas se perderán para siempre.</p>
-                </>
-              ) : (
-                <>
-                  <p className="text-gray-400">Se eliminarán permanentemente:</p>
-                  <ul className="text-gray-400 list-disc list-inside space-y-0.5 mt-1">
-                    <li>Imágenes del bucket de almacenamiento</li>
-                    <li>Registros de inventario</li>
-                    <li>Precios configurados</li>
-                  </ul>
-                  <p className="text-yellow-400 text-xs mt-2">Si tiene ventas o apartados activos se ofrecerá la opción de borrado forzado.</p>
-                </>
+              <div className="rounded-xl p-3 mb-4" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
+                <p className="font-bold text-white text-sm">{deleteTarget.nombre}</p>
+                <p className="text-[10px] text-gray-400 mt-0.5">SKU: {deleteTarget.sku || "—"}</p>
+              </div>
+
+              {/* Radio: elegir modo */}
+              <div className="space-y-2 mb-4">
+                <label className={`flex items-start gap-3 p-3 rounded-xl cursor-pointer transition-all ${!isForce ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-white/[0.02] border border-white/5 hover:bg-white/[0.04]'}`}>
+                  <input
+                    type="radio"
+                    name="deleteMode"
+                    checked={!isForce}
+                    onChange={() => { setDeleteMode("soft"); setForceConfirmText(""); }}
+                    disabled={deleteLoading}
+                    className="mt-0.5 accent-amber-500"
+                  />
+                  <div className="flex-1">
+                    <p className="font-black text-sm text-white">Solo el producto</p>
+                    <p className="text-[11px] text-gray-400 mt-0.5">
+                      Elimina imágenes, inventario y precios. <strong className="text-amber-400">Si tiene ventas o apartados activos, fallará</strong> y tendrás que cambiar a "Borrar TODO".
+                    </p>
+                  </div>
+                </label>
+
+                <label className={`flex items-start gap-3 p-3 rounded-xl cursor-pointer transition-all ${isForce ? 'bg-red-500/10 border border-red-500/40' : 'bg-white/[0.02] border border-white/5 hover:bg-white/[0.04]'}`}>
+                  <input
+                    type="radio"
+                    name="deleteMode"
+                    checked={isForce}
+                    onChange={() => setDeleteMode("force")}
+                    disabled={deleteLoading}
+                    className="mt-0.5 accent-red-500"
+                  />
+                  <div className="flex-1">
+                    <p className="font-black text-sm text-white">⚠️ Borrar TODO (también ventas e historial)</p>
+                    <p className="text-[11px] text-gray-400 mt-0.5">
+                      Borra el producto Y todo lo relacionado: <strong className="text-red-400">ventas históricas, apartados, traspasos, inventario y precios</strong>. Datos contables se perderán.
+                    </p>
+                  </div>
+                </label>
+              </div>
+
+              {/* Confirmación tipeada para modo force */}
+              {isForce && (
+                <div className="mb-4">
+                  <p className="text-[11px] font-bold text-red-400 mb-2 uppercase tracking-wider">
+                    Para confirmar, tipea el nombre del producto:
+                  </p>
+                  <input
+                    type="text"
+                    value={forceConfirmText}
+                    onChange={e => setForceConfirmText(e.target.value)}
+                    placeholder={deleteTarget.nombre}
+                    disabled={deleteLoading}
+                    className="w-full px-3 py-2 rounded-xl text-sm font-bold bg-black/40 border outline-none transition-all"
+                    style={{ borderColor: forceConfirmed ? '#10b981' : 'rgba(239,68,68,0.4)', color: forceConfirmed ? '#10b981' : '#fff' }}
+                  />
+                </div>
               )}
-            </div>
 
-            <div className="flex gap-3 justify-end">
-              <button
-                onClick={() => { setDeleteTarget(null); setForceMode(false); }}
-                disabled={deleteLoading}
-                className="px-5 py-2 rounded-full text-sm font-bold text-gray-400 hover:bg-white/5 transition-all"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={() => handleDeleteProduct(forceMode)}
-                disabled={deleteLoading}
-                className="px-5 py-2 rounded-full text-sm font-bold text-white transition-all disabled:opacity-50"
-                style={{ background: forceMode ? '#b91c1c' : '#ef4444' }}
-              >
-                {deleteLoading ? 'Eliminando…' : forceMode ? '🗑 Borrar TODO' : 'Sí, eliminar'}
-              </button>
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={close}
+                  disabled={deleteLoading}
+                  className="px-5 py-2.5 rounded-xl text-sm font-bold text-gray-300 bg-white/5 hover:bg-white/10 transition-all"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleDeleteProduct}
+                  disabled={deleteLoading || !forceConfirmed}
+                  className="px-5 py-2.5 rounded-xl text-sm font-bold text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+                  style={{ background: isForce ? '#b91c1c' : '#ef4444' }}
+                >
+                  {deleteLoading ? <><Loader2 size={14} className="animate-spin" /> Eliminando…</> : isForce ? '🗑 Borrar TODO' : 'Eliminar'}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       </>}
 
@@ -1977,6 +2154,16 @@ export function ProductsPage() {
           canViewCost={canViewCost}
           isAdmin={isAdmin}
           locations={locations}
+        />
+      )}
+
+      {/* Modal rápido de stock por tienda (productos o tomos/mangas). */}
+      {stockModalProduct && (
+        <QuickStockModal
+          productId={stockModalProduct.id}
+          productName={stockModalProduct.name}
+          kind={stockModalProduct.kind ?? "product"}
+          onClose={() => setStockModalProduct(null)}
         />
       )}
 

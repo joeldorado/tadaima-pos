@@ -80,6 +80,10 @@ export function ImageWithFallback({ src, alt, style, className, ...rest }: Image
       alt={alt}
       className={className}
       style={style}
+      // Lazy: solo descarga cuando entra al viewport (ahorra bandwidth en catálogos
+      // largos). Async: decodifica fuera del main thread, sin bloquear render.
+      loading="lazy"
+      decoding="async"
       {...rest}
       onError={() => { setDidError(true) }}
     />

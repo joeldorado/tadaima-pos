@@ -8,6 +8,10 @@ import {
   Settings, Sun, Moon,
 } from "lucide-react";
 import { NotificationBadge } from "@/components/notifications/NotificationBadge";
+// ADR-014: ExpiringDraftsModal desactivado — el carrito vive client-side, no
+// hay drafts en vivo que expirar. Componente preservado en repo por si se
+// vuelve al modelo server-authoritative.
+// import { ExpiringDraftsModal } from "@/components/ExpiringDraftsModal";
 import { useEffect, useState } from "react";
 import { primaryRole, type PageKey } from "@/lib/permisos";
 import { useQueryClient } from "@tanstack/react-query";
@@ -272,6 +276,8 @@ export function Layout() {
       <main className="flex-1 overflow-y-auto">
         <Outlet />
       </main>
+
+      {/* ADR-014: <ExpiringDraftsModal /> desactivado — carrito client-side. */}
     </div>
   );
 }

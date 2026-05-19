@@ -32,6 +32,53 @@ class CheckoutService
      *
      * @throws \DomainException con mensaje legible para el usuario
      */
+    /**
+     * Checkout directo (ADR-014, client-authoritative cart): crea draft + items
+     * y delega al checkout clásico en una sola transacción. Usado cuando el
+     * frontend mantiene el carrito en memoria + localStorage y solo persiste
+     * al cobrar. Si el stock no alcanza, todo rollback — no queda draft sucio.
+     *
+     * @param array<int,array{product_id:int,quantity:float,price:float,price_level?:string}> $items
+     */
+    public function checkoutDirect(
+        int $storeId,
+        int $registerSessionId,
+        ?int $customerId,
+        array $items,
+        array $paymentsData,
+        float $discount,
+        int $userId,
+    ): Sale {
+        return DB::transaction(function () use ($storeId, $registerSessionId, $customerId, $items, $paymentsData, $discount, $userId) {
+            $draft = SalesDraft::create([
+                'store_id'            => $storeId,
+                'register_session_id' => $registerSessionId,
+                'user_id'             => $userId,
+                'customer_id'         => $customerId,
+                'status'              => SalesDraft::STATUS_OPEN,
+            ]);
+
+            foreach ($items as $item) {
+                SalesDraftItem::create([
+                    'draft_id'    => $draft->id,
+                    'product_id'  => (int) $item['product_id'],
+                    'quantity'    => (float) $item['quantity'],
+                    'price'       => (float) $item['price'],
+                    // 'total' lo computa el booted() del modelo
+                ]);
+            }
+
+            // Delegamos al checkout clásico — toda la lógica de stock, locks,
+            // payments, descuento de inventario, ya está probada.
+            return $this->checkout(
+                draftId:      $draft->id,
+                paymentsData: $paymentsData,
+                discount:     $discount,
+                userId:       $userId,
+            );
+        });
+    }
+
     public function checkout(
         int $draftId,
         array $paymentsData,
@@ -75,7 +122,7 @@ class CheckoutService
 
             // ── 4. Verificar stock con lockForUpdate ──────────────────────────
             // Retorna un mapa product_id → Inventory (el registro que se descontará)
-            $inventoryMap = $this->reserveStock($draft->store_id, $draftItems);
+            $inventoryMap = $this->reserveStock($draft->store_id, $draftItems, $draft->id);
 
             // ── 5. Crear Sale ─────────────────────────────────────────────────
             [$totalCommission, $paymentsWithCommission] = $this->calculateCommissions($paymentsData);
@@ -153,11 +200,51 @@ class CheckoutService
      * @return array<int, Inventory>
      * @throws \DomainException si falta stock para algún producto
      */
-    private function reserveStock(int $storeId, Collection $draftItems): array
+    private function reserveStock(int $storeId, Collection $draftItems, ?int $excludeDraftId = null): array
     {
         $inventoryMap = [];
 
-        foreach ($draftItems as $item) {
+        // Orden de lock determinístico por product_id. Sin esto, dos cajeros que
+        // cobran simultáneo con orden distinto de items pueden hacer deadlock
+        // (A bloquea producto 1→2, B bloquea 2→1 → MySQL aborta una transacción).
+        $orderedItems = $draftItems->sortBy('product_id')->values();
+
+        foreach ($orderedItems as $item) {
+            // 1. Stock TOTAL en la tienda (agregado sobre todas las bodegas del store).
+            //    El inventario puede estar fragmentado entre bodegas; la disponibilidad
+            //    real para vender es la suma de las bodegas activas de la tienda.
+            $stockInStore = (float) Inventory::query()
+                ->where('product_id', $item->product_id)
+                ->whereHas('warehouse', fn ($q) => $q
+                    ->where('store_id', $storeId)
+                    ->where('active', true)
+                )
+                ->sum('quantity');
+
+            // 2. Reservas por OTROS drafts open de la misma tienda. Sin esto, dos
+            //    cajeros pueden pasar la validación con el último producto y el
+            //    segundo descuenta a negativo.
+            $reservedByOthers = (float) DB::table('sales_draft_items as sdi')
+                ->join('sales_drafts as sd', 'sd.id', '=', 'sdi.draft_id')
+                ->where('sdi.product_id', $item->product_id)
+                ->where('sd.store_id', $storeId)
+                ->where('sd.status', SalesDraft::STATUS_OPEN)
+                ->when($excludeDraftId !== null, fn ($q) => $q->where('sd.id', '!=', $excludeDraftId))
+                ->sum('sdi.quantity');
+
+            $availableForMe = $stockInStore - $reservedByOthers;
+
+            if ($availableForMe < $item->quantity) {
+                $name = $item->product?->name ?? "producto ID:{$item->product_id}";
+                $msg = $reservedByOthers > 0
+                    ? "Stock insuficiente para '{$name}'. Otros cajeros reservaron {$reservedByOthers}, disponible para ti: {$availableForMe}, solicitado: {$item->quantity}."
+                    : "Stock insuficiente para '{$name}'. Disponible: {$availableForMe}, solicitado: {$item->quantity}.";
+                throw new \DomainException($msg);
+            }
+
+            // 3. Asignar a UNA bodega para el descuento físico. Preferimos la
+            //    bodega con más stock para minimizar fragmentación. lockForUpdate
+            //    previene que dos checkouts simultáneos descuenten la misma fila.
             $inventory = Inventory::query()
                 ->lockForUpdate()
                 ->where('product_id', $item->product_id)
@@ -169,7 +256,8 @@ class CheckoutService
                 ->orderByDesc('quantity')
                 ->first();
 
-            // Fallback: cualquier bodega con stock suficiente
+            // Fallback: cualquier bodega con stock suficiente (situación rara —
+            // tienda sin bodegas asignadas).
             $inventory ??= Inventory::query()
                 ->lockForUpdate()
                 ->where('product_id', $item->product_id)
@@ -179,9 +267,8 @@ class CheckoutService
 
             if (! $inventory) {
                 $name = $item->product?->name ?? "producto ID:{$item->product_id}";
-                $available = (float) Inventory::where('product_id', $item->product_id)->sum('quantity');
                 throw new \DomainException(
-                    "Stock insuficiente para '{$name}'. Disponible: {$available}, solicitado: {$item->quantity}."
+                    "Stock disponible para '{$name}' pero ninguna bodega individual tiene {$item->quantity} unidades — inventario fragmentado, contacta admin."
                 );
             }
 
