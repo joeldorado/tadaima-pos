@@ -10,6 +10,9 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Product extends Model
 {
+    public const TYPE_PRODUCT = 'product';
+    public const TYPE_MANGA   = 'manga';
+
     protected $fillable = [
         'category_id',
         'name',
@@ -18,11 +21,16 @@ class Product extends Model
         'description',
         'cost',
         'active',
+        'product_type',
     ];
 
     protected $casts = [
         'cost'   => 'float',
         'active' => 'boolean',
+    ];
+
+    protected $attributes = [
+        'product_type' => self::TYPE_PRODUCT,
     ];
 
     // ─── Relations ────────────────────────────────────────────────────────────
@@ -67,11 +75,25 @@ class Product extends Model
         return $this->hasMany(ProductStorePrice::class)->orderBy('store_id')->orderBy('price_level');
     }
 
+    /**
+     * Extensión específica para mangas (volume, editorial, genre). Solo tiene
+     * fila cuando product_type='manga'. Para productos regulares retorna null.
+     */
+    public function mangaDetails(): HasOne
+    {
+        return $this->hasOne(ProductMangaDetail::class);
+    }
+
     // ─── Scopes ───────────────────────────────────────────────────────────────
 
     public function scopeActive(Builder $query): Builder
     {
         return $query->where('active', true);
+    }
+
+    public function scopeOfType(Builder $query, string $type): Builder
+    {
+        return $query->where('product_type', $type);
     }
 
     public function scopeSearch(Builder $query, string $term): Builder

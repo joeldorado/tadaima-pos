@@ -81,6 +81,21 @@ class ProductResource extends JsonResource
 
             'stock_total' => $stockTotal,
 
+            // Discriminador para que el frontend sepa si es producto o manga.
+            // Default 'product' por compatibilidad (rows pre-migración).
+            'product_type' => $this->product_type ?? 'product',
+
+            // Solo presente cuando product_type='manga' Y mangaDetails fue
+            // eager-loaded (ProductController lo carga si ?type=manga).
+            'manga_details' => $this->when(
+                $this->relationLoaded('mangaDetails') && $this->mangaDetails,
+                fn () => [
+                    'volume_number' => $this->mangaDetails->volume_number,
+                    'editorial'     => $this->mangaDetails->editorial,
+                    'genre'         => $this->mangaDetails->genre,
+                ],
+            ),
+
             'created_at' => $this->created_at?->toISOString(),
             'updated_at' => $this->updated_at?->toISOString(),
         ];

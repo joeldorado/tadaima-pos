@@ -32,11 +32,23 @@ class ProductController extends Controller
         $light = $request->boolean('light');
 
         // Light mode: drop category eager-load (only category_id is sent).
-        $query = Product::query()->with(
-            $light
-                ? ['price', 'images', 'paymentMethod']
-                : ['category', 'price', 'images', 'paymentMethod']
-        );
+        // Cuando filtramos por product_type='manga', eager-load mangaDetails
+        // para que el resource pueda exponer volume/editorial/genre.
+        $type = $request->filled('type') ? (string) $request->get('type') : null;
+        $needsMangaDetails = $type === Product::TYPE_MANGA;
+
+        $relations = $light
+            ? ['price', 'images', 'paymentMethod']
+            : ['category', 'price', 'images', 'paymentMethod'];
+        if ($needsMangaDetails) {
+            $relations[] = 'mangaDetails';
+        }
+
+        $query = Product::query()->with($relations);
+
+        if ($type !== null) {
+            $query->ofType($type);
+        }
 
         // Scope the stock sum to the selected store's warehouses when filtering
         if ($storeId) {
@@ -116,17 +128,24 @@ class ProductController extends Controller
     public function store(StoreProductRequest $request): JsonResponse
     {
         $product = DB::transaction(function () use ($request) {
-            $product = Product::create($request->only([
+            $payload = $request->only([
                 'name', 'sku', 'barcode', 'description', 'category_id', 'cost', 'active',
-            ]));
+            ]);
+            // product_type opcional — admin de mangas lo manda como 'manga'.
+            // Default 'product' viene del modelo.
+            if ($request->filled('product_type')) {
+                $payload['product_type'] = $request->get('product_type');
+            }
+            $product = Product::create($payload);
 
             $this->syncPrices($product, $request->input('prices', []));
             $this->syncPaymentMethod($product, $request);
+            $this->syncMangaDetails($product, $request);
 
             return $product;
         });
 
-        $product->load(['category', 'price', 'images', 'paymentMethod'])
+        $product->load(['category', 'price', 'images', 'paymentMethod', 'mangaDetails'])
                 ->loadSum('inventory', 'quantity');
 
         return $this->success(new ProductResource($product), 'Producto creado', 201);
@@ -140,9 +159,13 @@ class ProductController extends Controller
     public function update(UpdateProductRequest $request, Product $product): JsonResponse
     {
         DB::transaction(function () use ($request, $product) {
-            $product->update($request->only([
+            $payload = $request->only([
                 'name', 'sku', 'barcode', 'description', 'category_id', 'cost', 'active',
-            ]));
+            ]);
+            if ($request->filled('product_type')) {
+                $payload['product_type'] = $request->get('product_type');
+            }
+            $product->update($payload);
 
             if ($request->has('prices')) {
                 $this->syncPrices($product, $request->input('prices', []));
@@ -151,12 +174,42 @@ class ProductController extends Controller
             if ($request->hasAny(['allow_cash', 'allow_card'])) {
                 $this->syncPaymentMethod($product, $request);
             }
+
+            $this->syncMangaDetails($product, $request);
         });
 
-        $product->load(['category', 'price', 'images', 'paymentMethod'])
+        $product->load(['category', 'price', 'images', 'paymentMethod', 'mangaDetails'])
                 ->loadSum('inventory', 'quantity');
 
         return $this->success(new ProductResource($product), 'Producto actualizado');
+    }
+
+    /**
+     * Upsert de detalles específicos de manga (volume_number, editorial, genre).
+     * Solo aplica si product_type === 'manga' y el request trae el sub-objeto.
+     */
+    private function syncMangaDetails(Product $product, $request): void
+    {
+        if ($product->product_type !== Product::TYPE_MANGA) {
+            return;
+        }
+        if (! $request->hasAny(['manga_details', 'volume_number', 'editorial', 'genre'])) {
+            return;
+        }
+
+        $details = $request->input('manga_details', []);
+        // Aceptar tanto `manga_details: {...}` como campos flat al top-level
+        // (para compatibilidad con el formulario actual de MangaEditModal).
+        $payload = [
+            'volume_number' => $details['volume_number'] ?? $request->input('volume_number'),
+            'editorial'     => $details['editorial']     ?? $request->input('editorial'),
+            'genre'         => $details['genre']         ?? $request->input('genre'),
+        ];
+
+        \App\Models\ProductMangaDetail::updateOrCreate(
+            ['product_id' => $product->id],
+            $payload,
+        );
     }
 
     // ─── Destroy ──────────────────────────────────────────────────────────────

@@ -2139,7 +2139,15 @@ export function ProductsPage() {
       {showMangaModal && (
         <MangaBatchModal
           onClose={() => setShowMangaModal(false)}
-          onSuccess={() => { void invalidateMangas(); toast.success('Tomos registrados correctamente'); setPageSection('tomos'); }}
+          onSuccess={() => {
+            // Post-unificación: los mangas viven en `products` con type='manga'.
+            // Invalidamos AMBOS caches: el legacy de mangas (tab Tomos) y el de
+            // products (Caja/scan/catálogo lo necesitan para ver el manga nuevo).
+            void invalidateMangas();
+            void invalidateProducts();
+            toast.success('Tomos registrados correctamente');
+            setPageSection('tomos');
+          }}
           locations={locations}
           canViewCost={canViewCost}
         />
@@ -2151,11 +2159,13 @@ export function ProductsPage() {
           onClose={() => setEditingManga(null)}
           onSuccess={_updated => {
             void invalidateMangas();
+            void invalidateProducts();
             setEditingManga(null);
             toast.success('Tomo actualizado.');
           }}
           onDeleted={() => {
             void invalidateMangas();
+            void invalidateProducts();
             setEditingManga(null);
             toast.success('Tomo eliminado.');
           }}

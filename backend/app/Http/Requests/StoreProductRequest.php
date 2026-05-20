@@ -31,6 +31,17 @@ class StoreProductRequest extends FormRequest
 
             'allow_cash'    => ['boolean'],
             'allow_card'    => ['boolean'],
+
+            // Tipo de producto: 'product' (default) o 'manga'. Cuando es manga
+            // los detalles específicos pueden venir como sub-objeto o flat.
+            'product_type'  => ['nullable', 'string', 'in:product,manga'],
+            'manga_details'               => ['nullable', 'array'],
+            'manga_details.volume_number' => ['nullable', 'integer', 'min:0', 'max:65535'],
+            'manga_details.editorial'     => ['nullable', 'string', 'max:255'],
+            'manga_details.genre'         => ['nullable', 'string', 'max:255'],
+            'volume_number' => ['nullable', 'integer', 'min:0', 'max:65535'],
+            'editorial'     => ['nullable', 'string', 'max:255'],
+            'genre'         => ['nullable', 'string', 'max:255'],
         ];
     }
 }

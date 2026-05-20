@@ -60,6 +60,11 @@ class ProductLightResource extends JsonResource
                 : true,
 
             'stock_total' => $stockTotal,
+
+            // Discriminador para que el frontend filtre/etiquete mangas si lo
+            // necesita. Default 'product' por compatibilidad con rows que aún
+            // no tienen la columna en envs viejos.
+            'product_type' => $this->product_type ?? 'product',
         ];
     }
 }

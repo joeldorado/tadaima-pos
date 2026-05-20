@@ -1981,3 +1981,172 @@ Verificado con `curl` real: endpoint devuelve los 2 folios correctamente post-fi
 | Tab Folios con lista de apartados | ✅ |
 | GET /pre-sale-orders funcional | ✅ Fix aplicado |
 | Folios del Samsung Galaxy visibles en UI | ✅ Verificado con curl |
+
+---
+
+## Sesión 2026-05-19 — QA Web 4 + perf checkout + UNIFICACIÓN mangas como productos
+
+### Resumen de la sesión
+
+Múltiples bugs reportados por Rubén en QA Web 4 (PDF), más optimizaciones y una decisión arquitectónica grande al final: **unificar mangas con productos** para eliminar deuda técnica del sistema dual.
+
+### Bugs QA Web 4 resueltos (commit `4f900af`)
+
+| # | Bug | Causa | Fix |
+|---|---|---|---|
+| 1 | Terminal: campo "Sucursal" desaparece al editar | `{!modal.data.id && ...}` envolvía el field | Removido wrapper + `store_id` añadido a `UpdateTerminalPayload` y `updateTerminal()` call |
+| 2 | Cajero ve todas las tiendas + puede editar | `StoresPage` no filtraba por user.store_id ni gateaba el botón Editar/Nueva Tienda | Añadidos helpers `isAdminUser`, `canEditStores`; filtro `getStores().filter()`; props `canEdit` en `StoreCard` |
+| 3 | Cajero ve productos de otras sucursales | `ProductsPage` inicializaba `selectedStoreId = null` y el cajero veía global | `useEffect` que fuerza `selectedStoreId = user.store_id` para no-admin |
+| 6 | Scanner agrega 2 productos por escaneo | Físico (rebote del HID) o React StrictMode en dev | `useRef` con timestamp en `handleScannedCode` — ignora mismo código <500ms |
+
+### Bug A — Stock fantasma cross-caja (commit `e82681e`)
+
+**Síntoma:** "Otros cajeros reservaron 4, disponible para ti: -2, solicitado: 1" — venta bloqueada aunque el producto físicamente existe.
+
+**Causa raíz:** `CheckoutService::reserveStock` sumaba `sales_drafts.status='open'` de OTROS cajeros para restar del stock disponible. Con ADR-014 (carrito client-side) los drafts solo deberían vivir milisegundos dentro de la transacción, pero quedaban huérfanos por:
+- Checkouts antiguos pre-ADR-014 que la migración previa no había alcanzado
+- Crashes mid-transacción que dejaban drafts open en MySQL
+- Crons de expiración (`drafts:expire-warned`) estaban comentados en `routes/console.php`
+
+**Fix:**
+1. `reserveStock` ahora solo valida stock real + `lockForUpdate` (que ya prevenía oversell). Mensaje de error compatible con el regex del frontend para que auto-quite el item del carrito.
+2. Migración one-shot `2026_05_19_000001_cancel_open_drafts_after_killing_cross_caja.php` cancela todos los `status='open'` atorados en prod.
+
+### Bug B — Admin no veía selector al cerrar caja (commit `e82681e`)
+
+**Causa:** `useEffect` (SellPage:537) re-asignaba `activeStore` desde `cashSession` apenas el admin lo ponía en null tras `handleCloseCash`. La query de session aún no se invalidaba y el efecto leía la cached → admin nunca veía el guard de selector de tiendas.
+
+**Fix:** El efecto ahora solo aplica si `cashSession?.status === 'open'`. Sesiones cerradas no reviven el `activeStore`.
+
+### UX caja — rename + atajo flotante (commits `e82681e`, `e58e99d`, `73952d8`)
+
+- Tab 1 → "Caja Principal" (turno del cajero), tabs 2..5 → "Venta 2/3/4/5"
+- Header del tab bar muestra "CAJA · {tienda} · {cajero}"
+- Card flotante bottom-right con accesos rápidos a otras ventas (Crown icon para principal, ShoppingCart para ventas paralelas)
+- Pulso rojo en filas con items, gris en vacías
+- Botón "cancelar venta" (Trash2) solo en Venta 2..5 — Caja Principal nunca se borra
+- Variables `--td-*` para soporte light/dark theme
+
+### Auto-refresh React Query (commit `e58e99d`)
+
+**Síntoma:** producto nuevo no se veía en Caja hasta darle sync manual.
+
+**Causa:** `useProductsLightQuery` tenía `refetchOnMount: false` con `staleTime: 24h`. Cuando `ProductsPage` invalidaba post-create, la query marcaba stale pero al volver a Caja NUNCA refetcheaba.
+
+**Fix:** Removido `refetchOnMount: false` de `useProductsQuery`, `useProductsLightQuery`, `useProductsInfiniteQuery`, `useCustomersAllQuery`. Default `true`: si stale, refetch al mount; si fresh, lee del cache. Cero overhead extra.
+
+### Perf checkout — -24% queries por venta (commit `73952d8`)
+
+Tres optimizaciones validadas con phpunit 27/27:
+
+1. **`SalesDraftItem::withoutEvents()` en checkoutDirect**: el observer `bumpDraftFromItem` gastaba 2 queries por item (lazy load del draft + saveQuietly). En checkout el draft se completa en la misma transacción — bump es desperdicio. Replicamos el cálculo de `total` y `created_at` a mano.
+2. **`reserveStock` fusiona sum + lock en 1 query**: antes hacía `Inventory::sum()` y luego `Inventory::lockForUpdate()->first()` por separado. Ahora trae las filas con lock + suma en PHP + elige bodega en PHP.
+3. **Prefetch warehouses + `whereIn`**: una sola query al inicio del loop trae los warehouse_ids activos de la tienda. El loop usa `whereIn('warehouse_id', $ids)` en lugar de `whereHas('warehouse', ...)` que generaba `EXISTS` correlacionadas.
+
+**Resultado:** ~21 → ~16 queries para venta de 1 item, ~28 → ~22 para 3 items. Lock transaccional más corto.
+
+### Deploy
+
+Cambio a Cloud Build (`gcloud run deploy --source`) para no depender de Docker local. Revisión `tadaima-00039-8fr` sirviendo 100% del tráfico en us-central1.
+
+---
+
+## Sesión 2026-05-19 (continuación) — Unificar mangas como productos
+
+### Decisión arquitectónica
+
+Los mangas (librerías) viven hoy en tablas paralelas (`mangas`, `manga_inventories`) con su propio controller, modelo y modal. En Caja NUNCA se han podido cobrar porque `CheckoutService::reserveStock` solo consulta `inventories`, no `manga_inventories`. Las columnas `manga_id` en `sale_items` y `sales_draft_items` existen pero la lógica de checkout, devoluciones y `inventory_movements` no las usa.
+
+**Opciones evaluadas** (validadas con `code-architect` agent):
+
+| Opción | Pros | Contras |
+|---|---|---|
+| Mantener dual + añadir branching en checkout/return/inventory | Sin migración de datos | Branching en muchos archivos, deuda técnica permanente |
+| **Migrar mangas a products con `product_type='manga'`** (Class Table Inheritance) | Cero branching en checkout/return/reportes, schema extensible | Migración de datos histórica (mitigable con backup) |
+
+**Elegida:** Class Table Inheritance — `products` (base) + `product_manga_details` (extensión) + `inventories` (compartida). Los detalles específicos de manga (`volume_number`, `editorial`, `genre`) viven en la tabla extensión, no como nullables en `products`.
+
+### Plan
+
+#### Schema (1 migración nueva)
+- `products.product_type ENUM('product','manga')` default `'product'` + índice
+- Nueva tabla `product_manga_details(product_id PK, volume_number, editorial, genre)`
+- Migración de datos (atomic):
+  - Por cada manga → INSERT en products + product_manga_details + product_prices
+  - Copia `manga_inventories` → `inventories` con el nuevo `product_id`
+  - Remappea `sale_items.manga_id` → `product_id` (mapping manga_id → new product_id)
+  - `sales_draft_items` ya están cancelados todos (migración del Bug A)
+- Mantiene `mangas` y `manga_inventories` como backup. Drop después de 1-2 semanas en prod.
+
+#### Backend
+- `ProductController::index` acepta `?type=manga|product`
+- `MangaController` se convierte en facade que delega a Product con `type='manga'`
+- `CheckoutService` — **CERO cambios** (manga ahora es product, ya funciona)
+- `SalesController::return` — **CERO cambios** (manga ahora es product)
+- `InventoryMovement` — **CERO cambios** (todo es product_id)
+- `SaleItem::manga()` — no se necesita, `product()` cubre todo
+
+#### Frontend
+- `ProductsPage` tab "Tomos" → `useProductsQuery({ type: 'manga' })`
+- `MangaEditModal` sigue existiendo (UI específica para alta de tomo) pero internamente POSTea a `/products` con `product_type='manga'` + payload de details
+- `SellPage` — **CERO cambios** (los mangas aparecen como productos normales en search/scan/catálogo)
+
+### Riesgos críticos y mitigaciones
+
+| Riesgo | Mitigación |
+|---|---|
+| Conflicto de `sku` único entre product y manga | Prefijar `MANGA-{code}` si colisiona durante migración |
+| Mangas históricas en sale_items rompen reportes existentes | UPDATE de remapping atomic en la misma transacción de migración |
+| `mangas` con `manga_inventories` 1:N por bodega | Mismo schema en `inventories`, copia directa |
+| `mangas` sin `allow_cash/allow_card` | Default `true,true` al INSERT |
+| Rollback necesario | `down()` de la migración vacía las columnas nuevas; los datos siguen intactos en `mangas` y `manga_inventories` originales |
+| Stock de manga editado desde MangaEditModal | El modal debe POSTear a `/inventory/{product_id}/{warehouse_id}` (no a `/manga-inventory/`). Cambio de 1 línea. |
+
+### Estimación
+
+- Migración SQL + datos: 45 min
+- Backend (ProductController filtro + MangaController facade): 30 min  
+- Frontend (ProductsPage hook + MangaEditModal POST a products): 30 min
+- Tests + dry-run de migración + deploy: 30 min
+- **Total: ~2.25 horas**
+
+### Estado actual
+
+🟡 En progreso — arrancando con la migración SQL.
+
+
+### Implementación completada
+
+**Backend (compatible al 100%, frontend cero cambios obligatorios):**
+
+| Archivo | Cambio |
+|---|---|
+| `backend/database/migrations/2026_05_19_000002_unify_mangas_into_products.php` | Schema + data migration. Agrega `product_type` y `product_manga_details`. Migra cada manga → product (resuelve colisiones de SKU prefijando `MANGA-{id}-{code}`). Copia inventarios. Re-mapea `sale_items.manga_id` → `product_id`. Idempotente: si re-corre, skipea las ya migradas. Mantiene `mangas` y `manga_inventory` como backup. |
+| `backend/app/Models/Product.php` | Constantes `TYPE_PRODUCT`, `TYPE_MANGA`. `product_type` en fillable + default. Relación `mangaDetails()`. Scope `ofType()`. |
+| `backend/app/Models/ProductMangaDetail.php` | **NUEVO** — modelo CTI extensión, PK `product_id`, FK cascade. |
+| `backend/app/Http/Controllers/Api/ProductController.php` | `index()` acepta `?type=manga\|product`, eager-loads `mangaDetails` cuando filtra mangas. `store()`/`update()` aceptan `product_type` + sub-objeto `manga_details` (o flat compat). Helper `syncMangaDetails()`. |
+| `backend/app/Http/Controllers/Api/MangaController.php` | **Reescrito como facade**: opera sobre Product (type=manga) y ProductMangaDetail. Mantiene la API pública `/mangas` con shape compatible vía `MangaCompatResource`. Detecta intentos de editar productos no-manga y rechaza. Destroy desactiva si tiene ventas. |
+| `backend/app/Http/Controllers/Api/MangaInventoryController.php` | **Reescrito como facade**: lee/escribe `inventory` filtrando por `products.product_type='manga'`. Los IDs en la URL ahora son product_id. |
+| `backend/app/Http/Resources/MangaCompatResource.php` | **NUEVO** — toma un `Product` y devuelve el shape histórico de `MangaResource`. Deriva `profit_margin_percent` de cost/price cuando se necesita. |
+| `backend/app/Http/Resources/ProductResource.php` | Añade `product_type` y `manga_details` (when eager-loaded). |
+| `backend/app/Http/Resources/ProductLightResource.php` | Añade `product_type` para que SellPage pueda etiquetar/filtrar si quiere. |
+| `backend/app/Http/Resources/MangaInventoryResource.php` | Mapea `product_id` → `manga_id` en el shape de salida para compat con frontend. |
+| `backend/app/Http/Requests/StoreProductRequest.php` + `UpdateProductRequest.php` | Reglas para `product_type`, `manga_details.{volume_number,editorial,genre}` (sub-objeto o flat). |
+
+**Frontend:**
+
+| Archivo | Cambio |
+|---|---|
+| `landing/src/pages/ProductsPage.tsx` | Tras crear/editar/borrar manga, invalida **además** `queryKeys.products.all` para que SellPage vea el manga nuevo en su catálogo/scan/búsqueda. Cero cambios más — `useMangasQuery` sigue funcionando contra el endpoint legacy `/mangas` (que ahora es facade). |
+
+**Lo que se logra:**
+
+- Cajero escanea código de manga → backend busca en `products` por barcode/sku → encuentra y agrega al carrito como producto normal
+- Cajero busca por nombre de manga → aparece en resultados de búsqueda igual que producto
+- Cajero cobra venta con mangas → `CheckoutService` descuenta `inventory` automáticamente (no necesita branching)
+- Devoluciones de mangas → `SalesController::return` restaura `inventory` automáticamente
+- Reportes de inventario → unificados en `inventory` table
+- Admin crea/edita manga desde tab Tomos → escribe en `products` + `product_manga_details` + `inventory` (manga_inventory legacy queda intacto como backup)
+
+**Cero código nuevo en checkout, returns, inventory_movements, reportes.** La unificación elimina la deuda técnica permanente que el architect identificó como riesgo crítico.
+

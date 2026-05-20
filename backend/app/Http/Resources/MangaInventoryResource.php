@@ -9,9 +9,12 @@ class MangaInventoryResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
+        // Post-unificación: el row viene de la tabla `inventory` con
+        // product_id. Exponemos product_id como manga_id para mantener el
+        // shape histórico que espera el frontend.
         return [
             'id'           => $this->id,
-            'manga_id'     => $this->manga_id,
+            'manga_id'     => $this->product_id ?? $this->manga_id ?? null,
             'warehouse_id' => $this->warehouse_id,
             'quantity'     => $this->quantity,
 
