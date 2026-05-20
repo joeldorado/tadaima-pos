@@ -2150,3 +2150,39 @@ Los mangas (librerías) viven hoy en tablas paralelas (`mangas`, `manga_inventor
 
 **Cero código nuevo en checkout, returns, inventory_movements, reportes.** La unificación elimina la deuda técnica permanente que el architect identificó como riesgo crítico.
 
+
+---
+
+## Cierre sesión 2026-05-19
+
+### Deploys del día
+
+| Revisión | Commits incluidos | Contenido |
+|---|---|---|
+| `tadaima-00039-8fr` | `4f900af` + `e82681e` + `e58e99d` + `73952d8` | Fixes QA Web 4 (terminal/cajero/productos/scanner) + kill cross-caja + admin selector cerrar caja + rename Caja Principal/Venta 2-5 + atajo flotante + auto-refresh React Query + -24% queries checkout |
+| `tadaima-00040-jd5` | `1207d9f` | **Unificación mangas → products** (Class Table Inheritance). Migración de schema + datos. MangaController/MangaInventoryController como facade. Frontend cero cambios obligatorios |
+| `tadaima-00041-49m` | `df8a220` | Bug A: +/- en catálogo no escalaba anticipo (faltaba sellingCatalogId en la condición de changeQty). Bug B: Caja respeta store_limits por tienda (backend expone reserved_by_store, frontend lo lee en CatalogCard) |
+
+### Estado del sistema en prod (`https://tadaima-987277625193.us-central1.run.app`)
+
+- ✅ Migración `unify_mangas_into_products` aplicada — todos los mangas existentes ahora viven en `products` con `product_type='manga'`. Tablas `mangas` y `manga_inventory` quedan como backup (drop después de 2 semanas)
+- ✅ Cajas/ventanas: Caja Principal + Venta 2..5, atajo flotante a otras ventas funcionando
+- ✅ Catálogo de Caja (búsqueda/scan) ahora ve productos Y mangas indistintamente
+- ✅ Checkout funciona para mangas sin código nuevo (mismo pipeline que productos regulares)
+- ✅ +/- en catálogo escala anticipo correctamente
+- ✅ store_limits respetados en UI (badge "X disponibles" por tienda) y backend (enforce al cobrar)
+- ✅ PHPUnit 27/27 OK
+
+### Lo que sigue (pendiente)
+
+1. **Bugs nuevos de mañana** — Joel los reportará después de testing con Rubén/hermano
+2. **Cleanup tablas legacy** — drop `mangas` y `manga_inventory` después de validar 1-2 semanas que la unificación no rompió nada en prod
+3. **Caso A de preventas (cargar múltiples folios en misma mesa)** — confirmado por Joel que ya se maneja vía folio con array interno de preventas, no se requiere cambio
+4. **Devoluciones de mangas como producto** — verificar que funciona end-to-end en prod (no se hizo migración de tests para esto pero el código ya no branchea)
+
+### Notas operativas
+
+- Deploy script ahora usa `gcloud run deploy --source` (Cloud Build remoto) — ya no se necesita Docker Desktop local
+- Frontend cache (React Query + IndexedDB persister) refresca automáticamente al volver a Caja después de mutaciones gracias a `refetchOnMount: true`
+- Migraciones corren automáticamente en el entrypoint del contenedor Cloud Run
+
