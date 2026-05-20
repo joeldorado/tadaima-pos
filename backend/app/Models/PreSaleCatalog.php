@@ -88,6 +88,10 @@ class PreSaleCatalog extends Model
             return $this->preorder_limit;
         }
         $row = $limits->firstWhere('store_id', $storeId);
+        // Whitelist explícita: tienda asignada → su límite; tienda no asignada → 0.
+        // Si el admin quiere que un catálogo se venda en TODAS las tiendas, debe
+        // dejar store_limits vacío (cae al preorder_limit global) en lugar de
+        // listar solo algunas.
         return $row ? (int) $row->limit_qty : 0;
     }
 

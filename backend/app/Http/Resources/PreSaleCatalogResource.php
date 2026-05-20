@@ -53,6 +53,18 @@ class PreSaleCatalogResource extends JsonResource
                 fn () => $this->reserved_count
             ),
 
+            // Reservados agrupados por tienda. Sin esto la Caja no puede calcular
+            // "disponible en mi tienda" cuando hay store_limits — el reserved_count
+            // global mezcla todas las tiendas.
+            'reserved_by_store' => $this->when(
+                $this->relationLoaded('activeOrderItems'),
+                fn () => $this->activeOrderItems
+                    ->groupBy(fn ($it) => (int) ($it->order->store_id ?? 0))
+                    ->map(fn ($group) => (int) $group->sum('quantity'))
+                    ->reject(fn ($_, $storeId) => $storeId === 0)
+                    ->toArray() // { "store_id": quantity }
+            ),
+
             // Límites por tienda (si están definidos). Frontend admin los edita en el
             // tab "Tiendas" del modal de catálogo.
             'store_limits' => $this->when(

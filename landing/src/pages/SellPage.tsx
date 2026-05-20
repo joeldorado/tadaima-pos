@@ -1097,7 +1097,13 @@ export function SellPage() {
           ? {
               ...i,
               quantity: newQty,
-              ...(m.isPreventa && i.depositAmount != null
+              // Escala el anticipo proporcional cuando aplica:
+              //  - modo preventa explícita (m.isPreventa)
+              //  - item de catálogo en mixed-cart (sellingCatalogId)
+              // Sin la segunda condición, +/- subía qty pero no escalaba
+              // el depositAmount del catálogo y el total a cobrar quedaba
+              // congelado en el anticipo inicial (bug reportado en QA).
+              ...((m.isPreventa || i.sellingCatalogId != null) && i.depositAmount != null
                 ? { depositAmount: Math.max(0, unitPrice * newQty) }
                 : {}),
             }
@@ -4201,11 +4207,26 @@ export function SellPage() {
 
             const imgSrc = catalog.image_url ?? (catalog.image_path ? storageUrl(catalog.image_path) : null);
 
-            // Disponibilidad: si el catálogo tiene preorder_limit, calcular cuánto queda
-            // (límite − reservados ya). Si remaining ≤ 0, agotado: bloquear click y
-            // marcar visualmente. Sin preorder_limit, ilimitado.
-            const reserved = catalog.reserved_count ?? 0;
-            const limit = catalog.preorder_limit;
+            // Disponibilidad por tienda:
+            //  - Si el catálogo tiene store_limits y la tienda activa está asignada,
+            //    usar `limit_qty` específico + `reserved_by_store[active]` para
+            //    calcular cuánto queda EN ESA TIENDA.
+            //  - Si tiene store_limits pero la tienda activa NO está asignada,
+            //    marcar agotado (la tienda no participa en este catálogo).
+            //  - Sin store_limits, fallback al preorder_limit + reserved_count global.
+            const storeLimitRow = catalog.store_limits?.find(sl => sl.store_id === activeStore?.id);
+            const hasStoreLimits = (catalog.store_limits?.length ?? 0) > 0;
+            let limit: number | null;
+            let reserved: number;
+            if (hasStoreLimits) {
+              limit = storeLimitRow?.limit_qty ?? 0;
+              reserved = activeStore?.id != null
+                ? (catalog.reserved_by_store?.[String(activeStore.id)] ?? 0)
+                : 0;
+            } else {
+              limit = catalog.preorder_limit;
+              reserved = catalog.reserved_count ?? 0;
+            }
             const remaining = limit != null ? Math.max(0, limit - reserved) : null;
             const isAgotado = remaining !== null && remaining <= 0;
 

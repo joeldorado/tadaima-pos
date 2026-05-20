@@ -21,7 +21,14 @@ class PreSaleCatalogsController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $query = PreSaleCatalog::with(['category', 'supplier', 'product', 'orderItems', 'activeOrderItems', 'soldOrderItems', 'deliveredOrderItems', 'storeLimits'])
+        $query = PreSaleCatalog::with([
+            'category', 'supplier', 'product',
+            'orderItems',
+            // Nested order.store_id necesario para calcular reservados por tienda
+            // sin N+1 al renderizar reserved_by_store en el resource.
+            'activeOrderItems.order:id,store_id',
+            'soldOrderItems', 'deliveredOrderItems', 'storeLimits',
+        ])
             ->when($request->filled('status'),      fn ($q) => $q->where('status',      $request->status))
             ->when($request->filled('category_id'), fn ($q) => $q->where('category_id', $request->category_id))
             ->when($request->filled('supplier_id'), fn ($q) => $q->where('supplier_id', $request->supplier_id))

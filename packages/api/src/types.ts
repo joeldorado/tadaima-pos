@@ -510,6 +510,12 @@ export interface PreSaleCatalog {
   created_by: { id: number; name: string } | null
   /** Computed — requires orderItems relation loaded */
   reserved_count: number | null
+  /**
+   * Reservados agrupados por tienda. Permite calcular "disponible en mi tienda"
+   * cuando el catálogo usa store_limits. Map: `{ store_id: cantidad }`.
+   */
+  reserved_by_store?: Record<string, number>
+
   /** All non-cancelled orders — never decreases after liquidation */
   sold_count: number | null
   /** Orders already delivered/liquidated */
