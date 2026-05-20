@@ -122,7 +122,7 @@ class CheckoutService
 
             // ── 4. Verificar stock con lockForUpdate ──────────────────────────
             // Retorna un mapa product_id → Inventory (el registro que se descontará)
-            $inventoryMap = $this->reserveStock($draft->store_id, $draftItems, $draft->id);
+            $inventoryMap = $this->reserveStock($draft->store_id, $draftItems);
 
             // ── 5. Crear Sale ─────────────────────────────────────────────────
             [$totalCommission, $paymentsWithCommission] = $this->calculateCommissions($paymentsData);
@@ -200,7 +200,7 @@ class CheckoutService
      * @return array<int, Inventory>
      * @throws \DomainException si falta stock para algún producto
      */
-    private function reserveStock(int $storeId, Collection $draftItems, ?int $excludeDraftId = null): array
+    private function reserveStock(int $storeId, Collection $draftItems): array
     {
         $inventoryMap = [];
 
@@ -210,9 +210,12 @@ class CheckoutService
         $orderedItems = $draftItems->sortBy('product_id')->values();
 
         foreach ($orderedItems as $item) {
-            // 1. Stock TOTAL en la tienda (agregado sobre todas las bodegas del store).
-            //    El inventario puede estar fragmentado entre bodegas; la disponibilidad
-            //    real para vender es la suma de las bodegas activas de la tienda.
+            // ADR-014: el carrito vive client-side. Ya no consultamos sales_drafts
+            // para "reservar" stock por adelantado — esa capa se volvió decorativa
+            // y solo generaba fantasmas que bloqueaban inventario real. El
+            // lockForUpdate de más abajo es suficiente para impedir oversell entre
+            // dos checkouts simultáneos: el primero gana, el segundo lee el stock
+            // ya descontado y falla con "Producto agotado".
             $stockInStore = (float) Inventory::query()
                 ->where('product_id', $item->product_id)
                 ->whereHas('warehouse', fn ($q) => $q
@@ -221,25 +224,16 @@ class CheckoutService
                 )
                 ->sum('quantity');
 
-            // 2. Reservas por OTROS drafts open de la misma tienda. Sin esto, dos
-            //    cajeros pueden pasar la validación con el último producto y el
-            //    segundo descuenta a negativo.
-            $reservedByOthers = (float) DB::table('sales_draft_items as sdi')
-                ->join('sales_drafts as sd', 'sd.id', '=', 'sdi.draft_id')
-                ->where('sdi.product_id', $item->product_id)
-                ->where('sd.store_id', $storeId)
-                ->where('sd.status', SalesDraft::STATUS_OPEN)
-                ->when($excludeDraftId !== null, fn ($q) => $q->where('sd.id', '!=', $excludeDraftId))
-                ->sum('sdi.quantity');
-
-            $availableForMe = $stockInStore - $reservedByOthers;
-
-            if ($availableForMe < $item->quantity) {
+            if ($stockInStore < $item->quantity) {
                 $name = $item->product?->name ?? "producto ID:{$item->product_id}";
-                $msg = $reservedByOthers > 0
-                    ? "Stock insuficiente para '{$name}'. Otros cajeros reservaron {$reservedByOthers}, disponible para ti: {$availableForMe}, solicitado: {$item->quantity}."
-                    : "Stock insuficiente para '{$name}'. Disponible: {$availableForMe}, solicitado: {$item->quantity}.";
-                throw new \DomainException($msg);
+                // Formato compatible con el regex del frontend (SellPage.handleCheckoutError),
+                // que auto-ajusta la qty del carrito al disponible real cuando la venta falla.
+                $suffix = $stockInStore <= 0
+                    ? " Otro cajero acaba de vender las últimas unidades."
+                    : '';
+                throw new \DomainException(
+                    "Stock insuficiente para '{$name}'. Disponible: {$stockInStore}, solicitado: {$item->quantity}.{$suffix}"
+                );
             }
 
             // 3. Asignar a UNA bodega para el descuento físico. Preferimos la

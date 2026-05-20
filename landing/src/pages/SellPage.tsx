@@ -202,16 +202,22 @@ function normalizeProduct(raw: any): Product {
 }
 
 let _mc = 2;
-const makeMesa = (n?: number): Mesa => ({
-  id: `mesa-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-  name: `Caja ${n !== undefined ? n : _mc++}`,
-  items: [],
-  discount: 0,
-  paymentMethod: "Efectivo",
-  isPreventa: false,
-  depositAmount: 0,
-  absorbCommission: true, // tienda siempre absorbe — nunca se cobra al cliente
-});
+// Tab 1 → "Caja Principal" (el turno del cajero), tabs 2..5 → "Venta N"
+// (ventas paralelas para atender múltiples clientes a la vez).
+const mesaLabel = (n: number): string => (n === 1 ? "Caja Principal" : `Venta ${n}`);
+const makeMesa = (n?: number): Mesa => {
+  const num = n !== undefined ? n : _mc++;
+  return {
+    id: `mesa-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    name: mesaLabel(num),
+    items: [],
+    discount: 0,
+    paymentMethod: "Efectivo",
+    isPreventa: false,
+    depositAmount: 0,
+    absorbCommission: true, // tienda siempre absorbe — nunca se cobra al cliente
+  };
+};
 
 // ─── Design tokens ─────────────────────────────────────────────────────────────
 const BG     = "var(--td-page-bg)";
@@ -241,7 +247,9 @@ export function SellPage() {
     (() => {
       const snap = draftStore.mesasSnapshot;
       if (Array.isArray(snap) && snap.length > 0) {
-        return snap as Mesa[];
+        // Normaliza labels antiguos ("Caja 1..5") al nuevo esquema
+        // ("Caja Principal" / "Venta 2..5"). Preserva los items intactos.
+        return (snap as Mesa[]).map((m, idx) => ({ ...m, name: mesaLabel(idx + 1) }));
       }
       return [makeMesa(1)];
     })()
@@ -532,10 +540,19 @@ export function SellPage() {
   const prodInputRef       = useRef<HTMLInputElement>(null);
   const cashInputRef       = useRef<HTMLInputElement>(null);
 
-  // Auto-select store from active session when admin navigates to Caja with
-  // an already-open session (stores and session may load in any order).
+  // Auto-select store from active session when admin navigates to Caja con
+  // sesión ya abierta (stores y session pueden cargar en cualquier orden).
+  // IMPORTANTE: solo aplica si la sesión sigue OPEN. Si el admin acaba de
+  // cerrar caja (setActiveStore(null) en handleCloseCash), no debemos
+  // re-asignar la tienda desde la sesión recién cerrada — el admin necesita
+  // ver el selector para elegir otra tienda.
   useEffect(() => {
-    if (cashSession?.register?.store_id && !activeStore && stores.length > 0) {
+    if (
+      cashSession?.status === 'open' &&
+      cashSession.register?.store_id &&
+      !activeStore &&
+      stores.length > 0
+    ) {
       const match = stores.find(s => s.id === cashSession.register!.store_id);
       if (match) setActiveStore(match);
     }
@@ -2586,7 +2603,14 @@ export function SellPage() {
       >
         <div className="flex items-center h-full px-6 border-r border-white/5 gap-3 shrink-0">
           <ShoppingBag size={18} className="text-[#E0221A]" />
-          <h2 className="text-[11px] font-black uppercase tracking-[0.2em] text-white">Venta</h2>
+          <div className="flex flex-col leading-tight">
+            <span className="text-[10px] font-black uppercase tracking-[0.18em] text-white">
+              Caja · {activeStore?.name ?? "Sin tienda"}
+            </span>
+            <span className="text-[9px] font-bold uppercase tracking-[0.15em] text-white/40">
+              {user?.name?.split(" ")[0] ?? "—"}
+            </span>
+          </div>
         </div>
 
         {mesas.map((m, idx) => (
@@ -2622,7 +2646,7 @@ export function SellPage() {
         <button 
           onClick={addMesa}
           className="flex items-center justify-center h-full px-6 hover:bg-[#E0221A]/10 border-r border-white/5 text-[#E0221A] transition-colors"
-          title="Nueva Caja"
+          title="Nueva venta paralela"
         >
           <Plus size={16} strokeWidth={3} />
         </button>
