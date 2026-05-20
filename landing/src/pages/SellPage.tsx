@@ -9,7 +9,7 @@ import {
   Mail,
   TriangleAlert, PackageX, Bookmark, Calendar, PackageCheck, ClipboardList, Banknote,
   Truck, CheckCircle2, Printer, History, Receipt, RefreshCw,
-  ShoppingCart, Crown, Circle,
+  ShoppingCart, Crown, Circle, Trash2,
 } from "lucide-react";
 import { ImageWithFallback } from "@/components/figma/ImageWithFallback";
 import { ProductCatalogModal } from "@/components/ProductCatalogModal";
@@ -5511,9 +5511,12 @@ export function SellPage() {
                 const isPrincipal = m.name === "Caja Principal";
                 const Icon = isPrincipal ? Crown : ShoppingCart;
                 return (
-                  <button
+                  <div
                     key={m.id}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setActiveMesaId(m.id)}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setActiveMesaId(m.id); } }}
                     title={`Ir a ${m.name}${hasItems ? ` · ${itemCount} item${itemCount === 1 ? "" : "s"} · $${subtotal.toFixed(0)}` : " · vacía"}`}
                     style={{
                       display: "flex",
@@ -5571,11 +5574,57 @@ export function SellPage() {
                       </span>
                     </div>
                     {hasItems ? (
-                      <ChevronRight size={14} style={{ opacity: 0.9, color: "#fff" }} />
+                      <ChevronRight size={14} style={{ opacity: 0.9, color: hasItems ? "#fff" : "var(--td-text-ghost)" }} />
                     ) : (
                       <Circle size={6} fill="currentColor" style={{ opacity: 0.4, color: "var(--td-text-ghost)" }} />
                     )}
-                  </button>
+                    {/* Cancelar venta — solo en Venta 2..5, nunca en Caja Principal.
+                        Si tiene items, pide confirmación para evitar borrar venta
+                        en curso por accidente. */}
+                    {!isPrincipal && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (hasItems) {
+                            const ok = window.confirm(
+                              `${m.name} tiene ${itemCount} item${itemCount === 1 ? "" : "s"} ($${subtotal.toFixed(0)}).\n\n¿Cancelar la venta? Los productos se perderán.`
+                            );
+                            if (!ok) return;
+                          }
+                          removeMesa(m.id);
+                        }}
+                        title={`Cancelar ${m.name}`}
+                        aria-label={`Cancelar ${m.name}`}
+                        style={{
+                          width: 26,
+                          height: 26,
+                          borderRadius: 8,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          background: hasItems ? "rgba(0,0,0,0.18)" : "transparent",
+                          border: hasItems ? "1px solid rgba(255,255,255,0.18)" : "1px solid var(--td-panel-border)",
+                          color: hasItems ? "rgba(255,255,255,0.85)" : "var(--td-text-ghost)",
+                          cursor: "pointer",
+                          flexShrink: 0,
+                          transition: "background 0.12s, color 0.12s",
+                        }}
+                        onMouseEnter={(e) => {
+                          (e.currentTarget as HTMLButtonElement).style.background = "rgba(224,34,26,0.9)";
+                          (e.currentTarget as HTMLButtonElement).style.color = "#fff";
+                          (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,80,50,0.6)";
+                        }}
+                        onMouseLeave={(e) => {
+                          (e.currentTarget as HTMLButtonElement).style.background = hasItems ? "rgba(0,0,0,0.18)" : "transparent";
+                          (e.currentTarget as HTMLButtonElement).style.color = hasItems ? "rgba(255,255,255,0.85)" : "var(--td-text-ghost)";
+                          (e.currentTarget as HTMLButtonElement).style.borderColor = hasItems ? "rgba(255,255,255,0.18)" : "var(--td-panel-border)";
+                        }}
+                      >
+                        <Trash2 size={12} strokeWidth={2.5} />
+                      </button>
+                    )}
+                  </div>
                 );
               })}
           </div>

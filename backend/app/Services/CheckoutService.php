@@ -58,15 +58,26 @@ class CheckoutService
                 'status'              => SalesDraft::STATUS_OPEN,
             ]);
 
-            foreach ($items as $item) {
-                SalesDraftItem::create([
-                    'draft_id'    => $draft->id,
-                    'product_id'  => (int) $item['product_id'],
-                    'quantity'    => (float) $item['quantity'],
-                    'price'       => (float) $item['price'],
-                    // 'total' lo computa el booted() del modelo
-                ]);
-            }
+            // El observer bumpDraftFromItem gasta 2 queries por item (lazy load
+            // del draft + saveQuietly para extender expires_at). Aquí el draft
+            // se completa en la misma transacción — no hay tiempo de expirar,
+            // así que cualquier bump es desperdicio. Skipear el evento ahorra
+            // 2N queries (N = items en el carrito) por checkout.
+            SalesDraftItem::withoutEvents(function () use ($items, $draft) {
+                foreach ($items as $item) {
+                    $row = new SalesDraftItem([
+                        'draft_id'   => $draft->id,
+                        'product_id' => (int) $item['product_id'],
+                        'quantity'   => (float) $item['quantity'],
+                        'price'      => (float) $item['price'],
+                    ]);
+                    // booted() recalcula `total` en `creating`, pero withoutEvents
+                    // también skipea creating. Replicamos la fórmula a mano.
+                    $row->total      = round($row->quantity * $row->price, 2);
+                    $row->created_at = now();
+                    $row->save();
+                }
+            });
 
             // Delegamos al checkout clásico — toda la lógica de stock, locks,
             // payments, descuento de inventario, ya está probada.
@@ -209,20 +220,36 @@ class CheckoutService
         // (A bloquea producto 1→2, B bloquea 2→1 → MySQL aborta una transacción).
         $orderedItems = $draftItems->sortBy('product_id')->values();
 
+        // Prefetch de bodegas activas de la tienda — una sola query antes del
+        // loop reemplaza N×2 subqueries correlacionadas (`whereHas`) por item.
+        // Cloud SQL ejecuta `whereIn` con índice directo sobre warehouse_id en
+        // lugar de un EXISTS por cada lookup de inventario.
+        $warehouseIds = \App\Models\Warehouse::query()
+            ->where('store_id', $storeId)
+            ->where('active', true)
+            ->pluck('id')
+            ->all();
+
         foreach ($orderedItems as $item) {
             // ADR-014: el carrito vive client-side. Ya no consultamos sales_drafts
-            // para "reservar" stock por adelantado — esa capa se volvió decorativa
-            // y solo generaba fantasmas que bloqueaban inventario real. El
-            // lockForUpdate de más abajo es suficiente para impedir oversell entre
-            // dos checkouts simultáneos: el primero gana, el segundo lee el stock
-            // ya descontado y falla con "Producto agotado".
-            $stockInStore = (float) Inventory::query()
-                ->where('product_id', $item->product_id)
-                ->whereHas('warehouse', fn ($q) => $q
-                    ->where('store_id', $storeId)
-                    ->where('active', true)
-                )
-                ->sum('quantity');
+            // para "reservar" stock — el lockForUpdate de abajo es suficiente
+            // para impedir oversell entre dos checkouts simultáneos: el primero
+            // gana, el segundo lee el stock ya descontado y falla.
+            //
+            // Una sola query trae TODAS las filas de inventario de este producto
+            // en las bodegas de la tienda, con lock. Calculamos stock total y
+            // elegimos la bodega objetivo en PHP — antes hacíamos 2 queries por
+            // item (sum + first).
+            $inventories = empty($warehouseIds)
+                ? collect()
+                : Inventory::query()
+                    ->lockForUpdate()
+                    ->where('product_id', $item->product_id)
+                    ->whereIn('warehouse_id', $warehouseIds)
+                    ->orderByDesc('quantity')
+                    ->get();
+
+            $stockInStore = (float) $inventories->sum('quantity');
 
             if ($stockInStore < $item->quantity) {
                 $name = $item->product?->name ?? "producto ID:{$item->product_id}";
@@ -236,29 +263,13 @@ class CheckoutService
                 );
             }
 
-            // 3. Asignar a UNA bodega para el descuento físico. Preferimos la
-            //    bodega con más stock para minimizar fragmentación. lockForUpdate
-            //    previene que dos checkouts simultáneos descuenten la misma fila.
-            $inventory = Inventory::query()
-                ->lockForUpdate()
-                ->where('product_id', $item->product_id)
-                ->where('quantity', '>=', $item->quantity)
-                ->whereHas('warehouse', fn ($q) => $q
-                    ->where('store_id', $storeId)
-                    ->where('active', true)
-                )
-                ->orderByDesc('quantity')
-                ->first();
+            // Asignar a UNA bodega con stock suficiente para el descuento físico.
+            // Preferimos la de mayor cantidad para minimizar fragmentación.
+            $inventory = $inventories->first(fn ($inv) => (float) $inv->quantity >= (float) $item->quantity);
 
-            // Fallback: cualquier bodega con stock suficiente (situación rara —
-            // tienda sin bodegas asignadas).
-            $inventory ??= Inventory::query()
-                ->lockForUpdate()
-                ->where('product_id', $item->product_id)
-                ->where('quantity', '>=', $item->quantity)
-                ->orderByDesc('quantity')
-                ->first();
-
+            // Fallback raro: stock total alcanza pero ninguna bodega individual
+            // tiene la cantidad solicitada — inventario fragmentado entre varias
+            // bodegas. Hoy no soportamos descuento split.
             if (! $inventory) {
                 $name = $item->product?->name ?? "producto ID:{$item->product_id}";
                 throw new \DomainException(
