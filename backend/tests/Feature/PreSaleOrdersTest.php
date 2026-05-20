@@ -41,13 +41,25 @@ class PreSaleOrdersTest extends TestCase
 
     private function makePublishedCatalog(array $overrides = []): PreSaleCatalog
     {
-        return PreSaleCatalog::create(array_merge([
+        $storeLimit = $overrides['store_limit'] ?? 99;
+        unset($overrides['store_limit']);
+
+        $catalog = PreSaleCatalog::create(array_merge([
             'product_name'   => 'Test Manga',
             'price_1'        => 150.00,
             'status'         => PreSaleCatalog::STATUS_PUBLISHED,
             'created_by'     => $this->user->id,
             'preorder_limit' => null,
         ], $overrides));
+
+        // Cambio Joel 2026-05-20: store_limits es obligatorio para vender.
+        // Sin entrada el catálogo no se vende en ninguna tienda.
+        $catalog->storeLimits()->create([
+            'store_id'  => $this->store->id,
+            'limit_qty' => $storeLimit,
+        ]);
+
+        return $catalog;
     }
 
     private function createOrderPayload(PreSaleCatalog $catalog, array $overrides = []): array
@@ -133,7 +145,10 @@ class PreSaleOrdersTest extends TestCase
 
     public function test_preorder_limit_is_enforced(): void
     {
-        $catalog = $this->makePublishedCatalog(['preorder_limit' => 1]);
+        // store_limit=1 → la tienda solo permite 1 unidad de preventa
+        // (antes este test usaba preorder_limit como cap global; ahora la cap
+        // vive en pre_sale_catalog_store_limits por tienda).
+        $catalog = $this->makePublishedCatalog(['store_limit' => 1]);
 
         // First order fits within the limit
         $first = $this->actingAs($this->user)
@@ -144,6 +159,25 @@ class PreSaleOrdersTest extends TestCase
         $second = $this->actingAs($this->user)
             ->postJson('/api/v1/pre-sale-orders', $this->createOrderPayload($catalog));
         $second->assertStatus(422)
+            ->assertJsonPath('success', false);
+    }
+
+    public function test_catalog_without_store_limits_cannot_be_sold(): void
+    {
+        // Catálogo publicado pero sin entrada en store_limits para la tienda.
+        // Cambio Joel 2026-05-20: ya no hay fallback a preorder_limit global.
+        $catalog = PreSaleCatalog::create([
+            'product_name'   => 'Sin Stock por Tienda',
+            'price_1'        => 100.00,
+            'status'         => PreSaleCatalog::STATUS_PUBLISHED,
+            'created_by'     => $this->user->id,
+            'preorder_limit' => 10,
+        ]);
+
+        $response = $this->actingAs($this->user)
+            ->postJson('/api/v1/pre-sale-orders', $this->createOrderPayload($catalog));
+
+        $response->assertStatus(422)
             ->assertJsonPath('success', false);
     }
 

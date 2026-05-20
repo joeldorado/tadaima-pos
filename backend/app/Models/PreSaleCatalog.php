@@ -69,29 +69,34 @@ class PreSaleCatalog extends Model
         return $this->hasMany(PreSaleOrderItem::class, 'pre_sale_catalog_id');
     }
 
-    /** Límites por tienda (opcional). Si está vacío, fallback al preorder_limit global. */
+    /** Stock de preventa por tienda. Whitelist obligatoria — sin entrada, esa tienda no vende. */
     public function storeLimits(): HasMany
     {
         return $this->hasMany(PreSaleCatalogStoreLimit::class, 'catalog_id');
     }
 
     /**
-     * Retorna el límite de unidades para la tienda dada. Prioridad:
-     *  1. Si hay registros en store_limits y existe uno para esta tienda → usar ese.
-     *  2. Si hay store_limits pero NO incluye esta tienda → 0 (la tienda no participa).
-     *  3. Si no hay store_limits → fallback al preorder_limit global (null = sin límite).
+     * Retorna el stock de preventa disponible para la tienda dada.
+     *
+     * Decisión Joel 2026-05-20: `store_limits` es la única fuente de verdad.
+     * Antes existía un fallback al `preorder_limit` global cuando la tabla
+     * estaba vacía — eso convertía cualquier catálogo sin tiendas en "se
+     * vende en todas las tiendas" sin querer. Ahora:
+     *
+     *  1. store_limits incluye esta tienda → su limit_qty.
+     *  2. store_limits NO incluye esta tienda (o está vacío) → 0 (no se vende).
+     *
+     * Si el admin quiere vender en varias tiendas debe agregar una entrada
+     * por cada una en el tab "Stock" del catálogo.
+     *
+     * `preorder_limit` queda en el modelo por compatibilidad histórica pero
+     * deja de afectar la disponibilidad por tienda. Pendiente revisar su uso
+     * como "límite por cliente" — ver entrada del MASTERLOG 2026-05-20.
      */
-    public function limitForStore(int $storeId): ?int
+    public function limitForStore(int $storeId): int
     {
         $limits = $this->relationLoaded('storeLimits') ? $this->storeLimits : $this->storeLimits()->get();
-        if ($limits->isEmpty()) {
-            return $this->preorder_limit;
-        }
         $row = $limits->firstWhere('store_id', $storeId);
-        // Whitelist explícita: tienda asignada → su límite; tienda no asignada → 0.
-        // Si el admin quiere que un catálogo se venda en TODAS las tiendas, debe
-        // dejar store_limits vacío (cae al preorder_limit global) en lugar de
-        // listar solo algunas.
         return $row ? (int) $row->limit_qty : 0;
     }
 

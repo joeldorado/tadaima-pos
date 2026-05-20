@@ -24,6 +24,7 @@ export interface ProductLight {
   id: number
   name: string
   sku: string
+  barcode: string | null
   active: boolean
   category_id: number | null
   prices: {

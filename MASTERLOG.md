@@ -2186,3 +2186,55 @@ Los mangas (librerías) viven hoy en tablas paralelas (`mangas`, `manga_inventor
 - Frontend cache (React Query + IndexedDB persister) refresca automáticamente al volver a Caja después de mutaciones gracias a `refetchOnMount: true`
 - Migraciones corren automáticamente en el entrypoint del contenedor Cloud Run
 
+---
+
+## Sesión 2026-05-20 — QA Web 5 (round 2) + stock por tienda obligatorio
+
+### Bugs QA resueltos en código (pendientes de deploy)
+
+| # | Bug | Causa | Fix |
+|---|---|---|---|
+| 1 | Caja: botón "Escanear" abre la webcam de la laptop | Botón gatillaba `CameraScannerModal` en desktop donde se usa scanner USB-HID | Botón oculto con `{false &&}` en SellPage. Lector USB HID sigue activo globalmente vía `useBarcodeScanner` |
+| 2 | Scanner suma 2 productos por escaneo | Dedup `lastScanRef` a 500ms no cubría rebote del HID; además `addToCart` incrementaba al re-leer | Dedup → 1500ms + scanner NO incrementa si el item ya está en venta (toast: "ya está en la venta · usa + para sumar") |
+| 3 | Manga (barcode 820650858406) no se trae al escanear | `ProductLightResource` no exponía `barcode`, el match exacto fallaba | Backend: `ProductLightResource` agrega `barcode`. Frontend: tipo `ProductLight.barcode`, lookup local + match del backend por SKU OR barcode |
+| 4 | Catálogo de preventa: botón "Guardar borrador" nunca se pinta de rojo | `(isEdit \|\| publishNow)` excluía el caso "draft listo" | Footer ahora muestra "Falta: …" cuando hay campos pendientes (Nombre, P1, fechas válidas). Botón pinta gradient rojo solo cuando `missingFields.length === 0` |
+| 5 | Tarjeta se permite con preventas en el carrito | Sin guard al cambiar `paymentMethod` ni al agregar catálogo / cargar folio | `setPayment("Tarjeta")` bloqueado con toast. `addCatalogToCart` + `togglePreventa` + `loadPreSaleOrderIntoCart` fuerzan a Efectivo + avisan al cajero |
+| 6 | Admin: tras cerrar caja, solo se ve Tienda 1 (hard reload arreglaba) | El efecto auto-asignar leía la caché stale de `cashSession` (status='open') después de `setActiveStore(null)`, reasignando la tienda | `handleCloseCash` ahora hace `queryClient.setQueryData(['cash','activeSession'], null)` síncrono antes del `setActiveStore(null)` |
+
+### Cambio de política: store_limits como única fuente de verdad
+
+| Archivo | Cambio |
+|---|---|
+| `backend/app/Models/PreSaleCatalog.php` (`limitForStore`) | Eliminado el fallback al `preorder_limit` global. Ahora: tienda asignada en `store_limits` → su `limit_qty`; tienda no asignada (o tabla vacía) → 0 (no se vende). Retorna `int`, ya no `?int` |
+| `backend/app/Services/PreSaleOrderService.php` (`createOrder`) | Si `limitForStore` retorna 0 → `DomainException` claro: "X no está disponible para venta en esta tienda. Pídele al admin asignar stock en el tab Stock del catálogo." |
+| `landing/src/components/presales/NewPreSaleCatalogModal.tsx` | Copy actualizado: "Sin tiendas asignadas → este catálogo no se podrá vender en ninguna tienda". Empty state ahora rojo |
+| `landing/src/pages/SellPage.tsx` (`CatalogCard`) | Cálculo de `remaining` simplificado a `storeLimitRow.limit_qty - reserved_by_store[active]`. Sin entrada → `Agotado` automático |
+| `backend/tests/Feature/PreSaleOrdersTest.php` | `makePublishedCatalog` ahora crea una entrada `store_limits` (default 99). Test nuevo: `test_catalog_without_store_limits_cannot_be_sold` |
+
+**Razón:** el fallback al `preorder_limit` global convertía cualquier catálogo "sin tiendas configuradas" en "se vende en todas las tiendas con el mismo cap", lo que no es lo que queremos. Joel quiere que el admin diga explícitamente en qué tiendas se vende y cuántas en cada una. Si el admin olvida asignar tiendas, el catálogo no se vende — eso es seguro por defecto.
+
+**Verificación:** PHPUnit 28/28 verde (incluye el test nuevo). `vite build` verde.
+
+### Pendiente: revisar `preorder_limit` como límite por cliente
+
+Joel señaló (2026-05-20) que el campo `preorder_limit` del modal de catálogo (que en la UI dice "Límite de unidades") se está interpretando como **stock total del catálogo** pero originalmente fue pensado como **límite por cliente** (cuántas unidades puede reservar un mismo cliente).
+
+**Estado actual del código:**
+- `PreSaleCatalog.preorder_limit` (int, nullable) — sigue existiendo en DB y se llena desde el modal General → "Límite de unidades"
+- Después del cambio de hoy ya **no afecta** la disponibilidad por tienda (eso lo controla `store_limits` ahora)
+- En frontend (`addCatalogToCart`) sí se usa como tope de cantidad por línea del carrito: `existing.quantity + 1 > catalog.preorder_limit` → bloquea
+- En backend ya no se valida en `createOrder`
+
+**Lo que Joel quiere:**
+- Sin límite por cliente — un cliente puede reservar todo el stock disponible de la tienda (ej. los 20)
+- El único cap real es `store_limits[active_store].limit_qty` (stock por tienda)
+
+**Trabajo necesario (NO ejecutado en esta sesión, plan only):**
+1. **UI catálogo:** ocultar/eliminar el input "Límite de unidades" del tab General; aclarar que el stock se configura en el tab "Stock"
+2. **Frontend `addCatalogToCart`:** quitar el check `existing.quantity + 1 > preorder_limit`; en su lugar validar contra `store_limits[active].limit_qty - reserved_by_store[active]` para mostrar "Agotado en esta tienda" si se excede
+3. **Backend:** considerar deprecar `preorder_limit` o re-significarlo como "máximo por folio" (límite por venta, no por cliente histórico). Decidir antes de migrar
+4. **Migración:** opcional, dejar la columna en DB con sus valores actuales para no romper rollback. Solo dejar de leerla
+5. **QA:** correr Bloque 12 de Playwright (TC-78→TC-85) para verificar que ningún caso depende del `preorder_limit`
+
+**Riesgo:** el `unitLimit` que se copia al `CartItem` también se usa para el render del carrito. Eliminar el concepto requiere limpiar todo el camino UI → CartItem → display. Considerar mantener `preorder_limit` solo como "max por folio" si se quiere proteger contra abusos.
+

@@ -176,6 +176,17 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog }: Props) {
     }
   };
 
+  // Campos faltantes que impiden guardar. Se recalcula en cada render para que
+  // el footer pueda mostrar al cajero exactamente qué le falta antes de hacer click,
+  // y el botón se pinta de rojo solo cuando la lista queda vacía.
+  const missingFields: string[] = [];
+  if (!name.trim()) missingFields.push("Nombre del producto");
+  if (!price1 || Number(price1) <= 0) missingFields.push("Precio base (P1)");
+  if (arrivalDate && pickupDate && new Date(pickupDate) < new Date(arrivalDate)) {
+    missingFields.push("Fecha de retiro inválida (anterior a la llegada)");
+  }
+  const isFormReady = missingFields.length === 0;
+
   const handleSave = async () => {
     if (!name.trim()) { toast.error("Nombre del producto es requerido"); setTab("general"); return; }
     if (!price1 || Number(price1) <= 0) { toast.error("El precio base (P1) es requerido"); setTab("precios"); return; }
@@ -189,10 +200,10 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog }: Props) {
 
     setSaving(true);
     try {
-      // Store limits: solo enviar entradas con valor numérico ≥ 0. Si el cajero deja
-      // un input vacío, esa tienda NO se incluye (el límite por tienda no existe).
-      // Si el array queda vacío y NO había limites previos, no se manda el campo
-      // (preserva preorder_limit como fallback global).
+      // Store limits: única fuente de verdad para "dónde se vende este catálogo".
+      // Sin entradas → catálogo no se vende en ninguna tienda. Sin entrada para
+      // una tienda → esa tienda no vende. Ya NO hay fallback al preorder_limit
+      // global (cambio Joel 2026-05-20).
       const validStoreLimits = Object.entries(storeLimits)
         .filter(([, v]) => v !== "" && !Number.isNaN(Number(v)))
         .map(([sid, v]) => ({ store_id: Number(sid), limit_qty: Math.max(0, Number(v)) }));
@@ -522,7 +533,7 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog }: Props) {
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 <div style={{ padding: "10px 14px", borderRadius: 14, background: "rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.18)" }}>
                   <p style={{ fontSize: 10, fontWeight: 700, color: "#F59E0B", margin: 0, lineHeight: 1.5 }}>
-                    Agrega tienda por tienda el stock de preventa disponible. Tiendas sin entrada aquí <strong>no podrán vender</strong> este catálogo. Si no agregas ninguna, se usa el <strong>Límite general</strong> del tab General.
+                    Agrega el stock de preventa por tienda. Tiendas sin entrada <strong>no podrán vender</strong> este catálogo. Si no asignas ninguna tienda, el catálogo <strong>no se vende en ningún lado</strong>.
                   </p>
                 </div>
 
@@ -568,8 +579,8 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog }: Props) {
 
                 {/* Tabla de tiendas asignadas */}
                 {assignedEntries.length === 0 ? (
-                  <div style={{ padding: "24px 16px", textAlign: "center", color: TM, fontSize: 12, border: "1px dashed var(--td-input-border)", borderRadius: 14 }}>
-                    Sin tiendas asignadas — el catálogo usará el límite general del tab General.
+                  <div style={{ padding: "24px 16px", textAlign: "center", color: "#DC2626", fontSize: 12, border: "1px dashed rgba(220,38,38,0.35)", borderRadius: 14, background: "rgba(220,38,38,0.04)" }}>
+                    Sin tiendas asignadas — este catálogo <strong>no se podrá vender</strong> en ninguna tienda hasta que asignes al menos una.
                   </div>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -651,27 +662,37 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog }: Props) {
         </div>
 
         {/* Footer */}
-        <div style={{ padding: "14px 22px", borderTop: "1px solid var(--td-panel-border)", display: "flex", gap: 10, flexShrink: 0 }}>
-          <button onClick={onClose} style={{ flex: 1, padding: "12px 0", borderRadius: 14, border: "1px solid var(--td-panel-border)", background: "transparent", color: TS, fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
-            Cancelar
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            style={{
-              flex: 2, padding: "12px 0", borderRadius: 14,
-              background: (isEdit || publishNow) ? "linear-gradient(135deg,#CC2200,#FF4422)" : "var(--td-card-bg)",
-              color: (isEdit || publishNow) ? "#fff" : TS,
-              fontSize: 12, fontWeight: 900, cursor: saving ? "not-allowed" : "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-              opacity: saving ? 0.7 : 1,
-              border: (isEdit || publishNow) ? "none" : "1px solid var(--td-panel-border)",
-              boxShadow: (isEdit || publishNow) ? "0 4px 20px rgba(204,34,0,0.35)" : "none",
-            } as React.CSSProperties}
-          >
-            {saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
-            {saving ? "Guardando…" : isEdit ? "Guardar cambios" : publishNow ? "Publicar catálogo" : "Guardar borrador"}
-          </button>
+        <div style={{ padding: "14px 22px", borderTop: "1px solid var(--td-panel-border)", display: "flex", flexDirection: "column", gap: 8, flexShrink: 0 }}>
+          {/* Indicador de qué falta para habilitar el guardado.
+              El cajero veía el botón gris sin saber por qué — ahora se lista. */}
+          {missingFields.length > 0 && (
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#f59e0b", lineHeight: 1.45 }}>
+              Falta: {missingFields.join(" · ")}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={onClose} style={{ flex: 1, padding: "12px 0", borderRadius: 14, border: "1px solid var(--td-panel-border)", background: "transparent", color: TS, fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
+              Cancelar
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              title={missingFields.length > 0 ? `Falta: ${missingFields.join(", ")}` : ""}
+              style={{
+                flex: 2, padding: "12px 0", borderRadius: 14,
+                background: isFormReady ? "linear-gradient(135deg,#CC2200,#FF4422)" : "var(--td-card-bg)",
+                color: isFormReady ? "#fff" : TS,
+                fontSize: 12, fontWeight: 900, cursor: saving ? "not-allowed" : "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                opacity: saving ? 0.7 : 1,
+                border: isFormReady ? "none" : "1px solid var(--td-panel-border)",
+                boxShadow: isFormReady ? "0 4px 20px rgba(204,34,0,0.35)" : "none",
+              } as React.CSSProperties}
+            >
+              {saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+              {saving ? "Guardando…" : isEdit ? "Guardar cambios" : publishNow ? "Publicar catálogo" : "Guardar borrador"}
+            </button>
+          </div>
         </div>
       </Motion.div>
     </div>

@@ -46,6 +46,7 @@ interface Product {
   id: string;
   name: string;
   sku: string;
+  barcode?: string;
   category: string;
   image?: string;
   price_a: number;
@@ -334,6 +335,7 @@ export function SellPage() {
           id: String(p.id),
           name: p.name,
           sku: p.sku,
+          barcode: p.barcode ?? undefined,
           category: String(p.category_id ?? ""),
           image: p.image ?? "",
           price_a: priceAt(p, 1),
@@ -424,6 +426,7 @@ export function SellPage() {
         id: String(p.id),
         name: p.name,
         sku: p.sku,
+        barcode: p.barcode ?? undefined,
         category: String(p.category_id ?? ""),
         image: p.image ?? "",
         price_a: priceAt(p, 1),
@@ -1146,7 +1149,24 @@ export function SellPage() {
 
 
 
+  // Política: preventas no aceptan Tarjeta (no podemos pasar la comisión al cliente
+  // y el cobro físico se hace en mostrador con efectivo/transferencia). Detecta:
+  //  - mesa marcada como preventa (catálogos en el carrito)
+  //  - items de catálogo agregados con sellingCatalogId (mixed cart)
+  //  - folio cargado para liquidación (isFromPreSale)
+  const hasPreventaInCart = !!(activeMesa && (
+    activeMesa.isPreventa
+    || activeMesa.items.some(i => i.sellingCatalogId != null || i.isFromPreSale)
+  ));
+
   const setPayment = (pm: PaymentMethod) => {
+    if (pm === "Tarjeta" && hasPreventaInCart) {
+      toast.error(
+        "Esta venta incluye preventas. No se permite cobrar con Tarjeta · usa Efectivo, Dólares o Transferencia.",
+        { duration: 5500 }
+      );
+      return;
+    }
     // Tarjeta y Transferencia no usan campo de efectivo recibido — limpiarlo para
     // evitar que un monto residual (escrito antes en Dólares/Efectivo) se cuele al
     // ticket como "Recibido $100" cuando realmente se cobró el total con tarjeta.
@@ -1167,15 +1187,28 @@ export function SellPage() {
 
   const togglePreventa = () => {
     const turningOn = !activeMesa.isPreventa;
+    if (turningOn && activeMesa.paymentMethod === "Tarjeta") {
+      toast.info(
+        "Cambié el método de pago a Efectivo porque las preventas no se cobran con Tarjeta.",
+        { duration: 5000 }
+      );
+    }
     updMesa(activeMesa.id, m => {
       const nextVal = !m.isPreventa;
-      const nextPayment = m.paymentMethod;
+      const nextPayment: PaymentMethod = (nextVal && m.paymentMethod === "Tarjeta") ? "Efectivo" : m.paymentMethod;
       // Reset items that don't have preventa stock if turning ON
       const nextItems = nextVal
         ? m.items.filter(i => (i.product.stock_details?.preventa || 0) > 0)
         : m.items;
 
-      return { ...m, isPreventa: nextVal, paymentMethod: nextPayment, depositAmount: 0, items: nextItems };
+      return {
+        ...m,
+        isPreventa: nextVal,
+        paymentMethod: nextPayment,
+        ...(nextPayment !== "Tarjeta" ? { selectedTerminalId: undefined } : {}),
+        depositAmount: 0,
+        items: nextItems,
+      };
     });
     // Auto-open catalog in preventa mode so user picks products immediately
     if (turningOn) {
@@ -1371,8 +1404,9 @@ export function SellPage() {
     }
   };
 
-  // Dedupe: ignora el mismo código si llega dentro de los 500ms del último escaneo.
+  // Dedupe: ignora el mismo código si llega dentro de los 1500ms del último escaneo.
   // Cubre doble-lectura del HID, StrictMode y rebote físico del lector.
+  // Subido de 500ms → 1500ms porque ciertos scanners siguen reportando duplicados a ~700-1200ms.
   const lastScanRef = useRef<{ code: string; at: number }>({ code: '', at: 0 });
 
   // Maneja un código escaneado (USB HID o cámara). Rutea PREV-* → folio, sino → producto por SKU.
@@ -1380,7 +1414,7 @@ export function SellPage() {
     const code = raw.trim();
     if (!code) return;
     const now = Date.now();
-    if (lastScanRef.current.code === code && now - lastScanRef.current.at < 500) {
+    if (lastScanRef.current.code === code && now - lastScanRef.current.at < 1500) {
       return;
     }
     lastScanRef.current = { code, at: now };
@@ -1400,10 +1434,21 @@ export function SellPage() {
       await openCustomerScanPopup(code.toUpperCase());
       return;
     }
-    // 1. Try local cache first (top 200 + background 1000 + previous searches)
-    const local = products.find(p => p.sku.toLowerCase() === code.toLowerCase());
+    // 1. Try local cache first (top 200 + background 1000 + previous searches).
+    //    Scanner-origin: si ya está en venta, NO suma (los lectores HID pueden
+    //    rebotar varias veces el mismo código → cajero usa +/- manualmente).
+    //    Match por SKU o barcode (mangas/libros llegan por barcode).
+    const lc = code.toLowerCase();
+    const local = products.find(p =>
+      p.sku.toLowerCase() === lc
+      || (p.barcode ?? '').toLowerCase() === lc);
     if (local) {
-      void addToCart(local, "a");
+      const already = activeMesa?.items.find(i => i.product.id === local.id);
+      if (already) {
+        toast.info(`${local.name} ya está en la venta · usa + para sumar`);
+        return;
+      }
+      void addToCart(local, "a", 1);
       toast.success(`Agregado: ${local.name}`);
       return;
     }
@@ -1421,12 +1466,21 @@ export function SellPage() {
         } as Parameters<typeof getProductsLight>[0]),
         staleTime: 60_000,
       });
-      const exact = fresh.data.find(p => p.sku.toLowerCase() === code.toLowerCase());
+      const exact = fresh.data.find(p =>
+        p.sku.toLowerCase() === code.toLowerCase()
+        || (p.barcode ?? '').toLowerCase() === code.toLowerCase()
+      );
       if (exact) {
+        const alreadyInCart = activeMesa?.items.find(i => i.product.id === String(exact.id));
+        if (alreadyInCart) {
+          toast.info(`${exact.name} ya está en la venta · usa + para sumar`);
+          return;
+        }
         const adapted: Product = {
           id: String(exact.id),
           name: exact.name,
           sku: exact.sku,
+          barcode: exact.barcode ?? undefined,
           category: String(exact.category_id ?? ""),
           image: exact.image ?? "",
           price_a: Number(exact.prices?.price_1 ?? 0) || 0,
@@ -1530,8 +1584,19 @@ export function SellPage() {
       },
     }));
 
+    // Política: liquidación de preventa no se cobra con Tarjeta. Si la mesa
+    // estaba en Tarjeta, forzar Efectivo + avisar.
+    if (activeMesa.paymentMethod === "Tarjeta") {
+      toast.info(
+        "Cambié el método de pago a Efectivo porque las preventas no se cobran con Tarjeta.",
+        { duration: 5000 }
+      );
+    }
+
     updMesa(activeMesa.id, m => ({
       ...m,
+      paymentMethod: m.paymentMethod === "Tarjeta" ? "Efectivo" : m.paymentMethod,
+      ...(m.paymentMethod === "Tarjeta" ? { selectedTerminalId: undefined } : {}),
       items: [...balancedItems, ...m.items.filter(i => !i.isFromPreSale)],
       loadedPreSaleOrderId: order.id,
       loadedPreSaleOrderCode: order.code,
@@ -1552,9 +1617,20 @@ export function SellPage() {
     const anticipo = catalog.advance_payment ?? 0;
     const catalogImg = catalog.image_url ?? (catalog.image_path ? storageUrl(catalog.image_path) : "");
 
+    // Política: preventas no aceptan Tarjeta. Si la mesa estaba en Tarjeta, cambia
+    // a Efectivo automáticamente y avisa al cajero (tomamos control como pidió Joel).
+    if (activeMesa.paymentMethod === "Tarjeta") {
+      toast.info(
+        "Cambié el método de pago a Efectivo porque las preventas no se cobran con Tarjeta.",
+        { duration: 5000 }
+      );
+    }
+
     // NO setear isPreventa: true a nivel mesa — el item ya viene con sellingCatalogId
     // y su propio depositAmount, así no contamina con anticipo a productos regulares.
     updMesa(activeMesa.id, m => {
+      // Asegura que el método de pago no sea Tarjeta cuando entra una preventa.
+      const safePayment: PaymentMethod = m.paymentMethod === "Tarjeta" ? "Efectivo" : m.paymentMethod;
       // Idempotente: si ya existe un item con el mismo sellingCatalogId, sumar qty
       // en lugar de duplicar la fila (bug típico al doble-click en la card del modal).
       const existing = m.items.find(i => i.sellingCatalogId === catalog.id);
@@ -1567,6 +1643,8 @@ export function SellPage() {
         }
         return {
           ...m,
+          paymentMethod: safePayment,
+          ...(safePayment !== "Tarjeta" ? { selectedTerminalId: undefined } : {}),
           items: m.items.map(i => i.sellingCatalogId === catalog.id
             ? { ...i, quantity: i.quantity + 1, depositAmount: (i.depositAmount ?? 0) + anticipo }
             : i),
@@ -1592,7 +1670,12 @@ export function SellPage() {
         sellingCatalogId: catalog.id,
         ...(catalog.preorder_limit != null ? { unitLimit: catalog.preorder_limit } : {}),
       };
-      return { ...m, items: [...m.items, item] };
+      return {
+        ...m,
+        paymentMethod: safePayment,
+        ...(safePayment !== "Tarjeta" ? { selectedTerminalId: undefined } : {}),
+        items: [...m.items, item],
+      };
     });
     setShowPreSalesModal(false);
     toast.success(`${catalog.product_name} agregado a la venta · Anticipo mín.: ${fmt(anticipo)}`);
@@ -1716,6 +1799,12 @@ export function SellPage() {
     setClosingCashLoading(true);
     try {
       await closeSession(amount);
+      // Limpiar la caché de sesión activa SINCRÓNICAMENTE antes de cualquier
+      // setState. El efecto de auto-asignación (línea ~553) lee `cashSession`
+      // de la caché — si dejamos la versión vieja "open" y solo invalidamos,
+      // el re-render entre setActiveStore(null) y el refetch reasigna la tienda
+      // y el admin nunca ve el selector (síntoma: solo Tienda 1 sin hard reload).
+      queryClient.setQueryData(['cash', 'activeSession'], null);
       void queryClient.invalidateQueries({ queryKey: ['cash'] });
       setShowCloseCashModal(false);
       setCloseCashAmount("");
@@ -3270,15 +3359,20 @@ export function SellPage() {
                 {activeMesa.customerId ? "Cliente ✓" : "Cliente"}
               </button>
 
-              {/* Botón Escanear (cámara) — el lector USB HID está activo siempre */}
-              <button
-                onClick={() => setShowCameraScanner(true)}
-                className="flex items-center gap-3 px-6 rounded-2xl bg-[#E0221A]/[0.08] border border-[#E0221A]/20 text-[#E0221A] hover:bg-[#E0221A]/[0.12] transition-all font-black uppercase tracking-widest text-[10px]"
-                title="Escanear con cámara (folio PREV, SKU o tarjeta TAD)"
-              >
-                <ScanLine size={18} />
-                Escanear
-              </button>
+              {/* Botón Escanear (cámara) — OCULTO en desktop/laptop/PC.
+                  Las tiendas usan scanner USB-HID conectado físicamente; abrir la
+                  webcam en una laptop o PC es ruido (pide permisos, abre LED, etc).
+                  El lector USB HID sigue activo globalmente vía useBarcodeScanner. */}
+              {false && (
+                <button
+                  onClick={() => setShowCameraScanner(true)}
+                  className="flex items-center gap-3 px-6 rounded-2xl bg-[#E0221A]/[0.08] border border-[#E0221A]/20 text-[#E0221A] hover:bg-[#E0221A]/[0.12] transition-all font-black uppercase tracking-widest text-[10px]"
+                  title="Escanear con cámara (folio PREV, SKU o tarjeta TAD)"
+                >
+                  <ScanLine size={18} />
+                  Escanear
+                </button>
+              )}
 
               {/* Cancelar Venta — solo visible si hay productos. Vacía toda la venta:
                   items, cliente, descuento, terminal, folio cargado. Sin pegar al backend. */}
@@ -4207,28 +4301,18 @@ export function SellPage() {
 
             const imgSrc = catalog.image_url ?? (catalog.image_path ? storageUrl(catalog.image_path) : null);
 
-            // Disponibilidad por tienda:
-            //  - Si el catálogo tiene store_limits y la tienda activa está asignada,
-            //    usar `limit_qty` específico + `reserved_by_store[active]` para
-            //    calcular cuánto queda EN ESA TIENDA.
-            //  - Si tiene store_limits pero la tienda activa NO está asignada,
-            //    marcar agotado (la tienda no participa en este catálogo).
-            //  - Sin store_limits, fallback al preorder_limit + reserved_count global.
+            // Disponibilidad por tienda — fuente única de verdad: store_limits.
+            // Cambio Joel 2026-05-20: si la tienda activa no tiene entrada en
+            // store_limits, NO se vende en esa tienda (antes había fallback al
+            // preorder_limit global, lo que abría el catálogo en todas las tiendas
+            // sin querer).
             const storeLimitRow = catalog.store_limits?.find(sl => sl.store_id === activeStore?.id);
-            const hasStoreLimits = (catalog.store_limits?.length ?? 0) > 0;
-            let limit: number | null;
-            let reserved: number;
-            if (hasStoreLimits) {
-              limit = storeLimitRow?.limit_qty ?? 0;
-              reserved = activeStore?.id != null
-                ? (catalog.reserved_by_store?.[String(activeStore.id)] ?? 0)
-                : 0;
-            } else {
-              limit = catalog.preorder_limit;
-              reserved = catalog.reserved_count ?? 0;
-            }
-            const remaining = limit != null ? Math.max(0, limit - reserved) : null;
-            const isAgotado = remaining !== null && remaining <= 0;
+            const limit = storeLimitRow?.limit_qty ?? 0;
+            const reserved = activeStore?.id != null
+              ? (catalog.reserved_by_store?.[String(activeStore.id)] ?? 0)
+              : 0;
+            const remaining = Math.max(0, limit - reserved);
+            const isAgotado = remaining <= 0;
 
             return (
               <button

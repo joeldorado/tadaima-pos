@@ -39,6 +39,9 @@ class ProductLightResource extends JsonResource
             'id'          => $this->id,
             'name'        => $this->name,
             'sku'         => $this->sku,
+            // Necesario para que el frontend matchee el resultado exacto del
+            // scanner cuando el código escaneado es el barcode (mangas/libros).
+            'barcode'     => $this->barcode,
             'active'      => $this->active,
             'category_id' => $this->category_id,
 

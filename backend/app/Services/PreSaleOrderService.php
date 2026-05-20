@@ -50,21 +50,23 @@ class PreSaleOrderService
                     );
                 }
 
-                // Límite POR TIENDA si hay store_limits definidos, sino preorder_limit global.
-                // null = sin límite.
-                $limit = $catalog->limitForStore($storeId);
-                if ($limit !== null) {
-                    $reserved = $catalog->storeLimits->isNotEmpty()
-                        ? $catalog->reservedCountForStore($storeId)
-                        : (int) $catalog->activeOrderItems->sum('quantity');
-                    $qty = (int) $line['quantity'];
+                // Stock por tienda obligatorio. Sin entrada en store_limits → 0
+                // disponible en esa tienda (no se vende). Ver PreSaleCatalog::limitForStore.
+                $limit    = $catalog->limitForStore($storeId);
+                $reserved = $catalog->reservedCountForStore($storeId);
+                $qty      = (int) $line['quantity'];
 
-                    if ($reserved + $qty > $limit) {
-                        $available = max(0, $limit - $reserved);
-                        throw new \DomainException(
-                            "'{$catalog->product_name}' solo tiene {$available} unidades disponibles (límite: {$limit})."
-                        );
-                    }
+                if ($limit <= 0) {
+                    throw new \DomainException(
+                        "'{$catalog->product_name}' no está disponible para venta en esta tienda. Pídele al admin asignar stock en el tab Stock del catálogo."
+                    );
+                }
+
+                if ($reserved + $qty > $limit) {
+                    $available = max(0, $limit - $reserved);
+                    throw new \DomainException(
+                        "'{$catalog->product_name}' solo tiene {$available} unidades disponibles (límite: {$limit})."
+                    );
                 }
             }
 
