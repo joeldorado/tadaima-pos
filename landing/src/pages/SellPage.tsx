@@ -9,6 +9,7 @@ import {
   Mail,
   TriangleAlert, PackageX, Bookmark, Calendar, PackageCheck, ClipboardList, Banknote,
   Truck, CheckCircle2, Printer, History, Receipt, RefreshCw,
+  ShoppingCart, Crown, Circle,
 } from "lucide-react";
 import { ImageWithFallback } from "@/components/figma/ImageWithFallback";
 import { ProductCatalogModal } from "@/components/ProductCatalogModal";
@@ -5433,6 +5434,152 @@ export function SellPage() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* ══════════════ ATAJOS FLOTANTES: OTRAS VENTAS ABIERTAS ══════════════ */}
+      {/* Aparece solo si hay >1 mesa. Card horizontal arribita del footer
+          de cobro con filas tipo pill (icono + nombre + items). Usa
+          variables --td-* para adaptarse a light/dark theme. Las filas
+          con items siempre rojas (mantienen contraste en ambos themes). */}
+      {mesas.length > 1 && (
+        <>
+          <style>{`
+            @keyframes td-shortcut-pulse {
+              0%, 100% { box-shadow: 0 0 0 rgba(224,34,26,0); }
+              50%      { box-shadow: 0 0 18px rgba(224,34,26,0.55); }
+            }
+          `}</style>
+          <div
+            style={{
+              position: "fixed",
+              bottom: 130,
+              right: 20,
+              zIndex: 50,
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+              minWidth: 210,
+              background: "var(--td-popup-bg)",
+              backdropFilter: "blur(14px)",
+              border: "1px solid var(--td-popup-border)",
+              borderRadius: 18,
+              padding: 10,
+              boxShadow: "0 12px 36px rgba(0,0,0,0.25)",
+            }}
+          >
+            {/* Header con label + contador de activas */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "2px 6px 6px",
+                borderBottom: "1px solid var(--td-panel-border)",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <ShoppingCart size={11} style={{ color: "var(--td-red)" }} />
+                <span
+                  style={{
+                    fontSize: 9,
+                    fontWeight: 900,
+                    letterSpacing: "0.16em",
+                    textTransform: "uppercase",
+                    color: "var(--td-red)",
+                  }}
+                >
+                  Otras ventas
+                </span>
+              </div>
+              <span
+                style={{
+                  fontSize: 9,
+                  fontWeight: 800,
+                  color: "var(--td-text-ghost)",
+                }}
+              >
+                {mesas.filter(m => m.id !== activeMesaId && m.items.length > 0).length}/{mesas.length - 1}
+              </span>
+            </div>
+
+            {mesas
+              .filter(m => m.id !== activeMesaId)
+              .map(m => {
+                const itemCount = m.items.reduce((s, i) => s + i.quantity, 0);
+                const subtotal = m.items.reduce((s, i) => s + i.price * i.quantity, 0);
+                const hasItems = itemCount > 0;
+                const isPrincipal = m.name === "Caja Principal";
+                const Icon = isPrincipal ? Crown : ShoppingCart;
+                return (
+                  <button
+                    key={m.id}
+                    onClick={() => setActiveMesaId(m.id)}
+                    title={`Ir a ${m.name}${hasItems ? ` · ${itemCount} item${itemCount === 1 ? "" : "s"} · $${subtotal.toFixed(0)}` : " · vacía"}`}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      width: "100%",
+                      padding: "10px 12px",
+                      borderRadius: 12,
+                      // Activas → rojo sólido (mismo contraste en light/dark).
+                      // Vacías → fondo y bordes del theme para integrarse.
+                      background: hasItems
+                        ? "linear-gradient(135deg, #BB1100 0%, #FF3322 100%)"
+                        : "var(--td-input-bg)",
+                      border: hasItems
+                        ? "1px solid rgba(255,120,80,0.5)"
+                        : "1px solid var(--td-input-border)",
+                      color: hasItems ? "#fff" : "var(--td-text-lo)",
+                      cursor: "pointer",
+                      textAlign: "left",
+                      transition: "transform 0.12s ease, background 0.15s",
+                      animation: hasItems ? "td-shortcut-pulse 2.6s ease-in-out infinite" : undefined,
+                    }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.transform = "translateX(-3px)"; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.transform = "translateX(0)"; }}
+                  >
+                    <div
+                      style={{
+                        width: 32,
+                        height: 32,
+                        borderRadius: 10,
+                        background: hasItems ? "rgba(255,255,255,0.20)" : "var(--td-panel-bg)",
+                        border: hasItems ? "none" : "1px solid var(--td-panel-border)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        flexShrink: 0,
+                        color: hasItems ? "#fff" : "var(--td-text-ghost)",
+                      }}
+                    >
+                      <Icon size={15} strokeWidth={2.5} />
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, lineHeight: 1.15 }}>
+                      <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: "0.04em" }}>
+                        {m.name}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 9,
+                          fontWeight: 700,
+                          opacity: hasItems ? 0.85 : 1,
+                          color: hasItems ? "rgba(255,255,255,0.85)" : "var(--td-text-ghost)",
+                        }}
+                      >
+                        {hasItems ? `${itemCount} item${itemCount === 1 ? "" : "s"} · $${subtotal.toFixed(0)}` : "Vacía"}
+                      </span>
+                    </div>
+                    {hasItems ? (
+                      <ChevronRight size={14} style={{ opacity: 0.9, color: "#fff" }} />
+                    ) : (
+                      <Circle size={6} fill="currentColor" style={{ opacity: 0.4, color: "var(--td-text-ghost)" }} />
+                    )}
+                  </button>
+                );
+              })}
+          </div>
+        </>
       )}
     </div>
   );

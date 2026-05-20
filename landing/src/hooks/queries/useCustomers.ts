@@ -37,6 +37,8 @@ export function useCustomersAllQuery(maxPerPage = 500) {
     staleTime: 60 * 60_000,
     gcTime: 24 * 60 * 60_000,
     refetchOnWindowFocus: false,
-    refetchOnMount: false,
+    // refetchOnMount default (true): después de crear/editar un cliente e
+    // invalidar el cache, al volver a Caja se hace refetch automático y el
+    // cliente nuevo aparece sin recargar.
   })
 }

@@ -20,7 +20,10 @@ export function useProductsQuery(storeId?: number | null) {
     staleTime: ONE_DAY_MS,
     gcTime: ONE_DAY_MS,
     refetchOnWindowFocus: false,
-    refetchOnMount: false,
+    // refetchOnMount default (true): si una mutación invalida este query
+    // mientras estamos en otra página, al volver a esta vista refetch para
+    // ver el dato nuevo. Si el cache sigue fresh (<24h, sin invalidaciones)
+    // no hay fetch — el staleTime largo evita ruido en navegación normal.
     refetchOnReconnect: false,
   })
 }
@@ -40,7 +43,9 @@ export function useProductsLightQuery(storeId?: number | null) {
     staleTime: ONE_DAY_MS,
     gcTime: ONE_DAY_MS,
     refetchOnWindowFocus: false,
-    refetchOnMount: false,
+    // refetchOnMount default (true): cuando ProductsPage crea/edita/borra
+    // un producto e invalida el cache, al volver a Caja se hace refetch
+    // automático y el cajero ve los productos nuevos sin recargar.
     refetchOnReconnect: false,
   })
 }
@@ -90,7 +95,7 @@ export function useProductsInfiniteQuery(storeId?: number | null, options?: { en
     staleTime: ONE_DAY_MS,
     gcTime: ONE_DAY_MS,
     refetchOnWindowFocus: false,
-    refetchOnMount: false,
+    // refetchOnMount default (true) — ver useProductsLightQuery.
     refetchOnReconnect: false,
     enabled: options?.enabled ?? true,
   })
