@@ -2602,31 +2602,36 @@ export function SellPage() {
                     {s.address && <span style={{ display: "block", fontSize: 10, color: "var(--td-text-ghost)", marginTop: 2 }}>{s.address}</span>}
                   </div>
                   {/* Badge "N cajeros activos" — solo admin. Verde con dot pulsante
-                      cuando hay sesiones; gris muted cuando está vacía. */}
-                  {isAdmin && (
-                    <div style={{
-                      display: "flex", alignItems: "center", gap: 6,
-                      padding: "4px 10px", borderRadius: 999,
-                      background: count > 0 ? "rgba(16,185,129,0.12)" : "rgba(255,255,255,0.04)",
-                      border: `1px solid ${count > 0 ? "rgba(16,185,129,0.3)" : "var(--td-card-border)"}`,
-                      flexShrink: 0,
-                    }}>
-                      <span
-                        className={count > 0 ? "animate-pulse" : ""}
-                        style={{
-                          width: 6, height: 6, borderRadius: 999,
-                          background: count > 0 ? "#10b981" : "var(--td-text-ghost)",
-                          boxShadow: count > 0 ? "0 0 8px rgba(16,185,129,0.6)" : "none",
-                        }}
-                      />
-                      <span style={{
-                        fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em",
-                        color: count > 0 ? "#10b981" : "var(--td-text-ghost)",
+                      cuando hay sesiones; gris muted cuando está vacía.
+                      Si todavía no llega la primera respuesta, dice "Verificando"
+                      en gris en lugar de un falso "Sin caja". */}
+                  {isAdmin && (() => {
+                    const isLoading = allActiveSessionsQuery.isPending;
+                    return (
+                      <div style={{
+                        display: "flex", alignItems: "center", gap: 6,
+                        padding: "4px 10px", borderRadius: 999,
+                        background: isLoading ? "rgba(255,255,255,0.04)" : (count > 0 ? "rgba(16,185,129,0.12)" : "rgba(255,255,255,0.04)"),
+                        border: `1px solid ${isLoading ? "var(--td-card-border)" : (count > 0 ? "rgba(16,185,129,0.3)" : "var(--td-card-border)")}`,
+                        flexShrink: 0,
                       }}>
-                        {count === 0 ? "Sin caja" : count === 1 ? "1 caja abierta" : `${count} cajas abiertas`}
-                      </span>
-                    </div>
-                  )}
+                        <span
+                          className={!isLoading && count > 0 ? "animate-pulse" : ""}
+                          style={{
+                            width: 6, height: 6, borderRadius: 999,
+                            background: isLoading ? "var(--td-text-ghost)" : (count > 0 ? "#10b981" : "var(--td-text-ghost)"),
+                            boxShadow: !isLoading && count > 0 ? "0 0 8px rgba(16,185,129,0.6)" : "none",
+                          }}
+                        />
+                        <span style={{
+                          fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em",
+                          color: isLoading ? "var(--td-text-ghost)" : (count > 0 ? "#10b981" : "var(--td-text-ghost)"),
+                        }}>
+                          {isLoading ? "Verificando…" : (count === 0 ? "Sin caja" : count === 1 ? "1 caja abierta" : `${count} cajas abiertas`)}
+                        </span>
+                      </div>
+                    );
+                  })()}
                 </button>
               );
             })
@@ -2648,6 +2653,30 @@ export function SellPage() {
         <p style={{ fontSize: 10, fontWeight: 900, letterSpacing: "0.3em", color: "var(--td-text-ghost)", textTransform: "uppercase" }}>
           Cargando POS...
         </p>
+      </div>
+    );
+  }
+
+  /* ── GATE: verificando sesión de caja ─────────────────────────────────────
+     Joel: antes saltaba "Caja cerrada" 200ms y luego aparecía la lista de
+     cajeros activos, lo cual confundía. Ahora mostramos un loading explícito
+     mientras la sesión del usuario se verifica y (para admin) mientras se
+     traen las sesiones abiertas de la tienda activa. */
+  const verifyingSession =
+    activeSessionQuery.isPending ||
+    (isAdmin && !!activeStore?.id && activeSessionsQuery.isPending);
+  if (verifyingSession) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-4" style={{ background: BG }}>
+        <Loader2 size={36} className="animate-spin" style={{ color: RED }} />
+        <div style={{ textAlign: "center" }}>
+          <p style={{ margin: 0, fontSize: 13, fontWeight: 900, color: "var(--td-text-hi)" }}>
+            Verificando sesión de caja
+          </p>
+          <p style={{ margin: "6px 0 0", fontSize: 10, fontWeight: 700, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.18em" }}>
+            {activeStore?.name ?? "Cargando…"}
+          </p>
+        </div>
       </div>
     );
   }
