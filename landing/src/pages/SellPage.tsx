@@ -2631,18 +2631,24 @@ export function SellPage() {
                   <X size={18} />
                 </button>
               </div>
-              {cashRegisters.length > 0 && (
-                <div style={{ marginBottom: 14 }}>
-                  <label style={{ display: "block", fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "var(--td-text-ghost)", marginBottom: 6 }}>Caja Registradora</label>
-                  <select
-                    value={openCashRegisterId}
-                    onChange={e => setOpenCashRegisterId(e.target.value ? Number(e.target.value) : "")}
-                    style={{ width: "100%", background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 14, color: "var(--td-input-text)", padding: "10px 14px", fontSize: 13, outline: "none", appearance: "none" as const, boxSizing: "border-box" as const }}
-                  >
-                    {cashRegisters.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-                  </select>
-                </div>
-              )}
+              {cashRegisters.length > 0 && (() => {
+                // La tienda ya se eligió en la pantalla previa; el cajero no
+                // necesita re-seleccionar caja registradora. Mostramos el nombre
+                // como texto (read-only). Por defecto se usa la primera caja
+                // activa de la tienda (auto-seleccionada en el useEffect de arriba).
+                const selectedRegister = openCashRegisterId !== ""
+                  ? cashRegisters.find(r => r.id === Number(openCashRegisterId))
+                  : cashRegisters[0];
+                const registerLabel = selectedRegister?.name ?? "Caja sin asignar";
+                return (
+                  <div style={{ marginBottom: 14 }}>
+                    <label style={{ display: "block", fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "var(--td-text-ghost)", marginBottom: 6 }}>Caja Registradora</label>
+                    <div style={{ width: "100%", background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 14, color: "var(--td-input-text)", padding: "10px 14px", fontSize: 13, boxSizing: "border-box" as const }}>
+                      {registerLabel}
+                    </div>
+                  </div>
+                );
+              })()}
               <div style={{ marginBottom: 22 }}>
                 <label style={{ display: "block", fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "var(--td-text-ghost)", marginBottom: 6 }}>Efectivo Inicial en Caja ($MXN)</label>
                 <input
