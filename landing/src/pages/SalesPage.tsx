@@ -785,7 +785,15 @@ export function SalesPage() {
           </button>
           {isMethodOpen && (
             <div className="absolute top-[calc(100%+6px)] right-0 w-48 rounded-2xl overflow-hidden shadow-2xl"
-              style={{ zIndex: 60, background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)", boxShadow: "0 12px 40px rgba(0,0,0,0.4)" }}>
+              style={{
+                zIndex: 60,
+                // --td-popup-bg es opaco por tema (#13091e dark / #ffffff light).
+                // Antes usábamos --td-panel-bg que tiene alpha y dejaba ver la
+                // tabla detrás del dropdown.
+                background: "var(--td-popup-bg)",
+                border: "1px solid var(--td-popup-border)",
+                boxShadow: "0 12px 40px rgba(0,0,0,0.4)",
+              }}>
               {methodOptions.map(opt => (
                 <button key={opt.value} onClick={() => { setFilterMethod(opt.value); setIsMethodOpen(false); }}
                   className="w-full text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest transition-colors"
