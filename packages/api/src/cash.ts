@@ -102,6 +102,8 @@ export interface ActiveCashSessionSummary {
   store_id: number | null
   user_id: number
   user_name: string | null
+  /** URL absoluta lista para <img src> — null si el cajero usa iniciales */
+  user_avatar_url: string | null
   opened_at: string
   opening_cash: number
 }

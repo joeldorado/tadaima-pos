@@ -2895,7 +2895,7 @@ export function SellPage() {
                     const opened = new Date(s.opened_at);
                     return (
                       <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                        <UserAvatar name={userName} size={32} />
+                        <UserAvatar name={userName} avatarUrl={s.user_avatar_url} size={32} />
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: "var(--td-text-hi)" }}>
                             {userName}

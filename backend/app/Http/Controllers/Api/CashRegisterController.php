@@ -46,7 +46,7 @@ class CashRegisterController extends Controller
         $isAdminUser = $user && $user->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
 
         $query = CashRegisterSession::query()
-            ->with(['register:id,store_id,name', 'user:id,name'])
+            ->with(['register:id,store_id,name', 'user:id,name,avatar_url'])
             ->where('status', CashRegisterSession::STATUS_OPEN);
 
         // No-admin solo ve sesiones de su propia tienda.
@@ -70,6 +70,14 @@ class CashRegisterController extends Controller
                 'store_id'     => $s->register?->store_id,
                 'user_id'      => $s->user_id,
                 'user_name'    => $s->user?->name,
+                // avatar resuelto (path GCS → URL absoluta, URL externa pasa
+                // tal cual) para que UserAvatar muestre la foto del cajero
+                // que abrió caja, no solo las iniciales
+                'user_avatar_url' => $s->user?->avatar_url
+                    ? (str_starts_with($s->user->avatar_url, 'http')
+                        ? $s->user->avatar_url
+                        : \Storage::url($s->user->avatar_url))
+                    : null,
                 'opened_at'    => $s->opened_at,
                 'opening_cash' => (float) $s->opening_cash,
             ])->values()
