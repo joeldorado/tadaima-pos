@@ -594,16 +594,13 @@ export function SalesPage() {
 
   const topRevenue = displayedProducts[0]?.totalRevenue || 1;
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  if (loading) {
-    return (
-      <div className="h-screen flex flex-col items-center justify-center gap-4" style={{ background: T.bgGrad }}>
-        <Loader2 size={40} className="animate-spin text-red-500" />
-        <p className="text-xs font-black uppercase tracking-[0.3em]" style={{ color: "var(--td-text-lo)" }}>Cargando Ventas...</p>
-      </div>
-    );
-  }
+  // `loading` se mantiene para mostrar skeleton dentro de la tabla. Quitamos
+  // el return de pantalla completa para que el header y los filtros siempre
+  // estén visibles mientras se cambia el rango (antes Joel veía un spinner que
+  // tapaba todo y no podía corregir el filtro hasta que el fetch acabara).
+  const isFetching = salesQuery.isFetching || preSaleOrdersQuery.isFetching || productsQuery.isFetching;
 
+  // ─────────────────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen p-6 space-y-6" style={{ background: T.bgGrad }}>
 
@@ -652,8 +649,10 @@ export function SalesPage() {
           <button onClick={() => { void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all }); void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all }); }}
             className="flex items-center justify-center gap-2 px-5 h-[36px] font-black text-[9px] uppercase tracking-widest transition-all hover:scale-105 active:scale-95"
             style={T.btnRed}>
-            <TrendingUp size={13} strokeWidth={3} />
-            Actualizar
+            {isFetching && !loading
+              ? <Loader2 size={13} strokeWidth={3} className="animate-spin" />
+              : <TrendingUp size={13} strokeWidth={3} />}
+            {isFetching && !loading ? "Actualizando…" : "Actualizar"}
           </button>
         </div>
       </header>
@@ -687,29 +686,42 @@ export function SalesPage() {
           );
         })}
 
-        {/* Rango personalizado — sigue disponible para cualquier rango ad-hoc */}
-        <div className="flex items-center gap-1 rounded-full px-3 py-1.5 h-[34px]"
-          style={{ background: "var(--td-panel-bg)", border: `1px solid ${activePreset === "custom" ? "rgba(255,68,34,0.4)" : "var(--td-panel-border)"}` }}>
-          <div className="flex items-center gap-1 ml-1">
-            <div className="relative flex items-center justify-center min-w-[72px]">
-              <span className="text-[10px] font-bold tracking-widest uppercase pointer-events-none select-none"
-                style={{ color: filterStartDate ? "var(--td-text-hi)" : "var(--td-text-lo)" }}>
-                {fmtDate(filterStartDate) || "Inicio"}
-              </span>
-              <input type="date" value={filterStartDate} onChange={e => setFilterStartDate(e.target.value)}
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
-            </div>
-            <span className="text-[10px]" style={{ color: "var(--td-text-lo)" }}>→</span>
-            <div className="relative flex items-center justify-center min-w-[72px]">
-              <span className="text-[10px] font-bold tracking-widest uppercase pointer-events-none select-none"
-                style={{ color: filterEndDate ? "var(--td-text-hi)" : "var(--td-text-lo)" }}>
-                {fmtDate(filterEndDate) || "Fin"}
-              </span>
-              <input type="date" value={filterEndDate} min={filterStartDate} onChange={e => setFilterEndDate(e.target.value)}
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
-            </div>
-          </div>
-        </div>
+        {/* Rango personalizado — DOS pills separados para que el click target
+            de cada fecha sea grande, claro y diferenciable. Antes era un solo
+            pill compartido y se batallaba para acertar al inicio vs fin. */}
+        {([
+          { value: filterStartDate, set: setFilterStartDate, label: "Desde", placeholder: "—" },
+          { value: filterEndDate,   set: setFilterEndDate,   label: "Hasta", placeholder: "—", min: filterStartDate },
+        ] as const).map((d, i) => (
+          <label
+            key={i}
+            className="relative flex items-center gap-2 rounded-full h-[34px] cursor-pointer transition-all"
+            style={{
+              padding: "0 12px 0 14px",
+              background: "var(--td-panel-bg)",
+              border: `1px solid ${activePreset === "custom" ? "rgba(255,68,34,0.4)" : "var(--td-panel-border)"}`,
+              minWidth: 130,
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLLabelElement).style.borderColor = "rgba(255,68,34,0.6)"; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLLabelElement).style.borderColor = activePreset === "custom" ? "rgba(255,68,34,0.4)" : "var(--td-panel-border)"; }}
+          >
+            <CalendarDays size={11} style={{ color: "var(--td-text-lo)", flexShrink: 0 }} />
+            <span className="text-[8px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>
+              {d.label}
+            </span>
+            <span className="text-[10px] font-bold tracking-widest uppercase pointer-events-none select-none"
+              style={{ color: d.value ? "var(--td-text-hi)" : "var(--td-text-lo)" }}>
+              {fmtDate(d.value) || d.placeholder}
+            </span>
+            <input
+              type="date"
+              value={d.value}
+              {...(("min" in d) && d.min ? { min: d.min } : {})}
+              onChange={e => d.set(e.target.value)}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+            />
+          </label>
+        ))}
 
         <div className="flex-1 min-w-0" />
 
@@ -874,7 +886,24 @@ export function SalesPage() {
               </div>
 
               <div className="space-y-1.5">
-                {displayedSales.length === 0 ? (
+                {loading ? (
+                  // Skeleton: 5 filas con shimmer mientras cargan los datos
+                  Array.from({ length: 5 }).map((_, i) => (
+                    <div
+                      key={`sk-${i}`}
+                      className="flex items-center gap-4 px-4 py-3 rounded-2xl animate-pulse"
+                      style={{ background: "rgba(255,255,255,0.03)", border: "1px solid var(--td-panel-border)" }}
+                    >
+                      <div className="w-9 h-9 rounded-xl" style={{ background: "rgba(255,255,255,0.06)" }} />
+                      <div className="flex-1 space-y-1.5">
+                        <div className="h-2.5 w-32 rounded-full" style={{ background: "rgba(255,255,255,0.08)" }} />
+                        <div className="h-2 w-20 rounded-full" style={{ background: "rgba(255,255,255,0.05)" }} />
+                      </div>
+                      <div className="h-2.5 w-16 rounded-full" style={{ background: "rgba(255,255,255,0.05)" }} />
+                      <div className="h-3 w-20 rounded-full" style={{ background: "rgba(255,255,255,0.08)" }} />
+                    </div>
+                  ))
+                ) : displayedSales.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-20" style={{ opacity: 0.15 }}>
                     <Receipt size={40} className="mb-3" />
                     <p className="text-[10px] font-black uppercase tracking-widest">Sin ventas en este período</p>
@@ -911,7 +940,24 @@ export function SalesPage() {
               </div>
 
               <div className="space-y-2">
-                {displayedProducts.length === 0 ? (
+                {loading ? (
+                  Array.from({ length: 5 }).map((_, i) => (
+                    <div
+                      key={`pk-${i}`}
+                      className="flex items-center gap-4 px-4 py-3 rounded-2xl animate-pulse"
+                      style={{ background: "rgba(255,255,255,0.03)", border: "1px solid var(--td-panel-border)" }}
+                    >
+                      <div className="w-10 h-10 rounded-xl" style={{ background: "rgba(255,255,255,0.06)" }} />
+                      <div className="flex-1 space-y-1.5">
+                        <div className="h-2.5 w-40 rounded-full" style={{ background: "rgba(255,255,255,0.08)" }} />
+                        <div className="h-2 w-24 rounded-full" style={{ background: "rgba(255,255,255,0.05)" }} />
+                      </div>
+                      <div className="h-2.5 w-10 rounded-full" style={{ background: "rgba(255,255,255,0.05)" }} />
+                      <div className="h-2.5 w-14 rounded-full" style={{ background: "rgba(255,255,255,0.05)" }} />
+                      <div className="h-3 w-20 rounded-full" style={{ background: "rgba(255,255,255,0.08)" }} />
+                    </div>
+                  ))
+                ) : displayedProducts.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-20" style={{ opacity: 0.15 }}>
                     <Package size={40} className="mb-3" />
                     <p className="text-[10px] font-black uppercase tracking-widest">Sin productos vendidos en este período</p>
