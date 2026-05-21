@@ -65,12 +65,13 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // ── Cash Register ─────────────────────────────────────────────────────────
     Route::prefix('cash')->group(function () {
-        Route::get('registers',  [CashRegisterController::class, 'registers']);
-        Route::get('session',    [CashRegisterController::class, 'session']);
-        Route::post('open',      [CashRegisterController::class, 'open']);
-        Route::post('close',     [CashRegisterController::class, 'close']);
-        Route::post('movements', [CashRegisterController::class, 'addMovement']);
-        Route::get('movements',  [CashRegisterController::class, 'movements']);
+        Route::get('registers',       [CashRegisterController::class, 'registers']);
+        Route::get('session',         [CashRegisterController::class, 'session']);
+        Route::get('active-sessions', [CashRegisterController::class, 'activeSessions']);
+        Route::post('open',           [CashRegisterController::class, 'open']);
+        Route::post('close',          [CashRegisterController::class, 'close']);
+        Route::post('movements',      [CashRegisterController::class, 'addMovement']);
+        Route::get('movements',       [CashRegisterController::class, 'movements']);
     });
 
     // ── Transfers ─────────────────────────────────────────────────────────────

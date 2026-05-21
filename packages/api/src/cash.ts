@@ -95,6 +95,25 @@ export async function getCashRegisters(storeId?: number): Promise<CashRegisterIn
   return response.data
 }
 
+export interface ActiveCashSessionSummary {
+  id: number
+  register_id: number
+  register_name: string | null
+  store_id: number | null
+  user_id: number
+  user_name: string | null
+  opened_at: string
+  opening_cash: number
+}
+
+/** GET /cash/active-sessions?store_id= — sesiones abiertas de una tienda con su cajero */
+export async function getActiveSessions(storeId?: number): Promise<ActiveCashSessionSummary[]> {
+  const response = await apiClient.get<ActiveCashSessionSummary[]>('/cash/active-sessions', {
+    params: storeId ? { store_id: storeId } : undefined,
+  })
+  return response.data
+}
+
 /** GET /cash/movements */
 export async function getCashMovements(params?: {
   session_id?: number

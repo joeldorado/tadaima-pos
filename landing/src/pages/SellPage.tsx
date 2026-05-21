@@ -4,7 +4,7 @@ import {
   Search, ShoppingBag, X, Plus, Minus, Check, SlidersHorizontal,
   ScanLine, Zap, Loader2, Settings2, Smartphone,
   AlertTriangle, ArrowLeftRight, Maximize2, LayoutGrid,
-  Tag, ChevronDown, ChevronUp, ChevronRight, ArrowLeft,
+  Tag, ChevronDown, ChevronUp, ChevronRight, ChevronLeft, ArrowLeft,
   Users, UserPlus, User, Phone, AlertCircle,
   Mail,
   TriangleAlert, PackageX, Bookmark, Calendar, PackageCheck, ClipboardList, Banknote,
@@ -24,7 +24,7 @@ import { useProductsLightQuery, useProductsSearchQuery, useBackgroundProductsPre
 // ADR-014: useReservedStockQuery removido — carrito client-side, sin polling.
 import { usePaymentMethodsQuery } from "@/hooks/queries/usePaymentMethods";
 import { useTerminalsQuery } from "@/hooks/queries/useTerminals";
-import { useActiveSessionQuery, useCashRegistersQuery } from "@/hooks/queries/useCashSession";
+import { useActiveSessionQuery, useCashRegistersQuery, useActiveSessionsQuery } from "@/hooks/queries/useCashSession";
 import { useExchangeRateQuery } from "@/hooks/queries/useSystemSettings";
 import { usePreSaleCatalogsQuery, usePreSaleOrdersQuery } from "@/hooks/queries/usePreSales";
 import { useCustomersAllQuery } from "@/hooks/queries/useCustomers";
@@ -321,6 +321,12 @@ export function SellPage() {
   const cashSession: CashSession | null = activeSessionQuery.data ?? null;
   const cashRegistersQuery  = useCashRegistersQuery(activeStore?.id, { enabled: !cashSession });
   const cashRegisters: CashRegisterInfo[] = cashRegistersQuery.data ?? [];
+  // Sesiones abiertas en la tienda activa — solo el admin las muestra en la
+  // pantalla "Caja cerrada" para saber quién está activo (cajero o gerente).
+  const activeSessionsQuery = useActiveSessionsQuery(activeStore?.id ?? null, {
+    enabled: !cashSession && !!activeStore?.id && isAdmin,
+  });
+  const activeSessionsInStore = activeSessionsQuery.data ?? [];
   const paymentMethods: ApiPaymentMethod[] = paymentMethodsQuery.data ?? [];
   const terminals: Terminal[] = terminalsQuery.data ?? [];
 
@@ -2583,7 +2589,27 @@ export function SellPage() {
   /* ── GATE: sin caja abierta ────────────────────────────────────────────── */
   if (!cashSession) {
     return (
-      <div className="h-full flex flex-col items-center justify-center gap-8" style={{ background: BG }}>
+      <div className="h-full flex flex-col items-center justify-center gap-8 relative" style={{ background: BG }}>
+        {/* Back a selector de tiendas — solo admin, atajo para no hacer hard reload */}
+        {isAdmin && stores.length > 1 && (
+          <button
+            onClick={() => setActiveStore(null)}
+            style={{
+              position: "absolute", top: 16, left: 16,
+              display: "flex", alignItems: "center", gap: 8,
+              padding: "8px 14px", borderRadius: 999, cursor: "pointer",
+              background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)",
+              color: "var(--td-text-md)", fontSize: 11, fontWeight: 800,
+              textTransform: "uppercase", letterSpacing: "0.12em",
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(224,34,26,0.4)"; (e.currentTarget as HTMLButtonElement).style.color = "#E0221A"; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--td-card-border)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--td-text-md)"; }}
+          >
+            <ChevronLeft size={14} />
+            Cambiar tienda
+          </button>
+        )}
+
         {/* Icon */}
         <div style={{
           width: 96, height: 96, borderRadius: 28,
@@ -2619,6 +2645,32 @@ export function SellPage() {
           <Zap size={18} />
           Abrir Caja
         </button>
+
+        {/* Cajeros activos en la tienda — solo visible para admin.
+            Lista compacta tipo "Quién está abierto" para que el admin sepa antes
+            de abrir su propia sesión. Poll 30s vía useActiveSessionsQuery. */}
+        {isAdmin && activeSessionsInStore.length > 0 && (
+          <div style={{
+            display: "flex", flexDirection: "column", gap: 6,
+            padding: "12px 16px", borderRadius: 16,
+            background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)",
+            minWidth: 280, maxWidth: 360,
+          }}>
+            <p style={{ margin: 0, fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.18em", color: "var(--td-text-ghost)" }}>
+              Sesiones abiertas en esta tienda
+            </p>
+            {activeSessionsInStore.map(s => (
+              <div key={s.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 12 }}>
+                <span style={{ color: "var(--td-text-hi)", fontWeight: 700 }}>
+                  {s.user_name ?? `Usuario ${s.user_id}`}
+                </span>
+                <span style={{ color: "var(--td-text-ghost)", fontSize: 10, fontWeight: 600 }}>
+                  {s.register_name ?? `Caja ${s.register_id}`} · desde {new Date(s.opened_at).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Modal: Abrir caja */}
         {showOpenCashModal && (

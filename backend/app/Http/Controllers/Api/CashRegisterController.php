@@ -35,6 +35,48 @@ class CashRegisterController extends Controller
     }
 
     /**
+     * GET /cash/active-sessions?store_id=
+     * Lista las sesiones abiertas de una tienda con el cajero/admin que la abrió.
+     * Solo para admin — usado en la pantalla "Caja cerrada" para ver quién está
+     * con sesión abierta en la tienda activa.
+     */
+    public function activeSessions(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $isAdminUser = $user && $user->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
+
+        $query = CashRegisterSession::query()
+            ->with(['register:id,store_id,name', 'user:id,name'])
+            ->where('status', CashRegisterSession::STATUS_OPEN);
+
+        // No-admin solo ve sesiones de su propia tienda.
+        if (! $isAdminUser) {
+            $storeId = $user?->store_id;
+            if (! $storeId) {
+                return $this->success([]);
+            }
+            $query->whereHas('register', fn ($q) => $q->where('store_id', $storeId));
+        } elseif ($request->filled('store_id')) {
+            $query->whereHas('register', fn ($q) => $q->where('store_id', $request->integer('store_id')));
+        }
+
+        $sessions = $query->orderBy('opened_at', 'desc')->get();
+
+        return $this->success(
+            $sessions->map(fn ($s) => [
+                'id'           => $s->id,
+                'register_id'  => $s->register_id,
+                'register_name'=> $s->register?->name,
+                'store_id'     => $s->register?->store_id,
+                'user_id'      => $s->user_id,
+                'user_name'    => $s->user?->name,
+                'opened_at'    => $s->opened_at,
+                'opening_cash' => (float) $s->opening_cash,
+            ])->values()
+        );
+    }
+
+    /**
      * GET /cash/session
      * Retorna la sesión activa del usuario autenticado (o null si no hay ninguna).
      */
