@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { X, Upload, Trash2, Loader2, Sparkles, Check } from "lucide-react";
+import { X, Upload, Trash2, Loader2, Check } from "lucide-react";
 import { toast } from "sonner";
 import {
   uploadUserAvatar,
@@ -9,17 +9,17 @@ import {
 import { UserAvatar } from "./UserAvatar";
 
 /**
- * Modal para elegir foto de perfil. Tres fuentes:
+ * Modal para elegir foto de perfil. Dos fuentes:
  *  1. Galería Pokémon — sprites oficiales servidos por GitHub (PokéAPI repo).
  *     Solo guardamos la URL en `users.avatar_url` (jamás se descargan al bucket).
- *  2. Avatar abstracto (DiceBear) — generado con seed = nombre del usuario,
- *     varios estilos. También URL externa.
- *  3. Subir foto propia — file upload al bucket (profile_pics/), validado en
+ *  2. Subir foto propia — file upload al bucket (profile_pics/), validado en
  *     backend (max 3MB, MIME estricto).
  *
- * Backend whitelist (UserController::setExternalAvatar) sólo acepta URLs que
- * empiecen con los prefijos PokéAPI o DiceBear — si un usuario malicioso intenta
- * meter `evil.com/tracker.png`, se rechaza con 422.
+ * Backend whitelist (UserController::setExternalAvatar) sólo acepta URLs del
+ * repo PokéAPI/sprites — cualquier otra fuente se rechaza con 422.
+ *
+ * Plan futuro: pre-descargar los 24 sprites Pokémon al bucket para eliminar la
+ * dependencia externa por completo (decisión Joel 2026-05-21).
  */
 
 interface AvatarPickerProps {
@@ -42,21 +42,7 @@ const POKEMON_IDS = [
 const POKEMON_URL = (id: number) =>
   `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${id}.png`;
 
-// DiceBear styles a ofrecer. Cada uno produce un look distinto. Usamos PNG
-// con seed = userName + variantSeed para que las opciones sean estables.
-const DICEBEAR_STYLES: Array<{ id: string; name: string }> = [
-  { id: "personas",       name: "Persona" },
-  { id: "bottts-neutral", name: "Robot" },
-  { id: "pixel-art",      name: "Pixel" },
-  { id: "fun-emoji",      name: "Emoji" },
-  { id: "thumbs",         name: "Pulgar" },
-  { id: "lorelei",        name: "Anime" },
-];
-
-const dicebearUrl = (style: string, seed: string) =>
-  `https://api.dicebear.com/9.x/${style}/png?seed=${encodeURIComponent(seed)}&backgroundType=gradientLinear`;
-
-type Tab = "pokemon" | "abstract" | "upload";
+type Tab = "pokemon" | "upload";
 
 export function AvatarPicker({
   userId,
@@ -69,7 +55,6 @@ export function AvatarPicker({
   const [tab, setTab] = useState<Tab>("pokemon");
   const [saving, setSaving] = useState(false);
   const [hoverUrl, setHoverUrl] = useState<string | null>(null);
-  const [seedSuffix, setSeedSuffix] = useState(0); // refresca los avatares abstractos
 
   if (!open) return null;
 
@@ -160,7 +145,7 @@ export function AvatarPicker({
 
         {/* Tabs */}
         <div style={{ display: "flex", gap: 4, padding: "12px 22px 0" }}>
-          {(["pokemon", "abstract", "upload"] as const).map(t => (
+          {(["pokemon", "upload"] as const).map(t => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -172,7 +157,7 @@ export function AvatarPicker({
                 fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.12em",
               }}
             >
-              {t === "pokemon" ? "Pokémon" : t === "abstract" ? "Abstracto" : "Subir foto"}
+              {t === "pokemon" ? "Pokémon" : "Subir foto"}
             </button>
           ))}
         </div>
@@ -212,59 +197,6 @@ export function AvatarPicker({
                   </button>
                 );
               })}
-            </div>
-          )}
-
-          {tab === "abstract" && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <p style={{ margin: 0, fontSize: 11, color: "var(--td-text-md)", fontWeight: 700 }}>
-                  Generados con tu nombre. Toca el botón para refrescar variantes.
-                </p>
-                <button
-                  onClick={() => setSeedSuffix(s => s + 1)}
-                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 10, background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", color: "var(--td-text-md)", fontSize: 10, fontWeight: 800, cursor: "pointer", textTransform: "uppercase", letterSpacing: "0.1em" }}
-                >
-                  <Sparkles size={12} />
-                  Refrescar
-                </button>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(96px, 1fr))", gap: 10 }}>
-                {DICEBEAR_STYLES.map(s => {
-                  const seed = `${userName}-${s.id}-${seedSuffix}`;
-                  const url = dicebearUrl(s.id, seed);
-                  return (
-                    <button
-                      key={s.id}
-                      onClick={() => void pickExternal(url)}
-                      onMouseEnter={() => setHoverUrl(url)}
-                      onMouseLeave={() => setHoverUrl(null)}
-                      disabled={saving}
-                      style={{
-                        display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
-                        padding: 10, borderRadius: 14,
-                        background: "var(--td-card-bg)",
-                        border: `2px solid ${currentAvatarUrl === url ? "#E0221A" : "var(--td-card-border)"}`,
-                        cursor: saving ? "not-allowed" : "pointer",
-                      }}
-                    >
-                      <img
-                        src={url}
-                        alt={s.name}
-                        width={64}
-                        height={64}
-                        loading="lazy"
-                        decoding="async"
-                        referrerPolicy="no-referrer"
-                        style={{ width: 64, height: 64, borderRadius: 999, objectFit: "cover" }}
-                      />
-                      <span style={{ fontSize: 9, fontWeight: 800, color: "var(--td-text-md)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
-                        {s.name}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
             </div>
           )}
 

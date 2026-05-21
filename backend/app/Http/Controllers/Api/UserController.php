@@ -211,10 +211,12 @@ class UserController extends Controller
 
         // Whitelist explícito. Cualquier otra fuente se rechaza para impedir
         // que un usuario malicioso meta tracking pixels o phishing en su perfil.
+        // Joel 2026-05-21: DiceBear removido — la galería en UI sólo ofrece
+        // Pokémon (GitHub repo oficial). Plan futuro: pre-descargar sprites al
+        // bucket para eliminar también esta dependencia externa.
         $url = $request->input('url');
         $allowedPrefixes = [
             'https://raw.githubusercontent.com/PokeAPI/sprites/',
-            'https://api.dicebear.com/',
         ];
         $allowed = false;
         foreach ($allowedPrefixes as $prefix) {

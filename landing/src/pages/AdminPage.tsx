@@ -520,7 +520,7 @@ function TabUsuarios() {
         toast.success("Usuario actualizado");
       } else {
         if (!d.password.trim()) { toast.error("La contraseña es requerida"); setSaving(false); return; }
-        await createUser({
+        const created = await createUser({
           name: d.name,
           email: d.email,
           password: d.password,
@@ -530,6 +530,16 @@ function TabUsuarios() {
           role_id: d.role_id,
         });
         toast.success("Usuario creado");
+        // Cierra el modal de alta y, tras un refetch, ofrece el picker para
+        // que el admin asigne la foto del usuario recién creado.
+        void invalidateUsers();
+        closeModal();
+        setAvatarPicker({
+          userId: created.id,
+          userName: created.name,
+          currentUrl: null,
+        });
+        return;
       }
       void invalidateUsers();
       closeModal();
@@ -645,37 +655,45 @@ function TabUsuarios() {
       {modal?.open && (
         <Modal title={modal.data.id ? "Editar Usuario" : "Nuevo Usuario"} onClose={closeModal}>
           <div style={{ display: "grid", gap: 14 }}>
-            {/* Avatar — sólo en edición. Para usuarios nuevos hay que crearlos
-                primero (necesitamos user_id para el endpoint del bucket). */}
-            {modal.data.id && (() => {
-              const existing = users.find(u => u.id === modal.data.id);
+            {/* Avatar — preview con iniciales del nombre escrito. En edición
+                hay botón para abrir el picker. En alta nueva no se puede
+                subir antes de crear el usuario (necesitamos user_id), pero
+                tras "Crear Usuario" se abre el picker automáticamente. */}
+            {(() => {
+              const existing = modal.data.id ? users.find(u => u.id === modal.data.id) : undefined;
               const currentAvatar = existing?.avatar_url ?? null;
+              const displayName = modal.data.name || existing?.name || "Nuevo Usuario";
+              const isNew = !modal.data.id;
               return (
                 <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px 0 4px" }}>
-                  <UserAvatar name={modal.data.name || existing?.name || ""} avatarUrl={currentAvatar} size={56} />
+                  <UserAvatar name={displayName} avatarUrl={currentAvatar} size={56} />
                   <div style={{ flex: 1 }}>
                     <p style={{ margin: 0, fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: TM }}>
                       Foto de perfil
                     </p>
                     <p style={{ margin: "2px 0 0", fontSize: 11, color: TM, lineHeight: 1.4 }}>
-                      {currentAvatar ? "Foto asignada" : "Sin foto — se muestran las iniciales"}
+                      {isNew
+                        ? "Podrás asignar la foto al guardar"
+                        : (currentAvatar ? "Foto asignada" : "Sin foto — se muestran las iniciales")}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setAvatarPicker({
-                      userId: modal.data.id!,
-                      userName: modal.data.name || existing?.name || "",
-                      currentUrl: currentAvatar,
-                    })}
-                    style={{
-                      padding: "8px 14px", borderRadius: 10, cursor: "pointer",
-                      background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)",
-                      color: TP, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em",
-                    }}
-                  >
-                    {currentAvatar ? "Cambiar" : "Elegir"}
-                  </button>
+                  {!isNew && (
+                    <button
+                      type="button"
+                      onClick={() => setAvatarPicker({
+                        userId: modal.data.id!,
+                        userName: displayName,
+                        currentUrl: currentAvatar,
+                      })}
+                      style={{
+                        padding: "8px 14px", borderRadius: 10, cursor: "pointer",
+                        background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)",
+                        color: TP, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em",
+                      }}
+                    >
+                      {currentAvatar ? "Cambiar" : "Elegir"}
+                    </button>
+                  )}
                 </div>
               );
             })()}
