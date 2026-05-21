@@ -2589,27 +2589,7 @@ export function SellPage() {
   /* ── GATE: sin caja abierta ────────────────────────────────────────────── */
   if (!cashSession) {
     return (
-      <div className="h-full flex flex-col items-center justify-center gap-8 relative" style={{ background: BG }}>
-        {/* Back a selector de tiendas — solo admin, atajo para no hacer hard reload */}
-        {isAdmin && stores.length > 1 && (
-          <button
-            onClick={() => setActiveStore(null)}
-            style={{
-              position: "absolute", top: 16, left: 16,
-              display: "flex", alignItems: "center", gap: 8,
-              padding: "8px 14px", borderRadius: 999, cursor: "pointer",
-              background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)",
-              color: "var(--td-text-md)", fontSize: 11, fontWeight: 800,
-              textTransform: "uppercase", letterSpacing: "0.12em",
-            }}
-            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(224,34,26,0.4)"; (e.currentTarget as HTMLButtonElement).style.color = "#E0221A"; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--td-card-border)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--td-text-md)"; }}
-          >
-            <ChevronLeft size={14} />
-            Cambiar tienda
-          </button>
-        )}
-
+      <div className="h-full flex flex-col items-center justify-center gap-8" style={{ background: BG }}>
         {/* Icon */}
         <div style={{
           width: 96, height: 96, borderRadius: 28,
@@ -2629,22 +2609,43 @@ export function SellPage() {
           </p>
         </div>
 
-        {/* Open button */}
-        <button
-          onClick={() => setShowOpenCashModal(true)}
-          style={{
-            display: "flex", alignItems: "center", gap: 12,
-            padding: "16px 40px", borderRadius: 20, cursor: "pointer",
-            background: "linear-gradient(135deg, #BB1100 0%, #E0221A 100%)",
-            border: "1px solid rgba(255,80,50,0.3)",
-            boxShadow: "0 0 40px rgba(224,34,26,0.3), 0 8px 24px rgba(0,0,0,0.4)",
-            color: "#fff", fontSize: 14, fontWeight: 900,
-            textTransform: "uppercase", letterSpacing: "0.15em",
-          }}
-        >
-          <Zap size={18} />
-          Abrir Caja
-        </button>
+        {/* Acciones: Abrir Caja + Cambiar tienda (solo admin con >1 tienda).
+            Joel pidió que el back vaya pegado al CTA, no flotante arriba. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", justifyContent: "center" }}>
+          <button
+            onClick={() => setShowOpenCashModal(true)}
+            style={{
+              display: "flex", alignItems: "center", gap: 12,
+              padding: "16px 40px", borderRadius: 20, cursor: "pointer",
+              background: "linear-gradient(135deg, #BB1100 0%, #E0221A 100%)",
+              border: "1px solid rgba(255,80,50,0.3)",
+              boxShadow: "0 0 40px rgba(224,34,26,0.3), 0 8px 24px rgba(0,0,0,0.4)",
+              color: "#fff", fontSize: 14, fontWeight: 900,
+              textTransform: "uppercase", letterSpacing: "0.15em",
+            }}
+          >
+            <Zap size={18} />
+            Abrir Caja
+          </button>
+
+          {isAdmin && stores.length > 1 && (
+            <button
+              onClick={() => setActiveStore(null)}
+              style={{
+                display: "flex", alignItems: "center", gap: 8,
+                padding: "16px 24px", borderRadius: 20, cursor: "pointer",
+                background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)",
+                color: "var(--td-text-md)", fontSize: 12, fontWeight: 800,
+                textTransform: "uppercase", letterSpacing: "0.15em",
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(224,34,26,0.4)"; (e.currentTarget as HTMLButtonElement).style.color = "#E0221A"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--td-card-border)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--td-text-md)"; }}
+            >
+              <ChevronLeft size={14} />
+              Cambiar tienda
+            </button>
+          )}
+        </div>
 
         {/* Cajeros activos en la tienda — solo visible para admin.
             Lista compacta tipo "Quién está abierto" para que el admin sepa antes
