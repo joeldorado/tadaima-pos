@@ -16,6 +16,10 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'auth' => \App\Http\Middleware\Authenticate::class,
         ]);
+        // Toca users.last_seen_at en cada request /api/* autenticada (dedupe 30s).
+        // Admin/gerente lo lee vía GET /users/online para saber quién está
+        // conectado al POS aunque no haya abierto caja todavía.
+        $middleware->api(append: [\App\Http\Middleware\TouchLastSeen::class]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         // No autenticado → 401 JSON (evita redirigir a ruta "login" inexistente)

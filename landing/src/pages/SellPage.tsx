@@ -26,6 +26,7 @@ import { useProductsLightQuery, useProductsSearchQuery, useBackgroundProductsPre
 import { usePaymentMethodsQuery } from "@/hooks/queries/usePaymentMethods";
 import { useTerminalsQuery } from "@/hooks/queries/useTerminals";
 import { useActiveSessionQuery, useCashRegistersQuery, useActiveSessionsQuery } from "@/hooks/queries/useCashSession";
+import { useOnlineUsersQuery } from "@/hooks/queries/useUsers";
 import { useExchangeRateQuery } from "@/hooks/queries/useSystemSettings";
 import { usePreSaleCatalogsQuery, usePreSaleOrdersQuery } from "@/hooks/queries/usePreSales";
 import { useCustomersAllQuery } from "@/hooks/queries/useCustomers";
@@ -348,6 +349,31 @@ export function SellPage() {
     }
     return m;
   }, [allActiveSessions]);
+
+  // Usuarios conectados (last_seen_at < 2 min) en TODAS las tiendas — admin
+  // los usa en el selector para distinguir "logueado pero sin caja" de "caja
+  // abierta vendiendo". Mismo query también se reusa en la pantalla Caja cerrada.
+  const allOnlineUsersQuery = useOnlineUsersQuery(null, {
+    enabled: !activeStore && isAdmin,
+  });
+  const allOnlineUsers = allOnlineUsersQuery.data ?? [];
+  const onlineByStore = useMemo(() => {
+    const m = new Map<number, typeof allOnlineUsers>();
+    for (const u of allOnlineUsers) {
+      if (!u.store_id) continue;
+      const arr = m.get(u.store_id) ?? [];
+      arr.push(u);
+      m.set(u.store_id, arr);
+    }
+    return m;
+  }, [allOnlineUsers]);
+
+  // Usuarios conectados de la tienda activa — para mostrar en "Caja cerrada"
+  // junto a las sesiones abiertas.
+  const onlineUsersInStoreQuery = useOnlineUsersQuery(activeStore?.id ?? null, {
+    enabled: !cashSession && !!activeStore?.id && isAdmin,
+  });
+  const onlineUsersInStore = onlineUsersInStoreQuery.data ?? [];
   const paymentMethods: ApiPaymentMethod[] = paymentMethodsQuery.data ?? [];
   const terminals: Terminal[] = terminalsQuery.data ?? [];
 
@@ -2577,11 +2603,18 @@ export function SellPage() {
               const entry = activeSessionsByStore.get(s.id);
               const count = entry?.count ?? 0;
               const sessions = entry?.sessions ?? [];
+              // Conectados pero SIN caja abierta — los que están logueados
+              // (last_seen_at < 2 min) pero no aparecen en sesiones de caja.
+              const onlineInStore = onlineByStore.get(s.id) ?? [];
+              const sessionUserIds = new Set(sessions.map(x => x.user_id));
+              const onlineOnly = onlineInStore.filter(u => !sessionUserIds.has(u.id));
               // Tooltip nativo con la lista de cajeros — útil para admin antes
               // de seleccionar la tienda. Ej: "joel · Caja 1 · 14:32".
-              const title = count > 0
-                ? sessions.map(x => `${x.user_name ?? `Usuario ${x.user_id}`} · ${x.register_name ?? `Caja ${x.register_id}`} · ${new Date(x.opened_at).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}`).join("\n")
-                : "Sin sesiones abiertas";
+              const titleLines = [
+                ...sessions.map(x => `🟢 ${x.user_name ?? `Usuario ${x.user_id}`} · ${x.register_name ?? `Caja ${x.register_id}`} · ${new Date(x.opened_at).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}`),
+                ...onlineOnly.map(u => `🔵 ${u.name} · conectado, sin caja`),
+              ];
+              const title = titleLines.length > 0 ? titleLines.join("\n") : "Sin actividad";
               return (
                 <button
                   key={s.id}
@@ -2601,34 +2634,74 @@ export function SellPage() {
                     {s.name}
                     {s.address && <span style={{ display: "block", fontSize: 10, color: "var(--td-text-ghost)", marginTop: 2 }}>{s.address}</span>}
                   </div>
-                  {/* Badge "N cajeros activos" — solo admin. Verde con dot pulsante
-                      cuando hay sesiones; gris muted cuando está vacía.
-                      Si todavía no llega la primera respuesta, dice "Verificando"
-                      en gris en lugar de un falso "Sin caja". */}
+                  {/* Badges — solo admin. Verde con dot pulsante = caja abierta.
+                      Azul = cajero conectado (logueado) sin abrir caja todavía.
+                      Si todavía no llega la primera respuesta, dice "Verificando". */}
                   {isAdmin && (() => {
-                    const isLoading = allActiveSessionsQuery.isPending;
-                    return (
-                      <div style={{
-                        display: "flex", alignItems: "center", gap: 6,
-                        padding: "4px 10px", borderRadius: 999,
-                        background: isLoading ? "rgba(255,255,255,0.04)" : (count > 0 ? "rgba(16,185,129,0.12)" : "rgba(255,255,255,0.04)"),
-                        border: `1px solid ${isLoading ? "var(--td-card-border)" : (count > 0 ? "rgba(16,185,129,0.3)" : "var(--td-card-border)")}`,
-                        flexShrink: 0,
-                      }}>
-                        <span
-                          className={!isLoading && count > 0 ? "animate-pulse" : ""}
-                          style={{
-                            width: 6, height: 6, borderRadius: 999,
-                            background: isLoading ? "var(--td-text-ghost)" : (count > 0 ? "#10b981" : "var(--td-text-ghost)"),
-                            boxShadow: !isLoading && count > 0 ? "0 0 8px rgba(16,185,129,0.6)" : "none",
-                          }}
-                        />
-                        <span style={{
-                          fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em",
-                          color: isLoading ? "var(--td-text-ghost)" : (count > 0 ? "#10b981" : "var(--td-text-ghost)"),
+                    const isLoading = allActiveSessionsQuery.isPending || allOnlineUsersQuery.isPending;
+                    if (isLoading) {
+                      return (
+                        <div style={{
+                          display: "flex", alignItems: "center", gap: 6,
+                          padding: "4px 10px", borderRadius: 999,
+                          background: "rgba(255,255,255,0.04)",
+                          border: "1px solid var(--td-card-border)",
+                          flexShrink: 0,
                         }}>
-                          {isLoading ? "Verificando…" : (count === 0 ? "Sin caja" : count === 1 ? "1 caja abierta" : `${count} cajas abiertas`)}
-                        </span>
+                          <span style={{ width: 6, height: 6, borderRadius: 999, background: "var(--td-text-ghost)" }} />
+                          <span style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--td-text-ghost)" }}>
+                            Verificando…
+                          </span>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                        {count > 0 && (
+                          <div style={{
+                            display: "flex", alignItems: "center", gap: 6,
+                            padding: "4px 10px", borderRadius: 999,
+                            background: "rgba(16,185,129,0.12)",
+                            border: "1px solid rgba(16,185,129,0.3)",
+                          }}>
+                            <span className="animate-pulse" style={{
+                              width: 6, height: 6, borderRadius: 999,
+                              background: "#10b981", boxShadow: "0 0 8px rgba(16,185,129,0.6)",
+                            }} />
+                            <span style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "#10b981" }}>
+                              {count === 1 ? "1 caja" : `${count} cajas`}
+                            </span>
+                          </div>
+                        )}
+                        {onlineOnly.length > 0 && (
+                          <div style={{
+                            display: "flex", alignItems: "center", gap: 6,
+                            padding: "4px 10px", borderRadius: 999,
+                            background: "rgba(59,130,246,0.10)",
+                            border: "1px solid rgba(59,130,246,0.3)",
+                          }} title="Conectados pero sin abrir caja">
+                            <span className="animate-pulse" style={{
+                              width: 6, height: 6, borderRadius: 999,
+                              background: "#3b82f6", boxShadow: "0 0 8px rgba(59,130,246,0.6)",
+                            }} />
+                            <span style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "#3b82f6" }}>
+                              +{onlineOnly.length} conectado{onlineOnly.length === 1 ? "" : "s"}
+                            </span>
+                          </div>
+                        )}
+                        {count === 0 && onlineOnly.length === 0 && (
+                          <div style={{
+                            display: "flex", alignItems: "center", gap: 6,
+                            padding: "4px 10px", borderRadius: 999,
+                            background: "rgba(255,255,255,0.04)",
+                            border: "1px solid var(--td-card-border)",
+                          }}>
+                            <span style={{ width: 6, height: 6, borderRadius: 999, background: "var(--td-text-ghost)" }} />
+                            <span style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--td-text-ghost)" }}>
+                              Sin actividad
+                            </span>
+                          </div>
+                        )}
                       </div>
                     );
                   })()}
@@ -2664,7 +2737,7 @@ export function SellPage() {
      traen las sesiones abiertas de la tienda activa. */
   const verifyingSession =
     activeSessionQuery.isPending ||
-    (isAdmin && !!activeStore?.id && activeSessionsQuery.isPending);
+    (isAdmin && !!activeStore?.id && (activeSessionsQuery.isPending || onlineUsersInStoreQuery.isPending));
   if (verifyingSession) {
     return (
       <div className="h-full flex flex-col items-center justify-center gap-4" style={{ background: BG }}>
@@ -2745,8 +2818,10 @@ export function SellPage() {
         {/* Cajeros activos en la tienda — solo visible para admin.
             Tarjeta visual con dot pulsante, hora de apertura y "hace X min" para
             que el admin sepa de un vistazo quién está vendiendo en su sucursal.
-            Poll 30s vía useActiveSessionsQuery. */}
-        {isAdmin && activeSessionsInStore.length > 0 && (() => {
+            Bajo eso, los "conectados sin caja" (logueados pero no han abierto
+            caja todavía). Poll 30s. */}
+        {isAdmin && (activeSessionsInStore.length > 0 || onlineUsersInStore.filter(u => !activeSessionsInStore.some(s => s.user_id === u.id)).length > 0) && (() => {
+          const onlineOnlyInStore = onlineUsersInStore.filter(u => !activeSessionsInStore.some(s => s.user_id === u.id));
           const fmtSince = (iso: string): string => {
             const diffMin = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
             if (diffMin < 1) return "hace un momento";
@@ -2763,40 +2838,77 @@ export function SellPage() {
               minWidth: 320, maxWidth: 420,
               boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
             }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, paddingBottom: 8, borderBottom: "1px solid var(--td-divider)" }}>
-                <span className="animate-pulse" style={{
-                  width: 8, height: 8, borderRadius: 999,
-                  background: "#10b981", boxShadow: "0 0 10px rgba(16,185,129,0.7)",
-                }} />
-                <p style={{ margin: 0, fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.18em", color: "#10b981" }}>
-                  {activeSessionsInStore.length === 1 ? "1 caja abierta ahora" : `${activeSessionsInStore.length} cajas abiertas ahora`}
-                </p>
-              </div>
-              {activeSessionsInStore.map(s => {
-                const userName = s.user_name ?? `Usuario ${s.user_id}`;
-                const opened = new Date(s.opened_at);
-                return (
-                  <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <UserAvatar name={userName} size={32} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: "var(--td-text-hi)" }}>
-                        {userName}
-                      </p>
-                      <p style={{ margin: "2px 0 0", fontSize: 9, fontWeight: 600, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
-                        {s.register_name ?? `Caja ${s.register_id}`} · ${(s.opening_cash ?? 0).toFixed(0)} inicial
-                      </p>
-                    </div>
-                    <div style={{ textAlign: "right", flexShrink: 0 }}>
-                      <p style={{ margin: 0, fontSize: 11, fontWeight: 800, color: "var(--td-text-md)" }}>
-                        {opened.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}
-                      </p>
-                      <p style={{ margin: "2px 0 0", fontSize: 9, color: "var(--td-text-ghost)", fontWeight: 700 }}>
-                        {fmtSince(s.opened_at)}
-                      </p>
-                    </div>
+              {activeSessionsInStore.length > 0 && (
+                <>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, paddingBottom: 8, borderBottom: "1px solid var(--td-divider)" }}>
+                    <span className="animate-pulse" style={{
+                      width: 8, height: 8, borderRadius: 999,
+                      background: "#10b981", boxShadow: "0 0 10px rgba(16,185,129,0.7)",
+                    }} />
+                    <p style={{ margin: 0, fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.18em", color: "#10b981" }}>
+                      {activeSessionsInStore.length === 1 ? "1 caja abierta ahora" : `${activeSessionsInStore.length} cajas abiertas ahora`}
+                    </p>
                   </div>
-                );
-              })}
+                  {activeSessionsInStore.map(s => {
+                    const userName = s.user_name ?? `Usuario ${s.user_id}`;
+                    const opened = new Date(s.opened_at);
+                    return (
+                      <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <UserAvatar name={userName} size={32} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: "var(--td-text-hi)" }}>
+                            {userName}
+                          </p>
+                          <p style={{ margin: "2px 0 0", fontSize: 9, fontWeight: 600, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
+                            {s.register_name ?? `Caja ${s.register_id}`} · ${(s.opening_cash ?? 0).toFixed(0)} inicial
+                          </p>
+                        </div>
+                        <div style={{ textAlign: "right", flexShrink: 0 }}>
+                          <p style={{ margin: 0, fontSize: 11, fontWeight: 800, color: "var(--td-text-md)" }}>
+                            {opened.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}
+                          </p>
+                          <p style={{ margin: "2px 0 0", fontSize: 9, color: "var(--td-text-ghost)", fontWeight: 700 }}>
+                            {fmtSince(s.opened_at)}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+              {/* Conectados sin abrir caja — separados visualmente con divisor
+                  y dot azul para distinguirlos de los que están vendiendo. */}
+              {onlineOnlyInStore.length > 0 && (
+                <>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: activeSessionsInStore.length > 0 ? 8 : 0, paddingBottom: 8, borderTop: activeSessionsInStore.length > 0 ? "1px solid var(--td-divider)" : "none", borderBottom: "1px solid var(--td-divider)" }}>
+                    <span className="animate-pulse" style={{
+                      width: 8, height: 8, borderRadius: 999,
+                      background: "#3b82f6", boxShadow: "0 0 10px rgba(59,130,246,0.7)",
+                    }} />
+                    <p style={{ margin: 0, fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.18em", color: "#3b82f6" }}>
+                      {onlineOnlyInStore.length === 1 ? "1 conectado · sin caja" : `${onlineOnlyInStore.length} conectados · sin caja`}
+                    </p>
+                  </div>
+                  {onlineOnlyInStore.map(u => (
+                    <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <UserAvatar name={u.name} avatarUrl={u.avatar_url} size={32} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: "var(--td-text-hi)" }}>
+                          {u.name}
+                        </p>
+                        <p style={{ margin: "2px 0 0", fontSize: 9, fontWeight: 600, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
+                          {u.roles?.[0] ?? "Usuario"} · sin caja abierta
+                        </p>
+                      </div>
+                      <div style={{ textAlign: "right", flexShrink: 0 }}>
+                        <p style={{ margin: "0", fontSize: 9, color: "var(--td-text-ghost)", fontWeight: 700 }}>
+                          {u.last_seen_at ? fmtSince(u.last_seen_at) : "—"}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </>
+              )}
             </div>
           );
         })()}

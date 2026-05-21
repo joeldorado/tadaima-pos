@@ -52,6 +52,7 @@ Route::get('public/catalog/{catalogUrl}', [CatalogController::class, 'publicCata
 Route::middleware('auth:sanctum')->group(function () {
 
     // ── Users ─────────────────────────────────────────────────────────────────
+    Route::get('users/online',                  [UserController::class, 'online']);
     Route::apiResource('users', UserController::class);
     Route::post('users/{user}/roles',           [UserController::class, 'assignRole']);
     Route::delete('users/{user}/roles/{roleId}', [UserController::class, 'removeRole']);

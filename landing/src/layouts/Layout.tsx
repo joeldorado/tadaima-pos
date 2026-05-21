@@ -16,7 +16,7 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { useEffect, useState } from "react";
 import { primaryRole, type PageKey } from "@/lib/permisos";
 import { useQueryClient } from "@tanstack/react-query";
-import { getProductsLight } from "@tadaima/api";
+import { getProductsLight, apiClient } from "@tadaima/api";
 import { queryKeys } from "@/lib/queryKeys";
 
 interface NavItem {
@@ -69,6 +69,20 @@ export function Layout() {
   }, [user, queryClient]);
 
   const [showUserMenu, setShowUserMenu] = useState(false);
+
+  // Heartbeat — el backend (middleware TouchLastSeen) actualiza last_seen_at
+  // en CUALQUIER request. Con el cajero activamente vendiendo (queries, polls)
+  // ya se mantiene "conectado" sin esfuerzo extra. Para cubrir el caso idle
+  // (cajero deja la pestaña abierta sin interactuar) hacemos un GET cada 60s
+  // a /auth/me — barato y reusa el mismo flow que ya valida el token.
+  useEffect(() => {
+    if (!user) return;
+    const tick = () => {
+      void apiClient.get('/auth/me').catch(() => { /* token caduco → AuthContext maneja */ });
+    };
+    const id = window.setInterval(tick, 60_000);
+    return () => window.clearInterval(id);
+  }, [user?.id]);
 
   const isDark = theme === "dark";
 

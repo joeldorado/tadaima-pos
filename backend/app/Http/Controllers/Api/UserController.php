@@ -14,6 +14,53 @@ use Illuminate\Support\Facades\DB;
 class UserController extends Controller
 {
     /**
+     * GET /users/online
+     *
+     * Lista los usuarios "conectados" (last_seen_at < 2 min). Admin sin store_id
+     * ve todos; admin con store_id filtra a esa sucursal; gerente/cajero se
+     * limitan a su propia tienda. Útil para que admin vea cajeros logueados
+     * antes de que abran caja registradora.
+     */
+    public function online(Request $request): JsonResponse
+    {
+        $authUser = $request->user();
+        $isAdminUser = $authUser && $authUser->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
+
+        $threshold = now()->subMinutes(2);
+
+        $query = User::query()
+            ->with('store:id,name')
+            ->where('active', true)
+            ->where('last_seen_at', '>=', $threshold);
+
+        if (! $isAdminUser) {
+            $storeId = $authUser?->store_id;
+            if (! $storeId) {
+                return $this->success([]);
+            }
+            $query->where('store_id', $storeId);
+        } elseif ($request->filled('store_id')) {
+            $query->where('store_id', $request->integer('store_id'));
+        }
+
+        $users = $query->orderByDesc('last_seen_at')->get();
+
+        return $this->success(
+            $users->map(fn ($u) => [
+                'id'           => $u->id,
+                'name'         => $u->name,
+                'avatar_url'   => $u->avatar_url
+                    ? (str_starts_with($u->avatar_url, 'http') ? $u->avatar_url : \Storage::url($u->avatar_url))
+                    : null,
+                'store_id'     => $u->store_id,
+                'store_name'   => $u->store?->name,
+                'last_seen_at' => $u->last_seen_at?->toISOString(),
+                'roles'        => $u->roles,
+            ])->values()
+        );
+    }
+
+    /**
      * GET /users
      * Filters: store_id, company_id, active, search (name/email)
      */

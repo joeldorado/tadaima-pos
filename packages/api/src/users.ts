@@ -88,3 +88,21 @@ export async function removeUserAvatar(userId: number): Promise<User> {
   const response = await apiClient.delete<User>(`/users/${userId}/avatar`)
   return response.data
 }
+
+export interface OnlineUser {
+  id: number
+  name: string
+  avatar_url: string | null
+  store_id: number | null
+  store_name: string | null
+  last_seen_at: string | null
+  roles: string[]
+}
+
+/** GET /users/online?store_id= — usuarios con last_seen_at < 2 min */
+export async function getOnlineUsers(storeId?: number): Promise<OnlineUser[]> {
+  const response = await apiClient.get<OnlineUser[]>('/users/online', {
+    params: storeId ? { store_id: storeId } : undefined,
+  })
+  return response.data
+}
