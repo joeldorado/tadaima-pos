@@ -9,7 +9,7 @@ import {
   X, Check, ChevronDown, Loader2, AlertTriangle,
   Eye, EyeOff, Lock, Globe, Phone,
   Mail, MapPin, ToggleLeft, ToggleRight,
-  UserCheck, Key, Clock, Trash2, Percent,
+  UserCheck, Key, Clock, Trash2, Percent, Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -479,6 +479,7 @@ function TabUsuarios() {
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<ApiUser | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
     if (usersQuery.error || storesQuery.error || rolesQuery.error) toast.error("Error al cargar usuarios");
@@ -491,7 +492,7 @@ function TabUsuarios() {
     const currentRole = roles.find(r => u.roles.includes(r.name));
     setModal({ open: true, data: { id: u.id, name: u.name, email: u.email, password: "", phone: u.phone ?? "", active: u.active, store_id: u.store_id ?? undefined, role_id: currentRole?.id } });
   };
-  const closeModal = () => setModal(null);
+  const closeModal = () => { setModal(null); setShowPassword(false); };
 
   const save = async () => {
     if (!modal) return;
@@ -536,6 +537,36 @@ function TabUsuarios() {
 
   const setField = (key: keyof UserFormData, value: string | boolean | number | undefined) =>
     setModal(m => m ? { ...m, data: { ...m.data, [key]: value } } : m);
+
+  // Genera una contraseña simple-pero-fuerte: 1 palabra capitalizada + 4 dígitos
+  // + un símbolo. Ej. "Tienda4827!". Cumple políticas comunes (mayús+minús+digit+
+  // símbolo, 9+ chars) y es fácil de dictar verbalmente al cajero.
+  const generatePassword = (): string => {
+    const palabras = [
+      "Tadaima", "Caja", "Tienda", "Manga", "Folio", "Venta", "Cobro",
+      "Almacen", "Centro", "Recibo", "Stock", "Catalogo", "Pago", "Cliente",
+    ];
+    const simbolos = ["!", "#", "$", "@", "%"];
+    const rand = (max: number) => Math.floor(Math.random() * max);
+    const palabra = palabras[rand(palabras.length)]!;
+    const digitos = String(rand(9000) + 1000); // 4 dígitos, primero ≥1
+    const simbolo = simbolos[rand(simbolos.length)]!;
+    return `${palabra}${digitos}${simbolo}`;
+  };
+
+  const handleGeneratePassword = () => {
+    const pwd = generatePassword();
+    setField("password", pwd);
+    setShowPassword(true); // muestra al instante para que el admin lo copie/dicte
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(pwd).then(
+        () => toast.success(`Contraseña generada y copiada: ${pwd}`),
+        () => toast.success(`Contraseña generada: ${pwd}`)
+      );
+    } else {
+      toast.success(`Contraseña generada: ${pwd}`);
+    }
+  };
 
   const askDelete = (u: ApiUser) => {
     if (currentUser?.id === u.id) {
@@ -612,8 +643,8 @@ function TabUsuarios() {
         <Modal title={modal.data.id ? "Editar Usuario" : "Nuevo Usuario"} onClose={closeModal}>
           <div style={{ display: "grid", gap: 14 }}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <Field label="Nombre *">
-                <input type="text" style={INPUT} value={modal.data.name} onChange={e => setField("name", e.target.value)} placeholder="Nombre completo" />
+              <Field label="Nombre completo *">
+                <input type="text" style={INPUT} value={modal.data.name} onChange={e => setField("name", e.target.value)} placeholder="Ej. María López Pérez" />
               </Field>
               <Field label="Email *">
                 <input type="email" style={INPUT} value={modal.data.email} onChange={e => setField("email", e.target.value)} placeholder="correo@ejemplo.com" />
@@ -621,7 +652,40 @@ function TabUsuarios() {
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <Field label={modal.data.id ? "Nueva contraseña (opcional)" : "Contraseña *"}>
-                <input type="password" style={INPUT} value={modal.data.password} onChange={e => setField("password", e.target.value)} placeholder="••••••••" />
+                <div style={{ position: "relative" }}>
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    style={{ ...INPUT, paddingRight: 76 }}
+                    value={modal.data.password}
+                    onChange={e => setField("password", e.target.value)}
+                    placeholder="••••••••"
+                    autoComplete="new-password"
+                  />
+                  {/* Eye toggle + Generar — pegados a la derecha del input.
+                      "Generar" produce contraseña simple-pero-fuerte y la copia. */}
+                  <div style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", display: "flex", alignItems: "center", gap: 2 }}>
+                    <button
+                      type="button"
+                      onClick={handleGeneratePassword}
+                      title="Generar contraseña segura"
+                      style={{ background: "transparent", border: "none", cursor: "pointer", padding: 6, borderRadius: 8, color: TM, display: "flex", alignItems: "center" }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = "#E0221A"; }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = TM; }}
+                    >
+                      <Sparkles size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(s => !s)}
+                      title={showPassword ? "Ocultar" : "Mostrar"}
+                      style={{ background: "transparent", border: "none", cursor: "pointer", padding: 6, borderRadius: 8, color: TM, display: "flex", alignItems: "center" }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = TP; }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = TM; }}
+                    >
+                      {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
+                </div>
               </Field>
               <Field label="Teléfono">
                 <input type="tel" style={INPUT} value={modal.data.phone} onChange={e => setField("phone", e.target.value)} placeholder="55 1234 5678" />
