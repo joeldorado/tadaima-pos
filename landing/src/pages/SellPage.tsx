@@ -2819,7 +2819,48 @@ export function SellPage() {
             Tarjeta visual con dot pulsante, hora de apertura y "hace X min" para
             que el admin sepa de un vistazo quién está vendiendo en su sucursal.
             Bajo eso, los "conectados sin caja" (logueados pero no han abierto
-            caja todavía). Poll 30s. */}
+            caja todavía). Poll 30s.
+
+            Estados:
+            - cargando (sin datos previos) → skeleton de 2 filas con 'Cargando cajeros…'
+            - con datos → render normal (caja abiertas + conectados)
+            - sin datos y sin loading → no se renderiza */}
+        {isAdmin && (() => {
+          const onlineOnlyInStore = onlineUsersInStore.filter(u => !activeSessionsInStore.some(s => s.user_id === u.id));
+          const isLoadingCashiers = activeSessionsQuery.isFetching || onlineUsersInStoreQuery.isFetching;
+          const hasContent = activeSessionsInStore.length > 0 || onlineOnlyInStore.length > 0;
+          if (!hasContent && !isLoadingCashiers) return null;
+          if (isLoadingCashiers && !hasContent) {
+            return (
+              <div style={{
+                display: "flex", flexDirection: "column", gap: 10,
+                padding: "16px 18px", borderRadius: 20,
+                background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)",
+                minWidth: 320, maxWidth: 420,
+                boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, paddingBottom: 8, borderBottom: "1px solid var(--td-divider)" }}>
+                  <Loader2 size={12} className="animate-spin" style={{ color: "var(--td-text-ghost)" }} />
+                  <p style={{ margin: 0, fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.18em", color: "var(--td-text-ghost)" }}>
+                    Cargando cajeros…
+                  </p>
+                </div>
+                {[0, 1].map(i => (
+                  <div key={`sk-cash-${i}`} className="animate-pulse" style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <div style={{ width: 32, height: 32, borderRadius: 999, background: "rgba(255,255,255,0.06)", flexShrink: 0 }} />
+                    <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+                      <div style={{ height: 10, width: 110, borderRadius: 999, background: "rgba(255,255,255,0.08)" }} />
+                      <div style={{ height: 8, width: 80, borderRadius: 999, background: "rgba(255,255,255,0.05)" }} />
+                    </div>
+                    <div style={{ width: 50, height: 10, borderRadius: 999, background: "rgba(255,255,255,0.05)" }} />
+                  </div>
+                ))}
+              </div>
+            );
+          }
+          // hasContent — caemos al bloque siguiente que ya tiene el render real
+          return null;
+        })()}
         {isAdmin && (activeSessionsInStore.length > 0 || onlineUsersInStore.filter(u => !activeSessionsInStore.some(s => s.user_id === u.id)).length > 0) && (() => {
           const onlineOnlyInStore = onlineUsersInStore.filter(u => !activeSessionsInStore.some(s => s.user_id === u.id));
           const fmtSince = (iso: string): string => {
