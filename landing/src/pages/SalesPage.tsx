@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   TrendingUp, DollarSign, ShoppingBag, Users, BarChart3, Loader2,
   CreditCard, CalendarDays, ChevronDown, X, ChevronRight,
@@ -358,6 +358,9 @@ export function SalesPage() {
 
   const [chartOpen, setChartOpen] = useState(false);
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
+  // Refs a los <input type="date"> para abrir el native picker en cualquier
+  // clic del pill (Chromium/Firefox soportan input.showPicker()).
+  const dateInputRefs = useRef<Array<HTMLInputElement | null>>([null, null]);
   const effectiveStoreId: number | null = canPickStore ? selectedStoreId : (user?.store_id ?? null);
 
   // Default: filtro "Hoy" al primer render — Joel quiere que las ventas del
@@ -692,36 +695,57 @@ export function SalesPage() {
         {([
           { value: filterStartDate, set: setFilterStartDate, label: "Desde", placeholder: "—" },
           { value: filterEndDate,   set: setFilterEndDate,   label: "Hasta", placeholder: "—", min: filterStartDate },
-        ] as const).map((d, i) => (
-          <label
-            key={i}
-            className="relative flex items-center gap-2 rounded-full h-[34px] cursor-pointer transition-all"
-            style={{
-              padding: "0 12px 0 14px",
-              background: "var(--td-panel-bg)",
-              border: `1px solid ${activePreset === "custom" ? "rgba(255,68,34,0.4)" : "var(--td-panel-border)"}`,
-              minWidth: 130,
-            }}
-            onMouseEnter={e => { (e.currentTarget as HTMLLabelElement).style.borderColor = "rgba(255,68,34,0.6)"; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLLabelElement).style.borderColor = activePreset === "custom" ? "rgba(255,68,34,0.4)" : "var(--td-panel-border)"; }}
-          >
-            <CalendarDays size={11} style={{ color: "var(--td-text-lo)", flexShrink: 0 }} />
-            <span className="text-[8px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>
-              {d.label}
-            </span>
-            <span className="text-[10px] font-bold tracking-widest uppercase pointer-events-none select-none"
-              style={{ color: d.value ? "var(--td-text-hi)" : "var(--td-text-lo)" }}>
-              {fmtDate(d.value) || d.placeholder}
-            </span>
-            <input
-              type="date"
-              value={d.value}
-              {...(("min" in d) && d.min ? { min: d.min } : {})}
-              onChange={e => d.set(e.target.value)}
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-            />
-          </label>
-        ))}
+        ] as const).map((d, i) => {
+          const inputRef = (el: HTMLInputElement | null) => { dateInputRefs.current[i] = el; };
+          // Forzamos la apertura del native date picker en cualquier click del pill.
+          // Sin esto el navegador a veces solo enfoca el input (sin abrir) cuando
+          // se clickea fuera del ícono pequeño nativo.
+          const openPicker = (e: React.MouseEvent) => {
+            const input = dateInputRefs.current[i];
+            if (!input) return;
+            if (typeof input.showPicker === "function") {
+              e.preventDefault();
+              try { input.showPicker(); } catch { /* algunos browsers exigen gesto distinto */ }
+            }
+          };
+          return (
+            <div
+              key={i}
+              role="button"
+              tabIndex={0}
+              onClick={openPicker}
+              className="relative flex items-center gap-2 rounded-full h-[34px] cursor-pointer transition-all"
+              style={{
+                padding: "0 12px 0 14px",
+                background: "var(--td-panel-bg)",
+                border: `1px solid ${activePreset === "custom" ? "rgba(255,68,34,0.4)" : "var(--td-panel-border)"}`,
+                minWidth: 130,
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.borderColor = "rgba(255,68,34,0.6)"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.borderColor = activePreset === "custom" ? "rgba(255,68,34,0.4)" : "var(--td-panel-border)"; }}
+            >
+              <CalendarDays size={11} style={{ color: "var(--td-text-lo)", flexShrink: 0, pointerEvents: "none" }} />
+              <span className="text-[8px] font-black uppercase tracking-widest pointer-events-none select-none" style={{ color: "var(--td-text-lo)" }}>
+                {d.label}
+              </span>
+              <span className="text-[10px] font-bold tracking-widest uppercase pointer-events-none select-none"
+                style={{ color: d.value ? "var(--td-text-hi)" : "var(--td-text-lo)" }}>
+                {fmtDate(d.value) || d.placeholder}
+              </span>
+              <input
+                ref={inputRef}
+                type="date"
+                value={d.value}
+                {...(("min" in d) && d.min ? { min: d.min } : {})}
+                onChange={e => d.set(e.target.value)}
+                // Cubre todo el pill como fallback si el browser no soporta
+                // showPicker(). Mantenemos opacity-0 para que se vea el label.
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                tabIndex={-1}
+              />
+            </div>
+          );
+        })}
 
         <div className="flex-1 min-w-0" />
 
