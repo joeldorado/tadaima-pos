@@ -14,6 +14,7 @@ import { useSalesQuery } from "@/hooks/queries/useSales";
 import { usePreSaleOrdersQuery } from "@/hooks/queries/usePreSales";
 import { useProductsQuery } from "@/hooks/queries/useProducts";
 import { useStoresQuery } from "@/hooks/queries/useStores";
+import { useUsersQuery } from "@/hooks/queries/useUsers";
 import { queryKeys } from "@/lib/queryKeys";
 import type { SaleDetail, PreSaleOrder, Product, Store as StoreType } from "@tadaima/api";
 import { useAuth } from "@tadaima/auth";
@@ -346,15 +347,26 @@ export function SalesPage() {
 
   const isAdmin   = user?.roles?.some(r => ["admin","super_admin","owner","dueño"].includes(r.toLowerCase())) ?? false;
   const isGerente = user?.roles?.some(r => r.toLowerCase() === "gerente") ?? false;
+  const isCashier = user?.roles?.some(r => r.toLowerCase() === "cajero") ?? false;
   const canPickStore = isAdmin;
+  // Cajero no ve cards de finanzas (ingresos, por cobrar, totales). Gerente y
+  // admin sí — gerente para su tienda, admin para todas o la que elija.
+  const canSeeFinancials = !isCashier;
+  // Gerente puede filtrar por cajero dentro de su tienda; admin si selecciona
+  // tienda también; cajero queda forzado a sus propias ventas.
+  const canFilterByCashier = isAdmin || isGerente;
 
   const [chartOpen, setChartOpen] = useState(false);
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
   const effectiveStoreId: number | null = canPickStore ? selectedStoreId : (user?.store_id ?? null);
 
-  const [filterStartDate, setFilterStartDate] = useState("");
-  const [filterEndDate, setFilterEndDate]     = useState("");
+  // Default: filtro "Hoy" al primer render — Joel quiere que las ventas del
+  // día sean lo primero que el cajero/gerente/admin ven al entrar.
+  const todayISO = () => new Date().toISOString().split("T")[0]!;
+  const [filterStartDate, setFilterStartDate] = useState<string>(todayISO);
+  const [filterEndDate, setFilterEndDate]     = useState<string>(todayISO);
   const [filterMethod, setFilterMethod]       = useState("all");
+  const [filterCashierId, setFilterCashierId] = useState<number | null>(null);
   const [isMethodOpen, setIsMethodOpen]       = useState(false);
   const [activeTab, setActiveTab]             = useState<"ventas" | "productos">("ventas");
   const [searchSale, setSearchSale]           = useState("");
@@ -378,6 +390,20 @@ export function SalesPage() {
     }
   };
 
+  // Identifica el preset activo para resaltar el chip correspondiente.
+  const activePreset: "today" | "week" | "month" | "custom" = useMemo(() => {
+    if (!filterStartDate || !filterEndDate) return "custom";
+    const today = todayISO();
+    const now = new Date();
+    const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+    const weekStart = new Date(now); weekStart.setDate(weekStart.getDate() - 6);
+    const weekStartStr = weekStart.toISOString().split("T")[0]!;
+    if (filterStartDate === today && filterEndDate === today) return "today";
+    if (filterStartDate === weekStartStr && filterEndDate === today) return "week";
+    if (filterStartDate === monthStart && filterEndDate === today) return "month";
+    return "custom";
+  }, [filterStartDate, filterEndDate]);
+
   const methodOptions = [
     { value: "all",      label: "Todos los pagos" },
     { value: "efectivo", label: "Efectivo" },
@@ -392,10 +418,22 @@ export function SalesPage() {
   const storesQuery = useStoresQuery({ active: true, enabled: canPickStore });
   const stores: StoreType[] = storesQuery.data ?? [];
 
+  // Lista de cajeros de la tienda — solo gerente/admin la consume para el
+  // dropdown "Filtrar por cajero". Admin sin tienda seleccionada → todos.
+  const cashiersQuery = useUsersQuery(
+    canFilterByCashier && effectiveStoreId ? { store_id: effectiveStoreId, active: true } : undefined,
+    { enabled: canFilterByCashier && !!effectiveStoreId }
+  );
+  const cashiers = cashiersQuery.data ?? [];
+
   const salesParams: Record<string, unknown> = { per_page: 500 };
   if (effectiveStoreId) salesParams.store_id = effectiveStoreId;
   if (filterStartDate) salesParams.from = filterStartDate;
   if (filterEndDate)   salesParams.to   = filterEndDate;
+  // Cajero queda forzado backend a su propio user_id (RBAC), pero le mandamos
+  // el filtro explícito para que el caching de RQ no mezcle con datos viejos.
+  if (isCashier && user?.id) salesParams.user_id = user.id;
+  else if (filterCashierId)   salesParams.user_id = filterCashierId;
 
   const preSaleOrdersParams: Record<string, unknown> = { per_page: 500, status: 'pending,ready' };
   if (effectiveStoreId) preSaleOrdersParams.store_id = effectiveStoreId;
@@ -570,7 +608,7 @@ export function SalesPage() {
     <div className="min-h-screen p-6 space-y-6" style={{ background: T.bgGrad }}>
 
       {/* ── Header ── */}
-      <header className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-4">
           <div className="w-12 h-12 rounded-2xl flex items-center justify-center" style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)" }}>
             <BarChart3 size={24} style={{ color: T.redBright }} />
@@ -579,152 +617,179 @@ export function SalesPage() {
             <h1 className="text-2xl font-black tracking-tighter" style={{ color: "var(--td-text-hi)" }}>
               REPORTE DE <span style={{ color: T.redBright }}>VENTAS</span>
             </h1>
-            <p className="text-[9px] font-black uppercase tracking-[0.3em] mt-0.5" style={{ color: "var(--td-text-lo)" }}>Control Financiero Tadaima</p>
+            {/* Subtítulo dinámico: tienda activa + rol del usuario. Cajero ve
+                "Mi tienda · {nombre} · Mis ventas"; gerente ve nombre de tienda. */}
+            <p className="text-[9px] font-black uppercase tracking-[0.3em] mt-0.5" style={{ color: "var(--td-text-lo)" }}>
+              {(() => {
+                const storeName = (canPickStore ? stores.find(s => s.id === effectiveStoreId)?.name : user?.store?.name) ?? null;
+                if (isCashier) return `MI TIENDA · ${storeName ?? "—"} · MIS VENTAS`;
+                if (isGerente) return `GERENTE · ${storeName ?? "—"}`;
+                return `Control Financiero · ${storeName ?? "Todas las tiendas"}`;
+              })()}
+            </p>
           </div>
         </div>
 
-        {/* ── Controles ── */}
-        <div className="flex flex-col gap-2">
-
-          {/* Fila 1: Tienda + Método + Actualizar */}
-          <div className="flex flex-wrap items-center gap-2">
-
-            {/* Store picker (admin) */}
-            {canPickStore && (
-              <div className="flex items-center gap-2 rounded-full px-3 py-1.5 h-[36px]"
-                style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)" }}>
-                <Store size={12} style={{ color: "var(--td-text-lo)" }} />
-                <select
-                  value={selectedStoreId ?? ""}
-                  onChange={e => setSelectedStoreId(e.target.value ? Number(e.target.value) : null)}
-                  className="bg-transparent outline-none text-[10px] font-bold uppercase tracking-widest cursor-pointer"
-                  style={{ color: "var(--td-text-hi)" }}
-                >
-                  <option value="">Todas las tiendas</option>
-                  {stores.map(s => (
-                    <option key={s.id} value={s.id}>{s.name}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {/* Store badge for non-admin */}
-            {!canPickStore && user?.store_id && (
-              <div className="flex items-center gap-2 rounded-full px-3 py-1.5 h-[36px]"
-                style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)" }}>
-                <Store size={12} style={{ color: "var(--td-text-lo)" }} />
-                <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "var(--td-text-md)" }}>
-                  {isGerente ? "Gerente" : "Mi tienda"}
-                </span>
-              </div>
-            )}
-
-            {/* Método de pago */}
-            <div className="relative">
-              <button onClick={() => setIsMethodOpen(v => !v)}
-                className="flex items-center gap-2 rounded-full px-4 py-2 h-[36px] transition-colors"
-                style={{ background: "var(--td-panel-bg)", border: `1px solid ${filterMethod !== "all" ? "rgba(255,68,34,0.4)" : "var(--td-panel-border)"}` }}>
-                <CreditCard size={12} style={{ color: filterMethod !== "all" ? T.redBright : "var(--td-text-lo)" }} />
-                <span className="text-[9px] font-bold uppercase tracking-widest whitespace-nowrap" style={{ color: "var(--td-text-hi)" }}>
-                  {methodOptions.find(o => o.value === filterMethod)?.label}
-                </span>
-                <ChevronDown size={10} style={{ color: "var(--td-text-lo)" }} className="ml-1" />
-              </button>
-              {isMethodOpen && (
-                <div className="absolute top-[calc(100%+6px)] right-0 w-48 rounded-2xl overflow-hidden shadow-2xl z-50"
-                  style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)", boxShadow: "0 12px 40px rgba(0,0,0,0.4)" }}>
-                  {methodOptions.map(opt => (
-                    <button key={opt.value} onClick={() => { setFilterMethod(opt.value); setIsMethodOpen(false); }}
-                      className="w-full text-left px-4 py-2.5 text-[9px] font-bold uppercase tracking-widest transition-colors"
-                      style={{
-                        color: filterMethod === opt.value ? T.redBright : "var(--td-text-md)",
-                        background: filterMethod === opt.value ? "rgba(255,68,34,0.08)" : "transparent",
-                      }}
-                      onMouseEnter={e => { if (filterMethod !== opt.value) (e.target as HTMLElement).style.background = "var(--td-panel-border)"; }}
-                      onMouseLeave={e => { if (filterMethod !== opt.value) (e.target as HTMLElement).style.background = "transparent"; }}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <button onClick={() => { void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all }); void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all }); }}
-              className="flex items-center justify-center gap-2 px-5 h-[36px] font-black text-[9px] uppercase tracking-widest transition-all hover:scale-105 active:scale-95"
-              style={T.btnRed}>
-              <TrendingUp size={13} strokeWidth={3} />
-              Actualizar
-            </button>
-          </div>
-
-          {/* Fila 2: Fecha */}
-          <div className="flex items-center gap-2">
-            {/* Preset chips */}
-            {(["today", "week", "month"] as const).map(p => (
-              <button key={p} onClick={() => setPreset(p)}
-                className="h-[30px] px-3 rounded-full text-[8px] font-black uppercase tracking-widest transition-all hover:scale-105"
-                style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)", color: "var(--td-text-md)" }}>
-                {p === "today" ? "Hoy" : p === "week" ? "7 días" : "Este mes"}
-              </button>
-            ))}
-
-            {/* Date range picker */}
-            <div className="flex items-center gap-1 rounded-full px-3 py-1.5 h-[30px]"
+        <div className="flex items-center gap-2">
+          {/* Store picker — solo admin */}
+          {canPickStore && (
+            <div className="flex items-center gap-2 rounded-full px-3 py-1.5 h-[36px]"
               style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)" }}>
-              <CalendarDays size={11} style={{ color: "var(--td-text-lo)" }} />
-              <div className="flex items-center gap-1 ml-1">
-                <div className="relative flex items-center justify-center min-w-[72px]">
-                  <span className="text-[9px] font-bold tracking-widest uppercase pointer-events-none select-none"
-                    style={{ color: filterStartDate ? "var(--td-text-hi)" : "var(--td-text-lo)" }}>
-                    {fmtDate(filterStartDate)}
-                  </span>
-                  <input type="date" value={filterStartDate} onChange={e => setFilterStartDate(e.target.value)}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
-                </div>
-                <span className="text-[9px]" style={{ color: "var(--td-text-lo)" }}>→</span>
-                <div className="relative flex items-center justify-center min-w-[72px]">
-                  <span className="text-[9px] font-bold tracking-widest uppercase pointer-events-none select-none"
-                    style={{ color: filterEndDate ? "var(--td-text-hi)" : "var(--td-text-lo)" }}>
-                    {fmtDate(filterEndDate)}
-                  </span>
-                  <input type="date" value={filterEndDate} min={filterStartDate} onChange={e => setFilterEndDate(e.target.value)}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
-                </div>
-              </div>
-              {(filterStartDate || filterEndDate) && (
-                <button onClick={() => { setFilterStartDate(""); setFilterEndDate(""); }}
-                  className="ml-1 w-4 h-4 rounded-full flex items-center justify-center transition-colors z-10 hover:opacity-70"
-                  style={{ background: "var(--td-panel-border)", color: "var(--td-text-md)" }}>
-                  <X size={8} />
-                </button>
-              )}
+              <Store size={12} style={{ color: "var(--td-text-lo)" }} />
+              <select
+                value={selectedStoreId ?? ""}
+                onChange={e => setSelectedStoreId(e.target.value ? Number(e.target.value) : null)}
+                className="bg-transparent outline-none text-[10px] font-bold uppercase tracking-widest cursor-pointer"
+                style={{ color: "var(--td-text-hi)" }}
+              >
+                <option value="">Todas las tiendas</option>
+                {stores.map(s => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
             </div>
-          </div>
+          )}
+          <button onClick={() => { void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all }); void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all }); }}
+            className="flex items-center justify-center gap-2 px-5 h-[36px] font-black text-[9px] uppercase tracking-widest transition-all hover:scale-105 active:scale-95"
+            style={T.btnRed}>
+            <TrendingUp size={13} strokeWidth={3} />
+            Actualizar
+          </button>
         </div>
       </header>
 
-      {/* ── KPIs ── */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-        {[
-          { label: (filterStartDate || filterEndDate) ? "Ingresos Período" : "Ingresos Totales", value: fmt(totalRevenue), icon: DollarSign, color: T.redBright },
-          { label: "Ingresos Hoy",           value: fmt(todayRevenue),    icon: TrendingUp,  color: "#00CC66" },
-          { label: "Por Cobrar (Preventas)",  value: fmt(pendingPreSales), icon: CreditCard,  color: "#facc15" },
-          { label: "Ventas Totales",          value: String(filteredSales.length + filteredPreSales.length), icon: ShoppingBag, color: "#4488FF" },
-          { label: "Artículos Vendidos",      value: String(filteredSales.reduce((a, s) => a + (s.items?.reduce((b, i) => b + i.quantity, 0) ?? 0), 0)), icon: Package, color: "#FFAA00" },
-        ].map((stat, i) => (
-          <div key={i} className="p-4 rounded-[24px] flex items-center gap-3" style={T.glass}>
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
-              style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)" }}>
-              <stat.icon size={16} style={{ color: stat.color }} />
+      {/* ── Filtro principal: ocupa todo el ancho arriba de la tabla. Joel pidió
+          que el periodo sea lo primero y se vea siempre activo cuál preset
+          está seleccionado (Hoy por default). ── */}
+      <div className="rounded-[24px] p-4 flex flex-wrap items-center gap-3" style={T.glass}>
+        <div className="flex items-center gap-2">
+          <CalendarDays size={14} style={{ color: T.redBright }} />
+          <span className="text-[10px] font-black uppercase tracking-[0.18em]" style={{ color: "var(--td-text-md)" }}>
+            Periodo
+          </span>
+        </div>
+
+        {/* Chips de preset — el activo va con gradient rojo y borde luminoso */}
+        {(["today", "week", "month"] as const).map(p => {
+          const active = activePreset === p;
+          return (
+            <button
+              key={p}
+              onClick={() => setPreset(p)}
+              className="h-[34px] px-4 rounded-full text-[10px] font-black uppercase tracking-widest transition-all"
+              style={active
+                ? { background: "linear-gradient(135deg,#CC2200,#FF4422)", color: "#fff", border: "1px solid rgba(255,80,50,0.4)", boxShadow: "0 4px 18px rgba(204,34,0,0.4)" }
+                : { background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)", color: "var(--td-text-md)" }
+              }
+            >
+              {p === "today" ? "Hoy" : p === "week" ? "7 días" : "Este mes"}
+            </button>
+          );
+        })}
+
+        {/* Rango personalizado — sigue disponible para cualquier rango ad-hoc */}
+        <div className="flex items-center gap-1 rounded-full px-3 py-1.5 h-[34px]"
+          style={{ background: "var(--td-panel-bg)", border: `1px solid ${activePreset === "custom" ? "rgba(255,68,34,0.4)" : "var(--td-panel-border)"}` }}>
+          <div className="flex items-center gap-1 ml-1">
+            <div className="relative flex items-center justify-center min-w-[72px]">
+              <span className="text-[10px] font-bold tracking-widest uppercase pointer-events-none select-none"
+                style={{ color: filterStartDate ? "var(--td-text-hi)" : "var(--td-text-lo)" }}>
+                {fmtDate(filterStartDate) || "Inicio"}
+              </span>
+              <input type="date" value={filterStartDate} onChange={e => setFilterStartDate(e.target.value)}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
             </div>
-            <div className="min-w-0">
-              <p className="text-[8px] font-black uppercase tracking-widest truncate" style={{ color: "var(--td-text-lo)" }}>{stat.label}</p>
-              <p className="text-lg font-black italic leading-tight" style={{ color: "var(--td-text-hi)" }}>{stat.value}</p>
+            <span className="text-[10px]" style={{ color: "var(--td-text-lo)" }}>→</span>
+            <div className="relative flex items-center justify-center min-w-[72px]">
+              <span className="text-[10px] font-bold tracking-widest uppercase pointer-events-none select-none"
+                style={{ color: filterEndDate ? "var(--td-text-hi)" : "var(--td-text-lo)" }}>
+                {fmtDate(filterEndDate) || "Fin"}
+              </span>
+              <input type="date" value={filterEndDate} min={filterStartDate} onChange={e => setFilterEndDate(e.target.value)}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
             </div>
           </div>
-        ))}
+        </div>
+
+        <div className="flex-1 min-w-0" />
+
+        {/* Filtro de cajero — solo gerente/admin lo ven. Cajero no necesita
+            (siempre se le fuerza a su user_id en backend). */}
+        {canFilterByCashier && cashiers.length > 0 && (
+          <div className="flex items-center gap-2 rounded-full px-3 h-[34px]"
+            style={{ background: "var(--td-panel-bg)", border: `1px solid ${filterCashierId ? "rgba(255,68,34,0.4)" : "var(--td-panel-border)"}` }}>
+            <Receipt size={12} style={{ color: filterCashierId ? T.redBright : "var(--td-text-lo)" }} />
+            <select
+              value={filterCashierId ?? ""}
+              onChange={e => setFilterCashierId(e.target.value ? Number(e.target.value) : null)}
+              className="bg-transparent outline-none text-[10px] font-bold uppercase tracking-widest cursor-pointer"
+              style={{ color: "var(--td-text-hi)" }}
+            >
+              <option value="">Todos los cajeros</option>
+              {cashiers.map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Método de pago — secundario, en la misma fila */}
+        <div className="relative">
+          <button onClick={() => setIsMethodOpen(v => !v)}
+            className="flex items-center gap-2 rounded-full px-4 h-[34px] transition-colors"
+            style={{ background: "var(--td-panel-bg)", border: `1px solid ${filterMethod !== "all" ? "rgba(255,68,34,0.4)" : "var(--td-panel-border)"}` }}>
+            <CreditCard size={12} style={{ color: filterMethod !== "all" ? T.redBright : "var(--td-text-lo)" }} />
+            <span className="text-[10px] font-bold uppercase tracking-widest whitespace-nowrap" style={{ color: "var(--td-text-hi)" }}>
+              {methodOptions.find(o => o.value === filterMethod)?.label}
+            </span>
+            <ChevronDown size={10} style={{ color: "var(--td-text-lo)" }} className="ml-1" />
+          </button>
+          {isMethodOpen && (
+            <div className="absolute top-[calc(100%+6px)] right-0 w-48 rounded-2xl overflow-hidden shadow-2xl z-50"
+              style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)", boxShadow: "0 12px 40px rgba(0,0,0,0.4)" }}>
+              {methodOptions.map(opt => (
+                <button key={opt.value} onClick={() => { setFilterMethod(opt.value); setIsMethodOpen(false); }}
+                  className="w-full text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest transition-colors"
+                  style={{
+                    color: filterMethod === opt.value ? T.redBright : "var(--td-text-md)",
+                    background: filterMethod === opt.value ? "rgba(255,68,34,0.08)" : "transparent",
+                  }}
+                  onMouseEnter={e => { if (filterMethod !== opt.value) (e.target as HTMLElement).style.background = "var(--td-panel-border)"; }}
+                  onMouseLeave={e => { if (filterMethod !== opt.value) (e.target as HTMLElement).style.background = "transparent"; }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
+
+      {/* ── KPIs ── Cards de finanzas solo para admin/gerente. El cajero no
+          ve totales ni por cobrar (Joel pidió que el cajero vea solo sus ventas
+          sin métricas globales). */}
+      {canSeeFinancials && (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+          {[
+            { label: (filterStartDate || filterEndDate) ? "Ingresos Período" : "Ingresos Totales", value: fmt(totalRevenue), icon: DollarSign, color: T.redBright },
+            { label: "Ingresos Hoy",           value: fmt(todayRevenue),    icon: TrendingUp,  color: "#00CC66" },
+            { label: "Por Cobrar (Preventas)",  value: fmt(pendingPreSales), icon: CreditCard,  color: "#facc15" },
+            { label: "Ventas Totales",          value: String(filteredSales.length + filteredPreSales.length), icon: ShoppingBag, color: "#4488FF" },
+            { label: "Artículos Vendidos",      value: String(filteredSales.reduce((a, s) => a + (s.items?.reduce((b, i) => b + i.quantity, 0) ?? 0), 0)), icon: Package, color: "#FFAA00" },
+          ].map((stat, i) => (
+            <div key={i} className="p-4 rounded-[24px] flex items-center gap-3" style={T.glass}>
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+                style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)" }}>
+                <stat.icon size={16} style={{ color: stat.color }} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[8px] font-black uppercase tracking-widest truncate" style={{ color: "var(--td-text-lo)" }}>{stat.label}</p>
+                <p className="text-lg font-black italic leading-tight" style={{ color: "var(--td-text-hi)" }}>{stat.value}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* ══════════ LISTAS ══════════ */}
       <div className="rounded-[36px] overflow-hidden" style={T.glass}>
@@ -909,7 +974,8 @@ export function SalesPage() {
         </div>
       </div>
 
-      {/* ── Gráfico (colapsable) ── */}
+      {/* ── Gráfico (colapsable) — solo admin/gerente, métricas globales ── */}
+      {canSeeFinancials && (
       <div className="rounded-[28px] overflow-hidden" style={T.glassDim}>
         <button onClick={() => setChartOpen(v => !v)}
           className="w-full flex items-center justify-between px-6 py-4 hover:bg-white/[0.02] transition-colors">
@@ -957,6 +1023,7 @@ export function SalesPage() {
           </div>
         )}
       </div>
+      )}
 
     </div>
   );

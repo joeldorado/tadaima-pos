@@ -19,16 +19,44 @@ class SalesController extends Controller
 
     /**
      * GET /sales
-     * Filters: store_id, from (Y-m-d), to (Y-m-d), status, per_page
+     * Filters: store_id, user_id, from (Y-m-d), to (Y-m-d), status, per_page
+     *
+     * RBAC:
+     *  - admin: ve todo, puede filtrar libremente
+     *  - gerente: scoping a su tienda (ignora store_id del request si difiere)
+     *  - cajero: scoping a su tienda Y a su propio user_id (ignora filtros que
+     *    intenten ver otras ventas)
      */
     public function index(Request $request): JsonResponse
     {
+        $user = $request->user();
+        $isAdmin = $user && $user->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
+        $isCashier = $user && $user->hasRole(['cajero']) && ! $isAdmin;
+
         $query = Sale::with(['customer', 'payments.paymentMethod', 'items.product'])
-            ->when($request->store_id, fn ($q) => $q->where('store_id', $request->store_id))
-            ->when($request->status,   fn ($q) => $q->where('status', $request->status))
-            ->when($request->from,     fn ($q) => $q->whereDate('sold_at', '>=', $request->from))
-            ->when($request->to,       fn ($q) => $q->whereDate('sold_at', '<=', $request->to))
+            ->when($request->user_id, fn ($q) => $q->where('user_id', $request->user_id))
+            ->when($request->status,  fn ($q) => $q->where('status', $request->status))
+            ->when($request->from,    fn ($q) => $q->whereDate('sold_at', '>=', $request->from))
+            ->when($request->to,      fn ($q) => $q->whereDate('sold_at', '<=', $request->to))
             ->latest('sold_at');
+
+        // Scope por rol — no permitir que un cajero/gerente vea más de lo suyo.
+        if (! $isAdmin) {
+            $storeId = $user?->store_id;
+            if (! $storeId) {
+                $query->whereRaw('1=0');
+            } else {
+                $query->where('store_id', $storeId);
+            }
+            if ($isCashier) {
+                // Cajero solo ve sus propias ventas — incluso si el frontend
+                // intentó pasar un user_id distinto, se sobreescribe.
+                $query->where('user_id', $user->id);
+            }
+        } else {
+            // Admin: filtra por store_id si lo pide.
+            $query->when($request->store_id, fn ($q) => $q->where('store_id', $request->store_id));
+        }
 
         $perPage = min((int) ($request->per_page ?? 25), 100);
         $sales   = $query->paginate($perPage);

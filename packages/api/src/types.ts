@@ -226,6 +226,8 @@ export interface SaleDetail {
 
 export interface GetSalesParams {
   store_id?: number
+  /** Filtrar por cajero — admin/gerente pueden, cajero queda forzado a su id. */
+  user_id?: number
   from?: string
   to?: string
   status?: string
