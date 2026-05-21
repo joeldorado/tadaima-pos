@@ -112,10 +112,39 @@ class CashRegisterService
 
     // ─── Active session ───────────────────────────────────────────────────────
 
+    /**
+     * Devuelve la sesión de caja activa para el usuario.
+     *
+     * Lógica (cambio 2026-05-20):
+     *  1. Si el usuario tiene su propia sesión abierta → devuelve esa.
+     *  2. Si no, y el usuario tiene una tienda asignada, devuelve la sesión
+     *     abierta en cualquier caja de su tienda (puede haber sido abierta por
+     *     admin u otro turno). Esto deja que un cajero "tome" la caja que
+     *     dejó abierta el admin sin tener que pedirle que la cierre.
+     *  3. Si el usuario es admin sin sesión propia → null (admin abre la suya).
+     *
+     * Nota: el ownership de la sesión (user_id) no cambia. Las ventas que cobre
+     * el cajero igual se registran con su propio user_id en la tabla `sales`.
+     */
     public function activeSession(int $userId): ?CashRegisterSession
     {
-        return CashRegisterSession::with(['register', 'user', 'movements'])
+        $own = CashRegisterSession::with(['register', 'user', 'movements'])
             ->where('user_id', $userId)
+            ->where('status', CashRegisterSession::STATUS_OPEN)
+            ->first();
+
+        if ($own) {
+            return $own;
+        }
+
+        $user = \App\Models\User::find($userId);
+        $storeId = $user?->store_id;
+        if (! $storeId) {
+            return null;
+        }
+
+        return CashRegisterSession::with(['register', 'user', 'movements'])
+            ->whereHas('register', fn ($q) => $q->where('store_id', $storeId))
             ->where('status', CashRegisterSession::STATUS_OPEN)
             ->first();
     }

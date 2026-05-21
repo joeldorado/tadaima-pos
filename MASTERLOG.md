@@ -2238,3 +2238,55 @@ Joel señaló (2026-05-20) que el campo `preorder_limit` del modal de catálogo 
 
 **Riesgo:** el `unitLimit` que se copia al `CartItem` también se usa para el render del carrito. Eliminar el concepto requiere limpiar todo el camino UI → CartItem → display. Considerar mantener `preorder_limit` solo como "max por folio" si se quiere proteger contra abusos.
 
+---
+
+## Sesión 2026-05-20 (round 2) — RBAC gerente + imágenes Historial + UX caja compartida
+
+### Deploy `tadaima-00042-zcb` ya en prod con los 7 fixes anteriores + store_limits whitelist.
+
+### Bugs RBAC gerente — todos resueltos
+
+| # | Bug | Archivo | Cambio |
+|---|---|---|---|
+| 1 | Gerente veía transferencias de TODAS las tiendas | `backend/app/Http/Controllers/Api/TransferController.php` | `scopeToUserStore()` en `index()`; `show/items/complete/cancel` validan con `canAccessTransfer()`; admin pasa sin scope |
+| 2 | Gerente podía crear traslados desde otras tiendas | `TransferController::store` | Valida que `from_warehouse.store_id === user.store_id` para no-admin; devuelve 403 si no |
+| 2b | UI permitía origen de otra tienda | `landing/src/pages/TransfersPage.tsx` | `availableOriginWarehouses` filtra `row.warehouse.store_id === user.store_id` para no-admin |
+| 3 | Gerente no veía sus folios de preventa | `backend/app/Http/Controllers/Api/PreSaleOrdersController.php` | `index()`: ahora scoping para TODOS los no-admin (antes solo cajero). `show()` también valida acceso por `store_id` |
+| 4 | Gerente veía tab Tiendas con todas las sucursales | `landing/src/pages/StoresPage.tsx` | `canSeeAllStores = isAdminUser` (antes incluía gerente) — gerente y cajero ven solo su tienda |
+| 5 | Edit Producto mostraba stock de las 4 tiendas al gerente | `landing/src/pages/ProductsPage.tsx` | `locations` filtra warehouses por `store_id` para no-admin |
+
+### Bug imágenes en Historial / Ventas
+
+| Archivo | Cambio |
+|---|---|
+| `landing/src/pages/SalesPage.tsx` | `productMap[id].imagen` ahora se llena con `p.images[0]?.url` (antes siempre `""` → thumbnails rotos en historial mostrado por ProductThumb) |
+
+### UX "caja ya tiene sesión abierta"
+
+**Problema:** Admin deja sesión abierta → cajero/gerente intenta abrir Caja 1 y recibe error "ya tiene una sesión abierta" sin poder continuar. Tenían que pedirle al admin que cerrara desde otro lado.
+
+**Solución:**
+
+| Archivo | Cambio |
+|---|---|
+| `backend/app/Services/CashRegisterService.php` | `activeSession(userId)` ahora hace fallback: si el usuario no tiene su propia sesión abierta pero tiene `store_id`, devuelve la sesión abierta de cualquier caja de su tienda. Doc explica que el ownership (`user_id` de la sesión) no cambia — las ventas igual se registran con el `user_id` real del cajero |
+| `backend/app/Http/Controllers/Api/CashRegisterController.php` | `close()` y `addMovement()` usan `service->activeSession()` (mismo fallback) — cualquiera del turno puede cerrar o registrar movimientos en la sesión activa de la tienda |
+
+**Workflow ahora:**
+- Admin abre Caja 1 en la mañana → sesión queda con `user_id = admin`
+- Cajero entra → `getActiveSession` devuelve la sesión del admin (porque cae al fallback por store_id) → UI muestra "Caja abierta" en lugar del modal de abrir
+- Cajero cobra ventas → cada venta queda con `user_id = cajero` en la tabla `sales`
+- Cajero cierra al final del día → backend cierra la sesión (no importa quién la abrió)
+
+**Audit:** la sesión recuerda quién la abrió. Si quieres saber quién la cerró → habría que agregar `closed_by_user_id` a la tabla en un sprint futuro (P3).
+
+### Verificación
+- ✅ `vite build` verde
+- ✅ PHPUnit 28/28
+- ✅ Sin nuevos errores TS específicos a los archivos tocados
+
+### Estado del deploy
+
+- Deploy `tadaima-00042-zcb` en prod tiene los 7 fixes + store_limits whitelist.
+- Esta segunda tanda (RBAC + Historial + UX caja compartida) está commiteada y pusheada; pendiente deploy.
+

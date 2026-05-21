@@ -412,7 +412,13 @@ export function SalesPage() {
     const map: Record<string, ProductInfo> = {};
     (productsQuery.data?.data ?? []).forEach((p: Product) => {
       if (p.id) {
-        map[String(p.id)] = { name: p.name || "", sku: p.sku || "", imagen: "" };
+        // Antes `imagen: ""` siempre — el thumbnail salía roto en Historial.
+        // El endpoint devuelve `images: [{ url, ... }]`, tomamos la primera.
+        map[String(p.id)] = {
+          name: p.name || "",
+          sku: p.sku || "",
+          imagen: p.images?.[0]?.url ?? "",
+        };
       }
     });
     return map;

@@ -901,13 +901,18 @@ export function ProductsPage() {
   const mangas = mangasQuery.data ?? [];
   const stores = storesQuery.data ?? [];
   const locations = useMemo(
-    () => (warehousesQuery.data ?? []).map(w => ({
-      warehouseId: w.id,
-      name: w.name,
-      store: w.store?.name ?? '',
-      type: w.type,
-    })),
-    [warehousesQuery.data]
+    () => (warehousesQuery.data ?? [])
+      // RBAC: gerente/cajero solo ve y edita inventario de las bodegas de su
+      // tienda. Antes el modal Editar Producto le mostraba el stock de todas
+      // las sucursales (bug QA Web 5).
+      .filter(w => isAdmin || w.store?.id === user?.store_id)
+      .map(w => ({
+        warehouseId: w.id,
+        name: w.name,
+        store: w.store?.name ?? '',
+        type: w.type,
+      })),
+    [warehousesQuery.data, isAdmin, user?.store_id]
   );
   const loading = productsQuery.isPending;
   const mangasLoading = pageSection === 'tomos' && mangasQuery.isPending;

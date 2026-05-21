@@ -30,9 +30,14 @@ class PreSaleOrdersController extends Controller
     public function index(Request $request): JsonResponse
     {
         $user  = $request->user();
+        // RBAC: admin (cualquier variante) ve todas las tiendas; gerente y cajero
+        // sólo ven los folios de su propia tienda. Antes el scope solo cubría
+        // 'cajero', así el gerente caía al fallback "filtrar por request" y
+        // como el frontend no manda store_id, no veía sus folios asignados.
+        $isAdminUser = $user->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
         $query = PreSaleOrder::with(['store', 'user', 'customer', 'items.catalog', 'payments'])
-            ->when($user->hasRole('cajero'),        fn ($q) => $q->where('store_id', $user->store_id))
-            ->when(!$user->hasRole('cajero') && $request->filled('store_id'), fn ($q) => $q->where('store_id', $request->store_id))
+            ->when(!$isAdminUser,                   fn ($q) => $q->where('store_id', $user->store_id))
+            ->when($isAdminUser && $request->filled('store_id'), fn ($q) => $q->where('store_id', $request->store_id))
             ->when($request->filled('customer_id'), fn ($q) => $q->where('customer_id', $request->customer_id))
             ->when($request->filled('code'),        fn ($q) => $q->where('code',        $request->code))
             ->when($request->filled('status'), function ($q) use ($request) {
@@ -98,6 +103,13 @@ class PreSaleOrdersController extends Controller
             'payments.paymentMethod', 'payments.cashier',
             'logs.user',
         ])->findOrFail($id);
+
+        // RBAC: gerente/cajero solo pueden ver folios de su propia tienda.
+        $user = request()->user();
+        $isAdminUser = $user && $user->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
+        if (!$isAdminUser && (int) $order->store_id !== (int) ($user->store_id ?? 0)) {
+            return $this->error('No tienes acceso a este folio.', 403);
+        }
 
         return $this->success(new PreSaleOrderResource($order));
     }

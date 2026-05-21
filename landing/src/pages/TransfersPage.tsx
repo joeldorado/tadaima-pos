@@ -15,6 +15,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useTransfersQuery } from "@/hooks/queries/useTransfers";
 import { useWarehousesQuery } from "@/hooks/queries/useWarehouses";
 import { queryKeys } from "@/lib/queryKeys";
+import { useAuth } from "@tadaima/auth";
+import { isAdmin as isAdminRole } from "@/lib/permisos";
 
 // ─── Paleta Tadaima ───────────────────────────────────────────────────────────
 const T = {
@@ -101,6 +103,12 @@ function getStatusInfo(status: Transfer["status"]) {
 // ─── Component ────────────────────────────────────────────────────────────────
 export function TransfersPage() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  // RBAC: gerente/cajero solo opera sobre traslados que tocan SU tienda.
+  // El backend ya filtra (TransferController::scopeToUserStore), aquí afinamos
+  // la UI para que el selector de origen no muestre bodegas de otras tiendas.
+  const isAdminUser = isAdminRole(user?.roles ?? []);
+  const userStoreId = user?.store_id ?? null;
   const transfersQuery = useTransfersQuery({ per_page: 100 });
   const warehousesQuery = useWarehousesQuery({ active: true });
   const transfers: Transfer[] = transfersQuery.data?.data ?? [];
@@ -169,12 +177,14 @@ export function TransfersPage() {
   const availableOriginWarehouses = useMemo(() => {
     return selectedProductInventory
       .filter(row => row.quantity > 0 && row.warehouse !== null)
+      // RBAC: si no es admin, el origen DEBE ser una bodega de su propia tienda.
+      .filter(row => isAdminUser || row.warehouse?.store_id === userStoreId)
       .map(row => ({
         id: row.warehouse_id,
         name: row.warehouse?.name ?? "Bodega",
         quantity: row.quantity,
       }));
-  }, [selectedProductInventory]);
+  }, [selectedProductInventory, isAdminUser, userStoreId]);
 
   const selectedProductFromAvailable = useMemo(
     () => availableOriginWarehouses.find(row => String(row.id) === fromWhId)?.quantity ?? 0,

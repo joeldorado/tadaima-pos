@@ -332,12 +332,12 @@ export function StoresPage() {
   const [showModal, setShowModal] = useState(false);
 
   const companyId = user?.company_id;
-  // Permisos: solo admin (y opcionalmente gerente) puede crear/editar tiendas.
-  // Cajero solo VE su propia tienda — no puede editar ni ver otras.
+  // Permisos: solo admin puede crear/editar tiendas y ver TODAS las sucursales.
+  // Gerente y cajero solo VEN su tienda asignada — no pueden ver datos de otras
+  // sucursales desde esta pantalla (cambio QA Web 5: el gerente veía todas).
   const isAdminUser = user?.roles?.some(r => ["admin", "super_admin", "owner", "dueño"].includes(r.toLowerCase())) ?? false;
-  const isGerenteUser = user?.roles?.some(r => r.toLowerCase() === "gerente") ?? false;
   const canEditStores = isAdminUser; // solo admin
-  const canSeeAllStores = isAdminUser || isGerenteUser; // admin y gerente; cajero solo la suya
+  const canSeeAllStores = isAdminUser; // solo admin; gerente y cajero ven solo la suya
 
   async function load() {
     setLoading(true);
