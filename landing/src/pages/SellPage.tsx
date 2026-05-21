@@ -12,6 +12,7 @@ import {
   ShoppingCart, Crown, Circle, Trash2,
 } from "lucide-react";
 import { ImageWithFallback } from "@/components/figma/ImageWithFallback";
+import { UserAvatar } from "@/components/UserAvatar";
 import { ProductCatalogModal } from "@/components/ProductCatalogModal";
 import { PreSaleDifusionPanel } from "@/components/presales/PreSaleDifusionPanel";
 import { CameraScannerModal } from "@/components/CameraScannerModal";
@@ -327,6 +328,26 @@ export function SellPage() {
     enabled: !cashSession && !!activeStore?.id && isAdmin,
   });
   const activeSessionsInStore = activeSessionsQuery.data ?? [];
+
+  // Sesiones abiertas TODAS las tiendas — admin las usa en el selector de
+  // tienda para ver de un vistazo cuántos cajeros están activos en cada
+  // sucursal antes de elegir. Solo se activa cuando admin aún no eligió tienda.
+  const allActiveSessionsQuery = useActiveSessionsQuery(null, {
+    enabled: !activeStore && isAdmin,
+  });
+  const allActiveSessions = allActiveSessionsQuery.data ?? [];
+  // Map store_id -> { count, names[] } para renderizar badges + tooltip
+  const activeSessionsByStore = useMemo(() => {
+    const m = new Map<number, { count: number; sessions: typeof allActiveSessions }>();
+    for (const s of allActiveSessions) {
+      if (!s.store_id) continue;
+      const entry = m.get(s.store_id) ?? { count: 0, sessions: [] };
+      entry.count++;
+      entry.sessions.push(s);
+      m.set(s.store_id, entry);
+    }
+    return m;
+  }, [allActiveSessions]);
   const paymentMethods: ApiPaymentMethod[] = paymentMethodsQuery.data ?? [];
   const terminals: Terminal[] = terminalsQuery.data ?? [];
 
@@ -2548,27 +2569,72 @@ export function SellPage() {
             ¿Desde qué sucursal vas a cobrar?
           </p>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 240 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 320 }}>
           {stores.length === 0 ? (
             <p style={{ textAlign: "center", fontSize: 12, color: "var(--td-text-ghost)" }}>Sin tiendas asignadas — contacta al administrador</p>
           ) : (
-            stores.map(s => (
-              <button
-                key={s.id}
-                onClick={() => setActiveStore(s)}
-                style={{
-                  padding: "14px 24px", borderRadius: 16, cursor: "pointer", textAlign: "left",
-                  background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)",
-                  color: "var(--td-text-hi)", fontSize: 14, fontWeight: 700,
-                  transition: "all 0.15s",
-                }}
-                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(224,34,26,0.12)"; (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(224,34,26,0.3)"; }}
-                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "var(--td-card-bg)"; (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--td-card-border)"; }}
-              >
-                {s.name}
-                {s.address && <span style={{ display: "block", fontSize: 10, color: "var(--td-text-ghost)", marginTop: 2 }}>{s.address}</span>}
-              </button>
-            ))
+            stores.map(s => {
+              const entry = activeSessionsByStore.get(s.id);
+              const count = entry?.count ?? 0;
+              const sessions = entry?.sessions ?? [];
+              // Tooltip nativo con la lista de cajeros — útil para admin antes
+              // de seleccionar la tienda. Ej: "joel · Caja 1 · 14:32".
+              const title = count > 0
+                ? sessions.map(x => `${x.user_name ?? `Usuario ${x.user_id}`} · ${x.register_name ?? `Caja ${x.register_id}`} · ${new Date(x.opened_at).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}`).join("\n")
+                : "Sin sesiones abiertas";
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => setActiveStore(s)}
+                  title={isAdmin ? title : undefined}
+                  style={{
+                    padding: "14px 20px", borderRadius: 16, cursor: "pointer", textAlign: "left",
+                    background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)",
+                    color: "var(--td-text-hi)", fontSize: 14, fontWeight: 700,
+                    transition: "all 0.15s",
+                    display: "flex", alignItems: "center", gap: 12,
+                  }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(224,34,26,0.12)"; (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(224,34,26,0.3)"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "var(--td-card-bg)"; (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--td-card-border)"; }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {s.name}
+                    {s.address && <span style={{ display: "block", fontSize: 10, color: "var(--td-text-ghost)", marginTop: 2 }}>{s.address}</span>}
+                  </div>
+                  {/* Badge "N cajeros activos" — solo admin. Verde con dot pulsante
+                      cuando hay sesiones; gris muted cuando está vacía. */}
+                  {isAdmin && (
+                    <div style={{
+                      display: "flex", alignItems: "center", gap: 6,
+                      padding: "4px 10px", borderRadius: 999,
+                      background: count > 0 ? "rgba(16,185,129,0.12)" : "rgba(255,255,255,0.04)",
+                      border: `1px solid ${count > 0 ? "rgba(16,185,129,0.3)" : "var(--td-card-border)"}`,
+                      flexShrink: 0,
+                    }}>
+                      <span
+                        className={count > 0 ? "animate-pulse" : ""}
+                        style={{
+                          width: 6, height: 6, borderRadius: 999,
+                          background: count > 0 ? "#10b981" : "var(--td-text-ghost)",
+                          boxShadow: count > 0 ? "0 0 8px rgba(16,185,129,0.6)" : "none",
+                        }}
+                      />
+                      <span style={{
+                        fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em",
+                        color: count > 0 ? "#10b981" : "var(--td-text-ghost)",
+                      }}>
+                        {count === 0 ? "Sin caja" : count === 1 ? "1 caja abierta" : `${count} cajas abiertas`}
+                      </span>
+                    </div>
+                  )}
+                </button>
+              );
+            })
+          )}
+          {isAdmin && allActiveSessionsQuery.isFetching && (
+            <p style={{ textAlign: "center", fontSize: 9, color: "var(--td-text-ghost)", fontWeight: 700, marginTop: 4 }}>
+              Actualizando estado de cajas…
+            </p>
           )}
         </div>
       </div>
@@ -2648,30 +2714,63 @@ export function SellPage() {
         </div>
 
         {/* Cajeros activos en la tienda — solo visible para admin.
-            Lista compacta tipo "Quién está abierto" para que el admin sepa antes
-            de abrir su propia sesión. Poll 30s vía useActiveSessionsQuery. */}
-        {isAdmin && activeSessionsInStore.length > 0 && (
-          <div style={{
-            display: "flex", flexDirection: "column", gap: 6,
-            padding: "12px 16px", borderRadius: 16,
-            background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)",
-            minWidth: 280, maxWidth: 360,
-          }}>
-            <p style={{ margin: 0, fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.18em", color: "var(--td-text-ghost)" }}>
-              Sesiones abiertas en esta tienda
-            </p>
-            {activeSessionsInStore.map(s => (
-              <div key={s.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 12 }}>
-                <span style={{ color: "var(--td-text-hi)", fontWeight: 700 }}>
-                  {s.user_name ?? `Usuario ${s.user_id}`}
-                </span>
-                <span style={{ color: "var(--td-text-ghost)", fontSize: 10, fontWeight: 600 }}>
-                  {s.register_name ?? `Caja ${s.register_id}`} · desde {new Date(s.opened_at).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}
-                </span>
+            Tarjeta visual con dot pulsante, hora de apertura y "hace X min" para
+            que el admin sepa de un vistazo quién está vendiendo en su sucursal.
+            Poll 30s vía useActiveSessionsQuery. */}
+        {isAdmin && activeSessionsInStore.length > 0 && (() => {
+          const fmtSince = (iso: string): string => {
+            const diffMin = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+            if (diffMin < 1) return "hace un momento";
+            if (diffMin < 60) return `hace ${diffMin} min`;
+            const h = Math.floor(diffMin / 60);
+            const m = diffMin % 60;
+            return m === 0 ? `hace ${h}h` : `hace ${h}h ${m}min`;
+          };
+          return (
+            <div style={{
+              display: "flex", flexDirection: "column", gap: 10,
+              padding: "16px 18px", borderRadius: 20,
+              background: "var(--td-card-bg)", border: "1px solid rgba(16,185,129,0.25)",
+              minWidth: 320, maxWidth: 420,
+              boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, paddingBottom: 8, borderBottom: "1px solid var(--td-divider)" }}>
+                <span className="animate-pulse" style={{
+                  width: 8, height: 8, borderRadius: 999,
+                  background: "#10b981", boxShadow: "0 0 10px rgba(16,185,129,0.7)",
+                }} />
+                <p style={{ margin: 0, fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.18em", color: "#10b981" }}>
+                  {activeSessionsInStore.length === 1 ? "1 caja abierta ahora" : `${activeSessionsInStore.length} cajas abiertas ahora`}
+                </p>
               </div>
-            ))}
-          </div>
-        )}
+              {activeSessionsInStore.map(s => {
+                const userName = s.user_name ?? `Usuario ${s.user_id}`;
+                const opened = new Date(s.opened_at);
+                return (
+                  <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <UserAvatar name={userName} size={32} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: "var(--td-text-hi)" }}>
+                        {userName}
+                      </p>
+                      <p style={{ margin: "2px 0 0", fontSize: 9, fontWeight: 600, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
+                        {s.register_name ?? `Caja ${s.register_id}`} · ${(s.opening_cash ?? 0).toFixed(0)} inicial
+                      </p>
+                    </div>
+                    <div style={{ textAlign: "right", flexShrink: 0 }}>
+                      <p style={{ margin: 0, fontSize: 11, fontWeight: 800, color: "var(--td-text-md)" }}>
+                        {opened.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}
+                      </p>
+                      <p style={{ margin: "2px 0 0", fontSize: 9, color: "var(--td-text-ghost)", fontWeight: 700 }}>
+                        {fmtSince(s.opened_at)}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
 
         {/* Modal: Abrir caja */}
         {showOpenCashModal && (
