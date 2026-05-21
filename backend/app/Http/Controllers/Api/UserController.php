@@ -144,4 +144,116 @@ class UserController extends Controller
 
         return $this->success(['roles' => $user->roles], 'Rol removido.');
     }
+
+    /**
+     * POST /users/{user}/avatar
+     *
+     * Sube una foto de perfil personalizada al bucket. Reemplaza la avatar
+     * existente (sea upload anterior o URL externa). Validación estricta:
+     * solo image/{jpeg,png,webp}, max 3 MB.
+     *
+     * Permisos: admin puede editar a cualquiera; cada usuario puede editar
+     * su propia foto (auth->id === user->id).
+     */
+    public function uploadAvatar(Request $request, User $user): JsonResponse
+    {
+        $authUser = $request->user();
+        $isAdmin  = $authUser?->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
+        if (! $isAdmin && (int) $authUser?->id !== (int) $user->id) {
+            return $this->error('Sin permisos para cambiar el avatar de otro usuario.', 403);
+        }
+
+        $request->validate([
+            'image' => ['required', 'file', 'image', 'mimes:jpeg,jpg,png,webp', 'max:3072'],
+        ]);
+
+        // Si la avatar previa era un path GCS (no http), borrarla del bucket
+        // antes de subir la nueva. Las URLs externas (PokéAPI/DiceBear) no
+        // viven en nuestro bucket, no hay que borrar nada.
+        if ($user->avatar_url && ! str_starts_with($user->avatar_url, 'http')) {
+            try { \Storage::delete($user->avatar_url); } catch (\Throwable) { /* ignore */ }
+        }
+
+        try {
+            $path = $request->file('image')->store('profile_pics');
+        } catch (\Throwable $e) {
+            \Log::error('Avatar upload failed', ['error' => $e->getMessage()]);
+            return $this->error('Error al subir la foto.', 500);
+        }
+
+        if ($path === false) {
+            return $this->error('No se pudo guardar la foto.', 500);
+        }
+
+        $user->update(['avatar_url' => $path]);
+
+        return $this->success(new UserResource($user->fresh('store')), 'Avatar actualizado.');
+    }
+
+    /**
+     * PUT /users/{user}/avatar/external
+     *
+     * Guarda una URL externa como avatar (galería Pokemon/DiceBear). Body: { url }.
+     * Whitelist estricto de dominios — si un cajero comprometido manda URL de
+     * tracker, se rechaza.
+     */
+    public function setExternalAvatar(Request $request, User $user): JsonResponse
+    {
+        $authUser = $request->user();
+        $isAdmin  = $authUser?->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
+        if (! $isAdmin && (int) $authUser?->id !== (int) $user->id) {
+            return $this->error('Sin permisos para cambiar el avatar de otro usuario.', 403);
+        }
+
+        $request->validate([
+            'url' => ['required', 'string', 'max:500', 'url'],
+        ]);
+
+        // Whitelist explícito. Cualquier otra fuente se rechaza para impedir
+        // que un usuario malicioso meta tracking pixels o phishing en su perfil.
+        $url = $request->input('url');
+        $allowedPrefixes = [
+            'https://raw.githubusercontent.com/PokeAPI/sprites/',
+            'https://api.dicebear.com/',
+        ];
+        $allowed = false;
+        foreach ($allowedPrefixes as $prefix) {
+            if (str_starts_with($url, $prefix)) {
+                $allowed = true;
+                break;
+            }
+        }
+        if (! $allowed) {
+            return $this->error('Esa URL no está en la lista de fuentes permitidas.', 422);
+        }
+
+        // Si la previa era upload del bucket, limpiarla
+        if ($user->avatar_url && ! str_starts_with($user->avatar_url, 'http')) {
+            try { \Storage::delete($user->avatar_url); } catch (\Throwable) { /* ignore */ }
+        }
+
+        $user->update(['avatar_url' => $url]);
+
+        return $this->success(new UserResource($user->fresh('store')), 'Avatar actualizado.');
+    }
+
+    /**
+     * DELETE /users/{user}/avatar
+     * Quita la foto de perfil (vuelve a iniciales). Borra del bucket si era upload.
+     */
+    public function removeAvatar(Request $request, User $user): JsonResponse
+    {
+        $authUser = $request->user();
+        $isAdmin  = $authUser?->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
+        if (! $isAdmin && (int) $authUser?->id !== (int) $user->id) {
+            return $this->error('Sin permisos para cambiar el avatar de otro usuario.', 403);
+        }
+
+        if ($user->avatar_url && ! str_starts_with($user->avatar_url, 'http')) {
+            try { \Storage::delete($user->avatar_url); } catch (\Throwable) { /* ignore */ }
+        }
+        $user->update(['avatar_url' => null]);
+
+        return $this->success(new UserResource($user->fresh('store')), 'Avatar eliminado.');
+    }
 }

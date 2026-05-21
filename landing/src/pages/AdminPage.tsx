@@ -3,6 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@tadaima/auth";
 import { canAccessAdmin } from "@tadaima/permissions";
 import { TabPermisos } from "@/components/admin/TabPermisos";
+import { UserAvatar } from "@/components/UserAvatar";
+import { AvatarPicker } from "@/components/AvatarPicker";
 import {
   Store, Warehouse, Users, Shield, Tag,
   Package, CreditCard, Smartphone, Plus, Edit2, Save,
@@ -480,6 +482,9 @@ function TabUsuarios() {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<ApiUser | null>(null);
   const [showPassword, setShowPassword] = useState(false);
+  // Avatar picker abre encima del modal de Editar Usuario cuando el admin
+  // hace click en la foto. Solo aplica a usuarios existentes (necesita user_id real).
+  const [avatarPicker, setAvatarPicker] = useState<{ userId: number; userName: string; currentUrl: string | null } | null>(null);
 
   useEffect(() => {
     if (usersQuery.error || storesQuery.error || rolesQuery.error) toast.error("Error al cargar usuarios");
@@ -607,9 +612,7 @@ function TabUsuarios() {
         <div style={{ display: "grid", gap: 10 }}>
           {users.map(u => (
             <div key={u.id} style={{ ...GLASS, borderRadius: 16, padding: "14px 20px", display: "flex", alignItems: "center", gap: 16 }}>
-              <div style={{ width: 40, height: 40, borderRadius: 12, background: "var(--td-panel-bg)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <Users size={16} color={u.active ? "#4499FF" : TM} />
-              </div>
+              <UserAvatar name={u.name} avatarUrl={u.avatar_url} size={40} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" as const }}>
                   <p style={{ color: TP, fontWeight: 900, fontSize: 14, margin: 0 }}>{u.name}</p>
@@ -642,6 +645,40 @@ function TabUsuarios() {
       {modal?.open && (
         <Modal title={modal.data.id ? "Editar Usuario" : "Nuevo Usuario"} onClose={closeModal}>
           <div style={{ display: "grid", gap: 14 }}>
+            {/* Avatar — sólo en edición. Para usuarios nuevos hay que crearlos
+                primero (necesitamos user_id para el endpoint del bucket). */}
+            {modal.data.id && (() => {
+              const existing = users.find(u => u.id === modal.data.id);
+              const currentAvatar = existing?.avatar_url ?? null;
+              return (
+                <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px 0 4px" }}>
+                  <UserAvatar name={modal.data.name || existing?.name || ""} avatarUrl={currentAvatar} size={56} />
+                  <div style={{ flex: 1 }}>
+                    <p style={{ margin: 0, fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: TM }}>
+                      Foto de perfil
+                    </p>
+                    <p style={{ margin: "2px 0 0", fontSize: 11, color: TM, lineHeight: 1.4 }}>
+                      {currentAvatar ? "Foto asignada" : "Sin foto — se muestran las iniciales"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAvatarPicker({
+                      userId: modal.data.id!,
+                      userName: modal.data.name || existing?.name || "",
+                      currentUrl: currentAvatar,
+                    })}
+                    style={{
+                      padding: "8px 14px", borderRadius: 10, cursor: "pointer",
+                      background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)",
+                      color: TP, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em",
+                    }}
+                  >
+                    {currentAvatar ? "Cambiar" : "Elegir"}
+                  </button>
+                </div>
+              );
+            })()}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <Field label="Nombre completo *">
                 <input type="text" style={INPUT} value={modal.data.name} onChange={e => setField("name", e.target.value)} placeholder="Ej. María López Pérez" />
@@ -729,6 +766,16 @@ function TabUsuarios() {
             </Btn>
           </div>
         </Modal>
+      )}
+      {avatarPicker && (
+        <AvatarPicker
+          userId={avatarPicker.userId}
+          userName={avatarPicker.userName}
+          currentAvatarUrl={avatarPicker.currentUrl}
+          open
+          onClose={() => setAvatarPicker(null)}
+          onSaved={() => { invalidateUsers(); setAvatarPicker(null); }}
+        />
       )}
       {confirmDelete && (
         <Modal title="Eliminar usuario" onClose={() => deletingId === null && setConfirmDelete(null)} width={460}>

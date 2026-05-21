@@ -66,3 +66,25 @@ export async function removeRole(userId: number, roleId: number): Promise<{ role
   const response = await apiClient.delete<{ roles: string[] }>(`/users/${userId}/roles/${roleId}`)
   return response.data
 }
+
+/** POST /users/{id}/avatar — sube foto custom al bucket (multipart). */
+export async function uploadUserAvatar(userId: number, file: File): Promise<User> {
+  const form = new FormData()
+  form.append('image', file)
+  const response = await apiClient.post<User>(`/users/${userId}/avatar`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  return response.data
+}
+
+/** PUT /users/{id}/avatar/external — guarda URL externa (whitelisted: PokéAPI, DiceBear). */
+export async function setUserExternalAvatar(userId: number, url: string): Promise<User> {
+  const response = await apiClient.put<User>(`/users/${userId}/avatar/external`, { url })
+  return response.data
+}
+
+/** DELETE /users/{id}/avatar — quita avatar (vuelve a iniciales). */
+export async function removeUserAvatar(userId: number): Promise<User> {
+  const response = await apiClient.delete<User>(`/users/${userId}/avatar`)
+  return response.data
+}

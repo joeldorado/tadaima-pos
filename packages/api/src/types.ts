@@ -13,6 +13,8 @@ export interface User {
   store: { id: number; name: string } | null
   /** Role names from model_has_roles — e.g. ["admin"] */
   roles: string[]
+  /** Foto de perfil. URL absoluta lista para <img src>. null = usa iniciales. */
+  avatar_url: string | null
   created_at: string
 }
 

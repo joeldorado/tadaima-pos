@@ -8,6 +8,7 @@ import {
   Settings, Sun, Moon,
 } from "lucide-react";
 import { NotificationBadge } from "@/components/notifications/NotificationBadge";
+import { UserAvatar } from "@/components/UserAvatar";
 // ADR-014: ExpiringDraftsModal desactivado — el carrito vive client-side, no
 // hay drafts en vivo que expirar. Componente preservado en repo por si se
 // vuelve al modelo server-authoritative.
@@ -182,15 +183,19 @@ export function Layout() {
         >
           <button
             onClick={() => setShowUserMenu(v => !v)}
-            className="w-9 h-9 rounded-full flex items-center justify-center text-[11px] font-bold transition-all"
+            className="rounded-full transition-all"
             style={{
-              background: showUserMenu ? "var(--td-red-dim)" : "var(--td-panel-bg)",
+              background: "transparent",
               border: `1px solid ${showUserMenu ? "var(--td-red-brd)" : "var(--td-panel-border)"}`,
-              color: "var(--td-red)",
+              padding: 0,
             }}
             title={user?.name ?? ""}
           >
-            {initials}
+            <UserAvatar
+              name={user?.name ?? ""}
+              avatarUrl={user?.avatar_url}
+              size={36}
+            />
           </button>
 
           {showUserMenu && (

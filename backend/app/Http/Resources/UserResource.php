@@ -19,6 +19,15 @@ class UserResource extends JsonResource
             'company_id'    => $this->company_id,
             'store_id'      => $this->store_id,
 
+            // avatar_url: si empieza con http es URL externa (PokéAPI/DiceBear)
+            // y se devuelve tal cual. Si es path GCS, se resuelve a URL pública
+            // vía Storage::url. Frontend siempre recibe URL absoluta lista para <img src>.
+            'avatar_url' => $this->avatar_url
+                ? (str_starts_with($this->avatar_url, 'http')
+                    ? $this->avatar_url
+                    : \Storage::url($this->avatar_url))
+                : null,
+
             'store' => $this->when(
                 $this->relationLoaded('store') && $this->store,
                 fn () => [

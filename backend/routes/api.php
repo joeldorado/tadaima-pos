@@ -55,6 +55,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('users', UserController::class);
     Route::post('users/{user}/roles',           [UserController::class, 'assignRole']);
     Route::delete('users/{user}/roles/{roleId}', [UserController::class, 'removeRole']);
+    Route::post('users/{user}/avatar',          [UserController::class, 'uploadAvatar']);
+    Route::put('users/{user}/avatar/external',  [UserController::class, 'setExternalAvatar']);
+    Route::delete('users/{user}/avatar',        [UserController::class, 'removeAvatar']);
 
     // ── Roles & Permissions ───────────────────────────────────────────────────
     Route::get('permissions',                        [RoleController::class, 'permissions']);
