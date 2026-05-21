@@ -2215,28 +2215,17 @@ Los mangas (librerías) viven hoy en tablas paralelas (`mangas`, `manga_inventor
 
 **Verificación:** PHPUnit 28/28 verde (incluye el test nuevo). `vite build` verde.
 
-### Pendiente: revisar `preorder_limit` como límite por cliente
+### ⏸ PAUSADO — `preorder_limit` como límite por cliente
 
-Joel señaló (2026-05-20) que el campo `preorder_limit` del modal de catálogo (que en la UI dice "Límite de unidades") se está interpretando como **stock total del catálogo** pero originalmente fue pensado como **límite por cliente** (cuántas unidades puede reservar un mismo cliente).
+**Decisión Joel 2026-05-20:** se deja como está. `preorder_limit` sigue funcionando como tope por línea del carrito y no se elimina por ahora. No es prioridad ni se retomará a menos que aparezca un caso real que lo justifique.
 
-**Estado actual del código:**
-- `PreSaleCatalog.preorder_limit` (int, nullable) — sigue existiendo en DB y se llena desde el modal General → "Límite de unidades"
-- Después del cambio de hoy ya **no afecta** la disponibilidad por tienda (eso lo controla `store_limits` ahora)
-- En frontend (`addCatalogToCart`) sí se usa como tope de cantidad por línea del carrito: `existing.quantity + 1 > catalog.preorder_limit` → bloquea
+**Estado del campo:**
+- `PreSaleCatalog.preorder_limit` (int, nullable) — se sigue llenando desde el modal General → "Límite de unidades"
+- Ya **no afecta** la disponibilidad por tienda (eso lo controla `store_limits` desde el deploy `tadaima-00042-zcb`)
+- En frontend (`addCatalogToCart`) se usa como tope por línea del carrito (`existing.quantity + 1 > catalog.preorder_limit` → bloquea)
 - En backend ya no se valida en `createOrder`
 
-**Lo que Joel quiere:**
-- Sin límite por cliente — un cliente puede reservar todo el stock disponible de la tienda (ej. los 20)
-- El único cap real es `store_limits[active_store].limit_qty` (stock por tienda)
-
-**Trabajo necesario (NO ejecutado en esta sesión, plan only):**
-1. **UI catálogo:** ocultar/eliminar el input "Límite de unidades" del tab General; aclarar que el stock se configura en el tab "Stock"
-2. **Frontend `addCatalogToCart`:** quitar el check `existing.quantity + 1 > preorder_limit`; en su lugar validar contra `store_limits[active].limit_qty - reserved_by_store[active]` para mostrar "Agotado en esta tienda" si se excede
-3. **Backend:** considerar deprecar `preorder_limit` o re-significarlo como "máximo por folio" (límite por venta, no por cliente histórico). Decidir antes de migrar
-4. **Migración:** opcional, dejar la columna en DB con sus valores actuales para no romper rollback. Solo dejar de leerla
-5. **QA:** correr Bloque 12 de Playwright (TC-78→TC-85) para verificar que ningún caso depende del `preorder_limit`
-
-**Riesgo:** el `unitLimit` que se copia al `CartItem` también se usa para el render del carrito. Eliminar el concepto requiere limpiar todo el camino UI → CartItem → display. Considerar mantener `preorder_limit` solo como "max por folio" si se quiere proteger contra abusos.
+**Si se retoma en el futuro:** ver el historial git de este archivo para el plan de 5 pasos que se había documentado y luego se retiró. Riesgo principal: `unitLimit` también se propaga al `CartItem` y al render — limpiar todo el camino UI → CartItem → display.
 
 ---
 
