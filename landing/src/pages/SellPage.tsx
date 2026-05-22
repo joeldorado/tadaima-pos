@@ -2002,7 +2002,11 @@ export function SellPage() {
   const fetchHistorial = async () => {
     setHistorialLoading(true);
     try {
-      const today = new Date().toISOString().split("T")[0];
+      // CRÍTICO: usamos fecha LOCAL del navegador (MX), no UTC. Antes
+      // `toISOString().split('T')[0]` devolvía UTC y desde las 18:00 MX el
+      // historial buscaba "mañana" → no encontraba las ventas del día.
+      const n = new Date();
+      const today = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
       const baseParams: Record<string, unknown> = { per_page: 50 };
       if (activeStore?.id) baseParams.store_id = activeStore.id;
 

@@ -47,8 +47,11 @@ class PreSaleOrdersController extends Controller
                     : $q->where('status', $statuses[0]);
             })
             ->when($request->filled('catalog_id'),  fn ($q) => $q->whereHas('items', fn ($s) => $s->where('pre_sale_catalog_id', $request->catalog_id)))
-            ->when($request->filled('from'),        fn ($q) => $q->whereDate('created_at', '>=', $request->from))
-            ->when($request->filled('to'),          fn ($q) => $q->whereDate('created_at', '<=', $request->to))
+            // Fechas LOCAL del frontend (MX) → UTC range para comparar con
+            // created_at guardado en UTC. Sin esto, folio creado a las 19:00 MX
+            // (= 01:00 UTC del día sig) no matchea con filter 'Hoy' del cajero.
+            ->when(\App\Support\DateRange::fromUtc($request->from), fn ($q, $from) => $q->where('created_at', '>=', $from))
+            ->when(\App\Support\DateRange::toUtc($request->to),     fn ($q, $to)   => $q->where('created_at', '<=', $to))
             ->latest();
 
         $perPage = min((int) ($request->per_page ?? 25), 500);
