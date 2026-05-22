@@ -3147,14 +3147,20 @@ export function SellPage() {
             <History size={13} />
             Historial
           </button>
-          <button
-            onClick={openClientsModal}
-            className="h-full px-5 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-white/30 hover:text-white transition-colors border-r border-white/5"
-            title="Buscar clientes y ver sus tickets / preventas"
-          >
-            <User size={13} />
-            Clientes
-          </button>
+          {/* Botón 'Clientes' del top header oculto — redundante con el
+              botón 'Cliente' del toolbar al lado de Preventas que ya cubre
+              asignar cliente a la venta. Para buscar histórico de un cliente
+              específico se llega vía menú Clientes del sidebar. Joel 2026-05-21 */}
+          {false && (
+            <button
+              onClick={openClientsModal}
+              className="h-full px-5 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-white/30 hover:text-white transition-colors border-r border-white/5"
+              title="Buscar clientes y ver sus tickets / preventas"
+            >
+              <User size={13} />
+              Clientes
+            </button>
+          )}
           {/* Cancelar Venta movido a la barra de buscadores (junto a Catálogo,
               Preventas, Cliente, Escanear) y solo visible cuando hay productos. */}
           <button
