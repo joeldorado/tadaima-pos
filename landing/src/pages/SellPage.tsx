@@ -1852,17 +1852,34 @@ export function SellPage() {
     const amount = parseFloat(openCashAmount) || 0;
     setOpeningCash(true);
     try {
-      await openSession(registerId, amount);
-      void queryClient.invalidateQueries({ queryKey: ['cash'] });
-      // Force fresh exchange rate + productos (stock) + preventas al inicio del
-      // turno. Sin esto el cajero puede entrar con cache de 24h y agregar al
-      // carrito cantidades que el server rechazará al cobrar.
-      void queryClient.invalidateQueries({ queryKey: queryKeys.systemSettings.exchangeRate() });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleCatalogs.all });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all });
+      const session = await openSession(registerId, amount);
+      // Seed la cache con el response del POST en vez de invalidar — evita
+      // el GET extra /cash/session (~1s en prod) y la UI flipea a "Caja
+      // Abierta" en cuanto el modal se cierra.
+      queryClient.setQueryData(['cash', 'activeSession'], session);
       setShowOpenCashModal(false);
       toast.success(`Caja abierta · $${amount.toFixed(0)} inicial`);
+
+      // Refrescos pesados (TC + productos + preventas) en background al
+      // próximo idle para no bloquear el flip de UI. Stock fresco igual
+      // llega ~1-2s después sin que el cajero sienta el "thinking".
+      // Sin esto el cajero puede entrar con cache de 24h y agregar al
+      // carrito cantidades que el server rechazará al cobrar.
+      const refreshHeavyCaches = (): void => {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.systemSettings.exchangeRate() });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleCatalogs.all });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all });
+      };
+      type IdleCallback = (cb: () => void, opts?: { timeout: number }) => number;
+      const ric = (typeof window !== 'undefined'
+        ? (window as unknown as { requestIdleCallback?: IdleCallback }).requestIdleCallback
+        : undefined);
+      if (ric) {
+        ric(refreshHeavyCaches, { timeout: 500 });
+      } else {
+        setTimeout(refreshHeavyCaches, 0);
+      }
     } catch (err: unknown) {
       const msg = err && typeof err === "object" && "message" in err
         ? String((err as { message: unknown }).message)
