@@ -3,13 +3,16 @@ import {
   FileText, TrendingUp, Package, Users, BarChart3,
   Loader2, DollarSign, ArrowUpRight,
   ShoppingBag, Star, Calendar, Printer, Store,
-  ChevronDown, ChevronRight, Receipt, Clock, RefreshCw,
+  ChevronDown, ChevronRight, Receipt, Clock, RefreshCw, Wallet,
+  CheckCircle2, AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@tadaima/auth";
 import {
-  getSalesReport, getInventoryReport, getTopProductsReport, getCustomersReport,
+  getSalesReport, getInventoryReport, getTopProductsReport, getCustomersReport, getCashReport,
 } from "@tadaima/api";
+import type { CashReport, CashSessionReport } from "@tadaima/api";
+import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
 import { getSales } from "@tadaima/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useStoresQuery } from "@/hooks/queries/useStores";
@@ -46,7 +49,7 @@ const fmtDate = (iso: string) =>
 const fmtTime = (iso: string) =>
   new Date(iso).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" });
 
-type TabId = "ventas" | "inventario" | "productos" | "clientes";
+type TabId = "ventas" | "inventario" | "productos" | "clientes" | "cortes";
 
 // ─── Ticket print helper ───────────────────────────────────────────────────────
 function printTicket(sale: SaleDetail) {
@@ -114,6 +117,15 @@ function printTicket(sale: SaleDetail) {
   setTimeout(() => { win.print(); }, 300);
 }
 
+function KpiInline({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <div className="text-right">
+      <p className="text-[8px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-md)" }}>{label}</p>
+      <p className="text-sm font-black" style={{ color }}>{value}</p>
+    </div>
+  );
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 export function ReportsPage() {
   const { user } = useAuth();
@@ -173,17 +185,26 @@ export function ReportsPage() {
     queryFn: () => getCustomersReport(topParams),
     enabled: activeTab === "clientes",
   });
+  const cashParams = { from, to, ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}) };
+  const cashQuery = useQuery({
+    queryKey: queryKeys.reports.cash(cashParams),
+    queryFn: () => getCashReport(cashParams),
+    enabled: activeTab === "cortes",
+  });
 
   const salesReport: SalesReport | null = salesReportQuery.data ?? null;
   const sales: SaleDetail[] = salesListQuery.data?.data ?? [];
   const invReport: InventoryReport | null = invQuery.data ?? null;
   const topReport: TopProductsReport | null = topQuery.data ?? null;
   const custReport: CustomersReport | null = custQuery.data ?? null;
+  const cashReport: CashReport | null = cashQuery.data ?? null;
+  const [selectedCashSession, setSelectedCashSession] = useState<CashSessionReport | null>(null);
   const loading =
     (activeTab === "ventas"     && (salesReportQuery.isFetching || salesListQuery.isFetching)) ||
     (activeTab === "inventario" && invQuery.isFetching) ||
     (activeTab === "productos"  && topQuery.isFetching) ||
-    (activeTab === "clientes"   && custQuery.isFetching);
+    (activeTab === "clientes"   && custQuery.isFetching) ||
+    (activeTab === "cortes"     && cashQuery.isFetching);
 
   useEffect(() => {
     if (salesReportQuery.error || salesListQuery.error) toast.error("Error al cargar reporte de ventas");
@@ -262,6 +283,7 @@ export function ReportsPage() {
               { id: "inventario", label: "Inventario",    icon: Package    },
               { id: "productos",  label: "Top Productos", icon: Star       },
               { id: "clientes",   label: "Top Clientes",  icon: Users      },
+              { id: "cortes",     label: "Cortes de Caja", icon: Wallet     },
             ] as { id: TabId; label: string; icon: React.ElementType }[]).map(tab => (
               <button key={tab.id} onClick={() => setActiveTab(tab.id)}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
@@ -289,6 +311,8 @@ export function ReportsPage() {
                 void queryClient.invalidateQueries({ queryKey: queryKeys.reports.topProducts() });
               } else if (activeTab === "clientes") {
                 void queryClient.invalidateQueries({ queryKey: queryKeys.reports.customers() });
+              } else if (activeTab === "cortes") {
+                void queryClient.invalidateQueries({ queryKey: queryKeys.reports.cash() });
               }
               toast.success("Actualizando reporte…");
             }}
@@ -788,6 +812,92 @@ export function ReportsPage() {
                   </tbody>
                 </table>
               </div>
+            )}
+
+            {/* ── CORTES DE CAJA ── */}
+            {activeTab === "cortes" && cashReport && (
+              <div style={{ ...GLASS, borderRadius: 24, overflow: "hidden" }}>
+                <div className="px-6 py-4 flex items-center justify-between flex-wrap gap-3" style={{ borderBottom: DIV }}>
+                  <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: TM }}>
+                    {cashReport.summary.total_sessions} sesiones · {cashReport.period.from} → {cashReport.period.to}
+                  </p>
+                  <div className="flex gap-4 items-center">
+                    <KpiInline label="Ventas total" value={fmt(cashReport.summary.total_sales)} color="#00CC66" />
+                    <KpiInline label="Entradas" value={fmt(cashReport.summary.total_entradas)} color="#FFAA00" />
+                    <KpiInline label="Salidas" value={fmt(cashReport.summary.total_salidas)} color={RED} />
+                  </div>
+                </div>
+                {cashReport.sessions.length === 0 ? (
+                  <div className="py-20 text-center" style={{ color: TM, fontSize: 12 }}>
+                    Sin cortes en este período
+                  </div>
+                ) : (
+                  <div className="divide-y divide-white/[0.04]">
+                    {cashReport.sessions.map(s => {
+                      const diff = s.difference ?? 0;
+                      const isClosed = s.status === "closed";
+                      const isMatch = isClosed && Math.abs(diff) < 0.01;
+                      const isShort = isClosed && diff < -0.01;
+                      const isOver  = isClosed && diff > 0.01;
+                      const statusColor = !isClosed ? "#FFAA00" : isMatch ? "#10b981" : isShort ? "#DC2626" : "#f59e0b";
+                      const statusBg    = !isClosed ? "rgba(255,170,0,0.1)" : isMatch ? "rgba(16,185,129,0.1)" : isShort ? "rgba(220,38,38,0.1)" : "rgba(245,158,11,0.1)";
+                      const statusLabel = !isClosed ? "Abierta" : isMatch ? "Cuadra ✓" : isShort ? `Falta ${fmt(Math.abs(diff))}` : `Sobra ${fmt(diff)}`;
+                      return (
+                        <button
+                          key={s.id}
+                          onClick={() => setSelectedCashSession(s)}
+                          className="w-full px-6 py-4 flex items-center gap-4 hover:bg-white/[0.02] text-left transition-colors"
+                          style={{ background: "transparent", border: "none", cursor: "pointer" }}
+                        >
+                          <div style={{
+                            width: 40, height: 40, borderRadius: 12, flexShrink: 0,
+                            background: statusBg, border: `1px solid ${statusColor}33`,
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                          }}>
+                            {isMatch ? <CheckCircle2 size={18} color={statusColor} /> : <AlertTriangle size={18} color={statusColor} />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-3 flex-wrap">
+                              <span style={{ fontSize: 13, fontWeight: 900, color: TP }}>#{s.id} · {s.register.name}</span>
+                              <span style={{ fontSize: 10, fontWeight: 700, color: TM }}>{s.user.name}</span>
+                              {s.store?.name && <span style={{ fontSize: 9, fontWeight: 700, color: TM, opacity: 0.7 }}>· {s.store.name}</span>}
+                            </div>
+                            <p style={{ margin: "2px 0 0", fontSize: 10, color: TM }}>
+                              {new Date(s.opened_at).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" })}
+                              {s.closed_at && ` → ${new Date(s.closed_at).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" })}`}
+                              {" · "}
+                              {s.sales_count} ventas
+                            </p>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p style={{ margin: 0, fontSize: 14, fontWeight: 900, color: TP }}>
+                              {fmt(s.total_sales)}
+                            </p>
+                            <span style={{
+                              display: "inline-block", marginTop: 2,
+                              padding: "2px 8px", borderRadius: 6,
+                              fontSize: 8, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em",
+                              background: statusBg, color: statusColor, border: `1px solid ${statusColor}40`,
+                            }}>
+                              {statusLabel}
+                            </span>
+                          </div>
+                          <ChevronRight size={16} style={{ color: TM, opacity: 0.4 }} />
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Modal de detalle de corte */}
+            {selectedCashSession && (
+              <CashCloseSummaryModal
+                session={selectedCashSession}
+                open
+                onClose={() => setSelectedCashSession(null)}
+              />
             )}
 
             {/* ── TOP CLIENTES ── */}

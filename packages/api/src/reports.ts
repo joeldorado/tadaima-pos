@@ -95,3 +95,41 @@ export async function getCustomersReport(params?: ReportDateParams & { limit?: n
   const response = await apiClient.get<CustomersReport>('/reports/customers', { params })
   return response.data
 }
+
+// ─── Corte de Caja ────────────────────────────────────────────────────────────
+
+export interface CashSessionReport {
+  id: number
+  register: { id: number; name: string }
+  store: { id: number; name: string } | null
+  user: { id: number; name: string }
+  status: 'open' | 'closed'
+  opened_at: string
+  closed_at: string | null
+  opening_cash: number
+  closing_cash: number | null
+  total_entradas: number
+  total_salidas: number
+  total_ajustes: number
+  total_sales: number
+  sales_count: number
+  expected_cash: number
+  /** closing_cash - expected_cash. null si caja aún abierta. */
+  difference: number | null
+}
+
+export interface CashReport {
+  period: { from: string; to: string }
+  summary: {
+    total_sessions: number
+    total_sales: number
+    total_entradas: number
+    total_salidas: number
+  }
+  sessions: CashSessionReport[]
+}
+
+export async function getCashReport(params?: ReportDateParams & { register_id?: number }): Promise<CashReport> {
+  const response = await apiClient.get<CashReport>('/reports/cash', { params })
+  return response.data
+}

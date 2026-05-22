@@ -19,7 +19,9 @@ import { CameraScannerModal } from "@/components/CameraScannerModal";
 import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
 const tadaimaLogo = null // TODO: replace with real logo asset
 import { toast } from "sonner";
-import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, closeSession, createLayaway, getCustomers, createCustomer, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getPreSaleOrders, getSales, getProductsLight, storageUrl } from "@tadaima/api";
+import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, closeSession, createLayaway, getCustomers, createCustomer, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getPreSaleOrders, getSales, getProductsLight, storageUrl, getCashReport } from "@tadaima/api";
+import type { CashSessionReport } from "@tadaima/api";
+import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
 import { useQueryClient } from "@tanstack/react-query";
 import { useProductsLightQuery, useProductsSearchQuery, useBackgroundProductsPrefetch } from "@/hooks/queries/useProducts";
 // ADR-014: useReservedStockQuery removido — carrito client-side, sin polling.
@@ -415,6 +417,9 @@ export function SellPage() {
   const [showCloseCashModal, setShowCloseCashModal] = useState(false);
   const [closeCashAmount, setCloseCashAmount] = useState("");
   const [closingCashLoading, setClosingCashLoading] = useState(false);
+  // Cuando se cierra caja exitosamente, se llena con el reporte de corte y
+  // se muestra el modal de resumen. null = cerrado.
+  const [cashCloseSummary, setCashCloseSummary] = useState<CashSessionReport | null>(null);
   const [customers, setCustomers]     = useState<Customer[]>([]);
   const loading = productsQuery.isPending;
 
@@ -1872,7 +1877,7 @@ export function SellPage() {
     const amount = parseFloat(closeCashAmount) || 0;
     setClosingCashLoading(true);
     try {
-      await closeSession(amount);
+      const closedSession = await closeSession(amount);
       // Limpiar la caché de sesión activa SINCRÓNICAMENTE antes de cualquier
       // setState. El efecto de auto-asignación (línea ~553) lee `cashSession`
       // de la caché — si dejamos la versión vieja "open" y solo invalidamos,
@@ -1883,6 +1888,23 @@ export function SellPage() {
       setShowCloseCashModal(false);
       setCloseCashAmount("");
       toast.success("Caja cerrada — corte registrado");
+
+      // Trae el corte detallado del endpoint /reports/cash y abre el modal
+      // de Corte de Caja con resumen + opción de imprimir.
+      const today = new Date();
+      const localDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+      try {
+        const report = await getCashReport({
+          register_id: closedSession.register_id,
+          from: localDate,
+          to: localDate,
+        });
+        const match = report.sessions.find(x => x.id === closedSession.id);
+        if (match) setCashCloseSummary(match);
+      } catch {
+        // Si el fetch falla, no rompemos el flujo de cierre — solo no abre el modal
+      }
+
       if (isAdmin) {
         setActiveStore(null);
       }
@@ -5719,6 +5741,15 @@ export function SellPage() {
       )}
 
       {/* ── Modal: Historial de Ventas ────────────────────────────────────── */}
+      {/* Corte de Caja — abre tras cerrar sesión exitosamente */}
+      {cashCloseSummary && (
+        <CashCloseSummaryModal
+          session={cashCloseSummary}
+          open
+          onClose={() => setCashCloseSummary(null)}
+        />
+      )}
+
       {showHistorialModal && (
         <div style={{ position: "fixed", inset: 0, zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
           <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)" }}
