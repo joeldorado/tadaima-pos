@@ -1,7 +1,7 @@
 # MASTERLOG — Tadaima POS
 
 > Registro maestro del proyecto: arquitectura, evolución, decisiones clave y estado actual.
-> Actualizado: 2026-05-18 (refactor mayor de Caja a client-authoritative cart + UX polish)
+> Actualizado: 2026-05-21 (avisos de stock RBAC para cajero/gerente + detalle solo lectura en Productos/Tomos)
 
 ---
 
@@ -73,6 +73,7 @@
 | 54 | Caja | **Bug crítico stock global vs por tienda** — `useProductsLightQuery(activeStore?.id)` (antes `null`). El endpoint `/products?light=1` retornaba stock global cuando no se mandaba `store_id`, así que UI mostraba 10 y backend rechazaba con "0 disponible" en otra tienda. Fix también aplicado a `useProductsSearchQuery`, `useBackgroundProductsPrefetch` y scanner directo. Auto-invalida `products.all` al abrir modal Catálogo → siempre stock fresh | 2026-05-18 |
 | 55 | Caja | **Idempotencia addCatalogToCart** — doble click en catálogo ya no duplica fila; suma quantity + acumula depositAmount. Respeta preorder_limit | 2026-05-18 |
 | 56 | Productos | **Modal QuickStockModal** — botón "📦 Stock" en columna acciones (tabla) y flotante en grid card (hover). Selector "Agregar tienda" + qty + edit inline + 🗑. Diff vs estado inicial al guardar → PUT por cada cambio en paralelo (registra movimiento de ajuste en backend). Reusa endpoint existente `PUT /inventory/{productId}/{warehouseId}` | 2026-05-18 |
+| 57 | Productos / Avisos | **Avisos de stock RBAC + detalle solo lectura para cajero** — `ProductsPage` ahora permite a cajero abrir detalle de `Productos` y `Tomos/Librerías` sin editar (nombre, foto, código, categoría/editorial/género/volumen, precios, métodos de pago, pieza única, stock de su tienda). Acción rápida `Avisar`: cajero notifica a gerente de su tienda + admins; gerente notifica solo a admins. Backend `POST /notifications/stock-alert` hace upsert por `store + product + recipient` para actualizar stock/mensaje y evitar duplicados. UI pinta el botón en verde `Avisado` después de enviar. | 2026-05-21 |
 | - | Deploy | **Dominio custom activo** `tadaima.poslite.com.mx` | 2026-05-05 |
 
 ### 🟡 Media prioridad (mejora flujo o datos)
@@ -2279,3 +2280,117 @@ Los mangas (librerías) viven hoy en tablas paralelas (`mangas`, `manga_inventor
 - Deploy `tadaima-00042-zcb` en prod tiene los 7 fixes + store_limits whitelist.
 - Esta segunda tanda (RBAC + Historial + UX caja compartida) está commiteada y pusheada; pendiente deploy.
 
+---
+
+## Sesión 2026-05-21 — Avisos de stock RBAC + detalle solo lectura en Productos/Tomos
+
+### Objetivo
+
+Joel pidió que `cajero` no pudiera editar filas en `Productos` ni en `Tomos/Librerías`, pero sí abrir el detalle completo del item y poder mandar un aviso rápido cuando el stock de su tienda se esté agotando. También pidió que el flujo respetara jerarquía por rol:
+
+- `cajero` → gerente de su tienda + admin
+- `gerente` → solo admin
+- `admin` → master de todas las tiendas
+
+Además, si el mismo item ya fue reportado antes, no debía duplicarse la notificación: solo actualizar el stock restante. Visualmente, después de avisar, el botón debía ponerse verde por ahora.
+
+### Cambios aplicados
+
+| Archivo | Cambio |
+|---|---|
+| `landing/src/pages/ProductsPage.tsx` | `cajero` ahora abre modal de detalle solo lectura al hacer click en una fila/card de `Productos` o `Tomos`. Se muestran datos útiles según el tipo: producto regular (`nombre`, `foto`, `código`, `categoría`, `proveedor`, `precios`, `métodos de pago`, `pieza única`, `stock de su tienda`) y tomo/librería (`nombre`, `foto`, `código`, `editorial`, `género`, `detalle del tomo/volumen`, `precio`, `stock de su tienda`). |
+| `landing/src/pages/ProductsPage.tsx` | Nueva acción rápida `Avisar` en tabla y modales. Tras enviar, el botón cambia a estado visual verde `Avisado` (estado local de sesión). |
+| `backend/app/Http/Controllers/Api/NotificationsController.php` | Nuevo endpoint `POST /notifications/stock-alert`. Resuelve destinatarios por rol/tienda y hace `updateOrCreate` por destinatario para evitar duplicados. Si vuelven a avisar el mismo producto/tomo, actualiza mensaje + stock y resetea `read_at` a unread. |
+| `backend/routes/api.php` | Ruta protegida `notifications/stock-alert`. |
+| `packages/api/src/notifications.ts` + `packages/api/src/types.ts` | Cliente y tipos para `sendStockAlert`. |
+| `landing/src/components/notifications/NotificationBadge.tsx` | El badge de Avisos ahora refresca al abrirse y también escucha el evento `tadaima:notifications-changed` para reflejar avisos nuevos sin reload manual. |
+| `backend/tests/Feature/NotificationsStockAlertTest.php` | Cobertura para garantizar que `cajero` notifica a gerente+admin sin duplicados y que `gerente` notifica solo a admin. |
+
+### Reglas finales
+
+- `cajero` sigue sin editar productos/tomos existentes.
+- `cajero` sí puede ver detalle completo y mandar aviso.
+- `gerente` conserva edición y también puede mandar aviso a admin.
+- Si ya existía aviso del mismo item para el mismo destinatario y la misma tienda, se actualiza en lugar de crear otro.
+- El botón pasa a verde `Avisado` después de enviarlo para feedback inmediato.
+
+### Verificación
+
+- ✅ `php artisan test tests/Feature/NotificationsStockAlertTest.php`
+- ⚠️ `npm run type-check --workspace=@tadaima/web` sigue fallando por errores viejos del repo fuera de este cambio; no aparecieron errores nuevos aislados de este flujo en la revisión manual del diff
+
+---
+
+## Sesión 2026-05-21 (extendida) — 50+ commits: QA, UX, perf, cortes de caja
+
+Maratón de mejoras pre-deploy. Acumulado de la sesión 2026-05-20 (no deployado) + correcciones 2026-05-21.
+
+### Bugs críticos resueltos
+
+| # | Bug | Causa | Fix |
+|---|---|---|---|
+| 1 | Cajero no ve sus ventas hechas hoy en /ventas ni en Caja Historial | Frontend `toISOString` da UTC; backend `whereDate` también UTC. Desde 18:00 MX el filtro 'Hoy' saltaba al día siguiente UTC | Helper `localDateISO()` frontend + `App\Support\DateRange::fromUtc/toUtc` backend (zona `America/Mexico_City`) |
+| 2 | Skeleton no aparecía al cambiar filtro de fecha en /ventas | `loading = isPending` solo se activa en primer load; cambios de queryKey con cache previo saltaban directo | `loading = isPending \|\| (isFetching && !hasData)` |
+| 3 | 'Selecciona una terminal' sin opción de elegir si Tarjeta venía del localStorage | El botón cambiar-terminal requería `activeTerminal && ...`; sin terminal no aparecía | Botón siempre visible cuando `paymentMethod === 'Tarjeta'`; texto 'Elegir terminal' en ámbar si no hay; useEffect limpia `selectedTerminalId` zombie |
+| 4 | Difusión mostraba catálogos `arrived` sin folios (0 clientes a notificar) | No había filtro client-side | Filtrar por `reserved_count > 0`; mensaje informativo sobre los ocultos |
+
+### Features nuevas
+
+| Feature | Detalles |
+|---|---|
+| **Sistema de avatares** | `users.avatar_url` + endpoints upload/external/delete + `UserAvatar` reusable + `AvatarPicker` modal con Pokémon (24 curados, GitHub raw) + Subir foto. CSP whitelist + backend whitelist. DiceBear removido por seguridad |
+| **Presencia / Heartbeat** | `users.last_seen_at` + middleware `TouchLastSeen` dedupe 30s + `/users/online` (last_seen < 2min). Badge azul 'N conectados sin caja' en selector de tiendas + sección 'Conectados sin caja' en Caja cerrada. Layout heartbeat 90s |
+| **Sesiones activas por tienda** | `/cash/active-sessions` endpoint + UI bonita: card verde con dot pulsante + UserAvatar de cajeros + 'hace X min'. Selector de tiendas con badges 'N cajas / +N conectados' |
+| **Corte de Caja** | Modal post-cierre con resumen completo (efectivo inicial, ventas, entradas/salidas, esperado vs cerrado, diferencia con badge cuadra/falta/sobra) + Imprimir 58mm. Tab 'Cortes' en /reportes (admin/gerente). Botón 'Mis Cortes' en Inicio del cajero |
+| **Cajero Preventas** | Nav reemplaza 'Tiendas' por 'Preventas'. Tabs: Disponibles (read-only catálogos con stock por su tienda), Difusión, Vencidos (folios con pickup_deadline pasada) |
+| **Cajero Mi Perfil** | Inicio simplificado: avatar editable + nombre/email/tienda read-only. Sin KPIs ni setup. 'Configuración' del user menu oculto para no-admin |
+| **Difusión email** | Botón mailto: precarga subject + body. Cero backend |
+| **Auto-cierre Venta 2-5** | Al cobrar desde mesa secundaria, se cierra automáticamente tras print flow. Caja Principal nunca se cierra |
+| **Sticky headers** | Productos, Tomos, Catálogos Preventa, Folios — header fijo + body scrollable |
+| **Scanner-ready inputs** | Productos y Tomos: auto-focus + Enter limpia + match por nombre/SKU/barcode |
+| **Notificaciones React Query** | Polling condicional 15s/60s (popup abierto vs cerrado) + invalidate + multi-tab sync vía BroadcastChannel + botón borrar |
+
+### RBAC reforzado
+
+- `TransferController`: scope por tienda en index/show/items/complete/cancel; gerente no crea desde otras tiendas
+- `PreSaleOrdersController::index`: gerente scoped a su tienda (antes solo cajero)
+- `SalesController::index`: cajero forzado a su user_id + tienda; gerente a su tienda
+- `ReportsController::cash`: igual que sales
+- `NotificationsController::storeStockAlert` (Codex): cajero → gerente+admin; gerente → admin; dedupe por upsert
+- `StoresPage`: gerente y cajero solo ven su tienda
+- `ProductsPage`: locations filtradas por user.store_id para no-admin
+
+### Performance / costo
+
+- `useExchangeRateQuery`: staleTime 24h → 5min + refetchOnWindowFocus. Admin cambia TC y cajeros lo ven en ≤5min sin reload
+- `usePreSaleOrdersQuery`: refetchInterval 60s (cross-machine)
+- `useTransfersQuery`: refetchInterval 60s (cross-machine)
+- `useActiveSessionQuery`: refetchInterval 60s
+- `useSalesQuery`: staleTime 30s
+- `useNotificationsQuery`: 15s con bell abierto, 60s cerrado
+- Heartbeat `/auth/me`: 60s → 90s
+- Botones 'Actualizar' manuales (Productos/Ventas) ocultos — RQ ya cubre
+- **Costo estimado mensual:** $0 (dentro de free tier Cloud Run con 6-15 usuarios)
+
+### UX / UI
+
+- `SalesPage`: filtro de fechas como row prominente arriba de la tabla; chips Hoy/7d/Mes con preset activo resaltado; 2 pills separados Desde/Hasta con `showPicker()` para abrir el calendar nativo en cualquier clic; dropdown 'Métodos' con bg sólido + z-index 60
+- `Modal Abrir Caja`: caja registradora como texto (no dropdown — ya se eligió tienda)
+- Pantalla 'Caja cerrada': botón 'Cambiar tienda' al lado del CTA Abrir Caja (solo admin >1 tienda)
+- Modal 'Nuevo Usuario': eye toggle + generador password (`Palabra4827!`) + 'Nombre completo'
+- Tras crear usuario nuevo: auto-abre AvatarPicker
+- Auto-cierra mesas secundarias post-cobro tras print flow
+
+### Decisión de arquitectura: NO Pusher/SSE
+
+Joel preguntó por real-time. Análisis: 2-4 tiendas, 6-15 usuarios activos, polling 60s+ es suficiente. SSE costaría ~$30-50/mes (Cloud Run con CPU activo 24/7). Pusher Cloud free tier serviría pero añade SaaS externo. Veredicto: polling React Query optimizado, $0/mes. Re-evaluar si Tadaima crece a 50+ tiendas.
+
+### Estado del deploy
+
+- Acumulado pre-deploy: **54 commits** desde `tadaima-00043-7zr`
+- Migraciones nuevas (corren en container startup):
+  - `2026_05_21_000001_add_avatar_url_to_users`
+  - `2026_05_21_000002_add_last_seen_at_to_users`
+- Backend tests: 30/30 ✓
+- Vite build: ✓
+- Deploy pendiente al cierre de esta entrada
