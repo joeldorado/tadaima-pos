@@ -33,11 +33,19 @@ class SalesController extends Controller
         $isAdmin = $user && $user->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
         $isCashier = $user && $user->hasRole(['cajero']) && ! $isAdmin;
 
+        // Las fechas del frontend vienen en hora LOCAL del usuario (MX). El
+        // sold_at se guarda en UTC. whereDate compara fechas en UTC sin
+        // conversión, así que una venta del 21-may 19:00 MX (= 01:00 UTC del
+        // 22-may) NO matchea con filter "Hoy" del cajero. DateRange convierte
+        // el rango MX → UTC explícitamente.
+        $fromUtc = \App\Support\DateRange::fromUtc($request->from);
+        $toUtc = \App\Support\DateRange::toUtc($request->to);
+
         $query = Sale::with(['customer', 'payments.paymentMethod', 'items.product'])
             ->when($request->user_id, fn ($q) => $q->where('user_id', $request->user_id))
             ->when($request->status,  fn ($q) => $q->where('status', $request->status))
-            ->when($request->from,    fn ($q) => $q->whereDate('sold_at', '>=', $request->from))
-            ->when($request->to,      fn ($q) => $q->whereDate('sold_at', '<=', $request->to))
+            ->when($fromUtc, fn ($q) => $q->where('sold_at', '>=', $fromUtc))
+            ->when($toUtc,   fn ($q) => $q->where('sold_at', '<=', $toUtc))
             ->latest('sold_at');
 
         // Scope por rol — no permitir que un cajero/gerente vea más de lo suyo.

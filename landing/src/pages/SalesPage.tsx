@@ -365,7 +365,13 @@ export function SalesPage() {
 
   // Default: filtro "Hoy" al primer render — Joel quiere que las ventas del
   // día sean lo primero que el cajero/gerente/admin ven al entrar.
-  const todayISO = () => new Date().toISOString().split("T")[0]!;
+  // CRÍTICO: usamos la fecha LOCAL del navegador, no UTC. Antes esto usaba
+  // `toISOString().split('T')[0]` que devuelve fecha UTC; a partir de las 18:00 MX
+  // (00:00 UTC del día siguiente) el filtro cambiaba a "mañana" y dejaba de
+  // mostrar las ventas del día.
+  const localDateISO = (d: Date = new Date()) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const todayISO = () => localDateISO();
   const [filterStartDate, setFilterStartDate] = useState<string>(todayISO);
   const [filterEndDate, setFilterEndDate]     = useState<string>(todayISO);
   const [filterMethod, setFilterMethod]       = useState("all");
@@ -378,14 +384,14 @@ export function SalesPage() {
   // Preset date shortcuts
   const setPreset = (preset: "today" | "week" | "month") => {
     const now = new Date();
-    const today = now.toISOString().split("T")[0]!;
+    const today = localDateISO(now);
     if (preset === "today") {
       setFilterStartDate(today);
       setFilterEndDate(today);
     } else if (preset === "week") {
       const d = new Date(now);
       d.setDate(d.getDate() - 6);
-      setFilterStartDate(d.toISOString().split("T")[0]!);
+      setFilterStartDate(localDateISO(d));
       setFilterEndDate(today);
     } else {
       setFilterStartDate(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`);
@@ -400,7 +406,7 @@ export function SalesPage() {
     const now = new Date();
     const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
     const weekStart = new Date(now); weekStart.setDate(weekStart.getDate() - 6);
-    const weekStartStr = weekStart.toISOString().split("T")[0]!;
+    const weekStartStr = localDateISO(weekStart);
     if (filterStartDate === today && filterEndDate === today) return "today";
     if (filterStartDate === weekStartStr && filterEndDate === today) return "week";
     if (filterStartDate === monthStart && filterEndDate === today) return "month";
@@ -500,7 +506,7 @@ export function SalesPage() {
 
   const todayRevenue = useMemo(() => {
     if (filterStartDate || filterEndDate) return totalRevenue;
-    const today = new Date().toISOString().split("T")[0]!;
+    const today = localDateISO();
     return (
       sales.filter(s => (s.sold_at || s.created_at).startsWith(today)).reduce((a, s) => a + s.total, 0) +
       preSaleOrders
