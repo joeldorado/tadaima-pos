@@ -649,14 +649,20 @@ export function SalesPage() {
               </select>
             </div>
           )}
-          <button onClick={() => { void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all }); void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all }); }}
-            className="flex items-center justify-center gap-2 px-5 h-[36px] font-black text-[9px] uppercase tracking-widest transition-all hover:scale-105 active:scale-95"
-            style={T.btnRed}>
-            {isFetching && !loading
-              ? <Loader2 size={13} strokeWidth={3} className="animate-spin" />
-              : <TrendingUp size={13} strokeWidth={3} />}
-            {isFetching && !loading ? "Actualizando…" : "Actualizar"}
-          </button>
+          {/* Botón 'Actualizar' comentado — React Query refetcha en background
+              + refetchOnWindowFocus + las mutaciones (devolver venta) invalidan
+              ya el cache. No tiene sentido manual. Decisión Joel 2026-05-21.
+              Indicador de fetch en background ahora vive en el subtítulo del header. */}
+          {false && (
+            <button onClick={() => { void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all }); void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all }); }}
+              className="flex items-center justify-center gap-2 px-5 h-[36px] font-black text-[9px] uppercase tracking-widest transition-all hover:scale-105 active:scale-95"
+              style={T.btnRed}>
+              {isFetching && !loading
+                ? <Loader2 size={13} strokeWidth={3} className="animate-spin" />
+                : <TrendingUp size={13} strokeWidth={3} />}
+              {isFetching && !loading ? "Actualizando…" : "Actualizar"}
+            </button>
+          )}
         </div>
       </header>
 

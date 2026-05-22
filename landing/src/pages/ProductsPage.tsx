@@ -1895,9 +1895,11 @@ export function ProductsPage() {
               </>
             );
           })()}
-          {/* Buscar nuevos — visible para gerente y cajero. Admin no lo necesita
-              (sus mutations ya invalidan automáticamente el cache). */}
-          {!isAdmin && (
+          {/* 'Buscar nuevos' comentado — React Query refetcha en background
+              (refetchOnMount + refetchOnWindowFocus) y las mutaciones invalidan
+              el cache. El cajero/gerente ve productos nuevos sin tener que
+              forzar refresh manual. Decisión Joel 2026-05-21. */}
+          {false && !isAdmin && (
             <button
               onClick={() => {
                 void invalidateProducts();
