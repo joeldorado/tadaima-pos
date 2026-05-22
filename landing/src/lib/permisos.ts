@@ -66,7 +66,10 @@ export type PageKey =
 const PAGE_ACCESS: Record<Role, PageKey[]> = {
   admin:   ["inicio", "products", "sales", "clients", "presales", "transfers", "reports", "settings", "admin"],
   gerente: ["inicio", "stores", "products", "sales", "clients", "presales", "transfers", "reports"],
-  cajero:  ["inicio", "stores", "products", "sales"],
+  // Cajero: NO ve Tiendas (lo confunde — su tienda es fija). En su lugar
+  // ve Preventas con un panel adicional de catálogos disponibles + vencidos
+  // de su sucursal.
+  cajero:  ["inicio", "products", "sales", "presales"],
   unknown: ["inicio"],
 };
 

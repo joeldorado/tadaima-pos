@@ -4,6 +4,9 @@ import { useAuth } from "@tadaima/auth";
 import { PreSaleCatalogsPanel } from "@/components/presales/PreSaleCatalogsPanel";
 import { PreSaleOrdersPanel } from "@/components/presales/PreSaleOrdersPanel";
 import { PreSaleDifusionPanel } from "@/components/presales/PreSaleDifusionPanel";
+import { PreSaleAvailableCatalogsPanel } from "@/components/presales/PreSaleAvailableCatalogsPanel";
+import { PreSaleVencidosPanel } from "@/components/presales/PreSaleVencidosPanel";
+import { primaryRole } from "@/lib/permisos";
 
 const T = {
   bgGrad: "var(--td-page-bg)",
@@ -12,15 +15,19 @@ const T = {
   redBright: "#FF4422",
 };
 
-type AdminTab = "folios" | "difusion" | "catalogos";
+type AdminTab = "folios" | "difusion" | "catalogos" | "disponibles" | "vencidos";
 
 export function PreSalesPage() {
   const { user } = useAuth();
   const isAdmin = user?.roles?.some(r =>
     ["admin", "super_admin", "owner", "dueño"].includes(r.toLowerCase())
   ) ?? false;
+  const role = primaryRole(user?.roles);
+  const isCashier = role === "cajero";
 
-  const [adminTab, setAdminTab] = useState<AdminTab>("folios");
+  // Default tab: admin/gerente → folios; cajero → disponibles (lo más útil
+  // para arrancar el día, ver qué catálogos puede vender).
+  const [adminTab, setAdminTab] = useState<AdminTab>(isCashier ? "disponibles" : "folios");
 
   const storeId = !isAdmin && user?.store_id ? user.store_id : undefined;
   const pendingQuery = usePreSaleOrdersQuery(
@@ -36,11 +43,24 @@ export function PreSalesPage() {
   const foliosPendingCount: number | null =
     pendingQuery.isPending || readyQuery.isPending ? null : pCount + rCount;
 
-  const tabs: ReadonlyArray<{ id: AdminTab; label: string; adminOnly: boolean }> = [
-    { id: "catalogos", label: "Catálogos", adminOnly: true },
-    { id: "folios", label: "Folios", adminOnly: false },
-    { id: "difusion", label: "Difusión", adminOnly: false },
+  // Tab config con visibilidad por rol:
+  //  - "catalogos": admin/gerente (gestión completa de catálogos)
+  //  - "disponibles": cajero (vista read-only de su tienda)
+  //  - "folios": todos (admin global, gerente/cajero su tienda)
+  //  - "difusion": todos
+  //  - "vencidos": todos — pero scope por tienda en backend
+  const tabs: ReadonlyArray<{ id: AdminTab; label: string; roles: ("admin" | "gerente" | "cajero")[] }> = [
+    { id: "catalogos",   label: "Catálogos",   roles: ["admin", "gerente"] },
+    { id: "disponibles", label: "Disponibles", roles: ["cajero"] },
+    { id: "folios",      label: "Folios",      roles: ["admin", "gerente", "cajero"] },
+    { id: "difusion",    label: "Difusión",    roles: ["admin", "gerente", "cajero"] },
+    { id: "vencidos",    label: "Vencidos",    roles: ["admin", "gerente", "cajero"] },
   ];
+  const visibleTabs = tabs.filter(t =>
+    (isAdmin && t.roles.includes("admin")) ||
+    (!isAdmin && role === "gerente" && t.roles.includes("gerente")) ||
+    (isCashier && t.roles.includes("cajero"))
+  );
 
   return (
     <div className="h-full overflow-y-auto p-8 space-y-8 no-scrollbar" style={{ background: T.bgGrad }}>
@@ -61,7 +81,7 @@ export function PreSalesPage() {
 
       {/* Tab navigation */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {tabs.filter(t => !t.adminOnly || isAdmin).map(({ id, label }) => (
+        {visibleTabs.map(({ id, label }) => (
           <button
             key={id}
             onClick={() => setAdminTab(id)}
@@ -109,6 +129,8 @@ export function PreSalesPage() {
       {adminTab === "folios" && <PreSaleOrdersPanel />}
       {adminTab === "difusion" && <PreSaleDifusionPanel />}
       {isAdmin && adminTab === "catalogos" && <PreSaleCatalogsPanel />}
+      {adminTab === "disponibles" && <PreSaleAvailableCatalogsPanel />}
+      {adminTab === "vencidos" && <PreSaleVencidosPanel />}
     </div>
   );
 }

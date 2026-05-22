@@ -42,7 +42,9 @@ const ALL_NAV_ITEMS: NavItem[] = [
 const NAV_BY_ROLE: Record<string, PageKey[]> = {
   admin:   ["inicio", "products", "sales", "clients", "presales", "transfers", "reports"],
   gerente: ["inicio", "stores", "products", "sales", "clients", "presales", "transfers", "reports"],
-  cajero:  ["inicio", "stores", "products", "sales"],
+  // Cajero: sin Tiendas, con Preventas para ver catálogos disponibles +
+  // difusión + vencidos de su sucursal.
+  cajero:  ["inicio", "products", "sales", "presales"],
   unknown: ["inicio"],
 };
 
