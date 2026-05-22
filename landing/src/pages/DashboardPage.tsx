@@ -11,8 +11,12 @@ import {
   ShoppingCart, Package, Store as StoreIcon, AlertTriangle, LayoutDashboard,
   Boxes, CheckCircle2, Lock, ArrowRight,
   TrendingUp, Bookmark, PackageX, Loader2, X,
-  Shield, Settings, ArrowLeftRight, Users,
+  Shield, Settings, ArrowLeftRight, Users, ImageIcon,
 } from "lucide-react";
+import { primaryRole } from "@/lib/permisos";
+import { UserAvatar } from "@/components/UserAvatar";
+import { AvatarPicker } from "@/components/AvatarPicker";
+import { useQueryClient } from "@tanstack/react-query";
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const RED     = "var(--td-red)";
@@ -301,11 +305,84 @@ function DashCard({ icon: Icon, title, desc, value, onClick, accent = false, dis
 export function DashboardPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const queryClient = useQueryClient();
   const { activeStore, stores, setActiveStore, isLoading: storesLoading, productCount } = useActiveStore();
 
   const [showPicker, setShowPicker]         = useState(false);
+  const [showAvatarPicker, setShowAvatarPicker] = useState(false);
 
+  const role = primaryRole(user?.roles);
   const isAdmin     = user?.roles?.includes("admin") ?? false;
+
+  // Cajero: dashboard simple "Mi Perfil" — solo muestra avatar editable +
+  // nombre/email/tienda. Sin KPIs, sin setup, sin accesos rápidos. Joel pidió
+  // ocultarle todo el resto por ahora.
+  if (role === "cajero") {
+    return (
+      <div className="min-h-screen app-bg p-10 flex flex-col items-center justify-center">
+        <div className="w-full max-w-md p-8 rounded-3xl"
+          style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)" }}>
+          <div className="flex flex-col items-center text-center gap-5">
+            <UserAvatar name={user?.name ?? ""} avatarUrl={user?.avatar_url ?? null} size={96} />
+            <div>
+              <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.18em", color: "var(--td-text-ghost)" }}>
+                Mi Perfil
+              </p>
+              <h1 className="text-2xl font-black mt-2" style={{ color: "var(--td-text-hi)" }}>
+                {user?.name ?? "—"}
+              </h1>
+              <p className="text-xs mt-1" style={{ color: "var(--td-text-md)" }}>
+                {user?.email}
+              </p>
+              {user?.store?.name && (
+                <div className="inline-flex items-center gap-1.5 mt-3 px-3 py-1 rounded-full"
+                  style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)" }}>
+                  <StoreIcon size={11} style={{ color: "var(--td-text-ghost)" }} />
+                  <span style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--td-text-md)" }}>
+                    {user.store.name}
+                  </span>
+                </div>
+              )}
+            </div>
+            <button
+              onClick={() => setShowAvatarPicker(true)}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold transition-all hover:scale-[1.02] active:scale-95"
+              style={{
+                background: "linear-gradient(135deg,#CC2200,#FF4422)",
+                color: "#fff", fontSize: 11,
+                textTransform: "uppercase", letterSpacing: "0.12em",
+              }}
+            >
+              <ImageIcon size={13} />
+              {user?.avatar_url ? "Cambiar foto" : "Elegir foto"}
+            </button>
+            <button
+              onClick={() => navigate("/caja")}
+              className="text-[10px] font-bold uppercase tracking-widest mt-2"
+              style={{ color: "var(--td-text-ghost)" }}
+            >
+              ← Volver a Caja
+            </button>
+          </div>
+        </div>
+        {showAvatarPicker && user && (
+          <AvatarPicker
+            userId={user.id}
+            userName={user.name}
+            currentAvatarUrl={user.avatar_url ?? null}
+            open
+            onClose={() => setShowAvatarPicker(false)}
+            onSaved={() => {
+              void queryClient.invalidateQueries({ queryKey: queryKeys.users.all });
+              // Forzar refetch del /auth/me para que el contexto refresque el avatar
+              window.dispatchEvent(new Event("tadaima:auth-refresh"));
+              setShowAvatarPicker(false);
+            }}
+          />
+        )}
+      </div>
+    );
+  }
   const firstName   = user?.name?.split(" ")[0] ?? "Usuario";
   const hasStores   = !storesLoading && stores.length > 0;
   const hasProducts = (productCount ?? 0) > 0;
