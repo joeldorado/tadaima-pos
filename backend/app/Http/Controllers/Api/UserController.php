@@ -29,7 +29,10 @@ class UserController extends Controller
         $threshold = now()->subMinutes(2);
 
         $query = User::query()
-            ->with('store:id,name')
+            // Eager-load roles para evitar N+1 (uno por user al serializar). Spatie
+            // expone la relación `roles` desde `HasRoles`; sin esto, cada user en
+            // la respuesta dispara una SELECT extra cross-region (~30ms cada una).
+            ->with(['store:id,name', 'roles:id,name'])
             ->where('active', true)
             ->where('last_seen_at', '>=', $threshold);
 
