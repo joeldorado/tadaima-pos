@@ -224,12 +224,18 @@ function CatalogRow({ catalog }: CatalogRowProps) {
 
 export function PreSaleDifusionPanel() {
   const catalogsQuery = usePreSaleCatalogsQuery({ status: "arrived", per_page: 200 });
-  const catalogs: PreSaleCatalog[] = catalogsQuery.data?.data ?? [];
+  const allArrived: PreSaleCatalog[] = catalogsQuery.data?.data ?? [];
   const loading = catalogsQuery.isPending;
 
   useEffect(() => {
     if (catalogsQuery.error) toast.error("Error al cargar catálogos");
   }, [catalogsQuery.error]);
+
+  // Solo mostrar catálogos con folios activos a notificar (reserved_count > 0).
+  // Un catálogo arrived sin ningún folio es ruido — la mercancía llegó pero
+  // nadie la reservó en preventa, no hay nadie a quien avisar. Joel 2026-05-21.
+  const catalogs = allArrived.filter(c => (c.reserved_count ?? 0) > 0);
+  const hiddenEmpty = allArrived.length - catalogs.length;
 
   return (
     <div style={{ ...GLASS, borderRadius: 24, padding: 24 }}>
@@ -247,12 +253,21 @@ export function PreSaleDifusionPanel() {
         </div>
       ) : catalogs.length === 0 ? (
         <p style={{ fontSize: 12, color: TM, textAlign: "center", padding: 40, margin: 0 }}>
-          No hay catálogos llegados pendientes de notificación
+          {hiddenEmpty > 0
+            ? `${hiddenEmpty} catálogo${hiddenEmpty === 1 ? "" : "s"} llegado${hiddenEmpty === 1 ? "" : "s"} sin folios activos — nadie a quien notificar.`
+            : "No hay catálogos llegados pendientes de notificación"}
         </p>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {catalogs.map(cat => <CatalogRow key={cat.id} catalog={cat} />)}
-        </div>
+        <>
+          {hiddenEmpty > 0 && (
+            <p style={{ fontSize: 9, color: TM, marginTop: -10, marginBottom: 12, opacity: 0.7 }}>
+              Ocultos {hiddenEmpty} catálogo{hiddenEmpty === 1 ? "" : "s"} sin folios activos (sin clientes a notificar).
+            </p>
+          )}
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {catalogs.map(cat => <CatalogRow key={cat.id} catalog={cat} />)}
+          </div>
+        </>
       )}
     </div>
   );
