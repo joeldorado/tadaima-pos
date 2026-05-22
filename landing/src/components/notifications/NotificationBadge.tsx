@@ -1,50 +1,55 @@
 import { useState, useEffect, useRef } from "react";
 import { Bell, Check, X, Loader2, Trash2 } from "lucide-react";
-import { getNotifications, markNotificationRead, deleteNotification } from "@tadaima/api";
+import { useQueryClient } from "@tanstack/react-query";
+import { markNotificationRead, deleteNotification } from "@tadaima/api";
 import type { Notification } from "@tadaima/api";
 import { motion as Motion, AnimatePresence } from "motion/react";
+import { useNotificationsQuery } from "@/hooks/queries/useNotifications";
+import { queryKeys } from "@/lib/queryKeys";
 
-// Polling 60s — refresca el badge sin reload para que el admin vea avisos
-// nuevos (stock-alert) en cuanto entran. Antes estaba apagado porque no había
-// escritores backend; ahora el endpoint POST /notifications/stock-alert sí
-// produce notificaciones reales.
-const POLL_INTERVAL = 60_000;
-
+/**
+ * Badge + popup de notificaciones.
+ *
+ * Migrado a React Query (15s polling + refetchOnWindowFocus). Cualquier
+ * mutación local invalida `queryKeys.notifications.all` para forzar refetch
+ * inmediato y, gracias al `BroadcastChannel` del QueryClient global, otros
+ * tabs del mismo navegador se sincronizan también.
+ *
+ * Para flujos que generen notificaciones desde otra parte del app (ej.
+ * después de mandar un stock-alert) emitir el evento global
+ * `tadaima:notifications-changed` y este componente refetch al instante.
+ */
 export function NotificationBadge() {
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const dropRef = useRef<HTMLDivElement>(null);
-
+  const queryClient = useQueryClient();
+  const notificationsQuery = useNotificationsQuery({ unreadOnly: false });
+  const notifications: Notification[] = (notificationsQuery.data ?? []).slice(0, 20);
   const unread = notifications.filter(n => !n.read_at).length;
 
-  const fetchNotifications = async () => {
-    try {
-      const data = await getNotifications({ unread_only: false });
-      setNotifications(data.slice(0, 20));
-    } catch {
-      // silent — non-critical
-    }
+  const [open, setOpen] = useState(false);
+  const [mutating, setMutating] = useState(false);
+  const dropRef = useRef<HTMLDivElement>(null);
+
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.notifications.all });
   };
 
+  // Cuando el popup se abre, fuerza un refetch inmediato (no espera al
+  // siguiente tick del interval) para mostrar lo más fresco posible.
   useEffect(() => {
-    void fetchNotifications();
-    const id = window.setInterval(() => { void fetchNotifications(); }, POLL_INTERVAL);
-    return () => window.clearInterval(id);
-  }, []);
-
-  useEffect(() => {
-    if (open) {
-      void fetchNotifications();
-    }
+    if (open) invalidate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // Permite a otros módulos (ej. ProductsPage tras enviar stock-alert)
+  // disparar refetch global emitiendo `tadaima:notifications-changed`.
   useEffect(() => {
-    const handler = () => { void fetchNotifications(); };
+    const handler = () => invalidate();
     window.addEventListener("tadaima:notifications-changed", handler);
     return () => window.removeEventListener("tadaima:notifications-changed", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Click fuera del popup → cerrar
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (dropRef.current && !dropRef.current.contains(e.target as Node)) {
@@ -56,36 +61,45 @@ export function NotificationBadge() {
   }, []);
 
   const handleMarkRead = async (id: number) => {
-    setLoading(true);
+    setMutating(true);
     try {
       await markNotificationRead(id);
-      setNotifications(prev =>
-        prev.map(n => n.id === id ? { ...n, read_at: new Date().toISOString() } : n)
-      );
+      invalidate();
     } catch {
       // silent
     } finally {
-      setLoading(false);
+      setMutating(false);
     }
   };
 
   const handleDelete = async (id: number) => {
-    // Optimistic remove — la notificación desaparece al instante. Si falla
-    // el endpoint, recargamos para devolverla.
-    const prevSnapshot = notifications;
-    setNotifications(prev => prev.filter(n => n.id !== id));
+    // Optimistic: quito de la cache local; si falla la mutación, RQ refetch
+    // al invalidar restaura el estado real.
+    queryClient.setQueryData<Notification[]>(
+      queryKeys.notifications.list({ unread_only: false }),
+      prev => (prev ?? []).filter(n => n.id !== id),
+    );
     try {
       await deleteNotification(id);
     } catch {
-      setNotifications(prevSnapshot);
+      // restaura
+    } finally {
+      invalidate();
     }
   };
 
   const markAllRead = async () => {
     const unreadIds = notifications.filter(n => !n.read_at).map(n => n.id);
-    await Promise.allSettled(unreadIds.map(id => markNotificationRead(id)));
-    setNotifications(prev => prev.map(n => ({ ...n, read_at: n.read_at ?? new Date().toISOString() })));
+    setMutating(true);
+    try {
+      await Promise.allSettled(unreadIds.map(id => markNotificationRead(id)));
+    } finally {
+      setMutating(false);
+      invalidate();
+    }
   };
+
+  const loading = mutating || notificationsQuery.isFetching;
 
   return (
     <div ref={dropRef} className="relative flex flex-col items-center">
@@ -123,9 +137,9 @@ export function NotificationBadge() {
             animate={{ opacity: 1, x: 0, scale: 1 }}
             exit={{ opacity: 0, x: -8, scale: 0.95 }}
             transition={{ duration: 0.15 }}
-            // Popup ANCLADO al bottom del botón → crece hacia ARRIBA en lugar
-            // de bajar y salirse de la pantalla cuando el botón está al fondo
-            // del sidebar (caso reportado por Joel: 'muy abajo').
+            // Popup ancla left-12 + bottom-0 → crece HACIA ARRIBA. Antes con
+            // top-0 se iba abajo del viewport cuando el botón Avisos vive al
+            // fondo del sidebar.
             className="absolute left-12 bottom-0 z-50 rounded-2xl overflow-hidden shadow-2xl"
             style={{
               background: "var(--td-popup-bg)",
@@ -194,10 +208,9 @@ export function NotificationBadge() {
                       </p>
                     </div>
                     <div className="flex items-center gap-1 shrink-0 mt-0.5">
-                      {/* Check — marca como leído/enterado. Solo visible si está unread. */}
                       {!n.read_at && (
                         <button
-                          onClick={() => handleMarkRead(n.id)}
+                          onClick={() => void handleMarkRead(n.id)}
                           title="Marcar como leída"
                           style={{
                             width: 24, height: 24, borderRadius: 6,
@@ -211,7 +224,6 @@ export function NotificationBadge() {
                           <Check size={13} />
                         </button>
                       )}
-                      {/* Borrar — siempre disponible. Optimistic UI con rollback. */}
                       <button
                         onClick={() => void handleDelete(n.id)}
                         title="Eliminar notificación"
@@ -232,7 +244,7 @@ export function NotificationBadge() {
               )}
             </div>
 
-            {/* Close */}
+            {/* Footer */}
             <div
               className="flex justify-end px-4 py-2"
               style={{ borderTop: "1px solid var(--td-divider)", flexShrink: 0 }}

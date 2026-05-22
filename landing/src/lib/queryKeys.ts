@@ -76,4 +76,8 @@ export const queryKeys = {
     all: ['mangas'] as const,
     list: (params?: Record<string, unknown>) => ['mangas', 'list', params ?? {}] as const,
   },
+  notifications: {
+    all: ['notifications'] as const,
+    list: (params?: { unread_only?: boolean }) => ['notifications', 'list', params ?? {}] as const,
+  },
 } as const
