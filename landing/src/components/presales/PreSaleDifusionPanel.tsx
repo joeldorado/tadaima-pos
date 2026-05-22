@@ -46,6 +46,23 @@ function waMsg(customerName: string, folio: string, product: string, deadline: s
   );
 }
 
+/**
+ * Construye un mailto: con subject + body precargados. Al hacer click el SO
+ * abre el cliente de correo del cajero (Mail.app, Outlook, Gmail web si está
+ * configurado como handler). Cero backend — barato, simple, funcional.
+ * Plan futuro: endpoint /pre-sale-orders/{id}/notify que dispare un email
+ * real desde el server, opcional. Esto cubre el caso hoy.
+ */
+function mailtoLink(email: string, customerName: string, folio: string, product: string, deadline: string | null): string {
+  const dlPart = deadline ? ` Tienes hasta el ${fmt.format(new Date(deadline))} para recogerlo.` : "";
+  const subject = `Tu preventa ${folio} ya está lista`;
+  const body =
+    `Hola ${customerName},\n\n` +
+    `Te avisamos que tu preventa ${folio} de ${product} ya llegó a la tienda y está lista para que pases a recogerla.${dlPart}\n\n` +
+    `¡Te esperamos!\n\nEquipo Tadaima`;
+  return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
 interface CatalogRowProps {
   catalog: PreSaleCatalog;
 }
@@ -135,6 +152,9 @@ function CatalogRow({ catalog }: CatalogRowProps) {
                 const wa = phone
                   ? `https://wa.me/52${phone}?text=${waMsg(cust?.name ?? "", order.code, catalog.product_name, catalog.pickup_deadline)}`
                   : null;
+                const mailHref = cust?.email
+                  ? mailtoLink(cust.email, cust.name ?? "", order.code, catalog.product_name, catalog.pickup_deadline)
+                  : null;
 
                 return (
                   <div
@@ -190,6 +210,28 @@ function CatalogRow({ catalog }: CatalogRowProps) {
                       {order.status === "delivered" ? "Entregado" : order.status === "ready" ? "Listo" : "Pendiente"}
                     </span>
 
+                    {/* Email — mailto: precarga subject + body, abre el cliente
+                        del cajero. Disponible para cualquier rol (cajero, gerente,
+                        admin) sin endpoint backend. */}
+                    {mailHref ? (
+                      <a
+                        href={mailHref}
+                        title={`Enviar correo a ${cust?.name}`}
+                        style={{
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          width: 30, height: 30, borderRadius: 8, flexShrink: 0,
+                          background: "rgba(59,130,246,0.12)", border: "1px solid rgba(59,130,246,0.25)",
+                          color: "#3B82F6", textDecoration: "none",
+                        }}
+                      >
+                        <Mail size={14} />
+                      </a>
+                    ) : (
+                      <div title="Sin correo registrado" style={{ width: 30, height: 30, borderRadius: 8, background: "var(--td-card-bg)", border: "1px solid var(--td-panel-border)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, opacity: 0.4 }}>
+                        <Mail size={12} style={{ color: TM }} />
+                      </div>
+                    )}
+
                     {/* WhatsApp */}
                     {wa ? (
                       <a
@@ -207,7 +249,7 @@ function CatalogRow({ catalog }: CatalogRowProps) {
                         <MessageCircle size={14} />
                       </a>
                     ) : (
-                      <div style={{ width: 30, height: 30, borderRadius: 8, background: "var(--td-card-bg)", border: "1px solid var(--td-panel-border)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <div title="Sin teléfono registrado" style={{ width: 30, height: 30, borderRadius: 8, background: "var(--td-card-bg)", border: "1px solid var(--td-panel-border)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, opacity: 0.4 }}>
                         <Phone size={12} style={{ color: TM }} />
                       </div>
                     )}
