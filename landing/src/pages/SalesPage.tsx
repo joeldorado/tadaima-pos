@@ -470,7 +470,22 @@ export function SalesPage() {
     });
     return map;
   }, [productsQuery.data]);
-  const loading = salesQuery.isPending || preSaleOrdersQuery.isPending || productsQuery.isPending;
+  // Skeleton se muestra cuando:
+  //  - Primer load (no hay data en cache de RQ)
+  //  - Cambio de filtro/queryKey: data anterior ya no aplica y la nueva está
+  //    fetcheando — distinguimos esto de un polling background usando
+  //    `isFetching && !hasData`. Sin esto, el polling de 30s tira skeleton
+  //    aunque haya data válida en pantalla.
+  const isFirstLoad =
+    salesQuery.isPending || preSaleOrdersQuery.isPending || productsQuery.isPending;
+  const salesHasData       = (salesQuery.data?.data?.length ?? 0) > 0;
+  const preSalesHasData    = (preSaleOrdersQuery.data?.data?.length ?? 0) > 0;
+  const productsHasData    = (productsQuery.data?.data?.length ?? 0) > 0;
+  const isFreshFilterFetch =
+    (salesQuery.isFetching       && !salesHasData) ||
+    (preSaleOrdersQuery.isFetching && !preSalesHasData) ||
+    (productsQuery.isFetching    && !productsHasData);
+  const loading = isFirstLoad || isFreshFilterFetch;
 
   useEffect(() => {
     if (salesQuery.error || preSaleOrdersQuery.error || productsQuery.error) {
