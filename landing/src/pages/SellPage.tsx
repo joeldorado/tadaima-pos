@@ -1320,6 +1320,23 @@ export function SellPage() {
   const activeTerminal = useMemo(() => terminals.find(t => t.id === activeMesa.selectedTerminalId), [terminals, activeMesa.selectedTerminalId]);
   const hasAssignedCustomer = !!activeMesa.customerName?.trim();
 
+  // Si el método quedó como "Tarjeta" desde localStorage pero no hay terminal
+  // (la guardada ya no existe o nunca se eligió), abrimos el modal solo cuando
+  // el cajero intente cobrar. No al cargar — sería ruidoso si llega y aún no
+  // está listo. El badge "Elegir terminal" en el botón ya marca el faltante.
+  // Auto-clear de selectedTerminalId zombie: si el id apunta a una terminal
+  // que ya no existe en la lista, lo limpiamos.
+  useEffect(() => {
+    if (
+      activeMesa?.paymentMethod === "Tarjeta"
+      && activeMesa.selectedTerminalId
+      && terminals.length > 0
+      && !activeTerminal
+    ) {
+      updMesa(activeMesa.id, m => ({ ...m, selectedTerminalId: undefined }));
+    }
+  }, [activeTerminal, activeMesa?.paymentMethod, activeMesa?.selectedTerminalId, terminals.length]);
+
   // Mapas para el catálogo: stock disponible ajustado por reservas de otras cajas,
   // y desglose de qué está reservado en qué caja (para mostrar "2 en Caja 3" en cada card).
   const catalogAvailableStock = useMemo<Record<string, number>>(() => {
@@ -4215,18 +4232,29 @@ export function SellPage() {
                               <SlidersHorizontal size={14} className="text-white" />
                             </button>
                           )}
-                          {active === "Tarjeta" && activeTerminal && (
+                          {active === "Tarjeta" && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setPaymentMenuOpen(false);
                                 setShowTerminalModal(true);
                               }}
-                              className="px-3 border-l border-white/20 flex items-center gap-1 text-[8px] font-black tracking-widest text-white/80 hover:bg-white/10 transition-colors"
-                              title="Cambiar terminal"
+                              className={`px-3 border-l border-white/20 flex items-center gap-1 text-[8px] font-black tracking-widest hover:bg-white/10 transition-colors ${
+                                activeTerminal ? "text-white/80" : "text-amber-200 animate-pulse"
+                              }`}
+                              title={activeTerminal ? "Cambiar terminal" : "Elegir terminal para cobrar con tarjeta"}
                             >
-                              {activeTerminal.name}
-                              {isAdmin && ` (${activeTerminal.commission_percent}%)`}
+                              {activeTerminal ? (
+                                <>
+                                  {activeTerminal.name}
+                                  {isAdmin && ` (${activeTerminal.commission_percent}%)`}
+                                </>
+                              ) : (
+                                <>
+                                  <AlertTriangle size={10} />
+                                  Elegir terminal
+                                </>
+                              )}
                               <ChevronDown size={10} className="text-white/60" />
                             </button>
                           )}
