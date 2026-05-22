@@ -200,11 +200,26 @@ class ReportsController extends Controller
         $to         = $request->input('to',   now()->toDateString());
         $storeId    = $request->integer('store_id')    ?: null;
         $registerId = $request->integer('register_id') ?: null;
+        $userId     = $request->integer('user_id')     ?: null;
+
+        $user      = $request->user();
+        $isAdmin   = $user && $user->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
+        $isCashier = $user && $user->hasRole(['cajero']) && ! $isAdmin;
+
+        // RBAC: cajero forzado a su user_id + tienda; gerente a su tienda;
+        // admin libre. Filtros del request se ignoran si intentan ver más.
+        if (! $isAdmin) {
+            $storeId = $user?->store_id ?: $storeId;
+            if ($isCashier) {
+                $userId = $user->id;
+            }
+        }
 
         $sessions = CashRegisterSession::with(['register.store', 'user'])
             ->whereDate('opened_at', '>=', $from)
             ->whereDate('opened_at', '<=', $to)
             ->when($registerId, fn ($q) => $q->where('register_id', $registerId))
+            ->when($userId,     fn ($q) => $q->where('user_id',     $userId))
             ->when($storeId, fn ($q) => $q->whereHas('register', fn ($r) => $r->where('store_id', $storeId)))
             ->orderByDesc('opened_at')
             ->get();

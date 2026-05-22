@@ -11,12 +11,14 @@ import {
   ShoppingCart, Package, Store as StoreIcon, AlertTriangle, LayoutDashboard,
   Boxes, CheckCircle2, Lock, ArrowRight,
   TrendingUp, Bookmark, PackageX, Loader2, X,
-  Shield, Settings, ArrowLeftRight, Users, ImageIcon,
+  Shield, Settings, ArrowLeftRight, Users, ImageIcon, Wallet,
 } from "lucide-react";
 import { primaryRole } from "@/lib/permisos";
 import { UserAvatar } from "@/components/UserAvatar";
 import { AvatarPicker } from "@/components/AvatarPicker";
+import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
 import { useQueryClient } from "@tanstack/react-query";
+import { getCashReport, type CashSessionReport } from "@tadaima/api";
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const RED     = "var(--td-red)";
@@ -310,13 +312,29 @@ export function DashboardPage() {
 
   const [showPicker, setShowPicker]         = useState(false);
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
+  // Mis Cortes — cajero ve histórico de sus propias sesiones cerradas
+  const [showMyCutsModal, setShowMyCutsModal] = useState(false);
+  const [selectedCut, setSelectedCut] = useState<CashSessionReport | null>(null);
 
   const role = primaryRole(user?.roles);
   const isAdmin     = user?.roles?.includes("admin") ?? false;
 
-  // Cajero: dashboard simple "Mi Perfil" — solo muestra avatar editable +
-  // nombre/email/tienda. Sin KPIs, sin setup, sin accesos rápidos. Joel pidió
-  // ocultarle todo el resto por ahora.
+  // Cajero: dashboard simple "Mi Perfil" — avatar editable, datos read-only
+  // y acceso a sus cortes de caja. Sin KPIs ni setup global.
+  // Query de cortes propios del cajero (RBAC backend ya lo limita a su user_id).
+  const myCutsQuery = useQuery({
+    queryKey: ['my-cuts', user?.id],
+    queryFn: () => getCashReport({
+      // últimos 90 días — rango razonable para que vea su historial
+      from: new Date(Date.now() - 90 * 24 * 60 * 60_000).toISOString().split("T")[0]!,
+      to: new Date().toISOString().split("T")[0]!,
+    }),
+    enabled: role === "cajero" && showMyCutsModal && !!user?.id,
+    staleTime: 30_000,
+  });
+  const myCuts = myCutsQuery.data?.sessions ?? [];
+  const fmtMoney = (n: number) => `$${n.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
   if (role === "cajero") {
     return (
       <div className="min-h-screen app-bg p-10 flex flex-col items-center justify-center">
@@ -344,18 +362,33 @@ export function DashboardPage() {
                 </div>
               )}
             </div>
-            <button
-              onClick={() => setShowAvatarPicker(true)}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold transition-all hover:scale-[1.02] active:scale-95"
-              style={{
-                background: "linear-gradient(135deg,#CC2200,#FF4422)",
-                color: "#fff", fontSize: 11,
-                textTransform: "uppercase", letterSpacing: "0.12em",
-              }}
-            >
-              <ImageIcon size={13} />
-              {user?.avatar_url ? "Cambiar foto" : "Elegir foto"}
-            </button>
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <button
+                onClick={() => setShowAvatarPicker(true)}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold transition-all hover:scale-[1.02] active:scale-95"
+                style={{
+                  background: "linear-gradient(135deg,#CC2200,#FF4422)",
+                  color: "#fff", fontSize: 11,
+                  textTransform: "uppercase", letterSpacing: "0.12em",
+                }}
+              >
+                <ImageIcon size={13} />
+                {user?.avatar_url ? "Cambiar foto" : "Elegir foto"}
+              </button>
+              <button
+                onClick={() => setShowMyCutsModal(true)}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold transition-all hover:scale-[1.02] active:scale-95"
+                style={{
+                  background: "var(--td-card-bg)",
+                  border: "1px solid var(--td-card-border)",
+                  color: "var(--td-text-hi)", fontSize: 11,
+                  textTransform: "uppercase", letterSpacing: "0.12em",
+                }}
+              >
+                <Wallet size={13} />
+                Mis Cortes
+              </button>
+            </div>
             <button
               onClick={() => navigate("/caja")}
               className="text-[10px] font-bold uppercase tracking-widest mt-2"
@@ -378,6 +411,108 @@ export function DashboardPage() {
               window.dispatchEvent(new Event("tadaima:auth-refresh"));
               setShowAvatarPicker(false);
             }}
+          />
+        )}
+
+        {/* Modal Mis Cortes — lista de sesiones del cajero (últimos 90 días).
+            Click en una abre CashCloseSummaryModal con detalle + opción imprimir. */}
+        {showMyCutsModal && (
+          <div style={{ position: "fixed", inset: 0, zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+            <div onClick={() => setShowMyCutsModal(false)}
+              style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.78)", backdropFilter: "blur(8px)" }} />
+            <div style={{
+              position: "relative",
+              background: "var(--td-popup-bg)", border: "1px solid var(--td-popup-border)",
+              borderRadius: 24, padding: 24, width: "100%", maxWidth: 520,
+              maxHeight: "85vh", display: "flex", flexDirection: "column",
+            }}>
+              <div className="flex items-center justify-between" style={{ marginBottom: 16 }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 15, fontWeight: 900, color: "var(--td-text-hi)" }}>Mis Cortes de Caja</h3>
+                  <p style={{ margin: "2px 0 0", fontSize: 10, fontWeight: 700, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.12em" }}>
+                    Últimos 90 días · {myCuts.length} sesiones
+                  </p>
+                </div>
+                <button onClick={() => setShowMyCutsModal(false)}
+                  style={{ background: "none", border: "none", cursor: "pointer", color: "var(--td-text-ghost)", padding: 4 }}>
+                  <X size={18} />
+                </button>
+              </div>
+              <div style={{ flex: 1, overflowY: "auto" }}>
+                {myCutsQuery.isFetching ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 size={24} className="animate-spin" style={{ color: "#E0221A" }} />
+                  </div>
+                ) : myCuts.length === 0 ? (
+                  <div className="text-center py-12" style={{ color: "var(--td-text-ghost)", fontSize: 12 }}>
+                    Sin cortes aún. Aparecerán aquí cuando cierres caja.
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    {myCuts.map(s => {
+                      const isClosed = s.status === "closed";
+                      const diff = s.difference ?? 0;
+                      const isMatch = isClosed && Math.abs(diff) < 0.01;
+                      const isShort = isClosed && diff < -0.01;
+                      const statusColor = !isClosed ? "#FFAA00" : isMatch ? "#10b981" : isShort ? "#DC2626" : "#f59e0b";
+                      const statusBg    = !isClosed ? "rgba(255,170,0,0.1)" : isMatch ? "rgba(16,185,129,0.1)" : isShort ? "rgba(220,38,38,0.1)" : "rgba(245,158,11,0.1)";
+                      const statusLabel = !isClosed ? "Abierta" : isMatch ? "Cuadra ✓" : isShort ? "Falta" : "Sobra";
+                      return (
+                        <button
+                          key={s.id}
+                          onClick={() => setSelectedCut(s)}
+                          className="text-left transition-colors"
+                          style={{
+                            display: "flex", alignItems: "center", gap: 12,
+                            padding: "12px 14px", borderRadius: 14,
+                            background: "var(--td-card-bg)",
+                            border: "1px solid var(--td-card-border)",
+                            cursor: "pointer",
+                          }}
+                        >
+                          <div style={{
+                            width: 38, height: 38, borderRadius: 10,
+                            background: statusBg, border: `1px solid ${statusColor}33`,
+                            display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                          }}>
+                            {isMatch ? <CheckCircle2 size={16} color={statusColor} /> : <AlertTriangle size={16} color={statusColor} />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: "var(--td-text-hi)" }}>
+                              #{s.id} · {s.register.name}
+                            </p>
+                            <p style={{ margin: "2px 0 0", fontSize: 10, color: "var(--td-text-ghost)" }}>
+                              {new Date(s.opened_at).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" })}
+                              {s.closed_at && ` → ${new Date(s.closed_at).toLocaleString("es-MX", { timeStyle: "short" })}`}
+                              {" · "}{s.sales_count} ventas
+                            </p>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p style={{ margin: 0, fontSize: 13, fontWeight: 900, color: "var(--td-text-hi)" }}>
+                              {fmtMoney(s.total_sales)}
+                            </p>
+                            <span style={{
+                              display: "inline-block", marginTop: 2,
+                              padding: "1px 6px", borderRadius: 5,
+                              fontSize: 8, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em",
+                              background: statusBg, color: statusColor, border: `1px solid ${statusColor}40`,
+                            }}>{statusLabel}</span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {selectedCut && (
+          <CashCloseSummaryModal
+            session={selectedCut}
+            open
+            onClose={() => setSelectedCut(null)}
           />
         )}
       </div>

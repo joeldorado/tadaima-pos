@@ -129,7 +129,7 @@ export interface CashReport {
   sessions: CashSessionReport[]
 }
 
-export async function getCashReport(params?: ReportDateParams & { register_id?: number }): Promise<CashReport> {
+export async function getCashReport(params?: ReportDateParams & { register_id?: number; user_id?: number }): Promise<CashReport> {
   const response = await apiClient.get<CashReport>('/reports/cash', { params })
   return response.data
 }
