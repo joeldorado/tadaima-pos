@@ -5,18 +5,20 @@ import { queryKeys } from '@/lib/queryKeys'
 /**
  * Lista de notificaciones del usuario autenticado.
  *
- * - refetchInterval 15s — el admin ve avisos nuevos sin recargar
+ * - refetchInterval condicional: 15s cuando el popup del bell está abierto
+ *   (usuario mirando activamente), 60s cuando está cerrado (solo refresca el
+ *   contador del badge). Reduce ~75% de requests cuando nadie mira el bell.
  * - refetchOnWindowFocus — al volver al tab, refetcha
- * - Sincronización multi-tab gratis vía el BroadcastChannel del QueryClient
- *   global: si marca leída/borra en un tab, los otros tabs se enteran al
- *   invalidar la queryKey
+ * - Sincronización multi-tab vía BroadcastChannel del QueryClient global
+ * - Backend devuelve 304 Not Modified si no hubo cambios → respuesta de 0 bytes
+ *   y CPU mínimo en Cloud Run
  */
-export function useNotificationsQuery(options?: { unreadOnly?: boolean; enabled?: boolean }) {
+export function useNotificationsQuery(options?: { unreadOnly?: boolean; enabled?: boolean; popupOpen?: boolean }) {
   const params = { unread_only: options?.unreadOnly ?? false }
   return useQuery<Notification[]>({
     queryKey: queryKeys.notifications.list(params),
     queryFn: () => getNotifications(params),
-    refetchInterval: 15_000,
+    refetchInterval: options?.popupOpen ? 15_000 : 60_000,
     refetchOnWindowFocus: true,
     enabled: options?.enabled ?? true,
   })

@@ -21,11 +21,12 @@ import { queryKeys } from "@/lib/queryKeys";
  */
 export function NotificationBadge() {
   const queryClient = useQueryClient();
-  const notificationsQuery = useNotificationsQuery({ unreadOnly: false });
+  const [open, setOpen] = useState(false);
+  // popupOpen=true → polling 15s (usuario mirando); cerrado → 60s (solo badge)
+  const notificationsQuery = useNotificationsQuery({ unreadOnly: false, popupOpen: open });
   const notifications: Notification[] = (notificationsQuery.data ?? []).slice(0, 20);
   const unread = notifications.filter(n => !n.read_at).length;
 
-  const [open, setOpen] = useState(false);
   const [mutating, setMutating] = useState(false);
   const dropRef = useRef<HTMLDivElement>(null);
 

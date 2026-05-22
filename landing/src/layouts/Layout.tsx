@@ -75,14 +75,14 @@ export function Layout() {
   // Heartbeat — el backend (middleware TouchLastSeen) actualiza last_seen_at
   // en CUALQUIER request. Con el cajero activamente vendiendo (queries, polls)
   // ya se mantiene "conectado" sin esfuerzo extra. Para cubrir el caso idle
-  // (cajero deja la pestaña abierta sin interactuar) hacemos un GET cada 60s
-  // a /auth/me — barato y reusa el mismo flow que ya valida el token.
+  // (cajero deja la pestaña abierta sin interactuar) hacemos un GET cada 90s
+  // a /auth/me — basta para mantenerlo "online" en el threshold de 2 min.
   useEffect(() => {
     if (!user) return;
     const tick = () => {
       void apiClient.get('/auth/me').catch(() => { /* token caduco → AuthContext maneja */ });
     };
-    const id = window.setInterval(tick, 60_000);
+    const id = window.setInterval(tick, 90_000);
     return () => window.clearInterval(id);
   }, [user?.id]);
 
