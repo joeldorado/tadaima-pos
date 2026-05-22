@@ -1,7 +1,7 @@
 # MASTERLOG — Tadaima POS
 
 > Registro maestro del proyecto: arquitectura, evolución, decisiones clave y estado actual.
-> Actualizado: 2026-05-21 (avisos de stock RBAC para cajero/gerente + detalle solo lectura en Productos/Tomos)
+> Actualizado: 2026-05-21 (perf abrir caja en prod: setQueryData + gate relajado + fix N+1 roles en /users/online + min-instances=1)
 
 ---
 
@@ -9,7 +9,7 @@
 
 | Componente | Estado | Notas |
 |-----------|--------|-------|
-| Backend API (Laravel) | ✅ En producción | revision `tadaima-00034-ghr`, URL: tadaima-987277625193.us-central1.run.app |
+| Backend API (Laravel) | ✅ En producción | revision `tadaima-00048-h6j`, URL: tadaima-987277625193.us-central1.run.app. **`min-instances=1`** desde 2026-05-21 (~$8-10/mes, elimina cold starts de 5-37s) |
 | Landing / Web (React) | ✅ En producción | Email folio, historial mixto, Tarjeta/Transferencia, checkout mixto. **ADR-014 (2026-05-18): client-authoritative cart** (carrito vive en localStorage, backend solo se entera al cobrar). Dropdown UP método de pago, total en USD cuando Dólares, scanner detecta socios TAD, modal Clientes en toolbar, cache de imágenes 3 capas con Service Worker. |
 | App móvil (Expo) | ⏳ Pendiente | Estructura base existe en `apps/`, sin paridad de features |
 | Deploy / Cloud Run | ✅ Operacional | `gcloud run deploy --source .`, región us-central1. Build remoto en Cloud Build (no requiere Docker local) |
@@ -2394,3 +2394,34 @@ Joel preguntó por real-time. Análisis: 2-4 tiendas, 6-15 usuarios activos, pol
 - Backend tests: 30/30 ✓
 - Vite build: ✓
 - Deploy pendiente al cierre de esta entrada
+
+---
+
+## Sesión 2026-05-21 (cierre) — Perf de "Abrir Caja" en prod
+
+### Síntoma reportado
+Admin tarda mucho al abrir caja en `tadaima.poslite.com.mx`: primero pensaba al click "Abrir Caja", luego se quedaba congelado en el spinner "Verificando sesión de caja" hasta 3 segundos.
+
+### Diagnóstico (de logs Cloud Run)
+- `POST /cash/open` ~1.1s + `GET /cash/session` ~1.0s en refetch = ~2.2s perceived al abrir caja (innecesario, el POST ya devolvía la sesión)
+- Gate "Verificando sesión de caja" esperaba 3 queries para admin: `activeSession` + `activeSessions` + `onlineUsers`. Las dos últimas tardaban hasta 3.26s en prod
+- N+1 en `/users/online`: el endpoint cargaba `store` eager pero no `roles`. Cada user serializado disparaba SELECT extra a `model_has_roles` cross-region (~30ms × N usuarios)
+- Cold starts de 5-37s con `min-instances=0` (502s visibles en logs)
+
+### Cambios aplicados
+
+| Commit | Archivo | Cambio |
+|---|---|---|
+| `9983fd4` | `landing/src/pages/SellPage.tsx` (handleOpenCash) | `queryClient.setQueryData(['cash','activeSession'], session)` con response del POST en vez de `invalidateQueries(['cash'])` — evita el GET extra. Invalidaciones pesadas (TC + products + preventas) diferidas a `requestIdleCallback` |
+| `3471137` | `landing/src/pages/SellPage.tsx` (gate verifyingSession) | Gate solo bloquea con `activeSessionQuery.isPending`. Las queries decorativas (`activeSessions`, `onlineUsersInStore`) cargan en background; el card "Cajeros activos" tiene su propio loading inline |
+| `edec171` | `backend/app/Http/Controllers/Api/UserController.php` | Fix N+1: `->with(['store:id,name', 'roles:id,name'])` en `/users/online` |
+| (infra) | Cloud Run config | `min-instances=1`, `max-instances=100`. Costo ~$8-10/mes pero elimina cold starts |
+
+### Verificación
+- Backend tests: 30/30 ✓
+- Vite build: ✓
+- Deploys: `tadaima-00046-8pt` → `00047-4z9` → `00048-h6j` (todos verdes, 100% tráfico)
+
+### Pending para próximas sesiones
+- Mover Cloud Run a `us-west1` (misma región que MySQL `pos-lite-db`) cuando Joel migre a la cuenta nueva de GCP. Cada query interna pasaría de ~30ms RTT a ~1ms — bajaría el piso de `/cash/session` de ~500ms a ~150ms
+- Revisar si `TouchLastSeen` middleware podría usar `Cache::remember` en vez de read+write a `users` cada 30s (ahora suma ~30ms cross-region a toda ruta autenticada)
