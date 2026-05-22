@@ -438,10 +438,11 @@ export function PreSaleCatalogsPanel() {
         </div>
       ) : (
         <div style={{ ...GLASS, borderRadius: 18, overflow: "hidden" }}>
+          <div style={{ maxHeight: "calc(100vh - 360px)", overflow: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
+            <thead style={{ position: "sticky", top: 0, zIndex: 10 }}>
               {table.getHeaderGroups().map(hg => (
-                <tr key={hg.id} style={{ borderBottom: "1px solid var(--td-panel-border)" }}>
+                <tr key={hg.id} style={{ borderBottom: "1px solid var(--td-panel-border)", background: "var(--td-popup-bg)" }}>
                   {hg.headers.map(header => {
                     const canSort = header.column.getCanSort();
                     const sorted  = header.column.getIsSorted();
@@ -457,6 +458,7 @@ export function PreSaleCatalogsPanel() {
                           cursor: canSort ? "pointer" : "default",
                           userSelect: "none",
                           whiteSpace: "nowrap",
+                          background: "var(--td-popup-bg)",
                         }}
                       >
                         <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: isCenter ? "center" : "flex-start" }}>
@@ -486,6 +488,7 @@ export function PreSaleCatalogsPanel() {
               ))}
             </tbody>
           </table>
+          </div>
 
           {/* Pagination */}
           {pageCount > 1 && (

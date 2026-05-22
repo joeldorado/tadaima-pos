@@ -130,11 +130,12 @@ export function PreSaleOrdersPanel() {
             <p className="text-[11px] text-white/20">Los apartados de catálogo aparecerán aquí</p>
           </div>
         ) : (
+          <div className="overflow-auto" style={{ maxHeight: "calc(100vh - 360px)" }}>
           <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-white/[0.06]">
+            <thead style={{ position: "sticky", top: 0, zIndex: 10 }}>
+              <tr className="border-b border-white/[0.06]" style={{ background: "var(--td-popup-bg)" }}>
                 {["Folio", "Cliente", "Productos", "Total", "Anticipo", "Pendiente", "Estado", "Tienda", "Fecha"].map(h => (
-                  <th key={h} className="px-4 py-3 text-[9px] font-black uppercase tracking-widest text-white/30">{h}</th>
+                  <th key={h} className="px-4 py-3 text-[9px] font-black uppercase tracking-widest text-white/30" style={{ background: "var(--td-popup-bg)" }}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -257,6 +258,7 @@ export function PreSaleOrdersPanel() {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 

@@ -2124,12 +2124,13 @@ export function ProductsPage() {
         </div>
       ) : (
         <div className="rounded-[32px] overflow-hidden shadow-2xl flex flex-col" style={T.glass}>
-          {/* ── Table ── */}
-          <div className="overflow-x-auto">
+          {/* ── Table con sticky header. maxHeight calc para que el body
+              scrollee dentro del card sin empujar paginación abajo. ── */}
+          <div className="overflow-auto" style={{ maxHeight: "calc(100vh - 320px)" }}>
             <table className="w-full text-left border-collapse">
-              <thead>
+              <thead style={{ position: "sticky", top: 0, zIndex: 10 }}>
                 {table.getHeaderGroups().map(headerGroup => (
-                  <tr key={headerGroup.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.06)", background: "rgba(255,255,255,0.02)" }}>
+                  <tr key={headerGroup.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.06)", background: "var(--td-popup-bg)" }}>
                     {headerGroup.headers.map(header => (
                       <th
                         key={header.id}
@@ -2137,6 +2138,7 @@ export function ProductsPage() {
                         style={{
                           color: T.textMuted,
                           cursor: header.column.getCanSort() ? 'pointer' : 'default',
+                          background: "var(--td-popup-bg)",
                         }}
                         onClick={header.column.getToggleSortingHandler()}
                       >
@@ -2413,16 +2415,16 @@ export function ProductsPage() {
             </div>
           ) : (
             <div className="rounded-[32px] overflow-hidden shadow-2xl flex flex-col" style={T.glass}>
-              <div className="overflow-x-auto">
+              <div className="overflow-auto" style={{ maxHeight: "calc(100vh - 320px)" }}>
                 <table className="w-full text-left border-collapse">
-                  <thead>
+                  <thead style={{ position: "sticky", top: 0, zIndex: 10 }}>
                     {mangaTable.getHeaderGroups().map(hg => (
-                      <tr key={hg.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', background: 'rgba(255,255,255,0.02)' }}>
+                      <tr key={hg.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', background: 'var(--td-popup-bg)' }}>
                         {hg.headers.map(header => (
                           <th
                             key={header.id}
                             className="px-6 py-5 text-[10px] font-black uppercase tracking-widest select-none whitespace-nowrap"
-                            style={{ color: T.textMuted, cursor: header.column.getCanSort() ? 'pointer' : 'default' }}
+                            style={{ color: T.textMuted, cursor: header.column.getCanSort() ? 'pointer' : 'default', background: 'var(--td-popup-bg)' }}
                             onClick={header.column.getToggleSortingHandler()}
                           >
                             <div className="flex items-center gap-1.5">
