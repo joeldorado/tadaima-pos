@@ -2,23 +2,22 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import type { CSSProperties } from "react";
 import {
   Search, Plus,
-  Package, AlertTriangle, ShoppingCart,
+  Package, AlertTriangle,
   DollarSign, Scan,
   ChevronRight,
   Warehouse, CheckCircle2,
-  Clock, X, Save,
+  X, Save,
   BookOpen, TrendingUp,
-  MessageCircle, Check,
+  MessageCircle,
   Upload, Camera, Loader2,
   ArrowUp, ArrowDown, ArrowUpDown,
   ChevronLeft, ChevronsLeft, ChevronsRight, Trash2, Pencil, RefreshCw, PackageX,
 } from "lucide-react";
-import { ImageWithFallback } from "@/components/figma/ImageWithFallback";
 import { useActiveStore } from "@/contexts/StoreContext";
 import { useAuth } from "@tadaima/auth";
 import { isAdmin as isAdminRole, isManager as isManagerRole } from "@/lib/permisos";
 import { toast } from "sonner";
-import { createProduct, updateProduct, deleteProduct, forceDeleteProduct, uploadProductImage, removeProductImage, getInventory, updateInventory, getPrice } from "@tadaima/api";
+import { createProduct, updateProduct, deleteProduct, forceDeleteProduct, uploadProductImage, removeProductImage, getInventory, updateInventory, getPrice, sendStockAlert } from "@tadaima/api";
 import type { ApiError } from "@tadaima/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { useProductsQuery } from "@/hooks/queries/useProducts";
@@ -195,6 +194,235 @@ function ProductThumb({ src, alt }: { src: string; alt: string }) {
       decoding="async"
       onError={() => setFailed(true)}
     />
+  );
+}
+
+function DetailChip({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider"
+      style={{ background: "rgba(255,255,255,0.06)", color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function DetailField({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="space-y-1.5">
+      <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: T.textMuted }}>{label}</p>
+      <div className="rounded-2xl px-4 py-3" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", color: T.textPrimary }}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function ProductDetailModal({
+  product,
+  stock,
+  storeLabel,
+  onClose,
+  onNotify,
+  canNotify,
+  sending,
+  notified,
+}: {
+  product: Producto;
+  stock: number;
+  storeLabel: string;
+  onClose: () => void;
+  onNotify: () => void;
+  canNotify: boolean;
+  sending: boolean;
+  notified: boolean;
+}) {
+  return (
+    <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={onClose} />
+      <div className="relative w-full max-w-3xl max-h-[90vh] overflow-hidden rounded-[32px] flex flex-col" style={T.glass}>
+        <div className="p-6 border-b border-white/10 flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: T.redBright }}>Detalle de producto</p>
+            <h2 className="text-xl font-black truncate" style={{ color: T.textPrimary }}>{product.nombre}</h2>
+            <div className="flex items-center gap-2 mt-2 flex-wrap">
+              <DetailChip>{product.sku || 'Sin código'}</DetailChip>
+              {product.categoria && <DetailChip>{product.categoria}</DetailChip>}
+              <DetailChip>{storeLabel}: {stock}</DetailChip>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-xl hover:bg-white/10 transition-colors">
+            <X size={20} style={{ color: T.textSecondary }} />
+          </button>
+        </div>
+
+        <div className="p-6 overflow-y-auto space-y-6">
+          <div className="flex flex-col md:flex-row gap-6">
+            <div className="w-40 h-40 rounded-[28px] overflow-hidden shrink-0 flex items-center justify-center" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)" }}>
+              {product.imagen ? (
+                <img src={product.imagen} alt={product.nombre} className="w-full h-full object-cover" />
+              ) : (
+                <Package size={36} style={{ color: T.textMuted }} />
+              )}
+            </div>
+            <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
+              <DetailField label="Nombre" value={<span className="text-sm font-bold">{product.nombre}</span>} />
+              <DetailField label="Código" value={<span className="text-sm font-mono">{product.sku || "—"}</span>} />
+              <DetailField label="Categoría" value={<span className="text-sm">{product.categoria || "Sin categoría"}</span>} />
+              <DetailField label="Proveedor" value={<span className="text-sm">{product.proveedor || "Sin proveedor"}</span>} />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <DetailField label="Precio A" value={<span className="text-lg font-black" style={{ color: "#00CC66" }}>{fmt(product.precioA)}</span>} />
+            <DetailField label="Precio B" value={<span className="text-sm font-bold">{product.precioB ? fmt(product.precioB) : "No configurado"}</span>} />
+            <DetailField label="Precio C" value={<span className="text-sm font-bold">{product.precioC ? fmt(product.precioC) : "No configurado"}</span>} />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <DetailField
+              label="Métodos de pago"
+              value={(
+                <div className="flex items-center gap-2 flex-wrap">
+                  {product.allowCash && <DetailChip>Efectivo</DetailChip>}
+                  {product.allowCard && <DetailChip>Tarjeta</DetailChip>}
+                  {!product.allowCash && !product.allowCard && <span className="text-sm">Sin métodos configurados</span>}
+                </div>
+              )}
+            />
+            <DetailField
+              label="Pieza única"
+              value={<span className="text-sm font-bold">{product.esUnico ? "Sí" : "No"}</span>}
+            />
+            <DetailField
+              label="Stock de tienda"
+              value={<span className="text-lg font-black" style={{ color: stock <= 0 ? T.redBright : stock <= 10 ? "#FFAA00" : T.textPrimary }}>{stock}</span>}
+            />
+            <DetailField
+              label="Estado"
+              value={<span className="text-sm font-bold">{stock <= 0 ? "Agotado" : stock <= 10 ? "Por agotarse" : "Disponible"}</span>}
+            />
+          </div>
+        </div>
+
+        <div className="p-6 border-t border-white/10 flex items-center justify-between gap-3">
+          <p className="text-xs" style={{ color: T.textMuted }}>
+            {canNotify ? "Puedes avisar al gerente/admin cuando el stock esté por agotarse." : "Vista solo lectura."}
+          </p>
+          <div className="flex items-center gap-3">
+            <button onClick={onClose} className="px-4 py-2 rounded-2xl text-sm font-bold" style={{ ...T.glassMd, color: T.textSecondary }}>
+              Cerrar
+            </button>
+            {canNotify && (
+              <button
+                onClick={onNotify}
+                disabled={sending}
+                className="px-4 py-2 rounded-2xl text-sm font-bold flex items-center gap-2 disabled:opacity-50"
+                style={notified
+                  ? { background: "linear-gradient(135deg, #15803d 0%, #22c55e 100%)", borderRadius: "16px", border: "1px solid rgba(134,239,172,0.35)", color: "#fff" }
+                  : T.btnRed}
+              >
+                {sending ? <Loader2 size={15} className="animate-spin" /> : <AlertTriangle size={15} />}
+                {notified ? "Avisado" : "Notificar stock"}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MangaDetailModal({
+  manga,
+  storeLabel,
+  onClose,
+  onNotify,
+  canNotify,
+  sending,
+  notified,
+}: {
+  manga: Manga;
+  storeLabel: string;
+  onClose: () => void;
+  onNotify: () => void;
+  canNotify: boolean;
+  sending: boolean;
+  notified: boolean;
+}) {
+  const stock = manga.stock ?? 0;
+
+  return (
+    <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={onClose} />
+      <div className="relative w-full max-w-3xl max-h-[90vh] overflow-hidden rounded-[32px] flex flex-col" style={T.glass}>
+        <div className="p-6 border-b border-white/10 flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: T.redBright }}>Detalle de tomo</p>
+            <h2 className="text-xl font-black truncate" style={{ color: T.textPrimary }}>{manga.name}</h2>
+            <div className="flex items-center gap-2 mt-2 flex-wrap">
+              {manga.code && <DetailChip>{manga.code}</DetailChip>}
+              {manga.editorial && <DetailChip>{manga.editorial}</DetailChip>}
+              <DetailChip>{storeLabel}: {stock}</DetailChip>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-xl hover:bg-white/10 transition-colors">
+            <X size={20} style={{ color: T.textSecondary }} />
+          </button>
+        </div>
+
+        <div className="p-6 overflow-y-auto space-y-6">
+          <div className="flex flex-col md:flex-row gap-6">
+            <div className="w-40 h-40 rounded-[28px] overflow-hidden shrink-0 flex items-center justify-center" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)" }}>
+              {manga.image_url ? (
+                <img src={manga.image_url} alt={manga.name} className="w-full h-full object-cover" />
+              ) : (
+                <BookOpen size={36} style={{ color: T.textMuted }} />
+              )}
+            </div>
+            <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
+              <DetailField label="Nombre" value={<span className="text-sm font-bold">{manga.name}</span>} />
+              <DetailField label="Código" value={<span className="text-sm font-mono">{manga.code || "—"}</span>} />
+              <DetailField label="Editorial" value={<span className="text-sm">{manga.editorial || "Sin editorial"}</span>} />
+              <DetailField label="Género" value={<span className="text-sm">{manga.genre || "Sin género"}</span>} />
+              <DetailField label="Detalle del tomo" value={<span className="text-sm">{manga.volume_number ? `Volumen ${manga.volume_number}` : "Sin volumen registrado"}</span>} />
+              <DetailField label="Estado" value={<span className="text-sm font-bold">{stock <= 0 ? "Agotado" : stock <= 10 ? "Por agotarse" : "Disponible"}</span>} />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <DetailField label="Precio público" value={<span className="text-lg font-black" style={{ color: "#00CC66" }}>{fmt(manga.public_price)}</span>} />
+            <DetailField label="Stock de tienda" value={<span className="text-lg font-black" style={{ color: stock <= 0 ? T.redBright : stock <= 10 ? "#FFAA00" : T.textPrimary }}>{stock}</span>} />
+            <DetailField label="Activo" value={<span className="text-sm font-bold">{manga.active ? "Sí" : "No"}</span>} />
+          </div>
+        </div>
+
+        <div className="p-6 border-t border-white/10 flex items-center justify-between gap-3">
+          <p className="text-xs" style={{ color: T.textMuted }}>
+            {canNotify ? "Puedes avisar al gerente/admin cuando este tomo se esté agotando." : "Vista solo lectura."}
+          </p>
+          <div className="flex items-center gap-3">
+            <button onClick={onClose} className="px-4 py-2 rounded-2xl text-sm font-bold" style={{ ...T.glassMd, color: T.textSecondary }}>
+              Cerrar
+            </button>
+            {canNotify && (
+              <button
+                onClick={onNotify}
+                disabled={sending}
+                className="px-4 py-2 rounded-2xl text-sm font-bold flex items-center gap-2 disabled:opacity-50"
+                style={notified
+                  ? { background: "linear-gradient(135deg, #15803d 0%, #22c55e 100%)", borderRadius: "16px", border: "1px solid rgba(134,239,172,0.35)", color: "#fff" }
+                  : T.btnRed}
+              >
+                {sending ? <Loader2 size={15} className="animate-spin" /> : <AlertTriangle size={15} />}
+                {notified ? "Avisado" : "Notificar stock"}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -838,7 +1066,7 @@ export function ProductsPage() {
   const [categorias, setCategorias] = useState(["Todo", "Funko Pop", "Pokémon", "Naruto", "Dragon Ball", "Manga", "Figuras"]);
   const [proveedores, setProveedores] = useState(["Funko Corp", "Panini", "Nintendo", "Bandai", "Good Smile"]);
   const [search, setSearch] = useState("");
-  const [selectedCat, setSelectedCat] = useState("Todo");
+  const [selectedCat] = useState("Todo");
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<"grid" | "list">(
     () => (localStorage.getItem('tadaima-products-view') ?? 'list') as "grid" | "list"
@@ -862,7 +1090,7 @@ export function ProductsPage() {
   const canManage   = isAdmin || isGerente;
   // Cajero puede dar de alta productos nuevos, pero no editar existentes ni borrar
   const canEdit     = canManage; // admin + gerente
-  const canDelete   = isAdmin;
+  const canNotify   = !isAdmin && !!user?.store_id;
 
   // Cajero/no-admin: forzar filtro a su tienda asignada (no debe ver productos de otras sucursales)
   useEffect(() => {
@@ -877,6 +1105,10 @@ export function ProductsPage() {
   const [showTypeSelector, setShowTypeSelector] = useState(false);
   const [showMangaModal, setShowMangaModal] = useState(false);
   const [editingManga, setEditingManga] = useState<Manga | null>(null);
+  const [viewingProduct, setViewingProduct] = useState<Producto | null>(null);
+  const [viewingManga, setViewingManga] = useState<Manga | null>(null);
+  const [alertingKey, setAlertingKey] = useState<string | null>(null);
+  const [notifiedKeys, setNotifiedKeys] = useState<Record<string, boolean>>({});
   const [showTopSellers, setShowTopSellers] = useState(false);
   const [showLowStock, setShowLowStock] = useState(false);
   const [showOutStock, setShowOutStock] = useState(false);
@@ -1076,6 +1308,48 @@ export function ProductsPage() {
     setIsModalOpen(true);
   }, []);
 
+  const storeLabel = useMemo(() => {
+    if (selectedStoreId) {
+      return stores.find(s => s.id === selectedStoreId)?.name ?? 'Tienda';
+    }
+    return user?.store?.name ?? 'Tu tienda';
+  }, [selectedStoreId, stores, user?.store?.name]);
+
+  const handleNotify = useCallback(async (
+    productId: number,
+    stock: number,
+    kind: "product" | "manga",
+    label: string,
+  ) => {
+    if (!canNotify) return;
+
+    const key = `${kind}:${productId}`;
+    setAlertingKey(key);
+    try {
+      const result = await sendStockAlert({ product_id: productId, stock, kind });
+      setNotifiedKeys(prev => ({ ...prev, [key]: true }));
+      window.dispatchEvent(new Event("tadaima:notifications-changed"));
+      toast.success(
+        result.created_or_updated > 1
+          ? `Aviso actualizado para ${result.created_or_updated} destinatarios.`
+          : `Aviso enviado por ${label}.`,
+      );
+    } catch (err: unknown) {
+      const msg = (err as { message?: string }).message ?? 'No se pudo enviar el aviso de stock.';
+      toast.error(msg);
+    } finally {
+      setAlertingKey(null);
+    }
+  }, [canNotify]);
+
+  const openProductDetails = useCallback((p: Producto) => {
+    setViewingProduct(p);
+  }, []);
+
+  const openMangaDetails = useCallback((m: Manga) => {
+    setViewingManga(m);
+  }, []);
+
   const handleCreateNew = useCallback(() => {
     setShowTypeSelector(true);
   }, []);
@@ -1207,28 +1481,72 @@ export function ProductsPage() {
       id: 'acciones',
       header: '',
       enableSorting: false,
-      cell: info => canEdit ? (
-        <div className="flex items-center gap-2 justify-end">
-          <button
-            onClick={e => { e.stopPropagation(); const p = info.row.original; setStockModalProduct({ id: p.id, name: p.nombre }); }}
-            className="px-3 py-1.5 rounded-xl text-[10px] font-black transition-all hover:bg-emerald-500/10 hover:text-emerald-300 flex items-center gap-1.5"
-            style={{ color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
-            title="Editar stock por tienda"
-          >
-            <Warehouse size={11} />
-            Stock
-          </button>
-          <button
-            onClick={e => { e.stopPropagation(); handleEdit(info.row.original); }}
-            className="px-3 py-1.5 rounded-xl text-[10px] font-black transition-all hover:bg-white/10"
-            style={{ color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
-          >
-            Editar
-          </button>
-        </div>
-      ) : null,
+      cell: info => {
+        const p = info.row.original;
+        const stock = getTotalStock(p.id);
+
+        if (canEdit) {
+          return (
+            <div className="flex items-center gap-2 justify-end">
+              {!isAdmin && (
+                <button
+                  onClick={e => { e.stopPropagation(); void handleNotify(p.id, stock, "product", p.nombre); }}
+                  className="px-3 py-1.5 rounded-xl text-[10px] font-black transition-all flex items-center gap-1.5"
+                  style={notifiedKeys[`product:${p.id}`]
+                    ? { color: "#22c55e", border: "1px solid rgba(34,197,94,0.35)", background: "rgba(34,197,94,0.10)" }
+                    : { color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
+                  title="Notificar stock bajo"
+                >
+                  {alertingKey === `product:${p.id}` ? <Loader2 size={11} className="animate-spin" /> : <AlertTriangle size={11} />}
+                  {notifiedKeys[`product:${p.id}`] ? "Avisado" : "Avisar"}
+                </button>
+              )}
+              <button
+                onClick={e => { e.stopPropagation(); setStockModalProduct({ id: p.id, name: p.nombre }); }}
+                className="px-3 py-1.5 rounded-xl text-[10px] font-black transition-all hover:bg-emerald-500/10 hover:text-emerald-300 flex items-center gap-1.5"
+                style={{ color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
+                title="Editar stock por tienda"
+              >
+                <Warehouse size={11} />
+                Stock
+              </button>
+              <button
+                onClick={e => { e.stopPropagation(); handleEdit(p); }}
+                className="px-3 py-1.5 rounded-xl text-[10px] font-black transition-all hover:bg-white/10"
+                style={{ color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
+              >
+                Editar
+              </button>
+            </div>
+          );
+        }
+
+        return (
+          <div className="flex items-center gap-2 justify-end">
+            <button
+              onClick={e => { e.stopPropagation(); openProductDetails(p); }}
+              className="px-3 py-1.5 rounded-xl text-[10px] font-black transition-all hover:bg-white/10"
+              style={{ color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
+            >
+              Ver
+            </button>
+            {canNotify && (
+              <button
+                onClick={e => { e.stopPropagation(); void handleNotify(p.id, stock, "product", p.nombre); }}
+                className="px-3 py-1.5 rounded-xl text-[10px] font-black transition-all flex items-center gap-1.5"
+                style={notifiedKeys[`product:${p.id}`]
+                  ? { color: "#22c55e", border: "1px solid rgba(34,197,94,0.35)", background: "rgba(34,197,94,0.10)" }
+                  : { color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
+              >
+                {alertingKey === `product:${p.id}` ? <Loader2 size={11} className="animate-spin" /> : <AlertTriangle size={11} />}
+                {notifiedKeys[`product:${p.id}`] ? "Avisado" : "Avisar"}
+              </button>
+            )}
+          </div>
+        );
+      },
     }),
-  ], [handleEdit, getTotalStock, canEdit, isAdmin, selectedStoreId]);
+  ], [handleEdit, getTotalStock, canEdit, isAdmin, selectedStoreId, canNotify, handleNotify, openProductDetails, alertingKey, notifiedKeys]);
 
 
   // Memoize filtered so the array reference is stable between renders that don't change
@@ -1344,30 +1662,74 @@ export function ProductsPage() {
     mangaColumnHelper.display({
       id: 'acciones',
       header: '',
-      cell: info => canEdit ? (
-        <div className="flex items-center gap-2 justify-end">
-          <button
-            onClick={e => { e.stopPropagation(); const m = info.row.original; setStockModalProduct({ id: m.id, name: `${m.name}${m.volume_number != null ? ` Vol. ${m.volume_number}` : ""}`, kind: "manga" }); }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black transition-all hover:bg-emerald-500/10 hover:text-emerald-300"
-            style={{ color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
-            title="Editar stock por tienda"
-          >
-            <Warehouse size={11} />
-            Stock
-          </button>
-          <button
-            onClick={e => { e.stopPropagation(); setEditingManga(info.row.original); }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black transition-all hover:bg-white/10"
-            style={{ color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
-            title="Editar tomo"
-          >
-            <Pencil size={11} />
-            Editar
-          </button>
-        </div>
-      ) : null,
+      cell: info => {
+        const m = info.row.original;
+        const stock = m.stock ?? 0;
+
+        if (canEdit) {
+          return (
+            <div className="flex items-center gap-2 justify-end">
+              {!isAdmin && (
+                <button
+                  onClick={e => { e.stopPropagation(); void handleNotify(m.id, stock, "manga", m.name); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black transition-all"
+                  style={notifiedKeys[`manga:${m.id}`]
+                    ? { color: "#22c55e", border: "1px solid rgba(34,197,94,0.35)", background: "rgba(34,197,94,0.10)" }
+                    : { color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
+                  title="Notificar stock bajo"
+                >
+                  {alertingKey === `manga:${m.id}` ? <Loader2 size={11} className="animate-spin" /> : <AlertTriangle size={11} />}
+                  {notifiedKeys[`manga:${m.id}`] ? "Avisado" : "Avisar"}
+                </button>
+              )}
+              <button
+                onClick={e => { e.stopPropagation(); setStockModalProduct({ id: m.id, name: `${m.name}${m.volume_number != null ? ` Vol. ${m.volume_number}` : ""}`, kind: "manga" }); }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black transition-all hover:bg-emerald-500/10 hover:text-emerald-300"
+                style={{ color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
+                title="Editar stock por tienda"
+              >
+                <Warehouse size={11} />
+                Stock
+              </button>
+              <button
+                onClick={e => { e.stopPropagation(); setEditingManga(m); }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black transition-all hover:bg-white/10"
+                style={{ color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
+                title="Editar tomo"
+              >
+                <Pencil size={11} />
+                Editar
+              </button>
+            </div>
+          );
+        }
+
+        return (
+          <div className="flex items-center gap-2 justify-end">
+            <button
+              onClick={e => { e.stopPropagation(); openMangaDetails(m); }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black transition-all hover:bg-white/10"
+              style={{ color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
+            >
+              Ver
+            </button>
+            {canNotify && (
+              <button
+                onClick={e => { e.stopPropagation(); void handleNotify(m.id, stock, "manga", m.name); }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black transition-all"
+                style={notifiedKeys[`manga:${m.id}`]
+                  ? { color: "#22c55e", border: "1px solid rgba(34,197,94,0.35)", background: "rgba(34,197,94,0.10)" }
+                  : { color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
+              >
+                {alertingKey === `manga:${m.id}` ? <Loader2 size={11} className="animate-spin" /> : <AlertTriangle size={11} />}
+                {notifiedKeys[`manga:${m.id}`] ? "Avisado" : "Avisar"}
+              </button>
+            )}
+          </div>
+        );
+      },
     }),
-  ], [canViewCost, canEdit]);
+  ], [canViewCost, canEdit, isAdmin, canNotify, handleNotify, openMangaDetails, alertingKey, notifiedKeys]);
 
   const filteredMangas = useMemo(() => {
     let list = mangas;
@@ -1663,8 +2025,9 @@ export function ProductsPage() {
                 onClick={() => {
                   if (showLowStock) return handleToggleWhatsappSelection(p.id);
                   if (canEdit) return handleEdit(p);
+                  return openProductDetails(p);
                 }}
-                className={`group relative rounded-[32px] overflow-hidden transition-all hover:translate-y-[-6px] ${(canEdit || showLowStock) ? 'cursor-pointer' : ''} ${p.desactivado ? 'grayscale opacity-60' : ''} ${showLowStock && selectedForWhatsapp.includes(p.id) ? 'ring-4 ring-green-500' : ''}`}
+                className={`group relative rounded-[32px] overflow-hidden transition-all hover:translate-y-[-6px] cursor-pointer ${p.desactivado ? 'grayscale opacity-60' : ''} ${showLowStock && selectedForWhatsapp.includes(p.id) ? 'ring-4 ring-green-500' : ''}`}
                 style={T.glassMd}
               >
                 {/* Botón Stock — flotante, solo visible en hover. Detiene propagación
@@ -1789,8 +2152,8 @@ export function ProductsPage() {
                   table.getRowModel().rows.map(row => (
                     <tr
                       key={row.id}
-                      onClick={canEdit ? () => handleEdit(row.original) : undefined}
-                      className={`group transition-colors hover:bg-white/[0.03] ${canEdit ? 'cursor-pointer' : ''}`}
+                      onClick={canEdit ? () => handleEdit(row.original) : () => openProductDetails(row.original)}
+                      className="group transition-colors hover:bg-white/[0.03] cursor-pointer"
                       style={{ borderBottom: "1px solid rgba(255,255,255,0.03)" }}
                     >
                       {row.getVisibleCells().map(cell => (
@@ -1997,14 +2360,16 @@ export function ProductsPage() {
             <p className="text-[10px] font-black uppercase tracking-[0.2em]" style={{ color: T.textMuted }}>
               {filteredMangas.length} tomo{filteredMangas.length !== 1 ? 's' : ''}
             </p>
-            <button
-              onClick={() => setShowMangaModal(true)}
-              className="flex items-center justify-center gap-2 px-5 py-2.5 text-sm font-bold transition-all hover:scale-[1.02] active:scale-95 shadow-xl shadow-red-500/20"
-              style={T.btnRed}
-            >
-              <Plus size={15} />
-              Alta de Tomos
-            </button>
+            {canEdit && (
+              <button
+                onClick={() => setShowMangaModal(true)}
+                className="flex items-center justify-center gap-2 px-5 py-2.5 text-sm font-bold transition-all hover:scale-[1.02] active:scale-95 shadow-xl shadow-red-500/20"
+                style={T.btnRed}
+              >
+                <Plus size={15} />
+                Alta de Tomos
+              </button>
+            )}
           </div>
 
           {/* Search bar — mismo estilo que productos */}
@@ -2067,7 +2432,7 @@ export function ProductsPage() {
                           key={row.id}
                           className="group transition-colors hover:bg-white/[0.04] cursor-pointer"
                           style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}
-                          onClick={() => setEditingManga(row.original)}
+                          onClick={() => canEdit ? setEditingManga(row.original) : openMangaDetails(row.original)}
                         >
                           {row.getVisibleCells().map(cell => (
                             <td key={cell.id} className="px-6 py-4">
@@ -2141,6 +2506,19 @@ export function ProductsPage() {
         />
       )}
 
+      {viewingProduct && (
+        <ProductDetailModal
+          product={viewingProduct}
+          stock={getTotalStock(viewingProduct.id)}
+          storeLabel={storeLabel}
+          onClose={() => setViewingProduct(null)}
+          canNotify={canNotify}
+          sending={alertingKey === `product:${viewingProduct.id}`}
+          notified={!!notifiedKeys[`product:${viewingProduct.id}`]}
+          onNotify={() => void handleNotify(viewingProduct.id, getTotalStock(viewingProduct.id), "product", viewingProduct.nombre)}
+        />
+      )}
+
       {showMangaModal && (
         <MangaBatchModal
           onClose={() => setShowMangaModal(false)}
@@ -2155,6 +2533,18 @@ export function ProductsPage() {
           }}
           locations={locations}
           canViewCost={canViewCost}
+        />
+      )}
+
+      {viewingManga && (
+        <MangaDetailModal
+          manga={viewingManga}
+          storeLabel={storeLabel}
+          onClose={() => setViewingManga(null)}
+          canNotify={canNotify}
+          sending={alertingKey === `manga:${viewingManga.id}`}
+          notified={!!notifiedKeys[`manga:${viewingManga.id}`]}
+          onNotify={() => void handleNotify(viewingManga.id, viewingManga.stock ?? 0, "manga", viewingManga.name)}
         />
       )}
 

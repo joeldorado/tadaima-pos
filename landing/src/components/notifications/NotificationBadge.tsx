@@ -1,15 +1,14 @@
 import { useState, useEffect, useRef } from "react";
-import { Bell, Check, X, Loader2 } from "lucide-react";
-import { getNotifications, markNotificationRead } from "@tadaima/api";
+import { Bell, Check, X, Loader2, Trash2 } from "lucide-react";
+import { getNotifications, markNotificationRead, deleteNotification } from "@tadaima/api";
 import type { Notification } from "@tadaima/api";
 import { motion as Motion, AnimatePresence } from "motion/react";
 
-// Polling desactivado: hoy ningún flujo backend crea AppNotification, así que
-// el endpoint siempre retorna []. Mantenemos el fetch inicial al montar por si
-// en el futuro se generan notificaciones (stock bajo, cierre de caja, etc.) —
-// el cajero las verá al recargar la página. Reactivar el setInterval cuando
-// haya escritores reales.
-// const POLL_INTERVAL = 30_000;
+// Polling 60s — refresca el badge sin reload para que el admin vea avisos
+// nuevos (stock-alert) en cuanto entran. Antes estaba apagado porque no había
+// escritores backend; ahora el endpoint POST /notifications/stock-alert sí
+// produce notificaciones reales.
+const POLL_INTERVAL = 60_000;
 
 export function NotificationBadge() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -29,9 +28,21 @@ export function NotificationBadge() {
   };
 
   useEffect(() => {
-    fetchNotifications();
-    // setInterval(fetchNotifications, POLL_INTERVAL) desactivado — sin escritores
-    // backend hoy. Reactivar cuando haya generadores reales de notificaciones.
+    void fetchNotifications();
+    const id = window.setInterval(() => { void fetchNotifications(); }, POLL_INTERVAL);
+    return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    if (open) {
+      void fetchNotifications();
+    }
+  }, [open]);
+
+  useEffect(() => {
+    const handler = () => { void fetchNotifications(); };
+    window.addEventListener("tadaima:notifications-changed", handler);
+    return () => window.removeEventListener("tadaima:notifications-changed", handler);
   }, []);
 
   useEffect(() => {
@@ -55,6 +66,18 @@ export function NotificationBadge() {
       // silent
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDelete = async (id: number) => {
+    // Optimistic remove — la notificación desaparece al instante. Si falla
+    // el endpoint, recargamos para devolverla.
+    const prevSnapshot = notifications;
+    setNotifications(prev => prev.filter(n => n.id !== id));
+    try {
+      await deleteNotification(id);
+    } catch {
+      setNotifications(prevSnapshot);
     }
   };
 
@@ -100,20 +123,25 @@ export function NotificationBadge() {
             animate={{ opacity: 1, x: 0, scale: 1 }}
             exit={{ opacity: 0, x: -8, scale: 0.95 }}
             transition={{ duration: 0.15 }}
-            className="absolute left-12 top-0 z-50 rounded-2xl overflow-hidden shadow-2xl"
+            // Popup ANCLADO al bottom del botón → crece hacia ARRIBA en lugar
+            // de bajar y salirse de la pantalla cuando el botón está al fondo
+            // del sidebar (caso reportado por Joel: 'muy abajo').
+            className="absolute left-12 bottom-0 z-50 rounded-2xl overflow-hidden shadow-2xl"
             style={{
               background: "var(--td-popup-bg)",
               border: "1px solid var(--td-popup-border)",
-              width: 300,
+              width: 320,
+              maxHeight: "min(calc(100vh - 64px), 480px)",
+              display: "flex", flexDirection: "column",
             }}
           >
             {/* Header */}
             <div
               className="flex items-center justify-between px-4 py-3"
-              style={{ borderBottom: "1px solid var(--td-divider)" }}
+              style={{ borderBottom: "1px solid var(--td-divider)", flexShrink: 0 }}
             >
               <span style={{ fontSize: 11, fontWeight: 800, color: "var(--td-text-hi)" }}>
-                Notificaciones
+                Notificaciones {unread > 0 && <span style={{ color: "#CC2200" }}>· {unread} sin leer</span>}
               </span>
               <div className="flex items-center gap-2">
                 {unread > 0 && (
@@ -131,7 +159,7 @@ export function NotificationBadge() {
             </div>
 
             {/* List */}
-            <div style={{ maxHeight: 320, overflowY: "auto" }}>
+            <div style={{ flex: 1, overflowY: "auto" }}>
               {notifications.length === 0 ? (
                 <div className="flex flex-col items-center gap-2 py-8 opacity-30">
                   <Bell size={22} />
@@ -165,16 +193,40 @@ export function NotificationBadge() {
                         })}
                       </p>
                     </div>
-                    {!n.read_at && (
+                    <div className="flex items-center gap-1 shrink-0 mt-0.5">
+                      {/* Check — marca como leído/enterado. Solo visible si está unread. */}
+                      {!n.read_at && (
+                        <button
+                          onClick={() => handleMarkRead(n.id)}
+                          title="Marcar como leída"
+                          style={{
+                            width: 24, height: 24, borderRadius: 6,
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            background: "transparent", border: "1px solid transparent",
+                            color: "var(--td-text-lo)", cursor: "pointer",
+                          }}
+                          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(34,197,94,0.12)"; (e.currentTarget as HTMLButtonElement).style.color = "#22C55E"; }}
+                          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = "var(--td-text-lo)"; }}
+                        >
+                          <Check size={13} />
+                        </button>
+                      )}
+                      {/* Borrar — siempre disponible. Optimistic UI con rollback. */}
                       <button
-                        onClick={() => handleMarkRead(n.id)}
-                        title="Marcar como leída"
-                        className="shrink-0 mt-0.5"
-                        style={{ color: "var(--td-text-lo)" }}
+                        onClick={() => void handleDelete(n.id)}
+                        title="Eliminar notificación"
+                        style={{
+                          width: 24, height: 24, borderRadius: 6,
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          background: "transparent", border: "1px solid transparent",
+                          color: "var(--td-text-lo)", cursor: "pointer",
+                        }}
+                        onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(220,38,38,0.12)"; (e.currentTarget as HTMLButtonElement).style.color = "#DC2626"; }}
+                        onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = "var(--td-text-lo)"; }}
                       >
-                        <Check size={13} />
+                        <Trash2 size={12} />
                       </button>
-                    )}
+                    </div>
                   </div>
                 ))
               )}
@@ -183,7 +235,7 @@ export function NotificationBadge() {
             {/* Close */}
             <div
               className="flex justify-end px-4 py-2"
-              style={{ borderTop: "1px solid var(--td-divider)" }}
+              style={{ borderTop: "1px solid var(--td-divider)", flexShrink: 0 }}
             >
               <button
                 onClick={() => setOpen(false)}

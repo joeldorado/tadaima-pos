@@ -454,6 +454,21 @@ export interface Notification {
   created_at: string
 }
 
+export interface SendStockAlertInput {
+  product_id: number
+  stock: number
+  kind?: 'product' | 'manga'
+}
+
+export interface SendStockAlertResult {
+  created_or_updated: number
+  recipients: Array<{
+    notification_id: number
+    user_id: number
+    user_name: string
+  }>
+}
+
 // ─── Pre-Sale Phase 2 inputs ──────────────────────────────────────────────────
 
 export interface AssignInventoryInput {

@@ -174,7 +174,9 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // ── Notifications ─────────────────────────────────────────────────────────
     Route::get('notifications',                    [NotificationsController::class, 'index']);
+    Route::post('notifications/stock-alert',       [NotificationsController::class, 'storeStockAlert']);
     Route::patch('notifications/{id}/read',        [NotificationsController::class, 'markRead']);
+    Route::delete('notifications/{id}',            [NotificationsController::class, 'destroy']);
 
     // ── Layaways (Apartados) ──────────────────────────────────────────────────
     Route::prefix('layaways')->group(function () {
