@@ -528,6 +528,10 @@ export function SellPage() {
   const PRINT_PREF_KEY = "tadaima_print_pref"; // 'auto' | 'ask' | 'never'
   const [lastCompletedSale, setLastCompletedSale] = useState<CompletedSaleData | null>(null);
   const [showPrintModal, setShowPrintModal]         = useState(false);
+  // mesaId de la venta recién cobrada — si es una mesa secundaria (Venta 2..5)
+  // se cierra automáticamente al terminar el flujo de impresión. La Caja
+  // Principal nunca se cierra. Petición Joel 2026-05-21.
+  const [pendingMesaCloseId, setPendingMesaCloseId] = useState<string | null>(null);
   const [printNeverAsk, setPrintNeverAsk]           = useState(false);
   const [showHistorialModal, setShowHistorialModal] = useState(false);
   const [historialEntries, setHistorialEntries]     = useState<HistorialEntry[]>([]);
@@ -1948,11 +1952,34 @@ export function SellPage() {
 
   const triggerPrintFlow = (sale: CompletedSaleData) => {
     const pref = localStorage.getItem(PRINT_PREF_KEY) ?? "ask";
-    if (pref === "auto") { doPrintTicket(sale); return; }
-    if (pref === "never") return;
+    if (pref === "auto") {
+      doPrintTicket(sale);
+      // Auto-print abre una ventana nueva; cerramos la mesa secundaria
+      // un instante después para que setTimeout(print, 300) ya haya disparado.
+      window.setTimeout(closePendingMesa, 500);
+      return;
+    }
+    if (pref === "never") { closePendingMesa(); return; }
     setLastCompletedSale(sale);
     setPrintNeverAsk(false);
     setShowPrintModal(true);
+  };
+
+  /**
+   * Cierra la mesa secundaria que se acaba de cobrar (Venta 2..5). La
+   * Caja Principal no se cierra nunca. Se llama después del flujo de impresión
+   * en los 3 caminos: auto-print, never-print y modal cerrado.
+   */
+  const closePendingMesa = () => {
+    setPendingMesaCloseId(id => {
+      if (!id) return null;
+      const mesa = mesasRef.current.find(m => m.id === id);
+      if (mesa && mesa.name !== "Caja Principal" && mesasRef.current.length > 1) {
+        // Defer al siguiente tick para no chocar con el setState actual.
+        window.setTimeout(() => removeMesa(id), 0);
+      }
+      return null;
+    });
   };
 
   const fetchHistorial = async () => {
@@ -2263,6 +2290,7 @@ export function SellPage() {
         void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleCatalogs.all });
         void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all });
         void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all });
+        setPendingMesaCloseId(mesaId);
         triggerPrintFlow(mixedTicket);
 
         const parts: string[] = [`Preventa liquidada · ${fmt(liquidationAmount)}`];
@@ -2455,6 +2483,7 @@ export function SellPage() {
         void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all });
         void queryClient.invalidateQueries({ queryKey: queryKeys.salesDrafts.all });
         void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all });
+        setPendingMesaCloseId(mesaId);
         triggerPrintFlow(mixedTicket);
       } catch (err: unknown) {
         const msg = err && typeof err === "object" && "message" in err
@@ -2571,6 +2600,7 @@ export function SellPage() {
       void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
       void queryClient.invalidateQueries({ queryKey: queryKeys.salesDrafts.all });
       void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all });
+      setPendingMesaCloseId(mesaId);
       triggerPrintFlow(completedSale);
     } catch (err: unknown) {
       const msg = err && typeof err === "object" && "message" in err
@@ -5198,7 +5228,7 @@ export function SellPage() {
       {showPrintModal && lastCompletedSale && (
         <div style={{ position: "fixed", inset: 0, zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
           <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)" }}
-            onClick={() => setShowPrintModal(false)} />
+            onClick={() => { setShowPrintModal(false); closePendingMesa(); }} />
           <div style={{ position: "relative", background: "var(--td-popup-bg)", border: "1px solid var(--td-popup-border)", borderRadius: 28, padding: 28, width: "100%", maxWidth: 380 }}>
             {/* Icon + title */}
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, marginBottom: 20 }}>
@@ -5245,6 +5275,8 @@ export function SellPage() {
                 onClick={() => {
                   if (printNeverAsk) localStorage.setItem(PRINT_PREF_KEY, "never");
                   setShowPrintModal(false);
+                  // Mesa secundaria se cierra al cerrar el modal — sea omitir o imprimir.
+                  closePendingMesa();
                 }}
                 style={{ flex: 1, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 14, color: "var(--td-text-lo)", padding: "11px", fontSize: 11, fontWeight: 900, cursor: "pointer", textTransform: "uppercase", letterSpacing: "0.1em" }}
               >
@@ -5255,6 +5287,10 @@ export function SellPage() {
                   if (printNeverAsk) localStorage.setItem(PRINT_PREF_KEY, "auto");
                   doPrintTicket(lastCompletedSale);
                   setShowPrintModal(false);
+                  // Espera medio segundo al setTimeout(print, 300) que abre la
+                  // ventana del ticket antes de cerrar la mesa, para que el
+                  // print no quede en estado raro si removeMesa cambia el active.
+                  window.setTimeout(closePendingMesa, 500);
                 }}
                 style={{ flex: 2, background: "linear-gradient(135deg,#BB1100,#FF3322)", border: "none", borderRadius: 14, color: "#fff", padding: "11px", fontSize: 12, fontWeight: 900, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, textTransform: "uppercase", letterSpacing: "0.1em" }}
               >
