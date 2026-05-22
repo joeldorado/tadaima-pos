@@ -31,10 +31,13 @@ export function usePreSaleCatalogsQuery(
 }
 
 /**
- * Folios de preventa. Cambian más seguido (cobros, status, items entregados)
- * así que mantenemos staleTime corto (60s) — admin/gerente quiere ver lo nuevo.
- * Las mutations en Caja (createPreSaleOrder, addPayment, updateStatus) invalidan
- * automáticamente.
+ * Folios de preventa. Cambian seguido cross-machine (admin marca status=ready,
+ * cajero cobra anticipo, llega mercancía). Por eso:
+ *  - staleTime 30s (datos válidos 30s)
+ *  - refetchInterval 60s (poll moderado para detectar cambios entre máquinas)
+ *  - refetchOnWindowFocus true (default) cubre el caso "vengo de otra pantalla"
+ * Las mutations en Caja invalidan automáticamente para feedback instantáneo
+ * en el mismo browser.
  */
 export function usePreSaleOrdersQuery(
   params?: Parameters<typeof getPreSaleOrders>[0],
@@ -44,6 +47,7 @@ export function usePreSaleOrdersQuery(
     queryKey: queryKeys.preSaleOrders.list(params as Record<string, unknown> | undefined),
     queryFn: () => getPreSaleOrders(params),
     enabled: options?.enabled ?? true,
-    staleTime: 60_000,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
   })
 }

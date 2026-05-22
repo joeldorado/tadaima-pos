@@ -19,7 +19,7 @@ export function useProductsQuery(storeId?: number | null) {
     queryFn: () => getProducts(params),
     staleTime: ONE_DAY_MS,
     gcTime: ONE_DAY_MS,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
     // refetchOnMount default (true): si una mutación invalida este query
     // mientras estamos en otra página, al volver a esta vista refetch para
     // ver el dato nuevo. Si el cache sigue fresh (<24h, sin invalidaciones)
@@ -42,7 +42,7 @@ export function useProductsLightQuery(storeId?: number | null) {
     queryFn: () => getProductsLight({ ...params, per_page: TOP_PAGE_SIZE, page: 1 } as Parameters<typeof getProductsLight>[0]),
     staleTime: ONE_DAY_MS,
     gcTime: ONE_DAY_MS,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
     // refetchOnMount default (true): cuando ProductsPage crea/edita/borra
     // un producto e invalida el cache, al volver a Caja se hace refetch
     // automático y el cajero ve los productos nuevos sin recargar.
@@ -71,7 +71,7 @@ export function useProductsSearchQuery(search: string, storeId?: number | null, 
     enabled: isLong && (options?.enabled ?? true),
     staleTime: 60_000,
     gcTime: 5 * 60_000,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
   })
 }
 
@@ -94,7 +94,7 @@ export function useProductsInfiniteQuery(storeId?: number | null, options?: { en
     },
     staleTime: ONE_DAY_MS,
     gcTime: ONE_DAY_MS,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
     // refetchOnMount default (true) — ver useProductsLightQuery.
     refetchOnReconnect: false,
     enabled: options?.enabled ?? true,

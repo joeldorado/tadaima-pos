@@ -18,11 +18,14 @@ export function useSystemSettingsQuery(options?: { enabled?: boolean }) {
 const ONE_DAY_MS = 24 * 60 * 60_000
 
 /**
- * Exchange rate USD→MXN. Fetched once per cashier session: admin sets the rate
- * at night, cashier opens caja in the morning and the value is fetched fresh.
- * No background polling, no refetch-on-focus — to minimize API calls. When the
- * cashier opens a new cash session the parent invalidates this query so the
- * morning fetch is guaranteed. Stale time is 24h as an upper bound.
+ * Exchange rate USD→MXN.
+ *
+ * Antes: staleTime 24h + sin focus refetch — el cajero veía el TC viejo si
+ * el admin lo cambiaba durante el turno. Ahora:
+ *  - staleTime 5min → el query se considera fresco 5min, no spamea
+ *  - refetchOnWindowFocus + refetchOnMount: al volver al tab/abrir página
+ *    refetcha si está stale (=cambió hace >5min, raro pero garantiza fresh)
+ * Cualquier mutación en SettingsPage invalida esta key → propagación instantánea.
  */
 export function useExchangeRateQuery(options?: { enabled?: boolean }) {
   return useQuery({
@@ -34,11 +37,9 @@ export function useExchangeRateQuery(options?: { enabled?: boolean }) {
       const n = Number.parseFloat(raw)
       return Number.isFinite(n) && n > 0 ? n : null
     },
-    staleTime: ONE_DAY_MS,
+    staleTime: 5 * 60_000,
     gcTime: ONE_DAY_MS,
-    refetchOnWindowFocus: false,
-    refetchOnMount: false,
-    refetchOnReconnect: false,
+    refetchOnWindowFocus: true,
     enabled: options?.enabled ?? true,
   })
 }
