@@ -14,7 +14,7 @@ import { UserAvatar } from "@/components/UserAvatar";
 // vuelve al modelo server-authoritative.
 // import { ExpiringDraftsModal } from "@/components/ExpiringDraftsModal";
 import { useEffect, useState } from "react";
-import { primaryRole, type PageKey } from "@/lib/permisos";
+import { primaryRole, canAccessPage, type PageKey } from "@/lib/permisos";
 import { useQueryClient } from "@tanstack/react-query";
 import { getProductsLight, apiClient } from "@tadaima/api";
 import { queryKeys } from "@/lib/queryKeys";
@@ -236,17 +236,20 @@ export function Layout() {
                 </p>
               </div>
 
-              {/* Settings */}
-              <button
-                onClick={() => { setShowUserMenu(false); navigate("/settings"); }}
-                className="w-full text-left px-4 py-2.5 text-xs font-semibold flex items-center gap-2 transition-colors"
-                style={{ color: "var(--td-text-md)", background: "transparent" }}
-                onMouseEnter={e => (e.currentTarget.style.background = "var(--td-hover-bg)")}
-                onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
-              >
-                <Settings size={12} style={{ color: "var(--td-text-lo)" }} />
-                Configuración
-              </button>
+              {/* Settings — solo si el rol tiene acceso a esa página
+                  (admin). Cajero/gerente no ven la opción. */}
+              {canAccessPage(user?.roles, "settings") && (
+                <button
+                  onClick={() => { setShowUserMenu(false); navigate("/settings"); }}
+                  className="w-full text-left px-4 py-2.5 text-xs font-semibold flex items-center gap-2 transition-colors"
+                  style={{ color: "var(--td-text-md)", background: "transparent" }}
+                  onMouseEnter={e => (e.currentTarget.style.background = "var(--td-hover-bg)")}
+                  onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                >
+                  <Settings size={12} style={{ color: "var(--td-text-lo)" }} />
+                  Configuración
+                </button>
+              )}
 
               {/* Theme toggle */}
               <button
