@@ -2821,13 +2821,13 @@ export function SellPage() {
   }
 
   /* ── GATE: verificando sesión de caja ─────────────────────────────────────
-     Joel: antes saltaba "Caja cerrada" 200ms y luego aparecía la lista de
-     cajeros activos, lo cual confundía. Ahora mostramos un loading explícito
-     mientras la sesión del usuario se verifica y (para admin) mientras se
-     traen las sesiones abiertas de la tienda activa. */
-  const verifyingSession =
-    activeSessionQuery.isPending ||
-    (isAdmin && !!activeStore?.id && (activeSessionsQuery.isPending || onlineUsersInStoreQuery.isPending));
+     Solo bloqueamos con activeSessionQuery — es la única que decide ruteo
+     (Caja Abierta vs Caja Cerrada). Las queries de cajeros activos /
+     online users se cargan en background y el card "Cajeros activos en la
+     tienda" tiene su propio loading inline ("Cargando cajeros…"). Antes
+     bloqueábamos por las 3, lo que mantenía al admin 3+ segundos en este
+     spinner cuando /cash/active-sessions o /users/online iban lentos. */
+  const verifyingSession = activeSessionQuery.isPending;
   if (verifyingSession) {
     return (
       <div className="h-full flex flex-col items-center justify-center gap-4" style={{ background: BG }}>
