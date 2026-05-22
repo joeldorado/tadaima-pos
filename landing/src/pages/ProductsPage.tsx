@@ -128,6 +128,7 @@ interface Producto {
   id: number;
   nombre: string;
   sku: string;
+  barcode?: string;
   categoria: string;
   proveedor: string;
   tipo: TipoProducto;
@@ -162,6 +163,7 @@ function apiProductToProducto(p: Product): Producto {
     id: p.id,
     nombre: p.name,
     sku: p.sku,
+    barcode: p.barcode ?? undefined,
     categoria: p.category?.name ?? (p.category_id !== null ? String(p.category_id) : ''),
     proveedor: '',
     tipo: 'normal',
@@ -1557,10 +1559,14 @@ export function ProductsPage() {
     if (showOutStock)   return products.filter(p => !p.esUnico && getTotalStock(p.id) === 0);
     if (showLowStock)   return products.filter(p => !p.esUnico && getTotalStock(p.id) > 0 && getTotalStock(p.id) <= 10);
     if (showNoCost)     return products.filter(p => !p.costo || p.costo <= 0);
+    const q = search.toLowerCase();
     return products.filter(p => {
+      // Match por nombre, SKU o código de barras — el scanner USB teclea el
+      // valor en este input y matcheamos contra los 3 campos.
       const matchesSearch =
-        p.nombre.toLowerCase().includes(search.toLowerCase()) ||
-        p.sku.toLowerCase().includes(search.toLowerCase());
+        p.nombre.toLowerCase().includes(q) ||
+        p.sku.toLowerCase().includes(q) ||
+        (p.barcode ?? '').toLowerCase().includes(q);
       const matchesCat = selectedCat === 'Todo' || p.categoria === selectedCat;
       return matchesSearch && matchesCat;
     });
@@ -1952,15 +1958,23 @@ export function ProductsPage() {
       </div>
 
       {pageSection === 'productos' && <>
-      {/* Search + view toggle */}
+      {/* Search + view toggle. Input scanner-ready: auto-focus al entrar, Enter
+          limpia para preparar el siguiente escaneo, match contra nombre/SKU/barcode. */}
       <div className="flex flex-col md:flex-row items-center gap-4 mb-4">
         <div className="relative flex-1 w-full">
           <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2" style={{ color: T.textMuted }} />
           <input
             type="text"
-            placeholder="Buscar por nombre, SKU o proveedor..."
+            placeholder="Escanea o busca · nombre, SKU o código de barras"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={e => {
+              // Enter después de un scan: si el match es único, el cajero ya
+              // está mirando el resultado. Limpiamos para que el siguiente
+              // scan no quede pegado al anterior.
+              if (e.key === "Enter") setSearch("");
+            }}
+            autoFocus
             className="w-full pl-11 pr-4 py-3 rounded-2xl text-sm outline-none transition-all focus:ring-1 focus:ring-red-500/30 shadow-inner"
             style={T.input}
           />
@@ -2372,15 +2386,18 @@ export function ProductsPage() {
             )}
           </div>
 
-          {/* Search bar — mismo estilo que productos */}
+          {/* Search bar — scanner-ready: enfoca al entrar y Enter limpia para
+              el siguiente escaneo. Match contra serie/editorial/género/ISBN/barcode. */}
           <div className="flex flex-col md:flex-row items-center gap-4 mb-4">
             <div className="relative flex-1 w-full">
               <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2" style={{ color: T.textMuted }} />
               <input
                 type="text"
-                placeholder="Buscar por serie, editorial, género o ISBN…"
+                placeholder="Escanea o busca · serie, editorial, género, ISBN"
                 value={mangaSearch}
                 onChange={e => setMangaSearch(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") setMangaSearch(""); }}
+                autoFocus
                 className="w-full pl-11 pr-4 py-3 rounded-2xl text-sm outline-none transition-all focus:ring-1 focus:ring-red-500/30 shadow-inner"
                 style={T.input}
               />
