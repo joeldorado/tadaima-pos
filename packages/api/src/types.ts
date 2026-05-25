@@ -234,6 +234,29 @@ export interface SaleDetail {
   user: { id: number; name: string } | null
   items: SaleItemDetail[]
   payments: SalePaymentDetail[]
+  /**
+   * Preventas creadas en la misma transacción del checkout (cobro mixto:
+   * regular + anticipo nuevo). El ticket es padre, estas son hijas. Permite
+   * mostrar UN solo registro con todo el desglose en SalesPage / historial.
+   * Eager-loaded por SalesController vía `preSaleOrders.items.catalog`.
+   */
+  pre_sale_orders?: Array<{
+    id: number
+    code: string
+    status: string
+    total: number
+    paid_amount: number
+    balance: number
+    items: Array<{
+      id: number
+      product_id: number | null
+      quantity: number
+      unit_price: number
+      price_level: number
+      status: string
+      catalog: { id: number; product_name: string } | null
+    }>
+  }>
   sold_at: string
   created_at: string
 }

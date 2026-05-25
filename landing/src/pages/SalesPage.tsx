@@ -3,7 +3,7 @@ import {
   TrendingUp, DollarSign, ShoppingBag, Users, BarChart3, Loader2,
   CreditCard, CalendarDays, ChevronDown, X, ChevronRight,
   Package, Receipt, PackageX, ChevronUp, ImageOff, RotateCcw, AlertTriangle,
-  Store, Printer, User as UserIcon, FileText, Download,
+  Store, Printer, User as UserIcon, FileText, Download, Bookmark,
 } from "lucide-react";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -134,6 +134,17 @@ function printTicket(sale: SaleDetail) {
       <td style="text-align:right">${fmt(sale.total)}</td>
     </tr></tfoot>
   </table>
+
+  ${(sale.pre_sale_orders ?? []).length > 0 ? `
+  <div class="divider"></div>
+  <div style="font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;text-align:center">Preventas en este ticket</div>
+  ${(sale.pre_sale_orders ?? []).map(o => `
+    <div style="font-size:10px;margin-bottom:6px">
+      <div style="font-weight:900;font-size:10px">${o.code} · Anticipo ${fmt(o.paid_amount)}${o.balance > 0 ? ` · Saldo ${fmt(o.balance)}` : ""}</div>
+      ${o.items.map(it => `<div style="font-size:9px;display:flex;justify-content:space-between"><span>${it.catalog?.product_name ?? "Producto"} ×${it.quantity}</span><span>${fmt(it.unit_price * it.quantity)}</span></div>`).join("")}
+    </div>
+  `).join("")}` : ""}
+
   <div class="divider"></div>
   <div class="footer">¡Gracias por tu compra!</div>
   </body></html>`);
@@ -291,6 +302,55 @@ function SaleRow({
               </div>
             );
           })}
+
+          {/* Preventas creadas en el mismo ticket (cobro mixto). El backend
+              las trae via Sale.preSaleOrders; si el campo viene, mostramos
+              un sub-bloque para que el ticket sea un padre unificado en vez
+              de aparecer separado de la venta regular. */}
+          {(sale.pre_sale_orders ?? []).length > 0 && (
+            <div className="mt-3 pt-3 space-y-2" style={{ borderTop: "1px dashed var(--td-panel-border)" }}>
+              <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: "#f59e0b" }}>
+                Preventas creadas en este ticket
+              </p>
+              {(sale.pre_sale_orders ?? []).map(order => (
+                <div key={order.id} className="rounded-xl p-3" style={{ background: "rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.18)" }}>
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="flex items-center gap-2">
+                      <Bookmark size={12} className="text-amber-400" />
+                      <span className="text-xs font-black uppercase tracking-widest" style={{ color: "var(--td-text-hi)" }}>{order.code}</span>
+                      <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded" style={{
+                        background: order.status === 'delivered' ? "rgba(34,197,94,0.15)" : "rgba(245,158,11,0.15)",
+                        color: order.status === 'delivered' ? "#22c55e" : "#f59e0b",
+                      }}>
+                        {order.status === 'delivered' ? "Entregado"
+                          : order.status === 'ready' ? "Listo · Liquidar"
+                          : order.status === 'pending' ? "Pendiente"
+                          : order.status}
+                      </span>
+                    </div>
+                    <div className="text-right text-[10px] font-bold" style={{ color: "var(--td-text-md)" }}>
+                      Anticipo {fmt(order.paid_amount)}
+                      {order.balance > 0 && <span style={{ color: "#f59e0b" }}> · Saldo {fmt(order.balance)}</span>}
+                    </div>
+                  </div>
+                  {order.items.map(it => (
+                    <div key={it.id} className="flex items-center gap-3 py-1.5" style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-bold truncate" style={{ color: "var(--td-text-md)" }}>
+                          {it.catalog?.product_name ?? `Producto #${it.product_id ?? "?"}`}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-4 text-right">
+                        <span className="text-[10px] font-black" style={{ color: "var(--td-text-md)" }}>×{it.quantity}</span>
+                        <span className="text-[10px] font-bold w-[60px]" style={{ color: "var(--td-text-md)" }}>{fmt(it.unit_price)}</span>
+                        <span className="text-xs font-black w-[70px]" style={{ color: "var(--td-text-hi)" }}>{fmt(it.unit_price * it.quantity)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
 
           <div className="flex justify-between items-center pt-2" style={{ borderTop: "1px solid var(--td-panel-border)" }}>
             <div className="flex items-center gap-3">

@@ -63,6 +63,18 @@ class Sale extends Model
         return $this->belongsTo(Customer::class);
     }
 
+    /**
+     * Preventas creadas en la MISMA transacción de checkout (cobro mixto).
+     * Cuando el cajero cobra regular + anticipo de nueva preventa en un solo
+     * ticket, ese anticipo va a `pre_sale_orders` con `linked_sale_id = sale.id`.
+     * Esto permite que el ticket "padre" muestre el desglose completo:
+     *   sale (regulares + liquidaciones) + pre_sale_orders[] (anticipos nuevos).
+     */
+    public function preSaleOrders(): HasMany
+    {
+        return $this->hasMany(\App\Models\PreSaleOrder::class, 'linked_sale_id');
+    }
+
     public function store(): BelongsTo
     {
         return $this->belongsTo(Store::class);
