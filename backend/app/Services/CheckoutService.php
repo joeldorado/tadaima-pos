@@ -152,6 +152,10 @@ class CheckoutService
             ]);
 
             // ── 6. Crear SaleItems ────────────────────────────────────────────
+            // Snap del cost del producto al momento EXACTO del INSERT (la
+            // invariante que mantiene `sale_items.cost` inmutable aunque el
+            // admin re-precie `products.cost` después). El producto ya viene
+            // eager-loaded en línea 111 (`->with('product')`), sin query extra.
             foreach ($draftItems as $draftItem) {
                 SaleItem::create([
                     'sale_id'    => $sale->id,
@@ -160,6 +164,7 @@ class CheckoutService
                     'quantity'   => $draftItem->quantity,
                     'price'      => $draftItem->price,
                     'total'      => $draftItem->total,
+                    'cost'       => $draftItem->product?->cost,
                 ]);
             }
 

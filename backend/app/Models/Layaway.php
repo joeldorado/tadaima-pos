@@ -18,7 +18,7 @@ class Layaway extends Model
 
     protected $fillable = [
         'code', 'store_id', 'user_id', 'customer_id', 'product_id',
-        'warehouse_id', 'quantity', 'price', 'total', 'down_payment',
+        'warehouse_id', 'quantity', 'price', 'total', 'cost', 'down_payment',
         'status', 'expires_at', 'notes',
     ];
 
@@ -26,6 +26,7 @@ class Layaway extends Model
         'quantity'     => 'integer',
         'price'        => 'float',
         'total'        => 'float',
+        'cost'         => 'float',
         'down_payment' => 'float',
         'expires_at'   => 'date:Y-m-d',
     ];

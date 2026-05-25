@@ -9,6 +9,7 @@ use App\Http\Resources\InventoryMovementResource;
 use App\Http\Resources\InventoryResource;
 use App\Models\Inventory;
 use App\Models\InventoryMovement;
+use App\Models\SystemLog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -46,14 +47,15 @@ class InventoryController extends Controller
     {
         $newQty = (float) $request->quantity;
 
-        $record = DB::transaction(function () use ($request, $productId, $warehouseId, $newQty) {
+        [$record, $oldQty, $delta] = DB::transaction(function () use ($request, $productId, $warehouseId, $newQty) {
             // Obtener o crear el registro de inventario
             $inventory = Inventory::firstOrCreate(
                 ['product_id' => $productId, 'warehouse_id' => $warehouseId],
                 ['quantity'   => 0]
             );
 
-            $delta = $newQty - $inventory->quantity;
+            $oldQty = (float) $inventory->quantity;
+            $delta  = $newQty - $oldQty;
 
             // Registrar ajuste (incluso si delta = 0, para dejar evidencia del intento)
             InventoryMovement::create([
@@ -67,8 +69,28 @@ class InventoryController extends Controller
 
             $inventory->update(['quantity' => $newQty]);
 
-            return $inventory->load(['product', 'warehouse']);
+            return [$inventory->load(['product', 'warehouse']), $oldQty, $delta];
         });
+
+        // Log de auditoría — solo si la cantidad cambió realmente. El movimiento
+        // queda igualmente en `inventory_movements` para trazabilidad operativa.
+        if (abs($delta) > 0.0001) {
+            $productName   = $record->product?->name   ?? "Producto #{$productId}";
+            $warehouseName = $record->warehouse?->name ?? "Bodega #{$warehouseId}";
+            SystemLog::write(
+                action: 'inventory.adjusted',
+                description: "Stock ajustado: {$productName} en {$warehouseName}: {$oldQty} → {$newQty}",
+                entityType: 'inventory',
+                entityId: $productId,
+                meta: [
+                    'product_id'   => $productId,
+                    'warehouse_id' => $warehouseId,
+                    'old'          => $oldQty,
+                    'new'          => $newQty,
+                    'delta'        => $delta,
+                ],
+            );
+        }
 
         return $this->success(new InventoryResource($record), 'Stock actualizado');
     }

@@ -434,7 +434,9 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
           {/* ── TAB: Precios ────────────────────────────────────────────── */}
           {tab === 'precios' && (
             <div className="space-y-6">
-              <div className={`grid ${canViewCost ? 'grid-cols-2' : 'grid-cols-1'} gap-4 p-4 rounded-2xl bg-white/5 border border-white/5`}>
+              {/* Mismo criterio que MangaEditModal: Margen % + Costo real
+                  siempre visibles al dar de alta tomos (Joel 2026-05-25). */}
+              <div className="grid grid-cols-2 gap-4 p-4 rounded-2xl bg-white/5 border border-white/5">
                 <div className="space-y-1.5">
                   <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>Precio Público (MXN) *</label>
                   <input
@@ -445,19 +447,17 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
                     onChange={e => setSeries(s => ({ ...s, precioPublico: e.target.value }))}
                   />
                 </div>
-                {canViewCost && (
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>Margen %</label>
-                    <input
-                      className="w-full px-4 py-3 rounded-2xl outline-none"
-                      style={T.input}
-                      type="number" min="0" max="99" step="0.1" placeholder="30"
-                      value={series.margenPct}
-                      onChange={e => setSeries(s => ({ ...s, margenPct: e.target.value }))}
-                    />
-                  </div>
-                )}
-                {canViewCost && costoReal !== null && (
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>Margen %</label>
+                  <input
+                    className="w-full px-4 py-3 rounded-2xl outline-none"
+                    style={T.input}
+                    type="number" min="0" max="99" step="0.1" placeholder="30"
+                    value={series.margenPct}
+                    onChange={e => setSeries(s => ({ ...s, margenPct: e.target.value }))}
+                  />
+                </div>
+                {costoReal !== null && (
                   <div className="col-span-2 flex items-center gap-2 px-4 py-2.5 rounded-2xl" style={{ background: 'rgba(0,180,100,0.08)', border: '1px solid rgba(0,180,100,0.2)' }}>
                     <CheckCircle2 size={13} style={{ color: '#4ade80' }} />
                     <span className="text-xs" style={{ color: T.textMuted }}>Costo real:</span>

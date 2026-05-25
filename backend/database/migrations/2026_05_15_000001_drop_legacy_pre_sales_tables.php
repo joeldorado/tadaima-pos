@@ -24,9 +24,25 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration {
     public function up(): void
     {
-        // Apagar FK checks (MySQL) para evitar problemas con FKs sobrevivientes.
+        // En SQLite (tests con :memory:), `dropIfExists` deja FK textuales
+        // colgando — payments.pre_sale_id sigue apuntando a la tabla borrada
+        // y al INSERT en payments dispara "no such table: pre_sales". Hay
+        // que soltar la FK antes del drop. En MySQL prod usamos disable
+        // global de constraints (los `dropForeign` de Laravel no resuelven
+        // FKs creadas con `foreignId(...)->constrained()` anónimo siempre).
         if (DB::getDriverName() === 'mysql') {
             Schema::disableForeignKeyConstraints();
+        } else {
+            // SQLite + otros — soltar la FK explícita declarada en migración 38.
+            if (Schema::hasTable('payments') && Schema::hasColumn('payments', 'pre_sale_id')) {
+                try {
+                    Schema::table('payments', function ($table) {
+                        $table->dropForeign(['pre_sale_id']);
+                    });
+                } catch (\Throwable $e) {
+                    // Si la FK no existe (driver que no la creó), continuar.
+                }
+            }
         }
 
         Schema::dropIfExists('pre_sale_logs');

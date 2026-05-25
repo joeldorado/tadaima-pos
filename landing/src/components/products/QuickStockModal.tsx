@@ -1,11 +1,13 @@
-import { useEffect, useState } from "react";
-import { X, Loader2, Plus, Trash2, Check, ChevronRight, Boxes } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { X, Loader2, Plus, Trash2, Check, ChevronRight, Boxes, Lock } from "lucide-react";
 import { motion as Motion } from "motion/react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { getInventory, updateInventory, getMangaInventory, updateMangaInventory, getWarehouses } from "@tadaima/api";
 import type { Warehouse, InventoryItem, MangaInventoryItem } from "@tadaima/api";
 import { queryKeys } from "@/lib/queryKeys";
+import { useAuth } from "@tadaima/auth";
+import { isAdmin as isAdminRole } from "@/lib/permisos";
 
 interface Props {
   productId: number;
@@ -37,6 +39,11 @@ const inputStyle: React.CSSProperties = {
 export function QuickStockModal({ productId, productName, kind = "product", onClose }: Props) {
   const isManga = kind === "manga";
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  // Gerente/cajero: solo pueden ajustar stock de su tienda asignada.
+  // Admin ve todas las tiendas y puede mover stock entre cualquiera.
+  const isAdmin = isAdminRole(user?.roles);
+  const restrictedStoreId = !isAdmin ? (user?.store_id ?? null) : null;
   const [loading, setLoading]   = useState(true);
   const [saving, setSaving]     = useState(false);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -61,9 +68,16 @@ export function QuickStockModal({ productId, productName, kind = "product", onCl
         ]);
         if (cancelled) return;
         setWarehouses(whs);
+        // Para gerente/cajero solo se cargan filas cuyo warehouse pertenece a
+        // su tienda. Stock de otras tiendas existe pero NO entra al state →
+        // no se renderiza ni se manda en el diff al guardar.
+        const allowedWhIds = restrictedStoreId == null
+          ? null
+          : new Set(whs.filter(w => w.store?.id === restrictedStoreId).map(w => w.id));
         const init: Record<number, number> = {};
         const snap: Record<number, string> = {};
         (inv as (InventoryItem | MangaInventoryItem)[]).forEach(i => {
+          if (allowedWhIds && !allowedWhIds.has(i.warehouse_id)) return;
           if (i.quantity > 0) {
             init[i.warehouse_id] = i.quantity;
             snap[i.warehouse_id] = String(i.quantity);
@@ -88,7 +102,23 @@ export function QuickStockModal({ productId, productName, kind = "product", onCl
   };
 
   const assignedIds = Object.keys(stock).map(Number);
-  const availableWarehouses = warehouses.filter(w => !assignedIds.includes(w.id));
+  // Warehouses visibles para el usuario: admin ve todos, gerente/cajero solo
+  // los de su tienda. El backend igual valida (defensa en profundidad).
+  const visibleWarehouses = useMemo(
+    () => restrictedStoreId == null
+      ? warehouses
+      : warehouses.filter(w => w.store?.id === restrictedStoreId),
+    [warehouses, restrictedStoreId],
+  );
+  const availableWarehouses = visibleWarehouses.filter(w => !assignedIds.includes(w.id));
+
+  // Para no-admin con UNA sola tienda → preseleccionar y bloquear el selector.
+  const lockedSingleStore = restrictedStoreId != null && visibleWarehouses.length === 1;
+  useEffect(() => {
+    if (lockedSingleStore && pendingWh === "" && availableWarehouses.length === 1) {
+      setPendingWh(availableWarehouses[0]!.id);
+    }
+  }, [lockedSingleStore, pendingWh, availableWarehouses]);
 
   const canAdd = pendingWh !== "" && pendingQty !== "" && Number(pendingQty) >= 0;
 
@@ -212,15 +242,19 @@ export function QuickStockModal({ productId, productName, kind = "product", onCl
                     <select
                       value={pendingWh}
                       onChange={e => setPendingWh(e.target.value === "" ? "" : Number(e.target.value))}
-                      disabled={availableWarehouses.length === 0}
-                      style={{ ...inputStyle, paddingRight: 32, appearance: "none" as const, opacity: availableWarehouses.length === 0 ? 0.5 : 1 }}
+                      disabled={availableWarehouses.length === 0 || lockedSingleStore}
+                      style={{ ...inputStyle, paddingRight: 32, appearance: "none" as const, opacity: (availableWarehouses.length === 0 || lockedSingleStore) ? 0.7 : 1, cursor: lockedSingleStore ? "not-allowed" : "auto" }}
                     >
                       <option value="">{availableWarehouses.length === 0 ? "Todas las tiendas asignadas" : "Selecciona una tienda…"}</option>
                       {availableWarehouses.map(w => (
                         <option key={w.id} value={w.id}>{w.store?.name ?? w.name}</option>
                       ))}
                     </select>
-                    <ChevronRight size={12} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%) rotate(90deg)", color: TM, pointerEvents: "none" }} />
+                    {lockedSingleStore ? (
+                      <Lock size={11} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: TM, pointerEvents: "none" }} />
+                    ) : (
+                      <ChevronRight size={12} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%) rotate(90deg)", color: TM, pointerEvents: "none" }} />
+                    )}
                   </div>
                 </div>
                 <div style={{ width: 100 }}>

@@ -10,6 +10,7 @@ use App\Http\Requests\UpdateMangaRequest;
 use App\Http\Resources\MangaCompatResource;
 use App\Models\Product;
 use App\Models\ProductMangaDetail;
+use App\Models\SystemLog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -123,6 +124,19 @@ class MangaController extends Controller
         $product->load(['mangaDetails', 'price', 'images'])
                 ->loadSum('inventory', 'quantity');
 
+        SystemLog::write(
+            action: 'manga.created',
+            description: "Manga creado: {$product->name} (SKU: {$product->sku})",
+            entityType: 'manga',
+            entityId: $product->id,
+            meta: [
+                'sku'           => $product->sku,
+                'name'          => $product->name,
+                'volume_number' => $data['volume_number'] ?? null,
+                'editorial'     => $data['editorial']     ?? null,
+            ],
+        );
+
         return $this->success(new MangaCompatResource($product), 'Manga creado.', 201);
     }
 
@@ -138,6 +152,10 @@ class MangaController extends Controller
         }
 
         $data = $request->validated();
+
+        // Snapshot ANTES de mutar para construir diff en el log.
+        $before = $manga->only(['name', 'sku', 'barcode', 'cost', 'active']);
+        $beforeDetail = $manga->mangaDetails?->only(['volume_number', 'editorial', 'genre']) ?? [];
 
         DB::transaction(function () use ($manga, $data): void {
             $productPayload = array_filter([
@@ -184,6 +202,32 @@ class MangaController extends Controller
         $manga->load(['mangaDetails', 'price', 'images'])
               ->loadSum('inventory', 'quantity');
 
+        // Diff: producto + detalles. Solo registra si hubo cambios reales.
+        $afterDetail = $manga->mangaDetails?->only(['volume_number', 'editorial', 'genre']) ?? [];
+        $changes = [];
+        foreach ($before as $field => $oldValue) {
+            $newValue = $manga->{$field} ?? null;
+            if ($oldValue != $newValue) {
+                $changes[$field] = ['old' => $oldValue, 'new' => $newValue];
+            }
+        }
+        foreach (['volume_number', 'editorial', 'genre'] as $field) {
+            $oldValue = $beforeDetail[$field] ?? null;
+            $newValue = $afterDetail[$field] ?? null;
+            if ($oldValue != $newValue) {
+                $changes["details.{$field}"] = ['old' => $oldValue, 'new' => $newValue];
+            }
+        }
+        if (! empty($changes)) {
+            SystemLog::write(
+                action: 'manga.updated',
+                description: "Manga editado: {$manga->name} (SKU: {$manga->sku})",
+                entityType: 'manga',
+                entityId: $manga->id,
+                meta: ['changes' => $changes],
+            );
+        }
+
         return $this->success(new MangaCompatResource($manga), 'Manga actualizado.');
     }
 
@@ -227,10 +271,19 @@ class MangaController extends Controller
             return $this->error('El producto no es de tipo manga.', 422);
         }
 
+        $snapshot = ['id' => $manga->id, 'name' => $manga->name, 'sku' => $manga->sku];
+
         $salesCount = DB::table('sale_items')->where('product_id', $manga->id)->count();
         if ($salesCount > 0) {
             // No borrar physicalmente — desactivar para preservar histórico.
             $manga->update(['active' => false]);
+            SystemLog::write(
+                action: 'manga.deactivated',
+                description: "Manga desactivado (tiene ventas): {$snapshot['name']} (SKU: {$snapshot['sku']})",
+                entityType: 'manga',
+                entityId: $snapshot['id'],
+                meta: ['mode' => 'soft', 'reason' => 'has_sales', 'snapshot' => $snapshot],
+            );
             return $this->success(null, 'Manga desactivado (tiene ventas registradas).');
         }
 
@@ -238,6 +291,14 @@ class MangaController extends Controller
             Storage::delete($img->image_path);
         });
         $manga->delete();
+
+        SystemLog::write(
+            action: 'manga.deleted',
+            description: "Manga eliminado: {$snapshot['name']} (SKU: {$snapshot['sku']})",
+            entityType: 'manga',
+            entityId: $snapshot['id'],
+            meta: ['mode' => 'hard', 'snapshot' => $snapshot],
+        );
 
         return $this->success(null, 'Manga eliminado.');
     }

@@ -3,22 +3,27 @@ import {
   TrendingUp, DollarSign, ShoppingBag, Users, BarChart3, Loader2,
   CreditCard, CalendarDays, ChevronDown, X, ChevronRight,
   Package, Receipt, PackageX, ChevronUp, ImageOff, RotateCcw, AlertTriangle,
-  Store, Printer,
+  Store, Printer, User as UserIcon, FileText, Download,
 } from "lucide-react";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
-import { returnSale } from "@tadaima/api";
-import { useQueryClient } from "@tanstack/react-query";
+import { returnSale, getCashReport } from "@tadaima/api";
+import { getTodayLocal } from "@/lib/date";
+import type { CashSessionReport } from "@tadaima/api";
+import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useSalesQuery } from "@/hooks/queries/useSales";
 import { usePreSaleOrdersQuery } from "@/hooks/queries/usePreSales";
 import { useProductsQuery } from "@/hooks/queries/useProducts";
 import { useStoresQuery } from "@/hooks/queries/useStores";
 import { useUsersQuery } from "@/hooks/queries/useUsers";
+import { useExchangeRateQuery } from "@/hooks/queries/useSystemSettings";
 import { queryKeys } from "@/lib/queryKeys";
 import type { SaleDetail, PreSaleOrder, Product, Store as StoreType } from "@tadaima/api";
 import { useAuth } from "@tadaima/auth";
 import { toast } from "sonner";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 const T = {
   bgGrad: "var(--td-page-bg)",
@@ -214,9 +219,22 @@ function SaleRow({
         </div>
 
         <div className="flex-1 min-w-0 hidden lg:block">
-          <p className="text-[9px] font-black uppercase tracking-widest truncate" style={{ color: "var(--td-text-lo)" }}>#{sale.id}</p>
-          {sale.customer?.name && (
-            <p className="text-[10px] mt-0.5 truncate" style={{ color: "var(--td-text-md)" }}>{sale.customer.name}</p>
+          <div className="flex items-center gap-2">
+            <p className="text-[9px] font-black uppercase tracking-widest truncate" style={{ color: "var(--td-text-lo)" }}>#{sale.id}</p>
+            {sale.customer?.name && (
+              <p className="text-[10px] truncate" style={{ color: "var(--td-text-md)" }}>{sale.customer.name}</p>
+            )}
+          </div>
+          {sale.user?.name && (
+            <div
+              className="flex items-center gap-1 mt-0.5 text-[9px] font-bold truncate"
+              style={{ color: "var(--td-text-lo)" }}
+              title={`Vendido por ${sale.user.name}`}
+            >
+              <UserIcon size={9} />
+              <span className="uppercase tracking-wider">Vendió:</span>
+              <span className="truncate" style={{ color: "var(--td-text-md)" }}>{sale.user.name}</span>
+            </div>
           )}
         </div>
 
@@ -341,6 +359,604 @@ function SaleRow({
   );
 }
 
+// ─── Reporte del Día (Lectura X) ──────────────────────────────────────────────
+// Resumen ejecutivo + desglose por método + preventas + caja para gerente/admin.
+// Reutiliza data ya cargada por SalesPage; no hace queries propias.
+
+interface DailyReport {
+  subtotal: number; descuento: number; ventasNetas: number;
+  comisionTotal: number; netoDespuesComision: number;
+  ticketsCount: number; promedio: number;
+  methodsRows: Array<{ name: string; count: number; amount: number; commission: number }>;
+  tipoCambio: number | null;
+  anticiposCobrados: number; anticiposCount: number;
+  liquidaciones: number; liquidadasCount: number;
+  totalPreventas: number;
+  apertura: number; entradas: number; salidas: number;
+  esperado: number; declarado: number; descuadre: number;
+  sesionesAbiertas: number; sesionesCerradas: number; sessionsCount: number;
+  topProductsRows: Array<{ product_id: string; name: string; sku: string; units: number; revenue: number; tickets: number }>;
+  cashierRows: Array<{ user_id: number; name: string; tickets: number; revenue: number; commission: number; descuadre: number; hasOpenSession: boolean }>;
+  // G) Ganancia bruta — solo confiable cuando isAdmin (backend gate)
+  costoTotal: number; gananciaBruta: number; margenPct: number;
+  tieneDatosCosto: boolean; tieneItemsSinCosto: boolean;
+}
+
+function ReporteDelDia({
+  report, fromDate, toDate, storeName, isAdmin,
+}: {
+  report: DailyReport;
+  fromDate: string;
+  toDate: string;
+  storeName: string;
+  /** Solo admin ve sección de ganancia bruta (backend gate de cost). */
+  isAdmin: boolean;
+}) {
+  const isSameDay = fromDate === toDate;
+  const periodLabel = isSameDay
+    ? new Date(fromDate + "T12:00").toLocaleDateString("es-MX", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })
+    : `${fromDate} → ${toDate}`;
+
+  const handlePrint = () => printDailyReport(report, fromDate, toDate, storeName, isAdmin);
+  const handlePdf   = () => exportDailyReportPdf(report, fromDate, toDate, storeName, isAdmin);
+
+  return (
+    <div id="reporte-dia-print" className="space-y-4">
+      {/* Header con acciones */}
+      <div className="flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <p className="text-[8px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>Reporte del Día · {storeName}</p>
+          <p className="text-base font-black mt-1 capitalize" style={{ color: "var(--td-text-hi)" }}>{periodLabel}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handlePrint}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all hover:scale-[1.02]"
+            style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)", color: "var(--td-text-md)" }}
+          >
+            <Printer size={12} /> Imprimir
+          </button>
+          <button
+            onClick={handlePdf}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all hover:scale-[1.02]"
+            style={{ background: "linear-gradient(135deg, #CC2200, #FF4422)", border: "1px solid rgba(255,120,90,0.3)", color: "#fff" }}
+          >
+            <Download size={12} /> Exportar PDF
+          </button>
+        </div>
+      </div>
+
+      {/* A) Resumen ejecutivo */}
+      <ReportSection title="A · Resumen Ejecutivo">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <Kpi label="Ventas brutas"           value={fmt(report.subtotal)} />
+          <Kpi label="Descuentos"              value={`- ${fmt(report.descuento)}`} muted />
+          <Kpi label="Ventas netas"            value={fmt(report.ventasNetas)} highlight />
+          <Kpi label="Comisión terminal"       value={`- ${fmt(report.comisionTotal)}`} muted />
+          <Kpi label="Neto después comisión"   value={fmt(report.netoDespuesComision)} highlight />
+          <Kpi label="Tickets"                 value={String(report.ticketsCount)} />
+          <Kpi label="Ticket promedio"         value={fmt(report.promedio)} />
+          {report.tipoCambio != null && (
+            <Kpi label="Tipo de cambio" value={`$${report.tipoCambio.toFixed(2)} MXN/USD`} />
+          )}
+        </div>
+      </ReportSection>
+
+      {/* G) Ganancia bruta — SOLO ADMIN. Gerente NO ve esta sección. */}
+      {isAdmin && (
+        <ReportSection title="Ganancia Bruta · Solo Admin">
+          {!report.tieneDatosCosto ? (
+            <p className="text-xs py-4 text-center" style={{ color: "var(--td-text-lo)" }}>
+              Sin datos de costo para los productos vendidos. Asigna `cost` en el catálogo de productos para calcular ganancia.
+            </p>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <Kpi label="Ingreso bruto"    value={fmt(report.ventasNetas)} />
+                <Kpi label="Costo de venta"   value={`- ${fmt(report.costoTotal)}`} muted />
+                <Kpi
+                  label="Ganancia bruta"
+                  value={fmt(report.gananciaBruta)}
+                  highlight={report.gananciaBruta > 0}
+                  danger={report.gananciaBruta < 0}
+                />
+                <Kpi
+                  label="Margen"
+                  value={`${report.margenPct.toFixed(1)}%`}
+                  hint={report.gananciaBruta < 0 ? "Pérdida en el periodo" : undefined}
+                  highlight={report.margenPct >= 30}
+                  danger={report.margenPct < 0}
+                />
+              </div>
+              {report.tieneItemsSinCosto && (
+                <p className="text-[10px] mt-3 px-3 py-2 rounded-lg" style={{
+                  color: "#fbbf24",
+                  background: "rgba(251,191,36,0.06)",
+                  border: "1px solid rgba(251,191,36,0.2)",
+                }}>
+                  Algunos productos vendidos no tienen costo configurado — la ganancia real podría ser menor.
+                </p>
+              )}
+              <p className="text-[9px] mt-2" style={{ color: "var(--td-text-lo)" }}>
+                Calculado con el costo ACTUAL del producto, no histórico al momento de la venta.
+              </p>
+            </>
+          )}
+        </ReportSection>
+      )}
+
+      {/* B) Desglose por método de pago */}
+      <ReportSection title="B · Desglose por Método de Pago">
+        {report.methodsRows.length === 0 ? (
+          <p className="text-xs py-4 text-center" style={{ color: "var(--td-text-lo)" }}>Sin pagos registrados en el periodo.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-[9px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>
+                  <th className="text-left py-2 px-3">Método</th>
+                  <th className="text-right py-2 px-3"># Tx</th>
+                  <th className="text-right py-2 px-3">Monto</th>
+                  <th className="text-right py-2 px-3">Comisión</th>
+                  <th className="text-right py-2 px-3">Neto</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.methodsRows.map(r => (
+                  <tr key={r.name} className="border-t" style={{ borderColor: "var(--td-panel-border)" }}>
+                    <td className="py-2 px-3 font-bold" style={{ color: "var(--td-text-hi)" }}>{r.name}</td>
+                    <td className="py-2 px-3 text-right" style={{ color: "var(--td-text-md)" }}>{r.count}</td>
+                    <td className="py-2 px-3 text-right font-black" style={{ color: "var(--td-text-hi)" }}>{fmt(r.amount)}</td>
+                    <td className="py-2 px-3 text-right" style={{ color: r.commission > 0 ? "#fbbf24" : "var(--td-text-lo)" }}>
+                      {r.commission > 0 ? fmt(r.commission) : "—"}
+                    </td>
+                    <td className="py-2 px-3 text-right font-bold" style={{ color: "var(--td-text-md)" }}>{fmt(r.amount - r.commission)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t-2" style={{ borderColor: "var(--td-panel-border)" }}>
+                  <td className="py-2 px-3 text-[9px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>Totales</td>
+                  <td className="py-2 px-3 text-right font-black" style={{ color: "var(--td-text-md)" }}>
+                    {report.methodsRows.reduce((a, r) => a + r.count, 0)}
+                  </td>
+                  <td className="py-2 px-3 text-right font-black" style={{ color: "var(--td-text-hi)" }}>
+                    {fmt(report.methodsRows.reduce((a, r) => a + r.amount, 0))}
+                  </td>
+                  <td className="py-2 px-3 text-right font-black" style={{ color: "#fbbf24" }}>
+                    {fmt(report.methodsRows.reduce((a, r) => a + r.commission, 0))}
+                  </td>
+                  <td className="py-2 px-3 text-right font-black" style={{ color: "var(--td-text-hi)" }}>
+                    {fmt(report.methodsRows.reduce((a, r) => a + (r.amount - r.commission), 0))}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </ReportSection>
+
+      {/* C) Preventas */}
+      <ReportSection title="C · Preventas">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <Kpi
+            label={`Anticipos cobrados · ${report.anticiposCount} folios`}
+            value={fmt(report.anticiposCobrados)}
+            hint="Apartadas nuevas o aún pendientes"
+          />
+          <Kpi
+            label={`Liquidaciones · ${report.liquidadasCount} folios`}
+            value={fmt(report.liquidaciones)}
+            hint="Preventas entregadas en el periodo"
+          />
+          <Kpi
+            label="Total recibido por preventas"
+            value={fmt(report.totalPreventas)}
+            highlight
+          />
+        </div>
+      </ReportSection>
+
+      {/* D) Movimientos de caja */}
+      <ReportSection title={`D · Movimientos de Caja · ${report.sessionsCount} sesión${report.sessionsCount === 1 ? "" : "es"}`}>
+        {report.sessionsCount === 0 ? (
+          <p className="text-xs py-4 text-center" style={{ color: "var(--td-text-lo)" }}>Sin sesiones de caja en el periodo.</p>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <Kpi label="Apertura inicial" value={fmt(report.apertura)} />
+            <Kpi label="Entradas (depósitos)" value={`+ ${fmt(report.entradas)}`} />
+            <Kpi label="Salidas (gastos)" value={`- ${fmt(report.salidas)}`} muted />
+            <Kpi label="Esperado al cierre" value={fmt(report.esperado)} highlight />
+            <Kpi label="Declarado real" value={fmt(report.declarado)} />
+            <Kpi
+              label="Descuadre"
+              value={`${report.descuadre >= 0 ? "+" : ""}${fmt(report.descuadre)}`}
+              danger={Math.abs(report.descuadre) > 0.01}
+              hint={
+                report.sesionesAbiertas > 0
+                  ? `${report.sesionesAbiertas} sesión aún abierta`
+                  : `${report.sesionesCerradas} cerradas`
+              }
+            />
+          </div>
+        )}
+      </ReportSection>
+
+      {/* E) Top productos */}
+      <ReportSection title={`E · Top ${report.topProductsRows.length} Productos del Periodo`}>
+        {report.topProductsRows.length === 0 ? (
+          <p className="text-xs py-4 text-center" style={{ color: "var(--td-text-lo)" }}>Sin productos vendidos.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-[9px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>
+                  <th className="text-left py-2 px-3 w-8">#</th>
+                  <th className="text-left py-2 px-3">Producto</th>
+                  <th className="text-right py-2 px-3">Tickets</th>
+                  <th className="text-right py-2 px-3">Unidades</th>
+                  <th className="text-right py-2 px-3">Ingreso</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.topProductsRows.map((p, idx) => (
+                  <tr key={p.product_id} className="border-t" style={{ borderColor: "var(--td-panel-border)" }}>
+                    <td className="py-2 px-3 font-black" style={{ color: "var(--td-text-lo)" }}>{idx + 1}</td>
+                    <td className="py-2 px-3">
+                      <div className="font-bold truncate max-w-[280px]" style={{ color: "var(--td-text-hi)" }}>{p.name}</div>
+                      {p.sku && <div className="text-[9px] uppercase tracking-widest mt-0.5" style={{ color: "var(--td-text-lo)" }}>{p.sku}</div>}
+                    </td>
+                    <td className="py-2 px-3 text-right" style={{ color: "var(--td-text-md)" }}>{p.tickets}</td>
+                    <td className="py-2 px-3 text-right font-bold" style={{ color: "var(--td-text-md)" }}>{p.units}</td>
+                    <td className="py-2 px-3 text-right font-black" style={{ color: "var(--td-text-hi)" }}>{fmt(p.revenue)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </ReportSection>
+
+      {/* F) Tabla por cajero */}
+      <ReportSection title={`F · Cajeros del Periodo · ${report.cashierRows.length}`}>
+        {report.cashierRows.length === 0 ? (
+          <p className="text-xs py-4 text-center" style={{ color: "var(--td-text-lo)" }}>Sin ventas en el periodo.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-[9px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>
+                  <th className="text-left py-2 px-3">Cajero</th>
+                  <th className="text-right py-2 px-3">Tickets</th>
+                  <th className="text-right py-2 px-3">Cobrado</th>
+                  <th className="text-right py-2 px-3">Comisión</th>
+                  <th className="text-right py-2 px-3">Neto</th>
+                  <th className="text-right py-2 px-3">Descuadre</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.cashierRows.map(c => (
+                  <tr key={c.user_id} className="border-t" style={{ borderColor: "var(--td-panel-border)" }}>
+                    <td className="py-2 px-3">
+                      <div className="font-bold" style={{ color: "var(--td-text-hi)" }}>{c.name}</div>
+                      {c.hasOpenSession && (
+                        <div className="text-[9px] font-black uppercase tracking-widest mt-0.5" style={{ color: "#FFAA00" }}>Caja abierta</div>
+                      )}
+                    </td>
+                    <td className="py-2 px-3 text-right" style={{ color: "var(--td-text-md)" }}>{c.tickets}</td>
+                    <td className="py-2 px-3 text-right font-black" style={{ color: "var(--td-text-hi)" }}>{fmt(c.revenue)}</td>
+                    <td className="py-2 px-3 text-right" style={{ color: c.commission > 0 ? "#fbbf24" : "var(--td-text-lo)" }}>
+                      {c.commission > 0 ? fmt(c.commission) : "—"}
+                    </td>
+                    <td className="py-2 px-3 text-right font-bold" style={{ color: "var(--td-text-md)" }}>{fmt(c.revenue - c.commission)}</td>
+                    <td className="py-2 px-3 text-right font-bold" style={{
+                      color: Math.abs(c.descuadre) < 0.01 ? "var(--td-text-lo)" : (c.descuadre < 0 ? "#DC2626" : "#10b981"),
+                    }}>
+                      {c.descuadre === 0 ? "—" : `${c.descuadre >= 0 ? "+" : ""}${fmt(c.descuadre)}`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t-2" style={{ borderColor: "var(--td-panel-border)" }}>
+                  <td className="py-2 px-3 text-[9px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>Totales</td>
+                  <td className="py-2 px-3 text-right font-black" style={{ color: "var(--td-text-md)" }}>
+                    {report.cashierRows.reduce((a, c) => a + c.tickets, 0)}
+                  </td>
+                  <td className="py-2 px-3 text-right font-black" style={{ color: "var(--td-text-hi)" }}>
+                    {fmt(report.cashierRows.reduce((a, c) => a + c.revenue, 0))}
+                  </td>
+                  <td className="py-2 px-3 text-right font-black" style={{ color: "#fbbf24" }}>
+                    {fmt(report.cashierRows.reduce((a, c) => a + c.commission, 0))}
+                  </td>
+                  <td className="py-2 px-3 text-right font-black" style={{ color: "var(--td-text-hi)" }}>
+                    {fmt(report.cashierRows.reduce((a, c) => a + (c.revenue - c.commission), 0))}
+                  </td>
+                  <td className="py-2 px-3 text-right font-black" style={{ color: "var(--td-text-lo)" }}>
+                    {fmt(report.cashierRows.reduce((a, c) => a + c.descuadre, 0))}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </ReportSection>
+    </div>
+  );
+}
+
+function ReportSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-2xl p-4" style={{ background: "rgba(0,0,0,0.15)", border: "1px solid var(--td-panel-border)" }}>
+      <p className="text-[9px] font-black uppercase tracking-widest mb-3" style={{ color: "var(--td-text-lo)" }}>{title}</p>
+      {children}
+    </div>
+  );
+}
+
+function Kpi({
+  label, value, hint, highlight = false, muted = false, danger = false,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  highlight?: boolean;
+  muted?: boolean;
+  danger?: boolean;
+}) {
+  const color = danger ? "#DC2626" : highlight ? "#FF4422" : muted ? "var(--td-text-md)" : "var(--td-text-hi)";
+  return (
+    <div className="rounded-xl px-4 py-3" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid var(--td-panel-border)" }}>
+      <p className="text-[8px] font-black uppercase tracking-widest truncate" style={{ color: "var(--td-text-lo)" }}>{label}</p>
+      <p className="text-lg font-black mt-1" style={{ color }}>{value}</p>
+      {hint && <p className="text-[9px] font-bold mt-0.5" style={{ color: "var(--td-text-lo)" }}>{hint}</p>}
+    </div>
+  );
+}
+
+// ─── Print / PDF helpers ──────────────────────────────────────────────────────
+
+function printDailyReport(r: DailyReport, fromDate: string, toDate: string, storeName: string, isAdmin: boolean): void {
+  const isSameDay = fromDate === toDate;
+  const periodLabel = isSameDay
+    ? new Date(fromDate + "T12:00").toLocaleDateString("es-MX", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })
+    : `${fromDate} → ${toDate}`;
+
+  const html = `
+    <html><head><title>Reporte ${fromDate}</title><style>
+      body { font-family: system-ui, sans-serif; padding: 24px; color: #111; max-width: 820px; margin: 0 auto; }
+      h1 { font-size: 18px; margin: 0 0 4px; }
+      h2 { font-size: 12px; margin: 18px 0 6px; padding-bottom: 4px; border-bottom: 1px solid #ccc; text-transform: uppercase; letter-spacing: 0.06em; }
+      .meta { color: #666; font-size: 11px; text-transform: capitalize; margin-bottom: 16px; }
+      table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 4px; }
+      th, td { padding: 5px 8px; text-align: left; border-bottom: 1px solid #eee; }
+      th { background: #f3f3f3; font-weight: 700; text-transform: uppercase; font-size: 9px; letter-spacing: 0.06em; }
+      .right { text-align: right; }
+      .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+      .kpi { padding: 6px 10px; background: #fafafa; border: 1px solid #eee; border-radius: 4px; }
+      .kpi-label { font-size: 9px; text-transform: uppercase; color: #777; }
+      .kpi-value { font-size: 14px; font-weight: 800; margin-top: 2px; }
+      .danger { color: #c00; }
+    </style></head><body>
+      <h1>Reporte del Día — ${storeName}</h1>
+      <p class="meta">${periodLabel}</p>
+
+      <h2>A · Resumen Ejecutivo</h2>
+      <div class="grid">
+        <div class="kpi"><div class="kpi-label">Ventas brutas</div><div class="kpi-value">${fmt(r.subtotal)}</div></div>
+        <div class="kpi"><div class="kpi-label">Descuentos</div><div class="kpi-value">- ${fmt(r.descuento)}</div></div>
+        <div class="kpi"><div class="kpi-label">Ventas netas</div><div class="kpi-value">${fmt(r.ventasNetas)}</div></div>
+        <div class="kpi"><div class="kpi-label">Comisión terminal</div><div class="kpi-value">- ${fmt(r.comisionTotal)}</div></div>
+        <div class="kpi"><div class="kpi-label">Neto después comisión</div><div class="kpi-value">${fmt(r.netoDespuesComision)}</div></div>
+        <div class="kpi"><div class="kpi-label">Tickets · Promedio</div><div class="kpi-value">${r.ticketsCount} · ${fmt(r.promedio)}</div></div>
+        ${r.tipoCambio != null ? `<div class="kpi"><div class="kpi-label">Tipo de cambio</div><div class="kpi-value">$${r.tipoCambio.toFixed(2)} MXN/USD</div></div>` : ""}
+      </div>
+
+      ${isAdmin && r.tieneDatosCosto ? `
+      <h2>Ganancia Bruta · Solo Admin</h2>
+      <div class="grid">
+        <div class="kpi"><div class="kpi-label">Ingreso bruto</div><div class="kpi-value">${fmt(r.ventasNetas)}</div></div>
+        <div class="kpi"><div class="kpi-label">Costo de venta</div><div class="kpi-value">- ${fmt(r.costoTotal)}</div></div>
+        <div class="kpi"><div class="kpi-label">Ganancia bruta</div><div class="kpi-value ${r.gananciaBruta < 0 ? "danger" : ""}">${fmt(r.gananciaBruta)}</div></div>
+        <div class="kpi"><div class="kpi-label">Margen</div><div class="kpi-value ${r.margenPct < 0 ? "danger" : ""}">${r.margenPct.toFixed(1)}%</div></div>
+      </div>
+      ${r.tieneItemsSinCosto ? '<p style="color:#a37000;font-size:10px;margin-top:6px">Algunos productos sin costo configurado — ganancia podría ser menor.</p>' : ""}
+      ` : ""}
+
+      <h2>B · Desglose por Método de Pago</h2>
+      <table>
+        <thead><tr><th>Método</th><th class="right"># Tx</th><th class="right">Monto</th><th class="right">Comisión</th><th class="right">Neto</th></tr></thead>
+        <tbody>
+          ${r.methodsRows.map(m => `
+            <tr><td>${m.name}</td><td class="right">${m.count}</td><td class="right">${fmt(m.amount)}</td><td class="right">${m.commission > 0 ? fmt(m.commission) : "—"}</td><td class="right">${fmt(m.amount - m.commission)}</td></tr>
+          `).join("")}
+        </tbody>
+      </table>
+
+      <h2>C · Preventas</h2>
+      <div class="grid">
+        <div class="kpi"><div class="kpi-label">Anticipos cobrados · ${r.anticiposCount} folios</div><div class="kpi-value">${fmt(r.anticiposCobrados)}</div></div>
+        <div class="kpi"><div class="kpi-label">Liquidaciones · ${r.liquidadasCount} folios</div><div class="kpi-value">${fmt(r.liquidaciones)}</div></div>
+        <div class="kpi"><div class="kpi-label">Total recibido</div><div class="kpi-value">${fmt(r.totalPreventas)}</div></div>
+      </div>
+
+      <h2>D · Movimientos de Caja · ${r.sessionsCount} sesión${r.sessionsCount === 1 ? "" : "es"}</h2>
+      <div class="grid">
+        <div class="kpi"><div class="kpi-label">Apertura inicial</div><div class="kpi-value">${fmt(r.apertura)}</div></div>
+        <div class="kpi"><div class="kpi-label">Entradas</div><div class="kpi-value">+ ${fmt(r.entradas)}</div></div>
+        <div class="kpi"><div class="kpi-label">Salidas</div><div class="kpi-value">- ${fmt(r.salidas)}</div></div>
+        <div class="kpi"><div class="kpi-label">Esperado</div><div class="kpi-value">${fmt(r.esperado)}</div></div>
+        <div class="kpi"><div class="kpi-label">Declarado</div><div class="kpi-value">${fmt(r.declarado)}</div></div>
+        <div class="kpi"><div class="kpi-label">Descuadre</div><div class="kpi-value ${Math.abs(r.descuadre) > 0.01 ? "danger" : ""}">${r.descuadre >= 0 ? "+" : ""}${fmt(r.descuadre)}</div></div>
+      </div>
+
+      <h2>E · Top ${r.topProductsRows.length} Productos</h2>
+      <table>
+        <thead><tr><th>#</th><th>Producto</th><th>SKU</th><th class="right">Tickets</th><th class="right">Uds</th><th class="right">Ingreso</th></tr></thead>
+        <tbody>
+          ${r.topProductsRows.map((p, idx) => `
+            <tr><td>${idx + 1}</td><td>${p.name}</td><td>${p.sku || "—"}</td><td class="right">${p.tickets}</td><td class="right">${p.units}</td><td class="right">${fmt(p.revenue)}</td></tr>
+          `).join("")}
+        </tbody>
+      </table>
+
+      <h2>F · Cajeros del Periodo</h2>
+      <table>
+        <thead><tr><th>Cajero</th><th class="right">Tickets</th><th class="right">Cobrado</th><th class="right">Comisión</th><th class="right">Neto</th><th class="right">Descuadre</th></tr></thead>
+        <tbody>
+          ${r.cashierRows.map(c => `
+            <tr>
+              <td>${c.name}${c.hasOpenSession ? ' <span style="color:#f59e0b">·abierta</span>' : ''}</td>
+              <td class="right">${c.tickets}</td>
+              <td class="right">${fmt(c.revenue)}</td>
+              <td class="right">${c.commission > 0 ? fmt(c.commission) : "—"}</td>
+              <td class="right">${fmt(c.revenue - c.commission)}</td>
+              <td class="right">${c.descuadre === 0 ? "—" : `${c.descuadre >= 0 ? "+" : ""}${fmt(c.descuadre)}`}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </body></html>`;
+
+  const w = window.open("", "_blank");
+  if (w) {
+    w.document.write(html);
+    w.document.close();
+    w.print();
+  }
+}
+
+function exportDailyReportPdf(r: DailyReport, fromDate: string, toDate: string, storeName: string, isAdmin: boolean): void {
+  const isSameDay = fromDate === toDate;
+  const periodLabel = isSameDay
+    ? new Date(fromDate + "T12:00").toLocaleDateString("es-MX", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })
+    : `${fromDate} → ${toDate}`;
+
+  const doc = new jsPDF({ unit: "mm", format: "letter" });
+  let y = 16;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(16);
+  doc.text(`Reporte del Día — ${storeName}`, 14, y);
+  y += 6;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.setTextColor(110);
+  doc.text(periodLabel, 14, y);
+  y += 8;
+  doc.setTextColor(20);
+
+  autoTable(doc, {
+    startY: y,
+    head: [["A · Resumen Ejecutivo", ""]],
+    body: [
+      ["Ventas brutas",          fmt(r.subtotal)],
+      ["Descuentos",             `- ${fmt(r.descuento)}`],
+      ["Ventas netas",           fmt(r.ventasNetas)],
+      ["Comisión terminal",      `- ${fmt(r.comisionTotal)}`],
+      ["Neto después comisión",  fmt(r.netoDespuesComision)],
+      ["Tickets · Promedio",     `${r.ticketsCount} · ${fmt(r.promedio)}`],
+      ...(r.tipoCambio != null ? [["Tipo de cambio", `$${r.tipoCambio.toFixed(2)} MXN/USD`]] : []),
+    ],
+    theme: "striped",
+    headStyles: { fillColor: [204, 34, 0] },
+    styles: { fontSize: 10 },
+    columnStyles: { 1: { halign: "right", fontStyle: "bold" } },
+  });
+
+  if (isAdmin && r.tieneDatosCosto) {
+    autoTable(doc, {
+      head: [["Ganancia Bruta · Solo Admin", ""]],
+      body: [
+        ["Ingreso bruto",   fmt(r.ventasNetas)],
+        ["Costo de venta", `- ${fmt(r.costoTotal)}`],
+        ["Ganancia bruta",  fmt(r.gananciaBruta)],
+        ["Margen",         `${r.margenPct.toFixed(1)}%`],
+      ],
+      theme: "striped",
+      headStyles: { fillColor: [204, 34, 0] },
+      styles: { fontSize: 10 },
+      columnStyles: { 1: { halign: "right", fontStyle: "bold" } },
+    });
+  }
+
+  autoTable(doc, {
+    head: [["B · Método", "# Tx", "Monto", "Comisión", "Neto"]],
+    body: r.methodsRows.map(m => [
+      m.name,
+      String(m.count),
+      fmt(m.amount),
+      m.commission > 0 ? fmt(m.commission) : "—",
+      fmt(m.amount - m.commission),
+    ]),
+    theme: "striped",
+    headStyles: { fillColor: [204, 34, 0] },
+    styles: { fontSize: 10 },
+    columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right", fontStyle: "bold" } },
+  });
+
+  autoTable(doc, {
+    head: [["C · Preventas", ""]],
+    body: [
+      [`Anticipos cobrados (${r.anticiposCount} folios)`, fmt(r.anticiposCobrados)],
+      [`Liquidaciones (${r.liquidadasCount} folios)`,     fmt(r.liquidaciones)],
+      ["Total recibido",                                   fmt(r.totalPreventas)],
+    ],
+    theme: "striped",
+    headStyles: { fillColor: [204, 34, 0] },
+    styles: { fontSize: 10 },
+    columnStyles: { 1: { halign: "right", fontStyle: "bold" } },
+  });
+
+  autoTable(doc, {
+    head: [[`D · Movimientos de Caja (${r.sessionsCount} sesión${r.sessionsCount === 1 ? "" : "es"})`, ""]],
+    body: [
+      ["Apertura inicial",   fmt(r.apertura)],
+      ["Entradas",          `+ ${fmt(r.entradas)}`],
+      ["Salidas",           `- ${fmt(r.salidas)}`],
+      ["Esperado al cierre", fmt(r.esperado)],
+      ["Declarado real",     fmt(r.declarado)],
+      ["Descuadre",          `${r.descuadre >= 0 ? "+" : ""}${fmt(r.descuadre)}`],
+    ],
+    theme: "striped",
+    headStyles: { fillColor: [204, 34, 0] },
+    styles: { fontSize: 10 },
+    columnStyles: { 1: { halign: "right", fontStyle: "bold" } },
+  });
+
+  autoTable(doc, {
+    head: [["E · Top Productos", "Tickets", "Uds", "Ingreso"]],
+    body: r.topProductsRows.map((p, idx) => [
+      `${idx + 1}. ${p.name}${p.sku ? ` · ${p.sku}` : ""}`,
+      String(p.tickets),
+      String(p.units),
+      fmt(p.revenue),
+    ]),
+    theme: "striped",
+    headStyles: { fillColor: [204, 34, 0] },
+    styles: { fontSize: 9 },
+    columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right", fontStyle: "bold" } },
+  });
+
+  autoTable(doc, {
+    head: [["F · Cajero", "Tickets", "Cobrado", "Comisión", "Neto", "Descuadre"]],
+    body: r.cashierRows.map(c => [
+      `${c.name}${c.hasOpenSession ? " (caja abierta)" : ""}`,
+      String(c.tickets),
+      fmt(c.revenue),
+      c.commission > 0 ? fmt(c.commission) : "—",
+      fmt(c.revenue - c.commission),
+      c.descuadre === 0 ? "—" : `${c.descuadre >= 0 ? "+" : ""}${fmt(c.descuadre)}`,
+    ]),
+    theme: "striped",
+    headStyles: { fillColor: [204, 34, 0] },
+    styles: { fontSize: 9 },
+    columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right", fontStyle: "bold" }, 5: { halign: "right" } },
+  });
+
+  doc.save(`reporte-${fromDate}${isSameDay ? "" : "_" + toDate}.pdf`);
+}
+
 // ─── Componente principal ─────────────────────────────────────────────────────
 export function SalesPage() {
   const { user } = useAuth();
@@ -351,12 +967,14 @@ export function SalesPage() {
   const canPickStore = isAdmin;
   // Cajero no ve cards de finanzas (ingresos, por cobrar, totales). Gerente y
   // admin sí — gerente para su tienda, admin para todas o la que elija.
+  // KPI row (Ingresos Periodo/Hoy/Por Cobrar/Totales/Artículos) solo admin.
+  // Gráfico semanal admin + gerente. Cajero no ve nada de agregados.
+  const canSeeKpiRow = isAdmin;
   const canSeeFinancials = !isCashier;
   // Gerente puede filtrar por cajero dentro de su tienda; admin si selecciona
   // tienda también; cajero queda forzado a sus propias ventas.
   const canFilterByCashier = isAdmin || isGerente;
 
-  const [chartOpen, setChartOpen] = useState(false);
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
   // Refs a los <input type="date"> para abrir el native picker en cualquier
   // clic del pill (Chromium/Firefox soportan input.showPicker()).
@@ -377,7 +995,7 @@ export function SalesPage() {
   const [filterMethod, setFilterMethod]       = useState("all");
   const [filterCashierId, setFilterCashierId] = useState<number | null>(null);
   const [isMethodOpen, setIsMethodOpen]       = useState(false);
-  const [activeTab, setActiveTab]             = useState<"ventas" | "productos">("ventas");
+  const [activeTab, setActiveTab]             = useState<"ventas" | "productos" | "flujo" | "reporte">("ventas");
   const [searchSale, setSearchSale]           = useState("");
   const [searchProduct, setSearchProduct]     = useState("");
 
@@ -426,6 +1044,9 @@ export function SalesPage() {
   const queryClient = useQueryClient();
   const storesQuery = useStoresQuery({ active: true, enabled: canPickStore });
   const stores: StoreType[] = storesQuery.data ?? [];
+  const activeStoreName: string = (effectiveStoreId
+    ? (stores.find(s => s.id === effectiveStoreId)?.name ?? user?.store?.name ?? "")
+    : (user?.store?.name ?? "Todas las tiendas"));
 
   // Lista de cajeros de la tienda — solo gerente/admin la consume para el
   // dropdown "Filtrar por cajero". Admin sin tienda seleccionada → todos.
@@ -452,6 +1073,21 @@ export function SalesPage() {
   const salesQuery = useSalesQuery(salesParams as Parameters<typeof useSalesQuery>[0]);
   const preSaleOrdersQuery = usePreSaleOrdersQuery(preSaleOrdersParams as Parameters<typeof usePreSaleOrdersQuery>[0]);
   const productsQuery = useProductsQuery();
+
+  // Reporte del Día — sesiones de caja del rango filtrado. Backend RBAC ya
+  // limita a la tienda del gerente/cajero. Solo se carga cuando el tab está
+  // activo o cuando se quiere imprimir/exportar.
+  const cashReportQuery = useQuery({
+    queryKey: ['daily-report', 'cash', filterStartDate, filterEndDate, selectedStoreId],
+    queryFn: () => getCashReport({
+      from: filterStartDate || getTodayLocal(),
+      to:   filterEndDate   || getTodayLocal(),
+      ...(selectedStoreId ? { store_id: selectedStoreId } : {}),
+    }),
+    enabled: canSeeFinancials,
+    staleTime: 30_000,
+  });
+  const exchangeRateQuery = useExchangeRateQuery({ enabled: canSeeFinancials });
 
   const sales: SaleDetail[] = salesQuery.data?.data ?? [];
   const preSaleOrders: PreSaleOrder[] = preSaleOrdersQuery.data?.data ?? [];
@@ -557,6 +1193,163 @@ export function SalesPage() {
     });
     return days.map(d => ({ day: d, revenue: map[d] || 0 }));
   }, [filteredSales, filteredPreSales]);
+
+  // ── Reporte del Día (Lectura X) ────────────────────────────────────────────
+  // Agregados para el tab "Reporte del Día". Reutiliza filteredSales /
+  // filteredPreSales (ya scopeados por rango + tienda) y suma data de cortes
+  // de caja (cashReportQuery) y TC del día (exchangeRateQuery).
+  const dailyReport = useMemo(() => {
+    // A) Resumen ejecutivo
+    const subtotal     = filteredSales.reduce((a, s) => a + (s.subtotal ?? s.total), 0);
+    const descuento    = filteredSales.reduce((a, s) => a + (s.discount ?? 0), 0);
+    const ventasNetas  = filteredSales.reduce((a, s) => a + s.total, 0);
+    const comisionTotal = filteredSales.reduce((a, s) => a + (s.commission_amount ?? 0), 0);
+    const netoDespuesComision = ventasNetas - comisionTotal;
+    const ticketsCount = filteredSales.length;
+    const promedio     = ticketsCount > 0 ? ventasNetas / ticketsCount : 0;
+
+    // B) Desglose por método de pago — iterar payments[] de cada venta
+    type Bucket = { count: number; amount: number; commission: number };
+    const byMethod = new Map<string, Bucket>();
+    filteredSales.forEach(s => {
+      (s.payments ?? []).forEach(p => {
+        const name = p.payment_method?.name ?? "Sin método";
+        const b = byMethod.get(name) ?? { count: 0, amount: 0, commission: 0 };
+        b.count     += 1;
+        b.amount    += Number(p.amount) || 0;
+        b.commission += Number(p.commission_amount) || 0;
+        byMethod.set(name, b);
+      });
+    });
+    const methodsRows = Array.from(byMethod.entries())
+      .map(([name, b]) => ({ name, ...b }))
+      .sort((a, b) => b.amount - a.amount);
+
+    // C) Preventas
+    // Anticipos cobrados = preventas creadas en el rango (paid_amount inicial)
+    // Liquidaciones      = preventas con status "delivered" en el rango (total entregado)
+    const anticiposCobrados = filteredPreSales
+      .filter(p => p.status === "pending" || p.status === "ready")
+      .reduce((a, p) => a + (p.paid_amount ?? 0), 0);
+    const anticiposCount = filteredPreSales.filter(p => p.status === "pending" || p.status === "ready").length;
+    const liquidaciones = filteredPreSales
+      .filter(p => p.status === "delivered")
+      .reduce((a, p) => a + (p.paid_amount ?? 0), 0);
+    const liquidadasCount = filteredPreSales.filter(p => p.status === "delivered").length;
+    const totalPreventas = anticiposCobrados + liquidaciones;
+
+    // D) Movimientos de caja — suma de sesiones del rango (closed o open)
+    const sessions: CashSessionReport[] = cashReportQuery.data?.sessions ?? [];
+    const apertura  = sessions.reduce((a, s) => a + (s.opening_cash ?? 0), 0);
+    const entradas  = sessions.reduce((a, s) => a + (s.total_entradas ?? 0), 0);
+    const salidas   = sessions.reduce((a, s) => a + (s.total_salidas ?? 0), 0);
+    const esperado  = sessions.reduce((a, s) => a + (s.expected_cash ?? 0), 0);
+    const declarado = sessions.reduce((a, s) => a + (s.closing_cash ?? 0), 0);
+    const descuadre = sessions.reduce((a, s) => a + (s.difference ?? 0), 0);
+    const sesionesAbiertas = sessions.filter(s => s.status === "open").length;
+    const sesionesCerradas = sessions.filter(s => s.status === "closed").length;
+
+    // E) Top productos — agregamos aquí en vez de depender de `productStats`
+    // (que se calcula más abajo) para no acoplar el orden de los useMemo.
+    type ProdRow = { product_id: string; name: string; sku: string; units: number; revenue: number; tickets: number };
+    const prodMap = new Map<string, ProdRow>();
+    filteredSales.forEach(sale => {
+      const seenInThisSale = new Set<string>();
+      (sale.items ?? []).forEach(item => {
+        const pid = String(item.product_id);
+        const row = prodMap.get(pid) ?? {
+          product_id: pid,
+          name: item.product?.name ?? `#${pid}`,
+          sku:  item.product?.sku  ?? "",
+          units: 0, revenue: 0, tickets: 0,
+        };
+        row.units   += item.quantity;
+        row.revenue += item.price * item.quantity;
+        if (!seenInThisSale.has(pid)) { row.tickets += 1; seenInThisSale.add(pid); }
+        prodMap.set(pid, row);
+      });
+    });
+    const topProductsRows = Array.from(prodMap.values())
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 10);
+
+    // G) Ganancia bruta (solo admin — backend solo expone cost a admin).
+    // Prioridad: item.cost (snapshot histórico al momento del INSERT) →
+    // fallback item.product.cost (cost actual del producto). El snapshot es la
+    // verdad: ventas creadas después de 2026-05-22 lo tienen siempre.
+    let costoTotal = 0;
+    let itemsConCosto = 0;
+    let itemsSinCosto = 0;
+    filteredSales.forEach(s => {
+      (s.items ?? []).forEach(item => {
+        const cost = item.cost ?? item.product?.cost;
+        if (cost != null) {
+          costoTotal += cost * item.quantity;
+          itemsConCosto += 1;
+        } else {
+          itemsSinCosto += 1;
+        }
+      });
+    });
+    const gananciaBruta = ventasNetas - costoTotal;
+    const margenPct = ventasNetas > 0 ? (gananciaBruta / ventasNetas) * 100 : 0;
+    const tieneDatosCosto = itemsConCosto > 0;
+    const tieneItemsSinCosto = itemsSinCosto > 0;
+
+    // F) Tabla por cajero — agrupar filteredSales por user_id + cruzar con
+    // sesiones de caja del rango para el descuadre por cajero.
+    type CashierRow = {
+      user_id: number; name: string;
+      tickets: number; revenue: number; commission: number;
+      descuadre: number; hasOpenSession: boolean;
+    };
+    const cashierMap = new Map<number, CashierRow>();
+    filteredSales.forEach(s => {
+      if (s.user_id == null) return;
+      const row = cashierMap.get(s.user_id) ?? {
+        user_id: s.user_id,
+        name: s.user?.name ?? `Usuario #${s.user_id}`,
+        tickets: 0, revenue: 0, commission: 0, descuadre: 0, hasOpenSession: false,
+      };
+      row.tickets    += 1;
+      row.revenue    += s.total;
+      row.commission += s.commission_amount ?? 0;
+      // Si SaleResource trae user pero el map no tenía nombre, llenarlo.
+      if (s.user?.name && row.name.startsWith("Usuario #")) row.name = s.user.name;
+      cashierMap.set(s.user_id, row);
+    });
+    // Cruzar con sesiones para sumar descuadre por cajero.
+    sessions.forEach(sess => {
+      const row = cashierMap.get(sess.user.id);
+      if (!row) return;
+      row.descuadre += sess.difference ?? 0;
+      if (sess.status === "open") row.hasOpenSession = true;
+    });
+    const cashierRows: CashierRow[] = Array.from(cashierMap.values())
+      .sort((a, b) => b.revenue - a.revenue);
+
+    return {
+      // A
+      subtotal, descuento, ventasNetas, comisionTotal, netoDespuesComision,
+      ticketsCount, promedio,
+      // B
+      methodsRows,
+      tipoCambio: exchangeRateQuery.data ?? null,
+      // C
+      anticiposCobrados, anticiposCount,
+      liquidaciones, liquidadasCount,
+      totalPreventas,
+      // D
+      apertura, entradas, salidas, esperado, declarado, descuadre,
+      sesionesAbiertas, sesionesCerradas, sessionsCount: sessions.length,
+      // E
+      topProductsRows,
+      // F
+      cashierRows,
+      // G — solo admin (gerente recibe null en product.cost)
+      costoTotal, gananciaBruta, margenPct, tieneDatosCosto, tieneItemsSinCosto,
+    };
+  }, [filteredSales, filteredPreSales, cashReportQuery.data, exchangeRateQuery.data]);
 
   // ── Lista de ventas ────────────────────────────────────────────────────────
   const sortedSales = useMemo(
@@ -839,10 +1632,9 @@ export function SalesPage() {
         </div>
       </div>
 
-      {/* ── KPIs ── Cards de finanzas solo para admin/gerente. El cajero no
-          ve totales ni por cobrar (Joel pidió que el cajero vea solo sus ventas
-          sin métricas globales). */}
-      {canSeeFinancials && (
+      {/* ── KPIs ── Solo admin. Gerente y cajero NO ven agregados del row.
+          Gerente sí ve el tab de Flujo de Caja Semanal abajo. */}
+      {canSeeKpiRow && (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
           {[
             { label: (filterStartDate || filterEndDate) ? "Ingresos Período" : "Ingresos Totales", value: fmt(totalRevenue), icon: DollarSign, color: T.redBright },
@@ -871,23 +1663,35 @@ export function SalesPage() {
         {/* Tab bar */}
         <div className="flex items-center justify-between px-8 pt-7 pb-0" style={{ borderBottom: "1px solid var(--td-panel-border)" }}>
           <div className="flex items-end gap-1">
-            {(["ventas", "productos"] as const).map(tab => (
+            {([
+              { key: "ventas",    label: "Lista de Ventas", icon: Receipt,   count: displayedSales.length },
+              { key: "productos", label: "Por Producto",    icon: Package,   count: displayedProducts.length },
+              // El tab de flujo y reporte solo aparecen para admin/gerente.
+              ...(canSeeFinancials
+                ? [
+                    { key: "reporte" as const, label: "Reporte del Día",       icon: FileText,  count: null as number | null },
+                    { key: "flujo"   as const, label: "Flujo de Caja Semanal", icon: BarChart3, count: null as number | null },
+                  ]
+                : []),
+            ] as const).map(t => (
               <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
+                key={t.key}
+                onClick={() => setActiveTab(t.key)}
                 className={`flex items-center gap-2.5 px-6 py-3.5 rounded-t-2xl text-[10px] font-black uppercase tracking-widest transition-all border-b-2 -mb-px ${
-                  activeTab === tab
+                  activeTab === t.key
                     ? "border-red-500 bg-gradient-to-b from-red-500/10 to-transparent"
                     : "border-transparent hover:bg-white/[0.02]"
                 }`}
-                style={{ color: activeTab === tab ? "var(--td-text-hi)" : "var(--td-text-lo)" }}
+                style={{ color: activeTab === t.key ? "var(--td-text-hi)" : "var(--td-text-lo)" }}
               >
-                {tab === "ventas" ? <Receipt size={14} /> : <Package size={14} />}
-                {tab === "ventas" ? "Lista de Ventas" : "Por Producto"}
-                <span className="px-2 py-0.5 rounded-full text-[8px] font-black"
-                  style={{ background: activeTab === tab ? "rgba(255,68,34,0.2)" : "var(--td-panel-bg)", color: activeTab === tab ? "#FF8866" : "var(--td-text-lo)" }}>
-                  {tab === "ventas" ? displayedSales.length : displayedProducts.length}
-                </span>
+                <t.icon size={14} />
+                {t.label}
+                {t.count !== null && (
+                  <span className="px-2 py-0.5 rounded-full text-[8px] font-black"
+                    style={{ background: activeTab === t.key ? "rgba(255,68,34,0.2)" : "var(--td-panel-bg)", color: activeTab === t.key ? "#FF8866" : "var(--td-text-lo)" }}>
+                    {t.count}
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -947,7 +1751,9 @@ export function SalesPage() {
                 <span className="ml-auto">Total</span>
               </div>
 
-              <div className="space-y-1.5">
+              {/* Body con scroll interno. Sin esto la página entera scrollea
+                  y el header de columnas queda lejos cuando hay muchos records. */}
+              <div className="space-y-1.5 overflow-y-auto pr-1" style={{ maxHeight: "60vh" }}>
                 {loading ? (
                   // Skeleton: 5 filas con shimmer mientras cargan los datos
                   Array.from({ length: 5 }).map((_, i) => (
@@ -1001,7 +1807,7 @@ export function SalesPage() {
                 <span className="text-right">Total recibido</span>
               </div>
 
-              <div className="space-y-2">
+              <div className="space-y-2 overflow-y-auto pr-1" style={{ maxHeight: "60vh" }}>
                 {loading ? (
                   Array.from({ length: 5 }).map((_, i) => (
                     <div
@@ -1079,59 +1885,68 @@ export function SalesPage() {
               </div>
             </>
           )}
+
+          {/* ══ Tab: Reporte del Día (Lectura X) ══ (admin + gerente) */}
+          {activeTab === "reporte" && canSeeFinancials && (
+            <ReporteDelDia
+              report={dailyReport}
+              fromDate={filterStartDate || getTodayLocal()}
+              toDate={filterEndDate || getTodayLocal()}
+              storeName={activeStoreName}
+              isAdmin={isAdmin}
+            />
+          )}
+
+          {/* ══ Tab: Flujo de Caja Semanal ══ (admin + gerente) */}
+          {activeTab === "flujo" && canSeeFinancials && (
+            <div className="space-y-4">
+              {/* Breakdown por método de pago */}
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {[
+                  { l: "Efectivo", v: methodsBreakdown["Efectivo"] || 0, c: "#34d399" },
+                  { l: "Tarjeta",  v: methodsBreakdown["Tarjeta"]  || 0, c: "#60a5fa" },
+                  { l: "Dólares",  v: methodsBreakdown["Dólares"]  || 0, c: "#fbbf24" },
+                ].map((m, i) => (
+                  <div key={i} className="rounded-2xl px-4 py-3" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid var(--td-panel-border)" }}>
+                    <p className="text-[8px] font-black uppercase tracking-widest" style={{ color: m.c }}>{m.l}</p>
+                    <p className="text-base font-black mt-1" style={{ color: "var(--td-text-hi)" }}>{fmt(m.v)}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Gráfico de revenue por día de la semana (Dom→Sáb) */}
+              <div className="rounded-2xl p-4" style={{ background: "rgba(0,0,0,0.15)", border: "1px solid var(--td-panel-border)" }}>
+                <div className="flex items-center gap-2 mb-3">
+                  <BarChart3 size={13} style={{ color: "var(--td-text-lo)" }} />
+                  <span className="text-[9px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>
+                    Revenue por día · {filterStartDate || "histórico"}{filterEndDate ? ` → ${filterEndDate}` : ""}
+                  </span>
+                </div>
+                <div className="h-[260px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={salesByDay}>
+                      <defs>
+                        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%"  stopColor="#FF4422" stopOpacity={0.25} />
+                          <stop offset="95%" stopColor="#FF4422" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
+                      <XAxis dataKey="day" tick={{ fontSize: 9, fill: "var(--td-text-lo)" }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fontSize: 9, fill: "var(--td-text-lo)" }} axisLine={false} tickLine={false} />
+                      <Tooltip contentStyle={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)", borderRadius: "10px" }} itemStyle={{ color: "#FF4422", fontWeight: 900, fontSize: 11 }} />
+                      <Area type="monotone" dataKey="revenue" stroke="#FF4422" strokeWidth={2.5} fill={`url(#${gradientId})`} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+                <p className="text-[9px] mt-2" style={{ color: "var(--td-text-lo)" }}>
+                  Suma de ventas + anticipos de preventa, agrupado por día de la semana dentro del rango filtrado.
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
-
-      {/* ── Gráfico (colapsable) — solo admin/gerente, métricas globales ── */}
-      {canSeeFinancials && (
-      <div className="rounded-[28px] overflow-hidden" style={T.glassDim}>
-        <button onClick={() => setChartOpen(v => !v)}
-          className="w-full flex items-center justify-between px-6 py-4 hover:bg-white/[0.02] transition-colors">
-          <div className="flex items-center gap-3">
-            <BarChart3 size={15} style={{ color: "var(--td-text-lo)" }} />
-            <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>Flujo de Caja Semanal</span>
-            <span className="text-[8px] uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>— {chartOpen ? "ocultar" : "ver gráfico"}</span>
-          </div>
-          <div className="flex items-center gap-6">
-            <div className="hidden md:flex items-center gap-5">
-              {[
-                { l: "Efectivo", v: methodsBreakdown["Efectivo"] || 0, c: "#34d399" },
-                { l: "Tarjeta",  v: methodsBreakdown["Tarjeta"]  || 0, c: "#60a5fa" },
-                { l: "Dólares",  v: methodsBreakdown["Dólares"]  || 0, c: "#fbbf24" },
-              ].map((m, i) => (
-                <div key={i} className="text-right">
-                  <p className="text-[8px] font-black uppercase tracking-widest" style={{ color: m.c }}>{m.l}</p>
-                  <p className="text-xs font-black" style={{ color: "var(--td-text-hi)" }}>{fmt(m.v)}</p>
-                </div>
-              ))}
-            </div>
-            {chartOpen ? <ChevronUp size={14} style={{ color: "var(--td-text-lo)" }} /> : <ChevronDown size={14} style={{ color: "var(--td-text-lo)" }} />}
-          </div>
-        </button>
-
-        {chartOpen && (
-          <div className="px-6 pb-6 pt-4" style={{ borderTop: "1px solid var(--td-panel-border)" }}>
-            <div className="h-[200px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={salesByDay}>
-                  <defs>
-                    <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%"  stopColor="#FF4422" stopOpacity={0.25} />
-                      <stop offset="95%" stopColor="#FF4422" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
-                  <XAxis dataKey="day" tick={{ fontSize: 9, fill: "var(--td-text-lo)" }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 9, fill: "var(--td-text-lo)" }} axisLine={false} tickLine={false} />
-                  <Tooltip contentStyle={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)", borderRadius: "10px" }} itemStyle={{ color: "#FF4422", fontWeight: 900, fontSize: 11 }} />
-                  <Area type="monotone" dataKey="revenue" stroke="#FF4422" strokeWidth={2.5} fill={`url(#${gradientId})`} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        )}
-      </div>
-      )}
 
     </div>
   );

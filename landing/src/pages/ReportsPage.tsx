@@ -16,6 +16,7 @@ import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
 import { getSales } from "@tadaima/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useStoresQuery } from "@/hooks/queries/useStores";
+import { getTodayLocal, toLocalYmd } from "@/lib/date";
 import { queryKeys } from "@/lib/queryKeys";
 import type { SalesReport, InventoryReport, TopProductsReport, CustomersReport } from "@tadaima/api";
 import type { SaleDetail, Store as StoreType } from "@tadaima/api";
@@ -138,8 +139,10 @@ export function ReportsPage() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<TabId>("ventas");
 
-  const today         = new Date().toISOString().split("T")[0]!;
-  const firstOfMonth  = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split("T")[0]!;
+  // Fecha local del navegador (no UTC). Después de 6pm MX, `toISOString` daba
+  // el día siguiente como "hoy" → filtros mal alineados.
+  const today         = getTodayLocal();
+  const firstOfMonth  = toLocalYmd(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
 
   const [from, setFrom] = useState(firstOfMonth);
   const [to, setTo]     = useState(today);
@@ -333,13 +336,16 @@ export function ReportsPage() {
 
             {/* Quick presets */}
             {(() => {
+              // Todos los presets se calculan con fecha LOCAL del navegador
+              // (no UTC). Antes los `toISOString().split("T")[0]` daban el
+              // día siguiente para usuarios MX después de 6pm.
               const todayD = new Date();
-              const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0]!;
-              const sevenAgo = new Date(Date.now() - 6 * 86400000).toISOString().split("T")[0]!;
-              const thirtyAgo = new Date(Date.now() - 29 * 86400000).toISOString().split("T")[0]!;
-              const firstOfLastMonth = new Date(todayD.getFullYear(), todayD.getMonth() - 1, 1).toISOString().split("T")[0]!;
-              const lastOfLastMonth = new Date(todayD.getFullYear(), todayD.getMonth(), 0).toISOString().split("T")[0]!;
-              const firstOfYear = new Date(todayD.getFullYear(), 0, 1).toISOString().split("T")[0]!;
+              const yesterday        = toLocalYmd(new Date(Date.now() - 86400000));
+              const sevenAgo         = toLocalYmd(new Date(Date.now() - 6 * 86400000));
+              const thirtyAgo        = toLocalYmd(new Date(Date.now() - 29 * 86400000));
+              const firstOfLastMonth = toLocalYmd(new Date(todayD.getFullYear(), todayD.getMonth() - 1, 1));
+              const lastOfLastMonth  = toLocalYmd(new Date(todayD.getFullYear(), todayD.getMonth(), 0));
+              const firstOfYear      = toLocalYmd(new Date(todayD.getFullYear(), 0, 1));
               const presets = [
                 { label: "Hoy",         from: today,            to: today },
                 { label: "Ayer",        from: yesterday,        to: yesterday },

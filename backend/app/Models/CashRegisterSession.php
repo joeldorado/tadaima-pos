@@ -42,6 +42,11 @@ class CashRegisterSession extends Model
         return $this->hasMany(CashMovement::class, 'register_session_id')->latest('created_at');
     }
 
+    public function sales(): HasMany
+    {
+        return $this->hasMany(Sale::class, 'register_session_id');
+    }
+
     // ── Computed (requiere movements cargados) ────────────────────────────────
 
     public function getBalanceAttribute(): float

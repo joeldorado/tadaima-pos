@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Exceptions\CashSessionConflictException;
 use App\Models\CashMovement;
 use App\Models\CashRegister;
 use App\Models\CashRegisterSession;
@@ -23,15 +24,19 @@ class CashRegisterService
     public function open(int $registerId, float $openingCash, int $userId): CashRegisterSession
     {
         return DB::transaction(function () use ($registerId, $openingCash, $userId) {
-            // Verificar que el usuario no tiene sesión abierta
+            // Verificar que el usuario no tiene sesión abierta. Si la tiene,
+            // devolvemos info estructurada para que el frontend ofrezca
+            // "reanudar" (misma caja) o "cerrar y abrir nueva" (otra caja).
             $userSession = CashRegisterSession::where('user_id', $userId)
                 ->where('status', CashRegisterSession::STATUS_OPEN)
+                ->with(['register.store', 'user:id,name'])
                 ->lockForUpdate()
                 ->first();
 
             if ($userSession) {
-                throw new \DomainException(
-                    'Ya tienes una sesión de caja abierta (ID: ' . $userSession->id . '). Ciérrala antes de abrir otra.'
+                throw new CashSessionConflictException(
+                    CashSessionConflictException::KIND_OWN,
+                    $userSession,
                 );
             }
 
@@ -44,11 +49,15 @@ class CashRegisterService
 
             $registerSession = CashRegisterSession::where('register_id', $registerId)
                 ->where('status', CashRegisterSession::STATUS_OPEN)
+                ->with(['register.store', 'user:id,name'])
                 ->lockForUpdate()
                 ->first();
 
             if ($registerSession) {
-                throw new \DomainException("La caja '{$register->name}' ya tiene una sesión abierta.");
+                throw new CashSessionConflictException(
+                    CashSessionConflictException::KIND_FOREIGN,
+                    $registerSession,
+                );
             }
 
             $session = CashRegisterSession::create([

@@ -19,20 +19,23 @@ import { CameraScannerModal } from "@/components/CameraScannerModal";
 import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
 const tadaimaLogo = null // TODO: replace with real logo asset
 import { toast } from "sonner";
-import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, closeSession, createLayaway, getCustomers, createCustomer, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getPreSaleOrders, getSales, getProductsLight, storageUrl, getCashReport } from "@tadaima/api";
+import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, closeSession, forceCloseSession, getActiveSession, createLayaway, getCustomers, createCustomer, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getPreSaleOrders, getSales, getProductsLight, storageUrl, getCashReport } from "@tadaima/api";
+import type { OpenSessionConflict } from "@tadaima/api";
 import type { CashSessionReport } from "@tadaima/api";
 import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
+import { OpenSessionConflictModal } from "@/components/cash/OpenSessionConflictModal";
 import { useQueryClient } from "@tanstack/react-query";
 import { useProductsLightQuery, useProductsSearchQuery, useBackgroundProductsPrefetch } from "@/hooks/queries/useProducts";
 // ADR-014: useReservedStockQuery removido — carrito client-side, sin polling.
 import { usePaymentMethodsQuery } from "@/hooks/queries/usePaymentMethods";
 import { useTerminalsQuery } from "@/hooks/queries/useTerminals";
-import { useActiveSessionQuery, useCashRegistersQuery, useActiveSessionsQuery } from "@/hooks/queries/useCashSession";
+import { useActiveSessionQuery, useCashRegistersQuery, useCashRegistersWithSessionQuery, useActiveSessionsQuery } from "@/hooks/queries/useCashSession";
 import { useOnlineUsersQuery } from "@/hooks/queries/useUsers";
 import { useExchangeRateQuery } from "@/hooks/queries/useSystemSettings";
 import { usePreSaleCatalogsQuery, usePreSaleOrdersQuery } from "@/hooks/queries/usePreSales";
 import { useCustomersAllQuery } from "@/hooks/queries/useCustomers";
 import { queryKeys } from "@/lib/queryKeys";
+import { getTodayLocal } from "@/lib/date";
 import type { CashSession, CashRegisterInfo, PaymentMethod as ApiPaymentMethod, PreSaleCatalog, PreSaleOrder, PreSaleOrderItem, SaleDetail, Terminal, ExternalCardLookup } from "@tadaima/api";
 type HistorialEntry = { type: 'sale'; data: SaleDetail } | { type: 'presale'; data: PreSaleOrder };
 import { useCartDraftStore } from "@/stores/cartDraftStore";
@@ -414,6 +417,16 @@ export function SellPage() {
   const [openCashRegisterId, setOpenCashRegisterId] = useState<number | "">("");
   const [openCashAmount, setOpenCashAmount] = useState("");
   const [openingCash, setOpeningCash]       = useState(false);
+  // Conflicto al abrir caja (existing session bloquea). UI muestra modal apropiado.
+  const [openSessionConflict, setOpenSessionConflict] = useState<OpenSessionConflict | null>(null);
+  const [resolvingConflict, setResolvingConflict] = useState(false);
+  // Cajas con sesión activa embebida — solo se fetch cuando el modal abre,
+  // para mostrar "Ocupada por X" en el dropdown.
+  const cashRegistersDetailedQuery = useCashRegistersWithSessionQuery(
+    activeStore?.id,
+    { enabled: !cashSession && showOpenCashModal },
+  );
+  const cashRegistersDetailed = cashRegistersDetailedQuery.data ?? [];
   const [showCloseCashModal, setShowCloseCashModal] = useState(false);
   const [closeCashAmount, setCloseCashAmount] = useState("");
   const [closingCashLoading, setClosingCashLoading] = useState(false);
@@ -1039,6 +1052,62 @@ export function SellPage() {
    * conditions, multi-tab del mismo browser sigue sincronizando vía
    * BroadcastChannel del zustand persist.
    */
+  /**
+   * Agregar producto desde SCANNER. Reglas (Joel 2026-05-25):
+   *  - Si el producto NO está en venta → crear fila con qty=1.
+   *  - Si YA está en venta → NO sumar, NO crear fila duplicada. Toast info.
+   *  - El cajero solo puede subir cantidad con +/− manual.
+   *
+   * Función separada de `addToCart` porque ese sí suma (es el comportamiento
+   * normal de clicks en catálogo / preventas / etc).
+   */
+  const addScanToCart = (product: Product, priceLevel: PriceLevel = "a"): void => {
+    const mesaId = activeMesa.id;
+    const exists = activeMesa.items.some(i => i.product.id === product.id);
+    if (exists) {
+      toast.info(`${product.name} ya está en la venta · usa + para sumar`);
+      return;
+    }
+    // Stock guard idéntico al de addToCart, pero antes de mutar.
+    if (!activeMesa.isPreventa) {
+      const available = availableStockFor(product, mesaId);
+      if (available !== undefined && available < 1) {
+        const reserved = reservedInOtherMesas(product.id, mesaId);
+        toast.error(
+          reserved > 0
+            ? `Stock insuficiente: 0 disponible(s) (${reserved} reservado(s) en otra caja).`
+            : `Stock insuficiente: sin unidades disponibles.`,
+        );
+        return;
+      }
+    }
+    const unitPrice =
+      priceLevel === "b" && product.price_b ? product.price_b :
+      priceLevel === "c" && product.price_c ? product.price_c :
+      priceLevel === "d" && product.price_d ? product.price_d :
+      priceLevel === "e" && product.price_e ? product.price_e :
+      product.price_a || 0;
+
+    let actuallyAdded = false;
+    updMesa(mesaId, m => {
+      // Double-check dentro del updater por si hay race condition entre
+      // dos escaneos concurrentes que pasaron el primer check.
+      if (m.items.some(i => i.product.id === product.id)) return m;
+      actuallyAdded = true;
+      const newItem = {
+        product, quantity: 1, priceLevel,
+        ...(m.isPreventa ? { depositAmount: unitPrice } : {}),
+      };
+      const newItems = [...m.items, newItem];
+      const willHaveCashOnly = newItems.some(i => i.product.payment_restriction === "cash_only");
+      const newPaymentMethod =
+        willHaveCashOnly && !["Efectivo", "Dólares"].includes(m.paymentMethod)
+          ? "Efectivo" : m.paymentMethod;
+      return { ...m, items: newItems, paymentMethod: newPaymentMethod };
+    });
+    if (actuallyAdded) toast.success(`Agregado: ${product.name}`);
+  };
+
   const addToCart = (product: Product, priceLevel: PriceLevel = "a", quantity: number = 1) => {
     const mesaId = activeMesa.id;
     const preItem = activeMesa.items.find(i => i.product.id === product.id);
@@ -1296,6 +1365,32 @@ export function SellPage() {
   };
 
   /**
+   * Quitar cliente asignado a la venta activa. Disponible para todos los roles
+   * mientras la caja está abierta y se está vendiendo — útil cuando el cajero
+   * se equivocó de cliente o el cliente decidió no usar su credencial.
+   *
+   * Bloqueado solo cuando la venta es PREVENTA cargada de un folio existente
+   * (el folio ya tiene customer_id en backend; quitarlo aquí lo desincronizaría
+   * con la fila de pre_sale_orders).
+   */
+  const clearCustomer = () => {
+    if (activeMesa.loadedPreSaleOrderId) {
+      toast.error("No se puede quitar el cliente de un folio cargado.");
+      return;
+    }
+    updMesa(activeMesa.id, m => ({
+      ...m,
+      customerId: undefined,
+      customerName: undefined,
+      customerPhone: "",
+      customerEmail: "",
+      isNewCustomer: false,
+    }));
+    setCustomerSearch("");
+    toast.info("Cliente quitado de la venta");
+  };
+
+  /**
    * Vaciar carrito (ADR-014: solo state local). zustand snapshot persistido se
    * actualiza automáticamente vía el useEffect que escucha cambios de mesas[].
    */
@@ -1493,7 +1588,10 @@ export function SellPage() {
     const code = raw.trim();
     if (!code) return;
     const now = Date.now();
-    if (lastScanRef.current.code === code && now - lastScanRef.current.at < 1500) {
+    // Dedup window 3s — defensiva contra lectores HID que emiten doble Enter,
+    // o cajeros que escanean dos veces creyendo que la primera "no funcionó".
+    // El cajero quiere qty=2 → debe usar +/- manual, no rescanear.
+    if (lastScanRef.current.code === code && now - lastScanRef.current.at < 3000) {
       return;
     }
     lastScanRef.current = { code, at: now };
@@ -1522,13 +1620,9 @@ export function SellPage() {
       p.sku.toLowerCase() === lc
       || (p.barcode ?? '').toLowerCase() === lc);
     if (local) {
-      const already = activeMesa?.items.find(i => i.product.id === local.id);
-      if (already) {
-        toast.info(`${local.name} ya está en la venta · usa + para sumar`);
-        return;
-      }
-      void addToCart(local, "a", 1);
-      toast.success(`Agregado: ${local.name}`);
+      // addScanToCart maneja internamente el "ya está" → no duplicar ni sumar
+      // y emite el toast apropiado (info o success).
+      addScanToCart(local, "a");
       return;
     }
     // 2. Cache miss → hit backend directly (no debounce, scanner is an
@@ -1550,11 +1644,6 @@ export function SellPage() {
         || (p.barcode ?? '').toLowerCase() === code.toLowerCase()
       );
       if (exact) {
-        const alreadyInCart = activeMesa?.items.find(i => i.product.id === String(exact.id));
-        if (alreadyInCart) {
-          toast.info(`${exact.name} ya está en la venta · usa + para sumar`);
-          return;
-        }
         const adapted: Product = {
           id: String(exact.id),
           name: exact.name,
@@ -1573,8 +1662,8 @@ export function SellPage() {
             : undefined,
           active: exact.active,
         } as Product;
-        void addToCart(adapted, "a");
-        toast.success(`Agregado: ${adapted.name}`);
+        // Scanner usa addScanToCart (nunca suma). Si ya está en venta, toast info.
+        addScanToCart(adapted, "a");
         return;
       }
     } catch {
@@ -1852,7 +1941,18 @@ export function SellPage() {
     const amount = parseFloat(openCashAmount) || 0;
     setOpeningCash(true);
     try {
-      const session = await openSession(registerId, amount);
+      const result = await openSession(registerId, amount);
+
+      // Conflicto: ya existe otra sesión que bloquea la apertura. Mostramos
+      // modal apropiado y cerramos el de "Abrir Sesión de Caja". El handler
+      // ResumeSession/SessionConflict decide qué hacer (continuar, forzar
+      // cierre, cerrar y abrir nueva).
+      if (!result.ok) {
+        setOpenSessionConflict(result.conflict);
+        setShowOpenCashModal(false);
+        return;
+      }
+      const session = result.session;
       // Seed la cache con el response del POST en vez de invalidar — evita
       // el GET extra /cash/session (~1s en prod) y la UI flipea a "Caja
       // Abierta" en cuanto el modal se cierra.
@@ -1887,6 +1987,73 @@ export function SellPage() {
       toast.error(msg);
     } finally {
       setOpeningCash(false);
+    }
+  };
+
+  /** Continuar la sesión existente del usuario (no crea nueva, solo seedea cache). */
+  const handleResumeOwnSession = async () => {
+    if (!openSessionConflict) return;
+    setResolvingConflict(true);
+    try {
+      // Fetch fresh active session — backend ya garantizó que existe y es del user.
+      await queryClient.invalidateQueries({ queryKey: ['cash', 'activeSession'] });
+      const refreshed = await queryClient.fetchQuery({
+        queryKey: ['cash', 'activeSession'],
+        queryFn: () => getActiveSession(),
+      });
+      if (refreshed) {
+        queryClient.setQueryData(['cash', 'activeSession'], refreshed);
+      }
+      toast.success(`Continuando sesión #${openSessionConflict.existing_session.id}`);
+      setOpenSessionConflict(null);
+    } catch (err: unknown) {
+      const msg = err && typeof err === "object" && "message" in err
+        ? String((err as { message: unknown }).message)
+        : "No se pudo cargar la sesión";
+      toast.error(msg);
+    } finally {
+      setResolvingConflict(false);
+    }
+  };
+
+  /**
+   * Cierra la sesión existente (propia en otra caja, o ajena con admin) y
+   * abre una nueva en la caja solicitada. Reusa los inputs del modal anterior
+   * (openCashRegisterId + openCashAmount).
+   */
+  const handleForceCloseAndReopen = async () => {
+    if (!openSessionConflict) return;
+    const sessionId = openSessionConflict.existing_session.id;
+    setResolvingConflict(true);
+    try {
+      await forceCloseSession(sessionId);
+      // Una vez cerrada la anterior, reintenta abrir la nueva con los mismos
+      // parámetros que el modal original.
+      const registerId = openCashRegisterId !== "" ? Number(openCashRegisterId) : cashRegisters[0]?.id;
+      const amount = parseFloat(openCashAmount) || 0;
+      if (!registerId) {
+        toast.success("Sesión anterior cerrada. Vuelve a intentar abrir caja.");
+        setOpenSessionConflict(null);
+        return;
+      }
+      const result = await openSession(registerId, amount);
+      if (!result.ok) {
+        // Raro: cerramos una y aún hay otra. Mostrar el nuevo conflicto.
+        setOpenSessionConflict(result.conflict);
+        return;
+      }
+      queryClient.setQueryData(['cash', 'activeSession'], result.session);
+      void queryClient.invalidateQueries({ queryKey: ['cash', 'activeSessions'] });
+      void queryClient.invalidateQueries({ queryKey: ['cash', 'registers'] });
+      toast.success(`Caja abierta · $${amount.toFixed(0)} inicial`);
+      setOpenSessionConflict(null);
+    } catch (err: unknown) {
+      const msg = err && typeof err === "object" && "message" in err
+        ? String((err as { message: unknown }).message)
+        : "Error al cerrar la sesión anterior";
+      toast.error(msg);
+    } finally {
+      setResolvingConflict(false);
     }
   };
 
@@ -3044,6 +3211,19 @@ export function SellPage() {
           );
         })()}
 
+        {/* Modal: Conflicto al abrir caja (sesión propia o ajena bloqueando). */}
+        {openSessionConflict && (
+          <OpenSessionConflictModal
+            conflict={openSessionConflict}
+            currentUserId={user?.id ?? null}
+            isAdmin={isAdmin}
+            busy={resolvingConflict}
+            onClose={() => setOpenSessionConflict(null)}
+            onResume={handleResumeOwnSession}
+            onForceClose={handleForceCloseAndReopen}
+          />
+        )}
+
         {/* Modal: Abrir caja */}
         {showOpenCashModal && (
           <div style={{ position: "fixed", inset: 0, zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
@@ -3064,12 +3244,39 @@ export function SellPage() {
                   ? cashRegisters.find(r => r.id === Number(openCashRegisterId))
                   : cashRegisters[0];
                 const registerLabel = selectedRegister?.name ?? "Caja sin asignar";
+                // Estado de ocupación: cashRegistersDetailed trae active_session.
+                const detailed = cashRegistersDetailed.find(r => r.id === selectedRegister?.id);
+                const occupant = detailed?.active_session;
+                const occupiedByMe = occupant?.user_id === user?.id;
                 return (
                   <div style={{ marginBottom: 14 }}>
                     <label style={{ display: "block", fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "var(--td-text-ghost)", marginBottom: 6 }}>Caja Registradora</label>
                     <div style={{ width: "100%", background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 14, color: "var(--td-input-text)", padding: "10px 14px", fontSize: 13, boxSizing: "border-box" as const }}>
                       {registerLabel}
                     </div>
+                    {occupant && (
+                      <div style={{
+                        marginTop: 8,
+                        padding: "8px 12px",
+                        borderRadius: 12,
+                        background: occupiedByMe ? "rgba(16,185,129,0.10)" : "rgba(245,158,11,0.10)",
+                        border: `1px solid ${occupiedByMe ? "rgba(16,185,129,0.30)" : "rgba(245,158,11,0.35)"}`,
+                        display: "flex", alignItems: "center", gap: 8,
+                      }}>
+                        <span style={{
+                          width: 8, height: 8, borderRadius: "50%",
+                          background: occupiedByMe ? "#10b981" : "#f59e0b",
+                          boxShadow: `0 0 0 3px ${occupiedByMe ? "rgba(16,185,129,0.2)" : "rgba(245,158,11,0.2)"}`,
+                          flexShrink: 0,
+                        }} />
+                        <span style={{ fontSize: 11, fontWeight: 700, color: occupiedByMe ? "#10b981" : "#f59e0b" }}>
+                          {occupiedByMe ? "Tu sesión activa" : `Ocupada por ${occupant.user_name ?? "otro usuario"}`}
+                        </span>
+                        <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--td-text-ghost)" }}>
+                          #{occupant.id}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 );
               })()}
@@ -3627,11 +3834,10 @@ export function SellPage() {
                           Cambiar
                         </button>
                         <button
-                          onClick={() => {
-                            updMesa(activeMesa.id, m => ({ ...m, customerId: undefined, customerName: undefined, customerPhone: "", customerEmail: "" }));
-                            setCustomerSearch("");
-                          }}
-                          className="px-3 py-2 rounded-xl border border-red-500/20 bg-red-500/10 text-[10px] font-black uppercase tracking-widest text-red-300 hover:bg-red-500/15 transition-all"
+                          onClick={clearCustomer}
+                          disabled={!!activeMesa.loadedPreSaleOrderId}
+                          className="px-3 py-2 rounded-xl border border-red-500/20 bg-red-500/10 text-[10px] font-black uppercase tracking-widest text-red-300 hover:bg-red-500/15 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                          title={activeMesa.loadedPreSaleOrderId ? "Folio cargado — no se puede quitar el cliente" : "Quitar cliente"}
                         >
                           Quitar
                         </button>
@@ -4432,6 +4638,20 @@ export function SellPage() {
                           {activeMesa.customerName}
                         </p>
                       </div>
+                      {/* ✕ quitar cliente. Bloqueado en preventa cargada (folio
+                          ya tiene customer_id en backend) — clearCustomer
+                          muestra toast de error si se intenta. */}
+                      {!activeMesa.loadedPreSaleOrderId && (
+                        <button
+                          type="button"
+                          onClick={clearCustomer}
+                          className="flex-shrink-0 w-6 h-6 rounded-md flex items-center justify-center transition-colors hover:bg-red-500/15"
+                          style={{ color: "rgba(255,255,255,0.4)", border: "1px solid rgba(255,255,255,0.08)" }}
+                          title="Quitar cliente de esta venta"
+                        >
+                          <X size={11} />
+                        </button>
+                      )}
                     </div>
                     <div className="flex flex-col gap-1 mt-1.5 pl-9">
                       {activeMesa.customerPhone && (
@@ -5235,7 +5455,7 @@ export function SellPage() {
                     type="date"
                     value={apartarExpiresAt}
                     onChange={e => setApartarExpiresAt(e.target.value)}
-                    min={new Date().toISOString().split("T")[0]}
+                    min={getTodayLocal()}
                     className="w-full bg-white/[0.03] border border-white/10 rounded-2xl px-4 py-2.5 text-sm font-bold text-white outline-none focus:border-amber-500/30 focus:bg-amber-500/5 transition-all [color-scheme:dark]"
                   />
                 </div>

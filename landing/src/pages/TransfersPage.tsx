@@ -780,16 +780,22 @@ export function TransfersPage() {
                     >
                       Solicitar
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => setTransferMode("complete")}
-                      className="rounded-full px-3 py-1.5 text-[10px] font-black uppercase tracking-wider transition-colors"
-                      style={transferMode === "complete"
-                        ? { background: "#0f9d68", color: "#fff", border: `1px solid ${T.fieldBorder}` }
-                        : { ...T.softButton, color: T.softText }}
-                    >
-                      Completar ahora
-                    </button>
+                    {/* "Completar ahora" mueve stock inmediatamente, sin que la
+                        tienda destino confirme la recepción. Solo admin debe
+                        poder hacer eso — gerente solo solicita y el admin
+                        confirma del otro lado. Decisión Joel 2026-05-25. */}
+                    {isAdminUser && (
+                      <button
+                        type="button"
+                        onClick={() => setTransferMode("complete")}
+                        className="rounded-full px-3 py-1.5 text-[10px] font-black uppercase tracking-wider transition-colors"
+                        style={transferMode === "complete"
+                          ? { background: "#0f9d68", color: "#fff", border: `1px solid ${T.fieldBorder}` }
+                          : { ...T.softButton, color: T.softText }}
+                      >
+                        Completar ahora
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>

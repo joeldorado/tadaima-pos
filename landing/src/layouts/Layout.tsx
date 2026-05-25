@@ -41,7 +41,10 @@ const ALL_NAV_ITEMS: NavItem[] = [
 
 const NAV_BY_ROLE: Record<string, PageKey[]> = {
   admin:   ["inicio", "products", "sales", "clients", "presales", "transfers", "reports"],
-  gerente: ["inicio", "stores", "products", "sales", "clients", "presales", "transfers", "reports"],
+  // Gerente: sin Tiendas. Solo gestiona la suya; el switcher del header basta
+  // para alternar entre tiendas asignadas. La página /stores es CRUD admin.
+  // Reportes oculto — solo admin ve ganancia bruta y agregados cross-tienda.
+  gerente: ["inicio", "products", "sales", "clients", "presales", "transfers"],
   // Cajero: sin Tiendas, con Preventas para ver catálogos disponibles +
   // difusión + vencidos de su sucursal.
   cajero:  ["inicio", "products", "sales", "presales"],

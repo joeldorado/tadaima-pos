@@ -33,6 +33,16 @@ class SaleResource extends JsonResource
                 ],
             ),
 
+            // Vendedor (cajero/gerente/admin que registró la venta). Solo se
+            // expone cuando el caller hizo eager-load explícito (with('user')).
+            'user' => $this->when(
+                $this->relationLoaded('user') && $this->user,
+                fn () => [
+                    'id'   => $this->user->id,
+                    'name' => $this->user->name,
+                ],
+            ),
+
             'items' => $this->when(
                 $this->relationLoaded('items'),
                 fn () => SaleItemResource::collection($this->items),

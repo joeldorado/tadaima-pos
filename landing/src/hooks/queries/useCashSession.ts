@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { getActiveSession, getCashRegisters, getActiveSessions } from '@tadaima/api'
+import { getActiveSession, getCashRegisters, getCashRegistersWithSession, getActiveSessions } from '@tadaima/api'
 
 /**
  * Sesión activa del usuario (o de la tienda con fallback). Poll moderado
@@ -21,6 +21,22 @@ export function useCashRegistersQuery(storeId?: number | null, options?: { enabl
     queryKey: ['cash', 'registers', storeId ?? null],
     queryFn: () => getCashRegisters(storeId ?? undefined),
     enabled: options?.enabled ?? true,
+  })
+}
+
+/**
+ * Variante de `useCashRegistersQuery` que trae `active_session` embebida por
+ * caja. Usar en el selector de "Abrir caja" para marcar "Ocupada"/"Reanudar".
+ * Misma queryKey base que la otra para compartir cache cuando solo se necesita
+ * el shape básico.
+ */
+export function useCashRegistersWithSessionQuery(storeId?: number | null, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['cash', 'registers-with-session', storeId ?? null],
+    queryFn: () => getCashRegistersWithSession(storeId ?? undefined),
+    enabled: options?.enabled ?? true,
+    // refetch cuando se abre el modal de abrir caja para mostrar estado fresco.
+    staleTime: 10_000,
   })
 }
 

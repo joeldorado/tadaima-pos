@@ -14,13 +14,14 @@ class PreSaleOrderItem extends Model
 
     protected $fillable = [
         'pre_sale_order_id', 'pre_sale_catalog_id', 'product_id',
-        'quantity', 'price_level', 'unit_price', 'status', 'delivered_at',
+        'quantity', 'price_level', 'unit_price', 'cost', 'status', 'delivered_at',
     ];
 
     protected $casts = [
         'quantity'     => 'integer',
         'price_level'  => 'integer',
         'unit_price'   => 'float',
+        'cost'         => 'float',
         'delivered_at' => 'datetime',
         'created_at'   => 'datetime',
     ];

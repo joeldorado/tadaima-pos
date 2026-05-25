@@ -11,6 +11,7 @@ use App\Models\Product;
 use App\Models\ProductImage;
 use App\Models\ProductStorePrice;
 use App\Models\Store;
+use App\Models\SystemLog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -148,6 +149,19 @@ class ProductController extends Controller
         $product->load(['category', 'price', 'images', 'paymentMethod', 'mangaDetails'])
                 ->loadSum('inventory', 'quantity');
 
+        SystemLog::write(
+            action: 'product.created',
+            description: "Producto creado: {$product->name} (SKU: {$product->sku})",
+            entityType: 'product',
+            entityId: $product->id,
+            meta: [
+                'sku'         => $product->sku,
+                'name'        => $product->name,
+                'category_id' => $product->category_id,
+                'cost'        => $product->cost,
+            ],
+        );
+
         return $this->success(new ProductResource($product), 'Producto creado', 201);
     }
 
@@ -158,6 +172,9 @@ class ProductController extends Controller
      */
     public function update(UpdateProductRequest $request, Product $product): JsonResponse
     {
+        // Snapshot ANTES de mutar — para construir el diff en el log.
+        $before = $product->only(['name', 'sku', 'barcode', 'description', 'category_id', 'cost', 'active', 'product_type']);
+
         DB::transaction(function () use ($request, $product) {
             $payload = $request->only([
                 'name', 'sku', 'barcode', 'description', 'category_id', 'cost', 'active',
@@ -180,6 +197,26 @@ class ProductController extends Controller
 
         $product->load(['category', 'price', 'images', 'paymentMethod', 'mangaDetails'])
                 ->loadSum('inventory', 'quantity');
+
+        // Diff: solo campos que cambiaron, con {old, new}. No registra precios
+        // ni payment methods (eso podría hacerse aparte si se necesita).
+        $after = $product->only(array_keys($before));
+        $changes = [];
+        foreach ($before as $field => $oldValue) {
+            $newValue = $after[$field] ?? null;
+            if ($oldValue != $newValue) {
+                $changes[$field] = ['old' => $oldValue, 'new' => $newValue];
+            }
+        }
+        if (! empty($changes) || $request->has('prices') || $request->hasAny(['allow_cash', 'allow_card'])) {
+            SystemLog::write(
+                action: 'product.updated',
+                description: "Producto editado: {$product->name} (SKU: {$product->sku})",
+                entityType: 'product',
+                entityId: $product->id,
+                meta: ['changes' => $changes],
+            );
+        }
 
         return $this->success(new ProductResource($product), 'Producto actualizado');
     }
@@ -240,7 +277,16 @@ class ProductController extends Controller
             Storage::delete($image->image_path);
         }
 
+        $productSnapshot = ['id' => $product->id, 'name' => $product->name, 'sku' => $product->sku];
         $product->delete();
+
+        SystemLog::write(
+            action: 'product.deleted',
+            description: "Producto eliminado: {$productSnapshot['name']} (SKU: {$productSnapshot['sku']})",
+            entityType: 'product',
+            entityId: $productSnapshot['id'],
+            meta: ['mode' => 'soft', 'snapshot' => $productSnapshot],
+        );
 
         return $this->success(null, 'Producto eliminado.');
     }
@@ -252,6 +298,8 @@ class ProductController extends Controller
      */
     public function forceDestroy(Product $product): JsonResponse
     {
+        $productSnapshot = ['id' => $product->id, 'name' => $product->name, 'sku' => $product->sku];
+
         DB::transaction(function () use ($product) {
             // Delete images from default storage (gcs en prod, public/local en dev)
             foreach ($product->images as $image) {
@@ -263,6 +311,14 @@ class ProductController extends Controller
 
             $product->delete();
         });
+
+        SystemLog::write(
+            action: 'product.force_deleted',
+            description: "Producto eliminado forzosamente: {$productSnapshot['name']} (SKU: {$productSnapshot['sku']})",
+            entityType: 'product',
+            entityId: $productSnapshot['id'],
+            meta: ['mode' => 'force', 'snapshot' => $productSnapshot],
+        );
 
         return $this->success(null, 'Producto eliminado forzosamente.');
     }

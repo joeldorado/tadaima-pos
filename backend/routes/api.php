@@ -76,6 +76,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('close',          [CashRegisterController::class, 'close']);
         Route::post('movements',      [CashRegisterController::class, 'addMovement']);
         Route::get('movements',       [CashRegisterController::class, 'movements']);
+        // Solo admin: cierra una sesión colgada de OTRO usuario.
+        Route::post('sessions/{session}/force-close', [CashRegisterController::class, 'forceClose']);
     });
 
     // ── Transfers ─────────────────────────────────────────────────────────────

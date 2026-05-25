@@ -1614,8 +1614,23 @@ export function ProductsPage() {
               </div>
             )}
             <div className="min-w-0">
-              <p className="text-sm font-bold truncate max-w-[200px]" style={{ color: T.textPrimary }}>{info.getValue()}</p>
-              {m.code && <p className="text-[10px] font-mono" style={{ color: T.textMuted }}>{m.code}</p>}
+              <div className="flex items-center gap-1.5">
+                <p className="text-sm font-bold truncate max-w-[180px]" style={{ color: T.textPrimary }}>{info.getValue()}</p>
+                {m.volume_number != null && (
+                  <span
+                    className="text-[9px] font-black px-1.5 py-0.5 rounded shrink-0"
+                    style={{
+                      background: 'rgba(204,34,0,0.15)',
+                      color: '#FF6644',
+                      border: '1px solid rgba(204,34,0,0.3)',
+                      letterSpacing: '0.04em',
+                    }}
+                  >
+                    Vol. {m.volume_number}
+                  </span>
+                )}
+              </div>
+              {m.code && <p className="text-[10px] font-mono mt-0.5" style={{ color: T.textMuted }}>{m.code}</p>}
             </div>
           </div>
         );
@@ -1971,10 +1986,17 @@ export function ProductsPage() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={e => {
-              // Enter después de un scan: si el match es único, el cajero ya
-              // está mirando el resultado. Limpiamos para que el siguiente
-              // scan no quede pegado al anterior.
-              if (e.key === "Enter") setSearch("");
+              // Enter del scanner: NO borrar (antes se vaciaba el input y daba
+              // sensación de "regresa todos"). Si no hay match, avisar al
+              // usuario con toast claro mostrando el código que leyó.
+              // Limpieza explícita: tecla Escape o botón ✕.
+              if (e.key === "Enter") {
+                const term = search.trim();
+                if (term && filtered.length === 0) {
+                  toast.warning(`No se encontró "${term}"`);
+                }
+              }
+              if (e.key === "Escape") setSearch("");
             }}
             autoFocus
             className="w-full pl-11 pr-4 py-3 rounded-2xl text-sm outline-none transition-all focus:ring-1 focus:ring-red-500/30 shadow-inner"
@@ -2400,7 +2422,17 @@ export function ProductsPage() {
                 placeholder="Escanea o busca · serie, editorial, género, ISBN"
                 value={mangaSearch}
                 onChange={e => setMangaSearch(e.target.value)}
-                onKeyDown={e => { if (e.key === "Enter") setMangaSearch(""); }}
+                onKeyDown={e => {
+                  // Enter NO borra (antes vaciaba y daba sensación de "regresa
+                  // todos"). Si no hay match avisar con el código que leyó.
+                  if (e.key === "Enter") {
+                    const term = mangaSearch.trim();
+                    if (term && filteredMangas.length === 0) {
+                      toast.warning(`No se encontró "${term}"`);
+                    }
+                  }
+                  if (e.key === "Escape") setMangaSearch("");
+                }}
                 autoFocus
                 className="w-full pl-11 pr-4 py-3 rounded-2xl text-sm outline-none transition-all focus:ring-1 focus:ring-red-500/30 shadow-inner"
                 style={T.input}

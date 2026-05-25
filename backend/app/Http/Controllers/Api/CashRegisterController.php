@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Exceptions\CashSessionConflictException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\CloseCashSessionRequest;
 use App\Http\Requests\OpenCashSessionRequest;
@@ -11,9 +12,11 @@ use App\Http\Resources\CashRegisterSessionResource;
 use App\Models\CashMovement;
 use App\Models\CashRegister;
 use App\Models\CashRegisterSession;
+use App\Models\SystemLog;
 use App\Services\CashRegisterService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class CashRegisterController extends Controller
 {
@@ -22,16 +25,50 @@ class CashRegisterController extends Controller
     /**
      * GET /cash/registers?store_id=
      * Lista las cajas registradoras, opcionalmente filtradas por tienda.
+     * Cada caja trae embebido `active_session` (null si está libre) para que
+     * el selector de cajas marque "Ocupada" / "Reanudar" sin queries extra.
      */
     public function registers(Request $request): JsonResponse
     {
-        $query = CashRegister::query()->where('active', true);
+        $registersQuery = CashRegister::query()->where('active', true);
 
         if ($request->filled('store_id')) {
-            $query->where('store_id', $request->integer('store_id'));
+            $registersQuery->where('store_id', $request->integer('store_id'));
         }
 
-        return $this->success($query->get(['id', 'store_id', 'name', 'active']));
+        $registers = $registersQuery->get(['id', 'store_id', 'name', 'active']);
+
+        // Sesiones activas indexadas por register_id (una query para todas
+        // las cajas devueltas). Si el caller no es admin, el frontend igual
+        // filtra por su tienda — el RBAC de "ver sesiones de otros" lo
+        // maneja `activeSessions`, este endpoint es solo selector de cajas.
+        $activeSessions = CashRegisterSession::query()
+            ->with(['user:id,name'])
+            ->whereIn('register_id', $registers->pluck('id'))
+            ->where('status', CashRegisterSession::STATUS_OPEN)
+            ->withCount(['sales' => fn ($q) => $q->where('status', 'completed')])
+            ->get()
+            ->keyBy('register_id');
+
+        return $this->success(
+            $registers->map(function ($r) use ($activeSessions) {
+                $session = $activeSessions->get($r->id);
+                return [
+                    'id'        => $r->id,
+                    'store_id'  => $r->store_id,
+                    'name'      => $r->name,
+                    'active'    => $r->active,
+                    'active_session' => $session ? [
+                        'id'           => $session->id,
+                        'user_id'      => $session->user_id,
+                        'user_name'    => $session->user?->name,
+                        'opened_at'    => $session->opened_at?->toISOString(),
+                        'opening_cash' => (float) $session->opening_cash,
+                        'sales_count'  => (int) ($session->sales_count ?? 0),
+                    ] : null,
+                ];
+            })
+        );
     }
 
     /**
@@ -111,11 +148,82 @@ class CashRegisterController extends Controller
                 (float) $request->input('opening_cash', 0),
                 $request->user()->id,
             );
+        } catch (CashSessionConflictException $e) {
+            // 409 Conflict con shape estructurado para que el frontend
+            // distinga entre "reanudar mi propia sesión" vs "conflicto con
+            // otro usuario". `same_register` permite al frontend decidir si
+            // mostrar modal Resume (own + misma caja) vs Conflict.
+            $existing = $e->existingSession;
+            $requestedRegisterId = $request->integer('register_id');
+            return response()->json([
+                'success'  => false,
+                'conflict' => $e->kind, // 'own' | 'foreign'
+                'error'    => $e->getMessage(),
+                'existing_session' => [
+                    'id'              => $existing->id,
+                    'opening_cash'    => (float) $existing->opening_cash,
+                    'opened_at'       => $existing->opened_at?->toISOString(),
+                    'user'            => $existing->user ? ['id' => $existing->user->id, 'name' => $existing->user->name] : null,
+                    'register'        => $existing->register ? ['id' => $existing->register->id, 'name' => $existing->register->name] : null,
+                    'store'           => $existing->register?->store ? ['id' => $existing->register->store->id, 'name' => $existing->register->store->name] : null,
+                    'same_register'   => $existing->register_id === $requestedRegisterId,
+                ],
+            ], 409);
         } catch (\DomainException $e) {
             return $this->error($e->getMessage(), 422);
         }
 
         return $this->success(new CashRegisterSessionResource($session), 'Caja abierta.', 201);
+    }
+
+    /**
+     * POST /cash/sessions/{session}/force-close
+     *
+     * Cierra una sesión colgada por su dueño. Solo admin. Útil cuando un
+     * cajero dejó la caja abierta en otra computadora y necesita reasignar.
+     *
+     * Body: { closing_cash? } — opcional, default = opening_cash (descuadre 0).
+     */
+    public function forceClose(Request $request, CashRegisterSession $session): JsonResponse
+    {
+        $user = $request->user();
+        $isAdmin = $user && $user->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
+
+        if (! $isAdmin) {
+            return $this->error('Solo admin puede forzar el cierre de sesiones ajenas.', 403);
+        }
+
+        if ($session->status !== CashRegisterSession::STATUS_OPEN) {
+            return $this->error('La sesión ya está cerrada.', 422);
+        }
+
+        // Si no se manda closing_cash, asume igual al opening (descuadre 0).
+        $closingCash = $request->has('closing_cash')
+            ? (float) $request->input('closing_cash')
+            : (float) $session->opening_cash;
+
+        try {
+            $closed = $this->service->close($session, $closingCash);
+        } catch (\DomainException $e) {
+            return $this->error($e->getMessage(), 422);
+        }
+
+        SystemLog::write(
+            action: 'cash_session.force_closed',
+            description: "Cierre forzado de sesión #{$closed->id} (caja: {$closed->register?->name}, dueño: {$closed->user?->name})",
+            entityType: 'cash_session',
+            entityId: $closed->id,
+            meta: [
+                'session_id'   => $closed->id,
+                'owner_id'     => $closed->user_id,
+                'owner_name'   => $closed->user?->name,
+                'register_id'  => $closed->register_id,
+                'closed_by'    => $user->id,
+                'closing_cash' => $closingCash,
+            ],
+        );
+
+        return $this->success(new CashRegisterSessionResource($closed), 'Sesión cerrada forzosamente.');
     }
 
     /**

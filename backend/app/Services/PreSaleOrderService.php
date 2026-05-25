@@ -106,6 +106,20 @@ class PreSaleOrderService
                 $priceField = 'price_' . $priceLevel;
                 $unitPrice  = (float) ($catalog->{$priceField} ?? $catalog->price_1 ?? 0);
 
+                // Snap del cost al momento de crear el folio:
+                //  - Si el catálogo está vinculado a Product → usa products.cost
+                //  - Si no (mercancía no llegada) → fallback a catalog.cost
+                //    (cost del proveedor en data maestra del catálogo).
+                // NO se re-snap al vincular product después — el folio queda
+                // con el cost al momento exacto de su creación.
+                $snappedCost = null;
+                if ($catalog->product_id) {
+                    $snappedCost = \App\Models\Product::whereKey($catalog->product_id)->value('cost');
+                }
+                if ($snappedCost === null && $catalog->cost !== null) {
+                    $snappedCost = (float) $catalog->cost;
+                }
+
                 PreSaleOrderItem::create([
                     'pre_sale_order_id'   => $order->id,
                     'pre_sale_catalog_id' => $catalog->id,
@@ -113,6 +127,7 @@ class PreSaleOrderService
                     'quantity'            => (int) $line['quantity'],
                     'price_level'         => $priceLevel,
                     'unit_price'          => $unitPrice,
+                    'cost'                => $snappedCost,
                     'status'              => PreSaleOrderItem::STATUS_PENDING,
                 ]);
             }

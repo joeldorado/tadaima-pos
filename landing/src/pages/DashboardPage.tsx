@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTodayLocal, daysAgoLocal, getTodayLocal } from "@/lib/date";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@tadaima/auth";
 import { useActiveStore } from "@/contexts/StoreContext";
@@ -12,13 +13,15 @@ import {
   Boxes, CheckCircle2, Lock, ArrowRight,
   TrendingUp, Bookmark, PackageX, Loader2, X,
   Shield, Settings, ArrowLeftRight, Users, ImageIcon, Wallet,
+  Clock, RefreshCw,
 } from "lucide-react";
-import { primaryRole } from "@/lib/permisos";
+import { primaryRole, isCashier } from "@/lib/permisos";
 import { UserAvatar } from "@/components/UserAvatar";
 import { AvatarPicker } from "@/components/AvatarPicker";
 import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
 import { useQueryClient } from "@tanstack/react-query";
 import { getCashReport, type CashSessionReport } from "@tadaima/api";
+import { useOnlineUsersQuery } from "@/hooks/queries/useUsers";
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const RED     = "var(--td-red)";
@@ -28,7 +31,23 @@ const RED_BRD = "var(--td-red-brd)";
 const fmt = (n: number) =>
   new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", minimumFractionDigits: 0 }).format(n || 0);
 
-const today = new Date().toISOString().split("T")[0];
+// `useTodayLocal`, `getTodayLocal`, `daysAgoLocal` viven en @/lib/date para
+// reusarse en SalesPage, ReportsPage, SellPage. Antes este archivo tenía un
+// `const today = new Date().toISOString().split("T")[0]` a nivel módulo que
+// se evaluaba una sola vez al cargar el bundle — quedaba stale al cruzar
+// medianoche y además daba la fecha UTC (no la local del navegador).
+
+// "Hace Xm" — `last_seen_at` viene en ISO desde backend (touch al hit del middleware)
+function timeAgo(iso: string | null): string {
+  if (!iso) return "—";
+  const seconds = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (seconds < 60)   return `hace ${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60)   return `hace ${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24)     return `hace ${hours}h`;
+  return new Date(iso).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" });
+}
 
 // ─── KPI state ────────────────────────────────────────────────────────────────
 interface KPIData {
@@ -308,6 +327,9 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  // Fecha local reactiva: cambia automáticamente al cruzar medianoche y dispara
+  // re-fetch de las queries del día (KPIs admin + Cortes de hoy del gerente).
+  const today = useTodayLocal();
   const { activeStore, stores, setActiveStore, isLoading: storesLoading, productCount } = useActiveStore();
 
   const [showPicker, setShowPicker]         = useState(false);
@@ -317,6 +339,7 @@ export function DashboardPage() {
   const [selectedCut, setSelectedCut] = useState<CashSessionReport | null>(null);
 
   const role = primaryRole(user?.roles);
+  const isGerente = role === "gerente";
   const isAdmin     = user?.roles?.includes("admin") ?? false;
 
   // Cajero: dashboard simple "Mi Perfil" — avatar editable, datos read-only
@@ -326,8 +349,8 @@ export function DashboardPage() {
     queryKey: ['my-cuts', user?.id],
     queryFn: () => getCashReport({
       // últimos 90 días — rango razonable para que vea su historial
-      from: new Date(Date.now() - 90 * 24 * 60 * 60_000).toISOString().split("T")[0]!,
-      to: new Date().toISOString().split("T")[0]!,
+      from: daysAgoLocal(90),
+      to:   getTodayLocal(),
     }),
     enabled: role === "cajero" && showMyCutsModal && !!user?.id,
     staleTime: 30_000,
@@ -535,22 +558,26 @@ export function DashboardPage() {
 
   const showSetup = isAdmin && !hasStores;
 
-  // KPI sub-queries — cached per active store
+  // KPI sub-queries — cached per active store.
+  // Gerente NO ve la row de KPIs (es repetitiva con "Cortes de hoy" + "Cajeros
+  // conectados" más abajo), así que deshabilitamos los fetches para evitar
+  // requests inútiles.
   const kpiStoreId = activeStore?.id;
+  const kpiEnabled = !!kpiStoreId && !isGerente;
   const salesKpiQuery = useQuery({
     queryKey: ['dashboard', 'kpi', 'sales', kpiStoreId, today],
     queryFn: () => getSalesReport({ from: today as string, to: today as string, store_id: kpiStoreId! }),
-    enabled: !!kpiStoreId,
+    enabled: kpiEnabled,
   });
   const layawaysKpiQuery = useQuery({
     queryKey: ['dashboard', 'kpi', 'layaways', kpiStoreId],
     queryFn: () => getLayaways({ status: "active", store_id: kpiStoreId!, per_page: 1 }),
-    enabled: !!kpiStoreId,
+    enabled: kpiEnabled,
   });
   const lowStockKpiQuery = useQuery({
     queryKey: ['dashboard', 'kpi', 'lowStock', kpiStoreId],
     queryFn: () => getInventoryReport({ store_id: kpiStoreId!, low_stock: true, threshold: 5 }),
-    enabled: !!kpiStoreId,
+    enabled: kpiEnabled,
   });
   const kpi: KPIData | null = activeStore
     ? {
@@ -560,7 +587,65 @@ export function DashboardPage() {
         lowStockCount:  lowStockKpiQuery.data?.summary.total_skus  ?? 0,
       }
     : null;
-  const kpiLoading = !!activeStore && (salesKpiQuery.isPending || layawaysKpiQuery.isPending || lowStockKpiQuery.isPending);
+  // Cuando las queries están disabled (gerente), isPending queda true permanente.
+  // Filtramos por kpiEnabled para no mostrar spinner eterno.
+  const kpiLoading = kpiEnabled && (salesKpiQuery.isPending || layawaysKpiQuery.isPending || lowStockKpiQuery.isPending);
+
+  // ── Gerente: cajeros conectados + cortes del día ─────────────────────────────
+  // Backend (RBAC) ya filtra ambos endpoints a la tienda del gerente, pero pasamos
+  // activeStore.id explícito para que el cache RQ se segmente por tienda.
+  const onlineUsersQuery = useOnlineUsersQuery(activeStore?.id ?? null, { enabled: isGerente && !!activeStore });
+  const dailyCashQuery = useQuery({
+    queryKey: ['gerente-daily-cash', activeStore?.id, today],
+    queryFn: () => getCashReport({ from: today as string, to: today as string, store_id: activeStore!.id }),
+    enabled: isGerente && !!activeStore,
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+  });
+
+  // Map user_id → última sesión abierta hoy (para badge "En caja #N")
+  const openSessionByUser = new Map<number, CashSessionReport>();
+  for (const s of (dailyCashQuery.data?.sessions ?? [])) {
+    if (s.status === "open" && !openSessionByUser.has(s.user.id)) {
+      openSessionByUser.set(s.user.id, s);
+    }
+  }
+
+  // "Cajeros conectados" = unión de dos señales (con dedupe por user.id):
+  //  1. /users/online → quien hizo request en últimos 2 min (filtrado a rol cajero)
+  //  2. Cualquiera con caja abierta hoy → señal más fuerte de presencia.
+  // Sin (2) un cajero con la pestaña en background pierde el heartbeat de 90s y
+  // se sale del threshold de 2 min, aunque obviamente está trabajando.
+  // /users/online retorna roles como objetos Spatie {id, name, ...} (no strings),
+  // así que normalizo antes de pasar a `isCashier()` que espera string[].
+  type CashierEntry = {
+    id: number;
+    name: string;
+    avatar_url: string | null;
+    last_seen_at: string | null;
+  };
+  const cashierMap = new Map<number, CashierEntry>();
+  for (const u of (onlineUsersQuery.data ?? [])) {
+    const raw = (u.roles ?? []) as unknown as Array<string | { name?: string }>;
+    const roleNames = raw.map(r => typeof r === "string" ? r : (r?.name ?? "")).filter(Boolean);
+    if (!isCashier(roleNames)) continue;
+    cashierMap.set(u.id, {
+      id: u.id,
+      name: u.name,
+      avatar_url: u.avatar_url,
+      last_seen_at: u.last_seen_at,
+    });
+  }
+  for (const [userId, session] of openSessionByUser) {
+    if (cashierMap.has(userId)) continue;
+    cashierMap.set(userId, {
+      id: userId,
+      name: session.user.name,
+      avatar_url: null,
+      last_seen_at: session.opened_at,
+    });
+  }
+  const onlineCashiers = Array.from(cashierMap.values());
 
   function handleCaja() {
     if (activeStore) navigate("/caja");
@@ -594,7 +679,10 @@ export function DashboardPage() {
       )}
 
       {/* ── KPIs del día ──────────────────────────────────────────────────── */}
-      {activeStore && (
+      {/* Para gerente: ocultos. Los KPIs son repetitivos respecto a "Cortes
+          de hoy" + "Cajeros conectados" que vienen abajo. Admin sigue viendo
+          el row porque tiene visión cross-tienda y no tiene secciones abajo. */}
+      {activeStore && !isGerente && (
         <div className="mb-8">
           <p className="text-[10px] font-black uppercase tracking-widest text-white/20 mb-3">
             Hoy · {activeStore.name}
@@ -746,28 +834,227 @@ export function DashboardPage() {
           </div>
         </>
       ) : (
-        /* Cajero */
-        <div className="flex gap-4 flex-wrap">
-          <ActionCard
-            icon={ShoppingCart}
-            title="Abrir Caja"
-            desc={
-              !hasStores   ? "Sin tiendas disponibles" :
-              !hasProducts ? "Sin productos"           :
-              activeStore  ? activeStore.name          : "Selecciona una tienda"
-            }
-            onClick={handleCaja}
-            accent
-            disabled={!hasStores || !hasProducts}
-          />
-          <ActionCard
-            icon={Package}
-            title="Productos"
-            desc={hasStores ? "Ver catálogo" : "Sin tiendas disponibles"}
-            onClick={() => navigate("/products")}
-            disabled={!hasStores}
-          />
-        </div>
+        /* Gerente */
+        <>
+          {/* Cajeros conectados — lista compacta de la tienda activa */}
+          {isGerente && activeStore && (
+            <div className="mb-8">
+              <div className="flex items-center justify-between mb-3">
+                <SectionLabel>Cajeros conectados · {activeStore.name}</SectionLabel>
+                <button
+                  onClick={() => onlineUsersQuery.refetch()}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-white/10 transition-colors"
+                  style={{ color: "var(--td-text-ghost)" }}
+                  title="Refrescar"
+                >
+                  <RefreshCw size={11} className={onlineUsersQuery.isFetching ? "animate-spin" : ""} />
+                  Refrescar
+                </button>
+              </div>
+              {onlineUsersQuery.isPending ? (
+                <div className="flex items-center justify-center py-6">
+                  <Loader2 size={18} className="animate-spin text-white/30" />
+                </div>
+              ) : onlineCashiers.length === 0 ? (
+                <div className="glass-dark rounded-2xl p-6 text-center" style={{ border: "1px solid var(--td-panel-border)" }}>
+                  <Users size={20} className="mx-auto mb-2 text-white/25" />
+                  <p className="text-xs text-white/40">Ningún cajero conectado en este momento.</p>
+                  <p className="text-[10px] text-white/25 mt-1">Aparecen aquí cuando inician sesión en el POS.</p>
+                </div>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "12px" }}>
+                  {onlineCashiers.map(u => {
+                    const openSession = openSessionByUser.get(u.id);
+                    const hasOpenCash = !!openSession;
+                    return (
+                      <div
+                        key={u.id}
+                        className="rounded-2xl p-4 flex items-center gap-3"
+                        style={{
+                          background: hasOpenCash
+                            ? "linear-gradient(135deg, rgba(16,185,129,0.10) 0%, rgba(0,0,0,0.3) 100%)"
+                            : "rgba(255,255,255,0.04)",
+                          border: `1px solid ${hasOpenCash ? "rgba(16,185,129,0.30)" : "var(--td-panel-border)"}`,
+                        }}
+                      >
+                        <div className="relative shrink-0">
+                          <UserAvatar name={u.name} avatarUrl={u.avatar_url} size={44} />
+                          <span
+                            className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full"
+                            style={{
+                              background: "#10b981",
+                              border: "2px solid var(--td-card-bg, #1a1a1a)",
+                              boxShadow: "0 0 0 1px rgba(16,185,129,0.4)",
+                            }}
+                          />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-bold text-white/85 truncate">{u.name}</div>
+                          <div className="flex items-center gap-1 mt-0.5">
+                            <Clock size={10} className="text-white/30" />
+                            <span className="text-[10px] font-semibold text-white/40">
+                              {hasOpenCash
+                                ? `Abrió caja ${new Date(openSession.opened_at).toLocaleTimeString("es-MX", { timeStyle: "short" })}`
+                                : timeAgo(u.last_seen_at)}
+                            </span>
+                          </div>
+                          {hasOpenCash ? (
+                            <button
+                              onClick={() => setSelectedCut(openSession)}
+                              className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider transition-opacity hover:opacity-80"
+                              style={{ background: "rgba(16,185,129,0.16)", color: "#10b981", border: "1px solid rgba(16,185,129,0.35)" }}
+                            >
+                              <Wallet size={9} />
+                              En caja · {openSession.register.name}
+                            </button>
+                          ) : (
+                            <span className="mt-1.5 inline-block px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider"
+                              style={{ background: "rgba(255,255,255,0.05)", color: "var(--td-text-ghost)", border: "1px solid var(--td-panel-border)" }}>
+                              Sin caja abierta
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Cortes de hoy — sesiones de hoy de mi tienda, agrupadas visualmente por cajero */}
+          {isGerente && activeStore && (
+            <div className="mb-8">
+              <div className="flex items-center justify-between mb-3">
+                <SectionLabel>Cortes de hoy · {activeStore.name}</SectionLabel>
+                <button
+                  onClick={() => dailyCashQuery.refetch()}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-white/10 transition-colors"
+                  style={{ color: "var(--td-text-ghost)" }}
+                  title="Refrescar"
+                >
+                  <RefreshCw size={11} className={dailyCashQuery.isFetching ? "animate-spin" : ""} />
+                  Refrescar
+                </button>
+              </div>
+
+              {/* Totales del día */}
+              {dailyCashQuery.data && dailyCashQuery.data.sessions.length > 0 && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                  <div className="rounded-xl p-3" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid var(--td-panel-border)" }}>
+                    <p className="text-[9px] font-black uppercase tracking-widest text-white/30">Sesiones</p>
+                    <p className="text-lg font-black text-white mt-1">{dailyCashQuery.data.summary.total_sessions}</p>
+                  </div>
+                  <div className="rounded-xl p-3" style={{ background: "rgba(224,34,26,0.08)", border: "1px solid rgba(224,34,26,0.25)" }}>
+                    <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: "rgba(224,34,26,0.7)" }}>Ventas del día</p>
+                    <p className="text-lg font-black text-white mt-1">{fmt(dailyCashQuery.data.summary.total_sales)}</p>
+                  </div>
+                  <div className="rounded-xl p-3" style={{ background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.25)" }}>
+                    <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: "rgba(16,185,129,0.75)" }}>Entradas</p>
+                    <p className="text-lg font-black text-white mt-1">{fmt(dailyCashQuery.data.summary.total_entradas)}</p>
+                  </div>
+                  <div className="rounded-xl p-3" style={{ background: "rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.25)" }}>
+                    <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: "rgba(245,158,11,0.75)" }}>Salidas</p>
+                    <p className="text-lg font-black text-white mt-1">{fmt(dailyCashQuery.data.summary.total_salidas)}</p>
+                  </div>
+                </div>
+              )}
+
+              {dailyCashQuery.isPending ? (
+                <div className="flex items-center justify-center py-6">
+                  <Loader2 size={18} className="animate-spin text-white/30" />
+                </div>
+              ) : (dailyCashQuery.data?.sessions.length ?? 0) === 0 ? (
+                <div className="glass-dark rounded-2xl p-6 text-center" style={{ border: "1px solid var(--td-panel-border)" }}>
+                  <Wallet size={20} className="mx-auto mb-2 text-white/25" />
+                  <p className="text-xs text-white/40">Sin cortes hoy todavía.</p>
+                  <p className="text-[10px] text-white/25 mt-1">Aparecen aquí en cuanto un cajero abra o cierre caja.</p>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {dailyCashQuery.data!.sessions.map(s => {
+                    const isClosed = s.status === "closed";
+                    const diff = s.difference ?? 0;
+                    const isMatch = isClosed && Math.abs(diff) < 0.01;
+                    const isShort = isClosed && diff < -0.01;
+                    const statusColor = !isClosed ? "#FFAA00" : isMatch ? "#10b981" : isShort ? "#DC2626" : "#f59e0b";
+                    const statusBg    = !isClosed ? "rgba(255,170,0,0.10)" : isMatch ? "rgba(16,185,129,0.10)" : isShort ? "rgba(220,38,38,0.10)" : "rgba(245,158,11,0.10)";
+                    const statusLabel = !isClosed ? "Abierta" : isMatch ? "Cuadra ✓" : isShort ? `Falta ${fmt(Math.abs(diff))}` : `Sobra ${fmt(diff)}`;
+                    return (
+                      <button
+                        key={s.id}
+                        onClick={() => setSelectedCut(s)}
+                        className="text-left transition-colors hover:bg-white/5"
+                        style={{
+                          display: "flex", alignItems: "center", gap: 12,
+                          padding: "12px 14px", borderRadius: 14,
+                          background: "var(--td-card-bg)",
+                          border: "1px solid var(--td-card-border)",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <div style={{
+                          width: 38, height: 38, borderRadius: 10,
+                          background: statusBg, border: `1px solid ${statusColor}33`,
+                          display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                        }}>
+                          {isMatch ? <CheckCircle2 size={16} color={statusColor} /> : <AlertTriangle size={16} color={statusColor} />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: "var(--td-text-hi)" }}>
+                            {s.user.name} · {s.register.name}
+                          </p>
+                          <p style={{ margin: "2px 0 0", fontSize: 10, color: "var(--td-text-ghost)" }}>
+                            {new Date(s.opened_at).toLocaleTimeString("es-MX", { timeStyle: "short" })}
+                            {s.closed_at && ` → ${new Date(s.closed_at).toLocaleTimeString("es-MX", { timeStyle: "short" })}`}
+                            {" · "}{s.sales_count} ventas
+                          </p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p style={{ margin: 0, fontSize: 13, fontWeight: 900, color: "var(--td-text-hi)" }}>
+                            {fmt(s.total_sales)}
+                          </p>
+                          <span style={{
+                            display: "inline-block", marginTop: 2,
+                            padding: "1px 6px", borderRadius: 5,
+                            fontSize: 8, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em",
+                            background: statusBg, color: statusColor, border: `1px solid ${statusColor}40`,
+                          }}>{statusLabel}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Acceso rápido — Caja + Productos */}
+          <div className="mb-8">
+            <SectionLabel>Acciones rápidas</SectionLabel>
+            <div className="flex gap-4 flex-wrap">
+              <ActionCard
+                icon={ShoppingCart}
+                title="Abrir Caja"
+                desc={
+                  !hasStores   ? "Sin tiendas disponibles" :
+                  !hasProducts ? "Sin productos"           :
+                  activeStore  ? activeStore.name          : "Selecciona una tienda"
+                }
+                onClick={handleCaja}
+                accent
+                disabled={!hasStores || !hasProducts}
+              />
+              <ActionCard
+                icon={Package}
+                title="Productos"
+                desc={hasStores ? "Ver catálogo" : "Sin tiendas disponibles"}
+                onClick={() => navigate("/products")}
+                disabled={!hasStores}
+              />
+            </div>
+          </div>
+        </>
       )}
 
       {showPicker && (
@@ -776,6 +1063,14 @@ export function DashboardPage() {
           isLoading={storesLoading}
           onSelect={handleSelectStore}
           onClose={() => setShowPicker(false)}
+        />
+      )}
+
+      {selectedCut && (
+        <CashCloseSummaryModal
+          session={selectedCut}
+          open
+          onClose={() => setSelectedCut(null)}
         />
       )}
     </div>

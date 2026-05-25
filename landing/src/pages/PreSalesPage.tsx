@@ -44,14 +44,16 @@ export function PreSalesPage() {
     pendingQuery.isPending || readyQuery.isPending ? null : pCount + rCount;
 
   // Tab config con visibilidad por rol:
-  //  - "catalogos": admin/gerente (gestión completa de catálogos)
-  //  - "disponibles": cajero (vista read-only de su tienda)
+  //  - "catalogos": solo admin (gestión completa de catálogos). Gerente queda
+  //    fuera por decisión Joel 2026-05-22 — el catálogo es responsabilidad del
+  //    dueño/admin que negocia con proveedor y define preorder_limit.
+  //  - "disponibles": cajero + gerente (vista read-only de su tienda)
   //  - "folios": todos (admin global, gerente/cajero su tienda)
   //  - "difusion": todos
   //  - "vencidos": todos — pero scope por tienda en backend
   const tabs: ReadonlyArray<{ id: AdminTab; label: string; roles: ("admin" | "gerente" | "cajero")[] }> = [
-    { id: "catalogos",   label: "Catálogos",   roles: ["admin", "gerente"] },
-    { id: "disponibles", label: "Disponibles", roles: ["cajero"] },
+    { id: "catalogos",   label: "Catálogos",   roles: ["admin"] },
+    { id: "disponibles", label: "Disponibles", roles: ["gerente", "cajero"] },
     { id: "folios",      label: "Folios",      roles: ["admin", "gerente", "cajero"] },
     { id: "difusion",    label: "Difusión",    roles: ["admin", "gerente", "cajero"] },
     { id: "vencidos",    label: "Vencidos",    roles: ["admin", "gerente", "cajero"] },

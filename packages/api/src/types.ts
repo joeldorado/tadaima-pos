@@ -192,7 +192,19 @@ export interface SaleItemDetail {
   quantity: number
   price: number
   total: number
-  product: { id: number; name: string; sku: string } | null
+  /**
+   * Cost snapshot al momento EXACTO del checkout. Solo viene cuando el caller
+   * es admin (security gate en `SaleItemResource`). NULL para ventas pre-
+   * migración cost_at_sale (2026-05-22). Esta es la verdad histórica:
+   * inmutable después del INSERT, no muta cuando admin re-precia productos.
+   */
+  cost?: number | null
+  /**
+   * Legacy `product.cost` actual del producto. Solo admin lo ve. Solo se usa
+   * como fallback cuando `item.cost` es NULL (ventas pre-migración) — para
+   * ventas nuevas SIEMPRE preferir `item.cost`.
+   */
+  product: { id: number; name: string; sku: string; cost?: number | null } | null
   created_at: string
 }
 
@@ -218,6 +230,8 @@ export interface SaleDetail {
   commission_amount: number
   status: string
   customer: { id: number; name: string; tier: string | null } | null
+  /** Usuario que registró la venta (cajero/gerente/admin). Eager-loaded por SalesController. */
+  user: { id: number; name: string } | null
   items: SaleItemDetail[]
   payments: SalePaymentDetail[]
   sold_at: string

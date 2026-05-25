@@ -65,7 +65,10 @@ export type PageKey =
 
 const PAGE_ACCESS: Record<Role, PageKey[]> = {
   admin:   ["inicio", "products", "sales", "clients", "presales", "transfers", "reports", "settings", "admin"],
-  gerente: ["inicio", "stores", "products", "sales", "clients", "presales", "transfers", "reports"],
+  // Gerente: NO ve "Tiendas" — gestiona solo la suya, el switcher del header
+  // basta para alternar entre las que tiene asignadas. La página /stores es
+  // CRUD de tiendas (solo admin). Reportes también queda solo para admin.
+  gerente: ["inicio", "products", "sales", "clients", "presales", "transfers"],
   // Cajero: NO ve Tiendas (lo confunde — su tienda es fija). En su lugar
   // ve Preventas con un panel adicional de catálogos disponibles + vencidos
   // de su sucursal.

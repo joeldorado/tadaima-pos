@@ -18,12 +18,14 @@ class SaleItem extends Model
         'quantity',
         'price',
         'total',
+        'cost',
     ];
 
     protected $casts = [
         'quantity'   => 'float',
         'price'      => 'float',
         'total'      => 'float',
+        'cost'       => 'float',
         'created_at' => 'datetime',
     ];
 

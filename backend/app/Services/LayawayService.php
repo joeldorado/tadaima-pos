@@ -46,6 +46,12 @@ class LayawayService
             // ── Lock inventory ────────────────────────────────────────────────
             $inventory = $this->lockInventory($productId, $quantity, $data['store_id'] ?? null, $data['warehouse_id'] ?? null);
 
+            // Snap del cost del producto al momento de crear el apartado.
+            // El apartado descuenta inventario al crearse, así que ese es el
+            // momento contable. Cuando se entregue (deliver), el SaleItem
+            // hereda este cost — no se re-snap.
+            $snappedCost = \App\Models\Product::whereKey($productId)->value('cost');
+
             // ── Create layaway ────────────────────────────────────────────────
             $layaway = Layaway::create([
                 'code'         => $this->generateCode(),
@@ -57,6 +63,7 @@ class LayawayService
                 'quantity'     => $quantity,
                 'price'        => $price,
                 'total'        => $total,
+                'cost'         => $snappedCost !== null ? (float) $snappedCost : null,
                 'down_payment' => (float) $data['down_payment'],
                 'status'       => Layaway::STATUS_ACTIVE,
                 'expires_at'   => $data['expires_at'] ?? null,
@@ -184,6 +191,12 @@ class LayawayService
                 'status'            => Sale::STATUS_COMPLETED,
             ]);
 
+            // El SaleItem hereda `cost` del Layaway (snapped al crear el
+            // apartado). NO se lee `products.cost` actual — el apartado fijó
+            // el costo cuando reservó el inventario, esa es la verdad
+            // contable. Si el cost del producto cambió entre apartar y
+            // entregar, la ganancia del apartado sigue siendo la del momento
+            // de la reservación, no la del momento de la entrega.
             SaleItem::create([
                 'sale_id'    => $sale->id,
                 'product_id' => $layaway->product_id,
@@ -191,6 +204,7 @@ class LayawayService
                 'quantity'   => $layaway->quantity,
                 'price'      => $layaway->price,
                 'total'      => $layaway->total,
+                'cost'       => $layaway->cost,
             ]);
 
             $layaway->update(['status' => Layaway::STATUS_DELIVERED]);

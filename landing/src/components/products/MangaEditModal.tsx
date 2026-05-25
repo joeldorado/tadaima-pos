@@ -3,10 +3,12 @@ import {
   X, Save, Loader2, BookOpen, DollarSign, Warehouse,
   CheckCircle2, AlertTriangle, Camera, Scan, Trash2,
 } from 'lucide-react'
-import { updateManga, deleteManga, uploadMangaImage, getMangaInventory, updateMangaInventory } from '@tadaima/api'
-import type { Manga, MangaInventoryItem } from '@tadaima/api'
+import { updateManga, deleteManga, uploadMangaImage, getMangaInventory, updateMangaInventory, getWarehouses } from '@tadaima/api'
+import type { Manga, MangaInventoryItem, Warehouse } from '@tadaima/api'
 import { EDITORIALS, MANGA_GENRES } from './mangaConstants'
 import { toast } from 'sonner'
+import { useAuth } from '@tadaima/auth'
+import { isAdmin as isAdminRole } from '@/lib/permisos'
 
 // ─── Design tokens (same as MangaBatchModal) ──────────────────────────────────
 const T = {
@@ -66,6 +68,11 @@ export function MangaEditModal({
   canViewCost = false, isAdmin = false, locations = [],
 }: Props) {
   const [tab, setTab] = useState<Tab>('tomo')
+  // Gerente/cajero: el tab Inventario muestra y modifica solo el stock de su
+  // tienda. Admin ve y edita todas. Backend igual valida (defensa en profundidad).
+  const { user } = useAuth()
+  const userIsAdmin = isAdmin || isAdminRole(user?.roles)
+  const restrictedStoreId = !userIsAdmin ? (user?.store_id ?? null) : null
 
   // ── Series fields ──────────────────────────────────────────────────────────
   const [nombre,    setNombre]    = useState(manga.name)
@@ -95,20 +102,45 @@ export function MangaEditModal({
   const [inventory,     setInventory]     = useState<MangaInventoryItem[]>([])
   const [invLoading,    setInvLoading]    = useState(false)
   const [quantities,    setQuantities]    = useState<Record<number, string>>({})
+  // Lista completa de warehouses para el selector "Agregar tienda" del tab
+  // Inventario. Filtrado por restrictedStoreId cuando no es admin.
+  const [allWarehouses, setAllWarehouses] = useState<Warehouse[]>([])
+  const [pendingAddWh,  setPendingAddWh]  = useState<number | ''>('')
+  const [pendingAddQty, setPendingAddQty] = useState('')
 
   useEffect(() => {
     setInvLoading(true)
-    getMangaInventory(manga.id)
-      .then(items => {
+    Promise.all([
+      getMangaInventory(manga.id).catch(() => []),
+      getWarehouses({ active: true }).catch(() => []),
+    ])
+      .then(([items, whs]) => {
         const list = Array.isArray(items) ? items : []
-        setInventory(list)
+        // Para no-admin: filtra el inventario a warehouses de su propia tienda.
+        // Stock de otras tiendas existe en DB pero NO entra al state → no se
+        // renderiza ni se envía al guardar.
+        const allowedInventory = restrictedStoreId == null
+          ? list
+          : list.filter(i => i.warehouse?.store?.id === restrictedStoreId)
+        setInventory(allowedInventory)
         const init: Record<number, string> = {}
-        list.forEach(i => { init[i.warehouse_id] = String(i.quantity) })
+        allowedInventory.forEach(i => { init[i.warehouse_id] = String(i.quantity) })
         setQuantities(init)
+
+        // Warehouses disponibles para "Agregar": admin todas, no-admin solo
+        // las que pertenezcan a su tienda asignada.
+        const allowedWarehouses = restrictedStoreId == null
+          ? whs
+          : whs.filter(w => w.store?.id === restrictedStoreId)
+        setAllWarehouses(allowedWarehouses)
       })
-      .catch(() => {})
       .finally(() => setInvLoading(false))
-  }, [manga.id])
+  }, [manga.id, restrictedStoreId])
+
+  // Warehouses que NO están aún en el inventario del manga — opciones del selector "Agregar".
+  const availableWarehousesToAdd = allWarehouses.filter(
+    w => !(w.id in quantities)
+  )
 
   // ── Save state ────────────────────────────────────────────────────────────
   const [saving, setSaving] = useState(false)
@@ -383,7 +415,13 @@ export function MangaEditModal({
             {/* ── TAB: Precios ────────────────────────────────────────────── */}
             {tab === 'precios' && (
               <div className="space-y-6">
-                <div className={`grid ${canViewCost ? 'grid-cols-2' : 'grid-cols-1'} gap-4 p-4 rounded-2xl bg-white/5 border border-white/5`}>
+                {/* En mangas/librería, Margen % + Costo real SIEMPRE visibles
+                    (admin/gerente/cajero). Decisión Joel 2026-05-25: el costo
+                    en librería se deriva del margen sobre precio público, y
+                    todos los roles necesitan ver/editar ese cálculo cuando
+                    dan de alta o editan un tomo. NO afecta a productos
+                    regulares (que mantienen el gate canViewCost). */}
+                <div className="grid grid-cols-2 gap-4 p-4 rounded-2xl bg-white/5 border border-white/5">
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>Precio Público (MXN) *</label>
                     <input
@@ -394,19 +432,17 @@ export function MangaEditModal({
                       onChange={e => setPrecioPublico(e.target.value)}
                     />
                   </div>
-                  {canViewCost && (
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>Margen %</label>
-                      <input
-                        className="w-full px-4 py-3 rounded-2xl outline-none"
-                        style={T.input}
-                        type="number" min="0" max="99" step="0.1" placeholder="30"
-                        value={margenPct}
-                        onChange={e => setMargenPct(e.target.value)}
-                      />
-                    </div>
-                  )}
-                  {canViewCost && costoReal !== null && (
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>Margen %</label>
+                    <input
+                      className="w-full px-4 py-3 rounded-2xl outline-none"
+                      style={T.input}
+                      type="number" min="0" max="99" step="0.1" placeholder="30"
+                      value={margenPct}
+                      onChange={e => setMargenPct(e.target.value)}
+                    />
+                  </div>
+                  {costoReal !== null && (
                     <div className="col-span-2 flex items-center gap-2 px-4 py-2.5 rounded-2xl" style={{ background: 'rgba(0,180,100,0.08)', border: '1px solid rgba(0,180,100,0.2)' }}>
                       <CheckCircle2 size={13} style={{ color: '#4ade80' }} />
                       <span className="text-xs" style={{ color: T.textMuted }}>Costo real:</span>
@@ -437,6 +473,79 @@ export function MangaEditModal({
             {/* ── TAB: Inventario ─────────────────────────────────────────── */}
             {tab === 'inventario' && (
               <div className="space-y-3">
+                {/* Selector "Agregar tienda": carga warehouses disponibles que no
+                    están aún asignadas a este manga. Decisión Joel 2026-05-25:
+                    sin esto solo se podía editar stock de tiendas existentes,
+                    nunca dar de alta en una nueva. */}
+                {availableWarehousesToAdd.length > 0 && (
+                  <div className="flex gap-2 items-end p-3 rounded-2xl" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div className="flex-1">
+                      <label style={{ fontSize: 9, fontWeight: 900, textTransform: 'uppercase' as const, letterSpacing: '0.12em', color: T.textMuted, display: 'block', marginBottom: 4 }}>
+                        Agregar tienda
+                      </label>
+                      <select
+                        value={pendingAddWh}
+                        onChange={e => setPendingAddWh(e.target.value === '' ? '' : Number(e.target.value))}
+                        className="w-full px-3 py-2 rounded-xl outline-none text-sm font-bold"
+                        style={T.input}
+                      >
+                        <option value="">Selecciona…</option>
+                        {availableWarehousesToAdd.map(w => (
+                          <option key={w.id} value={w.id}>{w.store?.name ?? w.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div style={{ width: 90 }}>
+                      <label style={{ fontSize: 9, fontWeight: 900, textTransform: 'uppercase' as const, letterSpacing: '0.12em', color: T.textMuted, display: 'block', marginBottom: 4 }}>
+                        Stock
+                      </label>
+                      <input
+                        type="number" min={0} placeholder="0"
+                        value={pendingAddQty}
+                        onChange={e => setPendingAddQty(e.target.value)}
+                        disabled={pendingAddWh === ''}
+                        className="w-full px-3 py-2 rounded-xl outline-none text-sm font-bold text-center"
+                        style={T.input}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      disabled={pendingAddWh === '' || pendingAddQty === '' || Number(pendingAddQty) < 0}
+                      onClick={() => {
+                        const whId = Number(pendingAddWh);
+                        const wh = allWarehouses.find(w => w.id === whId);
+                        if (!wh) return;
+                        // Agregar fila virtual al inventory para que renderice,
+                        // y actualizar quantities con la cantidad inicial.
+                        setInventory(prev => [...prev, {
+                          id: -whId, // negativo para distinguir de filas reales
+                          manga_id: manga.id,
+                          warehouse_id: whId,
+                          quantity: 0,
+                          warehouse: {
+                            id: wh.id,
+                            name: wh.name,
+                            type: wh.type ?? 'store',
+                            store: wh.store ?? null,
+                          },
+                        }]);
+                        setQuantities(prev => ({ ...prev, [whId]: pendingAddQty }));
+                        setPendingAddWh('');
+                        setPendingAddQty('');
+                      }}
+                      style={{
+                        padding: '8px 14px', borderRadius: 10,
+                        background: (pendingAddWh !== '' && pendingAddQty !== '') ? T.redBright : 'rgba(255,255,255,0.05)',
+                        color: (pendingAddWh !== '' && pendingAddQty !== '') ? '#fff' : T.textMuted,
+                        border: 'none', fontSize: 10, fontWeight: 900, textTransform: 'uppercase' as const,
+                        cursor: (pendingAddWh !== '' && pendingAddQty !== '') ? 'pointer' : 'not-allowed',
+                      }}
+                    >
+                      + Agregar
+                    </button>
+                  </div>
+                )}
+
                 {invLoading ? (
                   <div className="flex items-center justify-center py-10 gap-3">
                     <Loader2 size={18} className="animate-spin" style={{ color: T.redBright }} />
@@ -445,7 +554,7 @@ export function MangaEditModal({
                 ) : inventory.length === 0 ? (
                   <div className="flex flex-col items-center gap-2 py-8 rounded-2xl" style={{ background: 'rgba(255,255,255,0.03)', border: '1px dashed rgba(255,255,255,0.1)' }}>
                     <Warehouse size={28} style={{ color: 'rgba(255,255,255,0.15)' }} />
-                    <p className="text-xs text-center" style={{ color: T.textMuted }}>Sin inventario asignado.<br /><span style={{ color: 'rgba(255,255,255,0.25)' }}>El stock total es 0.</span></p>
+                    <p className="text-xs text-center" style={{ color: T.textMuted }}>Sin inventario asignado.<br /><span style={{ color: 'rgba(255,255,255,0.25)' }}>Usa "Agregar tienda" arriba para asignar stock.</span></p>
                   </div>
                 ) : (
                   inventory.map(item => {

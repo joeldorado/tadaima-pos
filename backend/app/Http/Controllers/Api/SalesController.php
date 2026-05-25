@@ -41,7 +41,7 @@ class SalesController extends Controller
         $fromUtc = \App\Support\DateRange::fromUtc($request->from);
         $toUtc = \App\Support\DateRange::toUtc($request->to);
 
-        $query = Sale::with(['customer', 'payments.paymentMethod', 'items.product'])
+        $query = Sale::with(['customer', 'payments.paymentMethod', 'items.product', 'user:id,name'])
             ->when($request->user_id, fn ($q) => $q->where('user_id', $request->user_id))
             ->when($request->status,  fn ($q) => $q->where('status', $request->status))
             ->when($fromUtc, fn ($q) => $q->where('sold_at', '>=', $fromUtc))
@@ -85,7 +85,7 @@ class SalesController extends Controller
      */
     public function show(Sale $sale): JsonResponse
     {
-        $sale->load(['items.product', 'payments.paymentMethod', 'customer']);
+        $sale->load(['items.product', 'payments.paymentMethod', 'customer', 'user:id,name']);
 
         return $this->success(new SaleResource($sale));
     }

@@ -1,7 +1,7 @@
 # MASTERLOG — Tadaima POS
 
 > Registro maestro del proyecto: arquitectura, evolución, decisiones clave y estado actual.
-> Actualizado: 2026-05-21 (perf abrir caja en prod: setQueryData + gate relajado + fix N+1 roles en /users/online + min-instances=1)
+> Actualizado: 2026-05-22 (Dashboard gerente + Reporte del Día + cost_at_sale + helpers fecha local)
 
 ---
 
@@ -9,8 +9,8 @@
 
 | Componente | Estado | Notas |
 |-----------|--------|-------|
-| Backend API (Laravel) | ✅ En producción | revision `tadaima-00048-h6j`, URL: tadaima-987277625193.us-central1.run.app. **`min-instances=1`** desde 2026-05-21 (~$8-10/mes, elimina cold starts de 5-37s) |
-| Landing / Web (React) | ✅ En producción | Email folio, historial mixto, Tarjeta/Transferencia, checkout mixto. **ADR-014 (2026-05-18): client-authoritative cart** (carrito vive en localStorage, backend solo se entera al cobrar). Dropdown UP método de pago, total en USD cuando Dólares, scanner detecta socios TAD, modal Clientes en toolbar, cache de imágenes 3 capas con Service Worker. |
+| Backend API (Laravel) | ✅ En producción | revision `tadaima-00052-86t` (2026-05-22), URL: tadaima-987277625193.us-central1.run.app. **`min-instances=1`** desde 2026-05-21 (~$8-10/mes, elimina cold starts de 5-37s). **ADR-015 (2026-05-22): cost_at_sale** — sale_items/pre_sale_order_items/layaways tienen columna `cost` snapped al INSERT. Reportes históricos inmutables aunque admin re-precie productos. |
+| Landing / Web (React) | ✅ En producción | Email folio, historial mixto, Tarjeta/Transferencia, checkout mixto. **ADR-014 (2026-05-18): client-authoritative cart**. Dashboard gerente con Cajeros conectados + Cortes de hoy. Tab "Reporte del Día" en /sales (admin/gerente) con secciones A-F + Imprimir + Exportar PDF. **Helpers de fecha local** en `lib/date.ts` (`getTodayLocal`/`useTodayLocal`/`daysAgoLocal`/`toLocalYmd`) eliminan bug UTC stale en todos los filtros "Hoy". |
 | App móvil (Expo) | ⏳ Pendiente | Estructura base existe en `apps/`, sin paridad de features |
 | Deploy / Cloud Run | ✅ Operacional | `gcloud run deploy --source .`, región us-central1. Build remoto en Cloud Build (no requiere Docker local) |
 | DB Producción | ✅ Operacional | MySQL `pos-lite-db` en us-west1, vía Cloud SQL Proxy en local o `DB_SOCKET` en Cloud Run |
@@ -74,6 +74,14 @@
 | 55 | Caja | **Idempotencia addCatalogToCart** — doble click en catálogo ya no duplica fila; suma quantity + acumula depositAmount. Respeta preorder_limit | 2026-05-18 |
 | 56 | Productos | **Modal QuickStockModal** — botón "📦 Stock" en columna acciones (tabla) y flotante en grid card (hover). Selector "Agregar tienda" + qty + edit inline + 🗑. Diff vs estado inicial al guardar → PUT por cada cambio en paralelo (registra movimiento de ajuste en backend). Reusa endpoint existente `PUT /inventory/{productId}/{warehouseId}` | 2026-05-18 |
 | 57 | Productos / Avisos | **Avisos de stock RBAC + detalle solo lectura para cajero** — `ProductsPage` ahora permite a cajero abrir detalle de `Productos` y `Tomos/Librerías` sin editar (nombre, foto, código, categoría/editorial/género/volumen, precios, métodos de pago, pieza única, stock de su tienda). Acción rápida `Avisar`: cajero notifica a gerente de su tienda + admins; gerente notifica solo a admins. Backend `POST /notifications/stock-alert` hace upsert por `store + product + recipient` para actualizar stock/mensaje y evitar duplicados. UI pinta el botón en verde `Avisado` después de enviar. | 2026-05-21 |
+| 58 | Dashboard | **Dashboard del gerente** — secciones "Cajeros conectados · [tienda]" (avatar + tiempo + badge "En caja #N" + dot verde) y "Cortes de hoy · [tienda]" (4 KPIs: Sesiones/Ventas/Entradas/Salidas + lista expandible). Unión de `/users/online` (filtrado a rol cajero) + sesiones abiertas hoy → presencia robusta incluso con tabs en background (timer del heartbeat throttled). Click en sesión abre `CashCloseSummaryModal` (reusable). Auto-refresh 30s + botón manual. KPIs admin se ocultan para gerente (repetitivos con las secciones nuevas), queries deshabilitadas para ahorrar 3 requests por carga. | 2026-05-22 |
+| 59 | RBAC | **Restricciones de menú gerente** — ocultos del nav: "Tiendas" (gestiona solo la suya), "Reportes" (info financiera global solo admin). Tab "Catálogos" en Preventas ahora solo admin (data maestra de proveedor); gerente ve "Disponibles" (read-only). Defensa en profundidad: `PAGE_ACCESS` + `NAV_BY_ROLE` + `ProtectedRoute requiresPage` redirige a `/` si tipea URL directa. | 2026-05-22 |
+| 60 | Productos | **Stock limit a tienda del gerente** — `QuickStockModal` y tab Inventario de `MangaEditModal` ahora filtran warehouses a `user.store_id` cuando no es admin. Si solo hay 1 tienda asignada: select preseleccionado y deshabilitado con icono 🔒. Stock de otras tiendas no entra al state → no se renderiza ni se manda en el diff al guardar. | 2026-05-22 |
+| 61 | Auditoría | **Logs de mutaciones product/manga/inventory** — migración `2026_05_22_000001_extend_system_logs_with_entity_and_meta` agrega `entity_type` + `entity_id` (indexed) + `meta` JSON a `system_logs`. Helper `SystemLog::write($action, $description, $userId?, $entityType?, $entityId?, $meta?)` usa `Auth::id()` automático. Inserciones inyectadas en `ProductController` (store/update/destroy/forceDestroy con diff de campos), `MangaController` (store/update/deactivated/deleted con diff incluyendo detalles), `InventoryController::update` (ajuste con `{old, new, delta}`). Tablas de log dedicadas son out of scope — `system_logs` es genérica para futuras entidades (clientes, traslados, etc.). UI para visualizar pendiente — solo escritura por ahora. | 2026-05-22 |
+| 62 | Reporte | **Tab "Reporte del Día" en /sales** — accesible para admin/gerente. 6 secciones: A) Resumen ejecutivo (ventas brutas, descuentos, neto, comisión terminal, ticket promedio, TC del día), B) Desglose por método de pago con comisión + neto, C) Preventas (anticipos cobrados vs liquidaciones), D) Movimientos de caja (apertura, entradas, salidas, esperado, declarado, descuadre — usa `/reports/cash`), E) Top 10 productos, F) Tabla por cajero (tickets/cobrado/comisión/neto/descuadre — cruza con sesiones). Ganancia Bruta (sección extra) SOLO admin con margen %, banner ámbar si productos sin cost. Botones Imprimir (HTML print-friendly) + Exportar PDF (jsPDF + autoTable). KPI row admin (Ingresos/Por Cobrar/Tot/Arts) oculto para gerente. Tab "Flujo de Caja Semanal" reubicado como tab. Tab "Por Producto" + "Lista de Ventas" con scroll interno (`max-h: 60vh`). Columna "Vendedor" en cada fila con icono User. | 2026-05-22 |
+| 63 | Backend | **`SaleResource` expone `user: {id, name}`** — `SalesController::index/show` eager-load `user:id,name`. Frontend `SaleDetail.user` mostrado en lista de ventas para que gerente vea quién vendió cada ticket. RBAC del backend ya scopea ventas a tienda del gerente. | 2026-05-22 |
+| 64 | Backend | **ADR-015: cost_at_sale (snap del costo al INSERT)** — 3 migraciones nuevas: `sale_items.cost`, `pre_sale_order_items.cost`, `layaways.cost` (decimal 12,2 nullable). 5 write paths inyectados: `CheckoutService::checkout` snap de `$draftItem->product?->cost` (eager-loaded, sin query extra), `CheckoutService::checkoutDirect` hereda via delegación, `PreSaleOrderService::createOrder` snap del `products.cost` si vinculado, fallback `catalog.cost` si pre-arrival, `LayawayService::create` snap al apartar (momento contable correcto), `LayawayService::deliver` propaga `layaway.cost` al `sale_items.cost` resultante (cadena de snaps). Read paths: `SaleItemResource` expone `item.cost` admin-gated; legacy `product.cost` queda como fallback. Frontend `dailyReport.gananciaBruta` prioriza `item.cost ?? item.product?.cost`. 10 tests TDD nuevos (`CheckoutCostSnapshotTest` + `PreSaleOrderCostSnapshotTest` + `LayawayCostSnapshotTest`) protegen invariante load-bearing: mutar `products.cost` después de la venta NO afecta `sale_items.cost`. 40/40 tests pasan. Fix lateral: migración legacy `drop_legacy_pre_sales_tables` ahora limpia FK `payments.pre_sale_id → pre_sales` también en SQLite (antes solo MySQL). | 2026-05-22 |
+| 65 | UX | **Helpers de fecha local** (`lib/date.ts`) — `getTodayLocal()`, `toLocalYmd(Date)`, `useTodayLocal()` (hook con setInterval 60s detecta cambio de día), `daysAgoLocal(n)`. Reemplazan 7 usos del patrón `new Date().toISOString().split("T")[0]` que daba el día siguiente para usuarios MX (UTC-6) después de 6pm hora local. También arregla "tab abierta cruzando medianoche queda stale". Aplicado en: `DashboardPage` (KPIs admin + Cortes gerente reactivos), `SalesPage` (Reporte del Día), `ReportsPage` (today + 7 presets: Ayer/7 días/30 días/Este mes/Mes pasado/Este año), `SellPage` (min del input fecha de apartado). | 2026-05-22 |
 | - | Deploy | **Dominio custom activo** `tadaima.poslite.com.mx` | 2026-05-05 |
 
 ### 🟡 Media prioridad (mejora flujo o datos)
@@ -380,6 +388,25 @@ El endpoint `POST /pre-sale-orders` crea el folio Y registra el anticipo inicial
 ### ADR-013 — Precios congelados en folio
 `unit_price` se copia del catálogo al crear el folio. Cambios posteriores en el catálogo no afectan folios existentes (inmutabilidad de transacciones financieras).
 
+### ADR-014 — Carrito client-authoritative (2026-05-18)
+El carrito vive en memoria + localStorage. Backend NO sabe del carrito hasta el cobro (`POST /sales` con `items[]` directos). Stock validado solo al cobrar con `reserveStock` + `lockForUpdate`. Cero requests por `+`/`-`. Tradeoff aceptado: doble venta posible (manejada con error claro). Reemplaza el flujo previo de drafts en vivo con observer que extendía `expires_at`.
+
+### ADR-015 — cost_at_sale: snap del costo al INSERT (2026-05-22)
+**Problema:** `products.cost` muta cuando admin re-precia inventario, corrompiendo todo reporte histórico de ganancia bruta (reportes leían el cost ACTUAL, no el del momento de la venta).
+
+**Solución:** snap del cost al momento exacto del INSERT en líneas de transacción. Columnas `cost decimal(12,2) nullable` agregadas a `sale_items`, `pre_sale_order_items`, `layaways`. 5 write paths inyectados con snap inside-transaction:
+1. `CheckoutService::checkout` → `sale_items.cost = $draftItem->product?->cost` (eager-loaded, sin query extra)
+2. `CheckoutService::checkoutDirect` → hereda via delegación
+3. `PreSaleOrderService::createOrder` → `products.cost` si vinculado, sino `catalog.cost` (pre-arrival)
+4. `LayawayService::create` → snap al apartar (momento contable = reserva inventario)
+5. `LayawayService::deliver` → propaga `layaway.cost` al `sale_items.cost` resultante (cadena de snaps)
+
+**Read path:** `SaleItemResource` expone `item.cost` solo admin. Frontend prioriza `item.cost ?? item.product?.cost` (fallback al cost actual para ventas pre-migración).
+
+**Backfill:** ninguno. Data anterior a 2026-05-22 será borrada en QA. Tests TDD blindan la invariante load-bearing: mutar `products.cost` después de venta NO afecta `sale_items.cost`.
+
+**Patrón estándar:** Shopify (`inventory_unit_cost`), Stripe (`cost_of_goods_sold`), Square (columna directa en `order_lines`), Quickbooks/Xero (columna `cost` en item lines).
+
 ---
 
 ## 8. Deuda técnica conocida
@@ -449,6 +476,100 @@ docker compose up --build -d
 ---
 
 ## 11. Historial de sesiones de desarrollo
+
+### Sesión 2026-05-22 — Dashboard gerente, Reporte del Día, cost_at_sale (ADR-015), helpers fecha local
+
+**Contexto:** sesión larga dedicada a darle al gerente las herramientas operativas que le faltaban (sin tocar Reportes que queda solo admin) y blindar la integridad histórica de la ganancia bruta. Joel iba a borrar la data de QA al fin de semana, así que muchas decisiones se simplificaron (no backfill, no banners de aproximación).
+
+**Bloques principales:**
+
+#### 1. Dashboard del gerente en `/` (Home)
+- Sección **"Cajeros conectados · [tienda]"**: avatar + nombre + "hace Xm" o "Abrió caja HH:mm" + dot verde + badge "En caja · Caja #N" o "Sin caja abierta". Click en badge "En caja" → abre detalle del corte vivo (reusa `CashCloseSummaryModal`). Refresh auto 30s (`useOnlineUsersQuery`) + botón manual.
+- Doble señal de presencia: `/users/online` (heartbeat 90s vía `Layout.tsx`, threshold 2 min) + cualquier user con caja abierta hoy (`/reports/cash`). Sin la segunda señal, un cajero con la pestaña en background perdía visibilidad cuando el browser throteaba el setInterval del heartbeat.
+- Fix shape de roles: `/users/online` retorna `roles` como objetos Spatie `[{id, name}]`, no `string[]`. Normalizo con `r.name ?? r` antes de pasar a `isCashier()`.
+- Sección **"Cortes de hoy · [tienda]"**: 4 KPIs arriba (Sesiones / Ventas del día / Entradas / Salidas) + lista de sesiones del día con cajero, caja, horarios, ventas, status (Abierta / Cuadra ✓ / Falta $X / Sobra $X). Click abre detalle.
+- KPI row del admin (Ventas del día / Apartados activos / Stock crítico) OCULTO para gerente — repetitivo con las dos secciones nuevas. Bonus: 3 queries (`/reports/sales`, `/layaways`, `/reports/inventory?low_stock`) deshabilitadas para gerente → 3 requests menos por carga.
+
+#### 2. RBAC: restricciones de menú gerente
+- **"Tiendas"** removido del nav del gerente (`PAGE_ACCESS` + `NAV_BY_ROLE`). El switcher del header sigue activo para cambiar entre tiendas asignadas.
+- **"Reportes"** removido del nav del gerente. Solo admin ve agregados cross-tienda y ganancia bruta.
+- **"Catálogos" de Preventas** restringido a admin. Gerente queda con tab "Disponibles" (read-only) + "Folios" + "Difusión" + "Vencidos".
+
+#### 3. Productos: stock limitado a tienda del gerente
+- `QuickStockModal` y tab Inventario de `MangaEditModal` ahora filtran warehouses por `user.store_id` cuando no es admin.
+- Si solo hay 1 tienda asignada: preselecciona y bloquea el select con icono 🔒.
+- Stock de otras tiendas NO entra al state → no se renderiza ni se manda en el diff al guardar (defensa frontend; backend ya validaba).
+- Label "Solo puedes ajustar stock de tu tienda" eliminado por petición de Joel — el select bloqueado ya comunica suficiente.
+
+#### 4. Logs de auditoría product/manga/inventory
+- Migración `2026_05_22_000001_extend_system_logs_with_entity_and_meta` agrega `entity_type` (string nullable, indexed), `entity_id` (unsignedBigInt nullable, indexed), `meta` (JSON nullable).
+- Modelo `SystemLog::write($action, $description, $userId?, $entityType?, $entityId?, $meta?)` — `Auth::id()` automático.
+- Inyectado en `ProductController::store/update/destroy/forceDestroy` (diff de campos), `MangaController::store/update/destroy` (incluye diff de mangaDetails), `InventoryController::update` (`{old, new, delta}`).
+- Sin UI de visualización por ahora — solo escritura. Joel pedirá UI después.
+
+#### 5. Reporte del Día (tab nuevo en /sales)
+- Tab "Reporte del Día" entre "Por Producto" y "Flujo de Caja Semanal". Solo admin/gerente.
+- **6 secciones** (en pantalla, print HTML, PDF):
+  - A) Resumen ejecutivo (ventas brutas, descuentos, neto, comisión terminal, ticket promedio, TC del día)
+  - B) Desglose por método de pago: # tx, monto, comisión, neto. Suma `payments[].commission_amount` y `payments[].amount` con groupBy `payment_method.name`.
+  - C) Preventas: anticipos cobrados (pending+ready) vs liquidaciones (delivered)
+  - D) Movimientos de caja: usa `/reports/cash` para apertura/entradas/salidas/esperado/declarado/descuadre
+  - E) Top 10 productos del periodo
+  - F) Tabla por cajero (tickets/cobrado/comisión/neto/descuadre — cruza con sesiones para descuadre per-user)
+- **Ganancia Bruta**: sección extra **solo admin**. Margen %. Banner ámbar si productos sin cost. Backend gate en `SaleItemResource` — gerente recibe `cost: null`.
+- **Botones**: Imprimir (HTML print-friendly nueva ventana) + Exportar PDF (jsPDF + jspdf-autotable, descarga `reporte-AAAA-MM-DD.pdf`).
+- **Tabla de ventas** ahora con scroll interno (`max-h: 60vh`) + columna "Vendedor" con ícono User (línea secundaria abajo del #ID para no confundir con cliente).
+- Backend: `SaleResource` ahora eager-loads `user:id,name` y lo expone como `user: {id, name}`.
+- Tab "Flujo de Caja Semanal" reubicado como tab (antes era panel colapsable abajo).
+
+#### 6. ADR-015: cost_at_sale — snap del costo al INSERT
+Ver §7 ADR-015 arriba. Decisión validada con planner + database-reviewer agents en paralelo. Plan ejecutado en 5 fases TDD-first:
+
+**Phase 1 (migraciones):** 3 archivos nullable decimal(12,2):
+- `2026_05_22_000010_add_cost_to_sale_items`
+- `2026_05_22_000011_add_cost_to_pre_sale_order_items`
+- `2026_05_22_000012_add_cost_to_layaways`
+
+Modelos `SaleItem`, `PreSaleOrderItem`, `Layaway` extendidos con `cost` en fillable/casts.
+
+**Phase 2 (tests RED):** 3 archivos PHPUnit feature, 10 tests cubren:
+- Snap al INSERT (sale, preventa, apartado)
+- Inmutabilidad: mutar `products.cost` después NO afecta el snap (invariante load-bearing)
+- Fallback catalog→product para preventa pre-arrival
+- NULL passthrough (cost null en producto → cost null en línea, sin coerce a 0)
+- Propagación apartado→sale_item al `deliver()`
+
+**Phase 3 (write paths GREEN):** 5 puntos de INSERT.
+
+**Phase 4 (read paths):** `SaleItemResource` expone `cost` admin-gated. Tipo TS `SaleItemDetail.cost?: number | null`. Frontend `dailyReport` usa `item.cost ?? item.product?.cost`.
+
+**Phase 5 (verify):** 40/40 tests pasan (30 originales + 10 nuevos).
+
+**Fix lateral encontrado en tests:** la migración legacy `2026_05_15_000001_drop_legacy_pre_sales_tables.php` solo desactivaba FK checks en MySQL. En SQLite (tests `:memory:`), la FK `payments.pre_sale_id → pre_sales` quedaba huérfana y disparaba "no such table: main.pre_sales" al INSERT en payments. Editada para `dropForeign(['pre_sale_id'])` en SQLite antes del drop.
+
+#### 7. Helpers de fecha local (`lib/date.ts`)
+Joel reportó "no veo cargado nada en home" — diagnosticado como bug de `const today = new Date().toISOString().split("T")[0]` a nivel módulo:
+1. Se evalúa al cargar el bundle JS — queda stale al cruzar medianoche con tab abierta.
+2. `toISOString()` da UTC — usuarios MX (UTC-6) después de 6pm hora local ya ven el día siguiente como "hoy", filtros vacíos.
+
+Solución: módulo `landing/src/lib/date.ts` con:
+- `getTodayLocal()` — fecha local YYYY-MM-DD usando `getFullYear/getMonth/getDate`
+- `toLocalYmd(Date)` — convierte Date a YYYY-MM-DD local
+- `useTodayLocal()` — hook reactivo con setInterval 60s; al cruzar medianoche actualiza state → React Query re-fetch automático sin refresh manual
+- `daysAgoLocal(n)` — útil para rangos tipo "últimos 90 días"
+
+7 usos del patrón viejo eliminados en: `DashboardPage`, `SalesPage` (Reporte del Día), `ReportsPage` (today + firstOfMonth + 6 presets), `SellPage` (min del input fecha apartado).
+
+**Verificación de cobertura:** `grep -rnE "new Date\\(\\)\\.toISOString\\(\\)\\.split"` retorna solo comentarios explicativos del helper, ningún uso activo del antipatrón.
+
+#### Estado al cierre
+- ✅ `vite build` verde
+- ✅ `php artisan test` 40/40 pasan
+- ✅ Deploy `tadaima-00051-jxq` (cost_at_sale backend + reporte del día + dashboard gerente inicial)
+- ✅ Deploy `tadaima-00052-86t` (fixes de fecha local UTC→local, KPI row gerente oculto, catálogo preventas solo admin)
+- ⏳ Joel borra data este fin de semana para nuevos tests con cost_at_sale activo desde día 1
+
+---
 
 ### Sesión 2026-05-18 (continuación) — Reportes con calendario, imagen + límites por tienda en preventa, stock por tienda en productos
 
