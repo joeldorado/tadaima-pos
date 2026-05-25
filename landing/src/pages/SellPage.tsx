@@ -4766,20 +4766,6 @@ export function SellPage() {
                           {activeMesa.customerName}
                         </p>
                       </div>
-                      {/* ✕ quitar cliente. Bloqueado en preventa cargada (folio
-                          ya tiene customer_id en backend) — clearCustomer
-                          muestra toast de error si se intenta. */}
-                      {!activeMesa.loadedPreSaleOrderId && (
-                        <button
-                          type="button"
-                          onClick={clearCustomer}
-                          className="flex-shrink-0 w-6 h-6 rounded-md flex items-center justify-center transition-colors hover:bg-red-500/15"
-                          style={{ color: "rgba(255,255,255,0.4)", border: "1px solid rgba(255,255,255,0.08)" }}
-                          title="Quitar cliente de esta venta"
-                        >
-                          <X size={11} />
-                        </button>
-                      )}
                     </div>
                     <div className="flex flex-col gap-1 mt-1.5 pl-9">
                       {activeMesa.customerPhone && (
@@ -4805,6 +4791,49 @@ export function SellPage() {
                         ) : null;
                       })()}
                     </div>
+
+                    {/* Acciones del cliente: Cambiar + Quitar. Bloqueadas en
+                        folio cargado (loadedPreSaleOrderId) porque rompería el
+                        link con `pre_sale_orders.customer_id` del backend. */}
+                    {!activeMesa.loadedPreSaleOrderId && (
+                      <div className="flex items-center gap-1.5 mt-2 pl-9">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            // Limpia el cliente actual y abre el popup en modo
+                            // manual para buscar/asignar otro. Sin esto el
+                            // customerSearch quedaba con el nombre viejo y daba
+                            // sensación de "no se puede cambiar".
+                            clearCustomer();
+                            setAssignCustomerPopup({
+                              mode: 'manual',
+                              candidate: null,
+                              search: "",
+                              searching: false,
+                              searchResults: { locales: [], externos: [] },
+                              assigning: false,
+                              createForm: { open: false, name: "", phone: "", email: "", saving: false },
+                            });
+                          }}
+                          className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-colors hover:bg-emerald-500/10"
+                          style={{ color: "rgba(255,255,255,0.7)", border: "1px solid rgba(16,185,129,0.25)", background: "rgba(16,185,129,0.05)" }}
+                          title="Cambiar a otro cliente"
+                        >
+                          <RefreshCw size={10} className="text-emerald-400/70" />
+                          Cambiar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={clearCustomer}
+                          className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-colors hover:bg-red-500/15"
+                          style={{ color: "rgba(255,255,255,0.7)", border: "1px solid rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.05)" }}
+                          title="Quitar cliente de esta venta"
+                        >
+                          <Trash2 size={10} className="text-red-400/70" />
+                          Quitar
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </>
               )}
