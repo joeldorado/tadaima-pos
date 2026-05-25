@@ -129,21 +129,42 @@ function printTicket(sale: SaleDetail) {
       <th style="text-align:right;font-size:9px">Total</th>
     </tr></thead>
     <tbody>${items}</tbody>
+    ${(sale.pre_sale_orders ?? []).length === 0 ? `
     <tfoot><tr class="total-row">
       <td colspan="2">TOTAL</td>
       <td style="text-align:right">${fmt(sale.total)}</td>
-    </tr></tfoot>
+    </tr></tfoot>` : ""}
   </table>
 
   ${(sale.pre_sale_orders ?? []).length > 0 ? `
   <div class="divider"></div>
-  <div style="font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;text-align:center">Preventas en este ticket</div>
-  ${(sale.pre_sale_orders ?? []).map(o => `
-    <div style="font-size:10px;margin-bottom:6px">
-      <div style="font-weight:900;font-size:10px">${o.code} · Anticipo ${fmt(o.paid_amount)}${o.balance > 0 ? ` · Saldo ${fmt(o.balance)}` : ""}</div>
-      ${o.items.map(it => `<div style="font-size:9px;display:flex;justify-content:space-between"><span>${it.catalog?.product_name ?? "Producto"} ×${it.quantity}</span><span>${fmt(it.unit_price * it.quantity)}</span></div>`).join("")}
-    </div>
-  `).join("")}` : ""}
+  ${(sale.pre_sale_orders ?? []).map(o => {
+    const isLiq = (o.balance ?? 0) <= 0.01 && (o.paid_amount ?? 0) > 0;
+    const statusLabel = isLiq ? "LIQUIDACIÓN" : "ANTICIPO";
+    return `
+    <div style="font-size:10px;margin-bottom:8px">
+      <div style="font-weight:900;font-size:10px;display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
+        <span>★ ${o.code}</span>
+        <span style="font-size:8px;padding:1px 4px;border:1px solid #000">${statusLabel}</span>
+      </div>
+      ${o.items.map(it => `
+        <div style="font-size:9px;display:flex;justify-content:space-between;margin-bottom:1px">
+          <span>${it.catalog?.product_name ?? "Producto"} ×${it.quantity}</span>
+          <span>${fmt(it.unit_price * it.quantity)}</span>
+        </div>
+      `).join("")}
+      <div style="font-size:9px;margin-top:3px;border-top:1px dashed #000;padding-top:2px">
+        <div style="display:flex;justify-content:space-between"><span>Precio total folio</span><span>${fmt(o.total)}</span></div>
+        <div style="display:flex;justify-content:space-between;font-weight:900"><span>${isLiq ? "Liquidación pagada" : "Anticipo pagado"}</span><span>${fmt(o.paid_amount)}</span></div>
+        ${o.balance > 0 ? `<div style="display:flex;justify-content:space-between"><span>Saldo pendiente</span><span>${fmt(o.balance)}</span></div>` : ""}
+      </div>
+    </div>`;
+  }).join("")}
+  <div class="divider"></div>
+  <div style="font-size:10px;display:flex;justify-content:space-between"><span>Productos regulares</span><span>${fmt(sale.total)}</span></div>
+  <div style="font-size:10px;display:flex;justify-content:space-between"><span>Anticipo/Liquid. preventa</span><span>${fmt((sale.pre_sale_orders ?? []).reduce((s, o) => s + (o.paid_amount ?? 0), 0))}</span></div>
+  <div style="font-weight:900;font-size:13px;border-top:1px solid #000;padding-top:6px;margin-top:4px;display:flex;justify-content:space-between"><span>TOTAL COBRADO</span><span>${fmt(sale.total + (sale.pre_sale_orders ?? []).reduce((s, o) => s + (o.paid_amount ?? 0), 0))}</span></div>
+  ` : ""}
 
   <div class="divider"></div>
   <div class="footer">¡Gracias por tu compra!</div>
@@ -258,7 +279,19 @@ function SaleRow({
           <p className="text-[7px] uppercase" style={{ color: "var(--td-text-lo)" }}>arts.</p>
         </div>
 
-        <p className="ml-auto text-sm font-black flex-shrink-0" style={{ color: "var(--td-text-hi)" }}>{fmt(sale.total)}</p>
+        {/* Total cobrado = sale.total (productos regulares) + anticipos de
+            preventas creadas en el mismo ticket. Sin esto el row mostraba
+            solo $100 cuando el cobro real fue $200 (producto + anticipo). */}
+        <div className="ml-auto flex-shrink-0 text-right">
+          <p className="text-sm font-black" style={{ color: "var(--td-text-hi)" }}>
+            {fmt(sale.total + (sale.pre_sale_orders ?? []).reduce((s, o) => s + (o.paid_amount ?? 0), 0))}
+          </p>
+          {(sale.pre_sale_orders ?? []).length > 0 && (
+            <p className="text-[8px] font-bold uppercase tracking-widest" style={{ color: "#f59e0b" }}>
+              + anticipo
+            </p>
+          )}
+        </div>
       </button>
 
       {/* ── Detalle expandido ── */}
@@ -312,45 +345,103 @@ function SaleRow({
               <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: "#f59e0b" }}>
                 Preventas creadas en este ticket
               </p>
-              {(sale.pre_sale_orders ?? []).map(order => (
-                <div key={order.id} className="rounded-xl p-3" style={{ background: "rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.18)" }}>
-                  <div className="flex items-center justify-between gap-2 mb-2">
-                    <div className="flex items-center gap-2">
-                      <Bookmark size={12} className="text-amber-400" />
-                      <span className="text-xs font-black uppercase tracking-widest" style={{ color: "var(--td-text-hi)" }}>{order.code}</span>
-                      <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded" style={{
-                        background: order.status === 'delivered' ? "rgba(34,197,94,0.15)" : "rgba(245,158,11,0.15)",
-                        color: order.status === 'delivered' ? "#22c55e" : "#f59e0b",
-                      }}>
-                        {order.status === 'delivered' ? "Entregado"
-                          : order.status === 'ready' ? "Listo · Liquidar"
-                          : order.status === 'pending' ? "Pendiente"
-                          : order.status}
-                      </span>
+              {(sale.pre_sale_orders ?? []).map(order => {
+                // Status del cobro: si paid_amount cubre el total → liquidación,
+                // si no → anticipo (todavía debe saldo).
+                const isLiquidacion = (order.balance ?? 0) <= 0.01 && (order.paid_amount ?? 0) > 0;
+                const statusKind: "liquidacion" | "anticipo" = isLiquidacion ? "liquidacion" : "anticipo";
+                return (
+                  <div key={order.id} className="rounded-xl p-3" style={{ background: "rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.18)" }}>
+                    <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Bookmark size={12} className="text-amber-400" />
+                        <span className="text-xs font-black uppercase tracking-widest" style={{ color: "var(--td-text-hi)" }}>{order.code}</span>
+                        {/* Status de COBRO (anticipo vs liquidación) — más útil
+                            al cajero que el status del folio (pending/ready). */}
+                        <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded" style={{
+                          background: statusKind === "liquidacion" ? "rgba(34,197,94,0.15)" : "rgba(245,158,11,0.18)",
+                          color: statusKind === "liquidacion" ? "#22c55e" : "#f59e0b",
+                          border: `1px solid ${statusKind === "liquidacion" ? "rgba(34,197,94,0.35)" : "rgba(245,158,11,0.4)"}`,
+                        }}>
+                          {statusKind === "liquidacion" ? "Liquidación" : "Anticipo"}
+                        </span>
+                        {/* Status del folio (entrega) — secundario */}
+                        <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded" style={{
+                          background: order.status === 'delivered' ? "rgba(34,197,94,0.10)" : "rgba(255,255,255,0.05)",
+                          color: order.status === 'delivered' ? "#22c55e" : "var(--td-text-lo)",
+                        }}>
+                          {order.status === 'delivered' ? "Entregado"
+                            : order.status === 'ready' ? "Listo"
+                            : order.status === 'pending' ? "Pendiente llegada"
+                            : order.status}
+                        </span>
+                      </div>
                     </div>
-                    <div className="text-right text-[10px] font-bold" style={{ color: "var(--td-text-md)" }}>
-                      Anticipo {fmt(order.paid_amount)}
-                      {order.balance > 0 && <span style={{ color: "#f59e0b" }}> · Saldo {fmt(order.balance)}</span>}
+
+                    {/* Items del folio */}
+                    {order.items.map(it => (
+                      <div key={it.id} className="flex items-center gap-3 py-1.5" style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-bold truncate" style={{ color: "var(--td-text-md)" }}>
+                            {it.catalog?.product_name ?? `Producto #${it.product_id ?? "?"}`}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-4 text-right">
+                          <span className="text-[10px] font-black" style={{ color: "var(--td-text-md)" }}>×{it.quantity}</span>
+                          <span className="text-[10px] font-bold w-[60px]" style={{ color: "var(--td-text-md)" }}>{fmt(it.unit_price)}</span>
+                          <span className="text-xs font-black w-[70px]" style={{ color: "var(--td-text-hi)" }}>{fmt(it.unit_price * it.quantity)}</span>
+                        </div>
+                      </div>
+                    ))}
+
+                    {/* Desglose anticipo / saldo / total */}
+                    <div className="mt-2 pt-2 space-y-1" style={{ borderTop: "1px dashed rgba(245,158,11,0.25)" }}>
+                      <div className="flex justify-between text-[10px]">
+                        <span style={{ color: "var(--td-text-lo)" }}>Total del folio</span>
+                        <span className="font-bold" style={{ color: "var(--td-text-md)" }}>{fmt(order.total)}</span>
+                      </div>
+                      <div className="flex justify-between text-[10px]">
+                        <span style={{ color: "var(--td-text-lo)" }}>
+                          {statusKind === "liquidacion" ? "Liquidación pagada" : "Anticipo pagado en este ticket"}
+                        </span>
+                        <span className="font-black" style={{ color: "#10b981" }}>{fmt(order.paid_amount)}</span>
+                      </div>
+                      {(order.balance ?? 0) > 0.01 && (
+                        <div className="flex justify-between text-[10px]">
+                          <span style={{ color: "var(--td-text-lo)" }}>Saldo pendiente</span>
+                          <span className="font-black" style={{ color: "#f59e0b" }}>{fmt(order.balance)}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
-                  {order.items.map(it => (
-                    <div key={it.id} className="flex items-center gap-3 py-1.5" style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-bold truncate" style={{ color: "var(--td-text-md)" }}>
-                          {it.catalog?.product_name ?? `Producto #${it.product_id ?? "?"}`}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-4 text-right">
-                        <span className="text-[10px] font-black" style={{ color: "var(--td-text-md)" }}>×{it.quantity}</span>
-                        <span className="text-[10px] font-bold w-[60px]" style={{ color: "var(--td-text-md)" }}>{fmt(it.unit_price)}</span>
-                        <span className="text-xs font-black w-[70px]" style={{ color: "var(--td-text-hi)" }}>{fmt(it.unit_price * it.quantity)}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
+
+          {/* Resumen total cobrado del ticket (productos + anticipos preventas).
+              Visible solo cuando hay preventas vinculadas — si no, el TOTAL del
+              footer es suficiente. */}
+          {(sale.pre_sale_orders ?? []).length > 0 && (() => {
+            const anticipos = (sale.pre_sale_orders ?? []).reduce((s, o) => s + (o.paid_amount ?? 0), 0);
+            const totalCobrado = sale.total + anticipos;
+            return (
+              <div className="mt-3 p-3 rounded-xl" style={{ background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.2)" }}>
+                <div className="flex justify-between text-[10px]" style={{ color: "var(--td-text-md)" }}>
+                  <span>Productos</span>
+                  <span className="font-bold">{fmt(sale.total)}</span>
+                </div>
+                <div className="flex justify-between text-[10px]" style={{ color: "var(--td-text-md)" }}>
+                  <span>Anticipo preventa</span>
+                  <span className="font-bold">{fmt(anticipos)}</span>
+                </div>
+                <div className="flex justify-between text-sm font-black mt-1 pt-1" style={{ borderTop: "1px solid rgba(16,185,129,0.25)", color: "var(--td-text-hi)" }}>
+                  <span>Total cobrado</span>
+                  <span style={{ color: "#10b981" }}>{fmt(totalCobrado)}</span>
+                </div>
+              </div>
+            );
+          })()}
 
           <div className="flex justify-between items-center pt-2" style={{ borderTop: "1px solid var(--td-panel-border)" }}>
             <div className="flex items-center gap-3">
@@ -409,8 +500,10 @@ function SaleRow({
               )}
             </div>
             <div className="flex items-center gap-3">
-              <span className="text-[9px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>Total:</span>
-              <span className="text-base font-black" style={{ color: "var(--td-text-hi)" }}>{fmt(sale.total)}</span>
+              <span className="text-[9px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>Total cobrado:</span>
+              <span className="text-base font-black" style={{ color: "var(--td-text-hi)" }}>
+                {fmt(sale.total + (sale.pre_sale_orders ?? []).reduce((s, o) => s + (o.paid_amount ?? 0), 0))}
+              </span>
             </div>
           </div>
         </div>
@@ -489,13 +582,15 @@ function ReporteDelDia({
       {/* A) Resumen ejecutivo */}
       <ReportSection title="A · Resumen Ejecutivo">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <Kpi label="Ventas brutas"           value={fmt(report.subtotal)} />
-          <Kpi label="Descuentos"              value={`- ${fmt(report.descuento)}`} muted />
-          <Kpi label="Ventas netas"            value={fmt(report.ventasNetas)} highlight />
-          <Kpi label="Comisión terminal"       value={`- ${fmt(report.comisionTotal)}`} muted />
-          <Kpi label="Neto después comisión"   value={fmt(report.netoDespuesComision)} highlight />
-          <Kpi label="Tickets"                 value={String(report.ticketsCount)} />
-          <Kpi label="Ticket promedio"         value={fmt(report.promedio)} />
+          <Kpi label="Ventas brutas (productos)" value={fmt(report.subtotal)} />
+          <Kpi label="Descuentos"                value={`- ${fmt(report.descuento)}`} muted />
+          <Kpi label="Ventas netas (productos)"  value={fmt(report.ventasNetas)} />
+          <Kpi label="+ Anticipos/Liquidaciones preventa" value={fmt(report.totalPreventas)} hint={`${report.anticiposCount + report.liquidadasCount} folios`} />
+          <Kpi label="Total cobrado"             value={fmt(report.ventasNetas + report.totalPreventas)} highlight />
+          <Kpi label="Comisión terminal"         value={`- ${fmt(report.comisionTotal)}`} muted />
+          <Kpi label="Neto después comisión"     value={fmt(report.netoDespuesComision + report.totalPreventas)} highlight hint="incluye preventas" />
+          <Kpi label="Tickets"                   value={String(report.ticketsCount)} />
+          <Kpi label="Ticket promedio"           value={fmt(report.promedio)} />
           {report.tipoCambio != null && (
             <Kpi label="Tipo de cambio" value={`$${report.tipoCambio.toFixed(2)} MXN/USD`} />
           )}
@@ -803,11 +898,13 @@ function printDailyReport(r: DailyReport, fromDate: string, toDate: string, stor
 
       <h2>A · Resumen Ejecutivo</h2>
       <div class="grid">
-        <div class="kpi"><div class="kpi-label">Ventas brutas</div><div class="kpi-value">${fmt(r.subtotal)}</div></div>
+        <div class="kpi"><div class="kpi-label">Ventas brutas (productos)</div><div class="kpi-value">${fmt(r.subtotal)}</div></div>
         <div class="kpi"><div class="kpi-label">Descuentos</div><div class="kpi-value">- ${fmt(r.descuento)}</div></div>
-        <div class="kpi"><div class="kpi-label">Ventas netas</div><div class="kpi-value">${fmt(r.ventasNetas)}</div></div>
+        <div class="kpi"><div class="kpi-label">Ventas netas (productos)</div><div class="kpi-value">${fmt(r.ventasNetas)}</div></div>
+        <div class="kpi"><div class="kpi-label">+ Anticipos/Liquid. preventa</div><div class="kpi-value">${fmt(r.totalPreventas)}</div></div>
+        <div class="kpi"><div class="kpi-label">Total cobrado</div><div class="kpi-value">${fmt(r.ventasNetas + r.totalPreventas)}</div></div>
         <div class="kpi"><div class="kpi-label">Comisión terminal</div><div class="kpi-value">- ${fmt(r.comisionTotal)}</div></div>
-        <div class="kpi"><div class="kpi-label">Neto después comisión</div><div class="kpi-value">${fmt(r.netoDespuesComision)}</div></div>
+        <div class="kpi"><div class="kpi-label">Neto después comisión</div><div class="kpi-value">${fmt(r.netoDespuesComision + r.totalPreventas)}</div></div>
         <div class="kpi"><div class="kpi-label">Tickets · Promedio</div><div class="kpi-value">${r.ticketsCount} · ${fmt(r.promedio)}</div></div>
         ${r.tipoCambio != null ? `<div class="kpi"><div class="kpi-label">Tipo de cambio</div><div class="kpi-value">$${r.tipoCambio.toFixed(2)} MXN/USD</div></div>` : ""}
       </div>
@@ -910,12 +1007,14 @@ function exportDailyReportPdf(r: DailyReport, fromDate: string, toDate: string, 
     startY: y,
     head: [["A · Resumen Ejecutivo", ""]],
     body: [
-      ["Ventas brutas",          fmt(r.subtotal)],
-      ["Descuentos",             `- ${fmt(r.descuento)}`],
-      ["Ventas netas",           fmt(r.ventasNetas)],
-      ["Comisión terminal",      `- ${fmt(r.comisionTotal)}`],
-      ["Neto después comisión",  fmt(r.netoDespuesComision)],
-      ["Tickets · Promedio",     `${r.ticketsCount} · ${fmt(r.promedio)}`],
+      ["Ventas brutas (productos)", fmt(r.subtotal)],
+      ["Descuentos",                `- ${fmt(r.descuento)}`],
+      ["Ventas netas (productos)",  fmt(r.ventasNetas)],
+      ["+ Anticipos/Liquid. preventa", fmt(r.totalPreventas)],
+      ["Total cobrado",             fmt(r.ventasNetas + r.totalPreventas)],
+      ["Comisión terminal",         `- ${fmt(r.comisionTotal)}`],
+      ["Neto después comisión",     fmt(r.netoDespuesComision + r.totalPreventas)],
+      ["Tickets · Promedio",        `${r.ticketsCount} · ${fmt(r.promedio)}`],
       ...(r.tipoCambio != null ? [["Tipo de cambio", `$${r.tipoCambio.toFixed(2)} MXN/USD`]] : []),
     ],
     theme: "striped",
