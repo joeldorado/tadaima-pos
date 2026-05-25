@@ -1,7 +1,7 @@
 # MASTERLOG — Tadaima POS
 
 > Registro maestro del proyecto: arquitectura, evolución, decisiones clave y estado actual.
-> Actualizado: 2026-05-22 (Dashboard gerente + Reporte del Día + cost_at_sale + helpers fecha local)
+> Actualizado: 2026-05-25 (QA fixes ronda 5 + sesiones de caja conflict modal + margen visible mangas + quitar cliente desde caja)
 
 ---
 
@@ -9,7 +9,7 @@
 
 | Componente | Estado | Notas |
 |-----------|--------|-------|
-| Backend API (Laravel) | ✅ En producción | revision `tadaima-00052-86t` (2026-05-22), URL: tadaima-987277625193.us-central1.run.app. **`min-instances=1`** desde 2026-05-21 (~$8-10/mes, elimina cold starts de 5-37s). **ADR-015 (2026-05-22): cost_at_sale** — sale_items/pre_sale_order_items/layaways tienen columna `cost` snapped al INSERT. Reportes históricos inmutables aunque admin re-precie productos. |
+| Backend API (Laravel) | ✅ En producción | revision `tadaima-00053-697` (2026-05-25), URL: tadaima-987277625193.us-central1.run.app. **`min-instances=1`** desde 2026-05-21 (~$8-10/mes, elimina cold starts de 5-37s). **ADR-015 (2026-05-22): cost_at_sale** — sale_items/pre_sale_order_items/layaways tienen columna `cost` snapped al INSERT. Reportes históricos inmutables aunque admin re-precie productos. **Cash session conflict (2026-05-25)**: `CashSessionConflictException` + `POST /cash/sessions/{id}/force-close` admin-only + `cash/registers` embed `active_session`. |
 | Landing / Web (React) | ✅ En producción | Email folio, historial mixto, Tarjeta/Transferencia, checkout mixto. **ADR-014 (2026-05-18): client-authoritative cart**. Dashboard gerente con Cajeros conectados + Cortes de hoy. Tab "Reporte del Día" en /sales (admin/gerente) con secciones A-F + Imprimir + Exportar PDF. **Helpers de fecha local** en `lib/date.ts` (`getTodayLocal`/`useTodayLocal`/`daysAgoLocal`/`toLocalYmd`) eliminan bug UTC stale en todos los filtros "Hoy". |
 | App móvil (Expo) | ⏳ Pendiente | Estructura base existe en `apps/`, sin paridad de features |
 | Deploy / Cloud Run | ✅ Operacional | `gcloud run deploy --source .`, región us-central1. Build remoto en Cloud Build (no requiere Docker local) |
@@ -82,6 +82,10 @@
 | 63 | Backend | **`SaleResource` expone `user: {id, name}`** — `SalesController::index/show` eager-load `user:id,name`. Frontend `SaleDetail.user` mostrado en lista de ventas para que gerente vea quién vendió cada ticket. RBAC del backend ya scopea ventas a tienda del gerente. | 2026-05-22 |
 | 64 | Backend | **ADR-015: cost_at_sale (snap del costo al INSERT)** — 3 migraciones nuevas: `sale_items.cost`, `pre_sale_order_items.cost`, `layaways.cost` (decimal 12,2 nullable). 5 write paths inyectados: `CheckoutService::checkout` snap de `$draftItem->product?->cost` (eager-loaded, sin query extra), `CheckoutService::checkoutDirect` hereda via delegación, `PreSaleOrderService::createOrder` snap del `products.cost` si vinculado, fallback `catalog.cost` si pre-arrival, `LayawayService::create` snap al apartar (momento contable correcto), `LayawayService::deliver` propaga `layaway.cost` al `sale_items.cost` resultante (cadena de snaps). Read paths: `SaleItemResource` expone `item.cost` admin-gated; legacy `product.cost` queda como fallback. Frontend `dailyReport.gananciaBruta` prioriza `item.cost ?? item.product?.cost`. 10 tests TDD nuevos (`CheckoutCostSnapshotTest` + `PreSaleOrderCostSnapshotTest` + `LayawayCostSnapshotTest`) protegen invariante load-bearing: mutar `products.cost` después de la venta NO afecta `sale_items.cost`. 40/40 tests pasan. Fix lateral: migración legacy `drop_legacy_pre_sales_tables` ahora limpia FK `payments.pre_sale_id → pre_sales` también en SQLite (antes solo MySQL). | 2026-05-22 |
 | 65 | UX | **Helpers de fecha local** (`lib/date.ts`) — `getTodayLocal()`, `toLocalYmd(Date)`, `useTodayLocal()` (hook con setInterval 60s detecta cambio de día), `daysAgoLocal(n)`. Reemplazan 7 usos del patrón `new Date().toISOString().split("T")[0]` que daba el día siguiente para usuarios MX (UTC-6) después de 6pm hora local. También arregla "tab abierta cruzando medianoche queda stale". Aplicado en: `DashboardPage` (KPIs admin + Cortes gerente reactivos), `SalesPage` (Reporte del Día), `ReportsPage` (today + 7 presets: Ayer/7 días/30 días/Este mes/Mes pasado/Este año), `SellPage` (min del input fecha de apartado). | 2026-05-22 |
+| 66 | Mangas | **Margen % siempre visible** en MangaEditModal y MangaBatchModal (tab Precios). Antes gateado por `canViewCost`. Decisión Joel 2026-05-25: en librería el cost se deriva del margen sobre precio público y todos los roles que abren el modal (admin+gerente) necesitan ver/editar ese cálculo. NO afecta productos regulares. | 2026-05-25 |
+| 67 | Caja | **OpenSessionConflictModal** — 409 estructurado al abrir caja cuando hay sesión activa que bloquea. 3 escenarios: (a) propia + misma caja → botón verde "Continuar sesión" (reanuda sin crear nueva); (b) propia + otra caja → "Cerrar y abrir nueva"; (c) ajena → muestra quién/cuándo, admin ve "Forzar cierre". Selector de cajas en el modal de abrir muestra "Ocupada por X · #N" (ámbar) o "Tu sesión activa" (verde). Backend: `CashSessionConflictException` + `POST /cash/sessions/{id}/force-close` admin-only con audit log; `GET /cash/registers` ahora embed `active_session`. | 2026-05-25 |
+| 68 | Caja | **Quitar cliente asignado a la venta** — botón ✕ en chip del footer (venta regular) + botón "Quitar" rojo en header (preventa) ahora usan función única `clearCustomer()`. Disponible para todos los roles mientras vende. Bloqueado solo cuando la venta es PREVENTA cargada de un folio existente (desincronizaría con `pre_sale_orders.customer_id` del backend). | 2026-05-25 |
+| 69 | QA | **Fixes ronda 5 del PDF de QA**: (a) **Scanner no suma** — nueva función `addScanToCart()` separada de `addToCart()`, nunca suma. Si producto ya está en venta, toast info y salida; solo +/- manual incrementa. Dedup window 1.5s → 3s. (b) **MangaEditModal permite agregar tienda nueva** al inventario (portado de QuickStockModal). (c) **Volumen visible en lista de Tomos** como badge rojo "Vol. N" al lado del nombre. (d) **Search no devuelve todos** — Enter ya no borra el input (causaba sensación "regresa todos los productos"); muestra toast "No se encontró 'XXX'" cuando filtered está vacío. Escape limpia. (e) **Gerente sin "Completar ahora"** en transfers — botón solo visible para admin, gerente queda con "Solicitar". | 2026-05-25 |
 | - | Deploy | **Dominio custom activo** `tadaima.poslite.com.mx` | 2026-05-05 |
 
 ### 🟡 Media prioridad (mejora flujo o datos)
@@ -476,6 +480,93 @@ docker compose up --build -d
 ---
 
 ## 11. Historial de sesiones de desarrollo
+
+### Sesión 2026-05-25 — Sesiones de caja conflict, QA ronda 5, margen visible en mangas, quitar cliente
+
+**Contexto:** Joel volvió después de unos días. Sesión enfocada en fixes operativos del PDF "QA Tadaima Web5" + bugs reportados por Ruben + un caso real propio de Joel (sesión de caja abierta en otra computadora).
+
+**Bloques principales:**
+
+#### 1. Cash session conflict — open + force-close + selector enriquecido
+Joel reportó "No deja abrir la caja, incluso si seleccioné una caja que no está siendo usada". Diagnóstico: el backend tenía dos guardias (`user-level` y `register-level`) que solo tiraban `DomainException` genérica sin info de quién/dónde está la sesión existente. El cajero/gerente no podía reanudar su propia sesión colgada ni el admin podía forzar cierre desde la UI.
+
+**Backend:**
+- `App\Exceptions\CashSessionConflictException` con `kind: 'own'|'foreign'` + `existingSession` Eloquent.
+- `CashRegisterService::open()` tira la excepción tipada (en vez de DomainException) con la sesión eager-loaded (`register.store`, `user:id,name`).
+- `CashRegisterController::open()` traduce a HTTP 409 con shape estructurado: `{conflict, existing_session: {id, user, register, store, opening_cash, opened_at, same_register}}`.
+- Nuevo endpoint `POST /cash/sessions/{session}/force-close` admin-only — cierra la sesión por su dueño (`opening_cash` = closing si no se manda otro). Audit en `system_logs` con `entity_type=cash_session`, action `cash_session.force_closed`.
+- `GET /cash/registers` ahora retorna `active_session: {id, user_id, user_name, opened_at, opening_cash, sales_count} | null` por cada caja. Sin queries extra para el selector.
+- `CashRegisterSession::sales()` relación HasMany agregada para `withCount(['sales'])`.
+
+**Frontend (`packages/api/src/cash.ts`):**
+- `openSession()` ahora devuelve `OpenSessionResult = {ok:true, session} | {ok:false, conflict}`. Catchea 409 y lo envuelve.
+- `forceCloseSession(sessionId, closingCash?)` para el botón admin.
+- `getCashRegistersWithSession()` para el selector enriquecido.
+- `useCashRegistersWithSessionQuery()` hook análogo.
+
+**UI (`components/cash/OpenSessionConflictModal.tsx`):**
+- Modal único que distingue 3 escenarios según `kind` + `same_register`:
+  - `own + same_register` → CTA verde "Continuar sesión" (reanuda invalidando `cash.activeSession`).
+  - `own + otra caja` → CTA rojo "Cerrar y abrir nueva" (force-close + reopen con los mismos params).
+  - `foreign` → muestra quién/cuándo. Admin ve "Forzar cierre"; otros ven solo info + sugerencia de contactar al dueño/admin.
+- Display de la sesión existente: caja, tienda, cajero, hora apertura, efectivo inicial, ID.
+- Integrado en `SellPage.handleOpenCash` con state `openSessionConflict` + handlers `handleResumeOwnSession` / `handleForceCloseAndReopen`.
+
+**Selector "Abrir Sesión de Caja"** (modal en SellPage): muestra debajo del nombre de la caja un badge:
+- 🟢 verde "Tu sesión activa · #N" si es del propio user.
+- 🟡 ámbar "Ocupada por X · #N" si es de otro.
+- Sin badge si está libre.
+
+Solo se hace fetch cuando el modal se abre (`enabled: !cashSession && showOpenCashModal`).
+
+#### 2. Mangas: margen % visible para admin + gerente (siempre)
+Joel pidió mostrar el campo `Margen %` y el cálculo de costo derivado (`precio × (1 − margen%)`) sin gate `canViewCost` en mangas/librería. Razón: el cost de libros se deriva del margen sobre precio público, y todos los roles que entran al modal (admin+gerente) necesitan ver/editar.
+
+- `MangaEditModal.tsx` tab Precios: quitado `{canViewCost && ...}` en 3 puntos (grid cols, input margen, badge "Costo real").
+- `MangaBatchModal.tsx` (Alta de Tomos): mismo cambio en el form de creación.
+- Productos regulares siguen con su gate por `canViewCost` (NO cambian).
+- Backend ya aceptaba `profit_margin_percent` sin restricción de rol.
+
+#### 3. Quitar cliente desde Caja (todos los roles)
+Bug Joel: "una vez que agregas cliente a la caja no te permite quitarlo deberia de poder quitarlo si se equivoco todos los roles".
+
+- Nueva función `clearCustomer()` en SellPage — limpia `customerId/Name/Phone/Email/isNewCustomer` + reset del search input + toast info.
+- Botón ✕ discreto en el chip "Cliente" del footer (venta regular, solo cuando hay cliente asignado).
+- Botón "Quitar" del header de preventa ahora también usa `clearCustomer` (mismo flujo único).
+- **Excepción de seguridad**: si `loadedPreSaleOrderId` está presente (folio cargado de DB), NO permite quitar — desincronizaría con `pre_sale_orders.customer_id` backend. Toast de error + botón disabled con tooltip.
+
+#### 4. QA fixes ronda 5 (PDF "QA Tadaima Web5")
+Joel mandó PDF con 7 items. 5 son bugs reales que arreglé, 2 ya estaban resueltos.
+
+| # | Bug | Fix |
+|---|---|---|
+| 8 | Scanner suma 2 al re-escanear | **Nueva función `addScanToCart()`** separada de `addToCart()`. Nunca suma. Si producto ya está en venta → toast info + return. Solo +/- manual incrementa. Dedup window 1.5s → 3s. Aplicado en local match (línea 1543) y backend match (línea 1589) del `handleScannedCode`. |
+| 1 | MangaEditModal no permite agregar tienda nueva | Selector "Agregar tienda" portado de QuickStockModal. Carga `getWarehouses({active:true})`, filtra por `restrictedStoreId` (gerente). Estado `pendingAddWh` + `pendingAddQty` + botón "+ Agregar". Empty state actualizado. |
+| 5 | Lista de Tomos sin volumen visible | Badge rojo "Vol. N" inline con el nombre del manga en la tabla. Visible incluso cuando hay imagen del producto. |
+| 3 | Search Enter borra el input ("regresa todos") | Quitado `if(Enter) setSearch("")` en Productos (línea 1992) y Tomos (línea 2418). Enter ahora muestra toast `No se encontró "XXX"` si filtered está vacío. Escape limpia el campo. |
+| 7 | Gerente ve "Completar ahora" en transfers | Botón condicional `{isAdminUser && ...}`. Gerente solo ve "Solicitar". El admin de destino confirma la recepción del lado opuesto. |
+| 2 | Caja no carga 4.5 (verificación) | ✅ Ya resuelto en sesión 2026-05-21 (línea 2524 del masterlog) — `setQueryData` + gate relajado |
+| 4 | Gerente ve stock otras tiendas en MangaEditModal (verificación) | ✅ Filtro `restrictedStoreId` ya activo (línea 116 del MangaEditModal). Confirmado en build actual. |
+| 6 | Gerente no ve preventas (verificación) | ✅ `PreSalesPage` ya tiene catálogos solo admin. El screenshot del QA aparece logueado como ADMIN, por eso ve la tab. |
+
+#### 5. Verificación Supabase loyalty (request Joel)
+Joel pidió verificar si la conexión REST a Supabase sigue activa o si hay que rotar la API key. Hice un test directo:
+- URL: `https://tfbhysypjuoadgnwjaba.supabase.co` ✓
+- SERVICE_KEY en Cloud Run: 219 chars JWT (`eyJ...`) ✓
+- `GET /rest/v1/` → HTTP 200 ✓
+- `GET /rest/v1/socios?limit=1` → retorna `TAD18586474` real ✓
+- Query `joel` con ilike → 2 matches reales (Joel Ibarra TAD15428046, Joel Alavez TAD18355462) ✓
+
+Conexión sana, key vigente, sin necesidad de rotar.
+
+#### Estado al cierre
+- ✅ `vite build` verde
+- ✅ `php artisan test` 40/40 pasan
+- ✅ Push `dev/qa-handoff → github.com:joeldorado/tadaima-pos` commit `1aca34b`
+- ✅ Deploy `tadaima-00053-697` 100% del tráfico
+- ✅ `tadaima.poslite.com.mx → 200`
+
+---
 
 ### Sesión 2026-05-22 — Dashboard gerente, Reporte del Día, cost_at_sale (ADR-015), helpers fecha local
 
