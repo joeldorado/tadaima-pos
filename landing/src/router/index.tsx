@@ -13,6 +13,7 @@ import { TransfersPage } from '@/pages/TransfersPage'
 import { PreSalesPage } from '@/pages/PreSalesPage'
 import { ReportsPage } from '@/pages/ReportsPage'
 import { SettingsPage } from '@/pages/SettingsPage'
+import { DemoWalkthroughPage } from '@/pages/DemoWalkthroughPage'
 import { StoresPage } from '@/pages/StoresPage'
 import { AdminPage } from '@/pages/AdminPage'
 import { LayawaysPage } from '@/pages/LayawaysPage'
@@ -57,6 +58,9 @@ export const router = createBrowserRouter([
       { path: 'stores',    element: <ProtectedRoute requiresPage="stores"><StoresPage /></ProtectedRoute> },
       { path: 'admin',     element: <ProtectedRoute requiresPage="admin"><AdminPage /></ProtectedRoute> },
       { path: 'layaways',  Component: LayawaysPage },
+      // Walkthrough QA para demos al cliente. Admin only (gate adicional
+      // dentro del componente). No tiene link en nav — accesible por URL.
+      { path: 'demo',      Component: DemoWalkthroughPage },
     ],
   },
 ])
