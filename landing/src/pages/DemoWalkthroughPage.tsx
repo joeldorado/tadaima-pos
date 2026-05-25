@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Printer, Download, RotateCcw, CheckCircle2, AlertTriangle, XCircle, ChevronDown, ChevronRight, Shield, User as UserIcon, Users } from "lucide-react";
+import { Printer, Download, RotateCcw, CheckCircle2, AlertTriangle, XCircle, ChevronDown, ChevronRight, Shield, User as UserIcon, Users, X, LayoutGrid, List } from "lucide-react";
 import { useAuth } from "@tadaima/auth";
 import { isAdmin as isAdminRole } from "@/lib/permisos";
 import { Navigate } from "react-router-dom";
@@ -329,6 +329,12 @@ export function DemoWalkthroughPage() {
   });
   const [collapsedRoles, setCollapsedRoles] = useState<Set<string>>(new Set());
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+  /** "mapa" = bento por rol (default, ideal para demo). "lista" = vista anterior, ideal para imprimir. */
+  const [viewMode, setViewMode] = useState<"mapa" | "lista">("mapa");
+  /** Rol activo en vista mapa (tabs). */
+  const [activeRole, setActiveRole] = useState<"admin" | "gerente" | "cajero">("admin");
+  /** Sección expandida inline en vista mapa (solo una a la vez para no llenar pantalla). */
+  const [expandedSection, setExpandedSection] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -395,6 +401,26 @@ export function DemoWalkthroughPage() {
     });
   };
 
+  /** Stats agregados por sección (para el bento) */
+  const sectionStats = (section: Section) => {
+    const total = section.items.length;
+    let ok = 0, warn = 0, ko = 0, pending = 0;
+    section.items.forEach(it => {
+      const st = state[it.id]?.status ?? "pending";
+      if (st === "ok") ok++;
+      else if (st === "warn") warn++;
+      else if (st === "ko") ko++;
+      else pending++;
+    });
+    const done = ok + warn + ko;
+    const progress = total === 0 ? 0 : (done / total) * 100;
+    // Color dominante: rojo si hay ko, ámbar si hay warn pero no ko, verde si todo ok, gris si pendiente
+    const dominantColor = ko > 0 ? "#f87171" : warn > 0 ? "#f59e0b" : (ok === total && total > 0) ? "#10b981" : "rgba(255,255,255,0.25)";
+    return { total, ok, warn, ko, pending, done, progress, dominantColor };
+  };
+
+  const activeRoleGroup = WALKTHROUGH.find(r => r.role === activeRole)!;
+
   return (
     <div className="min-h-screen app-bg p-8 print:p-4 print:bg-white">
       {/* Print styles */}
@@ -422,7 +448,26 @@ export function DemoWalkthroughPage() {
             </p>
           </div>
 
-          <div className="flex items-center gap-2 no-print">
+          <div className="flex items-center gap-2 no-print flex-wrap">
+            {/* Toggle vista: Mapa (bento, default) vs Lista (cascada para imprimir) */}
+            <div className="flex items-center gap-0 rounded-xl overflow-hidden" style={{ border: "1px solid var(--td-panel-border)" }}>
+              <button onClick={() => setViewMode("mapa")}
+                className="flex items-center gap-1.5 px-3 py-2 text-[10px] font-black uppercase tracking-widest transition-all"
+                style={{
+                  background: viewMode === "mapa" ? "linear-gradient(135deg, #CC2200, #FF4422)" : "var(--td-panel-bg)",
+                  color: viewMode === "mapa" ? "#fff" : "var(--td-text-md)",
+                }}>
+                <LayoutGrid size={12} /> Mapa
+              </button>
+              <button onClick={() => setViewMode("lista")}
+                className="flex items-center gap-1.5 px-3 py-2 text-[10px] font-black uppercase tracking-widest transition-all"
+                style={{
+                  background: viewMode === "lista" ? "linear-gradient(135deg, #CC2200, #FF4422)" : "var(--td-panel-bg)",
+                  color: viewMode === "lista" ? "#fff" : "var(--td-text-md)",
+                }}>
+                <List size={12} /> Lista
+              </button>
+            </div>
             <button onClick={handleReset}
               className="flex items-center gap-2 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all hover:bg-white/10"
               style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)", color: "var(--td-text-md)" }}>
@@ -459,7 +504,160 @@ export function DemoWalkthroughPage() {
         </div>
       </div>
 
-      {/* Secciones por rol */}
+      {/* ════ VISTA MAPA — bento por rol con tabs ════════════════════════════ */}
+      {/* En print siempre se renderiza vista lista (más limpia). */}
+      <div className={viewMode === "mapa" ? "print:hidden" : "hidden"}>
+        {/* Tabs por rol */}
+        <div className="flex items-center gap-2 mb-5 flex-wrap">
+          {WALKTHROUGH.map(role => {
+            const Icon = role.icon;
+            const active = activeRole === role.role;
+            const roleStats = role.sections.reduce(
+              (acc, s) => {
+                s.items.forEach(it => {
+                  const st = state[it.id]?.status ?? "pending";
+                  if (st === "ok") acc.ok++;
+                  else if (st === "warn") acc.warn++;
+                  else if (st === "ko") acc.ko++;
+                });
+                acc.total += s.items.length;
+                return acc;
+              },
+              { ok: 0, warn: 0, ko: 0, total: 0 },
+            );
+            return (
+              <button
+                key={role.role}
+                onClick={() => { setActiveRole(role.role); setExpandedSection(null); }}
+                className="flex items-center gap-3 px-5 py-3 rounded-2xl transition-all"
+                style={{
+                  background: active
+                    ? `linear-gradient(135deg, ${role.color}22, ${role.color}08)`
+                    : "rgba(255,255,255,0.02)",
+                  border: `1px solid ${active ? role.color : "var(--td-panel-border)"}`,
+                  boxShadow: active ? `0 0 0 1px ${role.color}33, 0 8px 24px ${role.color}11` : "none",
+                  transform: active ? "translateY(-1px)" : "none",
+                }}
+              >
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{
+                  background: active ? `${role.color}33` : "rgba(255,255,255,0.04)",
+                  border: `1px solid ${active ? `${role.color}66` : "var(--td-panel-border)"}`,
+                }}>
+                  <Icon size={16} style={{ color: active ? role.color : "var(--td-text-md)" }} />
+                </div>
+                <div className="text-left">
+                  <p className="text-[8px] font-black uppercase tracking-widest" style={{ color: active ? role.color : "var(--td-text-ghost)" }}>
+                    Rol
+                  </p>
+                  <p className="text-sm font-black" style={{ color: active ? "#fff" : "var(--td-text-md)" }}>
+                    {role.title}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1 ml-2">
+                  {roleStats.ok > 0 && (
+                    <span className="text-[9px] font-black px-1.5 py-0.5 rounded" style={{ background: "rgba(16,185,129,0.15)", color: "#10b981" }}>
+                      {roleStats.ok}
+                    </span>
+                  )}
+                  {roleStats.warn > 0 && (
+                    <span className="text-[9px] font-black px-1.5 py-0.5 rounded" style={{ background: "rgba(245,158,11,0.15)", color: "#f59e0b" }}>
+                      {roleStats.warn}
+                    </span>
+                  )}
+                  {roleStats.ko > 0 && (
+                    <span className="text-[9px] font-black px-1.5 py-0.5 rounded" style={{ background: "rgba(239,68,68,0.15)", color: "#f87171" }}>
+                      {roleStats.ko}
+                    </span>
+                  )}
+                  <span className="text-[9px] font-bold" style={{ color: "var(--td-text-ghost)" }}>
+                    /{roleStats.total}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Bento grid de secciones del rol activo */}
+        <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+          {activeRoleGroup.sections.map(section => {
+            const s = sectionStats(section);
+            const isExpanded = expandedSection === section.id;
+            return (
+              <div
+                key={section.id}
+                className="rounded-2xl transition-all"
+                style={{
+                  background: "rgba(255,255,255,0.025)",
+                  border: `1px solid ${isExpanded ? activeRoleGroup.color + "55" : "var(--td-panel-border)"}`,
+                  gridColumn: isExpanded ? "1 / -1" : "auto",
+                }}
+              >
+                <button
+                  onClick={() => setExpandedSection(prev => prev === section.id ? null : section.id)}
+                  className="w-full text-left p-4 transition-colors hover:bg-white/[0.02] rounded-2xl"
+                >
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <p className="text-xs font-black uppercase tracking-widest flex-1" style={{ color: "var(--td-text-hi)" }}>
+                      {section.title}
+                    </p>
+                    <span
+                      className="w-2 h-2 rounded-full mt-1 shrink-0"
+                      style={{ background: s.dominantColor, boxShadow: `0 0 0 3px ${s.dominantColor}22` }}
+                    />
+                  </div>
+                  <div className="flex items-center gap-2 text-[10px] font-bold" style={{ color: "var(--td-text-ghost)" }}>
+                    <span>{s.done}/{s.total} revisados</span>
+                    {s.warn > 0 && <span style={{ color: "#f59e0b" }}>· {s.warn} cambios</span>}
+                    {s.ko > 0 && <span style={{ color: "#f87171" }}>· {s.ko} no funciona</span>}
+                  </div>
+                  {/* Mini progress bar */}
+                  <div className="mt-2 h-1 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.05)" }}>
+                    <div className="h-full transition-all" style={{
+                      width: `${s.progress}%`,
+                      background: s.dominantColor,
+                    }} />
+                  </div>
+                </button>
+
+                {/* Expand inline: items con check + notas */}
+                {isExpanded && (
+                  <div className="px-4 pb-4 pt-2 space-y-2" style={{ borderTop: "1px solid var(--td-panel-border)" }}>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: activeRoleGroup.color }}>
+                        {section.items.length} ítems
+                      </p>
+                      <button
+                        onClick={() => setExpandedSection(null)}
+                        className="w-6 h-6 rounded-md flex items-center justify-center transition-colors hover:bg-white/10"
+                        style={{ color: "var(--td-text-ghost)" }}
+                        title="Cerrar"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                    {section.items.map(item => {
+                      const itemState = state[item.id] ?? { status: "pending" as Status, notes: "" };
+                      return (
+                        <ChecklistItem
+                          key={item.id}
+                          item={item}
+                          itemState={itemState}
+                          onStatusChange={st => setStatus(item.id, st)}
+                          onNotesChange={n => setNotes(item.id, n)}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ════ VISTA LISTA — todos los roles en cascada, ideal para imprimir ═════ */}
+      <div className={viewMode === "lista" ? "" : "hidden print:block"}>
       {WALKTHROUGH.map(role => {
         const Icon = role.icon;
         const isCollapsed = collapsedRoles.has(role.role);
@@ -531,6 +729,7 @@ export function DemoWalkthroughPage() {
           </div>
         );
       })}
+      </div>
 
       {/* Footer */}
       <div className="mt-8 mb-4 p-4 rounded-2xl text-center print:border print:border-gray-300"
