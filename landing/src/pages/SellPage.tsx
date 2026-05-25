@@ -1914,13 +1914,36 @@ export function SellPage() {
       const name = (p.name ?? "").toLowerCase();
       const sku  = (p.sku  ?? "").toLowerCase();
       const matchesSearch = (!q || name.includes(q) || sku.includes(q));
-      
+
       if (activeMesa.isPreventa) {
         return matchesSearch && (p.stock_details?.preventa || 0) > 0;
       }
       return matchesSearch;
     });
   }, [products, search, activeMesa.isPreventa]);
+
+  /**
+   * Detecta cuándo el cajero está buscando un folio de preventa (input
+   * empieza con "PREV-" o "prev-"). En ese caso el dropdown del search
+   * muestra folios matching en vez de productos.
+   */
+  const isFolioSearch = useMemo(() => /^prev-/i.test(search.trim()), [search]);
+
+  /**
+   * Folios que matchean el código tecleado por el cajero (cache RQ ya cargado
+   * al abrir caja). Filtra cancelados + vencidos (no se pueden liquidar).
+   * Mantiene pending/ready (para liquidar o ver pendientes de llegada) y
+   * delivered (para reimpresión de ticket).
+   */
+  const filteredFolios = useMemo(() => {
+    if (!isFolioSearch) return [];
+    const q = search.trim().toLowerCase();
+    const all = preSaleOrdersQuery.data?.data ?? [];
+    return all
+      .filter(o => o.status !== 'cancelled')
+      .filter(o => o.code.toLowerCase().includes(q))
+      .slice(0, 8);
+  }, [isFolioSearch, search, preSaleOrdersQuery.data]);
 
   const filteredCusts = useMemo(() => {
     const q = customerSearch.toLowerCase();
@@ -2497,7 +2520,16 @@ export function SellPage() {
           storeName: activeStore?.name,
           cashierName: user?.name,
           amountReceived: cashReceivedSnap > 0 ? cashReceivedSnap : undefined,
-          change: cashReceivedSnap > ticketTotal ? cashReceivedSnap - ticketTotal : undefined,
+          // Cuando es Dólares, cashReceivedSnap es USD y ticketTotal es MXN.
+          // El cambio se calcula en USD: (receivedUSD * tc - ticketMxn) / tc.
+          change: (() => {
+            if (cashReceivedSnap <= 0) return undefined;
+            if (payMethodSnap === "Dólares") {
+              const receivedMxn = cashReceivedSnap * tc;
+              return receivedMxn > ticketTotal ? (receivedMxn - ticketTotal) / tc : undefined;
+            }
+            return cashReceivedSnap > ticketTotal ? cashReceivedSnap - ticketTotal : undefined;
+          })(),
           ...(newOrderCode ? {
             preSaleCode: newOrderCode,
             preSaleItems: newCatalogItems.map(i => ({
@@ -2571,11 +2603,17 @@ export function SellPage() {
 
       const needsCash = ["Efectivo", "Dólares"].includes(activeMesa.paymentMethod);
       const receivedAmt = parseFloat(cashReceived) || 0;
-      if (needsCash && totalDeposit > 0 && receivedAmt < totalDeposit) {
+      // Bug previo: comparaba USD vs MXN. Ej: $100 USD = $1,550 MXN (TC 15.50),
+      // pero `receivedAmt=100` vs `totalDeposit=200` MXN → 100<200 → bloqueaba.
+      // Convertimos USD→MXN antes de comparar cuando el método es Dólares.
+      const receivedInMxn = activeMesa.paymentMethod === "Dólares"
+        ? receivedAmt * tc
+        : receivedAmt;
+      if (needsCash && totalDeposit > 0 && receivedInMxn < totalDeposit) {
         blocked = true;
         toast("Ingresa el anticipo recibido", {
           icon: <Banknote size={16} className="text-red-400" />,
-          description: `Se requieren al menos ${fmt(totalDeposit)} para registrar el anticipo`,
+          description: `Se requieren al menos ${fmt(totalDeposit)} para registrar el anticipo${activeMesa.paymentMethod === "Dólares" ? ` (≈ ${(totalDeposit / tc).toFixed(2)} USD a TC ${tc})` : ""}`,
           style: {
             background: "#1a0000",
             color: "#f87171",
@@ -2696,7 +2734,15 @@ export function SellPage() {
           storeName: activeStore?.name,
           cashierName: user?.name,
           amountReceived: mixedReceived > 0 ? mixedReceived : undefined,
-          change: mixedReceived > mixedTotal ? mixedReceived - mixedTotal : undefined,
+          // Mismo fix USD/MXN que la rama de folio cargado.
+          change: (() => {
+            if (mixedReceived <= 0) return undefined;
+            if (payMethodSnap === "Dólares") {
+              const receivedMxn = mixedReceived * tc;
+              return receivedMxn > mixedTotal ? (receivedMxn - mixedTotal) / tc : undefined;
+            }
+            return mixedReceived > mixedTotal ? mixedReceived - mixedTotal : undefined;
+          })(),
           preSaleCode: order.code,
           preSaleItems: catalogItems.map(i => ({
             name: i.product.name,
@@ -2771,7 +2817,16 @@ export function SellPage() {
       // (defensa por si quedó algo en cashReceived de un método anterior).
       const isCashPay = activeMesa.paymentMethod === "Efectivo" || activeMesa.paymentMethod === "Dólares";
       const receivedSnapshot = isCashPay ? (parseFloat(cashReceived) || 0) : 0;
-      const changeSnapshot = receivedSnapshot > 0 ? receivedSnapshot - total : 0;
+      // Cambio: si paga Dólares, receivedSnapshot está en USD pero `total` en
+      // MXN. Convertir a USD para el cálculo del cambio.
+      const changeSnapshot = (() => {
+        if (receivedSnapshot <= 0) return 0;
+        if (activeMesa.paymentMethod === "Dólares") {
+          const receivedMxn = receivedSnapshot * tc;
+          return receivedMxn > total ? (receivedMxn - total) / tc : 0;
+        }
+        return receivedSnapshot - total;
+      })();
 
       // Items reales (no preventa-catálogo, no folio cargado). En esta rama
       // (venta regular sin folio cargado) todos los items son regulares.
@@ -3858,12 +3913,30 @@ export function SellPage() {
                 <input
                   ref={prodInputRef}
                   type="text"
-                  placeholder="Añadir producto por nombre, SKU o escanear código..."
+                  placeholder="Añadir producto, escanear código o tipear folio (PREV-…)"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   onKeyDown={e => {
-                    // Enter en escaneo / búsqueda: si hay un único match exacto, lo agrega y limpia.
                     if (e.key !== "Enter") return;
+                    // Si el cajero tecleó un folio PREV-NNN, busca y carga la
+                    // preventa. Prioridad al cache local; si no, query backend.
+                    if (isFolioSearch) {
+                      e.preventDefault();
+                      const code = search.trim().toUpperCase();
+                      const localMatch = filteredFolios.find(o => o.code.toUpperCase() === code)
+                        ?? (filteredFolios.length === 1 ? filteredFolios[0] : null);
+                      if (localMatch) {
+                        getPreSaleOrder(localMatch.id)
+                          .then(detail => loadPreSaleOrderIntoCart(detail))
+                          .then(() => setSearch(""))
+                          .catch(() => toast.error("Error al cargar la preventa"));
+                      } else {
+                        // No está en cache → backend lookup (handles "no encontrado")
+                        void searchByFolio(code).then(() => setSearch(""));
+                      }
+                      return;
+                    }
+                    // Enter en escaneo / búsqueda de producto: si hay un único match exacto, lo agrega y limpia.
                     if (filteredProds.length === 0) return;
                     e.preventDefault();
                     const exact = filteredProds.find(p => p.sku === search.trim()) ?? (filteredProds.length === 1 ? filteredProds[0] : null);
@@ -3876,8 +3949,63 @@ export function SellPage() {
                 
                 {/* Resultados de búsqueda rápidos */}
                 {search.length > 0 && (
-                  <div className="absolute top-full left-0 right-0 mt-2 z-[90] border border-white/10 rounded-2xl overflow-hidden shadow-2xl max-h-[300px] overflow-y-auto no-scrollbar" style={{ background: "var(--td-popup-bg)" }}>
-                    {filteredProds.length === 0 ? (
+                  <div className="absolute top-full left-0 right-0 mt-2 z-[90] border border-white/10 rounded-2xl overflow-hidden shadow-2xl max-h-[360px] overflow-y-auto no-scrollbar" style={{ background: "var(--td-popup-bg)" }}>
+                    {isFolioSearch ? (
+                      filteredFolios.length === 0 ? (
+                        <div className="p-4 text-center text-xs text-white/30 font-bold uppercase tracking-widest">
+                          Sin folios que empiecen con "{search.trim()}"
+                          <p className="text-[10px] mt-1 normal-case tracking-normal text-white/20">Enter para buscar en backend</p>
+                        </div>
+                      ) : (
+                        filteredFolios.map(o => {
+                          const isReady     = o.status === 'ready';
+                          const isPending   = o.status === 'pending';
+                          const isDelivered = o.status === 'delivered';
+                          const itemsCount  = (o.items ?? []).reduce((s, it) => s + (it.quantity ?? 0), 0);
+                          const statusLabel = isDelivered ? 'Liquidado' : isReady ? 'Listo · Liquidar' : isPending ? 'Pendiente de llegada' : (o.status ?? '');
+                          const statusColor = isDelivered ? '#22c55e' : isReady ? '#10b981' : isPending ? '#f59e0b' : '#6b7280';
+                          return (
+                            <button
+                              key={o.id}
+                              type="button"
+                              onClick={() => {
+                                getPreSaleOrder(o.id)
+                                  .then(detail => loadPreSaleOrderIntoCart(detail))
+                                  .then(() => setSearch(""))
+                                  .catch(() => toast.error("Error al cargar la preventa"));
+                              }}
+                              className="w-full px-5 py-4 border-b border-white/5 flex items-center gap-4 text-left hover:bg-white/[0.04] transition-colors"
+                              style={{ borderBottom: "1px solid var(--td-panel-border)" }}
+                            >
+                              <div className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0" style={{
+                                background: `${statusColor}1A`,
+                                border: `1px solid ${statusColor}55`,
+                              }}>
+                                <Bookmark size={18} style={{ color: statusColor }} />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-sm font-black" style={{ color: "var(--td-text-hi)" }}>{o.code}</span>
+                                  <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded" style={{ background: `${statusColor}22`, color: statusColor }}>
+                                    {statusLabel}
+                                  </span>
+                                </div>
+                                <p className="text-[11px] mt-0.5 truncate" style={{ color: "var(--td-text-md)" }}>
+                                  {o.customer?.name ?? "Sin cliente"}
+                                  {itemsCount > 0 && <span style={{ color: "var(--td-text-ghost)" }}> · {itemsCount} item{itemsCount === 1 ? "" : "s"}</span>}
+                                </p>
+                                <p className="text-[10px] mt-0.5" style={{ color: "var(--td-text-ghost)" }}>
+                                  Anticipo {fmt(o.paid_amount ?? 0)} de {fmt(o.total ?? 0)}
+                                  {o.balance != null && o.balance > 0 && (
+                                    <span style={{ color: "#f59e0b", marginLeft: 6 }}>· Por cobrar {fmt(o.balance)}</span>
+                                  )}
+                                </p>
+                              </div>
+                            </button>
+                          );
+                        })
+                      )
+                    ) : filteredProds.length === 0 ? (
                       <div className="p-4 text-center text-xs text-white/30 font-bold uppercase tracking-widest">No se encontró el producto</div>
                     ) : (
                       filteredProds.map(p => (
