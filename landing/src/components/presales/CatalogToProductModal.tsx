@@ -9,6 +9,7 @@ import {
   createProduct, updateProduct, uploadProductImage,
   getWarehouses, updateInventory,
   getCategories, updatePreSaleCatalog,
+  storageUrl,
 } from "@tadaima/api";
 import type { PreSaleCatalog, ProductCategory } from "@tadaima/api";
 
@@ -94,7 +95,13 @@ export function CatalogToProductModal({ catalog, onClose, onSuccess }: Props) {
 
   const [activeTab, setActiveTab]       = useState<"general" | "precios" | "inventario">("general");
   const [imageFile, setImageFile]       = useState<File | null>(null);
-  const [imagePreview, setImagePreview] = useState<string>(catalog.image_path ?? "");
+  // image_url es la URL pública (la setea PreSaleCatalogResource via Storage::url).
+  // image_path es solo el path relativo en el bucket — no sirve como src.
+  // Fallback a storageUrl(path) por si el backend no envió image_url en algún
+  // endpoint legacy.
+  const [imagePreview, setImagePreview] = useState<string>(
+    catalog.image_url ?? (catalog.image_path ? storageUrl(catalog.image_path) : "")
+  );
   const [saving, setSaving]             = useState(false);
   const [categories, setCategories]     = useState<ProductCategory[]>([]);
   const [locations, setLocations]       = useState<{ warehouseId: number; name: string; store: string; type: "central" | "store" }[]>([]);
