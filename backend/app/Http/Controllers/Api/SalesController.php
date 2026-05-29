@@ -8,7 +8,9 @@ use App\Http\Resources\SaleResource;
 use App\Models\Inventory;
 use App\Models\InventoryMovement;
 use App\Models\Sale;
+use App\Models\SaleCancellation;
 use App\Services\CheckoutService;
+use App\Services\SaleCancellationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -178,5 +180,51 @@ class SalesController extends Controller
         $sale->load(['items.product', 'payments.paymentMethod', 'customer']);
 
         return $this->success(new SaleResource($sale), 'Devolución registrada correctamente.');
+    }
+
+    /**
+     * POST /sales/{sale}/cancel — ADR-016.
+     *
+     * Body: {
+     *   items?:        [{sale_item_id: int, quantity: number}]   ← vacío/omitido = cancelación total
+     *   reason_code:   'cliente_devuelve'|'error_cajero'|'dañado'|'no_llego'|'otro'
+     *   reason_text?:  string
+     *   cash_session_id?: int   ← sesión activa donde se registra la salida
+     * }
+     */
+    public function cancel(Sale $sale, Request $request, SaleCancellationService $service): JsonResponse
+    {
+        $data = $request->validate([
+            'items'              => ['nullable', 'array'],
+            'items.*.sale_item_id' => ['required_with:items', 'integer'],
+            'items.*.quantity'   => ['required_with:items', 'numeric', 'min:0.01'],
+            'reason_code'        => ['required', 'string', 'in:cliente_devuelve,error_cajero,dañado,no_llego,otro'],
+            'reason_text'        => ['nullable', 'string', 'max:500'],
+            'cash_session_id'    => ['nullable', 'integer', 'exists:cash_register_sessions,id'],
+        ]);
+
+        try {
+            $cancellation = $service->cancelSale(
+                sale: $sale,
+                itemsToCancel: $data['items'] ?? [],
+                reasonCode: $data['reason_code'],
+                reasonText: $data['reason_text'] ?? null,
+                cancelledBy: $request->user(),
+                activeSessionId: $data['cash_session_id'] ?? null,
+            );
+        } catch (\DomainException $e) {
+            return $this->error($e->getMessage(), 422);
+        }
+
+        $sale->refresh()->load(['items.product', 'payments.paymentMethod', 'customer']);
+        return $this->success([
+            'sale'         => new SaleResource($sale),
+            'cancellation' => [
+                'id'              => $cancellation->id,
+                'mode'            => $cancellation->mode,
+                'amount_refunded' => (float) $cancellation->amount_refunded,
+                'cash_movement_id'=> $cancellation->cash_movement_id,
+            ],
+        ], 'Cancelación registrada correctamente.');
     }
 }

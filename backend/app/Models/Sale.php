@@ -14,6 +14,10 @@ class Sale extends Model
     const STATUS_CANCELLED = 'cancelled';
     const STATUS_RETURNED  = 'returned';
 
+    const CANCELLATION_NONE    = 'none';
+    const CANCELLATION_PARTIAL = 'partial';
+    const CANCELLATION_FULL    = 'full';
+
     protected $fillable = [
         'store_id',
         'register_session_id',
@@ -26,15 +30,18 @@ class Sale extends Model
         'total',
         'commission_amount',
         'status',
+        'cancellation_status',
+        'last_cancelled_at',
     ];
 
     protected $casts = [
-        'subtotal'          => 'float',
-        'discount'          => 'float',
-        'total'             => 'float',
-        'commission_amount' => 'float',
-        'sold_at'           => 'datetime',
-        'created_at'        => 'datetime',
+        'subtotal'           => 'float',
+        'discount'           => 'float',
+        'total'              => 'float',
+        'commission_amount'  => 'float',
+        'sold_at'            => 'datetime',
+        'created_at'         => 'datetime',
+        'last_cancelled_at'  => 'datetime',
     ];
 
     protected static function booted(): void
@@ -51,6 +58,11 @@ class Sale extends Model
     public function items(): HasMany
     {
         return $this->hasMany(SaleItem::class);
+    }
+
+    public function cancellations(): HasMany
+    {
+        return $this->hasMany(SaleCancellation::class);
     }
 
     public function payments(): HasMany

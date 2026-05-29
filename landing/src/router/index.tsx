@@ -8,6 +8,7 @@ import { DashboardPage } from '@/pages/DashboardPage'
 import { SellPage } from '@/pages/SellPage'
 import { SalesPage } from '@/pages/SalesPage'
 import { ProductsPage } from '@/pages/ProductsPage'
+import { StockSearchPage } from '@/pages/StockSearchPage'
 import { ClientsPage } from '@/pages/ClientsPage'
 import { TransfersPage } from '@/pages/TransfersPage'
 import { PreSalesPage } from '@/pages/PreSalesPage'
@@ -50,6 +51,7 @@ export const router = createBrowserRouter([
       { path: 'caja', Component: SellPage },
       { path: 'sales',     element: <ProtectedRoute requiresPage="sales"><SalesPage /></ProtectedRoute> },
       { path: 'products',  element: <ProtectedRoute requiresPage="products"><ProductsPage /></ProtectedRoute> },
+      { path: 'buscar-tiendas', element: <ProtectedRoute requiresPage="stock_search"><StockSearchPage /></ProtectedRoute> },
       { path: 'transfers', element: <ProtectedRoute requiresPage="transfers"><TransfersPage /></ProtectedRoute> },
       { path: 'clients',   element: <ProtectedRoute requiresPage="clients"><ClientsPage /></ProtectedRoute> },
       { path: 'pre-sales', element: <ProtectedRoute requiresPage="presales"><PreSalesPage /></ProtectedRoute> },

@@ -9,6 +9,13 @@ interface Props {
   onClose: () => void;
   onSuccess: (catalog: PreSaleCatalog) => void;
   catalog?: PreSaleCatalog;
+  /**
+   * Gerente: solo puede asignar stock a SU tienda. Cuando está presente, el
+   * tab Stock filtra el selector y las entradas a esta sucursal y oculta las
+   * de otras tiendas (el backend preserva las ajenas — ver syncStoreLimits).
+   * null = admin (todas las tiendas).
+   */
+  restrictedStoreId?: number | null;
 }
 
 type Tab = "general" | "precios" | "stock";
@@ -88,7 +95,7 @@ function ListPicker({ label, items, value, onChange, onAdd, adding }: {
   );
 }
 
-export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog }: Props) {
+export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restrictedStoreId = null }: Props) {
   const isEdit = !!catalog;
 
   const [tab, setTab]               = useState<Tab>("general");
@@ -121,7 +128,11 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog }: Props) {
   const [stores, setStores] = useState<Store[]>([]);
   const [storeLimits, setStoreLimits] = useState<Record<number, string>>(() => {
     const init: Record<number, string> = {};
-    (catalog?.store_limits ?? []).forEach(sl => { init[sl.store_id] = String(sl.limit_qty); });
+    (catalog?.store_limits ?? []).forEach(sl => {
+      // Gerente: oculta las asignaciones de otras tiendas (no las ve ni las edita).
+      if (restrictedStoreId != null && sl.store_id !== restrictedStoreId) return;
+      init[sl.store_id] = String(sl.limit_qty);
+    });
     return init;
   });
   // Selector "Agregar tienda": qué tienda se va a sumar a la lista
@@ -505,8 +516,12 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog }: Props) {
           )}
 
           {tab === "stock" && (() => {
+            // Gerente: solo puede asignar stock a su propia sucursal.
+            const selectableStores = restrictedStoreId != null
+              ? stores.filter(s => s.id === restrictedStoreId)
+              : stores;
             // Tiendas que aún no tienen stock asignado (disponibles para agregar).
-            const availableStores = stores.filter(s => !(s.id in storeLimits));
+            const availableStores = selectableStores.filter(s => !(s.id in storeLimits));
             // Tiendas ya asignadas (con stock definido).
             const assignedEntries = Object.entries(storeLimits).map(([sid, qty]) => {
               const store = stores.find(s => s.id === Number(sid));

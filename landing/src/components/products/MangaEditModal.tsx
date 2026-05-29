@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, type CSSProperties } from 'react'
 import {
-  X, Save, Loader2, BookOpen, DollarSign, Warehouse,
+  X, Save, Loader2, BookOpen, DollarSign, Warehouse as WarehouseIcon,
   CheckCircle2, AlertTriangle, Camera, Scan, Trash2,
 } from 'lucide-react'
 import { updateManga, deleteManga, uploadMangaImage, getMangaInventory, updateMangaInventory, getWarehouses } from '@tadaima/api'
@@ -283,7 +283,7 @@ export function MangaEditModal({
             {([
               { id: 'tomo' as Tab,       label: 'Tomo',       icon: BookOpen },
               { id: 'precios' as Tab,    label: 'Precios',    icon: DollarSign },
-              { id: 'inventario' as Tab, label: 'Inventario', icon: Warehouse },
+              { id: 'inventario' as Tab, label: 'Inventario', icon: WarehouseIcon },
             ]).map(t => (
               <button
                 key={t.id}
@@ -553,7 +553,7 @@ export function MangaEditModal({
                   </div>
                 ) : inventory.length === 0 ? (
                   <div className="flex flex-col items-center gap-2 py-8 rounded-2xl" style={{ background: 'rgba(255,255,255,0.03)', border: '1px dashed rgba(255,255,255,0.1)' }}>
-                    <Warehouse size={28} style={{ color: 'rgba(255,255,255,0.15)' }} />
+                    <WarehouseIcon size={28} style={{ color: 'rgba(255,255,255,0.15)' }} />
                     <p className="text-xs text-center" style={{ color: T.textMuted }}>Sin inventario asignado.<br /><span style={{ color: 'rgba(255,255,255,0.25)' }}>Usa "Agregar tienda" arriba para asignar stock.</span></p>
                   </div>
                 ) : (
@@ -564,7 +564,7 @@ export function MangaEditModal({
                       <div key={item.warehouse_id} className="rounded-2xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.08)' }}>
                         <div className="flex items-center gap-3 px-4 py-3" style={{ background: 'rgba(255,255,255,0.05)' }}>
                           <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ background: 'rgba(255,255,255,0.07)' }}>
-                            <Warehouse size={13} style={{ color: 'rgba(255,255,255,0.5)' }} />
+                            <WarehouseIcon size={13} style={{ color: 'rgba(255,255,255,0.5)' }} />
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">

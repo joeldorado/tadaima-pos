@@ -18,6 +18,8 @@ import {
 import { primaryRole, isCashier } from "@/lib/permisos";
 import { UserAvatar } from "@/components/UserAvatar";
 import { AvatarPicker } from "@/components/AvatarPicker";
+import { BackgroundBeams } from "@/components/aceternity/BackgroundBeams";
+import { HoverCard } from "@/components/aceternity/HoverCard";
 import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
 import { useQueryClient } from "@tanstack/react-query";
 import { getCashReport, type CashSessionReport } from "@tadaima/api";
@@ -659,10 +661,15 @@ export function DashboardPage() {
   }
 
   return (
-    <div className="min-h-screen app-bg p-10">
+    <div className="min-h-screen app-bg p-10 relative overflow-x-hidden">
+
+      {/* Aceternity Background Beams — capa atmosférica de rayos animados.
+          Solo visible para no-cajero (admin/gerente) para dar el toque premium
+          al dashboard. Cajero usa otra pantalla más operativa. */}
+      {!isCashier(user?.roles) && <BackgroundBeams />}
 
       {/* Header */}
-      <div className="mb-8">
+      <div className="mb-8 relative z-10">
         <div className="flex items-center gap-2 mb-1">
           <LayoutDashboard size={16} className="text-white/25" />
           <span className="text-xs font-medium text-white/25">Dashboard</span>
@@ -683,7 +690,7 @@ export function DashboardPage() {
           de hoy" + "Cajeros conectados" que vienen abajo. Admin sigue viendo
           el row porque tiene visión cross-tienda y no tiene secciones abajo. */}
       {activeStore && !isGerente && (
-        <div className="mb-8">
+        <div className="mb-8 relative z-10">
           <p className="text-[10px] font-black uppercase tracking-widest text-white/20 mb-3">
             Hoy · {activeStore.name}
           </p>
@@ -741,7 +748,7 @@ export function DashboardPage() {
           )}
 
           {/* Operaciones */}
-          <div className="mb-8">
+          <div className="mb-8 relative z-10">
             <SectionLabel>Operaciones</SectionLabel>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "12px" }}>
               <DashCard
@@ -774,7 +781,7 @@ export function DashboardPage() {
           </div>
 
           {/* Inventario */}
-          <div className="mb-8">
+          <div className="mb-8 relative z-10">
             <SectionLabel>Inventario</SectionLabel>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "12px" }}>
               <DashCard
@@ -805,7 +812,7 @@ export function DashboardPage() {
           </div>
 
           {/* Sistema */}
-          <div className="mb-8">
+          <div className="mb-8 relative z-10">
             <SectionLabel>Sistema</SectionLabel>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "12px" }}>
               <DashCard
@@ -838,7 +845,7 @@ export function DashboardPage() {
         <>
           {/* Cajeros conectados — lista compacta de la tienda activa */}
           {isGerente && activeStore && (
-            <div className="mb-8">
+            <div className="mb-8 relative z-10">
               <div className="flex items-center justify-between mb-3">
                 <SectionLabel>Cajeros conectados · {activeStore.name}</SectionLabel>
                 <button
@@ -867,9 +874,10 @@ export function DashboardPage() {
                     const openSession = openSessionByUser.get(u.id);
                     const hasOpenCash = !!openSession;
                     return (
-                      <div
+                      <HoverCard
                         key={u.id}
                         className="rounded-2xl p-4 flex items-center gap-3"
+                        accent={hasOpenCash ? "rgba(16,185,129,0.22)" : "rgba(224,34,26,0.16)"}
                         style={{
                           background: hasOpenCash
                             ? "linear-gradient(135deg, rgba(16,185,129,0.10) 0%, rgba(0,0,0,0.3) 100%)"
@@ -914,7 +922,7 @@ export function DashboardPage() {
                             </span>
                           )}
                         </div>
-                      </div>
+                      </HoverCard>
                     );
                   })}
                 </div>
@@ -924,7 +932,7 @@ export function DashboardPage() {
 
           {/* Cortes de hoy — sesiones de hoy de mi tienda, agrupadas visualmente por cajero */}
           {isGerente && activeStore && (
-            <div className="mb-8">
+            <div className="mb-8 relative z-10">
               <div className="flex items-center justify-between mb-3">
                 <SectionLabel>Cortes de hoy · {activeStore.name}</SectionLabel>
                 <button
@@ -981,16 +989,16 @@ export function DashboardPage() {
                     const statusBg    = !isClosed ? "rgba(255,170,0,0.10)" : isMatch ? "rgba(16,185,129,0.10)" : isShort ? "rgba(220,38,38,0.10)" : "rgba(245,158,11,0.10)";
                     const statusLabel = !isClosed ? "Abierta" : isMatch ? "Cuadra ✓" : isShort ? `Falta ${fmt(Math.abs(diff))}` : `Sobra ${fmt(diff)}`;
                     return (
-                      <button
+                      <HoverCard
                         key={s.id}
                         onClick={() => setSelectedCut(s)}
-                        className="text-left transition-colors hover:bg-white/5"
+                        accent={`${statusColor}26`}
+                        className="text-left"
                         style={{
                           display: "flex", alignItems: "center", gap: 12,
                           padding: "12px 14px", borderRadius: 14,
                           background: "var(--td-card-bg)",
                           border: "1px solid var(--td-card-border)",
-                          cursor: "pointer",
                         }}
                       >
                         <div style={{
@@ -1021,7 +1029,7 @@ export function DashboardPage() {
                             background: statusBg, color: statusColor, border: `1px solid ${statusColor}40`,
                           }}>{statusLabel}</span>
                         </div>
-                      </button>
+                      </HoverCard>
                     );
                   })}
                 </div>
@@ -1030,7 +1038,7 @@ export function DashboardPage() {
           )}
 
           {/* Acceso rápido — Caja + Productos */}
-          <div className="mb-8">
+          <div className="mb-8 relative z-10">
             <SectionLabel>Acciones rápidas</SectionLabel>
             <div className="flex gap-4 flex-wrap">
               <ActionCard

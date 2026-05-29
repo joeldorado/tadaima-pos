@@ -100,3 +100,38 @@ export async function markPreSaleOrderItemDelivered(
   )
   return response.data
 }
+
+// ─── ADR-016: cancelación de preventa ────────────────────────────────────────
+
+export interface CancelPreSaleOrderInput {
+  mode: 'full' | 'liquidation_rollback'
+  reason_code: 'cliente_devuelve' | 'error_cajero' | 'dañado' | 'no_llego' | 'otro'
+  reason_text?: string
+  cash_session_id?: number
+}
+
+export interface CancelPreSaleOrderResult {
+  order: PreSaleOrder
+  cancellation: {
+    id: number
+    mode: 'full' | 'liquidation_rollback'
+    amount_refunded: number
+    cash_movement_id: number | null
+  }
+}
+
+/**
+ * POST /pre-sale-orders/{id}/cancel — ADR-016.
+ * - mode='full' → cancela todo el folio, reversa todos los pagos.
+ * - mode='liquidation_rollback' → delivered → ready, reversa solo último pago.
+ */
+export async function cancelPreSaleOrder(
+  id: number,
+  input: CancelPreSaleOrderInput
+): Promise<CancelPreSaleOrderResult> {
+  const response = await apiClient.post<CancelPreSaleOrderResult>(
+    `/pre-sale-orders/${id}/cancel`,
+    input
+  )
+  return response.data
+}

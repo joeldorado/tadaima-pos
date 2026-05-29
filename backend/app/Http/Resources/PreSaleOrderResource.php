@@ -12,8 +12,12 @@ class PreSaleOrderResource extends JsonResource
         return [
             'id'              => $this->id,
             'code'            => $this->code,
-            'status'          => $this->status,
-            'linked_sale_id'  => $this->linked_sale_id,
+            'status'              => $this->status,
+            // ADR-016 — rollback liquidación deja status='ready' pero la preventa
+            // tuvo una liquidación reversada. Frontend muestra badge específico.
+            'cancellation_status' => $this->cancellation_status ?? 'none',
+            'last_cancelled_at'   => $this->last_cancelled_at?->toISOString(),
+            'linked_sale_id'      => $this->linked_sale_id,
             'pickup_deadline' => $this->pickup_deadline?->toDateString(),
             'notes'           => $this->notes,
             'created_at'      => $this->created_at,

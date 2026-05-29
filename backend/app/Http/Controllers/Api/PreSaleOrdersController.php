@@ -13,7 +13,9 @@ use App\Mail\FolioCreatedMail;
 use App\Models\PreSaleOrder;
 use App\Models\PreSaleOrderItem;
 use App\Models\PreSaleOrderLog;
+use App\Models\SaleCancellation;
 use App\Services\PreSaleOrderService;
+use App\Services\SaleCancellationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Mail;
@@ -202,5 +204,56 @@ class PreSaleOrdersController extends Controller
         }
 
         return $this->success(new PreSaleOrderItemResource($item));
+    }
+
+    /**
+     * POST /pre-sale-orders/{id}/cancel — ADR-016.
+     *
+     * Body: {
+     *   mode:          'full' | 'liquidation_rollback'
+     *   reason_code:   'cliente_devuelve'|'error_cajero'|'dañado'|'no_llego'|'otro'
+     *   reason_text?:  string
+     *   cash_session_id?: int
+     * }
+     *
+     * - mode='full' → cancela el folio entero (status='cancelled'), reversa todos los pagos,
+     *   restaura stock si estaba delivered.
+     * - mode='liquidation_rollback' → preventa delivered → ready, reversa solo el último
+     *   payment (la liquidación), restaura stock entregado, items.delivered_at=null.
+     */
+    public function cancel(int $id, Request $request, SaleCancellationService $service): JsonResponse
+    {
+        $order = PreSaleOrder::findOrFail($id);
+
+        $data = $request->validate([
+            'mode'            => ['required', 'string', 'in:full,liquidation_rollback'],
+            'reason_code'     => ['required', 'string', 'in:cliente_devuelve,error_cajero,dañado,no_llego,otro'],
+            'reason_text'     => ['nullable', 'string', 'max:500'],
+            'cash_session_id' => ['nullable', 'integer', 'exists:cash_register_sessions,id'],
+        ]);
+
+        try {
+            $cancellation = $service->cancelPreSaleOrder(
+                order: $order,
+                mode: $data['mode'],
+                reasonCode: $data['reason_code'],
+                reasonText: $data['reason_text'] ?? null,
+                cancelledBy: $request->user(),
+                activeSessionId: $data['cash_session_id'] ?? null,
+            );
+        } catch (\DomainException $e) {
+            return $this->error($e->getMessage(), 422);
+        }
+
+        $order->refresh()->load(['items.product', 'payments', 'customer']);
+        return $this->success([
+            'order'        => new PreSaleOrderResource($order),
+            'cancellation' => [
+                'id'              => $cancellation->id,
+                'mode'            => $cancellation->mode,
+                'amount_refunded' => (float) $cancellation->amount_refunded,
+                'cash_movement_id'=> $cancellation->cash_movement_id,
+            ],
+        ], 'Cancelación registrada correctamente.');
     }
 }

@@ -44,16 +44,18 @@ export function PreSalesPage() {
     pendingQuery.isPending || readyQuery.isPending ? null : pCount + rCount;
 
   // Tab config con visibilidad por rol:
-  //  - "catalogos": solo admin (gestión completa de catálogos). Gerente queda
-  //    fuera por decisión Joel 2026-05-22 — el catálogo es responsabilidad del
-  //    dueño/admin que negocia con proveedor y define preorder_limit.
-  //  - "disponibles": cajero + gerente (vista read-only de su tienda)
+  //  - "catalogos": admin + gerente (gestión completa). Decisión Joel 2026-05-27:
+  //    el gerente gestiona catálogos igual que un admin, PERO al asignar stock
+  //    por tienda solo puede su propia sucursal (scope en NewPreSaleCatalogModal
+  //    + validación backend en syncStoreLimits). Reemplaza la decisión 2026-05-22.
+  //  - "disponibles": solo cajero (vista read-only de su tienda). El gerente ya
+  //    no la necesita: tiene "Catálogos" completo.
   //  - "folios": todos (admin global, gerente/cajero su tienda)
   //  - "difusion": todos
   //  - "vencidos": todos — pero scope por tienda en backend
   const tabs: ReadonlyArray<{ id: AdminTab; label: string; roles: ("admin" | "gerente" | "cajero")[] }> = [
-    { id: "catalogos",   label: "Catálogos",   roles: ["admin"] },
-    { id: "disponibles", label: "Disponibles", roles: ["gerente", "cajero"] },
+    { id: "catalogos",   label: "Catálogos",   roles: ["admin", "gerente"] },
+    { id: "disponibles", label: "Disponibles", roles: ["cajero"] },
     { id: "folios",      label: "Folios",      roles: ["admin", "gerente", "cajero"] },
     { id: "difusion",    label: "Difusión",    roles: ["admin", "gerente", "cajero"] },
     { id: "vencidos",    label: "Vencidos",    roles: ["admin", "gerente", "cajero"] },
@@ -130,7 +132,9 @@ export function PreSalesPage() {
 
       {adminTab === "folios" && <PreSaleOrdersPanel />}
       {adminTab === "difusion" && <PreSaleDifusionPanel />}
-      {isAdmin && adminTab === "catalogos" && <PreSaleCatalogsPanel />}
+      {(isAdmin || role === "gerente") && adminTab === "catalogos" && (
+        <PreSaleCatalogsPanel restrictedStoreId={isAdmin ? null : (user?.store_id ?? null)} />
+      )}
       {adminTab === "disponibles" && <PreSaleAvailableCatalogsPanel />}
       {adminTab === "vencidos" && <PreSaleVencidosPanel />}
     </div>

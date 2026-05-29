@@ -31,13 +31,18 @@ export function usePreSaleCatalogsQuery(
 }
 
 /**
- * Folios de preventa. Cambian seguido cross-machine (admin marca status=ready,
- * cajero cobra anticipo, llega mercancía). Por eso:
- *  - staleTime 30s (datos válidos 30s)
- *  - refetchInterval 60s (poll moderado para detectar cambios entre máquinas)
- *  - refetchOnWindowFocus true (default) cubre el caso "vengo de otra pantalla"
- * Las mutations en Caja invalidan automáticamente para feedback instantáneo
- * en el mismo browser.
+ * Folios de preventa. Patrón "cache + invalidate" (sin polling) decisión
+ * 2026-05-28 — Joel pidió quitar el refetchInterval para acotar llamados.
+ *
+ *  - Cache 5min persistido en IndexedDB → render instantáneo al navegar.
+ *  - `refetchOnWindowFocus: true` → vuelves al tab y refetch en bg si stale.
+ *  - Mutaciones (createPreSaleOrder, addPayment, updateStatus, cancel) invalidan
+ *    automáticamente → feedback instantáneo en el mismo browser.
+ *  - Multi-tab: BroadcastChannel propaga las invalidaciones.
+ *
+ * Trade-off vs polling 60s: cross-máquina (admin marca ready en su PC →
+ * cajero en otra) ya no se ve en tiempo real. Cajero necesita focus en tab
+ * o presionar "Actualizar" para ver el cambio.
  */
 export function usePreSaleOrdersQuery(
   params?: Parameters<typeof getPreSaleOrders>[0],
@@ -47,7 +52,9 @@ export function usePreSaleOrdersQuery(
     queryKey: queryKeys.preSaleOrders.list(params as Record<string, unknown> | undefined),
     queryFn: () => getPreSaleOrders(params),
     enabled: options?.enabled ?? true,
-    staleTime: 30_000,
-    refetchInterval: 60_000,
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: false,
   })
 }

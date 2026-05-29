@@ -1,7 +1,7 @@
 # MASTERLOG — Tadaima POS
 
 > Registro maestro del proyecto: arquitectura, evolución, decisiones clave y estado actual.
-> Actualizado: 2026-05-25 (QA fixes ronda 5 + sesiones de caja conflict modal + margen visible mangas + quitar cliente desde caja)
+> Actualizado: 2026-05-28 (sprint largo cierre del día: **ADR-016 Fases 1-4 COMPLETAS** (cancelación de ventas + log auditable + admin tab), Aceternity UI piloteado en Dashboard, refactor Caja a 2 columnas Square-style, presets cuadrados, USD híbrido refinado, historial → React Query persist + invalidate, default pesos por mesa, perf RQ acotada — quitado polling preventas y prefetch productos)
 
 ---
 
@@ -86,6 +86,32 @@
 | 67 | Caja | **OpenSessionConflictModal** — 409 estructurado al abrir caja cuando hay sesión activa que bloquea. 3 escenarios: (a) propia + misma caja → botón verde "Continuar sesión" (reanuda sin crear nueva); (b) propia + otra caja → "Cerrar y abrir nueva"; (c) ajena → muestra quién/cuándo, admin ve "Forzar cierre". Selector de cajas en el modal de abrir muestra "Ocupada por X · #N" (ámbar) o "Tu sesión activa" (verde). Backend: `CashSessionConflictException` + `POST /cash/sessions/{id}/force-close` admin-only con audit log; `GET /cash/registers` ahora embed `active_session`. | 2026-05-25 |
 | 68 | Caja | **Quitar cliente asignado a la venta** — botón ✕ en chip del footer (venta regular) + botón "Quitar" rojo en header (preventa) ahora usan función única `clearCustomer()`. Disponible para todos los roles mientras vende. Bloqueado solo cuando la venta es PREVENTA cargada de un folio existente (desincronizaría con `pre_sale_orders.customer_id` del backend). | 2026-05-25 |
 | 69 | QA | **Fixes ronda 5 del PDF de QA**: (a) **Scanner no suma** — nueva función `addScanToCart()` separada de `addToCart()`, nunca suma. Si producto ya está en venta, toast info y salida; solo +/- manual incrementa. Dedup window 1.5s → 3s. (b) **MangaEditModal permite agregar tienda nueva** al inventario (portado de QuickStockModal). (c) **Volumen visible en lista de Tomos** como badge rojo "Vol. N" al lado del nombre. (d) **Search no devuelve todos** — Enter ya no borra el input (causaba sensación "regresa todos los productos"); muestra toast "No se encontró 'XXX'" cuando filtered está vacío. Escape limpia. (e) **Gerente sin "Completar ahora"** en transfers — botón solo visible para admin, gerente queda con "Solicitar". | 2026-05-25 |
+| 70 | Permisos | **Fix permiso de costo no se respetaba (QA ronda 6 de Ruben)** — `ProductResource:28`, `MangaResource:14`, `MangaCompatResource:27` gateaban con `hasRole(admin) && can_view_cost`. Bug: cajero/gerente con `can_view_cost=true` nunca veía el costo porque AND requería ser admin además. Fix: cambiar `&&` → `||` (admin/master siempre; cualquier rol con flag delegado también). `SaleItemResource` queda admin-only a propósito (reportes de ganancia son admin). Nuevo `tests/Feature/CostPermissionTest.php` con 4 tests (admin / cajero sin flag / cajero con flag / gerente con flag). 44/44 PHPUnit pasan. | 2026-05-27 |
+| 71 | UX | **Stock por tienda en detalle de producto/tomo** + **costo real visible** — `ProductDetailModal` y `MangaDetailModal` ahora aceptan `canViewCost` y `highlightStoreId`. Nuevo campo "Costo real" gateado por el flag. Nueva sección "Stock por tienda" via componente reusable `StoreStockBreakdown.tsx` (en `components/inventory/`) + hook `useInventory.ts` (`useProductInventoryQuery` con cache 30s). Backend: `InventoryController::index` eager-loads `warehouse.store`; `InventoryResource` expone `warehouse.store: {id, name, phone}`. Type `InventoryItem` en `packages/api` actualizado. | 2026-05-27 |
+| 72 | Nav | **Nueva página "Existencias" (`/buscar-tiendas`)** — admin/gerente/cajero. Buscador de productos cross-tienda con `useProductsSearchQuery` (debounce 250ms) + scanner USB integrado vía `useBarcodeScanner` (auto-selecciona match exacto por SKU/barcode o cuando hay 1 solo resultado). Click en producto → panel con `StoreStockBreakdown showContact` que lista cantidades por sucursal + botones **Llamar** (`tel:`) y **WhatsApp** (`https://wa.me/52…` antepone 52 a números MX de 10 dígitos) usando `store.phone`. PageKey `stock_search` agregado a `lib/permisos.ts` + Layout (label corto "Existencias" — Joel feedback "no cabe el título"). Icono `PackageSearch`. Fila resaltada en verde cuando es "Tu tienda". | 2026-05-27 |
+| 73 | RBAC | **Gerente: catálogos de preventa "gestión completa, solo su tienda"** — reversa decisión #59 (2026-05-22). Frontend: `PreSalesPage` agrega "gerente" a tab Catálogos y mueve "Disponibles" a cajero-only. `NewPreSaleCatalogModal` acepta `restrictedStoreId`: filtra el selector y oculta asignaciones de otras tiendas al gerente. Backend: `PreSaleCatalogsController::syncStoreLimits` con nuevo param `?int $restrictToStoreId` — cuando se manda, solo toca esa tienda y PRESERVA intactas las asignaciones de otras sucursales (no replace-all). Helper `storeLimitScope(Request)` infiere scope desde el rol del request. Admin sigue con replace-all. Migra invariante "ganancia/asignaciones ajenas no se filtran al gerente". | 2026-05-27 |
+| 74 | Caja | **Fix cliente persistente entre ventas (defensivo)** — Joel reportó en prod que tras liquidar una preventa, al crear otra el cliente anterior aparecía asignado. Audité los 3 paths de checkout (liquidación, mixto, regular) y todos llaman `clearCart()`. Bug real probable: estado residual del popup `assignCustomerPopup` o del input `customerSearch` no se limpiaban en clearCart. Fix: `clearCart()` ahora también resetea `assignCustomerPopup=null`, `showCustDrop=false`, `requireCustomerFlash=false` + `cashReceived=""` en el update de la mesa. | 2026-05-27 |
+| 75 | Caja | **`cashReceived` ahora por mesa (no global)** — antes era `useState("")` global; cambias entre Caja Principal / Venta 2 / Venta 3 y se perdía lo ingresado en la anterior. Agregado `cashReceived?: string` (+ `cashReceivedUsd?: string`) a interface `Mesa`. Wrapper derivado: `cashReceived = activeMesa.cashReceived ?? ""` + `setCashReceived` que llama `updMesa`. `updMesa` movido arriba (línea ~460) para estar disponible donde se necesita. Cada mesa conserva sus inputs al cambiar de tab. Snapshot zustand persiste a localStorage también. | 2026-05-27 |
+| 76 | Caja | **Botón "Mover artículos a otra caja"** — split por método de pago. Helper `itemAcceptsMethod(item, method)` considera: preventa (no Tarjeta), `payment_restriction=cash_only`, flags `allow_cash`/`allow_card`. Helper `methodForItems(items)` infiere método target. Handler `splitToOtherMesa()`: encuentra mesa vacía (o crea Venta N nueva) → mueve los items conflictivos + copia cliente + asigna método correcto al destino. Items `isFromPreSale` (de folio cargado) se PRESERVAN en la mesa actual (no se pueden mover sin romper liquidación). Banner ámbar arriba del dropdown de método se muestra solo cuando hay items movibles conflictivos. | 2026-05-27 |
+| 77 | Caja | **Dólares fuera del dropdown + input híbrido USD+MXN dentro de Efectivo** — métodos ahora: Efectivo / Tarjeta / Transferencia. Migración automática: mesas hidratadas con `paymentMethod="Dólares"` se normalizan a `"Efectivo"` al cargar. Bloque primario "Pesos recibidos" + presets $50/100/200/500. Toggle "+ Dólares (TC X.XX)" revela bloque verde con USD + presets US$10/20/50/100. Cálculo: `total = pesos + USD × TC`. "≈ X MXN" inline. Cambio/Falta siempre en pesos. Ticket impreso muestra desglose `· Pesos · Dólares (US$X ≈ $Y)` cuando hubo USD. `CompletedSaleData.amountReceivedUsd?` agregado para preservar el dato en el comprobante (no requiere cambio de schema en backend — `payments[].amount` sigue siendo MXN total). Botón editar TC ahora visible siempre para admin en Efectivo. | 2026-05-28 |
+| 78 | UX | **Textos más grandes en caja** — Ruben/cliente reportó "muy chicos". Bumps targeted en carrito (sin tocar layout): nombre producto `text-sm`→`text-base` (14→16px), SKU `text-[10px]`→`text-[11px]` opacidad subida, cantidad +/− `text-sm`→`text-base`, precio por línea `text-sm`→`text-base`, "de $X" anticipo `text-[9px]`→`text-[11px]`, nombre cliente footer `text-sm`→`text-base`. Label método pago `text-[11px]`→`text-xs`. | 2026-05-28 |
+| 79 | Caja | **Fix display historial — preventa al 100% resalta + monto correcto** — bug Joel reportó: en historial, una preventa nueva con $0 anticipo de $1000 mostraba "$1000" en grande aunque cobraste $0. Causa: `SellPage.tsx:6521` mostraba `order.total` (valor preventa) en vez de `paid_amount` (lo cobrado hoy). Fix: monto grande = `paid_amount` para no-mixtas (mixto sigue con `grandTotal`). Status `delivered` muestra badge verde resaltado "**Liquidada · $X cobrado**" en lugar de etiqueta tenue. Estados pending/ready: "Anticipo $X / Sin anticipo / Pendiente $X". Tooltip preserva valor total de la preventa. | 2026-05-28 |
+| 80 | ADR-016 Fase 1 | **Visibilidad de cancelaciones (sin backend nuevo)** — tabs "Todas/Canceladas" en historial de caja + badges rojo vivo "Cancelada" (full) y ámbar "Cancelada parcial" + total tachado con opacity. Sección H "Cancelaciones" en Reporte del Día con KPIs (count, monto cancelado, brutas, netas reales). Lee `sales.status='returned'` y `pre_sale_orders.status='cancelled'` ya existentes. | 2026-05-28 |
+| 81 | ADR-016 Fase 2 | **Backend cancelación (edit-in-place + log)** — migración `2026_05_28_000001_create_sale_cancellations_table` agrega `cancellation_status` + `last_cancelled_at` a `sales` y `pre_sale_orders`, crea tabla `sale_cancellations` con snapshot JSON (items + cost_at_sale preservado), `cash_movement_id`, `cash_session_id`, motivo y `cancelled_by`. Modelo `SaleCancellation` con constantes de modo (full/partial_items/liquidation_rollback) + 5 motivos. `SaleCancellationService` con `cancelSale()` (full o partial, edita sale_items in-place) y `cancelPreSaleOrder()` (modo `full` o `liquidation_rollback` — devuelve folio delivered → ready con saldo nuevo). Stock restaurado vía `InventoryMovement` type='devolucion'. Cash reversado como `cash_movements` type='salida' en sesión activa. 2 endpoints: `POST /sales/{id}/cancel` + `POST /pre-sale-orders/{id}/cancel`. 6 tests PHPUnit (`SaleCancellationTest`) — invariante stock + cost_at_sale preservado + double-cancel rechazado. 50/50 PHPUnit pasan. `SaleResource` + `PreSaleOrderResource` exponen `cancellation_status`. | 2026-05-28 |
+| 82 | ADR-016 Fase 3 | **UI de cancelación** — `CancelTicketModal.tsx` (en `components/cancel/`): para sales checkbox por item + qty editable + dropdown motivo (5 opciones) + notas opcionales; para preventas botones de modo (Rollback liquidación si delivered / Cancelar folio completo). Footer con salida estimada en rojo. Botón **XCircle** rojo por fila en historial (sale + preventa, oculto si ya cancelada). State `cancelTarget` + render del modal en SellPage. Z-index 500 (encima del historial z-400). Onsuccess invalida historial + cancellations + sales + preSaleOrders. | 2026-05-28 |
+| 83 | ADR-016 Fase 4 | **Sección H detallada + tab admin** — backend: `GET /sale-cancellations` con filtros (from/to/store_id/reason_code/cancelled_by) paginado, eager-loads cancelledByUser + sale + preSaleOrder. `SaleCancellationResource` con snapshot completo. Frontend: `useSaleCancellationsQuery` hook (cache 30s). Sección H del Reporte del Día rediseñada — lee del log real (no del filtro de status que rompía con parciales); 4 KPIs (eventos / monto reversado / ventas brutas = netas + cancelado / ventas netas reales); breakdown table por **motivo** con % + breakdown table por **cajero**. **Tab "Cancelaciones" en AdminPage** (`TabCancelaciones.tsx`): tabla full-screen con filtros (rango fechas default 30d, motivo, cajero, tienda, search), columnas Fecha/Tipo/Referencia/Modo badge/Motivo/Cajero/Monto, expand por fila con notas + snapshot completo de items (qty/price/cost) + ref a cash_movement y sesión. Paginación. | 2026-05-28 |
+| 84 | Perf | **Historial del día → React Query con persist + invalidate-on-event** — `useTodayHistorialQuery` hook (`hooks/queries/useHistorial.ts`), cache 30s persistido en IndexedDB. QueryKey `historial.today(storeId)`. Antes `useState` global con `fetchHistorial()` manual; ahora apertura instantánea del modal + background refetch tras checkout/cancelación. MixedPairs (preventa↔venta) recomputado vía useEffect reactivo. Invalidaciones en los 3 paths de checkout + en `onSuccess` del CancelTicketModal. Multi-tab sync vía BroadcastChannel ya configurado. | 2026-05-28 |
+| 85 | Perf | **Acotar llamados RQ (decisión Joel)** — (a) `usePreSaleOrdersQuery`: quitado `refetchInterval: 60_000` → ahora cache 5min + invalidate-on-event + refetchOnWindowFocus. Trade-off: cross-máquina pierde sync en tiempo real (requiere focus o refetch manual). (b) `useExchangeRateQuery`: `staleTime` 5min → 24h, `refetchOnWindowFocus: false` → solo refetch al abrir caja (handleOpenCash invalida) o cuando SettingsPage cambia TC. (c) Quitado `useBackgroundProductsPrefetch` (traía pgs 2..6 = 1000 productos extra al abrir caja). Solo top-200 + búsqueda server-side bajo demanda. (d) `useMangasQuery`: agregado cache 24h + persist + refetchOnFocus (antes era bare, refetch cada mount). | 2026-05-28 |
+| 86 | UX | **Aceternity UI piloteado en Dashboard** — primer uso de la librería copy-paste estilo Aceternity. Creados `components/aceternity/BackgroundBeams.tsx` (32 SVG paths con gradient animado motion, terminal en `#E0221A` rojo Tadaima) y `HoverCard.tsx` (wrapper con blob blur + spotlight radial que sigue al cursor). Integrados en DashboardPage: BackgroundBeams para admin/gerente (cajero excluido), HoverCard en cards de "Cajeros conectados" (verde si tienen caja abierta, rojo Tadaima si no) y "Cortes de hoy" (color del status: verde cuadra / rojo falta / amber sobra / naranja abierta). Secciones con `relative z-10` para layering sobre los beams. | 2026-05-28 |
+| 87 | Caja UX | **Layout Caja → 2 columnas side-by-side (estilo Square POS)** — refactor del SellPage por agente UI/UX. **Izquierda `flex-1`**: items del carrito con scroll propio + toolbar header. **Derecha `<aside w-[420px] xl:w-[460px]`**: sidebar vertical pinned con border-l glass-dark. Sidebar contiene scroll wrapper (`flex-1 overflow-y-auto justify-end` — crece de abajo hacia arriba) con secciones apiladas (Total centrado / Cliente con avatar 40px + nombre text-lg / Cash input híbrido USD+MXN). **Footer sticky** (`shrink-0` border-top) con grid 12-cols: Método de pago `col-span-4` (chip discreto sin glow, abre dropdown HACIA ARRIBA) + Cobrar `col-span-8` (CTA dominante rojo). Mobile (<md) sidebar oculto. Floating multi-mesa shortcuts movidos a bottom-left. Decisión Joel: "Total a Pagar centrado, que crezca de abajo para arriba", "Efectivo hace ruido", "baja esa parte al footer". | 2026-05-28 |
+| 88 | Caja UX | **Presets cuadrados con todas las denominaciones** — antes 4 chips horizontales pequeños; ahora **6 botones cuadrados (3×2 grid, `aspect-square`)** con label de moneda arriba (MXN/US$) + número grande (text-2xl) abajo. Pesos: $20, $50, $100, $200, $500, $1000 (todos los billetes MX). USD: $1, $5, $10, $20, $50, $100 (todos los billetes US). Tap targets ~120×120px, números legibles sin equivocaciones. | 2026-05-28 |
+| 89 | Caja | **Default pesos por mesa (no más USD residual)** — `showUsdInput` migrado de `useState` global a campo `usdPrimaryMode?: boolean` en `Mesa` interface (default false en `makeMesa`). Wrapper derivado `showUsdInput = !!activeMesa.usdPrimaryMode`. Cada venta nueva o post-checkout inicia en pesos. `clearCart` lo resetea. Bug previo: una venta con USD heredaba el modo a la siguiente. | 2026-05-28 |
+| 90 | Caja | **Input híbrido USD+MXN refinado + cambio dual currency** — input number text-4xl con tabular-nums, padding y border-2 (más presencia). "Efectivo" eliminado del dropdown (solo en input híbrido dentro de Efectivo). Modo USD primario: pesos se oculta hasta que USD no cubre → auto-aparece banner "Completa con pesos · faltan $X" + input pesos con autoFocus. Cambio en MXN principal + "≈ US$X" debajo cuando se cobró con dólares (útil para devolver cambio físico en USD si decide). Botón gate Cobrar arreglado: antes solo contaba pesos → bloqueaba "Falta efectivo" aunque USD cubriera; ahora cuenta `pesos + USD × TC`. | 2026-05-28 |
+| 91 | UX | **Form rápido nuevo cliente en popup asignar** — footer sticky abajo (antes vivía al final del scroll → en listas largas no se veía). Botón "+ Crear cliente nuevo" siempre visible. Al expandir, form compacto: Nombre full-width grande arriba + Teléfono y Email lado a lado (grid 2-col) + botón único "Crear y asignar". Enter en cualquier campo dispara submit. Cancelar reducido a "✕ Cancelar" pequeño arriba a la derecha. Pre-rellena nombre con `search.trim()`. | 2026-05-28 |
+| 92 | Caja | **Auto-open popup cliente al cobrar preventa sin cliente** — `handleCheckout` validation muestra toast amber "Falta cliente para la preventa" Y abre `assignCustomerPopup` en modo manual automáticamente. Antes solo enfocaba el search del header (poco visible). Ahora el cajero ve el form directo y puede buscar/crear sin navegar. Toast queda encima del popup (sonner portal). | 2026-05-28 |
+| 93 | Caja UX | **Iconografía cancelación: XCircle en vez de Trash2** — feedback Joel: Trash2 confunde (parece "borrar permanente"). Lucide `XCircle` es el equivalente del Material `cancel` (círculo con X). Aplicado en: botón cancelar venta/preventa en historial + modo "Cancelar folio completo" en CancelTicketModal + botón confirmar. Tamaños subidos a 15-18px. Trash2 conservado solo en "Quitar cliente" y "Quitar carrito" (semánticamente remover, no cancelar). | 2026-05-28 |
+| 94 | Caja UX | **Botones Cambiar/Quitar cliente legibles** — feedback Joel: texto invisible (white/70% sobre bg claro = ilegible). Fix: colores sólidos `#10b981` verde para Cambiar y `#ef4444` rojo para Quitar, border 40% opacity, text-[11px] (era text-[9px]), icon 13px. Contrastan en light y dark mode. | 2026-05-28 |
+| 95 | Caja UX | **Tamaños tipográficos del sidebar** — Total a Pagar `text-[2rem]` → `text-[2.5rem]` (40px) con tabular-nums. Cliente avatar 28→40px + icon 13→18px, nombre `text-base`→`text-lg`. Botón EFECTIVO `h-[44px] text-xs icon14` → `h-[52px] text-sm icon16`. "≈ X MXN" inline en input USD `text-[11px] opacity 80` → `text-base opacity 100`. Label CLIENTE `text-[10px]`→`text-[11px]` con opacity más alta. | 2026-05-28 |
 | - | Deploy | **Dominio custom activo** `tadaima.poslite.com.mx` | 2026-05-05 |
 
 ### 🟡 Media prioridad (mejora flujo o datos)
@@ -411,6 +437,55 @@ El carrito vive en memoria + localStorage. Backend NO sabe del carrito hasta el 
 
 **Patrón estándar:** Shopify (`inventory_unit_cost`), Stripe (`cost_of_goods_sold`), Square (columna directa en `order_lines`), Quickbooks/Xero (columna `cost` en item lines).
 
+### ADR-016 — Cancelación de ventas: edit-in-place + tabla de log (diseño 2026-05-28, ejecución en fases)
+
+**Decisión Joel 2026-05-28**: NO usar el patrón inmutable (Shopify/Square return records). En su lugar, **editar la venta original in-place** + mantener una **tabla de log** con snapshot de lo cancelado. Más cerca del patrón legacy/restaurant POS (Aldelo, NCR Counterpoint, Lightspeed simple, Quickbooks POS).
+
+**Decisiones clave**:
+1. **Edit-in-place**: `sales` se modifica directamente (decrementa qty, recalcula total). El log preserva el snapshot.
+2. **Preventa liquidada cancelada → rollback a `ready` con saldo nuevo** (no a `cancelled`). El folio queda válido como si no se hubiera liquidado, cliente paga cuando llegue.
+3. **Reverso de dinero como `cash_movements` tipo salida** en la sesión actual (no se intenta revertir en sesión cerrada). Sale en el corte del día como salida con referencia a la cancelación.
+4. **Vista**: filtro/tab "Canceladas" en historial de caja + sección en Reporte del Día. Vista admin para auditoría queda para después.
+
+**Riesgo vigilado (ADR-015)**: al editar `sale_items` decrementando qty, el snapshot `cost_at_sale` de items cancelados "desaparece" de la ganancia bruta del día. **El log table conserva snapshot completo** (qty, price, cost, product_id) para que reportes históricos puedan recalcular si se requiere.
+
+**Schema propuesto** (Fase 2):
+```
+sales:
+  + cancellation_status enum('none','partial','full') default 'none'
+  + last_cancelled_at timestamp nullable
+
+pre_sale_orders:
+  + cancellation_status enum (igual)
+  + last_cancelled_at
+  -- Estado puede regresar: delivered → ready (rollback liquidación)
+                           ready/pending → cancelled
+
+sale_cancellations (tabla nueva):
+  id, sale_id, pre_sale_order_id, mode enum('full','partial_items','liquidation_rollback'),
+  reason_code enum('cliente_devuelve','error_cajero','dañado','no_llego','otro'),
+  reason_text text, amount_refunded decimal, cash_movement_id (FK),
+  items_snapshot json [{sale_item_id, product_id, name, sku, qty, price, cost, line_total}, ...],
+  cancelled_by (FK user), cancelled_at, cash_session_id (FK)
+```
+
+**Plan en fases (TODAS COMPLETADAS 2026-05-28)**:
+
+| Fase | Scope | Estado |
+|------|-------|--------|
+| **1. Visibilidad** | Tabs "Todas/Canceladas" + badges + sección H mínima. Sin backend. | ✅ |
+| **2. Backend** | Migración `sale_cancellations` + servicio 3-modos + 2 endpoints + 6 PHPUnit. | ✅ |
+| **3. UI cancelación** | `CancelTicketModal` con item selection + motivo + modes preventa; botón XCircle por fila en historial. | ✅ |
+| **4. Reporte detallado + admin tab** | `GET /sale-cancellations` con filtros; sección H rediseñada con breakdown motivo+cajero; `TabCancelaciones` admin con filtros, paginación, snapshot expandible. | ✅ |
+
+**Total real**: 4 fases completadas en una sola sesión 2026-05-28. Cobertura completa del flujo edit-in-place + log inmutable + reporte agregado + admin auditor.
+
+**Comparativa de POS investigada**:
+- **Aldelo / NCR Counterpoint**: edita venta + log table (patrón elegido).
+- **Square**: editable 1 hr, después immutable + refund record.
+- **Shopify POS**: refunds siempre crean orden separada (immutable).
+- **Quickbooks POS**: editable con "History" pane.
+
 ---
 
 ## 8. Deuda técnica conocida
@@ -480,6 +555,168 @@ docker compose up --build -d
 ---
 
 ## 11. Historial de sesiones de desarrollo
+
+### Sesión 2026-05-28 (cierre del día) — ADR-016 Fases 2-4 completas, Aceternity UI, refactor Caja 2-cols, perf RQ
+
+**Contexto:** continuación del sprint largo del día. Joel aprobó Fase 2+3+4 de ADR-016 después de validar Fase 1, pidió pilotar Aceternity UI en Dashboard, y dirigió un refactor mayor del layout de Caja (footer → sidebar derecho sticky estilo Square POS).
+
+**Bloques principales:**
+
+#### 1. ADR-016 Fase 2 — Backend cancelación (~14 hrs estimado real ~3 hrs)
+- Migración `2026_05_28_000001_create_sale_cancellations_table`:
+  - `sales` + `pre_sale_orders`: `cancellation_status` enum('none','partial','full') + `last_cancelled_at`.
+  - Nueva tabla `sale_cancellations`: `sale_id`, `pre_sale_order_id`, `mode`, `reason_code`, `reason_text`, `amount_refunded`, `cash_movement_id`, `cash_session_id`, `items_snapshot` JSON, `cancelled_by`, `cancelled_at` + indexes.
+- Modelo `SaleCancellation` con constantes (MODE_FULL, MODE_PARTIAL_ITEMS, MODE_LIQUIDATION_ROLLBACK + 5 REASON_*).
+- `SaleCancellationService`:
+  - `cancelSale()` — full o partial. Edita `sale_items` in-place (delete row si qty=0), restaura inventario vía `InventoryMovement` type='devolucion' en bodega de la tienda original, recalcula total/subtotal, marca status='returned' si full o cancellation_status='partial' si parcial.
+  - `cancelPreSaleOrder()` con 2 modos:
+    - `full` → status='cancelled', reversa TODOS los payments, restaura stock si fue entregada.
+    - `liquidation_rollback` → delivered→ready, reversa SOLO último payment, marca items.delivered_at=null + status='pending', restaura stock.
+  - `createRefundCashMovement()` → `cash_movements` type='salida' en sesión activa con descripción referencial.
+  - Snapshot incluye `cost_at_sale` (ADR-015 preservado aunque se edite sale_items).
+  - Audit en `system_logs` con action='sale.cancelled' o 'pre_sale_order.cancelled'.
+- 2 endpoints: `POST /sales/{id}/cancel` + `POST /pre-sale-orders/{id}/cancel`, validados con Laravel Request (motivos enum, items shape, sesión exists).
+- 6 tests PHPUnit (`SaleCancellationTest`): full cancel + partial + snapshot preserva cost + double-cancel rechazado + liquidation rollback completo + full pre-sale cancela todos los pagos. **50/50 PHPUnit pasan**.
+- `SaleResource` + `PreSaleOrderResource` exponen `cancellation_status` para que el frontend distinga parcial vs total.
+
+#### 2. ADR-016 Fase 3 — UI de cancelación
+- `landing/src/components/cancel/CancelTicketModal.tsx`:
+  - Para sales: checkbox por item + qty editable (con max=qty original) + dropdown motivo (5 opciones) + notas opcionales + Enter dispara submit.
+  - Para preventas: 2 botones de modo (Rollback liquidación si delivered / Cancelar folio completo) con descripción de qué hace cada uno.
+  - Footer con "Salida estimada" en rojo + botón confirmar.
+- Botón **XCircle** rojo por fila en historial de caja (sale + preventa). Oculto si ya cancelada.
+- State `cancelTarget` + render del modal. Z-index 500 (encima del historial z-400).
+- OnSuccess invalida historial + cancellations + sales + preSaleOrders queries → bg refresh automático.
+- Iconografía: XCircle en vez de Trash2 (feedback Joel: "Trash2 confunde, parece borrar permanente"; XCircle es el equivalente del Material `cancel`).
+
+#### 3. ADR-016 Fase 4 — Reporte detallado + tab admin
+- Backend: `SaleCancellationsController::index` con filtros `from/to/store_id/reason_code/cancelled_by`, paginado, eager-loads relaciones; `SaleCancellationResource` con snapshot completo.
+- `useSaleCancellationsQuery` hook (cache 30s).
+- Sección H del Reporte del Día rediseñada — lee del log real (antes filtraba `status='returned'` que no captura parciales): 4 KPIs (eventos, monto reversado, ventas brutas = netas + cancelado, ventas netas reales con math correcto) + tabla **Por motivo** con % + tabla **Por cajero**.
+- **Tab "Cancelaciones" en AdminPage** (`TabCancelaciones.tsx`): tabla full-screen con filtros (rango fechas default 30d, motivo dropdown, cajero, tienda, search libre), columnas Fecha/Tipo/Referencia/Modo badge color-coded/Motivo/Cajero/Monto, expand por fila con notas + snapshot completo de items (qty/price/cost) + ref a cash_movement #N y sesión #N. Paginación completa.
+
+#### 4. QA real de cancelación + tests
+Joel hizo cancelación parcial real (venta #60, $600 de "Perfect order bundle Ingles"):
+- ✅ `sale_cancellations` #1 creado correctamente
+- ✅ `sales.total $2,800 → $2,200`, cancellation_status='partial'
+- ✅ Item snapshot preservó `cost: $300` (ADR-015 ok)
+- ✅ `cash_movements` #1 salida $600 sesión 17
+- ✅ `system_logs` #36 action='sale.cancelled'
+- ✅ Stock restaurado en Tienda 1 — Centro qty=1 (era 0)
+
+Fix lateral del z-index del CancelTicketModal (z-200 → z-500) tras Joel reportar que quedaba detrás del modal de historial.
+
+#### 5. Aceternity UI piloteado en Dashboard
+Joel pidió "qué librería combinaría con lo que usamos para mejorar look manteniendo el toque glass". Recomendé **Aceternity UI** (copy-paste basado en Tailwind + motion, compatible 100% con el stack actual). Pilotado en Dashboard:
+- `components/aceternity/BackgroundBeams.tsx`: 32 SVG paths con gradiente animado motion individual (10-20s ciclos aleatorios), terminal en `#E0221A`. Solo render para admin/gerente (cajero excluido).
+- `components/aceternity/HoverCard.tsx`: wrapper con blob blur detrás (AnimatePresence entrada/salida) + spotlight radial 220px que sigue al cursor. Acepta prop `accent` para color (verde si cajero tiene caja abierta, rojo Tadaima si no, etc.).
+- Integrado en cards de "Cajeros conectados" y "Cortes de hoy".
+- `relative z-10` agregado a todas las secciones top-level del Dashboard para layering correcto sobre los beams (z-0 absolute).
+
+#### 6. Caja UX — Refactor mayor a layout 2 columnas Square-style
+Delegado a agente con prompt detallado:
+- **Izquierda `flex-1`**: items del carrito con scroll propio + toolbar (Catálogo / Preventas / Cliente / Cancelar venta / scanner search).
+- **Derecha `<aside w-[420px] xl:w-[460px]`**: sidebar vertical pinned con border-l glass-dark.
+  - Scroll wrapper `flex-1 overflow-y-auto justify-end` — contenido alineado al FONDO, crece de abajo hacia arriba. Total a Pagar centrado horizontal (decisión Joel "que crezca de abajo para arriba").
+  - Secciones apiladas: Total → Cliente (avatar 40px + nombre text-lg + Cambiar/Quitar) → Cash input híbrido USD+MXN.
+  - **Footer sticky shrink-0** con border-top: grid 12-cols con Método de pago `col-span-4` (chip discreto, dropdown abre HACIA ARRIBA) + Cobrar `col-span-8` (CTA dominante).
+
+Mobile (<md) sidebar oculto; fallback al layout vertical previo. Floating multi-mesa shortcuts movidos a bottom-left para no chocar con el sidebar.
+
+#### 7. Caja UX — presets cuadrados con todas las denominaciones
+Joel: "aprovechando la altura agregar mas si faltaran, que sea cuadrado los numeros en espacio para que no se equivoque":
+- USD: $1, $5, $10, $20, $50, $100 (todos los billetes US, antes solo 4).
+- Pesos: $20, $50, $100, $200, $500, $1000 (todos los billetes MX).
+- 6 botones cada uno en grid 3×2 con `aspect-square text-2xl`. Cada botón tiene "MXN" / "US$" label arriba (text-[10px]) + número grande abajo. Tap targets ~120×120px.
+
+#### 8. Caja UX — default pesos por mesa
+Bug: `showUsdInput` era `useState(false)` global. Una vez activado en una venta, la siguiente venta también iniciaba en USD. Fix: campo `usdPrimaryMode?: boolean` en `Mesa` interface (default false en `makeMesa`). Wrapper derivado + `clearCart` lo resetea. Cada venta nueva o post-checkout vuelve a pesos.
+
+#### 9. Caja UX — input híbrido USD+MXN refinado + cambio dual
+- Input number text-4xl con tabular-nums, border-2.
+- Modo USD primario: pesos OCULTO hasta que USD no cubra → auto-aparece banner amber "Completa con pesos · faltan $X" + pesos input con autoFocus.
+- Cambio en MXN principal + "≈ US$X" debajo cuando se cobró con dólares (devolver físicamente parte del cambio en USD).
+- Fix gate Cobrar: antes solo contaba pesos → "Falta efectivo" bloqueaba aunque USD cubriera. Ahora cuenta `pesos + USD × TC`.
+
+#### 10. Historial → React Query con persist + invalidate-on-event
+- `useTodayHistorialQuery` hook (cache 30s persistido en IndexedDB).
+- Antes: `useState` global + `fetchHistorial()` manual. Ahora: apertura instantánea del modal + bg refetch tras cada checkout/cancelación.
+- MixedPairs (preventa↔venta) recomputado vía useEffect reactivo.
+- Invalidaciones en los 3 paths de checkout + onSuccess del CancelTicketModal.
+
+#### 11. Perf — Acotar llamados RQ (decisión Joel)
+- `usePreSaleOrdersQuery`: quitado `refetchInterval: 60s` → cache 5min + invalidate-on-event + refetchOnWindowFocus. Trade-off cross-máquina pierde sync tiempo real.
+- `useExchangeRateQuery`: `staleTime` 5min → 24h, sin `refetchOnWindowFocus`. Solo refetch al abrir caja (handleOpenCash invalida) o cuando SettingsPage cambia.
+- Quitado `useBackgroundProductsPrefetch` (traía 1000 productos extra al abrir caja). Solo top-200 + búsqueda server-side bajo demanda.
+- `useMangasQuery`: agregado cache 24h + persist + refetchOnFocus (antes bare, refetch cada mount).
+
+#### 12. Caja UX — micro-fixes
+- **Iconografía cancelación**: XCircle en vez de Trash2 (Joel: "trash confunde como borrar permanente").
+- **Botones Cambiar/Quitar cliente legibles**: colores sólidos `#10b981` / `#ef4444` (antes white/70% sobre bg claro = invisible). text-[11px] (era 9px), icon 13px.
+- **Tamaños tipográficos**: Total a Pagar 32→40px tabular-nums; Cliente avatar 28→40px nombre lg; EFECTIVO h-44→52 icon 14→16; "≈ X MXN" inline 11→16px opacity 100%.
+- **Form rápido nuevo cliente**: footer sticky en popup asignar (antes al final del scroll); form compacto Nombre full-width + Teléfono/Email grid 2-col + Enter submit + único botón "Crear y asignar"; pre-rellena nombre con search.trim().
+- **Auto-open popup cliente al cobrar preventa sin cliente**: toast amber + abre popup en modo manual directo.
+- **Bug fix del cambio total**: cuando USD recibido cubría el total el "Falta efectivo" gate del botón bloqueaba (solo contaba pesos). Fix: `totalReceived = pesos + USD × TC`.
+
+#### Estado al cierre
+- ✅ Backend: **50/50 PHPUnit verde** (6 nuevos en SaleCancellationTest).
+- ✅ Frontend: `vite build` verde tras cada cambio.
+- ✅ Migración aplicada en local. Pendiente prod (próximo deploy aplica con `php artisan migrate`).
+- ✅ Aceternity Background Beams + HoverCard funcionando.
+- ✅ Layout caja 2-columnas + footer sticky + presets cuadrados.
+- ✅ Cancelación end-to-end validada con QA real de Joel (venta #60).
+
+---
+
+### Sesión 2026-05-27/28 — QA Ruben ronda 6, página Existencias, gerente catálogos, cashReceived por mesa, USD híbrido, split por método, ADR-016 cancelación
+
+**Contexto:** Joel volvió con PDF "QA - Tadaima Web 6" de Ruben (solo 1 bug formal pero múltiples requisitos RBAC + nueva feature de existencias cross-tienda). Después agregó pedidos UX/perf y un análisis de cancelación de tickets que cerramos como ADR-016.
+
+**Bloques principales:**
+
+#### 1. Bug raíz QA: permiso de costo no se respetaba (ronda 6)
+`ProductResource:28`, `MangaResource:14`, `MangaCompatResource:27` gateaban con `hasRole(admin) && can_view_cost`. Bug confirmado: cajero/gerente con flag delegado nunca veía el costo (AND requería ser admin además). Fix: cambiar `&&` → `||`. `SaleItemResource` queda admin-only a propósito (reportes de ganancia son admin solo, alineado con "gerente no ve datos financieros de otras tiendas"). Nuevo `tests/Feature/CostPermissionTest.php` con 4 tests TDD (admin / cajero sin flag / cajero con flag / gerente con flag) — 44/44 PHPUnit pasan.
+
+#### 2. Stock por tienda visible en detalle de producto/tomo + costo
+`ProductDetailModal` y `MangaDetailModal` ahora aceptan `canViewCost` + `highlightStoreId`. Nuevo campo "Costo real" gateado por el flag. Nueva sección "Stock por tienda" vía componente reusable `StoreStockBreakdown.tsx` (en `components/inventory/`) + hook `useInventory.ts` (`useProductInventoryQuery` cache 30s). Backend: `InventoryController::index` eager-loads `warehouse.store`; `InventoryResource` expone `warehouse.store: {id, name, phone}`. Type `InventoryItem` en `packages/api` actualizado.
+
+#### 3. Página nueva "Existencias" (`/buscar-tiendas`)
+Para admin/gerente/cajero. Cumple requisito Joel: "lo que sí puede ver un gerente o cajero es buscar si el producto existe en otra tienda". Buscador con `useProductsSearchQuery` debounced 250ms + **scanner USB integrado** vía `useBarcodeScanner` (auto-selecciona match exacto por SKU/barcode o cuando hay 1 solo resultado — Joel pidió "que en caja meta scanner y muestre si en mi tienda hay de una vez"). Click en producto → panel con `StoreStockBreakdown showContact` listando cantidades por sucursal + botones **Llamar** (`tel:`) y **WhatsApp** (`https://wa.me/52…` antepone 52 a números MX) usando `store.phone`. PageKey `stock_search` en `lib/permisos.ts` + Layout (label corto "Existencias" tras feedback Joel "no cabe el título"). Icono `PackageSearch`. Fila resaltada verde con badge "Tu tienda" cuando es la del usuario.
+
+#### 4. UI fix de filas de tienda + nav label
+Joel reportó "el ui ux esta un poco pegado apenas veo la tienda" + nombre de tienda truncado por botones Llamar/WhatsApp. Refactor del row en `StoreStockBreakdown`: línea principal (icono + nombre + cantidad), botones de contacto pasan a 2da línea full-width. Nombre nunca se trunca por buttons.
+
+#### 5. Gerente: catálogos de preventa "gestión completa, solo su tienda" (reversa #59)
+Decisión Joel 2026-05-27: gerente debe gestionar catálogos igual que admin, pero al asignar stock por tienda solo puede su sucursal. PreSalesPage: agrega "gerente" a tab Catálogos, mueve "Disponibles" a cajero-only. `NewPreSaleCatalogModal` con `restrictedStoreId`: filtra el selector y OCULTA asignaciones de otras tiendas al gerente (sin esto vería ganancias/stock ajeno). Backend: `PreSaleCatalogsController::syncStoreLimits` con `?int $restrictToStoreId` param — solo toca esa tienda y PRESERVA intactas las allocations de otras (no replace-all). Helper `storeLimitScope(Request)` infiere scope desde rol. Admin sigue con replace-all.
+
+#### 6. Fix cliente persistente entre ventas (defensivo)
+Joel reportó en prod que tras liquidar una preventa, al crear otra el cliente anterior aparecía asignado. Audité los 3 paths de checkout — todos llaman `clearCart()`. Bug real probable: estado residual del popup `assignCustomerPopup` o input `customerSearch` no se limpiaban. Fix: `clearCart()` blindado ahora también resetea `assignCustomerPopup=null`, `showCustDrop=false`, `requireCustomerFlash=false`, `cashReceived=""` y `cashReceivedUsd=""` en el update de la mesa.
+
+#### 7. `cashReceived` y `cashReceivedUsd` por mesa (no global)
+Bug encontrado: era `useState("")` global; al cambiar entre Caja Principal / Venta 2 / Venta 3 se perdía lo ingresado. Agregados `cashReceived?: string` + `cashReceivedUsd?: string` a interface `Mesa`. Wrappers derivados: `cashReceived = activeMesa.cashReceived ?? ""` + setters que llaman `updMesa`. `updMesa` movido arriba (línea ~460) para estar disponible donde se usan los wrappers. Cada mesa conserva sus inputs al cambiar de tab. Sobrevive snapshot zustand a localStorage.
+
+#### 8. Botón "Mover artículos a otra caja" (split por método de pago)
+Joel pidió: cuando hay items con métodos incompatibles (preventa + producto solo-tarjeta), botón para enviar los conflictivos a otra caja en lugar de forzar el cambio de método. Helpers `itemAcceptsMethod(item, method)` (considera preventa, `payment_restriction=cash_only`, `allow_cash`/`allow_card`) y `methodForItems(items)` (infiere método target). Handler `splitToOtherMesa()`: encuentra mesa vacía o crea Venta N nueva → mueve items conflictivos + copia cliente + asigna método correcto al destino. Items `isFromPreSale` (de folio cargado) se PRESERVAN en la actual (no se pueden mover sin romper liquidación). Banner ámbar arriba del dropdown solo cuando hay items movibles conflictivos.
+
+#### 9. "Dólares" fuera del dropdown + input híbrido USD+MXN dentro de Efectivo
+Decisión Joel 2026-05-28: la práctica real es que el cliente entrega dólares + pesos al mismo tiempo, no que toda la venta sea en USD. Métodos ahora: **Efectivo / Tarjeta / Transferencia**. Migración automática: mesas hidratadas con `paymentMethod="Dólares"` se normalizan a `"Efectivo"` al cargar. Bloque primario "Pesos recibidos" + presets $50/100/200/500. Toggle "+ Dólares (TC X.XX)" revela bloque verde con USD + presets US$10/20/50/100. Cálculo: `total = pesos + USD × TC`. "≈ X MXN" inline. Cambio/Falta siempre en pesos (es lo que físicamente das al cliente). Ticket impreso muestra desglose `· Pesos · Dólares (US$X ≈ $Y)` cuando hubo USD. Field `CompletedSaleData.amountReceivedUsd?` agregado para preservar el dato en comprobante. **No requiere cambio de schema en backend** — `payments[].amount` sigue siendo MXN total. Botón editar TC ahora visible siempre para admin en Efectivo.
+
+#### 10. Textos más grandes en caja (feedback cliente)
+Bumps targeted en carrito (sin tocar layout): nombre producto `text-sm`→`text-base`, SKU `text-[10px]`→`text-[11px]` opacidad subida, cantidad +/− `text-sm`→`text-base`, precio por línea `text-sm`→`text-base`, "de $X" anticipo `text-[9px]`→`text-[11px]`, nombre cliente footer `text-sm`→`text-base`. Label método pago `text-[11px]`→`text-xs`.
+
+#### 11. Fix display historial: preventa al 100% resalta + monto correcto
+Joel reportó "anticipo salió 0 y cobro total" + "historial salió mal" después de test en caja. Diagnóstico: bug de presentación, no de data. `SellPage.tsx:6521` mostraba `order.total` (valor preventa) en vez de `paid_amount` (lo cobrado hoy) en el monto grande del historial. Una preventa nueva con $0 anticipo de $1000 mostraba "$1000" en grande aunque no cobraste nada. Fix: monto grande = `paid_amount` para no-mixtas (mixto sigue con `grandTotal`). Status `delivered` muestra badge verde resaltado "**Liquidada · $X cobrado**" en lugar de etiqueta tenue. Estados pending/ready: "Anticipo $X / Sin anticipo / Pendiente $X". Tooltip preserva valor total de la preventa.
+
+#### 12. ADR-016: sistema de cancelación de ventas (diseño + Fase 1 en curso)
+Joel pidió analizar cancelación de tickets. Definimos 4 decisiones: **edit-in-place + log table** (no inmutable estilo Shopify) · preventa liquidada cancelada → rollback a `ready` con saldo nuevo · dinero sale como `cash_movements` tipo salida en sesión actual · vista con filtro/tab "Canceladas" en caja + sección en Reporte del Día. Plan en 4 fases (~26-31 hrs total). **Fase 1 (visibilidad sin backend nuevo) en ejecución** — usa `sales.status='returned'` y `pre_sale_orders.status='cancelled'` que ya existen. Ver ADR-016 en §7.
+
+#### Estado al cierre (en curso)
+- ✅ Backend: 44/44 PHPUnit verde tras Fase A (cost fix + nuevo test).
+- ✅ Frontend: `vite build` verde tras cada bloque.
+- ⏳ Sin commits aún — Joel push único al final.
+- ⏳ ADR-016 Fase 1 en ejecución (tab/filtro Canceladas + sección Reporte).
+
+---
 
 ### Sesión 2026-05-25 — Sesiones de caja conflict, QA ronda 5, margen visible en mangas, quitar cliente
 

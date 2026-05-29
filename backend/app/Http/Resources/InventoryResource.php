@@ -31,6 +31,15 @@ class InventoryResource extends JsonResource
                     'id'   => $this->warehouse->id,
                     'name' => $this->warehouse->name,
                     'type' => $this->warehouse->type,
+                    // Tienda dueña de la bodega — para "Buscar en Tiendas"
+                    // (nombre + teléfono para llamar / WhatsApp).
+                    'store' => $this->warehouse->relationLoaded('store') && $this->warehouse->store
+                        ? [
+                            'id'    => $this->warehouse->store->id,
+                            'name'  => $this->warehouse->store->name,
+                            'phone' => $this->warehouse->store->phone,
+                        ]
+                        : null,
                 ],
             ),
 

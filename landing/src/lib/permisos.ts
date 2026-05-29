@@ -55,6 +55,7 @@ export type PageKey =
   | "inicio"
   | "stores"      // Tab "Tiendas" — para no-admin es donde se abre la caja
   | "products"
+  | "stock_search" // "Buscar en Tiendas" — existencias de un producto por sucursal
   | "sales"       // Tickets pasados
   | "clients"     // Tab dedicado de clientes
   | "presales"
@@ -64,15 +65,16 @@ export type PageKey =
   | "admin";      // AdminPage (sucursales, usuarios, permisos…)
 
 const PAGE_ACCESS: Record<Role, PageKey[]> = {
-  admin:   ["inicio", "products", "sales", "clients", "presales", "transfers", "reports", "settings", "admin"],
+  admin:   ["inicio", "products", "stock_search", "sales", "clients", "presales", "transfers", "reports", "settings", "admin"],
   // Gerente: NO ve "Tiendas" — gestiona solo la suya, el switcher del header
   // basta para alternar entre las que tiene asignadas. La página /stores es
   // CRUD de tiendas (solo admin). Reportes también queda solo para admin.
-  gerente: ["inicio", "products", "sales", "clients", "presales", "transfers"],
+  // SÍ ve "Buscar en Tiendas" (existencias por sucursal, sin datos financieros).
+  gerente: ["inicio", "products", "stock_search", "sales", "clients", "presales", "transfers"],
   // Cajero: NO ve Tiendas (lo confunde — su tienda es fija). En su lugar
   // ve Preventas con un panel adicional de catálogos disponibles + vencidos
-  // de su sucursal.
-  cajero:  ["inicio", "products", "sales", "presales"],
+  // de su sucursal. SÍ ve "Buscar en Tiendas" para localizar stock.
+  cajero:  ["inicio", "products", "stock_search", "sales", "presales"],
   unknown: ["inicio"],
 };
 

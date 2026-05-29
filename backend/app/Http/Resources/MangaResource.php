@@ -11,7 +11,9 @@ class MangaResource extends JsonResource
     public function toArray(Request $request): array
     {
         $user = $request->user();
-        $canViewCost = $user?->hasRole(['admin', 'super_admin', 'owner', 'dueño']) && ($user->can_view_cost ?? false);
+        // admin/master siempre; no-admin solo si tiene el flag delegado (ver ProductResource).
+        $canViewCost = ($user?->hasRole(['admin', 'super_admin', 'owner', 'dueño']) ?? false)
+            || ($user?->can_view_cost ?? false);
 
         return [
             'id'                    => $this->id,

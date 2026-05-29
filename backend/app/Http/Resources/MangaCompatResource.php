@@ -24,7 +24,9 @@ class MangaCompatResource extends JsonResource
         $product = $this->resource;
 
         $user = $request->user();
-        $canViewCost = $user?->hasRole(['admin', 'super_admin', 'owner', 'dueño']) && ($user->can_view_cost ?? false);
+        // admin/master siempre; no-admin solo si tiene el flag delegado (ver ProductResource).
+        $canViewCost = ($user?->hasRole(['admin', 'super_admin', 'owner', 'dueño']) ?? false)
+            || ($user?->can_view_cost ?? false);
 
         $details = $product->relationLoaded('mangaDetails') ? $product->mangaDetails : null;
         $price   = $product->relationLoaded('price') ? $product->price : null;

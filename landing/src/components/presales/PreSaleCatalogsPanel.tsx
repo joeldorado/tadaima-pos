@@ -142,7 +142,7 @@ function CompletedBlockModal({ catalog, onClose }: { catalog: PreSaleCatalog; on
 }
 
 // ─── Panel ────────────────────────────────────────────────────────────────────
-export function PreSaleCatalogsPanel() {
+export function PreSaleCatalogsPanel({ restrictedStoreId = null }: { restrictedStoreId?: number | null }) {
   const queryClient = useQueryClient();
   const catalogsQuery = usePreSaleCatalogsQuery({ per_page: 200 });
   const catalogs: PreSaleCatalog[] = catalogsQuery.data?.data ?? [];
@@ -530,6 +530,7 @@ export function PreSaleCatalogsPanel() {
       <AnimatePresence>
         {showNew && (
           <NewPreSaleCatalogModal
+            restrictedStoreId={restrictedStoreId}
             onClose={() => setShowNew(false)}
             onSuccess={_catalog => { void invalidateCatalogs(); setShowNew(false); }}
           />
@@ -537,6 +538,7 @@ export function PreSaleCatalogsPanel() {
         {editCatalog && (
           <NewPreSaleCatalogModal
             catalog={editCatalog}
+            restrictedStoreId={restrictedStoreId}
             onClose={() => setEditCatalog(null)}
             onSuccess={updated => {
               void invalidateCatalogs();

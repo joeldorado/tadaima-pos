@@ -80,4 +80,11 @@ export const queryKeys = {
     all: ['notifications'] as const,
     list: (params?: { unread_only?: boolean }) => ['notifications', 'list', params ?? {}] as const,
   },
+  // Historial del día — sales + presales agregados, scope por tienda.
+  // Cache persistente (IndexedDB) para que la apertura del modal sea instantánea
+  // y un refetch en background traiga lo nuevo tras cada checkout/cancelación.
+  historial: {
+    all: ['historial'] as const,
+    today: (storeId?: number | null) => ['historial', 'today', storeId ?? 0] as const,
+  },
 } as const

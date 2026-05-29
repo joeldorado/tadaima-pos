@@ -20,12 +20,13 @@ const ONE_DAY_MS = 24 * 60 * 60_000
 /**
  * Exchange rate USD→MXN.
  *
- * Antes: staleTime 24h + sin focus refetch — el cajero veía el TC viejo si
- * el admin lo cambiaba durante el turno. Ahora:
- *  - staleTime 5min → el query se considera fresco 5min, no spamea
- *  - refetchOnWindowFocus + refetchOnMount: al volver al tab/abrir página
- *    refetcha si está stale (=cambió hace >5min, raro pero garantiza fresh)
- * Cualquier mutación en SettingsPage invalida esta key → propagación instantánea.
+ * Decisión 2026-05-28 (Joel): SIN refetch en background. Cache 24h, refetch
+ * solo cuando:
+ *   1. handleOpenCash invalida → fetch fresco al abrir caja del día.
+ *   2. SettingsPage admin cambia el TC → invalida → propaga vía BroadcastChannel.
+ *   3. Primera carga si no hay cache hidratado.
+ *
+ * Acota llamados (antes spameaba en cada focus de tab del cajero).
  */
 export function useExchangeRateQuery(options?: { enabled?: boolean }) {
   return useQuery({
@@ -37,9 +38,10 @@ export function useExchangeRateQuery(options?: { enabled?: boolean }) {
       const n = Number.parseFloat(raw)
       return Number.isFinite(n) && n > 0 ? n : null
     },
-    staleTime: 5 * 60_000,
+    staleTime: ONE_DAY_MS,
     gcTime: ONE_DAY_MS,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     enabled: options?.enabled ?? true,
   })
 }

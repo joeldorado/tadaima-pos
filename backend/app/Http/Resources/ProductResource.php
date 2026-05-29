@@ -25,7 +25,11 @@ class ProductResource extends JsonResource
         $stockTotal = (float) ($this->inventory_sum_quantity ?? 0);
 
         $user = $request->user();
-        $canViewCost = $user?->hasRole(['admin', 'super_admin', 'owner', 'dueño']) && ($user->can_view_cost ?? false);
+        // Costo visible para: admin/master (siempre) O cualquier usuario con el
+        // flag `can_view_cost` delegado por el admin (cajero/gerente). Antes era
+        // `&&`, lo que bloqueaba a no-admin aunque tuvieran el permiso (bug QA).
+        $canViewCost = ($user?->hasRole(['admin', 'super_admin', 'owner', 'dueño']) ?? false)
+            || ($user?->can_view_cost ?? false);
 
         return [
             'id'          => $this->id,

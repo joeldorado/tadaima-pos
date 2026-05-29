@@ -24,6 +24,7 @@ use App\Http\Controllers\Api\SuppliersController;
 use App\Http\Controllers\Api\ProductController;
 use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\SalesDraftController;
+use App\Http\Controllers\Api\SaleCancellationsController;
 use App\Http\Controllers\Api\SalesController;
 use App\Http\Controllers\Api\StoreController;
 use App\Http\Controllers\Api\TerminalController;
@@ -162,6 +163,8 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('payments', [PreSaleOrdersController::class, 'addPayment']);
             Route::patch('status',  [PreSaleOrdersController::class, 'updateStatus']);
             Route::patch('items/{itemId}/deliver', [PreSaleOrdersController::class, 'deliverItem']);
+            // ADR-016
+            Route::post('cancel',   [PreSaleOrdersController::class, 'cancel']);
         });
     });
 
@@ -198,6 +201,10 @@ Route::middleware('auth:sanctum')->group(function () {
     // ── Sales ─────────────────────────────────────────────────────────────────
     Route::apiResource('sales', SalesController::class)->only(['index', 'show', 'store']);
     Route::post('sales/{sale}/return', [SalesController::class, 'return']);
+    // ADR-016 — cancelación con log + reverso a cash_movements
+    Route::post('sales/{sale}/cancel', [SalesController::class, 'cancel']);
+    // ADR-016 Fase 4 — lectura del log de cancelaciones
+    Route::get('sale-cancellations', [SaleCancellationsController::class, 'index']);
 
     // ── Inventory ─────────────────────────────────────────────────────────────
     // IMPORTANTE: rutas fijas antes del patrón wildcard {productId}/{warehouseId}

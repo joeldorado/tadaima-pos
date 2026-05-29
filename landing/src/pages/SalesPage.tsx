@@ -18,6 +18,7 @@ import { useProductsQuery } from "@/hooks/queries/useProducts";
 import { useStoresQuery } from "@/hooks/queries/useStores";
 import { useUsersQuery } from "@/hooks/queries/useUsers";
 import { useExchangeRateQuery } from "@/hooks/queries/useSystemSettings";
+import { useSaleCancellationsQuery } from "@/hooks/queries/useSaleCancellations";
 import { queryKeys } from "@/lib/queryKeys";
 import type { SaleDetail, PreSaleOrder, Product, Store as StoreType } from "@tadaima/api";
 import { useAuth } from "@tadaima/auth";
@@ -533,15 +534,25 @@ interface DailyReport {
   // G) Ganancia bruta — solo confiable cuando isAdmin (backend gate)
   costoTotal: number; gananciaBruta: number; margenPct: number;
   tieneDatosCosto: boolean; tieneItemsSinCosto: boolean;
+  // H) Cancelaciones (ADR-016 Fase 1)
+  cancelacionesCount: number;
+  ventasCanceladasCount: number;
+  preventasCanceladasCount: number;
+  montoVentasCanceladas: number;
+  montoPreventasCanceladas: number;
+  montoCanceladoTotal: number;
+  ventasNetasReales: number;
 }
 
 function ReporteDelDia({
-  report, fromDate, toDate, storeName, isAdmin,
+  report, fromDate, toDate, storeName, storeId, isAdmin,
 }: {
   report: DailyReport;
   fromDate: string;
   toDate: string;
   storeName: string;
+  /** Para fetch de log de cancelaciones del periodo + tienda. */
+  storeId?: number | null;
   /** Solo admin ve sección de ganancia bruta (backend gate de cost). */
   isAdmin: boolean;
 }) {
@@ -549,6 +560,57 @@ function ReporteDelDia({
   const periodLabel = isSameDay
     ? new Date(fromDate + "T12:00").toLocaleDateString("es-MX", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })
     : `${fromDate} → ${toDate}`;
+
+  // ADR-016 Fase 4: log de cancelaciones del periodo para breakdown por motivo + cajero.
+  const cancellationsQuery = useSaleCancellationsQuery({
+    from: fromDate,
+    to:   toDate,
+    ...(storeId ? { store_id: storeId } : {}),
+    per_page: 200,
+  });
+  const cancellations = cancellationsQuery.data?.data ?? [];
+
+  // Agregados desde el log (más precisos que los de DailyReport — capturan
+  // partial cancellations que el filtro `status='returned'` no detecta).
+  const logMontoTotal = cancellations.reduce((s, c) => s + c.amount_refunded, 0);
+  const logCount      = cancellations.length;
+  // Brutas = lo que se cobró ANTES de cualquier cancelación.
+  // ventasNetas (de DailyReport) ya refleja edit-in-place, así que: brutas = netas + cancelado.
+  const ventasBrutas      = report.ventasNetas + logMontoTotal;
+  const ventasNetasReales = report.ventasNetas;
+
+  // Group by motivo
+  const reasonLabels: Record<string, string> = {
+    cliente_devuelve: 'Cliente devuelve',
+    error_cajero:     'Error cajero',
+    'dañado':         'Producto dañado',
+    no_llego:         'No llegó',
+    otro:             'Otro',
+  };
+  const byReason = new Map<string, { count: number; amount: number }>();
+  cancellations.forEach(c => {
+    const b = byReason.get(c.reason_code) ?? { count: 0, amount: 0 };
+    b.count  += 1;
+    b.amount += c.amount_refunded;
+    byReason.set(c.reason_code, b);
+  });
+  const reasonRows = Array.from(byReason.entries())
+    .map(([code, b]) => ({ code, label: reasonLabels[code] ?? code, ...b }))
+    .sort((a, b) => b.amount - a.amount);
+
+  // Group by cajero
+  const byCashier = new Map<number, { name: string; count: number; amount: number }>();
+  cancellations.forEach(c => {
+    const id = c.cancelled_by?.id ?? 0;
+    const name = c.cancelled_by?.name ?? 'Sistema';
+    const b = byCashier.get(id) ?? { name, count: 0, amount: 0 };
+    b.count  += 1;
+    b.amount += c.amount_refunded;
+    byCashier.set(id, b);
+  });
+  const cashierRows = Array.from(byCashier.entries())
+    .map(([id, b]) => ({ user_id: id, ...b }))
+    .sort((a, b) => b.amount - a.amount);
 
   const handlePrint = () => printDailyReport(report, fromDate, toDate, storeName, isAdmin);
   const handlePdf   = () => exportDailyReportPdf(report, fromDate, toDate, storeName, isAdmin);
@@ -834,6 +896,82 @@ function ReporteDelDia({
               </tfoot>
             </table>
           </div>
+        )}
+      </ReportSection>
+
+      {/* H) Cancelaciones — ADR-016 Fase 4 (detallado).
+          Lee del log `sale_cancellations` con motivo + cajero + snapshot.
+          Sustituye al cálculo simple Fase 1 (DailyReport.montoVentasCanceladas)
+          porque edit-in-place ya descontó del sale.total, así que el monto real
+          reversado vive en el log. */}
+      <ReportSection title={`H · Cancelaciones · ${logCount}`}>
+        {logCount === 0 ? (
+          <p className="text-xs py-4 text-center" style={{ color: "var(--td-text-lo)" }}>Sin cancelaciones en el periodo.</p>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+              <Kpi label="Eventos de cancelación" value={String(logCount)} hint={logCount === 1 ? "1 evento" : `${logCount} eventos`} danger />
+              <Kpi label="Monto reversado" value={fmt(logMontoTotal)} hint="salidas en cash_movements" danger />
+              <Kpi label="Ventas brutas" value={fmt(ventasBrutas)} hint="antes de cancelaciones" />
+              <Kpi label="Ventas netas reales" value={fmt(ventasNetasReales)} hint={`Brutas ${fmt(ventasBrutas)} − ${fmt(logMontoTotal)}`} highlight />
+            </div>
+
+            {/* Por motivo */}
+            <div className="mb-4">
+              <p className="text-[10px] font-black uppercase tracking-widest mb-2" style={{ color: "var(--td-text-lo)" }}>Por motivo</p>
+              <div className="overflow-x-auto rounded-xl" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)" }}>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-[9px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>
+                      <th className="text-left py-2 px-3">Motivo</th>
+                      <th className="text-right py-2 px-3">Eventos</th>
+                      <th className="text-right py-2 px-3">Monto</th>
+                      <th className="text-right py-2 px-3">% del total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reasonRows.map(r => (
+                      <tr key={r.code} className="border-t" style={{ borderColor: "var(--td-divider)" }}>
+                        <td className="py-2 px-3 font-bold" style={{ color: "var(--td-text-hi)" }}>{r.label}</td>
+                        <td className="py-2 px-3 text-right" style={{ color: "var(--td-text-md)" }}>{r.count}</td>
+                        <td className="py-2 px-3 text-right font-black" style={{ color: "#f87171" }}>{fmt(r.amount)}</td>
+                        <td className="py-2 px-3 text-right" style={{ color: "var(--td-text-lo)" }}>{logMontoTotal > 0 ? `${((r.amount / logMontoTotal) * 100).toFixed(0)}%` : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Por cajero */}
+            <div className="mb-2">
+              <p className="text-[10px] font-black uppercase tracking-widest mb-2" style={{ color: "var(--td-text-lo)" }}>Por cajero</p>
+              <div className="overflow-x-auto rounded-xl" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)" }}>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-[9px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>
+                      <th className="text-left py-2 px-3">Cajero</th>
+                      <th className="text-right py-2 px-3">Cancelaciones</th>
+                      <th className="text-right py-2 px-3">Monto</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cashierRows.map(r => (
+                      <tr key={r.user_id} className="border-t" style={{ borderColor: "var(--td-divider)" }}>
+                        <td className="py-2 px-3 font-bold" style={{ color: "var(--td-text-hi)" }}>{r.name}</td>
+                        <td className="py-2 px-3 text-right" style={{ color: "var(--td-text-md)" }}>{r.count}</td>
+                        <td className="py-2 px-3 text-right font-black" style={{ color: "#f87171" }}>{fmt(r.amount)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <p className="text-[10px] mt-2" style={{ color: "var(--td-text-lo)" }}>
+              Detalle completo en Admin → tab Cancelaciones (filtros por motivo, cajero, rango).
+            </p>
+          </>
         )}
       </ReportSection>
     </div>
@@ -1487,6 +1625,17 @@ export function SalesPage() {
     const cashierRows: CashierRow[] = Array.from(cashierMap.values())
       .sort((a, b) => b.revenue - a.revenue);
 
+    // H) Cancelaciones (ADR-016 Fase 1) — solo visibilidad por ahora.
+    // Lee `sales.status='returned'` y `pre_sale_orders.status='cancelled'`
+    // (campos ya existentes). Fase 2 traerá motivo + items + tabla detallada.
+    const ventasCanceladas    = filteredSales.filter(s => s.status === "returned");
+    const preventasCanceladas = filteredPreSales.filter(p => p.status === "cancelled");
+    const cancelacionesCount  = ventasCanceladas.length + preventasCanceladas.length;
+    const montoVentasCanceladas    = ventasCanceladas.reduce((a, s) => a + s.total, 0);
+    const montoPreventasCanceladas = preventasCanceladas.reduce((a, p) => a + (p.paid_amount ?? 0), 0);
+    const montoCanceladoTotal      = montoVentasCanceladas + montoPreventasCanceladas;
+    const ventasNetasReales        = ventasNetas - montoCanceladoTotal;
+
     return {
       // A
       subtotal, descuento, ventasNetas, comisionTotal, netoDespuesComision,
@@ -1507,6 +1656,11 @@ export function SalesPage() {
       cashierRows,
       // G — solo admin (gerente recibe null en product.cost)
       costoTotal, gananciaBruta, margenPct, tieneDatosCosto, tieneItemsSinCosto,
+      // H — cancelaciones (Fase 1: solo visibilidad)
+      cancelacionesCount, ventasCanceladasCount: ventasCanceladas.length,
+      preventasCanceladasCount: preventasCanceladas.length,
+      montoVentasCanceladas, montoPreventasCanceladas, montoCanceladoTotal,
+      ventasNetasReales,
     };
   }, [filteredSales, filteredPreSales, cashReportQuery.data, exchangeRateQuery.data]);
 
@@ -2052,6 +2206,7 @@ export function SalesPage() {
               fromDate={filterStartDate || getTodayLocal()}
               toDate={filterEndDate || getTodayLocal()}
               storeName={activeStoreName}
+              storeId={effectiveStoreId ?? null}
               isAdmin={isAdmin}
             />
           )}

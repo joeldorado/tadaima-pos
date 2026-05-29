@@ -122,7 +122,7 @@ export interface InventoryItem {
     id: number
     name: string
     type: 'central' | 'store'
-    store: { id: number; name: string } | null
+    store: { id: number; name: string; phone: string | null } | null
   } | null
 }
 
@@ -229,6 +229,9 @@ export interface SaleDetail {
   total: number
   commission_amount: number
   status: string
+  /** ADR-016 — 'none' | 'partial' | 'full'. Indica si la venta tuvo cancelaciones. */
+  cancellation_status?: 'none' | 'partial' | 'full'
+  last_cancelled_at?: string | null
   customer: { id: number; name: string; tier: string | null } | null
   /** Usuario que registró la venta (cajero/gerente/admin). Eager-loaded por SalesController. */
   user: { id: number; name: string } | null
@@ -677,6 +680,9 @@ export interface PreSaleOrder {
   id: number
   code: string
   status: PreSaleOrderStatus
+  /** ADR-016 — 'none' | 'partial' | 'full'. Indica si tuvo cancelaciones/rollback. */
+  cancellation_status?: 'none' | 'partial' | 'full'
+  last_cancelled_at?: string | null
   linked_sale_id: number | null
   pickup_deadline: string | null
   notes: string | null
@@ -778,7 +784,7 @@ export interface MangaInventoryItem {
     id: number
     name: string
     type: 'central' | 'store'
-    store: { id: number; name: string } | null
+    store: { id: number; name: string; phone: string | null } | null
   } | null
 }
 

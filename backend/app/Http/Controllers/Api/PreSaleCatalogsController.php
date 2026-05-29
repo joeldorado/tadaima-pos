@@ -82,7 +82,7 @@ class PreSaleCatalogsController extends Controller
             'status'          => $data['status'] ?? PreSaleCatalog::STATUS_DRAFT,
         ]);
 
-        $this->syncStoreLimits($catalog, $data['store_limits'] ?? null);
+        $this->syncStoreLimits($catalog, $data['store_limits'] ?? null, $this->storeLimitScope($request));
 
         return $this->success(
             new PreSaleCatalogResource($catalog->load(['category', 'supplier', 'product', 'createdBy', 'storeLimits'])),
@@ -91,13 +91,33 @@ class PreSaleCatalogsController extends Controller
     }
 
     /**
-     * Replace-all sync de límites por tienda. Recibe array [{store_id, limit_qty}, ...]
-     * o null para no tocar. Si recibe array vacío [], borra todos los límites
+     * Sync de límites por tienda. Recibe array [{store_id, limit_qty}, ...]
+     * o null para no tocar. Array vacío [] borra todos los límites
      * (vuelve a usar el preorder_limit global).
+     *
+     * Cuando `$restrictToStoreId` está presente (gerente), SOLO se toca esa
+     * tienda: las asignaciones de otras sucursales se preservan intactas y se
+     * ignora cualquier store_id ajeno en el payload. Así el gerente puede
+     * gestionar el catálogo igual que un admin pero sin alterar (ni ver wipear)
+     * el stock de tiendas que no son la suya.
      */
-    private function syncStoreLimits(PreSaleCatalog $catalog, ?array $limits): void
+    private function syncStoreLimits(PreSaleCatalog $catalog, ?array $limits, ?int $restrictToStoreId = null): void
     {
         if ($limits === null) return;
+
+        if ($restrictToStoreId !== null) {
+            $mine = collect($limits)->first(fn ($l) => (int) $l['store_id'] === $restrictToStoreId);
+            $catalog->storeLimits()->where('store_id', $restrictToStoreId)->delete();
+            if ($mine !== null) {
+                $catalog->storeLimits()->create([
+                    'store_id'  => $restrictToStoreId,
+                    'limit_qty' => (int) $mine['limit_qty'],
+                ]);
+            }
+            return;
+        }
+
+        // Admin: replace-all de todas las tiendas.
         $catalog->storeLimits()->delete();
         foreach ($limits as $l) {
             $catalog->storeLimits()->create([
@@ -105,6 +125,18 @@ class PreSaleCatalogsController extends Controller
                 'limit_qty' => (int) $l['limit_qty'],
             ]);
         }
+    }
+
+    /**
+     * Tienda a la que se restringe la asignación de stock por sucursal.
+     * null para admin (puede tocar todas), store_id propio para gerente.
+     */
+    private function storeLimitScope(Request $request): ?int
+    {
+        $user = $request->user();
+        if ($user->hasRole('admin')) return null;
+        if ($user->hasRole('gerente')) return $user->store_id ? (int) $user->store_id : -1;
+        return null;
     }
 
     /**
@@ -140,7 +172,7 @@ class PreSaleCatalogsController extends Controller
         $storeLimits = $data['store_limits'] ?? null;
         unset($data['store_limits']);
         $catalog->update($data);
-        $this->syncStoreLimits($catalog, $storeLimits);
+        $this->syncStoreLimits($catalog, $storeLimits, $this->storeLimitScope($request));
 
         return $this->success(
             new PreSaleCatalogResource($catalog->load(['category', 'supplier', 'product', 'createdBy', 'orderItems', 'activeOrderItems', 'soldOrderItems', 'deliveredOrderItems', 'storeLimits']))

@@ -5,7 +5,7 @@ import { useTheme } from "@/contexts/ThemeContext";
 import {
   ShoppingCart, Package, LogOut, Home, Store,
   Users, Receipt, UserCircle2, ClipboardList, ArrowLeftRight, BarChart2,
-  Settings, Sun, Moon,
+  Settings, Sun, Moon, PackageSearch,
 } from "lucide-react";
 import { NotificationBadge } from "@/components/notifications/NotificationBadge";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -31,6 +31,7 @@ const ALL_NAV_ITEMS: NavItem[] = [
   { to: "/",          label: "Inicio",    icon: Home,            page: "inicio",    exact: true },
   { to: "/stores",    label: "Tiendas",   icon: Store,           page: "stores"    },
   { to: "/products",  label: "Productos", icon: Package,         page: "products"  },
+  { to: "/buscar-tiendas", label: "Existencias", icon: PackageSearch, page: "stock_search" },
   { to: "/sales",     label: "Ventas",    icon: Receipt,         page: "sales"     },
   { to: "/clients",   label: "Clientes",  icon: UserCircle2,     page: "clients"   },
   { to: "/pre-sales", label: "Preventas", icon: ClipboardList,   page: "presales"  },
@@ -40,14 +41,14 @@ const ALL_NAV_ITEMS: NavItem[] = [
 ];
 
 const NAV_BY_ROLE: Record<string, PageKey[]> = {
-  admin:   ["inicio", "products", "sales", "clients", "presales", "transfers", "reports"],
+  admin:   ["inicio", "products", "stock_search", "sales", "clients", "presales", "transfers", "reports"],
   // Gerente: sin Tiendas. Solo gestiona la suya; el switcher del header basta
   // para alternar entre tiendas asignadas. La página /stores es CRUD admin.
   // Reportes oculto — solo admin ve ganancia bruta y agregados cross-tienda.
-  gerente: ["inicio", "products", "sales", "clients", "presales", "transfers"],
+  gerente: ["inicio", "products", "stock_search", "sales", "clients", "presales", "transfers"],
   // Cajero: sin Tiendas, con Preventas para ver catálogos disponibles +
-  // difusión + vencidos de su sucursal.
-  cajero:  ["inicio", "products", "sales", "presales"],
+  // difusión + vencidos de su sucursal. "Buscar en Tiendas" para localizar stock.
+  cajero:  ["inicio", "products", "stock_search", "sales", "presales"],
   unknown: ["inicio"],
 };
 

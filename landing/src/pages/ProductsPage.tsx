@@ -37,6 +37,7 @@ function formatApiError(err: unknown, fallback: string): { title: string; detail
   return { title: fallback, detail: apiErr?.message ?? "" };
 }
 import { ProductTypeSelectorModal } from "@/components/products/ProductTypeSelectorModal";
+import { StoreStockBreakdown } from "@/components/inventory/StoreStockBreakdown";
 import { MangaBatchModal } from "@/components/products/MangaBatchModal";
 import { MangaEditModal } from "@/components/products/MangaEditModal";
 import { QuickStockModal } from "@/components/products/QuickStockModal";
@@ -230,6 +231,8 @@ function ProductDetailModal({
   canNotify,
   sending,
   notified,
+  canViewCost,
+  highlightStoreId,
 }: {
   product: Producto;
   stock: number;
@@ -239,6 +242,8 @@ function ProductDetailModal({
   canNotify: boolean;
   sending: boolean;
   notified: boolean;
+  canViewCost: boolean;
+  highlightStoreId?: number | null;
 }) {
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
@@ -282,6 +287,15 @@ function ProductDetailModal({
             <DetailField label="Precio C" value={<span className="text-sm font-bold">{product.precioC ? fmt(product.precioC) : "No configurado"}</span>} />
           </div>
 
+          {canViewCost && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <DetailField
+                label="Costo real"
+                value={<span className="text-lg font-black" style={{ color: "#FFAA00" }}>{product.costo ? fmt(product.costo) : "Sin costo"}</span>}
+              />
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <DetailField
               label="Métodos de pago"
@@ -305,6 +319,12 @@ function ProductDetailModal({
               label="Estado"
               value={<span className="text-sm font-bold">{stock <= 0 ? "Agotado" : stock <= 10 ? "Por agotarse" : "Disponible"}</span>}
             />
+          </div>
+
+          {/* Existencias en otras tiendas (gerente/cajero ven dónde hay stock). */}
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-widest mb-3" style={{ color: T.textMuted }}>Stock por tienda</p>
+            <StoreStockBreakdown productId={product.id} highlightStoreId={highlightStoreId} />
           </div>
         </div>
 
@@ -344,6 +364,8 @@ function MangaDetailModal({
   canNotify,
   sending,
   notified,
+  canViewCost,
+  highlightStoreId,
 }: {
   manga: Manga;
   storeLabel: string;
@@ -352,6 +374,8 @@ function MangaDetailModal({
   canNotify: boolean;
   sending: boolean;
   notified: boolean;
+  canViewCost: boolean;
+  highlightStoreId?: number | null;
 }) {
   const stock = manga.stock ?? 0;
 
@@ -397,6 +421,25 @@ function MangaDetailModal({
             <DetailField label="Precio público" value={<span className="text-lg font-black" style={{ color: "#00CC66" }}>{fmt(manga.public_price)}</span>} />
             <DetailField label="Stock de tienda" value={<span className="text-lg font-black" style={{ color: stock <= 0 ? T.redBright : stock <= 10 ? "#FFAA00" : T.textPrimary }}>{stock}</span>} />
             <DetailField label="Activo" value={<span className="text-sm font-bold">{manga.active ? "Sí" : "No"}</span>} />
+          </div>
+
+          {canViewCost && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <DetailField
+                label="Costo real"
+                value={<span className="text-lg font-black" style={{ color: "#FFAA00" }}>{manga.cost ? fmt(manga.cost) : "Sin costo"}</span>}
+              />
+              <DetailField
+                label="Margen %"
+                value={<span className="text-sm font-bold">{manga.profit_margin_percent ? `${manga.profit_margin_percent}%` : "—"}</span>}
+              />
+            </div>
+          )}
+
+          {/* Existencias en otras tiendas. */}
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-widest mb-3" style={{ color: T.textMuted }}>Stock por tienda</p>
+            <StoreStockBreakdown productId={manga.id} highlightStoreId={highlightStoreId} />
           </div>
         </div>
 
@@ -2564,6 +2607,8 @@ export function ProductsPage() {
           product={viewingProduct}
           stock={getTotalStock(viewingProduct.id)}
           storeLabel={storeLabel}
+          canViewCost={canViewCost}
+          highlightStoreId={user?.store_id}
           onClose={() => setViewingProduct(null)}
           canNotify={canNotify}
           sending={alertingKey === `product:${viewingProduct.id}`}
@@ -2593,6 +2638,8 @@ export function ProductsPage() {
         <MangaDetailModal
           manga={viewingManga}
           storeLabel={storeLabel}
+          canViewCost={canViewCost}
+          highlightStoreId={user?.store_id}
           onClose={() => setViewingManga(null)}
           canNotify={canNotify}
           sending={alertingKey === `manga:${viewingManga.id}`}

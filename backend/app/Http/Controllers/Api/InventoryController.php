@@ -26,7 +26,7 @@ class InventoryController extends Controller
     public function index(Request $request): JsonResponse
     {
         $inventory = Inventory::query()
-            ->with(['product', 'warehouse'])
+            ->with(['product', 'warehouse.store'])
             ->when($request->filled('product_id'),   fn ($q) => $q->forProduct($request->product_id))
             ->when($request->filled('warehouse_id'), fn ($q) => $q->forWarehouse($request->warehouse_id))
             ->orderBy('product_id')

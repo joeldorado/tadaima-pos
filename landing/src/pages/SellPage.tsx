@@ -9,7 +9,7 @@ import {
   Mail,
   TriangleAlert, PackageX, Bookmark, Calendar, PackageCheck, ClipboardList, Banknote,
   Truck, CheckCircle2, Printer, History, Receipt, RefreshCw,
-  ShoppingCart, Crown, Circle, Trash2,
+  ShoppingCart, Crown, Circle, Trash2, XCircle,
 } from "lucide-react";
 import { ImageWithFallback } from "@/components/figma/ImageWithFallback";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -25,7 +25,7 @@ import type { CashSessionReport } from "@tadaima/api";
 import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
 import { OpenSessionConflictModal } from "@/components/cash/OpenSessionConflictModal";
 import { useQueryClient } from "@tanstack/react-query";
-import { useProductsLightQuery, useProductsSearchQuery, useBackgroundProductsPrefetch } from "@/hooks/queries/useProducts";
+import { useProductsLightQuery, useProductsSearchQuery } from "@/hooks/queries/useProducts";
 // ADR-014: useReservedStockQuery removido — carrito client-side, sin polling.
 import { usePaymentMethodsQuery } from "@/hooks/queries/usePaymentMethods";
 import { useTerminalsQuery } from "@/hooks/queries/useTerminals";
@@ -34,13 +34,15 @@ import { useOnlineUsersQuery } from "@/hooks/queries/useUsers";
 import { useExchangeRateQuery } from "@/hooks/queries/useSystemSettings";
 import { usePreSaleCatalogsQuery, usePreSaleOrdersQuery } from "@/hooks/queries/usePreSales";
 import { useCustomersAllQuery } from "@/hooks/queries/useCustomers";
+import { useTodayHistorialQuery } from "@/hooks/queries/useHistorial";
 import { queryKeys } from "@/lib/queryKeys";
 import { getTodayLocal } from "@/lib/date";
 import type { CashSession, CashRegisterInfo, PaymentMethod as ApiPaymentMethod, PreSaleCatalog, PreSaleOrder, PreSaleOrderItem, SaleDetail, Terminal, ExternalCardLookup } from "@tadaima/api";
-type HistorialEntry = { type: 'sale'; data: SaleDetail } | { type: 'presale'; data: PreSaleOrder };
+import type { HistorialEntry } from "@/hooks/queries/useHistorial";
 import { useCartDraftStore } from "@/stores/cartDraftStore";
 import { useActiveStore } from "@/contexts/StoreContext";
 import { useAuth } from "@tadaima/auth";
+import { CancelTicketModal } from "@/components/cancel/CancelTicketModal";
 import { motion as Motion, AnimatePresence } from "motion/react";
 
 // API_BASE removed — using @tadaima/api (Laravel backend)
@@ -118,6 +120,16 @@ interface Mesa {
   absorbCommission?: boolean;
   loadedPreSaleOrderId?: number; // folio de preventa cargado para liquidar en caja
   loadedPreSaleOrderCode?: string; // código PREV-XXXXX del folio cargado, para ticket
+  // Lo que el cliente entregó en esta caja. Persiste por mesa: al cambiar entre
+  // Caja 1/2/3 cada una recuerda su propio efectivo recibido (fix 2026-05-27).
+  cashReceived?: string;
+  // Dólares físicos recibidos (input híbrido). Reemplaza al método "Dólares"
+  // del dropdown — el cobro siempre es Efectivo, y el cajero declara cuántos
+  // USD entraron físicamente para calcular el faltante en pesos.
+  cashReceivedUsd?: string;
+  // true cuando el cajero activó "+ Dólares" en esta mesa. Default false → cada
+  // venta nueva inicia en pesos (decisión Joel 2026-05-28).
+  usdPrimaryMode?: boolean;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -225,6 +237,9 @@ const makeMesa = (n?: number): Mesa => {
     isPreventa: false,
     depositAmount: 0,
     absorbCommission: true, // tienda siempre absorbe — nunca se cobra al cliente
+    cashReceived: "",
+    cashReceivedUsd: "",
+    usdPrimaryMode: false,
   };
 };
 
@@ -281,9 +296,10 @@ export function SellPage() {
   // 10 unidades en el catálogo cuando en su tienda hay 0 — al cobrar el backend
   // rechaza con "Stock insuficiente: Disponible 0".
   const productsQuery       = useProductsLightQuery(activeStore?.id);
-  // Once the top 200 are cached, gradually pull pages 2..6 in background
-  // (during requestIdleCallback) so subsequent searches feel instant.
-  useBackgroundProductsPrefetch(!!productsQuery.data, activeStore?.id);
+  // Decisión 2026-05-28 (Joel): quitado el prefetch agresivo de páginas 2..6
+  // (`useBackgroundProductsPrefetch`). Antes traía 1000 productos extra al
+  // abrir caja. Ahora solo top-200 + búsqueda server-side bajo demanda.
+  // Invalidaciones tras venta refrescan cache automáticamente en bg.
   const paymentMethodsQuery = usePaymentMethodsQuery({ active: true });
 
   // Preventas cacheadas con React Query — antes openPreSalesModal hacía 2 fetches
@@ -456,6 +472,11 @@ export function SellPage() {
   const [mesas, setMesas]             = useState<Mesa[]>(initialMesas.current);
   const [activeMesaId, setActiveMesaId] = useState(initialActiveId.current);
 
+  // Mover updMesa arriba — necesario para los wrappers per-mesa (cashReceived, etc.)
+  // que viven más arriba que su definición original.
+  const updMesa = useCallback((id: string, fn: (m: Mesa) => Mesa) =>
+    setMesas(prev => prev.map(m => m.id === id ? fn(m) : m)), []);
+
   // Ref con el snapshot más reciente de mesas. Permite que callbacks async (ej.
   // addToCart después de awaitar un inFlight) lean la qty actual del UI sin
   // depender del closure capturado al inicio de la llamada (que ya está stale).
@@ -524,7 +545,8 @@ export function SellPage() {
   const [extSearchResults, setExtSearchResults] = useState<ExternalCardLookup[]>([]);
   const [isWide, setIsWide]         = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [cashReceived, setCashReceived] = useState("");
+  // cashReceived vive en la mesa activa (ver Mesa.cashReceived) — el wrapper
+  // se define más abajo, después de derivar activeMesa.
 
   // ── Ticket / Historial ────────────────────────────────────────────────
   interface CompletedSaleData {
@@ -536,8 +558,9 @@ export function SellPage() {
     // contexto del punto de venta
     storeName?: string;
     cashierName?: string;
-    amountReceived?: number;  // efectivo / dólares ingresado por el cajero
-    change?: number;          // cambio devuelto (puede ser en dólares si PM=Dólares)
+    amountReceived?: number;     // efectivo total ingresado en MXN (incluye USD * tc)
+    amountReceivedUsd?: number;  // dólares físicos recibidos (informativo; ya van sumados en amountReceived)
+    change?: number;             // cambio devuelto en MXN
     // preventa section (mixed ticket)
     preSaleCode?: string;
     preSaleItems?: Array<{ name: string; quantity: number; unitPrice: number }>;
@@ -552,9 +575,22 @@ export function SellPage() {
   const [pendingMesaCloseId, setPendingMesaCloseId] = useState<string | null>(null);
   const [printNeverAsk, setPrintNeverAsk]           = useState(false);
   const [showHistorialModal, setShowHistorialModal] = useState(false);
-  const [historialEntries, setHistorialEntries]     = useState<HistorialEntry[]>([]);
-  const [historialLoading, setHistorialLoading]     = useState(false);
+  // Historial del día vía React Query: cacheado + persistido en IndexedDB.
+  // Apertura del modal instantánea con la última versión; background refetch
+  // tras cada checkout/cancelación gracias a las invalidaciones.
+  const historialQuery = useTodayHistorialQuery(activeStore?.id, { enabled: !!user });
+  const historialEntries: HistorialEntry[] = historialQuery.data ?? [];
+  const historialLoading = historialQuery.isLoading;
+  // ADR-016 Fase 1 — filtro del historial. 'all' default; 'cancelled' muestra
+  // solo ventas con status='returned' y preventas con status='cancelled'.
+  const [historialFilter, setHistorialFilter] = useState<'all' | 'cancelled'>('all');
   const [expandedEntryKey, setExpandedEntryKey]     = useState<string | null>(null);
+  // ADR-016 Fase 3 — qué ticket está siendo cancelado (modal)
+  const [cancelTarget, setCancelTarget] = useState<
+    | { kind: 'sale'; sale: SaleDetail }
+    | { kind: 'presale'; order: PreSaleOrder }
+    | null
+  >(null);
 
   // ── Popup asignar cliente (escanear TAD\d+ o botón "Cliente" del toolbar) ──
   // Se abre cuando el scanner detecta un código TAD o cuando el cajero clickea
@@ -611,10 +647,19 @@ export function SellPage() {
   // ── Escáner (lector USB HID + cámara) ──
   const [showCameraScanner, setShowCameraScanner] = useState(false);
 
-  const tcRef              = useRef<HTMLDivElement>(null);
+  // Cambiado de HTMLDivElement a HTMLElement porque ahora vive en el sidebar
+  // derecho (<aside>) en vez del antiguo footer (<div>). Sigue siendo el ancla
+  // del "click fuera" para cerrar el popover del Tipo de Cambio.
+  const tcRef              = useRef<HTMLElement>(null);
   const custRef            = useRef<HTMLDivElement>(null);
   const paymentMenuRef     = useRef<HTMLDivElement>(null);
   const [paymentMenuOpen, setPaymentMenuOpen] = useState(false);
+  // Toggle del input de dólares dentro de Efectivo. Por default oculto — se
+  // muestra cuando el cajero hace click en "+ Dólares" o cuando ya hay valor.
+  // showUsdInput se deriva de la mesa activa — cada caja inicia en PESOS por
+  // default, y USD solo cuando el cajero lo activa con "+ Dólares" (decisión
+  // Joel 2026-05-28). Antes era useState global → la siguiente venta heredaba
+  // el modo USD de la anterior aunque clearCart limpiara los inputs.
   const customerSearchRef  = useRef<HTMLInputElement>(null);
   const prodInputRef       = useRef<HTMLInputElement>(null);
   const cashInputRef       = useRef<HTMLInputElement>(null);
@@ -695,6 +740,47 @@ export function SellPage() {
   }, []);
 
   const activeMesa = useMemo(() => mesas.find(m => m.id === activeMesaId) ?? mesas[0], [mesas, activeMesaId]);
+
+  // cashReceived es por caja: cada mesa guarda lo que el cliente entregó.
+  // Antes era un useState global → al saltar entre Caja 1/2/3 se perdía lo
+  // ingresado. Ahora persiste mientras la caja siga abierta con esos items.
+  const cashReceived = activeMesa.cashReceived ?? "";
+  const setCashReceived = useCallback((v: string | ((prev: string) => string)) => {
+    updMesa(activeMesa.id, m => ({
+      ...m,
+      cashReceived: typeof v === 'function' ? (v as (p: string) => string)(m.cashReceived ?? "") : v,
+    }));
+  }, [activeMesa.id, updMesa]);
+
+  // Input híbrido: dólares físicos recibidos (siempre dentro de Efectivo).
+  const cashReceivedUsd = activeMesa.cashReceivedUsd ?? "";
+  const setCashReceivedUsd = useCallback((v: string | ((prev: string) => string)) => {
+    updMesa(activeMesa.id, m => ({
+      ...m,
+      cashReceivedUsd: typeof v === 'function' ? (v as (p: string) => string)(m.cashReceivedUsd ?? "") : v,
+    }));
+  }, [activeMesa.id, updMesa]);
+
+  // Modo USD primario (cajero activó "+ Dólares"). Por mesa — cada venta nueva
+  // inicia en pesos (default false en makeMesa + clearCart lo resetea).
+  const showUsdInput = !!activeMesa.usdPrimaryMode;
+  const setShowUsdInput = useCallback((v: boolean) => {
+    updMesa(activeMesa.id, m => ({ ...m, usdPrimaryMode: v }));
+  }, [activeMesa.id, updMesa]);
+
+  // Una sola vez al hidratar: si la mesa viene con paymentMethod="Dólares"
+  // de un snapshot anterior, normaliza a "Efectivo" (Dólares se eliminó del
+  // dropdown 2026-05-28 y vive ahora dentro de Efectivo vía cashReceivedUsd).
+  useEffect(() => {
+    setMesas(prev => {
+      const needsFix = prev.some(m => (m.paymentMethod as string) === "Dólares");
+      if (!needsFix) return prev;
+      return prev.map(m => (m.paymentMethod as string) === "Dólares"
+        ? { ...m, paymentMethod: "Efectivo" as PaymentMethod }
+        : m);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Clear cash input when cart is emptied
   useEffect(() => {
@@ -997,9 +1083,6 @@ export function SellPage() {
       toast.error("No se pudo agregar al socio");
     }
   };
-
-  const updMesa = useCallback((id: string, fn: (m: Mesa) => Mesa) =>
-    setMesas(prev => prev.map(m => m.id === id ? fn(m) : m)), []);
 
   const addMesa = () => {
     // La caja main (1ra) es la principal — cada caja extra es una sub-caja para
@@ -1394,6 +1477,105 @@ export function SellPage() {
    * Vaciar carrito (ADR-014: solo state local). zustand snapshot persistido se
    * actualiza automáticamente vía el useEffect que escucha cambios de mesas[].
    */
+  // ── Split por método de pago ──────────────────────────────────────────────
+  /** True si el item se puede cobrar con `method`. Considera preventa (no
+   * Tarjeta), cash_only y los flags allow_cash/allow_card del producto. */
+  const itemAcceptsMethod = useCallback((item: CartItem, method: PaymentMethod): boolean => {
+    const isCardMethod = method === "Tarjeta";
+    // Preventa (catálogo) → no Tarjeta.
+    if (item.sellingCatalogId != null) return !isCardMethod;
+    // Producto cash_only → solo efectivo/dólares/transferencia.
+    if (item.product.payment_restriction === "cash_only") return !isCardMethod;
+    // Flags explícitos del producto.
+    if (isCardMethod) return item.product.allow_card !== false;
+    return item.product.allow_cash !== false;
+  }, []);
+
+  /** Método más razonable para cobrar un conjunto de items conflictivos. */
+  const methodForItems = useCallback((items: CartItem[]): PaymentMethod => {
+    const allCard = items.every(i =>
+      i.sellingCatalogId == null &&
+      i.product.payment_restriction !== "cash_only" &&
+      i.product.allow_card !== false &&
+      i.product.allow_cash === false  // realmente solo Tarjeta
+    );
+    if (allCard) return "Tarjeta";
+    return "Efectivo";
+  }, []);
+
+  /**
+   * Mueve los items que NO aceptan el método actual a otra caja libre (o crea
+   * una nueva si todas están ocupadas). Copia el cliente y asigna el método
+   * apropiado al destino. Útil cuando hay preventa + producto solo-tarjeta en
+   * el mismo carrito (escenario que Joel reportó 2026-05-27).
+   */
+  const splitToOtherMesa = () => {
+    const currentMethod = activeMesa.paymentMethod;
+    // Excluye items vinculados a un folio cargado (isFromPreSale): no se pueden
+    // mover sin romper la liquidación. Quedan en la mesa actual sí o sí.
+    const movable = activeMesa.items.filter(i => !i.isFromPreSale);
+    const compatible   = movable.filter(i =>  itemAcceptsMethod(i, currentMethod));
+    const incompatible = movable.filter(i => !itemAcceptsMethod(i, currentMethod));
+
+    if (incompatible.length === 0) {
+      toast.info("No hay artículos con conflicto de método.");
+      return;
+    }
+    if (compatible.length === 0) {
+      toast.warning("Todos los artículos requieren otro método. Cámbialo arriba en lugar de mover.");
+      return;
+    }
+
+    const targetMethod = methodForItems(incompatible);
+    const existingFree = mesas.find(m => m.id !== activeMesa.id && m.items.length === 0);
+    const target = existingFree ?? makeMesa(mesas.length + 1);
+    const isNewMesa = !existingFree;
+
+    const customerSnap = {
+      customerId:    activeMesa.customerId,
+      customerName:  activeMesa.customerName,
+      customerPhone: activeMesa.customerPhone,
+      customerEmail: activeMesa.customerEmail,
+    };
+
+    setMesas(prev => {
+      const withTarget = isNewMesa ? [...prev, target] : prev;
+      return withTarget.map(m => {
+        if (m.id === activeMesa.id) {
+          // Preserva items de folio cargado (isFromPreSale): no se pueden mover.
+          const preserved = m.items.filter(i => i.isFromPreSale);
+          // Si quedan items de folio, conserva el balance original (viene del
+          // loadPreSaleOrder; no se recalcula desde items). Si no, suma deposits.
+          const remainingDeposit = preserved.length > 0
+            ? m.depositAmount
+            : compatible.reduce((s, i) => s + (i.depositAmount ?? 0), 0);
+          return { ...m, items: [...preserved, ...compatible], depositAmount: remainingDeposit };
+        }
+        if (m.id === target.id) {
+          const hasPreventa = incompatible.some(i => i.sellingCatalogId != null);
+          const deposit = incompatible.reduce((s, i) => s + (i.depositAmount ?? 0), 0);
+          return {
+            ...m,
+            items: [...m.items, ...incompatible],
+            paymentMethod: targetMethod,
+            ...customerSnap,
+            isPreventa: hasPreventa,
+            depositAmount: deposit,
+          };
+        }
+        return m;
+      });
+    });
+
+    toast.success(
+      `${incompatible.length} artículo(s) movido(s) a ${target.name} (${targetMethod})${isNewMesa ? ' — caja nueva' : ''}`,
+      {
+        icon: <ArrowLeftRight className="text-emerald-400" size={16} />,
+        style: { background: '#052e16', color: '#86efac', border: '1px solid rgba(74,222,128,0.3)', borderRadius: '14px' },
+      }
+    );
+  };
+
   const clearCart = () => {
     const mesaId = activeMesa.id;
     updMesa(mesaId, m => ({
@@ -1401,8 +1583,18 @@ export function SellPage() {
       customerPhone: "", customerEmail: "", isNewCustomer: false, discount: 0, depositAmount: 0,
       selectedTerminalId: undefined, absorbCommission: true,
       isPreventa: false, loadedPreSaleOrderId: undefined, loadedPreSaleOrderCode: undefined,
+      cashReceived: "",
+      cashReceivedUsd: "",
+      usdPrimaryMode: false,
     }));
+    // Defensa contra fuga de cliente entre ventas consecutivas (bug reportado
+    // Joel 2026-05-27 en prod): reseteamos también todo el estado del popup
+    // de asignar cliente y el dropdown de búsqueda. Sin esto, un popup abierto
+    // o un search con texto pre-rellenaba la siguiente venta.
     setCustomerSearch("");
+    setShowCustDrop(false);
+    setRequireCustomerFlash(false);
+    setAssignCustomerPopup(null);
   };
 
   const handleCreateCustomer = () => {
@@ -2161,11 +2353,18 @@ export function SellPage() {
         <tr class="total-row"><td colspan="2">TOTAL COBRADO</td><td style="text-align:right">${fmt(sale.total)}</td></tr>
       </tfoot></table>` : "";
 
-    const isCash = ["Efectivo", "Dólares"].includes(sale.paymentMethod);
+    // Efectivo siempre se mide en MXN. Si entró USD físico, lo desglosamos
+    // para trazabilidad (Joel quiere que quede registro aunque contablemente
+    // todo cuente como MXN).
+    const usdNum  = sale.amountReceivedUsd ?? 0;
+    const usdMxn  = usdNum * tc;
+    const mxnPart = (sale.amountReceived ?? 0) - usdMxn;
     const paymentRows = `
       <tr><td>Método de pago</td><td style="text-align:right;font-weight:900">${sale.paymentMethod}</td></tr>
-      ${sale.amountReceived != null ? `<tr><td>${sale.paymentMethod === "Dólares" ? "Recibido (USD)" : "Recibido"}</td><td style="text-align:right">${isCash && sale.paymentMethod !== "Dólares" ? fmt(sale.amountReceived) : `$${sale.amountReceived.toFixed(2)}`}</td></tr>` : ""}
-      ${sale.change != null && sale.change > 0 ? `<tr><td style="font-weight:900">Cambio</td><td style="text-align:right;font-weight:900">${sale.paymentMethod === "Dólares" ? `$${sale.change.toFixed(2)} USD <span style="font-weight:400;font-size:9px;color:#666">(≈ ${fmt(sale.change * tc)} MXN)</span>` : fmt(sale.change)}</td></tr>` : ""}
+      ${sale.amountReceived != null ? `<tr><td>Recibido</td><td style="text-align:right">${fmt(sale.amountReceived)}</td></tr>` : ""}
+      ${usdNum > 0 ? `<tr><td style="font-size:9px;color:#555">· Pesos</td><td style="text-align:right;font-size:9px;color:#555">${fmt(Math.max(0, mxnPart))}</td></tr>
+      <tr><td style="font-size:9px;color:#555">· Dólares</td><td style="text-align:right;font-size:9px;color:#555">$${usdNum.toFixed(2)} USD <span style="color:#888">(≈ ${fmt(usdMxn)})</span></td></tr>` : ""}
+      ${sale.change != null && sale.change > 0 ? `<tr><td style="font-weight:900">Cambio</td><td style="text-align:right;font-weight:900">${fmt(sale.change)}</td></tr>` : ""}
     `;
 
     win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Ticket</title>
@@ -2228,73 +2427,53 @@ export function SellPage() {
     });
   };
 
-  const fetchHistorial = async () => {
-    setHistorialLoading(true);
-    try {
-      // CRÍTICO: usamos fecha LOCAL del navegador (MX), no UTC. Antes
-      // `toISOString().split('T')[0]` devolvía UTC y desde las 18:00 MX el
-      // historial buscaba "mañana" → no encontraba las ventas del día.
-      const n = new Date();
-      const today = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
-      const baseParams: Record<string, unknown> = { per_page: 50 };
-      if (activeStore?.id) baseParams.store_id = activeStore.id;
-
-      const [salesRes, ordersRes] = await Promise.all([
-        getSales({ ...baseParams, from: today, to: today } as Parameters<typeof getSales>[0]),
-        getPreSaleOrders({ ...(activeStore?.id ? { store_id: activeStore.id } : {}), from: today, to: today, per_page: 50 } as Parameters<typeof getPreSaleOrders>[0]),
-      ]);
-
-      const entries: HistorialEntry[] = [
-        ...salesRes.data.map(d => ({ type: 'sale' as const, data: d })),
-        ...ordersRes.data.map(d => ({ type: 'presale' as const, data: d })),
-      ].sort((a, b) => {
-        const dateA = a.type === 'sale' ? (a.data.sold_at || a.data.created_at) : a.data.created_at;
-        const dateB = b.type === 'sale' ? (b.data.sold_at || b.data.created_at) : b.data.created_at;
-        return new Date(dateB).getTime() - new Date(dateA).getTime();
-      });
-
-      // Build pairs using the persisted linked_sale_id from the database.
-      // Fall back to the 30s timestamp heuristic for legacy orders that
-      // pre-date the linked_sale_id column.
-      const linkedSaleIds = new Set<number>();
-      const detectedPairs: Array<{ preSaleOrderId: number; saleId: number }> = [];
-
-      for (const entry of entries) {
-        if (entry.type !== 'presale') continue;
-        if (entry.data.linked_sale_id != null) {
-          detectedPairs.push({ preSaleOrderId: entry.data.id, saleId: entry.data.linked_sale_id });
-          linkedSaleIds.add(entry.data.linked_sale_id);
-        }
-      }
-
-      // Heuristic fallback for legacy orders without linked_sale_id
-      const usedSaleIds = new Set<number>(linkedSaleIds);
-      for (const entry of entries) {
-        if (entry.type !== 'presale') continue;
-        if (entry.data.linked_sale_id != null) continue;
-        const orderTime = new Date(entry.data.created_at).getTime();
-        for (const other of entries) {
-          if (other.type !== 'sale') continue;
-          if (usedSaleIds.has(other.data.id!)) continue;
-          const saleTime = new Date(other.data.sold_at || other.data.created_at).getTime();
-          if (Math.abs(orderTime - saleTime) <= 30_000) {
-            detectedPairs.push({ preSaleOrderId: entry.data.id, saleId: other.data.id! });
-            usedSaleIds.add(other.data.id!);
-            break;
-          }
-        }
-      }
-
-      setMixedPairs(detectedPairs);
-      setHistorialEntries(entries);
-    } catch { /* silently fail */ } finally {
-      setHistorialLoading(false);
+  /**
+   * Pareo mixto preventa↔venta. Antes vivía dentro de fetchHistorial; ahora
+   * que el historial es React Query reactivo, recalculamos cada vez que la
+   * data cambia (post-checkout, post-cancelación, refetch). Detección:
+   *   1. `linked_sale_id` persistido en DB → fuente de verdad.
+   *   2. Fallback heurístico (30s timestamp) para orders legacy sin linked_sale_id.
+   */
+  useEffect(() => {
+    if (!historialEntries.length) {
+      setMixedPairs([]);
+      return;
     }
-  };
+    const linkedSaleIds = new Set<number>();
+    const detectedPairs: Array<{ preSaleOrderId: number; saleId: number }> = [];
+    for (const entry of historialEntries) {
+      if (entry.type !== 'presale') continue;
+      if (entry.data.linked_sale_id != null) {
+        detectedPairs.push({ preSaleOrderId: entry.data.id, saleId: entry.data.linked_sale_id });
+        linkedSaleIds.add(entry.data.linked_sale_id);
+      }
+    }
+    const usedSaleIds = new Set<number>(linkedSaleIds);
+    for (const entry of historialEntries) {
+      if (entry.type !== 'presale') continue;
+      if (entry.data.linked_sale_id != null) continue;
+      const orderTime = new Date(entry.data.created_at).getTime();
+      for (const other of historialEntries) {
+        if (other.type !== 'sale') continue;
+        if (usedSaleIds.has(other.data.id!)) continue;
+        const saleTime = new Date(other.data.sold_at || other.data.created_at).getTime();
+        if (Math.abs(orderTime - saleTime) <= 30_000) {
+          detectedPairs.push({ preSaleOrderId: entry.data.id, saleId: other.data.id! });
+          usedSaleIds.add(other.data.id!);
+          break;
+        }
+      }
+    }
+    setMixedPairs(detectedPairs);
+  }, [historialEntries]);
+
+  /** Refetch manual del historial (botón "Actualizar"). */
+  const fetchHistorial = () => { void historialQuery.refetch(); };
 
   const openHistorial = () => {
     setShowHistorialModal(true);
-    if (historialEntries.length === 0) void fetchHistorial();
+    // React Query maneja el fetch automáticamente; si el cache es stale (>30s)
+    // hace background refetch al re-render. No necesitamos disparar manualmente.
   };
 
   /**
@@ -2487,7 +2666,8 @@ export function SellPage() {
         const customerEmailSnap  = activeMesa.customerEmail;
         const payMethodSnap      = activeMesa.paymentMethod;
         const liquidatedCodeSnap = activeMesa.loadedPreSaleOrderCode;
-        const cashReceivedSnap   = parseFloat(cashReceived) || 0;
+        const cashReceivedUsdSnap = parseFloat(cashReceivedUsd) || 0;
+        const cashReceivedSnap    = (parseFloat(cashReceived) || 0) + cashReceivedUsdSnap * tc;
 
         setCashReceived("");
         clearCart();
@@ -2520,16 +2700,10 @@ export function SellPage() {
           storeName: activeStore?.name,
           cashierName: user?.name,
           amountReceived: cashReceivedSnap > 0 ? cashReceivedSnap : undefined,
-          // Cuando es Dólares, cashReceivedSnap es USD y ticketTotal es MXN.
-          // El cambio se calcula en USD: (receivedUSD * tc - ticketMxn) / tc.
-          change: (() => {
-            if (cashReceivedSnap <= 0) return undefined;
-            if (payMethodSnap === "Dólares") {
-              const receivedMxn = cashReceivedSnap * tc;
-              return receivedMxn > ticketTotal ? (receivedMxn - ticketTotal) / tc : undefined;
-            }
-            return cashReceivedSnap > ticketTotal ? cashReceivedSnap - ticketTotal : undefined;
-          })(),
+          ...(cashReceivedUsdSnap > 0 ? { amountReceivedUsd: cashReceivedUsdSnap } : {}),
+          // cashReceivedSnap ya está en MXN (incluye USD * tc). El cambio se calcula
+          // directamente en pesos — se entrega siempre en MXN aunque haya recibido USD.
+          change: cashReceivedSnap > ticketTotal ? cashReceivedSnap - ticketTotal : undefined,
           ...(newOrderCode ? {
             preSaleCode: newOrderCode,
             preSaleItems: newCatalogItems.map(i => ({
@@ -2541,7 +2715,7 @@ export function SellPage() {
           } : {}),
         };
 
-        setHistorialEntries([]);
+        void queryClient.invalidateQueries({ queryKey: queryKeys.historial.all });
         // Sale + folios changed stock and reservation counts → refresh cached data
         // so the next time the cashier opens the catalog the numbers are correct.
         void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
@@ -2583,7 +2757,7 @@ export function SellPage() {
         blocked = true;
         toast("Falta cliente para la preventa", {
           icon: <Users size={16} className="text-amber-400" />,
-          description: "Busca o registra al cliente antes de apartar",
+          description: "Selecciona o registra al cliente en el formulario que se abrió.",
           style: {
             background: "#1a1000",
             color: "#fbbf24",
@@ -2595,25 +2769,23 @@ export function SellPage() {
         updMesa(activeMesa.id, m => ({ ...m, isNewCustomer: false }));
         setRequireCustomerFlash(true);
         setTimeout(() => setRequireCustomerFlash(false), 1800);
-        requestAnimationFrame(() => {
-          customerSearchRef.current?.focus();
-          if (customerSearch.length > 0) setShowCustDrop(true);
+        // Abre el popup de asignar cliente directamente — el cajero puede
+        // buscar/crear sin tener que ir al header. Toast queda encima (z más alto).
+        setAssignCustomerPopup({
+          mode: 'manual', candidate: null, search: "", searching: false,
+          searchResults: { locales: [], externos: [] }, assigning: false,
+          createForm: { open: false, name: "", phone: "", email: "", saving: false },
         });
       }
 
-      const needsCash = ["Efectivo", "Dólares"].includes(activeMesa.paymentMethod);
-      const receivedAmt = parseFloat(cashReceived) || 0;
-      // Bug previo: comparaba USD vs MXN. Ej: $100 USD = $1,550 MXN (TC 15.50),
-      // pero `receivedAmt=100` vs `totalDeposit=200` MXN → 100<200 → bloqueaba.
-      // Convertimos USD→MXN antes de comparar cuando el método es Dólares.
-      const receivedInMxn = activeMesa.paymentMethod === "Dólares"
-        ? receivedAmt * tc
-        : receivedAmt;
+      const needsCash = activeMesa.paymentMethod === "Efectivo";
+      // Efectivo híbrido: MXN + USD*tc, todo evaluado en pesos.
+      const receivedInMxn = (parseFloat(cashReceived) || 0) + (parseFloat(cashReceivedUsd) || 0) * tc;
       if (needsCash && totalDeposit > 0 && receivedInMxn < totalDeposit) {
         blocked = true;
         toast("Ingresa el anticipo recibido", {
           icon: <Banknote size={16} className="text-red-400" />,
-          description: `Se requieren al menos ${fmt(totalDeposit)} para registrar el anticipo${activeMesa.paymentMethod === "Dólares" ? ` (≈ ${(totalDeposit / tc).toFixed(2)} USD a TC ${tc})` : ""}`,
+          description: `Se requieren al menos ${fmt(totalDeposit)} para registrar el anticipo (puedes combinar pesos y dólares a TC ${tc})`,
           style: {
             background: "#1a0000",
             color: "#f87171",
@@ -2716,8 +2888,9 @@ export function SellPage() {
           { style: { background: '#1a0800', color: '#fff', border: '1px solid rgba(245,158,11,0.4)', borderRadius: '16px' } }
         );
 
-        setHistorialEntries([]);
-        const mixedReceived = parseFloat(cashReceived) || 0;
+        void queryClient.invalidateQueries({ queryKey: queryKeys.historial.all });
+        const mixedReceivedUsd = parseFloat(cashReceivedUsd) || 0;
+        const mixedReceived    = (parseFloat(cashReceived) || 0) + mixedReceivedUsd * tc;
         const mixedTotal = catalogDeposit + regularSubtotalFinal;
         const mixedTicket: CompletedSaleData = {
           total: mixedTotal,
@@ -2734,6 +2907,7 @@ export function SellPage() {
           storeName: activeStore?.name,
           cashierName: user?.name,
           amountReceived: mixedReceived > 0 ? mixedReceived : undefined,
+          ...(mixedReceivedUsd > 0 ? { amountReceivedUsd: mixedReceivedUsd } : {}),
           // Mismo fix USD/MXN que la rama de folio cargado.
           change: (() => {
             if (mixedReceived <= 0) return undefined;
@@ -2813,20 +2987,15 @@ export function SellPage() {
       const customerPhoneSnapshot = activeMesa.customerPhone;
       const customerEmailSnapshot = activeMesa.customerEmail;
       const payMethodSnapshot = activeMesa.paymentMethod;
-      // Solo Efectivo/Dólares usan campo recibido. Tarjeta/Transferencia siempre 0
-      // (defensa por si quedó algo en cashReceived de un método anterior).
-      const isCashPay = activeMesa.paymentMethod === "Efectivo" || activeMesa.paymentMethod === "Dólares";
-      const receivedSnapshot = isCashPay ? (parseFloat(cashReceived) || 0) : 0;
-      // Cambio: si paga Dólares, receivedSnapshot está en USD pero `total` en
-      // MXN. Convertir a USD para el cálculo del cambio.
-      const changeSnapshot = (() => {
-        if (receivedSnapshot <= 0) return 0;
-        if (activeMesa.paymentMethod === "Dólares") {
-          const receivedMxn = receivedSnapshot * tc;
-          return receivedMxn > total ? (receivedMxn - total) / tc : 0;
-        }
-        return receivedSnapshot - total;
-      })();
+      // Solo Efectivo usa campo recibido (incluye USD híbrido convertido a MXN).
+      // Tarjeta/Transferencia siempre 0 (defensa por si quedó algo).
+      const isCashPay = activeMesa.paymentMethod === "Efectivo";
+      const receivedUsdSnapshot = isCashPay ? (parseFloat(cashReceivedUsd) || 0) : 0;
+      const receivedSnapshot    = isCashPay
+        ? (parseFloat(cashReceived) || 0) + receivedUsdSnapshot * tc
+        : 0;
+      // Cambio en MXN: receivedSnapshot ya está en pesos.
+      const changeSnapshot = receivedSnapshot > total ? receivedSnapshot - total : 0;
 
       // Items reales (no preventa-catálogo, no folio cargado). En esta rama
       // (venta regular sin folio cargado) todos los items son regulares.
@@ -2876,9 +3045,10 @@ export function SellPage() {
         storeName: activeStore?.name,
         cashierName: user?.name,
         amountReceived: receivedSnapshot > 0 ? receivedSnapshot : undefined,
+        ...(receivedUsdSnapshot > 0 ? { amountReceivedUsd: receivedUsdSnapshot } : {}),
         change: changeSnapshot > 0 ? changeSnapshot : undefined,
       };
-      setHistorialEntries([]); // invalidate cache
+      void queryClient.invalidateQueries({ queryKey: queryKeys.historial.all });
       void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
       void queryClient.invalidateQueries({ queryKey: queryKeys.salesDrafts.all });
       void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all });
@@ -4217,9 +4387,9 @@ export function SellPage() {
                     )}
 
                     <div className="flex-1 min-w-0">
-                      <h3 className="text-sm font-black text-white truncate">{item.product.name}</h3>
-                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                        <p className="text-[10px] text-white/30 font-bold uppercase tracking-widest">{item.product.sku}</p>
+                      <h3 className="text-base font-black text-white truncate leading-tight">{item.product.name}</h3>
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        <p className="text-[11px] text-white/40 font-bold uppercase tracking-widest">{item.product.sku}</p>
                         {item.isFromPreSale && !item.preSaleItemDelivered && (
                           <span className="px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-[7px] font-black text-amber-400 uppercase tracking-widest flex items-center gap-1">
                             <PackageCheck size={8} />
@@ -4365,7 +4535,7 @@ export function SellPage() {
                         >
                           <Minus size={14} />
                         </button>
-                        <span className="w-8 text-center text-sm font-black text-white">{item.quantity}</span>
+                        <span className="w-8 text-center text-base font-black text-white">{item.quantity}</span>
                         <button
                           onClick={() => { void changeQty(item.product.id, 1); }}
                           className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition-colors text-white/40"
@@ -4381,16 +4551,16 @@ export function SellPage() {
                         const lineTotal = getItemPrice(item) * item.quantity;
                         return (
                           <>
-                            <p className="text-sm font-black text-amber-300" title="Anticipo a cobrar ahora">
+                            <p className="text-base font-black text-amber-300" title="Anticipo a cobrar ahora">
                               {fmt(anticipo)}
                             </p>
-                            <p className="text-[9px] font-black text-white/30 mt-0.5">
+                            <p className="text-[11px] font-black text-white/40 mt-0.5">
                               de {fmt(lineTotal)}
                             </p>
                           </>
                         );
                       })() : (
-                        <p className={`text-sm font-black ${item.isDamaged ? "text-orange-400" : item.isFromPreSale ? "text-amber-400/70" : "text-white"}`}>
+                        <p className={`text-base font-black ${item.isDamaged ? "text-orange-400" : item.isFromPreSale ? "text-amber-400/70" : "text-white"}`}>
                           {fmt(getItemPrice(item) * item.quantity)}
                         </p>
                       )}
@@ -4462,13 +4632,30 @@ export function SellPage() {
             )}
           </div>
 
-          {/* ══════════════════ FOOTER (RESUMEN + PAGOS) ══════════════════════════════════ */}
-          <div className="border-t border-white/10 px-5 py-3" style={{ background: "var(--td-panel-bg)" }} ref={tcRef}>
-            {/* ── 3-col: amounts | payment | action ── */}
-            <div className="flex items-stretch gap-0">
+        </div>
+        {/* ↑ cierra columna IZQUIERDA (cart). El antiguo footer 3-col se movió
+            a la columna DERECHA como sidebar vertical sticky (estilo Square POS). */}
 
-              {/* ── Col 1+2: Money summary arriba + Payment dropdown abajo (en una columna) ── */}
-              <div className="flex flex-col justify-center gap-4 min-w-[300px] pr-6">
+        {/* ══════════════════ SIDEBAR DERECHA (PANEL DE COBRO) ══════════════════
+            Layout vertical apilado: Total → Cliente → Método → Efectivo → Cambio → Cobrar.
+            Ancho fijo en desktop para que el cajero vea siempre el mismo footprint
+            sin importar cuántos items entren al carrito. El área scrolleable interna
+            asegura que el botón Cobrar y el cambio queden siempre visibles. */}
+        <aside
+          ref={tcRef}
+          className="hidden md:flex shrink-0 w-[420px] xl:w-[460px] flex-col border-l border-white/[0.07]"
+          style={{ background: "var(--td-panel-bg)" }}
+          aria-label="Panel de cobro"
+        >
+          {/* Contenedor scrolleable: contenido alineado al FONDO (justify-end)
+              para que crezca de abajo hacia arriba. Cuando solo hay TOTAL, el
+              espacio sobrante queda arriba; cuando se agrega cash input + cambio,
+              el contenido empuja hacia arriba quedando siempre pegado al footer.
+              Decisión Joel 2026-05-28: "que crezca de abajo para arriba". */}
+          <div className="flex-1 flex flex-col gap-4 overflow-y-auto no-scrollbar px-5 py-5 justify-end">
+
+              {/* ── Sección 1: Resumen monetario · Total centrado horizontal ── */}
+              <div className="flex flex-col gap-4">
 
                 {/* Subtotal + modifiers — only when they differ from total */}
                 {(discountAmt > 0 || (activeMesa.paymentMethod === "Tarjeta" && activeTerminal)) && (
@@ -4506,25 +4693,26 @@ export function SellPage() {
                   </div>
                 )}
 
-                {/* Total — always, prominent. En Dólares muestra USD arriba y MXN debajo. */}
-                <div>
-                  <p className="text-[9px] font-black uppercase tracking-widest text-white/30">
+                {/* Total — always, prominent. Centrado horizontal (decisión
+                    Joel 2026-05-28). En Dólares muestra USD arriba y MXN debajo. */}
+                <div className="text-center">
+                  <p className="text-xs font-black uppercase tracking-widest text-white/45">
                     {activeMesa.loadedPreSaleOrderId ? "Total a Cobrar" : activeMesa.isPreventa ? "Total de la Venta" : "Total a Pagar"}
                     {activeMesa.paymentMethod === "Dólares" && (
-                      <span className="ml-2 text-emerald-500/70">· en USD</span>
+                      <span className="ml-2 text-emerald-500/80">· en USD</span>
                     )}
                   </p>
                   {activeMesa.paymentMethod === "Dólares" ? (
                     <>
-                      <p className="text-[2rem] font-black text-emerald-400 leading-none">
-                        ${totalUSD.toFixed(2)} <span className="text-sm font-black text-emerald-500/60 ml-1">USD</span>
+                      <p className="text-[2.5rem] font-black text-emerald-400 leading-none mt-1 tabular-nums">
+                        ${totalUSD.toFixed(2)} <span className="text-base font-black text-emerald-500/70 ml-1">USD</span>
                       </p>
-                      <p className="text-[10px] font-black text-white/35 mt-1">
+                      <p className="text-xs font-black text-white/45 mt-1.5 tabular-nums">
                         {fmt(currentPayAmount)} MXN · TC {tc.toFixed(2)}
                       </p>
                     </>
                   ) : (
-                    <p className="text-[2rem] font-black text-white leading-none">{fmt(currentPayAmount)}</p>
+                    <p className="text-[2.5rem] font-black text-white leading-none mt-1 tabular-nums">{fmt(currentPayAmount)}</p>
                   )}
                 </div>
 
@@ -4583,186 +4771,56 @@ export function SellPage() {
                   </div>
                 )} */}
 
-              {/* ── Payment dropdown (debajo del total, mismo wrapper de columna) ── */}
-              <div className="relative" ref={paymentMenuRef}>
-                <div className="w-full relative">
-                  {(() => {
-                    const active = activeMesa.paymentMethod;
-                    const allOptions: PaymentMethod[] = ["Efectivo", "Dólares", "Tarjeta", "Transferencia"];
-                    const renderLabel = (pm: PaymentMethod, isActive: boolean) => (
-                      <div className="flex items-center justify-center gap-2 text-[11px] font-black uppercase tracking-widest">
-                        {pm === "Efectivo" && <Zap size={14} className={isActive ? 'text-white' : 'text-[#E0221A]'} />}
-                        {pm}
-                        {pm === "Dólares" && <span className={`text-[9px] font-black ml-1 ${isActive ? 'text-emerald-300' : 'text-emerald-500/50'}`}>TC: {tc.toFixed(2)}</span>}
-                      </div>
-                    );
-                    return (
-                      <>
-                        <div className="flex w-full h-[44px] rounded-xl border bg-[#E0221A] text-white border-transparent shadow-[0_0_20px_rgba(224,34,26,0.3)] overflow-hidden">
-                          <button
-                            onClick={() => setPaymentMenuOpen(o => !o)}
-                            className="flex-1 flex items-center justify-center gap-2 hover:bg-black/10 transition-all"
-                          >
-                            {renderLabel(active, true)}
-                            <ChevronUp size={12} className={`text-white/70 transition-transform ${paymentMenuOpen ? '' : 'rotate-180'}`} />
-                          </button>
-                          {active === "Dólares" && isAdmin && (
-                            <button
-                              onClick={() => { setTcDraft(tc.toString()); setShowTc(!showTc); }}
-                              className="w-11 border-l border-white/20 flex items-center justify-center hover:bg-white/10"
-                              title="Editar tipo de cambio"
-                            >
-                              <SlidersHorizontal size={14} className="text-white" />
-                            </button>
-                          )}
-                          {active === "Tarjeta" && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setPaymentMenuOpen(false);
-                                setShowTerminalModal(true);
-                              }}
-                              className={`px-3 border-l border-white/20 flex items-center gap-1 text-[8px] font-black tracking-widest hover:bg-white/10 transition-colors ${
-                                activeTerminal ? "text-white/80" : "text-amber-200 animate-pulse"
-                              }`}
-                              title={activeTerminal ? "Cambiar terminal" : "Elegir terminal para cobrar con tarjeta"}
-                            >
-                              {activeTerminal ? (
-                                <>
-                                  {activeTerminal.name}
-                                  {isAdmin && ` (${activeTerminal.commission_percent}%)`}
-                                </>
-                              ) : (
-                                <>
-                                  <AlertTriangle size={10} />
-                                  Elegir terminal
-                                </>
-                              )}
-                              <ChevronDown size={10} className="text-white/60" />
-                            </button>
-                          )}
-                        </div>
+              {/* Botón split: cuando hay items que no aceptan el método actual
+                  Y hay items que sí lo aceptan, ofrece mover los conflictivos
+                  a otra caja libre con el método correcto. */}
+              {(() => {
+                // Solo cuentan items movibles (no isFromPreSale — esos están
+                // atados al folio cargado y no se pueden mover sin romper el link).
+                const movable = activeMesa.items.filter(i => !i.isFromPreSale);
+                const incompatibleCount = movable.filter(i => !itemAcceptsMethod(i, activeMesa.paymentMethod)).length;
+                const compatibleCount   = movable.length - incompatibleCount;
+                if (incompatibleCount === 0 || compatibleCount === 0) return null;
+                return (
+                  <button
+                    type="button"
+                    onClick={splitToOtherMesa}
+                    className="w-full mb-2 flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors"
+                    style={{
+                      background: 'rgba(245,158,11,0.10)',
+                      border: '1px solid rgba(245,158,11,0.35)',
+                      color: '#fbbf24',
+                    }}
+                    title={`Mover los ${incompatibleCount} artículo(s) que no aceptan ${activeMesa.paymentMethod} a otra caja con su método correcto`}
+                  >
+                    <ArrowLeftRight size={12} />
+                    Mover {incompatibleCount} artículo{incompatibleCount === 1 ? '' : 's'} a otra caja
+                  </button>
+                );
+              })()}
 
-                        {/* Dropdown UP con opciones inactivas */}
-                        <AnimatePresence>
-                          {paymentMenuOpen && (
-                            <Motion.div
-                              initial={{ opacity: 0, y: 8 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              exit={{ opacity: 0, y: 8 }}
-                              transition={{ duration: 0.12 }}
-                              className="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-xl border border-white/10 overflow-hidden"
-                              style={{ background: "var(--td-popup-bg)", backdropFilter: "blur(20px)" }}
-                            >
-                              {allOptions.filter(pm => pm !== active).map(pm => {
-                                const isBlocked = hasCashOnly && (pm === "Tarjeta" || pm === "Transferencia");
-                                return (
-                                  <button
-                                    key={pm}
-                                    onClick={() => { if (!isBlocked) { setPayment(pm); setPaymentMenuOpen(false); } }}
-                                    disabled={isBlocked}
-                                    className={`w-full h-[44px] px-4 flex items-center justify-center border-b border-white/5 last:border-b-0 transition-all ${
-                                      isBlocked
-                                        ? 'opacity-30 cursor-not-allowed text-white/30'
-                                        : 'text-white/70 hover:bg-[#E0221A]/[0.12] hover:text-white cursor-pointer'
-                                    }`}
-                                  >
-                                    {isBlocked && <AlertTriangle size={12} className="text-amber-500 mr-2" />}
-                                    {renderLabel(pm, false)}
-                                  </button>
-                                );
-                              })}
-                            </Motion.div>
-                          )}
-                        </AnimatePresence>
-                      </>
-                    );
-                  })()}
-                </div>
-                {/* Popover Tipo de Cambio (anclado al botón principal) */}
-                <AnimatePresence>
-                  {showTc && (
-                    <Motion.div
-                      initial={{ opacity: 0, y: 20, scale: 0.8 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: 20, scale: 0.8 }}
-                      className="absolute bottom-full left-4 mb-3 z-[120] rounded-[40px] p-8 w-[320px] overflow-hidden"
-                      style={{
-                        background: "var(--td-popup-bg)",
-                        backdropFilter: "blur(40px) saturate(180%)",
-                        WebkitBackdropFilter: "blur(40px) saturate(180%)",
-                        border: "1px solid var(--td-panel-border)",
-                        boxShadow: "0 40px 100px rgba(0,0,0,0.8), inset 0 0 0 1px var(--td-panel-border)",
-                      }}
-                    >
-                      <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-emerald-500/20 to-transparent" />
-                      <div className="relative z-10 space-y-6">
-                        <div className="flex items-center justify-between">
-                          <div className="space-y-1">
-                            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/30">Exchange Rate</p>
-                            <h4 className="text-xs font-black text-emerald-500 uppercase tracking-widest">USD / MXN</h4>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-4">
-                          <div className="flex-1 relative group">
-                            <input
-                              type="number"
-                              step="0.01"
-                              value={tcDraft}
-                              onChange={e => setTcDraft(e.target.value)}
-                              className="w-full bg-black/40 border-2 border-emerald-500/10 rounded-[24px] px-6 py-5 text-4xl font-black text-white outline-none focus:border-emerald-500/40 focus:bg-emerald-500/5 transition-all placeholder:text-white/5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none shadow-inner"
-                              placeholder="0.00"
-                              autoFocus
-                            />
-                            <div className="absolute right-4 top-1/2 -translate-y-1/2 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                              <button onClick={() => setTcDraft(p => (parseFloat(p || "0") + 0.1).toFixed(2))} className="p-1 hover:text-emerald-500"><ChevronUp size={16} /></button>
-                              <button onClick={() => setTcDraft(p => Math.max(0, parseFloat(p || "0") - 0.1).toFixed(2))} className="p-1 hover:text-emerald-500"><ChevronDown size={16} /></button>
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => {
-                              const val = parseFloat(tcDraft);
-                              if (!isNaN(val) && val > 0) {
-                                setTc(val);
-                                setShowTc(false);
-                                toast.success(`TC: ${val.toFixed(2)}`, {
-                                  style: { background: '#064e3b', color: '#fff', border: '1px solid #10b981', borderRadius: '16px' }
-                                });
-                              }
-                            }}
-                            className="w-20 h-20 shrink-0 bg-emerald-600 text-white rounded-[28px] flex items-center justify-center hover:bg-emerald-500 hover:scale-105 active:scale-95 transition-all shadow-[0_20px_40px_rgba(16,185,129,0.2)] group relative overflow-hidden"
-                          >
-                            <div className="absolute inset-0 bg-gradient-to-tr from-black/20 to-transparent" />
-                            <Check size={36} strokeWidth={4} className="relative z-10 group-hover:scale-110 transition-transform" />
-                          </button>
-                        </div>
-                        <div className="pt-2 flex justify-center">
-                          <span className="text-[10px] font-black text-white/10 uppercase tracking-[0.4em]">Liquid Transaction</span>
-                        </div>
-                      </div>
-                      <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-emerald-500/5 rounded-full blur-[60px]" />
-                      <div className="absolute -top-10 -left-10 w-40 h-40 bg-emerald-500/5 rounded-full blur-[60px]" />
-                    </Motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-              {/* fin columna unificada Col 1+2 */}
+              {/* Payment dropdown movido al final del sidebar — ahora vive en
+                  la fila final junto al botón COBRAR (4/8). Decisión Joel
+                  2026-05-28: el botón rojo glow grande arriba "hacía ruido"
+                  visualmente con el Total / Cliente. */}
+              {/* fin Sección 1: Resumen monetario */}
               </div>
 
-              {/* ── Col cliente: solo visible cuando hay cliente asignado a la venta ── */}
+              {/* ── Sección 2: Cliente asignado (solo visible cuando hay cliente) ──
+                  Separador horizontal sutil para marcar el cambio de sección. */}
               {hasAssignedCustomer && (
                 <>
-                  <div className="w-px self-stretch bg-white/[0.06]" />
-                  <div className="flex flex-col justify-center gap-1 min-w-[220px] max-w-[260px] px-4">
+                  <div className="h-px w-full bg-white/[0.06]" />
+                  <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center flex-shrink-0">
-                        <User size={13} className="text-emerald-400" />
+                      <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center flex-shrink-0">
+                        <User size={18} className="text-emerald-400" />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="text-[9px] font-black uppercase tracking-widest text-emerald-500/70">
+                        <p className="text-[11px] font-black uppercase tracking-widest text-emerald-500/90">
                           Cliente
                         </p>
-                        <p className="text-sm font-black text-white truncate" title={activeMesa.customerName ?? ""}>
+                        <p className="text-lg font-black text-white truncate leading-tight" title={activeMesa.customerName ?? ""}>
                           {activeMesa.customerName}
                         </p>
                       </div>
@@ -4815,21 +4873,21 @@ export function SellPage() {
                               createForm: { open: false, name: "", phone: "", email: "", saving: false },
                             });
                           }}
-                          className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-colors hover:bg-emerald-500/10"
-                          style={{ color: "rgba(255,255,255,0.7)", border: "1px solid rgba(16,185,129,0.25)", background: "rgba(16,185,129,0.05)" }}
+                          className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-[11px] font-black uppercase tracking-wider transition-colors hover:bg-emerald-500/15"
+                          style={{ color: "#10b981", border: "1px solid rgba(16,185,129,0.40)", background: "rgba(16,185,129,0.08)" }}
                           title="Cambiar a otro cliente"
                         >
-                          <RefreshCw size={10} className="text-emerald-400/70" />
+                          <RefreshCw size={13} className="text-emerald-500" />
                           Cambiar
                         </button>
                         <button
                           type="button"
                           onClick={clearCustomer}
-                          className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-colors hover:bg-red-500/15"
-                          style={{ color: "rgba(255,255,255,0.7)", border: "1px solid rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.05)" }}
+                          className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-[11px] font-black uppercase tracking-wider transition-colors hover:bg-red-500/15"
+                          style={{ color: "#ef4444", border: "1px solid rgba(239,68,68,0.40)", background: "rgba(239,68,68,0.08)" }}
                           title="Quitar cliente de esta venta"
                         >
-                          <Trash2 size={10} className="text-red-400/70" />
+                          <Trash2 size={13} className="text-red-500" />
                           Quitar
                         </button>
                       </div>
@@ -4838,88 +4896,195 @@ export function SellPage() {
                 </>
               )}
 
-              <div className="w-px self-stretch bg-white/[0.06]" />
+              <div className="h-px w-full bg-white/[0.06]" />
 
-              {/* ── Col 3: Cash + folio side-by-side, then checkout button ── */}
-              <div className={`flex flex-col gap-2 flex-1 pl-4 transition-opacity duration-200 ${activeMesa.items.length === 0 ? "opacity-30 pointer-events-none" : ""}`}>
+              {/* ── Sección 3: Cobro (Efectivo/Tarjeta) + botón COBRAR ──
+                  Antes era una columna `flex-1 pl-4` lado a lado del total; ahora
+                  va apilada debajo del bloque anterior y ocupa todo el ancho del sidebar.
+                  La fila interna `flex gap-2` se mantiene por si en el futuro
+                  reaparece el folio buscador a la derecha. */}
+              <div className={`flex flex-col gap-3 transition-opacity duration-200 ${activeMesa.items.length === 0 ? "opacity-30 pointer-events-none" : ""}`}>
 
-                {/* Row: cash input (left half) + folio (right half) */}
-                <div className="flex gap-2 flex-1">
+                {/* Row: cash input. (Antes podía haber un folio searcher al lado.) */}
+                <div className="flex gap-2">
 
-                  {/* Cash input — only for Efectivo / Dólares */}
-                  {(activeMesa.paymentMethod === "Efectivo" || activeMesa.paymentMethod === "Dólares") && (
-                    <div className="flex flex-col gap-1 flex-1">
-                      <p className="text-[9px] font-black uppercase tracking-widest text-white/30">
-                        {activeMesa.paymentMethod === "Dólares" ? "USD recibido" : "Efectivo recibido"}
-                      </p>
-                      <div className="relative">
-                        <span className="absolute left-3 top-1/2 -translate-y-1/2 font-black text-base text-white/30 pointer-events-none">$</span>
-                        <input
-                          ref={cashInputRef}
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={cashReceived}
-                          onChange={e => setCashReceived(e.target.value)}
-                          onKeyDown={e => {
-                            if (e.key === "Enter") {
-                              const received = parseFloat(cashReceived) || 0;
-                              const threshold = activeMesa.paymentMethod === "Dólares" ? currentPayAmount / tc : currentPayAmount;
-                              if (received >= threshold || cashReceived === "") void handleCheckout();
-                            }
-                          }}
-                          placeholder="0.00"
-                          className="w-full text-center rounded-xl py-2 pl-6 pr-3 text-xl font-black placeholder-white/20 focus:outline-none transition-all"
-                          style={{
-                            background: "var(--td-input-bg)",
-                            border: "1px solid var(--td-input-border)",
-                            color: "var(--td-input-text)",
-                          }}
-                          onFocus={e => { e.currentTarget.style.border = "1px solid rgba(224,34,26,0.5)"; }}
-                          onBlur={e => { e.currentTarget.style.border = "1px solid var(--td-input-border)"; }}
-                        />
-                      </div>
-                      <div className="grid grid-cols-4 gap-1">
-                        {(activeMesa.paymentMethod === "Dólares" ? [20, 50, 100, 200] : [50, 100, 200, 500]).map(amt => (
-                          <button
-                            key={amt}
-                            onClick={() => setCashReceived(prev => ((parseFloat(prev) || 0) + amt).toString())}
-                            className="py-1 rounded-lg font-black text-[10px] transition-all"
-                            style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", color: "var(--td-text-lo)" }}
-                            onMouseEnter={e => { e.currentTarget.style.background = "var(--td-hover-bg)"; e.currentTarget.style.color = "var(--td-text-hi)"; }}
-                            onMouseLeave={e => { e.currentTarget.style.background = "var(--td-card-bg)"; e.currentTarget.style.color = "var(--td-text-lo)"; }}
-                          >
-                            ${amt}
-                          </button>
-                        ))}
-                      </div>
-                      {(() => {
-                        const receivedNum = parseFloat(cashReceived) || 0;
-                        const isDollars = activeMesa.paymentMethod === "Dólares";
-                        const totalInCurrency = isDollars ? currentPayAmount / tc : currentPayAmount;
-                        const fmtChange = isDollars ? fmtUSD : fmt;
-                        const cambio = receivedNum - totalInCurrency;
-                        if (receivedNum <= 0) return null;
-                        const cambioAbs = Math.abs(cambio);
-                        // En Dólares también mostramos el equivalente en MXN al lado para que el
-                        // cajero sepa cuánto darle físicamente si entrega en pesos.
-                        const cambioMxn = isDollars ? cambioAbs * tc : 0;
-                        return (
-                          <div className={`rounded-lg px-3 py-1 flex items-center justify-between border ${cambio >= 0 ? "bg-emerald-500/10 border-emerald-500/20" : "bg-red-500/10 border-red-500/20"}`}>
-                            <span className="text-[9px] font-black uppercase tracking-widest text-white/40">{cambio >= 0 ? "Cambio" : "Falta"}</span>
-                            <span className={`text-sm font-black ${cambio >= 0 ? "text-emerald-400" : "text-red-400"} flex items-baseline gap-1.5`}>
-                              {fmtChange(cambioAbs)}
-                              {isDollars && (
-                                <span className="text-[9px] font-black text-white/40 uppercase tracking-wider">
-                                  ≈ {fmt(cambioMxn)} MXN
+                  {/* Cash input — solo para Efectivo. "Dólares" como método se eliminó.
+                      Ahora vive como input secundario opcional dentro de Efectivo: el
+                      cajero puede declarar USD físicos recibidos → suma como MXN al
+                      total (vía TC) para calcular el faltante o cambio. */}
+                  {activeMesa.paymentMethod === "Efectivo" && (() => {
+                    const receivedMxn   = parseFloat(cashReceived)    || 0;
+                    const receivedUsd   = parseFloat(cashReceivedUsd) || 0;
+                    const usdAsMxn      = receivedUsd * tc;
+                    const totalReceived = receivedMxn + usdAsMxn;
+                    const cambio        = totalReceived - currentPayAmount;
+                    // Modo USD primario: al click "+ Dólares" se esconde pesos.
+                    // Pesos reaparece SOLO si USD no alcanza a cubrir el total
+                    // (cajero completa con pesos el faltante).
+                    const usdPrimary    = showUsdInput || receivedUsd > 0;
+                    const usdCoversAll  = usdAsMxn >= currentPayAmount && receivedUsd > 0;
+                    const needsPesosToComplete = usdPrimary && !usdCoversAll && receivedUsd > 0;
+                    // Pesos visible cuando:
+                    //  - No estamos en modo USD (default).
+                    //  - O estamos en USD pero USD no cubre y ya hay USD ingresado.
+                    const showPesos = !usdPrimary || needsPesosToComplete;
+
+                    // Cambio en dual currency cuando se cobró con USD.
+                    const cambioUsd = cambio > 0 && receivedUsd > 0 ? cambio / tc : 0;
+
+                    return (
+                      <div className="flex flex-col gap-2 flex-1 min-w-0">
+
+                        {/* ── USD primario (bloque verde, input dominante) ─────── */}
+                        {usdPrimary && (
+                          <div className="flex flex-col gap-2 rounded-2xl p-3" style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.28)' }}>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[11px] font-black uppercase tracking-widest text-emerald-400">
+                                Dólares recibidos · TC {tc.toFixed(2)}
+                              </span>
+                              {receivedUsd === 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => { setShowUsdInput(false); setCashReceivedUsd(""); }}
+                                  className="text-[10px] font-black uppercase tracking-wider text-white/40 hover:text-white/70 transition-colors"
+                                  title="Volver a pesos"
+                                >← Pagar en pesos</button>
+                              )}
+                            </div>
+                            <div className="relative">
+                              <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-xl text-emerald-500/80 pointer-events-none">US$</span>
+                              <input
+                                autoFocus
+                                type="number" min="0" step="0.01"
+                                value={cashReceivedUsd}
+                                onChange={e => setCashReceivedUsd(e.target.value)}
+                                onKeyDown={e => {
+                                  if (e.key === "Enter" && totalReceived >= currentPayAmount) void handleCheckout();
+                                }}
+                                placeholder="0.00"
+                                className="w-full text-center rounded-xl py-3 pl-14 pr-4 text-4xl font-black placeholder-emerald-500/15 focus:outline-none transition-all tabular-nums"
+                                style={{ background: "var(--td-input-bg)", border: "2px solid rgba(16,185,129,0.40)", color: "var(--td-input-text)" }}
+                              />
+                              {receivedUsd > 0 && (
+                                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-base font-black text-emerald-400 pointer-events-none tabular-nums">
+                                  ≈ {fmt(usdAsMxn)}
                                 </span>
                               )}
-                            </span>
+                            </div>
+                            {/* Presets USD cuadrados — todas las denominaciones
+                                de billetes US (1, 5, 10, 20, 50, 100). 3×2 grid
+                                con aspect-square para que los números respiren
+                                y el cajero no se equivoque al tap (Joel 2026-05-28). */}
+                            <div className="grid grid-cols-3 gap-2">
+                              {[1, 5, 10, 20, 50, 100].map(amt => (
+                                <button
+                                  key={amt}
+                                  onClick={() => setCashReceivedUsd(prev => ((parseFloat(prev) || 0) + amt).toString())}
+                                  className="aspect-square rounded-2xl font-black text-2xl transition-colors tabular-nums flex flex-col items-center justify-center gap-0.5"
+                                  style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.28)', color: '#34d399' }}
+                                  onMouseEnter={e => { e.currentTarget.style.background = 'rgba(16,185,129,0.24)'; }}
+                                  onMouseLeave={e => { e.currentTarget.style.background = 'rgba(16,185,129,0.12)'; }}
+                                >
+                                  <span className="text-[10px] font-bold text-emerald-500/60 uppercase tracking-wider leading-none">US$</span>
+                                  <span className="leading-none">{amt}</span>
+                                </button>
+                              ))}
+                            </div>
                           </div>
-                        );
-                      })()}
-                    </div>
-                  )}
+                        )}
+
+                        {/* ── PESOS (default o auto-aparece si USD insuficiente) ─── */}
+                        {showPesos && (
+                          <div className="flex flex-col gap-2">
+                            {needsPesosToComplete && (
+                              <div className="rounded-xl px-4 py-2 flex items-center justify-between" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.35)' }}>
+                                <span className="text-[11px] font-black uppercase tracking-widest text-amber-400">
+                                  Completa con pesos · faltan
+                                </span>
+                                <span className="text-xl font-black text-amber-400 tabular-nums">{fmt(Math.max(0, currentPayAmount - usdAsMxn))}</span>
+                              </div>
+                            )}
+                            {!needsPesosToComplete && (
+                              <p className="text-[11px] font-black uppercase tracking-widest text-white/40">Pesos recibidos</p>
+                            )}
+                            <div className="relative">
+                              <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-2xl text-white/30 pointer-events-none">$</span>
+                              <input
+                                ref={cashInputRef}
+                                autoFocus={needsPesosToComplete}
+                                type="number" min="0" step="0.01"
+                                value={cashReceived}
+                                onChange={e => setCashReceived(e.target.value)}
+                                onKeyDown={e => {
+                                  if (e.key === "Enter") {
+                                    if (totalReceived >= currentPayAmount || (cashReceived === "" && cashReceivedUsd === "")) void handleCheckout();
+                                  }
+                                }}
+                                placeholder="0.00"
+                                className="w-full text-center rounded-xl py-3 pl-10 pr-4 text-4xl font-black placeholder-white/15 focus:outline-none transition-all tabular-nums"
+                                style={{ background: "var(--td-input-bg)", border: "2px solid var(--td-input-border)", color: "var(--td-input-text)" }}
+                                onFocus={e => { e.currentTarget.style.borderColor = "rgba(224,34,26,0.55)"; }}
+                                onBlur={e  => { e.currentTarget.style.borderColor = "var(--td-input-border)"; }}
+                              />
+                            </div>
+                            {/* Presets pesos cuadrados — billetes MX (20, 50,
+                                100, 200, 500, 1000) + monedas grandes opcional.
+                                3×2 grid con aspect-square. Joel 2026-05-28:
+                                "cuadrado los numeros en espacio para que no se equivoque". */}
+                            <div className="grid grid-cols-3 gap-2">
+                              {[20, 50, 100, 200, 500, 1000].map(amt => (
+                                <button
+                                  key={amt}
+                                  onClick={() => setCashReceived(prev => ((parseFloat(prev) || 0) + amt).toString())}
+                                  className="aspect-square rounded-2xl font-black text-2xl transition-all tabular-nums flex flex-col items-center justify-center gap-0.5"
+                                  style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", color: "var(--td-text-hi)" }}
+                                  onMouseEnter={e => { e.currentTarget.style.background = "var(--td-hover-bg)"; }}
+                                  onMouseLeave={e => { e.currentTarget.style.background = "var(--td-card-bg)"; }}
+                                >
+                                  <span className="text-[10px] font-bold opacity-50 uppercase tracking-wider leading-none">MXN</span>
+                                  <span className="leading-none">${amt}</span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Toggle "+ Dólares" — solo visible en modo pesos default */}
+                        {!usdPrimary && (
+                          <button
+                            type="button"
+                            onClick={() => setShowUsdInput(true)}
+                            className="flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-colors"
+                            style={{ background: 'rgba(16,185,129,0.08)', border: '1px dashed rgba(16,185,129,0.30)', color: '#34d399' }}
+                            title={`Pagar con dólares (TC ${tc.toFixed(2)})`}
+                          >
+                            + Dólares (TC {tc.toFixed(2)})
+                          </button>
+                        )}
+
+                        {/* ── CAMBIO / FALTA — dual currency cuando hubo USD ──── */}
+                        {totalReceived > 0 && (
+                          <div className={`rounded-xl px-4 py-3 flex items-center justify-between border-2 ${cambio >= 0 ? "bg-emerald-500/12 border-emerald-500/35" : "bg-red-500/12 border-red-500/35"}`}>
+                            <span className={`text-xs font-black uppercase tracking-widest ${cambio >= 0 ? "text-emerald-400/90" : "text-red-400/90"}`}>
+                              {cambio >= 0 ? "Cambio" : "Falta"}
+                            </span>
+                            <div className="text-right">
+                              <p className={`text-3xl font-black leading-none tabular-nums ${cambio >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                                {fmt(Math.abs(cambio))}
+                              </p>
+                              {/* Cambio dual: si cobró con USD, ofrece el equivalente
+                                  en dólares (útil si decide regresarle parte en USD). */}
+                              {cambio > 0 && cambioUsd > 0 && (
+                                <p className="text-[11px] font-bold text-emerald-400/70 mt-1 tabular-nums">
+                                  ≈ US${cambioUsd.toFixed(2)}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* Buscar preventa: comentado. El folio se carga via scanner (códigos
                       PREV-N) o desde el modal Preventas → tab Apartadas. Mantenemos el
@@ -4931,39 +5096,218 @@ export function SellPage() {
                   </div> */}
                 </div>
 
-                {/* Checkout button — full width */}
-                {(() => {
-                  const receivedNum = parseFloat(cashReceived) || 0;
-                  const totalInCurrency = activeMesa.paymentMethod === "Dólares" ? currentPayAmount / tc : currentPayAmount;
-                  const isInsufficient = (activeMesa.paymentMethod === "Efectivo" || activeMesa.paymentMethod === "Dólares")
-                    && receivedNum > 0 && receivedNum < totalInCurrency;
-                  const label = isProcessing ? "Procesando..."
-                    : isInsufficient ? "Falta efectivo"
-                    : activeMesa.loadedPreSaleOrderId
-                      ? (newItemsSubtotal > 0 ? "Cobrar" : "Liquidar")
-                      : activeMesa.isPreventa
-                        ? (totalDeposit >= totalBeforeComm ? "Liquidar" : "Apartar")
-                        : "Cobrar";
-                  return (
-                    <button
-                      disabled={checkoutDisabled || isInsufficient}
-                      onClick={() => { void handleCheckout(); }}
-                      className="w-full group relative flex items-center justify-center gap-2 py-3 rounded-[18px] overflow-hidden transition-all disabled:opacity-30 disabled:grayscale"
-                    >
-                      <div className="absolute inset-0 bg-[#E0221A] group-hover:bg-[#f0221a] transition-colors" />
-                      <div className="absolute inset-0 bg-gradient-to-tr from-black/20 to-transparent" />
-                      <Zap size={16} className="relative z-10 text-white animate-pulse" />
-                      <span className="relative z-10 text-[13px] font-black uppercase tracking-widest text-white">{label}</span>
-                    </button>
-                  );
-                })()}
-
               </div>
+              {/* ↑ cierra Sección 3 interna (solo cash input + presets).
+                  La fila Efectivo + Cobrar baja al FOOTER STICKY del sidebar
+                  (sibling del scroll wrapper) para no scrollear con el resto. */}
             </div>
-          </div>
-        </div>
+            {/* ↑ cierra el SCROLL WRAPPER del sidebar */}
+
+            {/* ── FOOTER STICKY: Método (4/12) + Cobrar (8/12) ────────────────
+                Pinned al fondo del sidebar. `shrink-0` para no comprimirse
+                cuando el scroll wrapper de arriba ocupa todo el flex-1.
+                Joel 2026-05-28: "baja esa parte al footer" — Efectivo + Cobrar
+                siempre visibles, no requieren scroll del cajero. */}
+            <div
+              className={`shrink-0 px-5 py-4 transition-opacity duration-200 ${activeMesa.items.length === 0 ? "opacity-30 pointer-events-none" : ""}`}
+              style={{ borderTop: "1px solid var(--td-panel-border)", background: "var(--td-panel-bg)" }}
+            >
+              <div className="grid grid-cols-12 gap-2">
+
+                  {/* Método de pago — col-span-4. Dropdown sutil (border-only,
+                      sin glow) para que Cobrar siga siendo el CTA dominante. */}
+                  <div className="col-span-4 relative" ref={paymentMenuRef}>
+                    {(() => {
+                      const active = activeMesa.paymentMethod;
+                      const allOptions: PaymentMethod[] = ["Efectivo", "Tarjeta", "Transferencia"];
+                      const renderLabel = (pm: PaymentMethod, isActive: boolean) => (
+                        <div className="flex items-center justify-center gap-1.5 text-[11px] font-black uppercase tracking-widest leading-none">
+                          {pm === "Efectivo" && <Zap size={13} className={isActive ? 'text-white' : 'text-[#E0221A]'} />}
+                          {pm}
+                        </div>
+                      );
+                      return (
+                        <>
+                          <div className="flex w-full h-[52px] rounded-2xl overflow-hidden" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", color: "var(--td-text-hi)" }}>
+                            <button
+                              onClick={() => setPaymentMenuOpen(o => !o)}
+                              className="flex-1 flex items-center justify-center gap-1.5 hover:bg-white/5 transition-colors"
+                            >
+                              {renderLabel(active, false)}
+                              {/* Menú abre HACIA ARRIBA porque vive al fondo del sidebar.
+                                  Chevron: cerrado = ↑ (apunta hacia arriba indicando
+                                  "abre arriba"), abierto = ↓ (apunta abajo indicando
+                                  "colapsar abajo"). */}
+                              <ChevronUp size={11} className={`opacity-50 transition-transform ${paymentMenuOpen ? 'rotate-180' : ''}`} />
+                            </button>
+                            {active === "Efectivo" && isAdmin && (
+                              <button
+                                onClick={() => { setTcDraft(tc.toString()); setShowTc(!showTc); }}
+                                className="w-9 border-l flex items-center justify-center hover:bg-white/5"
+                                style={{ borderColor: "var(--td-card-border)", color: "var(--td-text-md)" }}
+                                title={`Editar tipo de cambio (actual ${tc.toFixed(2)})`}
+                              >
+                                <SlidersHorizontal size={13} />
+                              </button>
+                            )}
+                            {active === "Tarjeta" && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setPaymentMenuOpen(false); setShowTerminalModal(true); }}
+                                className={`px-2 border-l flex items-center gap-1 text-[8px] font-black tracking-wider hover:bg-white/5 transition-colors ${activeTerminal ? "" : "animate-pulse"}`}
+                                style={{ borderColor: "var(--td-card-border)", color: activeTerminal ? "var(--td-text-md)" : "#FFAA00" }}
+                                title={activeTerminal ? "Cambiar terminal" : "Elegir terminal para cobrar con tarjeta"}
+                              >
+                                {activeTerminal ? (
+                                  <span className="truncate max-w-[60px]">{activeTerminal.name}</span>
+                                ) : (
+                                  <><AlertTriangle size={9} /></>
+                                )}
+                                <ChevronDown size={9} className="opacity-60" />
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Menú UP (sale hacia arriba porque la fila está al fondo) */}
+                          <AnimatePresence>
+                            {paymentMenuOpen && (
+                              <Motion.div
+                                initial={{ opacity: 0, y: 8 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: 8 }}
+                                transition={{ duration: 0.12 }}
+                                className="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-2xl border border-white/10 overflow-hidden"
+                                style={{ background: "var(--td-popup-bg)", backdropFilter: "blur(20px)" }}
+                              >
+                                {allOptions.filter(pm => pm !== active).map(pm => {
+                                  const isBlocked = hasCashOnly && (pm === "Tarjeta" || pm === "Transferencia");
+                                  return (
+                                    <button
+                                      key={pm}
+                                      onClick={() => { if (!isBlocked) { setPayment(pm); setPaymentMenuOpen(false); } }}
+                                      disabled={isBlocked}
+                                      className={`w-full h-[44px] px-3 flex items-center justify-center border-b border-white/5 last:border-b-0 transition-all ${
+                                        isBlocked
+                                          ? 'opacity-30 cursor-not-allowed text-white/30'
+                                          : 'text-white/70 hover:bg-[#E0221A]/[0.12] hover:text-white cursor-pointer'
+                                      }`}
+                                    >
+                                      {isBlocked && <AlertTriangle size={11} className="text-amber-500 mr-1.5" />}
+                                      {renderLabel(pm, false)}
+                                    </button>
+                                  );
+                                })}
+                              </Motion.div>
+                            )}
+                          </AnimatePresence>
+                        </>
+                      );
+                    })()}
+
+                    {/* Popover Tipo de Cambio (sale ARRIBA del botón método) */}
+                    <AnimatePresence>
+                      {showTc && (
+                        <Motion.div
+                          initial={{ opacity: 0, y: 20, scale: 0.8 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: 20, scale: 0.8 }}
+                          className="absolute bottom-full left-0 mb-3 z-[120] rounded-[40px] p-8 w-[320px] overflow-hidden"
+                          style={{
+                            background: "var(--td-popup-bg)",
+                            backdropFilter: "blur(40px) saturate(180%)",
+                            WebkitBackdropFilter: "blur(40px) saturate(180%)",
+                            border: "1px solid var(--td-panel-border)",
+                            boxShadow: "0 40px 100px rgba(0,0,0,0.8), inset 0 0 0 1px var(--td-panel-border)",
+                          }}
+                        >
+                          <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-emerald-500/20 to-transparent" />
+                          <div className="relative z-10 space-y-6">
+                            <div className="flex items-center justify-between">
+                              <div className="space-y-1">
+                                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/30">Exchange Rate</p>
+                                <h4 className="text-xs font-black text-emerald-500 uppercase tracking-widest">USD / MXN</h4>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-4">
+                              <div className="flex-1 relative group">
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={tcDraft}
+                                  onChange={e => setTcDraft(e.target.value)}
+                                  className="w-full bg-black/40 border-2 border-emerald-500/10 rounded-[24px] px-6 py-5 text-4xl font-black text-white outline-none focus:border-emerald-500/40 focus:bg-emerald-500/5 transition-all placeholder:text-white/5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none shadow-inner"
+                                  placeholder="0.00"
+                                  autoFocus
+                                />
+                                <div className="absolute right-4 top-1/2 -translate-y-1/2 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                                  <button onClick={() => setTcDraft(p => (parseFloat(p || "0") + 0.1).toFixed(2))} className="p-1 hover:text-emerald-500"><ChevronUp size={16} /></button>
+                                  <button onClick={() => setTcDraft(p => Math.max(0, parseFloat(p || "0") - 0.1).toFixed(2))} className="p-1 hover:text-emerald-500"><ChevronDown size={16} /></button>
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => {
+                                  const val = parseFloat(tcDraft);
+                                  if (!isNaN(val) && val > 0) {
+                                    setTc(val);
+                                    setShowTc(false);
+                                    toast.success(`TC: ${val.toFixed(2)}`, {
+                                      style: { background: '#064e3b', color: '#fff', border: '1px solid #10b981', borderRadius: '16px' }
+                                    });
+                                  }
+                                }}
+                                className="w-20 h-20 shrink-0 bg-emerald-600 text-white rounded-[28px] flex items-center justify-center hover:bg-emerald-500 hover:scale-105 active:scale-95 transition-all shadow-[0_20px_40px_rgba(16,185,129,0.2)] group relative overflow-hidden"
+                              >
+                                <div className="absolute inset-0 bg-gradient-to-tr from-black/20 to-transparent" />
+                                <Check size={36} strokeWidth={4} className="relative z-10 group-hover:scale-110 transition-transform" />
+                              </button>
+                            </div>
+                            <div className="pt-2 flex justify-center">
+                              <span className="text-[10px] font-black text-white/10 uppercase tracking-[0.4em]">Liquid Transaction</span>
+                            </div>
+                          </div>
+                          <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-emerald-500/5 rounded-full blur-[60px]" />
+                          <div className="absolute -top-10 -left-10 w-40 h-40 bg-emerald-500/5 rounded-full blur-[60px]" />
+                        </Motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+
+                  {/* Cobrar — col-span-8 (CTA dominante) */}
+                  <div className="col-span-8">
+                    {(() => {
+                      const receivedMxn   = parseFloat(cashReceived)    || 0;
+                      const receivedUsd   = parseFloat(cashReceivedUsd) || 0;
+                      const totalReceived = receivedMxn + receivedUsd * tc;
+                      const hasAnyCash    = receivedMxn > 0 || receivedUsd > 0;
+                      const isInsufficient = activeMesa.paymentMethod === "Efectivo"
+                        && hasAnyCash && totalReceived < currentPayAmount;
+                      const label = isProcessing ? "Procesando..."
+                        : isInsufficient ? "Falta efectivo"
+                        : activeMesa.loadedPreSaleOrderId
+                          ? (newItemsSubtotal > 0 ? "Cobrar" : "Liquidar")
+                          : activeMesa.isPreventa
+                            ? (totalDeposit >= totalBeforeComm ? "Liquidar" : "Apartar")
+                            : "Cobrar";
+                      return (
+                        <button
+                          disabled={checkoutDisabled || isInsufficient}
+                          onClick={() => { void handleCheckout(); }}
+                          className="w-full h-[52px] group relative flex items-center justify-center gap-2 rounded-2xl overflow-hidden transition-all disabled:opacity-30 disabled:grayscale"
+                        >
+                          <div className="absolute inset-0 bg-[#E0221A] group-hover:bg-[#f0221a] transition-colors" />
+                          <div className="absolute inset-0 bg-gradient-to-tr from-black/20 to-transparent" />
+                          <Zap size={16} className="relative z-10 text-white animate-pulse" />
+                          <span className="relative z-10 text-sm font-black uppercase tracking-widest text-white">{label}</span>
+                        </button>
+                      );
+                    })()}
+                  </div>
+                </div>
+              </div>
+              {/* ↑ cierra wrapper del FOOTER STICKY (Método + Cobrar) */}
+        </aside>
       </div>
-      
+      {/* ↑ cierra contenedor horizontal de 2 columnas (cart + sidebar) */}
+
       {/* Modal Terminales de Pago */}
       <AnimatePresence>
         {showTerminalModal && (
@@ -5878,66 +6222,83 @@ export function SellPage() {
                         <p style={{ margin: 0, fontSize: 11, color: "var(--td-text-ghost)" }}>{[ext.phone, ext.email].filter(Boolean).join(" · ") || ext.external_member_id}</p>
                       </button>
                     ))}
+                  </>
+                )}
+              </div>
 
-                    {/* Crear cliente nuevo — toggle a form inline */}
-                    {!p.createForm.open ? (
-                      <button
-                        onClick={() => setAssignCustomerPopup(prev => prev ? {
-                          ...prev,
-                          createForm: { ...prev.createForm, open: true, name: prev.search.trim() },
-                        } : null)}
-                        style={{ marginTop: 14, width: "100%", padding: "12px 14px", borderRadius: 12, background: "rgba(96,165,250,0.08)", border: "1px dashed rgba(96,165,250,0.4)", color: "#60A5FA", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontSize: 12, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em" }}
-                      >
-                        <UserPlus size={14} />
-                        Crear cliente nuevo
-                      </button>
-                    ) : (
-                      <div style={{ marginTop: 14, padding: 14, background: "var(--td-card-bg)", border: "1px solid rgba(96,165,250,0.3)", borderRadius: 14, display: "flex", flexDirection: "column", gap: 8 }}>
-                        <p style={{ margin: "0 0 4px", fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "#60A5FA" }}>Nuevo cliente</p>
-                        <input
-                          autoFocus
-                          type="text"
-                          value={p.createForm.name}
-                          onChange={e => setAssignCustomerPopup(prev => prev ? { ...prev, createForm: { ...prev.createForm, name: e.target.value } } : null)}
-                          placeholder="Nombre completo *"
-                          style={{ background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 10, padding: "9px 12px", fontSize: 12, fontWeight: 700, color: "var(--td-input-text)", outline: "none" }}
-                        />
+              {/* Footer STICKY — modo manual: botón "+ Crear cliente nuevo" / form expandido.
+                  Antes vivía al final del scroll → en listas largas tenías que bajar a buscarlo.
+                  Ahora está siempre visible arriba del borde inferior del popup. */}
+              {p.mode === 'manual' && (
+                <div style={{
+                  borderTop: "1px solid var(--td-card-border)",
+                  padding: p.createForm.open ? "12px 22px 16px" : "12px 22px",
+                  background: p.createForm.open ? "rgba(96,165,250,0.04)" : "transparent",
+                }}>
+                  {!p.createForm.open ? (
+                    <button
+                      onClick={() => setAssignCustomerPopup(prev => prev ? {
+                        ...prev,
+                        createForm: { ...prev.createForm, open: true, name: prev.search.trim() },
+                      } : null)}
+                      style={{ width: "100%", padding: "12px 14px", borderRadius: 12, background: "rgba(96,165,250,0.10)", border: "1px dashed rgba(96,165,250,0.5)", color: "#60A5FA", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontSize: 13, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em" }}
+                    >
+                      <UserPlus size={15} />
+                      Crear cliente nuevo
+                    </button>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <p style={{ margin: 0, fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "#60A5FA" }}>Nuevo cliente</p>
+                        <button
+                          onClick={() => setAssignCustomerPopup(prev => prev ? { ...prev, createForm: { open: false, name: "", phone: "", email: "", saving: false } } : null)}
+                          disabled={p.createForm.saving}
+                          style={{ background: "transparent", border: "none", color: "var(--td-text-lo)", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", cursor: p.createForm.saving ? "default" : "pointer" }}
+                        >
+                          ✕ Cancelar
+                        </button>
+                      </div>
+                      {/* Nombre — full width, grande, autoFocus */}
+                      <input
+                        autoFocus
+                        type="text"
+                        value={p.createForm.name}
+                        onChange={e => setAssignCustomerPopup(prev => prev ? { ...prev, createForm: { ...prev.createForm, name: e.target.value } } : null)}
+                        onKeyDown={e => { if (e.key === "Enter" && p.createForm.name.trim() && !p.createForm.saving) void submitCreateCustomer(); }}
+                        placeholder="Nombre del cliente *"
+                        style={{ background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 10, padding: "11px 14px", fontSize: 14, fontWeight: 700, color: "var(--td-input-text)", outline: "none" }}
+                      />
+                      {/* Teléfono + Email en grid 2-col — compactos, ambos opcionales */}
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                         <input
                           type="tel"
                           value={p.createForm.phone}
                           onChange={e => setAssignCustomerPopup(prev => prev ? { ...prev, createForm: { ...prev.createForm, phone: e.target.value } } : null)}
-                          placeholder="Teléfono (opcional)"
-                          style={{ background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 10, padding: "9px 12px", fontSize: 12, fontWeight: 700, color: "var(--td-input-text)", outline: "none" }}
+                          onKeyDown={e => { if (e.key === "Enter" && p.createForm.name.trim() && !p.createForm.saving) void submitCreateCustomer(); }}
+                          placeholder="Teléfono"
+                          style={{ background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 10, padding: "9px 12px", fontSize: 12, fontWeight: 700, color: "var(--td-input-text)", outline: "none", minWidth: 0 }}
                         />
                         <input
                           type="email"
                           value={p.createForm.email}
                           onChange={e => setAssignCustomerPopup(prev => prev ? { ...prev, createForm: { ...prev.createForm, email: e.target.value } } : null)}
-                          placeholder="Correo (opcional)"
-                          style={{ background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 10, padding: "9px 12px", fontSize: 12, fontWeight: 700, color: "var(--td-input-text)", outline: "none" }}
+                          onKeyDown={e => { if (e.key === "Enter" && p.createForm.name.trim() && !p.createForm.saving) void submitCreateCustomer(); }}
+                          placeholder="Correo"
+                          style={{ background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 10, padding: "9px 12px", fontSize: 12, fontWeight: 700, color: "var(--td-input-text)", outline: "none", minWidth: 0 }}
                         />
-                        <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-                          <button
-                            onClick={() => setAssignCustomerPopup(prev => prev ? { ...prev, createForm: { open: false, name: "", phone: "", email: "", saving: false } } : null)}
-                            disabled={p.createForm.saving}
-                            style={{ flex: 1, padding: "9px 12px", borderRadius: 10, background: "transparent", border: "1px solid var(--td-card-border)", color: "var(--td-text-lo)", fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em", cursor: p.createForm.saving ? "default" : "pointer" }}
-                          >
-                            Cancelar
-                          </button>
-                          <button
-                            onClick={() => { void submitCreateCustomer(); }}
-                            disabled={p.createForm.saving || !p.createForm.name.trim()}
-                            style={{ flex: 2, padding: "9px 12px", borderRadius: 10, background: "#10b981", border: "none", color: "#fff", fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em", cursor: p.createForm.saving ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, opacity: (p.createForm.saving || !p.createForm.name.trim()) ? 0.5 : 1 }}
-                          >
-                            {p.createForm.saving ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
-                            Crear y asignar
-                          </button>
-                        </div>
                       </div>
-                    )}
-                  </>
-                )}
-              </div>
+                      <button
+                        onClick={() => { void submitCreateCustomer(); }}
+                        disabled={p.createForm.saving || !p.createForm.name.trim()}
+                        style={{ marginTop: 2, padding: "11px 14px", borderRadius: 10, background: "#10b981", border: "none", color: "#fff", fontSize: 12, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", cursor: p.createForm.saving ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, opacity: (p.createForm.saving || !p.createForm.name.trim()) ? 0.5 : 1 }}
+                      >
+                        {p.createForm.saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                        Crear y asignar
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Footer (solo modo scan con candidato) */}
               {p.mode === 'scan' && !p.searching && p.candidate && (
@@ -6144,6 +6505,26 @@ export function SellPage() {
         />
       )}
 
+      {/* ADR-016 Fase 3 — Modal de cancelación de ticket */}
+      {cancelTarget && (
+        <CancelTicketModal
+          {...(cancelTarget.kind === 'sale'
+            ? { kind: 'sale' as const, sale: cancelTarget.sale }
+            : { kind: 'presale' as const, order: cancelTarget.order })}
+          cashSessionId={cashSession?.id}
+          onClose={() => setCancelTarget(null)}
+          onSuccess={() => {
+            setCancelTarget(null);
+            // Invalida cache de historial + cancelaciones (sección H del reporte
+            // y tab admin) para que ambos se refresquen en bg.
+            void queryClient.invalidateQueries({ queryKey: queryKeys.historial.all });
+            void queryClient.invalidateQueries({ queryKey: ['saleCancellations'] });
+            void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all });
+            void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all });
+          }}
+        />
+      )}
+
       {showHistorialModal && (
         <div style={{ position: "fixed", inset: 0, zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
           <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)" }}
@@ -6169,6 +6550,56 @@ export function SellPage() {
               </button>
             </div>
 
+            {/* ADR-016 Fase 1 — Tabs/filtros del historial */}
+            {(() => {
+              const cancelledCount = historialEntries.filter(e => {
+                if (e.type === 'sale') {
+                  const s = e.data as SaleDetail;
+                  return s.status === 'returned' || s.cancellation_status === 'partial';
+                }
+                return e.data.status === 'cancelled' || e.data.cancellation_status === 'partial';
+              }).length;
+              return (
+                <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+                  {(['all', 'cancelled'] as const).map(f => {
+                    const isActive = historialFilter === f;
+                    const label = f === 'all' ? 'Todas' : 'Canceladas';
+                    const count = f === 'all' ? historialEntries.length : cancelledCount;
+                    return (
+                      <button
+                        key={f}
+                        onClick={() => setHistorialFilter(f)}
+                        style={{
+                          padding: '6px 12px',
+                          borderRadius: 10,
+                          fontSize: 10,
+                          fontWeight: 900,
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.1em',
+                          cursor: 'pointer',
+                          background: isActive ? (f === 'cancelled' ? 'rgba(239,68,68,0.15)' : 'rgba(224,34,26,0.12)') : 'var(--td-card-bg)',
+                          border: `1px solid ${isActive ? (f === 'cancelled' ? 'rgba(239,68,68,0.35)' : 'rgba(224,34,26,0.30)') : 'var(--td-card-border)'}`,
+                          color: isActive ? (f === 'cancelled' ? '#f87171' : '#E0221A') : 'var(--td-text-lo)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          transition: 'all 0.15s',
+                        }}
+                      >
+                        {label}
+                        <span style={{
+                          background: isActive ? 'rgba(0,0,0,0.25)' : 'rgba(255,255,255,0.05)',
+                          borderRadius: 999,
+                          padding: '1px 6px',
+                          fontSize: 9,
+                        }}>{count}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+
             {/* List */}
             <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
               {historialLoading ? (
@@ -6185,7 +6616,29 @@ export function SellPage() {
                   // Build set of saleIds that are part of a mixed pair so we skip them as standalone
                   const pairedSaleIds = new Set(mixedPairs.map(p => p.saleId));
 
-                  return historialEntries.map(entry => {
+                  // ADR-016 Fase 1: aplica filtro de tab.
+                  const filteredEntries = historialFilter === 'cancelled'
+                    ? historialEntries.filter(e => {
+                        if (e.type === 'sale') {
+                          const s = e.data as SaleDetail;
+                          return s.status === 'returned' || s.cancellation_status === 'partial';
+                        }
+                        return e.data.status === 'cancelled' || e.data.cancellation_status === 'partial';
+                      })
+                    : historialEntries;
+
+                  if (filteredEntries.length === 0) {
+                    return (
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 40, opacity: 0.3 }}>
+                        <Receipt size={36} style={{ marginBottom: 8 }} />
+                        <p style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em" }}>
+                          {historialFilter === 'cancelled' ? 'No hay cancelaciones hoy' : 'Sin eventos registrados hoy'}
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  return filteredEntries.map(entry => {
                   const entryKey = `${entry.type}-${entry.data.id}`;
                   const isOpen = expandedEntryKey === entryKey;
 
@@ -6214,10 +6667,11 @@ export function SellPage() {
                             <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
                               <span style={{ fontSize: 9, fontWeight: 700, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.08em" }}>{method}</span>
                               <span style={{ fontSize: 9, color: "var(--td-text-ghost)" }}>· {itemCount} art.</span>
-                              {sale.status === "returned" && <span style={{ fontSize: 8, fontWeight: 900, color: "#f59e0b", background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.2)", borderRadius: 999, padding: "1px 6px" }}>Devuelta</span>}
+                              {sale.status === "returned" && <span style={{ fontSize: 9, fontWeight: 900, color: "#f87171", background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.30)", borderRadius: 999, padding: "2px 8px", textTransform: "uppercase", letterSpacing: "0.08em" }}>Cancelada</span>}
+                              {sale.status !== "returned" && sale.cancellation_status === "partial" && <span style={{ fontSize: 9, fontWeight: 900, color: "#fbbf24", background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.30)", borderRadius: 999, padding: "2px 8px", textTransform: "uppercase", letterSpacing: "0.08em" }}>Cancelada parcial</span>}
                             </div>
                           </div>
-                          <span style={{ fontSize: 14, fontWeight: 900, color: "var(--td-text-hi)", flexShrink: 0 }}>{fmt(sale.total)}</span>
+                          <span style={{ fontSize: 14, fontWeight: 900, color: sale.status === "returned" ? "#f87171" : "var(--td-text-hi)", flexShrink: 0, textDecoration: sale.status === "returned" ? "line-through" : "none", opacity: sale.status === "returned" ? 0.6 : 1 }}>{fmt(sale.total)}</span>
                           <div onClick={e => { e.stopPropagation(); doPrintTicket({ id: sale.id, total: sale.total, paymentMethod: method, ...(sale.customer?.name ? { customerName: sale.customer.name } : {}), items: (sale.items || []).map(i => ({ name: i.product?.name || String(i.product_id), quantity: i.quantity, price: i.price })), soldAt: dateStr }); }}
                             role="button" title="Reimprimir ticket"
                             style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 9, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--td-text-lo)" }}
@@ -6225,6 +6679,15 @@ export function SellPage() {
                             onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = "var(--td-input-bg)"; (e.currentTarget as HTMLDivElement).style.borderColor = "var(--td-input-border)"; (e.currentTarget as HTMLDivElement).style.color = "var(--td-text-lo)"; }}>
                             <Printer size={13} />
                           </div>
+                          {sale.status !== "returned" && (
+                            <div onClick={e => { e.stopPropagation(); setCancelTarget({ kind: 'sale', sale }); }}
+                              role="button" title="Cancelar venta"
+                              style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 9, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--td-text-lo)" }}
+                              onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = "rgba(239,68,68,0.12)"; (e.currentTarget as HTMLDivElement).style.borderColor = "rgba(239,68,68,0.35)"; (e.currentTarget as HTMLDivElement).style.color = "#f87171"; }}
+                              onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = "var(--td-input-bg)"; (e.currentTarget as HTMLDivElement).style.borderColor = "var(--td-input-border)"; (e.currentTarget as HTMLDivElement).style.color = "var(--td-text-lo)"; }}>
+                              <XCircle size={15} />
+                            </div>
+                          )}
                         </button>
                         {isOpen && (
                           <div style={{ borderTop: "1px solid var(--td-card-border)", padding: "12px 14px 14px", background: "rgba(0,0,0,0.15)" }}>
@@ -6287,13 +6750,27 @@ export function SellPage() {
                           </div>
                           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
                             <span style={{ fontSize: 9, color: "var(--td-text-ghost)" }}>{orderItems.length} art. preventa{isMixed ? ` + ${regularItems.length} art. venta` : ""}</span>
-                            {paidAmt > 0 && <span style={{ fontSize: 9, color: "#34d399", fontWeight: 700 }}>Anticipo {fmt(paidAmt)}</span>}
+                            {/* Status delivered (preventa 100% liquidada) resalta en verde */}
+                            {order.status === "cancelled" ? (
+                              <span style={{ fontSize: 9, fontWeight: 900, color: "#f87171", background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.30)", borderRadius: 999, padding: "2px 8px", textTransform: "uppercase", letterSpacing: "0.08em" }}>Cancelada</span>
+                            ) : order.status === "delivered" ? (
+                              <span style={{ fontSize: 9, fontWeight: 900, color: "#34d399", background: "rgba(52,211,153,0.1)", border: "1px solid rgba(52,211,153,0.3)", borderRadius: 999, padding: "2px 8px", textTransform: "uppercase", letterSpacing: "0.08em" }}>Liquidada · {fmt(paidAmt)} cobrado</span>
+                            ) : (
+                              <>
+                                {paidAmt > 0 && <span style={{ fontSize: 9, color: "#34d399", fontWeight: 700 }}>Anticipo {fmt(paidAmt)}</span>}
+                                {paidAmt === 0 && !isMixed && <span style={{ fontSize: 9, color: "var(--td-text-ghost)", fontStyle: "italic" }}>Sin anticipo</span>}
+                                {balance > 0 && !isMixed && <span style={{ fontSize: 9, color: "#f59e0b", fontWeight: 700 }}>Pendiente {fmt(balance)}</span>}
+                              </>
+                            )}
                             {isMixed && regularTotal > 0 && <span style={{ fontSize: 9, color: "#E0221A", fontWeight: 700 }}>Venta {fmt(regularTotal)}</span>}
-                            {balance > 0 && !isMixed && <span style={{ fontSize: 9, color: "#f59e0b", fontWeight: 700 }}>Saldo {fmt(balance)}</span>}
-                            {order.status === "delivered" && <span style={{ fontSize: 8, fontWeight: 900, color: "#34d399", background: "rgba(52,211,153,0.1)", border: "1px solid rgba(52,211,153,0.2)", borderRadius: 999, padding: "1px 6px" }}>Liquidada</span>}
                           </div>
                         </div>
-                        <span style={{ fontSize: 14, fontWeight: 900, color: isMixed ? "#a78bfa" : "#f59e0b", flexShrink: 0 }}>{fmt(isMixed ? grandTotal : (order.total ?? 0))}</span>
+                        {/* Monto grande = lo cobrado HOY, no el valor total de la preventa.
+                            Para liquidada/anticipo: paid_amount (lo que entró a caja hoy).
+                            Para mixto: anticipo de preventa + venta regular = grandTotal. */}
+                        <span style={{ fontSize: 14, fontWeight: 900, color: order.status === "cancelled" ? "#f87171" : order.status === "delivered" ? "#34d399" : (isMixed ? "#a78bfa" : "#f59e0b"), flexShrink: 0, textDecoration: order.status === "cancelled" ? "line-through" : "none", opacity: order.status === "cancelled" ? 0.6 : 1 }} title={`Valor total de la preventa: ${fmt(order.total ?? 0)}`}>
+                          {fmt(isMixed ? grandTotal : paidAmt)}
+                        </span>
                         <div
                           onClick={e => {
                             e.stopPropagation();
@@ -6316,6 +6793,15 @@ export function SellPage() {
                           onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = isMixed ? "rgba(139,92,246,0.08)" : "rgba(245,158,11,0.08)"; (e.currentTarget as HTMLDivElement).style.color = isMixed ? "rgba(139,92,246,0.6)" : "rgba(245,158,11,0.6)"; }}>
                           <Printer size={13} />
                         </div>
+                        {order.status !== "cancelled" && (
+                          <div onClick={e => { e.stopPropagation(); setCancelTarget({ kind: 'presale', order }); }}
+                            role="button" title={order.status === "delivered" ? "Cancelar / Rollback liquidación" : "Cancelar folio"}
+                            style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 9, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.22)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "rgba(239,68,68,0.7)" }}
+                            onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = "rgba(239,68,68,0.18)"; (e.currentTarget as HTMLDivElement).style.color = "#f87171"; }}
+                            onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = "rgba(239,68,68,0.08)"; (e.currentTarget as HTMLDivElement).style.color = "rgba(239,68,68,0.7)"; }}>
+                            <XCircle size={15} />
+                          </div>
+                        )}
                       </button>
                       {isOpen && (
                         <div style={{ borderTop: `1px solid ${isMixed ? "rgba(139,92,246,0.15)" : "rgba(245,158,11,0.15)"}`, padding: "12px 14px 14px", background: "rgba(0,0,0,0.15)" }}>
@@ -6381,10 +6867,12 @@ export function SellPage() {
       )}
 
       {/* ══════════════ ATAJOS FLOTANTES: OTRAS VENTAS ABIERTAS ══════════════ */}
-      {/* Aparece solo si hay >1 mesa. Card horizontal arribita del footer
-          de cobro con filas tipo pill (icono + nombre + items). Usa
-          variables --td-* para adaptarse a light/dark theme. Las filas
-          con items siempre rojas (mantienen contraste en ambos themes). */}
+      {/* Aparece solo si hay >1 mesa. Card flotante con filas tipo pill
+          (icono + nombre + items). Antes vivía abajo-derecha "arribita del
+          footer"; con el nuevo sidebar derecho de cobro se movió a abajo-IZQUIERDA
+          para no traslaparse con el panel de cobro. Usa variables --td-* para
+          adaptarse a light/dark theme. Las filas con items siempre rojas
+          (mantienen contraste en ambos themes). */}
       {mesas.length > 1 && (
         <>
           <style>{`
@@ -6396,8 +6884,8 @@ export function SellPage() {
           <div
             style={{
               position: "fixed",
-              bottom: 130,
-              right: 20,
+              bottom: 20,
+              left: 20,
               zIndex: 50,
               display: "flex",
               flexDirection: "column",

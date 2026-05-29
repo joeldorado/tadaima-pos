@@ -16,13 +16,19 @@ class PreSaleOrder extends Model
 
     const OPEN_STATUSES = [self::STATUS_PENDING, self::STATUS_READY];
 
+    const CANCELLATION_NONE    = 'none';
+    const CANCELLATION_PARTIAL = 'partial';
+    const CANCELLATION_FULL    = 'full';
+
     protected $fillable = [
         'code', 'store_id', 'linked_sale_id', 'user_id', 'customer_id',
         'status', 'pickup_deadline', 'notes',
+        'cancellation_status', 'last_cancelled_at',
     ];
 
     protected $casts = [
-        'pickup_deadline' => 'date:Y-m-d',
+        'pickup_deadline'   => 'date:Y-m-d',
+        'last_cancelled_at' => 'datetime',
     ];
 
     // ── Relations ─────────────────────────────────────────────────────────────
@@ -55,6 +61,11 @@ class PreSaleOrder extends Model
     public function payments(): HasMany
     {
         return $this->hasMany(PreSaleOrderPayment::class)->latest('created_at');
+    }
+
+    public function cancellations(): HasMany
+    {
+        return $this->hasMany(SaleCancellation::class);
     }
 
     public function logs(): HasMany

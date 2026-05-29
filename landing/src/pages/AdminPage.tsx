@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@tadaima/auth";
 import { canAccessAdmin } from "@tadaima/permissions";
 import { TabPermisos } from "@/components/admin/TabPermisos";
+import { TabCancelaciones } from "@/components/admin/TabCancelaciones";
 import { UserAvatar } from "@/components/UserAvatar";
 import { AvatarPicker } from "@/components/AvatarPicker";
 import {
@@ -1557,7 +1558,7 @@ function TabPreciosTienda() {
 }
 
 // ─── Main AdminPage ────────────────────────────────────────────────────────────
-type TabId = "sucursales" | "bodegas" | "usuarios" | /* "roles" | */ "categorias" | "inventario" | /* "precios_tienda" | */ "terminales" | "permisos";
+type TabId = "sucursales" | "bodegas" | "usuarios" | /* "roles" | */ "categorias" | "inventario" | /* "precios_tienda" | */ "terminales" | "permisos" | "cancelaciones";
 
 const TABS: { id: TabId; label: string; icon: React.ElementType; sub: string }[] = [
   { id: "sucursales",     label: "Sucursales",       icon: Store,      sub: "STORES" },
@@ -1569,6 +1570,7 @@ const TABS: { id: TabId; label: string; icon: React.ElementType; sub: string }[]
   // { id: "precios_tienda", label: "Precios x Tienda", icon: CreditCard, sub: "STORE_PRICES" },
   { id: "terminales",     label: "Terminales",       icon: Smartphone, sub: "PAYMENT_TERMINALS" },
   { id: "permisos",       label: "Permisos",         icon: Shield,     sub: "PRICE_PERMISSIONS" },
+  { id: "cancelaciones",  label: "Cancelaciones",    icon: Trash2,     sub: "SALE_CANCELLATIONS" },
 ];
 
 export function AdminPage() {
@@ -1595,6 +1597,7 @@ export function AdminPage() {
       // case "precios_tienda": return <TabPreciosTienda />;
       case "terminales":     return <TabTerminales />;
       case "permisos":       return <TabPermisos />;
+      case "cancelaciones":  return <TabCancelaciones />;
     }
   };
 
