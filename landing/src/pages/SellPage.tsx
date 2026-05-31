@@ -29,7 +29,7 @@ import { useProductsLightQuery, useProductsSearchQuery } from "@/hooks/queries/u
 // ADR-014: useReservedStockQuery removido — carrito client-side, sin polling.
 import { usePaymentMethodsQuery } from "@/hooks/queries/usePaymentMethods";
 import { useTerminalsQuery } from "@/hooks/queries/useTerminals";
-import { useActiveSessionQuery, useCashRegistersQuery, useCashRegistersWithSessionQuery, useActiveSessionsQuery } from "@/hooks/queries/useCashSession";
+import { useActiveSessionQuery, useCashRegistersQuery, useActiveSessionsQuery } from "@/hooks/queries/useCashSession";
 import { useOnlineUsersQuery } from "@/hooks/queries/useUsers";
 import { useExchangeRateQuery } from "@/hooks/queries/useSystemSettings";
 import { usePreSaleCatalogsQuery, usePreSaleOrdersQuery } from "@/hooks/queries/usePreSales";
@@ -436,13 +436,6 @@ export function SellPage() {
   // Conflicto al abrir caja (existing session bloquea). UI muestra modal apropiado.
   const [openSessionConflict, setOpenSessionConflict] = useState<OpenSessionConflict | null>(null);
   const [resolvingConflict, setResolvingConflict] = useState(false);
-  // Cajas con sesión activa embebida — solo se fetch cuando el modal abre,
-  // para mostrar "Ocupada por X" en el dropdown.
-  const cashRegistersDetailedQuery = useCashRegistersWithSessionQuery(
-    activeStore?.id,
-    { enabled: !cashSession && showOpenCashModal },
-  );
-  const cashRegistersDetailed = cashRegistersDetailedQuery.data ?? [];
   const [showCloseCashModal, setShowCloseCashModal] = useState(false);
   const [closeCashAmount, setCloseCashAmount] = useState("");
   const [closingCashLoading, setClosingCashLoading] = useState(false);
@@ -2611,6 +2604,8 @@ export function SellPage() {
               quantity: ci.quantity,
               price: ci.damagedPrice ?? getItemPrice(ci),
               price_level: (["a","b","c"].includes(ci.priceLevel) ? ci.priceLevel : "a") as "a" | "b" | "c",
+              // Dañado → precio manual; el backend salta la validación de catálogo.
+              ...(ci.isDamaged ? { is_damaged: true } : {}),
             }))
             .filter(i => !Number.isNaN(i.product_id));
 
@@ -2833,6 +2828,8 @@ export function SellPage() {
               quantity: ci.quantity,
               price: ci.damagedPrice ?? getItemPrice(ci),
               price_level: (["a","b","c"].includes(ci.priceLevel) ? ci.priceLevel : "a") as "a" | "b" | "c",
+              // Dañado → precio manual; el backend salta la validación de catálogo.
+              ...(ci.isDamaged ? { is_damaged: true } : {}),
             }))
             .filter(i => !Number.isNaN(i.product_id));
 
@@ -3006,6 +3003,8 @@ export function SellPage() {
           quantity: ci.quantity,
           price: ci.damagedPrice ?? getItemPrice(ci),
           price_level: (["a","b","c"].includes(ci.priceLevel) ? ci.priceLevel : "a") as "a" | "b" | "c",
+          // Dañado → precio manual; el backend salta la validación de catálogo.
+          ...(ci.isDamaged ? { is_damaged: true } : {}),
         }))
         .filter(i => !Number.isNaN(i.product_id));
 
@@ -3091,9 +3090,10 @@ export function SellPage() {
               const sessionUserIds = new Set(sessions.map(x => x.user_id));
               const onlineOnly = onlineInStore.filter(u => !sessionUserIds.has(u.id));
               // Tooltip nativo con la lista de cajeros — útil para admin antes
-              // de seleccionar la tienda. Ej: "joel · Caja 1 · 14:32".
+              // de seleccionar la tienda. La tienda ya es la fila, y la caja
+              // personal incluye el nombre, así que basta "usuario · hora".
               const titleLines = [
-                ...sessions.map(x => `🟢 ${x.user_name ?? `Usuario ${x.user_id}`} · ${x.register_name ?? `Caja ${x.register_id}`} · ${new Date(x.opened_at).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}`),
+                ...sessions.map(x => `🟢 ${x.user_name ?? `Usuario ${x.user_id}`} · ${new Date(x.opened_at).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}`),
                 ...onlineOnly.map(u => `🔵 ${u.name} · conectado, sin caja`),
               ];
               const title = titleLines.length > 0 ? titleLines.join("\n") : "Sin actividad";
@@ -3383,7 +3383,7 @@ export function SellPage() {
                             {userName}
                           </p>
                           <p style={{ margin: "2px 0 0", fontSize: 9, fontWeight: 600, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
-                            {s.register_name ?? `Caja ${s.register_id}`} · ${(s.opening_cash ?? 0).toFixed(0)} inicial
+                            Su caja · ${(s.opening_cash ?? 0).toFixed(0)} inicial
                           </p>
                         </div>
                         <div style={{ textAlign: "right", flexShrink: 0 }}>
@@ -3461,47 +3461,18 @@ export function SellPage() {
                 </button>
               </div>
               {cashRegisters.length > 0 && (() => {
-                // La tienda ya se eligió en la pantalla previa; el cajero no
-                // necesita re-seleccionar caja registradora. Mostramos el nombre
-                // como texto (read-only). Por defecto se usa la primera caja
-                // activa de la tienda (auto-seleccionada en el useEffect de arriba).
-                const selectedRegister = openCashRegisterId !== ""
-                  ? cashRegisters.find(r => r.id === Number(openCashRegisterId))
-                  : cashRegisters[0];
-                const registerLabel = selectedRegister?.name ?? "Caja sin asignar";
-                // Estado de ocupación: cashRegistersDetailed trae active_session.
-                const detailed = cashRegistersDetailed.find(r => r.id === selectedRegister?.id);
-                const occupant = detailed?.active_session;
-                const occupiedByMe = occupant?.user_id === user?.id;
+                // Modelo "una caja por persona" (ADR-017): la caja ES tu sesión.
+                // El backend la nombra "{usuario} · {tienda}", así que aquí
+                // mostramos ese mismo nombre compuesto (la sesión aún no existe).
+                // Varios usuarios abren su propia caja en la misma tienda en
+                // paralelo; no hay "Ocupada por X" ni bloqueo.
+                const cajaLabel = `${user?.name ?? "Caja"}${activeStore?.name ? ` · ${activeStore.name}` : ""}`;
                 return (
                   <div style={{ marginBottom: 14 }}>
-                    <label style={{ display: "block", fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "var(--td-text-ghost)", marginBottom: 6 }}>Caja Registradora</label>
+                    <label style={{ display: "block", fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "var(--td-text-ghost)", marginBottom: 6 }}>Tu Caja</label>
                     <div style={{ width: "100%", background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 14, color: "var(--td-input-text)", padding: "10px 14px", fontSize: 13, boxSizing: "border-box" as const }}>
-                      {registerLabel}
+                      {cajaLabel}
                     </div>
-                    {occupant && (
-                      <div style={{
-                        marginTop: 8,
-                        padding: "8px 12px",
-                        borderRadius: 12,
-                        background: occupiedByMe ? "rgba(16,185,129,0.10)" : "rgba(245,158,11,0.10)",
-                        border: `1px solid ${occupiedByMe ? "rgba(16,185,129,0.30)" : "rgba(245,158,11,0.35)"}`,
-                        display: "flex", alignItems: "center", gap: 8,
-                      }}>
-                        <span style={{
-                          width: 8, height: 8, borderRadius: "50%",
-                          background: occupiedByMe ? "#10b981" : "#f59e0b",
-                          boxShadow: `0 0 0 3px ${occupiedByMe ? "rgba(16,185,129,0.2)" : "rgba(245,158,11,0.2)"}`,
-                          flexShrink: 0,
-                        }} />
-                        <span style={{ fontSize: 11, fontWeight: 700, color: occupiedByMe ? "#10b981" : "#f59e0b" }}>
-                          {occupiedByMe ? "Tu sesión activa" : `Ocupada por ${occupant.user_name ?? "otro usuario"}`}
-                        </span>
-                        <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--td-text-ghost)" }}>
-                          #{occupant.id}
-                        </span>
-                      </div>
-                    )}
                   </div>
                 );
               })()}
@@ -6521,6 +6492,11 @@ export function SellPage() {
             void queryClient.invalidateQueries({ queryKey: ['saleCancellations'] });
             void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all });
             void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all });
+            // Cancelar devuelve el stock (InventoryMovement 'devolucion'). Sin
+            // esto el catálogo de Caja seguía mostrando "1 disp." cuando ya son 2
+            // (bug QA Ruben 2026-05-30). Refresca productos + catálogos de preventa.
+            void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+            void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleCatalogs.all });
           }}
         />
       )}

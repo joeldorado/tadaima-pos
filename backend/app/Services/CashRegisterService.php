@@ -15,9 +15,13 @@ class CashRegisterService
     /**
      * Abre una sesión de caja para el usuario autenticado.
      *
-     * Reglas:
-     *  - El usuario no puede tener otra sesión abierta
-     *  - La caja debe estar activa y sin sesión abierta
+     * Modelo "una caja por persona" (sesión = caja, 2026-05-30):
+     *  - El usuario no puede tener otra sesión abierta (1 corte activo por persona).
+     *  - La caja debe estar activa.
+     *  - VARIOS usuarios pueden tener sesión abierta en la MISMA caja al mismo
+     *    tiempo. Cada sesión es un corte independiente (su propio fondo inicial,
+     *    movimientos y cierre). Así un cajero, un gerente y el admin pueden
+     *    vender en paralelo en la misma tienda sin bloquearse entre sí.
      *
      * @throws \DomainException
      */
@@ -40,28 +44,33 @@ class CashRegisterService
                 );
             }
 
-            // Verificar que la caja existe, está activa y no tiene sesión abierta
-            $register = CashRegister::lockForUpdate()->findOrFail($registerId);
+            // La caja seleccionada en el frontend solo nos dice la TIENDA. En el
+            // modelo "una caja por persona" cada usuario abre/reutiliza su PROPIA
+            // caja (sesión = caja), nombrada "{usuario} · {tienda}". Así el corte,
+            // los reportes y la UI muestran de quién es la caja, no un "Caja 1"
+            // compartido sin significado.
+            $selected = CashRegister::findOrFail($registerId);
 
-            if (! $register->active) {
-                throw new \DomainException("La caja '{$register->name}' no está activa.");
+            if (! $selected->store_id) {
+                throw new \DomainException('La caja seleccionada no tiene tienda.');
             }
 
-            $registerSession = CashRegisterSession::where('register_id', $registerId)
-                ->where('status', CashRegisterSession::STATUS_OPEN)
-                ->with(['register.store', 'user:id,name'])
-                ->lockForUpdate()
-                ->first();
+            $user  = \App\Models\User::find($userId);
+            $store = $selected->store;
+            $desiredName = trim(($user?->name ?? 'Caja') . ' · ' . ($store?->name ?? ''), " ·");
 
-            if ($registerSession) {
-                throw new CashSessionConflictException(
-                    CashSessionConflictException::KIND_FOREIGN,
-                    $registerSession,
-                );
+            $register = CashRegister::firstOrCreate(
+                ['store_id' => $selected->store_id, 'owner_user_id' => $userId],
+                ['name' => $desiredName !== '' ? $desiredName : 'Caja', 'active' => true],
+            );
+
+            // Mantener el nombre al día si cambió el nombre del usuario o la tienda.
+            if ($desiredName !== '' && $register->name !== $desiredName) {
+                $register->update(['name' => $desiredName]);
             }
 
             $session = CashRegisterSession::create([
-                'register_id'  => $registerId,
+                'register_id'  => $register->id,
                 'user_id'      => $userId,
                 'opened_at'    => now(),
                 'opening_cash' => $openingCash,
@@ -122,38 +131,18 @@ class CashRegisterService
     // ─── Active session ───────────────────────────────────────────────────────
 
     /**
-     * Devuelve la sesión de caja activa para el usuario.
+     * Devuelve la sesión de caja activa del usuario (solo la suya).
      *
-     * Lógica (cambio 2026-05-20):
-     *  1. Si el usuario tiene su propia sesión abierta → devuelve esa.
-     *  2. Si no, y el usuario tiene una tienda asignada, devuelve la sesión
-     *     abierta en cualquier caja de su tienda (puede haber sido abierta por
-     *     admin u otro turno). Esto deja que un cajero "tome" la caja que
-     *     dejó abierta el admin sin tener que pedirle que la cierre.
-     *  3. Si el usuario es admin sin sesión propia → null (admin abre la suya).
-     *
-     * Nota: el ownership de la sesión (user_id) no cambia. Las ventas que cobre
-     * el cajero igual se registran con su propio user_id en la tabla `sales`.
+     * Modelo "una caja por persona" (2026-05-30): cada usuario opera su propia
+     * sesión/corte. Se ELIMINÓ la "apropiación por tienda" (un usuario tomaba
+     * la sesión que otro dejó abierta), porque hacía que un segundo cajero o el
+     * gerente quedaran atrapados en el corte ajeno en vez de abrir el suyo.
+     * Ahora: si el usuario no tiene sesión propia abierta → null (abre la suya).
      */
     public function activeSession(int $userId): ?CashRegisterSession
     {
-        $own = CashRegisterSession::with(['register', 'user', 'movements'])
-            ->where('user_id', $userId)
-            ->where('status', CashRegisterSession::STATUS_OPEN)
-            ->first();
-
-        if ($own) {
-            return $own;
-        }
-
-        $user = \App\Models\User::find($userId);
-        $storeId = $user?->store_id;
-        if (! $storeId) {
-            return null;
-        }
-
         return CashRegisterSession::with(['register', 'user', 'movements'])
-            ->whereHas('register', fn ($q) => $q->where('store_id', $storeId))
+            ->where('user_id', $userId)
             ->where('status', CashRegisterSession::STATUS_OPEN)
             ->first();
     }

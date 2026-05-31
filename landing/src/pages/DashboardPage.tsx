@@ -913,7 +913,7 @@ export function DashboardPage() {
                               style={{ background: "rgba(16,185,129,0.16)", color: "#10b981", border: "1px solid rgba(16,185,129,0.35)" }}
                             >
                               <Wallet size={9} />
-                              En caja · {openSession.register.name}
+                              En caja
                             </button>
                           ) : (
                             <span className="mt-1.5 inline-block px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider"
@@ -1010,7 +1010,7 @@ export function DashboardPage() {
                         </div>
                         <div className="flex-1 min-w-0">
                           <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: "var(--td-text-hi)" }}>
-                            {s.user.name} · {s.register.name}
+                            {s.user.name}
                           </p>
                           <p style={{ margin: "2px 0 0", fontSize: 10, color: "var(--td-text-ghost)" }}>
                             {new Date(s.opened_at).toLocaleTimeString("es-MX", { timeStyle: "short" })}

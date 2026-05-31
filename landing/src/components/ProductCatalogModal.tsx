@@ -95,6 +95,14 @@ export function ProductCatalogModal({ products, onSelect, onClose, title = "CatÃ
     return ["Todos", ...cats];
   }, [products]);
 
+  // Stock efectivo para esta caja = el mismo que muestra el badge
+  // (stock de la tienda âˆ’ reservado en otras cajas). `undefined` = desconocido.
+  const effectiveStock = useCallback(
+    (p: CatalogProduct): number | undefined =>
+      availableStock?.[p.id] ?? p.stock_details?.tienda ?? p.stock,
+    [availableStock],
+  );
+
   const filtered = useMemo(() => {
     let list = products;
     if (category !== "Todos") list = list.filter(p => p.category === category);
@@ -106,8 +114,14 @@ export function ProductCatalogModal({ products, onSelect, onClose, title = "CatÃ
         p.category.toLowerCase().includes(q)
       );
     }
-    return list;
-  }, [products, query, category]);
+    // Productos sin stock (0) al final del listado (QA Ruben + Joel 2026-05-30).
+    // Sort estable (ES2019): conserva el orden original dentro de cada grupo.
+    return [...list].sort((a, b) => {
+      const aOut = effectiveStock(a) === 0 ? 1 : 0;
+      const bOut = effectiveStock(b) === 0 ? 1 : 0;
+      return aOut - bOut;
+    });
+  }, [products, query, category, effectiveStock]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage   = Math.min(page, totalPages);
@@ -284,7 +298,10 @@ export function ProductCatalogModal({ products, onSelect, onClose, title = "CatÃ
                       overflow: "hidden",
                       display: "flex", flexDirection: "column",
                       transition: "border-color 0.15s",
-                      opacity: hasStock ? 1 : 0.45,
+                      opacity: hasStock ? 1 : 0.5,
+                      // Sin stock â†’ escala de gris para identificar a simple vista
+                      // que no tenemos el producto (QA Ruben 2026-05-30).
+                      filter: hasStock ? "none" : "grayscale(1)",
                       position: "relative",
                     }}
                   >
@@ -484,7 +501,9 @@ export function ProductCatalogModal({ products, onSelect, onClose, title = "CatÃ
                     overflow: "hidden",
                     display: "flex", flexDirection: "column",
                     transition: "border-color 0.15s, transform 0.1s",
-                    opacity: hasStock ? 1 : 0.45,
+                    opacity: hasStock ? 1 : 0.5,
+                    // Sin stock â†’ escala de gris (QA Ruben 2026-05-30).
+                    filter: hasStock ? "none" : "grayscale(1)",
                     position: "relative",
                   }}
                   onMouseEnter={e => {

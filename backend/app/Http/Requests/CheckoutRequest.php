@@ -35,6 +35,9 @@ class CheckoutRequest extends FormRequest
             'items.*.quantity'              => ['required_with:items', 'numeric', 'min:0.01'],
             'items.*.price'                 => ['required_with:items', 'numeric', 'min:0'],
             'items.*.price_level'           => ['nullable', 'string', 'in:a,b,c'],
+            // Producto dañado → precio manual permitido fuera del catálogo. Sin
+            // este flag el precio se valida contra los niveles del catálogo.
+            'items.*.is_damaged'            => ['nullable', 'boolean'],
             'store_id'                      => [$hasItems ? 'required' : 'nullable', 'integer', 'exists:stores,id'],
             'register_session_id'           => [$hasItems ? 'required' : 'nullable', 'integer', 'exists:cash_register_sessions,id'],
             'customer_id'                   => ['nullable', 'integer', 'exists:customers,id'],

@@ -9,13 +9,18 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class CashRegister extends Model
 {
-    protected $fillable = ['store_id', 'name', 'active'];
+    protected $fillable = ['store_id', 'owner_user_id', 'name', 'active'];
 
     protected $casts = ['active' => 'boolean'];
 
     public function store(): BelongsTo
     {
         return $this->belongsTo(Store::class);
+    }
+
+    public function owner(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'owner_user_id');
     }
 
     public function sessions(): HasMany

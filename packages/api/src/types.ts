@@ -334,6 +334,8 @@ export interface SaleDirectItem {
   quantity: number
   price: number
   price_level?: 'a' | 'b' | 'c'
+  /** Mercancía dañada → precio manual permitido fuera del catálogo. */
+  is_damaged?: boolean
 }
 export interface CreateSaleInput {
   draft_id?: number

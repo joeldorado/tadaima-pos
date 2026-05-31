@@ -233,9 +233,8 @@ class CashRegisterController extends Controller
      */
     public function close(CloseCashSessionRequest $request): JsonResponse
     {
-        // Espejo de CashRegisterService::activeSession — cualquiera de la tienda
-        // puede cerrar la caja del turno (no solo quien la abrió). Esto cubre
-        // el caso real: admin abre en la mañana, cajero cierra al final del día.
+        // Modelo "una caja por persona": cada quien cierra SU propia sesión.
+        // Para cerrar la sesión colgada de otro usuario existe force-close (admin).
         $session = $this->service->activeSession($request->user()->id);
 
         if (! $session) {
@@ -258,8 +257,8 @@ class CashRegisterController extends Controller
      */
     public function addMovement(StoreCashMovementRequest $request): JsonResponse
     {
-        // Misma lógica que close: cualquiera del turno puede registrar movimientos
-        // en la sesión activa de su tienda.
+        // Misma lógica que close: el movimiento se registra en la sesión propia
+        // del usuario (cada quien su corte).
         $session = $this->service->activeSession($request->user()->id);
 
         if (! $session) {

@@ -50,6 +50,13 @@ class CheckoutService
         int $userId,
     ): Sale {
         return DB::transaction(function () use ($storeId, $registerSessionId, $customerId, $items, $paymentsData, $discount, $userId) {
+            // Guard de precios (2026-05-30): el carrito vive client-side (ADR-014)
+            // y el backend confiaba 100% en el `price` enviado. Validamos que el
+            // precio de cada item NO dañado coincida con un nivel del catálogo
+            // del producto (base o precio por tienda). Los dañados llevan flag
+            // `is_damaged` y permiten precio manual.
+            $this->assertPricesMatchCatalog($storeId, $items);
+
             $draft = SalesDraft::create([
                 'store_id'            => $storeId,
                 'register_session_id' => $registerSessionId,
@@ -204,6 +211,97 @@ class CheckoutService
     }
 
     // ─── Helpers privados ─────────────────────────────────────────────────────
+
+    /**
+     * Valida que el precio de cada item coincida con un nivel del catálogo del
+     * producto (precio base o precio por tienda), salvo que el item esté marcado
+     * `is_damaged` (precio manual permitido para mercancía dañada).
+     *
+     * Si el producto no tiene ningún precio definido, no se valida (no hay contra
+     * qué comparar). Tolerancia de 1 centavo.
+     *
+     * @param array<int,array{product_id:int,price:float,is_damaged?:bool,price_level?:string}> $items
+     * @throws \DomainException si un precio no dañado cae fuera del catálogo
+     */
+    private function assertPricesMatchCatalog(int $storeId, array $items): void
+    {
+        $productIds = array_values(array_unique(array_map(
+            static fn ($i) => (int) $i['product_id'],
+            $items,
+        )));
+
+        if (empty($productIds)) {
+            return;
+        }
+
+        $products = Product::query()
+            ->with([
+                'price',
+                'storePrices' => fn ($q) => $q->where('store_id', $storeId),
+            ])
+            ->whereIn('id', $productIds)
+            ->get()
+            ->keyBy('id');
+
+        foreach ($items as $item) {
+            if (! empty($item['is_damaged'])) {
+                continue; // dañado → precio manual permitido
+            }
+
+            $product = $products->get((int) $item['product_id']);
+            if (! $product) {
+                continue; // exists:products ya lo validó; defensivo
+            }
+
+            $allowed   = $this->allowedPricesFor($product);
+            if (empty($allowed)) {
+                continue; // sin precios de catálogo → nada que validar
+            }
+
+            $price = round((float) $item['price'], 2);
+            $match = false;
+            foreach ($allowed as $valid) {
+                if (abs($valid - $price) <= 0.01) {
+                    $match = true;
+                    break;
+                }
+            }
+
+            if (! $match) {
+                $validList = implode(', ', array_map(
+                    static fn ($v) => '$' . number_format($v, 2),
+                    $allowed,
+                ));
+                throw new \DomainException(
+                    "Precio \${$price} fuera del catálogo para '{$product->name}' "
+                    . "(precios válidos: {$validList}). Si es mercancía dañada, márcala como dañada."
+                );
+            }
+        }
+    }
+
+    /**
+     * Conjunto de precios válidos de un producto para la tienda: por cada nivel
+     * 1–5, el precio por tienda si existe, sino el precio base. Solo > 0.
+     *
+     * @return array<int,float>
+     */
+    private function allowedPricesFor(Product $product): array
+    {
+        $base      = $product->price; // ProductPrice (price_1..price_5) o null
+        $overrides = $product->storePrices->keyBy('price_level'); // nivel(int) → row
+
+        $allowed = [];
+        for ($level = 1; $level <= 5; $level++) {
+            $value = $overrides->get($level)?->price
+                ?? $base?->{"price_{$level}"};
+            if ($value !== null && (float) $value > 0) {
+                $allowed[] = round((float) $value, 2);
+            }
+        }
+
+        return array_values(array_unique($allowed));
+    }
 
     /**
      * Verifica stock para todos los ítems y retorna el mapa product_id → Inventory.
