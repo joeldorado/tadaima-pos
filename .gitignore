@@ -29,6 +29,9 @@ backend/public/hot
 test-results/
 playwright-report/
 
+# Respaldos de base de datos (contienen datos de prod — nunca subir)
+backups/
+
 # OS / IDE
 .DS_Store
 Thumbs.db

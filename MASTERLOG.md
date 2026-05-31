@@ -1,7 +1,7 @@
 # MASTERLOG — Tadaima POS
 
 > Registro maestro del proyecto: arquitectura, evolución, decisiones clave y estado actual.
-> Actualizado: 2026-05-30 (**ADR-017: caja multi-usuario "una caja por persona"** — varios usuarios (cajero/gerente/admin) abren su propio corte en la misma tienda en paralelo. Eliminado el bloqueo "Esta caja está abierta por otro usuario" y la apropiación de sesión por tienda. Pendiente deploy.)
+> Actualizado: 2026-05-30 (**DESPLEGADO rev `tadaima-00062-l6m`** + **PROD RESETEADA a cero para pruebas**: solo admin Pier <pier@tadaima.mx> + roles + métodos de pago base; sin tiendas/productos/ventas. Respaldo en `backups/tadaima_prod_2026-05-30_211356.sql` (local, gitignored). Incluye: **ADR-017 caja "una caja por persona"** + naming {usuario}·{tienda}, **guard de precios server-side**, fixes QA Ruben (stock al cancelar, gris, orden), y QA E2E. Login de Pier verificado en prod.)
 >
 > Actualizado: 2026-05-28 (sprint largo cierre del día: **ADR-016 Fases 1-4 COMPLETAS** (cancelación de ventas + log auditable + admin tab), Aceternity UI piloteado en Dashboard, refactor Caja a 2 columnas Square-style, presets cuadrados, USD híbrido refinado, historial → React Query persist + invalidate, default pesos por mesa, perf RQ acotada — quitado polling preventas y prefetch productos)
 
@@ -11,7 +11,7 @@
 
 | Componente | Estado | Notas |
 |-----------|--------|-------|
-| Backend API (Laravel) | ✅ En producción | revision `tadaima-00053-697` (2026-05-25), URL: tadaima-987277625193.us-central1.run.app. **`min-instances=1`** desde 2026-05-21 (~$8-10/mes, elimina cold starts de 5-37s). **ADR-015 (2026-05-22): cost_at_sale** — sale_items/pre_sale_order_items/layaways tienen columna `cost` snapped al INSERT. Reportes históricos inmutables aunque admin re-precie productos. **Cash session conflict (2026-05-25)**: `CashSessionConflictException` + `POST /cash/sessions/{id}/force-close` admin-only + `cash/registers` embed `active_session`. |
+| Backend API (Laravel) | ✅ En producción | revision `tadaima-00062-l6m` (2026-05-30, ADR-017 + guard de precios + fixes QA). **DB de prod RESETEADA a cero 2026-05-30** (solo admin Pier — fase de pruebas; respaldo previo en `backups/`). URL: tadaima-987277625193.us-central1.run.app. **`min-instances=1`** desde 2026-05-21 (~$8-10/mes, elimina cold starts de 5-37s). **ADR-015 (2026-05-22): cost_at_sale** — sale_items/pre_sale_order_items/layaways tienen columna `cost` snapped al INSERT. Reportes históricos inmutables aunque admin re-precie productos. **Cash session conflict (2026-05-25)**: `CashSessionConflictException` + `POST /cash/sessions/{id}/force-close` admin-only + `cash/registers` embed `active_session`. |
 | Landing / Web (React) | ✅ En producción | Email folio, historial mixto, Tarjeta/Transferencia, checkout mixto. **ADR-014 (2026-05-18): client-authoritative cart**. Dashboard gerente con Cajeros conectados + Cortes de hoy. Tab "Reporte del Día" en /sales (admin/gerente) con secciones A-F + Imprimir + Exportar PDF. **Helpers de fecha local** en `lib/date.ts` (`getTodayLocal`/`useTodayLocal`/`daysAgoLocal`/`toLocalYmd`) eliminan bug UTC stale en todos los filtros "Hoy". |
 | App móvil (Expo) | ⏳ Pendiente | Estructura base existe en `apps/`, sin paridad de features |
 | Deploy / Cloud Run | ✅ Operacional | `gcloud run deploy --source .`, región us-central1. Build remoto en Cloud Build (no requiere Docker local) |
