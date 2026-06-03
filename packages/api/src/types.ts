@@ -657,6 +657,8 @@ export interface PreSaleOrderItem {
   status: 'pending' | 'delivered'
   delivered_at: string | null
   created_at: string
+  /** Costo snapshot (ADR-015). Solo admin (null para gerente/cajero). Para utilidad real de preventas. */
+  cost?: number | null
   catalog: { id: number; product_name: string; image_path: string | null; status: PreSaleCatalogStatus | null; pickup_deadline: string | null } | null
 }
 

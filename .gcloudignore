@@ -1,0 +1,32 @@
+# Controla qué se sube a Cloud Build en `gcloud run deploy --source .`
+# (sintaxis tipo .gitignore). El Docker build instala deps fresco, así que
+# excluimos node_modules, vendor, builds y el repo móvil aparte.
+
+.git/
+.gitignore
+
+# Dependencias — Docker las instala dentro del build
+node_modules/
+backend/vendor/
+
+# App móvil — es su propio repo (tadaima-app-pos), NO parte del build backend/landing
+pos-app/
+
+# Respaldos y outputs de build
+backups/
+dist/
+landing/dist/
+.turbo/
+test-results/
+playwright-report/
+
+# Secretos y DB efímera (el backend usa env vars de Cloud Run, no .env del repo)
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+backend/database/database.sqlite*
+
+# Docs (no se necesitan en la imagen)
+*.md

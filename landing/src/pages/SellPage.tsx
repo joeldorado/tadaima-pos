@@ -23,6 +23,7 @@ import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, 
 import type { OpenSessionConflict } from "@tadaima/api";
 import type { CashSessionReport } from "@tadaima/api";
 import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
+import { CortesModal } from "@/components/cash/CortesModal";
 import { OpenSessionConflictModal } from "@/components/cash/OpenSessionConflictModal";
 import { useQueryClient } from "@tanstack/react-query";
 import { useProductsLightQuery, useProductsSearchQuery } from "@/hooks/queries/useProducts";
@@ -568,6 +569,7 @@ export function SellPage() {
   const [pendingMesaCloseId, setPendingMesaCloseId] = useState<string | null>(null);
   const [printNeverAsk, setPrintNeverAsk]           = useState(false);
   const [showHistorialModal, setShowHistorialModal] = useState(false);
+  const [showCortesModal, setShowCortesModal] = useState(false);
   // Historial del día vía React Query: cacheado + persistido en IndexedDB.
   // Apertura del modal instantánea con la última versión; background refetch
   // tras cada checkout/cancelación gracias a las invalidaciones.
@@ -3589,6 +3591,14 @@ export function SellPage() {
             <History size={13} />
             Historial
           </button>
+          <button
+            onClick={() => setShowCortesModal(true)}
+            className="h-full px-5 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-white/30 hover:text-white transition-colors border-r border-white/5"
+            title="Ver cortes de caja (según tu rol)"
+          >
+            <Clock size={13} />
+            Cortes
+          </button>
           {/* Botón 'Clientes' del top header oculto — redundante con el
               botón 'Cliente' del toolbar al lado de Preventas que ya cubre
               asignar cliente a la venta. Para buscar histórico de un cliente
@@ -6475,6 +6485,13 @@ export function SellPage() {
           onClose={() => setCashCloseSummary(null)}
         />
       )}
+
+      {/* Ventana de Cortes — vista rápida desde la Caja (acotada por rol en backend) */}
+      <CortesModal
+        open={showCortesModal}
+        onClose={() => setShowCortesModal(false)}
+        storeId={activeStore?.id}
+      />
 
       {/* ADR-016 Fase 3 — Modal de cancelación de ticket */}
       {cancelTarget && (

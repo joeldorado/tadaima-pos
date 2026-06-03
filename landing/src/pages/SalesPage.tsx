@@ -3,7 +3,7 @@ import {
   TrendingUp, DollarSign, ShoppingBag, Users, BarChart3, Loader2,
   CreditCard, CalendarDays, ChevronDown, X, ChevronRight,
   Package, Receipt, PackageX, ChevronUp, ImageOff, RotateCcw, AlertTriangle,
-  Store, Printer, User as UserIcon, FileText, Download, Bookmark,
+  Store, Printer, User as UserIcon, FileText, Download, Bookmark, FileSpreadsheet,
 } from "lucide-react";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -517,20 +517,28 @@ function SaleRow({
 // Resumen ejecutivo + desglose por método + preventas + caja para gerente/admin.
 // Reutiliza data ya cargada por SalesPage; no hace queries propias.
 
+// IVA sobre la comisión de terminal. En México la terminal cobra IVA (16%) sobre
+// su comisión; el gerente lo resta en su corte semanal para obtener la venta real
+// que le queda a la tienda. La tienda absorbe comisión + IVA (no se cobra al cliente).
+const IVA_COMISION_RATE = 0.16;
+
 interface DailyReport {
   subtotal: number; descuento: number; ventasNetas: number;
-  comisionTotal: number; netoDespuesComision: number;
+  comisionTotal: number; ivaComisionTotal: number; netoDespuesComision: number;
   ticketsCount: number; promedio: number;
-  methodsRows: Array<{ name: string; count: number; amount: number; commission: number }>;
+  methodsRows: Array<{ name: string; count: number; amount: number; commission: number; iva: number }>;
   tipoCambio: number | null;
   anticiposCobrados: number; anticiposCount: number;
   liquidaciones: number; liquidadasCount: number;
   totalPreventas: number;
+  anticiposRows: Array<{ code: string; cliente: string; cantidad: number; anticipo: number }>;
+  liquidacionesRows: Array<{ code: string; cliente: string; cantidad: number; venta: number; costo: number; utilidad: number; tieneCosto: boolean }>;
+  liqVentaTotal: number; liqCostoTotal: number; liqUtilidadTotal: number;
   apertura: number; entradas: number; salidas: number;
   esperado: number; declarado: number; descuadre: number;
   sesionesAbiertas: number; sesionesCerradas: number; sessionsCount: number;
   topProductsRows: Array<{ product_id: string; name: string; sku: string; units: number; revenue: number; tickets: number }>;
-  cashierRows: Array<{ user_id: number; name: string; tickets: number; revenue: number; commission: number; descuadre: number; hasOpenSession: boolean }>;
+  cashierRows: Array<{ user_id: number; name: string; tickets: number; revenue: number; commission: number; iva: number; descuadre: number; hasOpenSession: boolean }>;
   // G) Ganancia bruta — solo confiable cuando isAdmin (backend gate)
   costoTotal: number; gananciaBruta: number; margenPct: number;
   tieneDatosCosto: boolean; tieneItemsSinCosto: boolean;
@@ -614,6 +622,7 @@ function ReporteDelDia({
 
   const handlePrint = () => printDailyReport(report, fromDate, toDate, storeName, isAdmin);
   const handlePdf   = () => exportDailyReportPdf(report, fromDate, toDate, storeName, isAdmin);
+  const handleExcel = () => { void exportDailyReportXlsx(report, fromDate, toDate, storeName, isAdmin); };
 
   return (
     <div id="reporte-dia-print" className="space-y-4">
@@ -630,6 +639,14 @@ function ReporteDelDia({
             style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)", color: "var(--td-text-md)" }}
           >
             <Printer size={12} /> Imprimir
+          </button>
+          <button
+            onClick={handleExcel}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all hover:scale-[1.02]"
+            style={{ background: "var(--td-panel-bg)", border: "1px solid rgba(34,197,94,0.4)", color: "#22c55e" }}
+            title="Descargar el reporte en Excel (.xlsx)"
+          >
+            <FileSpreadsheet size={12} /> Excel
           </button>
           <button
             onClick={handlePdf}
@@ -650,7 +667,8 @@ function ReporteDelDia({
           <Kpi label="+ Anticipos/Liquidaciones preventa" value={fmt(report.totalPreventas)} hint={`${report.anticiposCount + report.liquidadasCount} folios`} />
           <Kpi label="Total cobrado"             value={fmt(report.ventasNetas + report.totalPreventas)} highlight />
           <Kpi label="Comisión terminal"         value={`- ${fmt(report.comisionTotal)}`} muted />
-          <Kpi label="Neto después comisión"     value={fmt(report.netoDespuesComision + report.totalPreventas)} highlight hint="incluye preventas" />
+          <Kpi label="IVA s/ comisión (16%)"     value={`- ${fmt(report.ivaComisionTotal)}`} muted />
+          <Kpi label="Neto después comisión + IVA" value={fmt(report.netoDespuesComision + report.totalPreventas)} highlight hint="incluye preventas" />
           <Kpi label="Tickets"                   value={String(report.ticketsCount)} />
           <Kpi label="Ticket promedio"           value={fmt(report.promedio)} />
           {report.tipoCambio != null && (
@@ -715,6 +733,7 @@ function ReporteDelDia({
                   <th className="text-right py-2 px-3"># Tx</th>
                   <th className="text-right py-2 px-3">Monto</th>
                   <th className="text-right py-2 px-3">Comisión</th>
+                  <th className="text-right py-2 px-3">IVA com.</th>
                   <th className="text-right py-2 px-3">Neto</th>
                 </tr>
               </thead>
@@ -727,7 +746,10 @@ function ReporteDelDia({
                     <td className="py-2 px-3 text-right" style={{ color: r.commission > 0 ? "#fbbf24" : "var(--td-text-lo)" }}>
                       {r.commission > 0 ? fmt(r.commission) : "—"}
                     </td>
-                    <td className="py-2 px-3 text-right font-bold" style={{ color: "var(--td-text-md)" }}>{fmt(r.amount - r.commission)}</td>
+                    <td className="py-2 px-3 text-right" style={{ color: r.iva > 0 ? "#fbbf24" : "var(--td-text-lo)" }}>
+                      {r.iva > 0 ? fmt(r.iva) : "—"}
+                    </td>
+                    <td className="py-2 px-3 text-right font-bold" style={{ color: "var(--td-text-md)" }}>{fmt(r.amount - r.commission - r.iva)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -743,8 +765,11 @@ function ReporteDelDia({
                   <td className="py-2 px-3 text-right font-black" style={{ color: "#fbbf24" }}>
                     {fmt(report.methodsRows.reduce((a, r) => a + r.commission, 0))}
                   </td>
+                  <td className="py-2 px-3 text-right font-black" style={{ color: "#fbbf24" }}>
+                    {fmt(report.methodsRows.reduce((a, r) => a + r.iva, 0))}
+                  </td>
                   <td className="py-2 px-3 text-right font-black" style={{ color: "var(--td-text-hi)" }}>
-                    {fmt(report.methodsRows.reduce((a, r) => a + (r.amount - r.commission), 0))}
+                    {fmt(report.methodsRows.reduce((a, r) => a + (r.amount - r.commission - r.iva), 0))}
                   </td>
                 </tr>
               </tfoot>
@@ -772,6 +797,87 @@ function ReporteDelDia({
             highlight
           />
         </div>
+
+        {/* Tabla detalle — Anticipos (apartado: el cliente deja un anticipo) */}
+        {report.anticiposRows.length > 0 && (
+          <div className="mt-5">
+            <p className="text-[9px] font-black uppercase tracking-widest mb-2" style={{ color: "var(--td-text-lo)" }}>Anticipos cobrados (apartado)</p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-[9px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>
+                    <th className="text-left py-2 px-3">Folio</th>
+                    <th className="text-left py-2 px-3">Cliente</th>
+                    <th className="text-right py-2 px-3">Artículos</th>
+                    <th className="text-right py-2 px-3">Anticipo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {report.anticiposRows.map(r => (
+                    <tr key={r.code} className="border-t" style={{ borderColor: "var(--td-panel-border)" }}>
+                      <td className="py-2 px-3 font-bold" style={{ color: "var(--td-text-hi)" }}>{r.code}</td>
+                      <td className="py-2 px-3" style={{ color: "var(--td-text-md)" }}>{r.cliente}</td>
+                      <td className="py-2 px-3 text-right" style={{ color: "var(--td-text-md)" }}>{r.cantidad}</td>
+                      <td className="py-2 px-3 text-right font-black" style={{ color: "var(--td-text-hi)" }}>{fmt(r.anticipo)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-2" style={{ borderColor: "var(--td-panel-border)" }}>
+                    <td className="py-2 px-3 text-[9px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }} colSpan={3}>Total anticipos</td>
+                    <td className="py-2 px-3 text-right font-black" style={{ color: "var(--td-text-hi)" }}>{fmt(report.anticiposCobrados)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Tabla detalle — Liquidaciones (vienen a pagar el resto). Utilidad real admin-only. */}
+        {report.liquidacionesRows.length > 0 && (
+          <div className="mt-5">
+            <p className="text-[9px] font-black uppercase tracking-widest mb-2" style={{ color: "var(--td-text-lo)" }}>Preventas liquidadas</p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-[9px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>
+                    <th className="text-left py-2 px-3">Folio</th>
+                    <th className="text-left py-2 px-3">Cliente</th>
+                    <th className="text-right py-2 px-3">Artículos</th>
+                    <th className="text-right py-2 px-3">Venta</th>
+                    {isAdmin && <th className="text-right py-2 px-3">Costo</th>}
+                    {isAdmin && <th className="text-right py-2 px-3">Utilidad</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {report.liquidacionesRows.map(r => (
+                    <tr key={r.code} className="border-t" style={{ borderColor: "var(--td-panel-border)" }}>
+                      <td className="py-2 px-3 font-bold" style={{ color: "var(--td-text-hi)" }}>{r.code}</td>
+                      <td className="py-2 px-3" style={{ color: "var(--td-text-md)" }}>{r.cliente}</td>
+                      <td className="py-2 px-3 text-right" style={{ color: "var(--td-text-md)" }}>{r.cantidad}</td>
+                      <td className="py-2 px-3 text-right font-black" style={{ color: "var(--td-text-hi)" }}>{fmt(r.venta)}</td>
+                      {isAdmin && <td className="py-2 px-3 text-right" style={{ color: "var(--td-text-md)" }}>{r.tieneCosto ? fmt(r.costo) : "—"}</td>}
+                      {isAdmin && <td className="py-2 px-3 text-right font-bold" style={{ color: r.utilidad >= 0 ? "#10b981" : "#DC2626" }}>{r.tieneCosto ? fmt(r.utilidad) : "—"}</td>}
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-2" style={{ borderColor: "var(--td-panel-border)" }}>
+                    <td className="py-2 px-3 text-[9px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }} colSpan={3}>Totales</td>
+                    <td className="py-2 px-3 text-right font-black" style={{ color: "var(--td-text-hi)" }}>{fmt(report.liqVentaTotal)}</td>
+                    {isAdmin && <td className="py-2 px-3 text-right font-black" style={{ color: "var(--td-text-md)" }}>{fmt(report.liqCostoTotal)}</td>}
+                    {isAdmin && <td className="py-2 px-3 text-right font-black" style={{ color: report.liqUtilidadTotal >= 0 ? "#10b981" : "#DC2626" }}>{fmt(report.liqUtilidadTotal)}</td>}
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+            {isAdmin && report.liquidacionesRows.some(r => !r.tieneCosto) && (
+              <p className="text-[10px] mt-2 px-3 py-2 rounded-lg" style={{ color: "#fbbf24", background: "rgba(251,191,36,0.06)", border: "1px solid rgba(251,191,36,0.2)" }}>
+                Algunas preventas sin costo registrado — la utilidad mostrada podría ser mayor a la real.
+              </p>
+            )}
+          </div>
+        )}
       </ReportSection>
 
       {/* D) Movimientos de caja */}
@@ -847,6 +953,7 @@ function ReporteDelDia({
                   <th className="text-right py-2 px-3">Tickets</th>
                   <th className="text-right py-2 px-3">Cobrado</th>
                   <th className="text-right py-2 px-3">Comisión</th>
+                  <th className="text-right py-2 px-3">IVA com.</th>
                   <th className="text-right py-2 px-3">Neto</th>
                   <th className="text-right py-2 px-3">Descuadre</th>
                 </tr>
@@ -865,7 +972,10 @@ function ReporteDelDia({
                     <td className="py-2 px-3 text-right" style={{ color: c.commission > 0 ? "#fbbf24" : "var(--td-text-lo)" }}>
                       {c.commission > 0 ? fmt(c.commission) : "—"}
                     </td>
-                    <td className="py-2 px-3 text-right font-bold" style={{ color: "var(--td-text-md)" }}>{fmt(c.revenue - c.commission)}</td>
+                    <td className="py-2 px-3 text-right" style={{ color: c.iva > 0 ? "#fbbf24" : "var(--td-text-lo)" }}>
+                      {c.iva > 0 ? fmt(c.iva) : "—"}
+                    </td>
+                    <td className="py-2 px-3 text-right font-bold" style={{ color: "var(--td-text-md)" }}>{fmt(c.revenue - c.commission - c.iva)}</td>
                     <td className="py-2 px-3 text-right font-bold" style={{
                       color: Math.abs(c.descuadre) < 0.01 ? "var(--td-text-lo)" : (c.descuadre < 0 ? "#DC2626" : "#10b981"),
                     }}>
@@ -886,8 +996,11 @@ function ReporteDelDia({
                   <td className="py-2 px-3 text-right font-black" style={{ color: "#fbbf24" }}>
                     {fmt(report.cashierRows.reduce((a, c) => a + c.commission, 0))}
                   </td>
+                  <td className="py-2 px-3 text-right font-black" style={{ color: "#fbbf24" }}>
+                    {fmt(report.cashierRows.reduce((a, c) => a + c.iva, 0))}
+                  </td>
                   <td className="py-2 px-3 text-right font-black" style={{ color: "var(--td-text-hi)" }}>
-                    {fmt(report.cashierRows.reduce((a, c) => a + (c.revenue - c.commission), 0))}
+                    {fmt(report.cashierRows.reduce((a, c) => a + (c.revenue - c.commission - c.iva), 0))}
                   </td>
                   <td className="py-2 px-3 text-right font-black" style={{ color: "var(--td-text-lo)" }}>
                     {fmt(report.cashierRows.reduce((a, c) => a + c.descuadre, 0))}
@@ -1042,7 +1155,8 @@ function printDailyReport(r: DailyReport, fromDate: string, toDate: string, stor
         <div class="kpi"><div class="kpi-label">+ Anticipos/Liquid. preventa</div><div class="kpi-value">${fmt(r.totalPreventas)}</div></div>
         <div class="kpi"><div class="kpi-label">Total cobrado</div><div class="kpi-value">${fmt(r.ventasNetas + r.totalPreventas)}</div></div>
         <div class="kpi"><div class="kpi-label">Comisión terminal</div><div class="kpi-value">- ${fmt(r.comisionTotal)}</div></div>
-        <div class="kpi"><div class="kpi-label">Neto después comisión</div><div class="kpi-value">${fmt(r.netoDespuesComision + r.totalPreventas)}</div></div>
+        <div class="kpi"><div class="kpi-label">IVA s/ comisión (16%)</div><div class="kpi-value">- ${fmt(r.ivaComisionTotal)}</div></div>
+        <div class="kpi"><div class="kpi-label">Neto después comisión + IVA</div><div class="kpi-value">${fmt(r.netoDespuesComision + r.totalPreventas)}</div></div>
         <div class="kpi"><div class="kpi-label">Tickets · Promedio</div><div class="kpi-value">${r.ticketsCount} · ${fmt(r.promedio)}</div></div>
         ${r.tipoCambio != null ? `<div class="kpi"><div class="kpi-label">Tipo de cambio</div><div class="kpi-value">$${r.tipoCambio.toFixed(2)} MXN/USD</div></div>` : ""}
       </div>
@@ -1060,10 +1174,10 @@ function printDailyReport(r: DailyReport, fromDate: string, toDate: string, stor
 
       <h2>B · Desglose por Método de Pago</h2>
       <table>
-        <thead><tr><th>Método</th><th class="right"># Tx</th><th class="right">Monto</th><th class="right">Comisión</th><th class="right">Neto</th></tr></thead>
+        <thead><tr><th>Método</th><th class="right"># Tx</th><th class="right">Monto</th><th class="right">Comisión</th><th class="right">IVA com.</th><th class="right">Neto</th></tr></thead>
         <tbody>
           ${r.methodsRows.map(m => `
-            <tr><td>${m.name}</td><td class="right">${m.count}</td><td class="right">${fmt(m.amount)}</td><td class="right">${m.commission > 0 ? fmt(m.commission) : "—"}</td><td class="right">${fmt(m.amount - m.commission)}</td></tr>
+            <tr><td>${m.name}</td><td class="right">${m.count}</td><td class="right">${fmt(m.amount)}</td><td class="right">${m.commission > 0 ? fmt(m.commission) : "—"}</td><td class="right">${m.iva > 0 ? fmt(m.iva) : "—"}</td><td class="right">${fmt(m.amount - m.commission - m.iva)}</td></tr>
           `).join("")}
         </tbody>
       </table>
@@ -1074,6 +1188,20 @@ function printDailyReport(r: DailyReport, fromDate: string, toDate: string, stor
         <div class="kpi"><div class="kpi-label">Liquidaciones · ${r.liquidadasCount} folios</div><div class="kpi-value">${fmt(r.liquidaciones)}</div></div>
         <div class="kpi"><div class="kpi-label">Total recibido</div><div class="kpi-value">${fmt(r.totalPreventas)}</div></div>
       </div>
+      ${r.anticiposRows.length > 0 ? `
+      <table>
+        <thead><tr><th>Anticipos · Folio</th><th>Cliente</th><th class="right">Arts.</th><th class="right">Anticipo</th></tr></thead>
+        <tbody>
+          ${r.anticiposRows.map(a => `<tr><td>${a.code}</td><td>${a.cliente}</td><td class="right">${a.cantidad}</td><td class="right">${fmt(a.anticipo)}</td></tr>`).join("")}
+        </tbody>
+      </table>` : ""}
+      ${r.liquidacionesRows.length > 0 ? `
+      <table>
+        <thead><tr><th>Liquidadas · Folio</th><th>Cliente</th><th class="right">Arts.</th><th class="right">Venta</th>${isAdmin ? '<th class="right">Costo</th><th class="right">Utilidad</th>' : ""}</tr></thead>
+        <tbody>
+          ${r.liquidacionesRows.map(l => `<tr><td>${l.code}</td><td>${l.cliente}</td><td class="right">${l.cantidad}</td><td class="right">${fmt(l.venta)}</td>${isAdmin ? `<td class="right">${l.tieneCosto ? fmt(l.costo) : "—"}</td><td class="right">${l.tieneCosto ? fmt(l.utilidad) : "—"}</td>` : ""}</tr>`).join("")}
+        </tbody>
+      </table>` : ""}
 
       <h2>D · Movimientos de Caja · ${r.sessionsCount} sesión${r.sessionsCount === 1 ? "" : "es"}</h2>
       <div class="grid">
@@ -1097,7 +1225,7 @@ function printDailyReport(r: DailyReport, fromDate: string, toDate: string, stor
 
       <h2>F · Cajeros del Periodo</h2>
       <table>
-        <thead><tr><th>Cajero</th><th class="right">Tickets</th><th class="right">Cobrado</th><th class="right">Comisión</th><th class="right">Neto</th><th class="right">Descuadre</th></tr></thead>
+        <thead><tr><th>Cajero</th><th class="right">Tickets</th><th class="right">Cobrado</th><th class="right">Comisión</th><th class="right">IVA com.</th><th class="right">Neto</th><th class="right">Descuadre</th></tr></thead>
         <tbody>
           ${r.cashierRows.map(c => `
             <tr>
@@ -1105,7 +1233,8 @@ function printDailyReport(r: DailyReport, fromDate: string, toDate: string, stor
               <td class="right">${c.tickets}</td>
               <td class="right">${fmt(c.revenue)}</td>
               <td class="right">${c.commission > 0 ? fmt(c.commission) : "—"}</td>
-              <td class="right">${fmt(c.revenue - c.commission)}</td>
+              <td class="right">${c.iva > 0 ? fmt(c.iva) : "—"}</td>
+              <td class="right">${fmt(c.revenue - c.commission - c.iva)}</td>
               <td class="right">${c.descuadre === 0 ? "—" : `${c.descuadre >= 0 ? "+" : ""}${fmt(c.descuadre)}`}</td>
             </tr>
           `).join("")}
@@ -1151,7 +1280,8 @@ function exportDailyReportPdf(r: DailyReport, fromDate: string, toDate: string, 
       ["+ Anticipos/Liquid. preventa", fmt(r.totalPreventas)],
       ["Total cobrado",             fmt(r.ventasNetas + r.totalPreventas)],
       ["Comisión terminal",         `- ${fmt(r.comisionTotal)}`],
-      ["Neto después comisión",     fmt(r.netoDespuesComision + r.totalPreventas)],
+      ["IVA s/ comisión (16%)",     `- ${fmt(r.ivaComisionTotal)}`],
+      ["Neto después comisión + IVA", fmt(r.netoDespuesComision + r.totalPreventas)],
       ["Tickets · Promedio",        `${r.ticketsCount} · ${fmt(r.promedio)}`],
       ...(r.tipoCambio != null ? [["Tipo de cambio", `$${r.tipoCambio.toFixed(2)} MXN/USD`]] : []),
     ],
@@ -1178,18 +1308,19 @@ function exportDailyReportPdf(r: DailyReport, fromDate: string, toDate: string, 
   }
 
   autoTable(doc, {
-    head: [["B · Método", "# Tx", "Monto", "Comisión", "Neto"]],
+    head: [["B · Método", "# Tx", "Monto", "Comisión", "IVA com.", "Neto"]],
     body: r.methodsRows.map(m => [
       m.name,
       String(m.count),
       fmt(m.amount),
       m.commission > 0 ? fmt(m.commission) : "—",
-      fmt(m.amount - m.commission),
+      m.iva > 0 ? fmt(m.iva) : "—",
+      fmt(m.amount - m.commission - m.iva),
     ]),
     theme: "striped",
     headStyles: { fillColor: [204, 34, 0] },
     styles: { fontSize: 10 },
-    columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right", fontStyle: "bold" } },
+    columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right", fontStyle: "bold" } },
   });
 
   autoTable(doc, {
@@ -1204,6 +1335,34 @@ function exportDailyReportPdf(r: DailyReport, fromDate: string, toDate: string, 
     styles: { fontSize: 10 },
     columnStyles: { 1: { halign: "right", fontStyle: "bold" } },
   });
+
+  if (r.anticiposRows.length > 0) {
+    autoTable(doc, {
+      head: [["Anticipos · Folio", "Cliente", "Arts.", "Anticipo"]],
+      body: r.anticiposRows.map(a => [a.code, a.cliente, String(a.cantidad), fmt(a.anticipo)]),
+      theme: "striped",
+      headStyles: { fillColor: [204, 34, 0] },
+      styles: { fontSize: 9 },
+      columnStyles: { 2: { halign: "right" }, 3: { halign: "right", fontStyle: "bold" } },
+    });
+  }
+
+  if (r.liquidacionesRows.length > 0) {
+    autoTable(doc, {
+      head: [isAdmin
+        ? ["Liquidadas · Folio", "Cliente", "Arts.", "Venta", "Costo", "Utilidad"]
+        : ["Liquidadas · Folio", "Cliente", "Arts.", "Venta"]],
+      body: r.liquidacionesRows.map(l => isAdmin
+        ? [l.code, l.cliente, String(l.cantidad), fmt(l.venta), l.tieneCosto ? fmt(l.costo) : "—", l.tieneCosto ? fmt(l.utilidad) : "—"]
+        : [l.code, l.cliente, String(l.cantidad), fmt(l.venta)]),
+      theme: "striped",
+      headStyles: { fillColor: [204, 34, 0] },
+      styles: { fontSize: 9 },
+      columnStyles: isAdmin
+        ? { 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right", fontStyle: "bold" } }
+        : { 2: { halign: "right" }, 3: { halign: "right", fontStyle: "bold" } },
+    });
+  }
 
   autoTable(doc, {
     head: [[`D · Movimientos de Caja (${r.sessionsCount} sesión${r.sessionsCount === 1 ? "" : "es"})`, ""]],
@@ -1236,22 +1395,170 @@ function exportDailyReportPdf(r: DailyReport, fromDate: string, toDate: string, 
   });
 
   autoTable(doc, {
-    head: [["F · Cajero", "Tickets", "Cobrado", "Comisión", "Neto", "Descuadre"]],
+    head: [["F · Cajero", "Tickets", "Cobrado", "Comisión", "IVA com.", "Neto", "Descuadre"]],
     body: r.cashierRows.map(c => [
       `${c.name}${c.hasOpenSession ? " (caja abierta)" : ""}`,
       String(c.tickets),
       fmt(c.revenue),
       c.commission > 0 ? fmt(c.commission) : "—",
-      fmt(c.revenue - c.commission),
+      c.iva > 0 ? fmt(c.iva) : "—",
+      fmt(c.revenue - c.commission - c.iva),
       c.descuadre === 0 ? "—" : `${c.descuadre >= 0 ? "+" : ""}${fmt(c.descuadre)}`,
     ]),
     theme: "striped",
     headStyles: { fillColor: [204, 34, 0] },
     styles: { fontSize: 9 },
-    columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right", fontStyle: "bold" }, 5: { halign: "right" } },
+    columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right", fontStyle: "bold" }, 6: { halign: "right" } },
   });
 
   doc.save(`reporte-${fromDate}${isSameDay ? "" : "_" + toDate}.pdf`);
+}
+
+// Export a Excel (.xlsx) — mismo contenido que el PDF, en tablas nativas de Excel
+// para que el gerente lo manipule como su hoja de corte. exceljs se carga con
+// import dinámico para no pesar en el bundle inicial (solo al exportar).
+async function exportDailyReportXlsx(r: DailyReport, fromDate: string, toDate: string, storeName: string, isAdmin: boolean): Promise<void> {
+  const mod = await import("exceljs");
+  const ExcelJS = ((mod as unknown as { default?: typeof mod }).default ?? mod);
+  const MONEY = '"$"#,##0.00';
+
+  const isSameDay = fromDate === toDate;
+  const periodLabel = isSameDay
+    ? new Date(fromDate + "T12:00").toLocaleDateString("es-MX", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })
+    : `${fromDate} → ${toDate}`;
+
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("Reporte del Día");
+  ws.columns = [{ width: 36 }, { width: 14 }, { width: 14 }, { width: 14 }, { width: 14 }, { width: 14 }, { width: 14 }];
+
+  const t = ws.addRow([`Reporte del Día · ${storeName}`]);
+  t.font = { bold: true, size: 14 };
+  ws.addRow([periodLabel]);
+  ws.addRow([]);
+
+  type XRow = ReturnType<typeof ws.addRow>;
+  const section = (title: string): void => {
+    const row = ws.addRow([title]);
+    row.font = { bold: true, size: 12, color: { argb: "FFCC2200" } };
+  };
+  const header = (cells: string[]): void => {
+    const row = ws.addRow(cells);
+    row.font = { bold: true };
+  };
+  const money = (row: XRow, ...cols: number[]): void => {
+    cols.forEach(c => { row.getCell(c).numFmt = MONEY; });
+  };
+  const kv = (label: string, value: number, asMoney = true): void => {
+    const row = ws.addRow([label, value]);
+    if (asMoney) row.getCell(2).numFmt = MONEY;
+  };
+
+  // A · Resumen
+  section("A · Resumen Ejecutivo");
+  kv("Ventas brutas (productos)", r.subtotal);
+  kv("Descuentos", -r.descuento);
+  kv("Ventas netas (productos)", r.ventasNetas);
+  kv("+ Anticipos/Liquidaciones preventa", r.totalPreventas);
+  kv("Total cobrado", r.ventasNetas + r.totalPreventas);
+  kv("Comisión terminal", -r.comisionTotal);
+  kv("IVA s/ comisión (16%)", -r.ivaComisionTotal);
+  kv("Neto después comisión + IVA", r.netoDespuesComision + r.totalPreventas);
+  kv("Tickets", r.ticketsCount, false);
+  kv("Ticket promedio", r.promedio);
+  if (r.tipoCambio != null) kv("Tipo de cambio (MXN/USD)", r.tipoCambio, false);
+  ws.addRow([]);
+
+  // Ganancia bruta (solo admin)
+  if (isAdmin && r.tieneDatosCosto) {
+    section("Ganancia Bruta · Solo Admin");
+    kv("Ingreso bruto", r.ventasNetas);
+    kv("Costo de venta", -r.costoTotal);
+    kv("Ganancia bruta", r.gananciaBruta);
+    kv("Margen %", Number(r.margenPct.toFixed(1)), false);
+    ws.addRow([]);
+  }
+
+  // B · Método de pago
+  section("B · Desglose por Método de Pago");
+  header(["Método", "# Tx", "Monto", "Comisión", "IVA com.", "Neto"]);
+  r.methodsRows.forEach(m => {
+    const row = ws.addRow([m.name, m.count, m.amount, m.commission, m.iva, m.amount - m.commission - m.iva]);
+    money(row, 3, 4, 5, 6);
+  });
+  ws.addRow([]);
+
+  // C · Preventas
+  section("C · Preventas");
+  kv(`Anticipos cobrados (${r.anticiposCount} folios)`, r.anticiposCobrados);
+  kv(`Liquidaciones (${r.liquidadasCount} folios)`, r.liquidaciones);
+  kv("Total recibido", r.totalPreventas);
+  ws.addRow([]);
+  if (r.anticiposRows.length > 0) {
+    header(["Anticipos · Folio", "Cliente", "Artículos", "Anticipo"]);
+    r.anticiposRows.forEach(a => {
+      const row = ws.addRow([a.code, a.cliente, a.cantidad, a.anticipo]);
+      money(row, 4);
+    });
+    ws.addRow([]);
+  }
+  if (r.liquidacionesRows.length > 0) {
+    header(isAdmin
+      ? ["Liquidadas · Folio", "Cliente", "Artículos", "Venta", "Costo", "Utilidad"]
+      : ["Liquidadas · Folio", "Cliente", "Artículos", "Venta"]);
+    r.liquidacionesRows.forEach(l => {
+      const row = isAdmin
+        ? ws.addRow([l.code, l.cliente, l.cantidad, l.venta, l.tieneCosto ? l.costo : 0, l.tieneCosto ? l.utilidad : 0])
+        : ws.addRow([l.code, l.cliente, l.cantidad, l.venta]);
+      if (isAdmin) money(row, 4, 5, 6); else money(row, 4);
+    });
+    ws.addRow([]);
+  }
+
+  // D · Movimientos de caja
+  section(`D · Movimientos de Caja (${r.sessionsCount} sesión${r.sessionsCount === 1 ? "" : "es"})`);
+  kv("Apertura inicial", r.apertura);
+  kv("Entradas", r.entradas);
+  kv("Salidas", -r.salidas);
+  kv("Esperado", r.esperado);
+  kv("Declarado", r.declarado);
+  kv("Descuadre", r.descuadre);
+  ws.addRow([]);
+
+  // E · Top productos
+  section("E · Top Productos");
+  header(["#", "Producto", "SKU", "Tickets", "Uds", "Ingreso"]);
+  r.topProductsRows.forEach((p, idx) => {
+    const row = ws.addRow([idx + 1, p.name, p.sku || "—", p.tickets, p.units, p.revenue]);
+    money(row, 6);
+  });
+  ws.addRow([]);
+
+  // F · Cajeros
+  section("F · Cajeros del Periodo");
+  header(["Cajero", "Tickets", "Cobrado", "Comisión", "IVA com.", "Neto", "Descuadre"]);
+  r.cashierRows.forEach(c => {
+    const row = ws.addRow([
+      c.name + (c.hasOpenSession ? " (caja abierta)" : ""),
+      c.tickets, c.revenue, c.commission, c.iva, c.revenue - c.commission - c.iva, c.descuadre,
+    ]);
+    money(row, 3, 4, 5, 6, 7);
+  });
+  ws.addRow([]);
+
+  // H · Cancelaciones
+  section("H · Cancelaciones");
+  kv("Eventos", r.cancelacionesCount, false);
+  kv("Monto cancelado", r.montoCanceladoTotal);
+  kv("Ventas netas reales", r.ventasNetasReales);
+
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf as BlobPart], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `reporte-${fromDate}${isSameDay ? "" : "_" + toDate}.xlsx`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 // ─── Componente principal ─────────────────────────────────────────────────────
@@ -1501,7 +1808,8 @@ export function SalesPage() {
     const descuento    = filteredSales.reduce((a, s) => a + (s.discount ?? 0), 0);
     const ventasNetas  = filteredSales.reduce((a, s) => a + s.total, 0);
     const comisionTotal = filteredSales.reduce((a, s) => a + (s.commission_amount ?? 0), 0);
-    const netoDespuesComision = ventasNetas - comisionTotal;
+    const ivaComisionTotal = comisionTotal * IVA_COMISION_RATE;
+    const netoDespuesComision = ventasNetas - comisionTotal - ivaComisionTotal;
     const ticketsCount = filteredSales.length;
     const promedio     = ticketsCount > 0 ? ventasNetas / ticketsCount : 0;
 
@@ -1519,7 +1827,7 @@ export function SalesPage() {
       });
     });
     const methodsRows = Array.from(byMethod.entries())
-      .map(([name, b]) => ({ name, ...b }))
+      .map(([name, b]) => ({ name, ...b, iva: b.commission * IVA_COMISION_RATE }))
       .sort((a, b) => b.amount - a.amount);
 
     // C) Preventas
@@ -1534,6 +1842,41 @@ export function SalesPage() {
       .reduce((a, p) => a + (p.paid_amount ?? 0), 0);
     const liquidadasCount = filteredPreSales.filter(p => p.status === "delivered").length;
     const totalPreventas = anticiposCobrados + liquidaciones;
+
+    // Detalle por folio (tablas como el corte del gerente). Utilidad REAL =
+    // venta − costo (cost snapshot ADR-015, admin-gated). cantidad = suma de items.
+    const qtyOf = (p: PreSaleOrder): number => (p.items ?? []).reduce((a, it) => a + (it.quantity ?? 0), 0);
+    const anticiposRows = filteredPreSales
+      .filter(p => p.status === "pending" || p.status === "ready")
+      .map(p => ({
+        code: p.code,
+        cliente: p.customer?.name ?? "—",
+        cantidad: qtyOf(p),
+        anticipo: p.paid_amount ?? 0,
+      }));
+    const liquidacionesRows = filteredPreSales
+      .filter(p => p.status === "delivered")
+      .map(p => {
+        const items = p.items ?? [];
+        const venta = p.total ?? 0;
+        let costo = 0;
+        let tieneCosto = false;
+        items.forEach(it => {
+          if (it.cost != null) { costo += it.cost * (it.quantity ?? 0); tieneCosto = true; }
+        });
+        return {
+          code: p.code,
+          cliente: p.customer?.name ?? "—",
+          cantidad: qtyOf(p),
+          venta,
+          costo,
+          utilidad: venta - costo,
+          tieneCosto,
+        };
+      });
+    const liqVentaTotal = liquidacionesRows.reduce((a, r) => a + r.venta, 0);
+    const liqCostoTotal = liquidacionesRows.reduce((a, r) => a + r.costo, 0);
+    const liqUtilidadTotal = liqVentaTotal - liqCostoTotal;
 
     // D) Movimientos de caja — suma de sesiones del rango (closed o open)
     const sessions: CashSessionReport[] = cashReportQuery.data?.sessions ?? [];
@@ -1597,7 +1940,7 @@ export function SalesPage() {
     // sesiones de caja del rango para el descuadre por cajero.
     type CashierRow = {
       user_id: number; name: string;
-      tickets: number; revenue: number; commission: number;
+      tickets: number; revenue: number; commission: number; iva: number;
       descuadre: number; hasOpenSession: boolean;
     };
     const cashierMap = new Map<number, CashierRow>();
@@ -1606,7 +1949,7 @@ export function SalesPage() {
       const row = cashierMap.get(s.user_id) ?? {
         user_id: s.user_id,
         name: s.user?.name ?? `Usuario #${s.user_id}`,
-        tickets: 0, revenue: 0, commission: 0, descuadre: 0, hasOpenSession: false,
+        tickets: 0, revenue: 0, commission: 0, iva: 0, descuadre: 0, hasOpenSession: false,
       };
       row.tickets    += 1;
       row.revenue    += s.total;
@@ -1623,6 +1966,7 @@ export function SalesPage() {
       if (sess.status === "open") row.hasOpenSession = true;
     });
     const cashierRows: CashierRow[] = Array.from(cashierMap.values())
+      .map(r => ({ ...r, iva: r.commission * IVA_COMISION_RATE }))
       .sort((a, b) => b.revenue - a.revenue);
 
     // H) Cancelaciones (ADR-016 Fase 1) — solo visibilidad por ahora.
@@ -1638,7 +1982,7 @@ export function SalesPage() {
 
     return {
       // A
-      subtotal, descuento, ventasNetas, comisionTotal, netoDespuesComision,
+      subtotal, descuento, ventasNetas, comisionTotal, ivaComisionTotal, netoDespuesComision,
       ticketsCount, promedio,
       // B
       methodsRows,
@@ -1647,6 +1991,8 @@ export function SalesPage() {
       anticiposCobrados, anticiposCount,
       liquidaciones, liquidadasCount,
       totalPreventas,
+      anticiposRows, liquidacionesRows,
+      liqVentaTotal, liqCostoTotal, liqUtilidadTotal,
       // D
       apertura, entradas, salidas, esperado, declarado, descuadre,
       sesionesAbiertas, sesionesCerradas, sessionsCount: sessions.length,

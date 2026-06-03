@@ -21,6 +21,13 @@ class PreSaleOrderItemResource extends JsonResource
             'delivered_at'        => $this->delivered_at,
             'created_at'          => $this->created_at,
 
+            // cost snapshot (ADR-015) — admin-only, igual que SaleItemResource.
+            // Permite calcular utilidad real de preventas en el Reporte del Día.
+            // Gerente/cajero reciben null (no ven margen).
+            'cost' => ($request->user()?->hasRole(['admin', 'super_admin', 'owner', 'dueño']) ?? false) && $this->cost !== null
+                ? (float) $this->cost
+                : null,
+
             'catalog' => $this->when($this->relationLoaded('catalog'), fn () => [
                 'id'             => $this->catalog?->id,
                 'product_name'   => $this->catalog?->product_name,
