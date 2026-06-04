@@ -104,6 +104,36 @@ class QABugFixesTest extends TestCase
             ->assertJsonFragment(['store_id' => $storeId, 'type' => 'store']);
     }
 
+    public function test_backfill_migration_creates_warehouse_for_legacy_stores(): void
+    {
+        // Bug QA 2026-06-03: las tiendas creadas por UI ANTES del fix quedaron sin
+        // su almacén type='store' → invisibles en alta de producto. La migración
+        // 2026_06_03_000001 las rellena. Aquí simulamos una tienda legacy (sin
+        // bodega) y corremos la migración de backfill.
+        $legacy = Store::create(['company_id' => $this->company->id, 'name' => 'Tienda Legacy']);
+        DB::table('warehouses')->where('store_id', $legacy->id)->delete();
+
+        $this->assertDatabaseMissing('warehouses', ['store_id' => $legacy->id, 'type' => 'store']);
+
+        $migration = require database_path('migrations/2026_06_03_000001_backfill_missing_store_warehouses.php');
+        $migration->up();
+
+        $this->assertDatabaseHas('warehouses', [
+            'store_id'   => $legacy->id,
+            'company_id' => $this->company->id,
+            'type'       => 'store',
+            'name'       => 'Tienda Legacy',
+            'active'     => true,
+        ]);
+
+        // Idempotente: correrla de nuevo no duplica la bodega.
+        $migration->up();
+        $this->assertEquals(
+            1,
+            DB::table('warehouses')->where('store_id', $legacy->id)->where('type', 'store')->count(),
+        );
+    }
+
     public function test_bug1_create_store_accepts_explicit_company_id(): void
     {
         $response = $this->actingAs($this->user, 'sanctum')
