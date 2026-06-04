@@ -9,8 +9,10 @@ use App\Http\Requests\UpdateStoreRequest;
 use App\Http\Resources\PaymentMethodResource;
 use App\Http\Resources\StoreResource;
 use App\Models\Store;
+use App\Models\Warehouse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class StoreController extends Controller
 {
@@ -43,7 +45,24 @@ class StoreController extends Controller
             return $this->error('No se pudo determinar la empresa para crear la tienda.', 422);
         }
 
-        $store = Store::create($data);
+        $store = DB::transaction(function () use ($data) {
+            $store = Store::create($data);
+
+            // Toda tienda necesita su almacén `type='store'` para poder recibir
+            // inventario. El seeder ya lo hace por cada tienda; al crear desde la
+            // UI hay que replicarlo o la tienda nunca aparece en el selector de
+            // alta de producto (lista warehouses, no stores). Bug QA 2026-06-03.
+            Warehouse::create([
+                'company_id' => $store->company_id,
+                'store_id'   => $store->id,
+                'name'       => $store->name,
+                'type'       => 'store',
+                'active'     => true,
+            ]);
+
+            return $store;
+        });
+
         $store->refresh()->load(['company', 'manager']);
 
         return $this->success(new StoreResource($store), 'Tienda creada.', 201);

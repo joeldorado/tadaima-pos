@@ -148,6 +148,16 @@
   color: rgba(20, 20, 50, 0.85);
 }
 .glass-input::placeholder { color: rgba(80, 80, 120, 0.45); }
+
+/* ── Native <select> dropdown options ───────────────────────────────────────── */
+/* El menú nativo del SO pinta los <option> con fondo blanco; sin esto heredan
+   el texto claro del input (--td-input-text) → letra blanca sobre blanco = invisible. */
+select option,
+select optgroup {
+  background: var(--td-popup-bg);
+  color: var(--td-text-hi);
+}
+
 .glass-input:focus {
   outline: none;
   border-color: rgba(45, 212, 166, 0.7);

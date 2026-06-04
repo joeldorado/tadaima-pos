@@ -29,10 +29,10 @@ class UserController extends Controller
         $threshold = now()->subMinutes(2);
 
         $query = User::query()
-            // Eager-load roles para evitar N+1 (uno por user al serializar). Spatie
-            // expone la relación `roles` desde `HasRoles`; sin esto, cada user en
-            // la respuesta dispara una SELECT extra cross-region (~30ms cada una).
-            ->with(['store:id,name', 'roles:id,name'])
+            // Nota: `roles` es un accessor (getRolesAttribute), NO una relación
+            // Eloquent — no se puede eager-load con `with('roles')` o lanza
+            // RelationNotFoundException. Solo cargamos la relación real `store`.
+            ->with(['store:id,name'])
             ->where('active', true)
             ->where('last_seen_at', '>=', $threshold);
 
@@ -159,26 +159,30 @@ class UserController extends Controller
     /**
      * POST /users/{user}/roles
      * Body: { role_id: int }
+     *
+     * Sincroniza el rol: borra los roles previos del usuario y asigna el nuevo.
+     * El form de admin sólo permite un rol a la vez, así que reemplazar (no
+     * acumular) es lo correcto — antes el INSERT idempotente dejaba al usuario
+     * con el rol viejo + el nuevo al cambiarlo (p. ej. admin + cajero).
      */
     public function assignRole(Request $request, User $user): JsonResponse
     {
         $request->validate(['role_id' => ['required', 'integer', 'exists:roles,id']]);
 
-        $exists = DB::table('model_has_roles')
-            ->where('role_id',    $request->role_id)
-            ->where('model_type', User::class)
-            ->where('model_id',   $user->id)
-            ->exists();
+        DB::transaction(function () use ($request, $user) {
+            DB::table('model_has_roles')
+                ->where('model_type', User::class)
+                ->where('model_id',   $user->id)
+                ->delete();
 
-        if (! $exists) {
             DB::table('model_has_roles')->insert([
                 'role_id'    => $request->role_id,
                 'model_type' => User::class,
                 'model_id'   => $user->id,
             ]);
-        }
+        });
 
-        return $this->success(['roles' => $user->roles], 'Rol asignado.');
+        return $this->success(['roles' => $user->fresh()->roles], 'Rol asignado.');
     }
 
     /**

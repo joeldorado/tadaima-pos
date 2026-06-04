@@ -75,6 +75,35 @@ class QABugFixesTest extends TestCase
         ]);
     }
 
+    public function test_create_store_auto_creates_default_store_warehouse(): void
+    {
+        // Bug QA 2026-06-03: crear una tienda por UI no creaba su almacén, así
+        // que la tienda nueva nunca aparecía en el selector de alta de producto
+        // (lista warehouses, no stores). Ahora se crea el warehouse type='store'.
+        $response = $this->actingAs($this->user, 'sanctum')
+            ->postJson('/api/v1/stores', [
+                'name'   => 'Tienda Otay',
+                'active' => true,
+            ]);
+
+        $response->assertCreated();
+        $storeId = $response->json('data.id');
+
+        $this->assertDatabaseHas('warehouses', [
+            'store_id'   => $storeId,
+            'company_id' => $this->company->id,
+            'type'       => 'store',
+            'name'       => 'Tienda Otay',
+            'active'     => true,
+        ]);
+
+        // El nuevo warehouse aparece en GET /warehouses (lo que llena el selector).
+        $this->actingAs($this->user, 'sanctum')
+            ->getJson('/api/v1/warehouses?active=true')
+            ->assertOk()
+            ->assertJsonFragment(['store_id' => $storeId, 'type' => 'store']);
+    }
+
     public function test_bug1_create_store_accepts_explicit_company_id(): void
     {
         $response = $this->actingAs($this->user, 'sanctum')

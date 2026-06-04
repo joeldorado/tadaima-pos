@@ -182,7 +182,13 @@ function TabSucursales() {
     if (storesQuery.error) toast.error("Error al cargar sucursales");
   }, [storesQuery.error]);
 
-  const invalidateStores = () => queryClient.invalidateQueries({ queryKey: queryKeys.stores.all });
+  const invalidateStores = () => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.stores.all });
+    // Crear una tienda también crea su almacén `type='store'` en el backend;
+    // refrescar warehouses para que la tienda aparezca de inmediato en el
+    // selector de alta de producto (que lista bodegas, no tiendas).
+    queryClient.invalidateQueries({ queryKey: ['warehouses'] });
+  };
 
   const save = async () => {
     const d = modal.data;
