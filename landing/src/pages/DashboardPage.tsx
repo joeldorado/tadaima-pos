@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useTodayLocal, daysAgoLocal, getTodayLocal } from "@/lib/date";
+import { useTodayLocal, daysAgoLocal, getTodayLocal, BUSINESS_TZ } from "@/lib/date";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@tadaima/auth";
 import { useActiveStore } from "@/contexts/StoreContext";
@@ -48,7 +48,7 @@ function timeAgo(iso: string | null): string {
   if (minutes < 60)   return `hace ${minutes}m`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24)     return `hace ${hours}h`;
-  return new Date(iso).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" });
+  return new Date(iso).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short", timeZone: BUSINESS_TZ });
 }
 
 // ─── KPI state ────────────────────────────────────────────────────────────────
@@ -507,8 +507,8 @@ export function DashboardPage() {
                               #{s.id} · {s.register.name}
                             </p>
                             <p style={{ margin: "2px 0 0", fontSize: 10, color: "var(--td-text-ghost)" }}>
-                              {new Date(s.opened_at).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" })}
-                              {s.closed_at && ` → ${new Date(s.closed_at).toLocaleString("es-MX", { timeStyle: "short" })}`}
+                              {new Date(s.opened_at).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short", timeZone: BUSINESS_TZ })}
+                              {s.closed_at && ` → ${new Date(s.closed_at).toLocaleString("es-MX", { timeStyle: "short", timeZone: BUSINESS_TZ })}`}
                               {" · "}{s.sales_count} ventas
                             </p>
                           </div>
@@ -902,7 +902,7 @@ export function DashboardPage() {
                             <Clock size={10} className="text-white/30" />
                             <span className="text-[10px] font-semibold text-white/40">
                               {hasOpenCash
-                                ? `Abrió caja ${new Date(openSession.opened_at).toLocaleTimeString("es-MX", { timeStyle: "short" })}`
+                                ? `Abrió caja ${new Date(openSession.opened_at).toLocaleTimeString("es-MX", { timeStyle: "short", timeZone: BUSINESS_TZ })}`
                                 : timeAgo(u.last_seen_at)}
                             </span>
                           </div>
@@ -1013,8 +1013,8 @@ export function DashboardPage() {
                             {s.user.name}
                           </p>
                           <p style={{ margin: "2px 0 0", fontSize: 10, color: "var(--td-text-ghost)" }}>
-                            {new Date(s.opened_at).toLocaleTimeString("es-MX", { timeStyle: "short" })}
-                            {s.closed_at && ` → ${new Date(s.closed_at).toLocaleTimeString("es-MX", { timeStyle: "short" })}`}
+                            {new Date(s.opened_at).toLocaleTimeString("es-MX", { timeStyle: "short", timeZone: BUSINESS_TZ })}
+                            {s.closed_at && ` → ${new Date(s.closed_at).toLocaleTimeString("es-MX", { timeStyle: "short", timeZone: BUSINESS_TZ })}`}
                             {" · "}{s.sales_count} ventas
                           </p>
                         </div>

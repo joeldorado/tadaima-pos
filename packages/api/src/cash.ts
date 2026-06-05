@@ -88,10 +88,14 @@ export interface OpenSessionConflict {
  * Devuelve `{ok: true, session}` en éxito o `{ok: false, conflict}` en 409.
  * Cualquier otro error sigue tirando excepción.
  */
-export async function openSession(registerId: number, openingCash: number): Promise<OpenSessionResult> {
+export async function openSession(
+  target: { storeId?: number; registerId?: number },
+  openingCash: number,
+): Promise<OpenSessionResult> {
   try {
     const response = await apiClient.post<CashSession>('/cash/open', {
-      register_id: registerId,
+      ...(target.registerId ? { register_id: target.registerId } : {}),
+      ...(target.storeId ? { store_id: target.storeId } : {}),
       opening_cash: openingCash,
     })
     return { ok: true, session: response.data }

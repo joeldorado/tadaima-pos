@@ -23,11 +23,19 @@ class CashRegisterService
      *    movimientos y cierre). Así un cajero, un gerente y el admin pueden
      *    vender en paralelo en la misma tienda sin bloquearse entre sí.
      *
+     * La tienda se resuelve por `store_id` (lo que la UI siempre conoce) o,
+     * por compatibilidad, deduciéndola de un `register_id` existente. Esto
+     * rompe el deadlock huevo-gallina: una tienda recién creada NO tiene caja
+     * todavía (el seeder de prod no las crea, y `StoreController::store` solo
+     * crea el warehouse), así que abrir por `register_id` era imposible —
+     * nadie podía abrir caja en una tienda nueva. Con `store_id` la caja
+     * personal se crea aquí mismo (`firstOrCreate`).
+     *
      * @throws \DomainException
      */
-    public function open(int $registerId, float $openingCash, int $userId): CashRegisterSession
+    public function open(?int $registerId, float $openingCash, int $userId, ?int $storeId = null): CashRegisterSession
     {
-        return DB::transaction(function () use ($registerId, $openingCash, $userId) {
+        return DB::transaction(function () use ($registerId, $openingCash, $userId, $storeId) {
             // Verificar que el usuario no tiene sesión abierta. Si la tiene,
             // devolvemos info estructurada para que el frontend ofrezca
             // "reanudar" (misma caja) o "cerrar y abrir nueva" (otra caja).
@@ -44,23 +52,32 @@ class CashRegisterService
                 );
             }
 
-            // La caja seleccionada en el frontend solo nos dice la TIENDA. En el
-            // modelo "una caja por persona" cada usuario abre/reutiliza su PROPIA
-            // caja (sesión = caja), nombrada "{usuario} · {tienda}". Así el corte,
-            // los reportes y la UI muestran de quién es la caja, no un "Caja 1"
-            // compartido sin significado.
-            $selected = CashRegister::findOrFail($registerId);
+            // Resolver la TIENDA. En el modelo "una caja por persona" cada
+            // usuario abre/reutiliza su PROPIA caja (sesión = caja), nombrada
+            // "{usuario} · {tienda}". Preferimos `store_id` directo; si no
+            // viene, lo deducimos de un `register_id` existente (compat).
+            if ($storeId) {
+                $resolvedStoreId = $storeId;
+            } elseif ($registerId) {
+                $resolvedStoreId = CashRegister::findOrFail($registerId)->store_id;
+            } else {
+                throw new \DomainException('Falta la tienda para abrir la caja.');
+            }
 
-            if (! $selected->store_id) {
+            if (! $resolvedStoreId) {
                 throw new \DomainException('La caja seleccionada no tiene tienda.');
             }
 
-            $user  = \App\Models\User::find($userId);
-            $store = $selected->store;
+            $store = \App\Models\Store::find($resolvedStoreId);
+            if (! $store) {
+                throw new \DomainException('La tienda no existe.');
+            }
+
+            $user = \App\Models\User::find($userId);
             $desiredName = trim(($user?->name ?? 'Caja') . ' · ' . ($store?->name ?? ''), " ·");
 
             $register = CashRegister::firstOrCreate(
-                ['store_id' => $selected->store_id, 'owner_user_id' => $userId],
+                ['store_id' => $resolvedStoreId, 'owner_user_id' => $userId],
                 ['name' => $desiredName !== '' ? $desiredName : 'Caja', 'active' => true],
             );
 

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import {
   FileText, TrendingUp, Package, Users, BarChart3,
-  Loader2, DollarSign, ArrowUpRight,
+  DollarSign, ArrowUpRight,
   ShoppingBag, Star, Calendar, Printer, Store,
   ChevronDown, ChevronRight, Receipt, Clock, RefreshCw, Wallet,
   CheckCircle2, AlertTriangle,
@@ -13,10 +13,11 @@ import {
 } from "@tadaima/api";
 import type { CashReport, CashSessionReport } from "@tadaima/api";
 import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
+import { ReportsSkeleton } from "@/components/reports/ReportsSkeleton";
 import { getSales } from "@tadaima/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useStoresQuery } from "@/hooks/queries/useStores";
-import { getTodayLocal, toLocalYmd } from "@/lib/date";
+import { getTodayLocal, daysAgoLocal, toLocalYmd, BUSINESS_TZ } from "@/lib/date";
 import { queryKeys } from "@/lib/queryKeys";
 import type { SalesReport, InventoryReport, TopProductsReport, CustomersReport } from "@tadaima/api";
 import type { SaleDetail, Store as StoreType } from "@tadaima/api";
@@ -44,11 +45,14 @@ const DIV = "1px solid var(--td-divider)";
 const fmt = (n: number) =>
   new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", minimumFractionDigits: 0 }).format(n ?? 0);
 
+// Formato anclado a la zona del NEGOCIO (México), no la del dispositivo: una
+// Mac/tablet en otra zona (Tijuana) mostraría la hora corrida ~1h y el día
+// equivocado cerca de medianoche.
 const fmtDate = (iso: string) =>
-  new Date(iso).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" });
+  new Date(iso).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric", timeZone: BUSINESS_TZ });
 
 const fmtTime = (iso: string) =>
-  new Date(iso).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" });
+  new Date(iso).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", timeZone: BUSINESS_TZ });
 
 type TabId = "ventas" | "inventario" | "productos" | "clientes" | "cortes";
 
@@ -139,10 +143,11 @@ export function ReportsPage() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<TabId>("ventas");
 
-  // Fecha local del navegador (no UTC). Después de 6pm MX, `toISOString` daba
-  // el día siguiente como "hoy" → filtros mal alineados.
+  // Fechas en la zona del NEGOCIO (México), no la del dispositivo (ver
+  // lib/date.ts). El primer día del mes se deriva del "hoy" del negocio para
+  // no depender del mes del dispositivo (que en otra zona puede diferir).
   const today         = getTodayLocal();
-  const firstOfMonth  = toLocalYmd(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  const firstOfMonth  = `${today.slice(0, 7)}-01`;
 
   const [from, setFrom] = useState(firstOfMonth);
   const [to, setTo]     = useState(today);
@@ -160,39 +165,49 @@ export function ReportsPage() {
 
   const baseParams = { from, to, ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}) };
 
+  // staleTime 30s: navegar entre tabs / volver a Reportes dentro de ese rango
+  // sirve del cache (instantáneo) en vez de refetch. El skeleton solo sale
+  // cuando de verdad no hay datos para el filtro/tab actual.
+  const REPORTS_STALE = 30_000;
   const salesReportQuery = useQuery({
     queryKey: queryKeys.reports.sales(baseParams),
     queryFn: () => getSalesReport(baseParams),
     enabled: activeTab === "ventas",
+    staleTime: REPORTS_STALE,
   });
   const salesListParams = { ...baseParams, per_page: 100, status: "completed" as const };
   const salesListQuery = useQuery({
     queryKey: queryKeys.sales.list(salesListParams),
     queryFn: () => getSales(salesListParams),
     enabled: activeTab === "ventas",
+    staleTime: REPORTS_STALE,
   });
   const invParams = { low_stock: lowStockOnly, ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}) };
   const invQuery = useQuery({
     queryKey: queryKeys.reports.inventory(invParams),
     queryFn: () => getInventoryReport(invParams),
     enabled: activeTab === "inventario",
+    staleTime: REPORTS_STALE,
   });
   const topParams = { from, to, limit: 25, ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}) };
   const topQuery = useQuery({
     queryKey: queryKeys.reports.topProducts(topParams),
     queryFn: () => getTopProductsReport(topParams),
     enabled: activeTab === "productos",
+    staleTime: REPORTS_STALE,
   });
   const custQuery = useQuery({
     queryKey: queryKeys.reports.customers(topParams),
     queryFn: () => getCustomersReport(topParams),
     enabled: activeTab === "clientes",
+    staleTime: REPORTS_STALE,
   });
   const cashParams = { from, to, ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}) };
   const cashQuery = useQuery({
     queryKey: queryKeys.reports.cash(cashParams),
     queryFn: () => getCashReport(cashParams),
     enabled: activeTab === "cortes",
+    staleTime: REPORTS_STALE,
   });
 
   const salesReport: SalesReport | null = salesReportQuery.data ?? null;
@@ -202,12 +217,24 @@ export function ReportsPage() {
   const custReport: CustomersReport | null = custQuery.data ?? null;
   const cashReport: CashReport | null = cashQuery.data ?? null;
   const [selectedCashSession, setSelectedCashSession] = useState<CashSessionReport | null>(null);
-  const loading =
+  // ¿La tab activa está fetcheando? ¿Ya tiene datos para mostrar?
+  const isFetchingActive =
     (activeTab === "ventas"     && (salesReportQuery.isFetching || salesListQuery.isFetching)) ||
     (activeTab === "inventario" && invQuery.isFetching) ||
     (activeTab === "productos"  && topQuery.isFetching) ||
     (activeTab === "clientes"   && custQuery.isFetching) ||
     (activeTab === "cortes"     && cashQuery.isFetching);
+  const activeHasData =
+    (activeTab === "ventas"     && salesReport !== null) ||
+    (activeTab === "inventario" && invReport !== null) ||
+    (activeTab === "productos"  && topReport !== null) ||
+    (activeTab === "clientes"   && custReport !== null) ||
+    (activeTab === "cortes"     && cashReport !== null);
+  // Skeleton SOLO cuando no hay datos que mostrar (primera carga / cambio de
+  // filtro o tab). El refetch de fondo (con datos en pantalla) muestra el
+  // indicador sutil "Actualizando…", no tapa el contenido.
+  const loading    = isFetchingActive && !activeHasData;
+  const refreshing = isFetchingActive && activeHasData;
 
   useEffect(() => {
     if (salesReportQuery.error || salesListQuery.error) toast.error("Error al cargar reporte de ventas");
@@ -250,7 +277,11 @@ export function ReportsPage() {
   const salesByDate = useMemo(() => {
     const map = new Map<string, SaleDetail[]>();
     for (const sale of sales) {
-      const date = (sale.sold_at || sale.created_at)?.split("T")[0] ?? "";
+      // Agrupar por día del NEGOCIO (MX), no por la fecha UTC del timestamp:
+      // `.split("T")[0]` daba el día UTC y metía ventas de la madrugada MX en
+      // el día siguiente del gráfico.
+      const ts = sale.sold_at || sale.created_at;
+      const date = ts ? toLocalYmd(new Date(ts)) : "";
       if (!map.has(date)) map.set(date, []);
       map.get(date)!.push(sale);
     }
@@ -319,13 +350,13 @@ export function ReportsPage() {
               }
               toast.success("Actualizando reporte…");
             }}
-            disabled={loading}
+            disabled={isFetchingActive}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-50"
             style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: TM }}
             title="Forzar refresh del reporte actual"
           >
-            <RefreshCw size={13} className={loading ? "animate-spin" : ""} />
-            Actualizar
+            <RefreshCw size={13} className={isFetchingActive ? "animate-spin" : ""} />
+            {refreshing ? "Actualizando…" : "Actualizar"}
           </button>
         </div>
 
@@ -336,16 +367,19 @@ export function ReportsPage() {
 
             {/* Quick presets */}
             {(() => {
-              // Todos los presets se calculan con fecha LOCAL del navegador
-              // (no UTC). Antes los `toISOString().split("T")[0]` daban el
-              // día siguiente para usuarios MX después de 6pm.
-              const todayD = new Date();
-              const yesterday        = toLocalYmd(new Date(Date.now() - 86400000));
-              const sevenAgo         = toLocalYmd(new Date(Date.now() - 6 * 86400000));
-              const thirtyAgo        = toLocalYmd(new Date(Date.now() - 29 * 86400000));
-              const firstOfLastMonth = toLocalYmd(new Date(todayD.getFullYear(), todayD.getMonth() - 1, 1));
-              const lastOfLastMonth  = toLocalYmd(new Date(todayD.getFullYear(), todayD.getMonth(), 0));
-              const firstOfYear      = toLocalYmd(new Date(todayD.getFullYear(), 0, 1));
+              // Todos los presets se calculan en la zona del NEGOCIO (México),
+              // no la del dispositivo (ver lib/date.ts). El mes/año se derivan
+              // del "hoy" del negocio para no depender del calendario local.
+              const [yy, mm] = today.split("-").map(Number) as [number, number, number]; // mm 1-based
+              const pmY = mm === 1 ? yy - 1 : yy;
+              const pm  = mm === 1 ? 12 : mm - 1;
+              const lastDayPrev = new Date(Date.UTC(yy, mm - 1, 0)).getUTCDate();
+              const yesterday        = daysAgoLocal(1);
+              const sevenAgo         = daysAgoLocal(6);
+              const thirtyAgo        = daysAgoLocal(29);
+              const firstOfLastMonth = `${pmY}-${String(pm).padStart(2, "0")}-01`;
+              const lastOfLastMonth  = `${pmY}-${String(pm).padStart(2, "0")}-${String(lastDayPrev).padStart(2, "0")}`;
+              const firstOfYear      = `${yy}-01-01`;
               const presets = [
                 { label: "Hoy",         from: today,            to: today },
                 { label: "Ayer",        from: yesterday,        to: yesterday },
@@ -426,9 +460,7 @@ export function ReportsPage() {
 
         {/* ── Content ─────────────────────────────────────────────────────── */}
         {loading ? (
-          <div className="flex items-center justify-center p-24">
-            <Loader2 size={32} className="animate-spin" style={{ color: RED }} />
-          </div>
+          <ReportsSkeleton />
         ) : (
           <>
             {/* ── VENTAS ── */}
@@ -602,7 +634,7 @@ export function ReportsPage() {
                                     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                                       {daySales.map(sale => {
                                         const method = sale.payments?.[0]?.payment_method?.name ?? "—";
-                                        const time = new Date(sale.sold_at || sale.created_at).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" });
+                                        const time = new Date(sale.sold_at || sale.created_at).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", timeZone: BUSINESS_TZ });
                                         const itemCount = sale.items?.reduce((s, i) => s + i.quantity, 0) ?? 0;
                                         return (
                                           <div key={sale.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 10px", background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", borderRadius: 9 }}>
@@ -869,8 +901,8 @@ export function ReportsPage() {
                               {s.store?.name && <span style={{ fontSize: 9, fontWeight: 700, color: TM, opacity: 0.7 }}>· {s.store.name}</span>}
                             </div>
                             <p style={{ margin: "2px 0 0", fontSize: 10, color: TM }}>
-                              {new Date(s.opened_at).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" })}
-                              {s.closed_at && ` → ${new Date(s.closed_at).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" })}`}
+                              {new Date(s.opened_at).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short", timeZone: BUSINESS_TZ })}
+                              {s.closed_at && ` → ${new Date(s.closed_at).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short", timeZone: BUSINESS_TZ })}`}
                               {" · "}
                               {s.sales_count} ventas
                             </p>

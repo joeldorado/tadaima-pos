@@ -1,7 +1,7 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { getSales, getPreSaleOrders, type SaleDetail, type PreSaleOrder } from '@tadaima/api'
 import { queryKeys } from '@/lib/queryKeys'
-import { getTodayLocal } from '@/lib/date'
+import { useTodayLocal } from '@/lib/date'
 
 export type HistorialEntry =
   | { type: 'sale'; data: SaleDetail }
@@ -18,10 +18,12 @@ export type HistorialEntry =
  *   en los success handlers de checkout/cancelación → la lista se actualiza sola.
  */
 export function useTodayHistorialQuery(storeId?: number | null, options?: { enabled?: boolean }) {
+  // Fecha local reactiva: el hook detecta el cambio de día (setInterval 60s) y
+  // re-renderiza con la nueva fecha → la queryKey cambia y refetchea sola.
+  const today = useTodayLocal()
   return useQuery<HistorialEntry[]>({
-    queryKey: queryKeys.historial.today(storeId),
+    queryKey: queryKeys.historial.today(storeId, today),
     queryFn: async () => {
-      const today = getTodayLocal()
       const baseParams: Record<string, unknown> = { per_page: 50 }
       if (storeId) baseParams.store_id = storeId
 
@@ -44,6 +46,11 @@ export function useTodayHistorialQuery(storeId?: number | null, options?: { enab
     staleTime: 30_000,
     gcTime: 30 * 60_000,
     refetchOnWindowFocus: true,
+    // Al cambiar la key (cambio de tienda o de día) NO blankear: mantener los
+    // datos anteriores en pantalla mientras refetchea en background. Así el
+    // modal abre instantáneo con lo último y solo muestra el indicador sutil
+    // de "actualizando" abajo en vez de un spinner que tapa todo.
+    placeholderData: keepPreviousData,
     enabled: options?.enabled ?? true,
   })
 }

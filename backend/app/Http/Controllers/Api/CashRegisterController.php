@@ -144,9 +144,10 @@ class CashRegisterController extends Controller
     {
         try {
             $session = $this->service->open(
-                $request->integer('register_id'),
+                $request->integer('register_id') ?: null,
                 (float) $request->input('opening_cash', 0),
                 $request->user()->id,
+                $request->integer('store_id') ?: null,
             );
         } catch (CashSessionConflictException $e) {
             // 409 Conflict con shape estructurado para que el frontend

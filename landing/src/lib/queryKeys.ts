@@ -85,6 +85,12 @@ export const queryKeys = {
   // y un refetch en background traiga lo nuevo tras cada checkout/cancelación.
   historial: {
     all: ['historial'] as const,
-    today: (storeId?: number | null) => ['historial', 'today', storeId ?? 0] as const,
+    // La fecha LOCAL va en la key: al cruzar la medianoche la key cambia y se
+    // refetchea solo, sin que el cache persistido (IndexedDB) del día anterior
+    // —típicamente vacío— enmascare las ventas del día nuevo. Bug 2026-06-04:
+    // abrir caja de noche + vender pasada la medianoche dejaba la venta
+    // "invisible" en el historial del día anterior cacheado.
+    today: (storeId?: number | null, date?: string) =>
+      ['historial', 'today', storeId ?? 0, date ?? ''] as const,
   },
 } as const

@@ -59,6 +59,7 @@ export interface CreateProductInput {
   active?: boolean
   allow_cash?: boolean
   allow_card?: boolean
+  category_id?: number | null
   prices?: {
     price_1?: number
     price_2?: number

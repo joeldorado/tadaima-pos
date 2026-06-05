@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
-import { Search, Package, Calendar, Loader2 } from "lucide-react";
+import { Search, Package, Calendar } from "lucide-react";
 import { useAuth } from "@tadaima/auth";
 import { usePreSaleCatalogsQuery } from "@/hooks/queries/usePreSales";
+import { PreSalesSkeleton } from "./PreSalesSkeleton";
 import { ImageWithFallback } from "@/components/figma/ImageWithFallback";
 import { storageUrl } from "@tadaima/api";
 import type { PreSaleCatalog } from "@tadaima/api";
@@ -37,12 +38,7 @@ export function PreSaleAvailableCatalogsPanel() {
   }, [catalogs, search, storeId]);
 
   if (catalogsQuery.isPending) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 gap-3" style={{ color: "var(--td-text-ghost)" }}>
-        <Loader2 size={28} className="animate-spin" />
-        <p style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.18em", textTransform: "uppercase" }}>Cargando catálogos…</p>
-      </div>
-    );
+    return <PreSalesSkeleton variant="cards" />;
   }
 
   return (

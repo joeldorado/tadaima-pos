@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { getPreSaleCatalogs, getPreSaleOrders } from '@tadaima/api'
 import { queryKeys } from '@/lib/queryKeys'
 
@@ -25,6 +25,7 @@ export function usePreSaleCatalogsQuery(
     enabled: options?.enabled ?? true,
     staleTime: ONE_DAY_MS,
     gcTime: ONE_DAY_MS,
+    placeholderData: keepPreviousData,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   })
@@ -54,6 +55,7 @@ export function usePreSaleOrdersQuery(
     enabled: options?.enabled ?? true,
     staleTime: 5 * 60_000,
     gcTime: 30 * 60_000,
+    placeholderData: keepPreviousData,
     refetchOnWindowFocus: true,
     refetchOnReconnect: false,
   })

@@ -7,6 +7,7 @@ import {
 import { createManga, updateMangaInventory, uploadMangaImage } from '@tadaima/api'
 import type { ApiError } from '@tadaima/api'
 import { EDITORIALS, MANGA_GENRES } from './mangaConstants'
+import { generateBarcode } from '@/lib/barcode'
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 
@@ -774,10 +775,10 @@ function TomoCard({ tomo, index, onRemove, onChangeNumero, onChangeIsbn, onSetIm
               {!disabled && (
                 <button
                   type="button"
-                  onClick={() => isbnRef.current?.focus()}
+                  onClick={() => onChangeIsbn(generateBarcode())}
                   className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-lg transition-all hover:text-red-400 hover:bg-red-500/10"
                   style={{ color: T.textSecondary }}
-                  title="Escanear código de barras"
+                  title="Generar código (sin lector)"
                 >
                   <Scan size={14} />
                 </button>

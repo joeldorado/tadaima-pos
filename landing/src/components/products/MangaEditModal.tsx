@@ -9,6 +9,7 @@ import { EDITORIALS, MANGA_GENRES } from './mangaConstants'
 import { toast } from 'sonner'
 import { useAuth } from '@tadaima/auth'
 import { isAdmin as isAdminRole } from '@/lib/permisos'
+import { generateBarcode } from '@/lib/barcode'
 
 // ─── Design tokens (same as MangaBatchModal) ──────────────────────────────────
 const T = {
@@ -397,9 +398,10 @@ export function MangaEditModal({
                             />
                             <button
                               type="button"
-                              onClick={() => isbnRef.current?.focus()}
+                              onClick={() => setIsbn(generateBarcode())}
                               className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-lg transition-all hover:text-red-400 hover:bg-red-500/10"
                               style={{ color: T.textSecondary }}
+                              title="Generar código (sin lector)"
                             >
                               <Scan size={14} />
                             </button>

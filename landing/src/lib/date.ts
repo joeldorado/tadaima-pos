@@ -1,24 +1,45 @@
 import { useEffect, useState } from "react";
 
 /**
- * Fecha local YYYY-MM-DD del navegador.
+ * Zona horaria del NEGOCIO. Todas las tiendas operan en hora de México y el
+ * backend filtra "hoy" con esta misma zona (`App\Support\DateRange` →
+ * `America/Mexico_City`). El "hoy" del frontend DEBE calcularse en esta zona,
+ * NO en la del dispositivo.
  *
- * Por qué no `new Date().toISOString().split("T")[0]`:
- *  - `toISOString()` siempre devuelve UTC. En MX (UTC-6) después de las 6pm
- *    locales (00:00 UTC del día siguiente), el split da el día EQUIVOCADO.
- *  - Ejemplo: 22-may 19:00 MX = 23-may 01:00 UTC → toISOString → "2026-05-23"
- *    cuando para el usuario sigue siendo 22-may.
+ * Por qué no la zona del dispositivo: una tablet/Mac configurada en otra zona
+ * (p.ej. Tijuana UTC-7) calcula un día distinto cerca de medianoche. Una venta
+ * hecha a las 00:04 hora MX (= 23:04 en Tijuana) se archiva en el día MX por el
+ * backend, pero el dispositivo pide el día anterior → la venta "desaparece" del
+ * historial del día. Anclando a la zona del negocio, frontend y backend siempre
+ * coinciden. (Bug 2026-06-04.)
  */
-export function getTodayLocal(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+export const BUSINESS_TZ = "America/Mexico_City";
+
+/** YYYY-MM-DD de un Date en la zona del negocio (robusto vía formatToParts). */
+function ymdInBusinessTz(d: Date): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: BUSINESS_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(d);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
 }
 
 /**
- * Convierte un Date al formato local YYYY-MM-DD del navegador.
+ * Fecha "de hoy" YYYY-MM-DD en la zona del NEGOCIO (México), independiente de
+ * la zona del dispositivo. Coincide con el filtro "hoy" del backend.
+ */
+export function getTodayLocal(): string {
+  return ymdInBusinessTz(new Date());
+}
+
+/**
+ * Convierte un Date a YYYY-MM-DD en la zona del NEGOCIO (México).
  */
 export function toLocalYmd(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return ymdInBusinessTz(d);
 }
 
 /**
@@ -47,7 +68,10 @@ export function useTodayLocal(): string {
  * Usado para rangos tipo "últimos 30 días" en reportes y filtros.
  */
 export function daysAgoLocal(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return toLocalYmd(d);
+  // Resta días sobre el "hoy" del negocio (no del dispositivo). Anclamos al
+  // mediodía UTC del día de negocio para que restar días no salte por DST.
+  const [y, m, d] = getTodayLocal().split("-").map(Number) as [number, number, number];
+  const base = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  base.setUTCDate(base.getUTCDate() - days);
+  return `${base.getUTCFullYear()}-${String(base.getUTCMonth() + 1).padStart(2, "0")}-${String(base.getUTCDate()).padStart(2, "0")}`;
 }

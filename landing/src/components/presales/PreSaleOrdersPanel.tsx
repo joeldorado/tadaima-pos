@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
+import { PreSalesSkeleton } from "./PreSalesSkeleton";
 import type { PreSaleOrder, PreSaleOrderStatus } from "@tadaima/api";
 import { useAuth } from "@tadaima/auth";
 import { useActiveStore } from "@/contexts/StoreContext";
@@ -119,10 +120,7 @@ export function PreSaleOrdersPanel() {
       {/* Table */}
       <div className="rounded-2xl border border-white/[0.07] overflow-hidden" style={{ background: "var(--td-card-bg)" }}>
         {loading ? (
-          <div className="flex items-center justify-center py-20 gap-3">
-            <Loader2 size={20} className="animate-spin text-white/30" />
-            <span className="text-sm text-white/30 font-bold">Cargando folios…</span>
-          </div>
+          <div className="p-4"><PreSalesSkeleton variant="rows" /></div>
         ) : orders.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 gap-3">
             <Package size={36} className="text-white/15" />

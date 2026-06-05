@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient, useInfiniteQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient, useInfiniteQuery, keepPreviousData } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { getProducts, getProductsLight, type GetProductsParams, type ProductLight, type PaginatedResponse } from '@tadaima/api'
 import { queryKeys } from '@/lib/queryKeys'
@@ -19,6 +19,10 @@ export function useProductsQuery(storeId?: number | null) {
     queryFn: () => getProducts(params),
     staleTime: ONE_DAY_MS,
     gcTime: ONE_DAY_MS,
+    // Al cambiar de tienda mantenemos el catálogo anterior en pantalla mientras
+    // llega el nuevo → no parpadea a "Cargando" (el skeleton solo sale en la
+    // primera carga real, sin datos previos).
+    placeholderData: keepPreviousData,
     refetchOnWindowFocus: true,
     // refetchOnMount default (true): si una mutación invalida este query
     // mientras estamos en otra página, al volver a esta vista refetch para

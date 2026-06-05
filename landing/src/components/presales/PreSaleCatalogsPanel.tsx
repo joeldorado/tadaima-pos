@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { toast } from "sonner";
+import { PreSalesSkeleton } from "./PreSalesSkeleton";
 import { updatePreSaleCatalogStatus, storageUrl } from "@tadaima/api";
 import type { PreSaleCatalog, PreSaleCatalogStatus } from "@tadaima/api";
 import { useQueryClient } from "@tanstack/react-query";
@@ -429,9 +430,7 @@ export function PreSaleCatalogsPanel({ restrictedStoreId = null }: { restrictedS
 
       {/* Table */}
       {loading ? (
-        <div style={{ textAlign: "center", padding: 48, color: TM }}>
-          <Loader2 size={24} className="animate-spin" style={{ margin: "0 auto" }} />
-        </div>
+        <PreSalesSkeleton variant="cards" />
       ) : filtered.length === 0 ? (
         <div style={{ ...GLASS_MD, borderRadius: 16, padding: "32px 20px", textAlign: "center", color: TM, fontSize: 12 }}>
           Sin catálogos{search ? " con ese filtro" : ""}

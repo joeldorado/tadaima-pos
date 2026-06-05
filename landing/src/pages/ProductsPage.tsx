@@ -17,14 +17,16 @@ import { useActiveStore } from "@/contexts/StoreContext";
 import { useAuth } from "@tadaima/auth";
 import { isAdmin as isAdminRole, isManager as isManagerRole } from "@/lib/permisos";
 import { toast } from "sonner";
-import { createProduct, updateProduct, deleteProduct, forceDeleteProduct, uploadProductImage, removeProductImage, getInventory, updateInventory, getPrice, sendStockAlert } from "@tadaima/api";
+import { createProduct, updateProduct, deleteProduct, forceDeleteProduct, uploadProductImage, removeProductImage, getInventory, updateInventory, getPrice, sendStockAlert, getCategories, createCategory, getSuppliers, createSupplier } from "@tadaima/api";
 import type { ApiError } from "@tadaima/api";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useProductsQuery } from "@/hooks/queries/useProducts";
 import { useMangasQuery } from "@/hooks/queries/useMangas";
+import { ProductsSkeleton } from "@/components/products/ProductsSkeleton";
 import { useStoresQuery } from "@/hooks/queries/useStores";
 import { useWarehousesQuery } from "@/hooks/queries/useWarehouses";
 import { queryKeys } from "@/lib/queryKeys";
+import { generateBarcode } from "@/lib/barcode";
 
 function formatApiError(err: unknown, fallback: string): { title: string; detail: string } {
   const apiErr = err as ApiError;
@@ -138,6 +140,8 @@ interface Producto {
   precioA: number; // Default
   precioB?: number;
   precioC?: number;
+  precioD?: number;
+  precioE?: number;
   porcentajeLibro?: number; // Para tipo libro
   imagen: string;
   imageIds: number[];
@@ -160,6 +164,8 @@ const fmt = (n: number) =>
 function apiProductToProducto(p: Product): Producto {
   const precioB = getPrice(p, 2)
   const precioC = getPrice(p, 3)
+  const precioD = getPrice(p, 4)
+  const precioE = getPrice(p, 5)
   return {
     id: p.id,
     nombre: p.name,
@@ -173,6 +179,8 @@ function apiProductToProducto(p: Product): Producto {
     precioA: getPrice(p, 1),
     ...(precioB > 0 ? { precioB } : {}),
     ...(precioC > 0 ? { precioC } : {}),
+    ...(precioD > 0 ? { precioD } : {}),
+    ...(precioE > 0 ? { precioE } : {}),
     imagen: p.images[0]?.url ?? '',
     imageIds: p.images.map(img => img.id),
     stockUbicaciones: [],
@@ -281,10 +289,12 @@ function ProductDetailModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
             <DetailField label="Precio A" value={<span className="text-lg font-black" style={{ color: "#00CC66" }}>{fmt(product.precioA)}</span>} />
             <DetailField label="Precio B" value={<span className="text-sm font-bold">{product.precioB ? fmt(product.precioB) : "No configurado"}</span>} />
             <DetailField label="Precio C" value={<span className="text-sm font-bold">{product.precioC ? fmt(product.precioC) : "No configurado"}</span>} />
+            <DetailField label="Precio D" value={<span className="text-sm font-bold">{product.precioD ? fmt(product.precioD) : "No configurado"}</span>} />
+            <DetailField label="Precio E" value={<span className="text-sm font-bold">{product.precioE ? fmt(product.precioE) : "No configurado"}</span>} />
           </div>
 
           {canViewCost && (
@@ -523,7 +533,7 @@ function ProductModal({
     // Nuevo producto — empieza sin ubicaciones; el usuario las agrega desde el tab Inventario
     return {
       nombre: "", sku: "", categoria: "", proveedor: "",
-      tipo: "normal", desactivado: false, costo: 0, precioA: 0, precioB: 0, precioC: 0,
+      tipo: "normal", desactivado: false, costo: 0, precioA: 0, precioB: 0, precioC: 0, precioD: 0, precioE: 0,
       stockUbicaciones: [],
       etiquetas: ["en bodega"], imagen: "", imageIds: [],
       ventasTotales: 0,
@@ -725,12 +735,11 @@ function ProductModal({
                           className="w-full pl-4 pr-12 py-3 rounded-2xl outline-none uppercase" style={T.input}
                           placeholder="ESCANEÉ O ESCRIBA"
                         />
-                        <button 
+                        <button
+                          type="button"
+                          title="Generar código (sin lector)"
                           className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-xl text-white/40 hover:text-red-500 hover:bg-red-500/10 transition-all"
-                          onClick={() => {
-                            const mockSku = "750" + Math.floor(Math.random() * 1000000000);
-                            setFormData({...formData, sku: mockSku});
-                          }}
+                          onClick={() => setFormData({ ...formData, sku: generateBarcode() })}
                         >
                           <Scan size={18} />
                         </button>
@@ -830,7 +839,7 @@ function ProductModal({
                 </div>
               )}
 
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
                 <div className="space-y-1.5">
                   <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>Precio A (Default)</label>
                   <input
@@ -855,6 +864,24 @@ function ProductModal({
                     type="number" value={formData.precioC || ''}
                     placeholder="0"
                     onChange={e => setFormData({...formData, precioC: parseFloat(e.target.value) || 0})}
+                    className="w-full px-4 py-3 rounded-2xl outline-none" style={T.input}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>Precio D</label>
+                  <input
+                    type="number" value={formData.precioD || ''}
+                    placeholder="0"
+                    onChange={e => setFormData({...formData, precioD: parseFloat(e.target.value) || 0})}
+                    className="w-full px-4 py-3 rounded-2xl outline-none" style={T.input}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>Precio E</label>
+                  <input
+                    type="number" value={formData.precioE || ''}
+                    placeholder="0"
+                    onChange={e => setFormData({...formData, precioE: parseFloat(e.target.value) || 0})}
                     className="w-full px-4 py-3 rounded-2xl outline-none" style={T.input}
                   />
                 </div>
@@ -1108,8 +1135,6 @@ function ProductModal({
 // ─── App Principal ────────────────────────────────────────────────────────────
 export function ProductsPage() {
   const [pageSection, setPageSection] = useState<'productos' | 'tomos'>('productos');
-  const [categorias, setCategorias] = useState(["Todo", "Funko Pop", "Pokémon", "Naruto", "Dragon Ball", "Manga", "Figuras"]);
-  const [proveedores, setProveedores] = useState(["Funko Corp", "Panini", "Nintendo", "Bandai", "Good Smile"]);
   const [search, setSearch] = useState("");
   const [selectedCat] = useState("Todo");
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
@@ -1162,9 +1187,56 @@ export function ProductsPage() {
 
   const queryClient = useQueryClient();
   const productsQuery = useProductsQuery(selectedStoreId);
-  const mangasQuery = useMangasQuery(selectedStoreId, { enabled: pageSection === 'tomos' });
+  // Librerías: se cargan al entrar a su tab, PERO también en background una vez
+  // que el catálogo de productos terminó de cargar → al dar clic en "Tomos" ya
+  // están en cache (instantáneo). El spinner de tomos sigue gateado a su tab,
+  // así que el prefetch no muestra "Cargando" en la vista de productos.
+  const mangasQuery = useMangasQuery(selectedStoreId, {
+    enabled: pageSection === 'tomos' || productsQuery.isSuccess,
+  });
   const storesQuery = useStoresQuery({ active: true, enabled: isAdmin });
   const warehousesQuery = useWarehousesQuery({ active: true });
+
+  // Categorías y proveedores desde el backend (antes hardcodeados). Esto
+  // evita que aparezcan opciones que el usuario nunca creó y asegura que las
+  // recién creadas se reflejen tras invalidar.
+  const categoriesQuery = useQuery({
+    queryKey: ['categories'],
+    queryFn: () => getCategories(),
+    staleTime: 5 * 60_000,
+  });
+  const suppliersQuery = useQuery({
+    queryKey: ['suppliers'],
+    queryFn: () => getSuppliers(),
+    staleTime: 5 * 60_000,
+  });
+  const categoriasData = categoriesQuery.data ?? [];
+  const categorias = ["Todo", ...categoriasData.map(c => c.name)];
+  const categoriaIdByName = useMemo(
+    () => new Map(categoriasData.map(c => [c.name, c.id])),
+    [categoriasData]
+  );
+  const proveedores = (suppliersQuery.data ?? []).map(s => s.name);
+
+  const handleAddCategoria = useCallback(async (name: string): Promise<void> => {
+    try {
+      await createCategory({ name });
+      await queryClient.invalidateQueries({ queryKey: ['categories'] });
+    } catch (err: unknown) {
+      const msg = (err as { message?: string }).message ?? 'No se pudo crear la categoría';
+      toast.error(msg);
+    }
+  }, [queryClient]);
+
+  const handleAddProveedor = useCallback(async (name: string): Promise<void> => {
+    try {
+      await createSupplier({ name });
+      await queryClient.invalidateQueries({ queryKey: ['suppliers'] });
+    } catch (err: unknown) {
+      const msg = (err as { message?: string }).message ?? 'No se pudo crear el proveedor';
+      toast.error(msg);
+    }
+  }, [queryClient]);
 
   const products = useMemo(
     () => productsQuery.data?.data.map(apiProductToProducto) ?? [],
@@ -1220,10 +1292,13 @@ export function ProductsPage() {
         active: !p.desactivado,
         allow_cash: p.allowCash,
         allow_card: p.allowCard,
+        category_id: categoriaIdByName.get(p.categoria) ?? null,
         prices: {
           price_1: p.precioA,
           ...(p.precioB !== undefined && p.precioB > 0 ? { price_2: p.precioB } : {}),
           ...(p.precioC !== undefined && p.precioC > 0 ? { price_3: p.precioC } : {}),
+          ...(p.precioD !== undefined && p.precioD > 0 ? { price_4: p.precioD } : {}),
+          ...(p.precioE !== undefined && p.precioE > 0 ? { price_5: p.precioE } : {}),
         },
       }).then(async (created) => {
         // Upload image if provided
@@ -1259,10 +1334,13 @@ export function ProductsPage() {
         active: !p.desactivado,
         allow_cash: p.allowCash,
         allow_card: p.allowCard,
+        category_id: categoriaIdByName.get(p.categoria) ?? null,
         prices: {
           price_1: p.precioA,
           ...(p.precioB !== undefined && p.precioB > 0 ? { price_2: p.precioB } : {}),
           ...(p.precioC !== undefined && p.precioC > 0 ? { price_3: p.precioC } : {}),
+          ...(p.precioD !== undefined && p.precioD > 0 ? { price_4: p.precioD } : {}),
+          ...(p.precioE !== undefined && p.precioE > 0 ? { price_5: p.precioE } : {}),
         },
       }).then(async () => {
         if (imageFile) {
@@ -1828,12 +1906,7 @@ export function ProductsPage() {
   });
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center gap-4" style={{ background: T.bgGrad }}>
-        <Loader2 size={40} className="animate-spin" style={{ color: T.redBright }} />
-        <p className="text-sm font-bold uppercase tracking-widest" style={{ color: T.textMuted }}>Cargando catálogo...</p>
-      </div>
-    );
+    return <ProductsSkeleton viewMode={viewMode} bgGrad={T.bgGrad} />;
   }
 
   return (
@@ -2595,9 +2668,9 @@ export function ProductsPage() {
           onDelete={(p) => setDeleteTarget(p)}
           {...(editingProduct !== undefined ? { product: editingProduct } : {})}
           categorias={categorias}
-          onAddCategoria={(c) => setCategorias(prev => [...prev, c])}
+          onAddCategoria={(c) => { void handleAddCategoria(c); }}
           proveedores={proveedores}
-          onAddProveedor={(p) => setProveedores(prev => [...prev, p])}
+          onAddProveedor={(p) => { void handleAddProveedor(p); }}
           locations={locations}
         />
       )}

@@ -71,6 +71,46 @@ class CashSessionConcurrencyTest extends TestCase
         $this->assertSame('María · Tienda Centro', $regB->name);
     }
 
+    public function test_can_open_caja_by_store_id_when_store_has_no_register(): void
+    {
+        // Bug 2026-06-04 (reportado por el hermano): el admin no podía abrir
+        // caja. Causa: tras el reset de prod no hay cajas, y las tiendas creadas
+        // por UI solo crean su warehouse (no un cash_register). El frontend
+        // exigía un register_id pre-existente → deadlock. Ahora se abre por
+        // store_id y el backend crea la caja personal.
+        $storeSinCaja = Store::create([
+            'company_id' => $this->company->id,
+            'name' => 'Tienda Nueva',
+            'active' => true,
+        ]);
+        $this->assertSame(0, CashRegister::where('store_id', $storeSinCaja->id)->count());
+
+        $admin = $this->makeUser('admin@test.com', 'Pier');
+
+        $this->actingAs($admin)
+            ->postJson('/api/v1/cash/open', ['store_id' => $storeSinCaja->id, 'opening_cash' => 1000])
+            ->assertCreated();
+
+        // Se creó la caja personal del admin en esa tienda.
+        $reg = CashRegister::where('store_id', $storeSinCaja->id)
+            ->where('owner_user_id', $admin->id)
+            ->first();
+        $this->assertNotNull($reg);
+        $this->assertSame('Pier · Tienda Nueva', $reg->name);
+        $this->assertSame(CashRegisterSession::STATUS_OPEN,
+            CashRegisterSession::where('user_id', $admin->id)->value('status'));
+    }
+
+    public function test_open_requires_store_or_register(): void
+    {
+        $user = $this->makeUser('a@test.com');
+
+        // Sin store_id ni register_id → 422 de validación.
+        $this->actingAs($user)
+            ->postJson('/api/v1/cash/open', ['opening_cash' => 100])
+            ->assertStatus(422);
+    }
+
     public function test_same_user_opening_twice_gets_own_conflict(): void
     {
         $cashier = $this->makeUser('a@test.com');

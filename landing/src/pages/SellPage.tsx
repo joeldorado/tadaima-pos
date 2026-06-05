@@ -9,7 +9,7 @@ import {
   Mail,
   TriangleAlert, PackageX, Bookmark, Calendar, PackageCheck, ClipboardList, Banknote,
   Truck, CheckCircle2, Printer, History, Receipt, RefreshCw,
-  ShoppingCart, Crown, Circle, Trash2, XCircle,
+  ShoppingCart, Crown, Circle, Trash2, XCircle, Clock,
 } from "lucide-react";
 import { ImageWithFallback } from "@/components/figma/ImageWithFallback";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -559,6 +559,7 @@ export function SellPage() {
     preSaleCode?: string;
     preSaleItems?: Array<{ name: string; quantity: number; unitPrice: number }>;
     preSaleAnticipo?: number;
+    preSaleIsLiquidation?: boolean; // true = liquidación de folio existente; false/undefined = anticipo/apartado nuevo
   }
   const PRINT_PREF_KEY = "tadaima_print_pref"; // 'auto' | 'ask' | 'never'
   const [lastCompletedSale, setLastCompletedSale] = useState<CompletedSaleData | null>(null);
@@ -575,7 +576,11 @@ export function SellPage() {
   // tras cada checkout/cancelación gracias a las invalidaciones.
   const historialQuery = useTodayHistorialQuery(activeStore?.id, { enabled: !!user });
   const historialEntries: HistorialEntry[] = historialQuery.data ?? [];
-  const historialLoading = historialQuery.isLoading;
+  // Spinner grande SOLO en la primera carga sin datos en cache. Si ya hay
+  // ventas en memoria, el modal abre instantáneo y el refresco se muestra
+  // como un indicador sutil abajo (historialRefreshing).
+  const historialLoading = historialQuery.isLoading && historialEntries.length === 0;
+  const historialRefreshing = historialQuery.isFetching && historialEntries.length > 0;
   // ADR-016 Fase 1 — filtro del historial. 'all' default; 'cancelled' muestra
   // solo ventas con status='returned' y preventas con status='cancelled'.
   const [historialFilter, setHistorialFilter] = useState<'all' | 'cancelled'>('all');
@@ -2143,15 +2148,21 @@ export function SellPage() {
   }, [customers, customerSearch]);
 
   const handleOpenCash = async () => {
+    // Modelo "una caja por persona" (ADR-017): el backend crea/reusa la caja
+    // personal del usuario a partir de la TIENDA. Ya no exigimos un register_id
+    // pre-existente — una tienda recién creada no tiene caja todavía y antes
+    // eso bloqueaba abrir (huevo-gallina). Mandamos store_id; register_id es
+    // un atajo opcional cuando ya existe la caja.
     const registerId = openCashRegisterId !== "" ? Number(openCashRegisterId) : cashRegisters[0]?.id;
-    if (!registerId) {
-      toast.error("No hay cajas disponibles para esta tienda. Crea una caja en Administración → Terminales.");
+    const storeId = activeStore?.id;
+    if (!registerId && !storeId) {
+      toast.error("Selecciona una tienda para abrir caja.");
       return;
     }
     const amount = parseFloat(openCashAmount) || 0;
     setOpeningCash(true);
     try {
-      const result = await openSession(registerId, amount);
+      const result = await openSession({ storeId, registerId }, amount);
 
       // Conflicto: ya existe otra sesión que bloquea la apertura. Mostramos
       // modal apropiado y cerramos el de "Abrir Sesión de Caja". El handler
@@ -2240,13 +2251,14 @@ export function SellPage() {
       // Una vez cerrada la anterior, reintenta abrir la nueva con los mismos
       // parámetros que el modal original.
       const registerId = openCashRegisterId !== "" ? Number(openCashRegisterId) : cashRegisters[0]?.id;
+      const storeId = activeStore?.id;
       const amount = parseFloat(openCashAmount) || 0;
-      if (!registerId) {
+      if (!registerId && !storeId) {
         toast.success("Sesión anterior cerrada. Vuelve a intentar abrir caja.");
         setOpenSessionConflict(null);
         return;
       }
-      const result = await openSession(registerId, amount);
+      const result = await openSession({ storeId, registerId }, amount);
       if (!result.ok) {
         // Raro: cerramos una y aún hay otra. Mostrar el nuevo conflicto.
         setOpenSessionConflict(result.conflict);
@@ -3462,12 +3474,13 @@ export function SellPage() {
                   <X size={18} />
                 </button>
               </div>
-              {cashRegisters.length > 0 && (() => {
+              {!!activeStore && (() => {
                 // Modelo "una caja por persona" (ADR-017): la caja ES tu sesión.
                 // El backend la nombra "{usuario} · {tienda}", así que aquí
                 // mostramos ese mismo nombre compuesto (la sesión aún no existe).
-                // Varios usuarios abren su propia caja en la misma tienda en
-                // paralelo; no hay "Ocupada por X" ni bloqueo.
+                // Se muestra aunque la tienda no tenga caja todavía: el backend
+                // la crea al abrir. Varios usuarios abren su propia caja en la
+                // misma tienda en paralelo; no hay "Ocupada por X" ni bloqueo.
                 const cajaLabel = `${user?.name ?? "Caja"}${activeStore?.name ? ` · ${activeStore.name}` : ""}`;
                 return (
                   <div style={{ marginBottom: 14 }}>
@@ -4902,13 +4915,15 @@ export function SellPage() {
                     // Modo USD primario: al click "+ Dólares" se esconde pesos.
                     // Pesos reaparece SOLO si USD no alcanza a cubrir el total
                     // (cajero completa con pesos el faltante).
-                    const usdPrimary    = showUsdInput || receivedUsd > 0;
-                    const usdCoversAll  = usdAsMxn >= currentPayAmount && receivedUsd > 0;
-                    const needsPesosToComplete = usdPrimary && !usdCoversAll && receivedUsd > 0;
-                    // Pesos visible cuando:
-                    //  - No estamos en modo USD (default).
-                    //  - O estamos en USD pero USD no cubre y ya hay USD ingresado.
-                    const showPesos = !usdPrimary || needsPesosToComplete;
+                    // Toggle PURO de moneda: la vista (pesos/dólares) la decide
+                    // solo el toggle, no si ya hay USD ingresado. Ambos montos
+                    // (cashReceived + cashReceivedUsd) se conservan al alternar,
+                    // así el pago mixto sigue: ingresas USD, cambias a pesos y
+                    // completas. Un solo grid a la vez (antes se apilaban dos).
+                    const usdPrimary    = showUsdInput;
+                    const showPesos     = !usdPrimary;
+                    // ¿Falta cubrir el total? (para el aviso "completa con…").
+                    const faltaCubrir   = Math.max(0, currentPayAmount - totalReceived);
 
                     // Cambio en dual currency cuando se cobró con USD.
                     const cambioUsd = cambio > 0 && receivedUsd > 0 ? cambio / tc : 0;
@@ -4923,15 +4938,19 @@ export function SellPage() {
                               <span className="text-[11px] font-black uppercase tracking-widest text-emerald-400">
                                 Dólares recibidos · TC {tc.toFixed(2)}
                               </span>
-                              {receivedUsd === 0 && (
-                                <button
-                                  type="button"
-                                  onClick={() => { setShowUsdInput(false); setCashReceivedUsd(""); }}
-                                  className="text-[10px] font-black uppercase tracking-wider text-white/40 hover:text-white/70 transition-colors"
-                                  title="Volver a pesos"
-                                >← Pagar en pesos</button>
-                              )}
+                              {/* Toggle a pesos — siempre visible (conserva el USD ingresado). */}
+                              <button
+                                type="button"
+                                onClick={() => setShowUsdInput(false)}
+                                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors"
+                                style={{ background: 'var(--td-card-bg)', border: '1px solid var(--td-card-border)', color: 'var(--td-text-hi)' }}
+                                title="Cambiar a pesos"
+                              >⇄ A pesos</button>
                             </div>
+                            {/* Mixto: ya hay pesos ingresados en la otra vista. */}
+                            {(parseFloat(cashReceived) || 0) > 0 && (
+                              <p className="text-[10px] font-bold text-white/45">+ {fmt(parseFloat(cashReceived) || 0)} en pesos ya ingresados</p>
+                            )}
                             <div className="relative">
                               <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-xl text-emerald-500/80 pointer-events-none">US$</span>
                               <input
@@ -4974,25 +4993,34 @@ export function SellPage() {
                           </div>
                         )}
 
-                        {/* ── PESOS (default o auto-aparece si USD insuficiente) ─── */}
+                        {/* ── PESOS (vista por toggle) ─────────────────────────── */}
                         {showPesos && (
                           <div className="flex flex-col gap-2">
-                            {needsPesosToComplete && (
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[11px] font-black uppercase tracking-widest text-white/40">Pesos recibidos</span>
+                              {/* Toggle a dólares — siempre visible (conserva los pesos ingresados). */}
+                              <button
+                                type="button"
+                                onClick={() => setShowUsdInput(true)}
+                                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors"
+                                style={{ background: 'rgba(16,185,129,0.10)', border: '1px solid rgba(16,185,129,0.30)', color: '#34d399' }}
+                                title={`Cambiar a dólares (TC ${tc.toFixed(2)})`}
+                              >⇄ A dólares</button>
+                            </div>
+                            {/* Mixto: ya hay USD ingresados en la otra vista + cuánto falta. */}
+                            {receivedUsd > 0 && (
                               <div className="rounded-xl px-4 py-2 flex items-center justify-between" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.35)' }}>
-                                <span className="text-[11px] font-black uppercase tracking-widest text-amber-400">
-                                  Completa con pesos · faltan
+                                <span className="text-[10px] font-black uppercase tracking-widest text-amber-400">
+                                  US${receivedUsd.toFixed(2)} ≈ {fmt(usdAsMxn)} · faltan
                                 </span>
-                                <span className="text-xl font-black text-amber-400 tabular-nums">{fmt(Math.max(0, currentPayAmount - usdAsMxn))}</span>
+                                <span className="text-lg font-black text-amber-400 tabular-nums">{fmt(faltaCubrir)}</span>
                               </div>
-                            )}
-                            {!needsPesosToComplete && (
-                              <p className="text-[11px] font-black uppercase tracking-widest text-white/40">Pesos recibidos</p>
                             )}
                             <div className="relative">
                               <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-2xl text-white/30 pointer-events-none">$</span>
                               <input
                                 ref={cashInputRef}
-                                autoFocus={needsPesosToComplete}
+                                autoFocus={receivedUsd > 0}
                                 type="number" min="0" step="0.01"
                                 value={cashReceived}
                                 onChange={e => setCashReceived(e.target.value)}
@@ -5030,18 +5058,9 @@ export function SellPage() {
                           </div>
                         )}
 
-                        {/* Toggle "+ Dólares" — solo visible en modo pesos default */}
-                        {!usdPrimary && (
-                          <button
-                            type="button"
-                            onClick={() => setShowUsdInput(true)}
-                            className="flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-colors"
-                            style={{ background: 'rgba(16,185,129,0.08)', border: '1px dashed rgba(16,185,129,0.30)', color: '#34d399' }}
-                            title={`Pagar con dólares (TC ${tc.toFixed(2)})`}
-                          >
-                            + Dólares (TC {tc.toFixed(2)})
-                          </button>
-                        )}
+                        {/* (El toggle dólar⇄pesos vive en el header de cada vista,
+                            mismo lugar y mismo grid — ya no hay botón "+ Dólares"
+                            aparte ni grids apilados.) */}
 
                         {/* ── CAMBIO / FALTA — dual currency cuando hubo USD ──── */}
                         {totalReceived > 0 && (
@@ -6022,8 +6041,33 @@ export function SellPage() {
               </div>
             </div>
 
-            {/* Sale summary */}
-            <div style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", borderRadius: 16, padding: "12px 16px", marginBottom: 20, maxHeight: 160, overflowY: "auto" }}>
+            {/* Sale summary — incluye la preventa (anticipo/liquidación) cuando
+                la venta es mixta, igual que el ticket impreso. Antes solo
+                listaba `items` (productos) y el anticipo no aparecía aunque
+                contara en el total → confundía (total $450 vs líneas $350). */}
+            <div style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", borderRadius: 16, padding: "12px 16px", marginBottom: 20, maxHeight: 200, overflowY: "auto" }}>
+              {lastCompletedSale.preSaleCode && (
+                <div style={{ paddingBottom: 6, marginBottom: 6, borderBottom: "1px solid var(--td-card-border)" }}>
+                  <p style={{ margin: "0 0 4px", fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "#E0221A" }}>
+                    ★ Preventa · {lastCompletedSale.preSaleCode}
+                  </p>
+                  {(lastCompletedSale.preSaleItems ?? []).map((it, i) => (
+                    <div key={`pv${i}`} style={{ display: "flex", justifyContent: "space-between", padding: "2px 0" }}>
+                      <span style={{ fontSize: 11, color: "var(--td-text-hi)", fontWeight: 700 }}>{it.name} ×{it.quantity}</span>
+                      <span style={{ fontSize: 10, color: "var(--td-text-ghost)", fontWeight: 700 }}>{fmt(it.unitPrice * it.quantity)}</span>
+                    </div>
+                  ))}
+                  <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 3 }}>
+                    <span style={{ fontSize: 10, color: "var(--td-text-md)", fontWeight: 700 }}>
+                      {lastCompletedSale.preSaleIsLiquidation ? "Liquidación" : "Anticipo"}
+                    </span>
+                    <span style={{ fontSize: 12, color: "#10b981", fontWeight: 900 }}>{fmt(lastCompletedSale.preSaleAnticipo ?? 0)}</span>
+                  </div>
+                </div>
+              )}
+              {lastCompletedSale.preSaleCode && lastCompletedSale.items.length > 0 && (
+                <p style={{ margin: "0 0 4px", fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--td-text-ghost)" }}>Productos</p>
+              )}
               {lastCompletedSale.items.map((item, i) => (
                 <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: i < lastCompletedSale.items.length - 1 ? "1px solid var(--td-card-border)" : "none" }}>
                   <span style={{ fontSize: 11, color: "var(--td-text-hi)", fontWeight: 700 }}>{item.name} ×{item.quantity}</span>
@@ -6532,8 +6576,13 @@ export function SellPage() {
                 </div>
                 <div>
                   <h3 style={{ margin: 0, fontSize: 15, fontWeight: 900, color: "var(--td-text-hi)" }}>Historial del Día</h3>
-                  <p style={{ margin: "2px 0 0", fontSize: 9, fontWeight: 700, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.15em" }}>
+                  <p style={{ margin: "2px 0 0", fontSize: 9, fontWeight: 700, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.15em", display: "flex", alignItems: "center", gap: 6 }}>
                     {activeStore?.name ?? "Tienda"} · {historialEntries.length} eventos hoy
+                    {historialRefreshing && (
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "#E0221A", opacity: 0.8 }}>
+                        <Loader2 size={9} className="animate-spin" /> actualizando
+                      </span>
+                    )}
                   </p>
                 </div>
               </div>
@@ -6799,20 +6848,41 @@ export function SellPage() {
                       {isOpen && (
                         <div style={{ borderTop: `1px solid ${isMixed ? "rgba(139,92,246,0.15)" : "rgba(245,158,11,0.15)"}`, padding: "12px 14px 14px", background: "rgba(0,0,0,0.15)" }}>
 
-                          {/* Preventa items section */}
-                          <p style={{ margin: "0 0 6px", fontSize: 8, fontWeight: 900, color: "#f59e0b", textTransform: "uppercase", letterSpacing: "0.12em" }}>★ Preventa · {order.code}</p>
+                          {/* Preventa items section. El badge muestra lo COBRADO
+                              (anticipo o liquidación) — no el precio total del
+                              folio, que confundía (pagó $100 de anticipo, no $1,100). */}
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 0 6px", flexWrap: "wrap" }}>
+                            <p style={{ margin: 0, fontSize: 8, fontWeight: 900, color: "#f59e0b", textTransform: "uppercase", letterSpacing: "0.12em" }}>★ Preventa · {order.code}</p>
+                            <span style={{ padding: "1px 8px", borderRadius: 8, fontSize: 8, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", background: order.status === "delivered" ? "rgba(52,211,153,0.15)" : "rgba(245,158,11,0.15)", color: order.status === "delivered" ? "#34d399" : "#f59e0b", border: `1px solid ${order.status === "delivered" ? "rgba(52,211,153,0.3)" : "rgba(245,158,11,0.3)"}` }}>
+                              {order.status === "delivered" ? "Liquidación" : "Anticipo"} {fmt(paidAmt)}
+                            </span>
+                          </div>
                           <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 10 }}>
                             {orderItems.length === 0
                               ? <p style={{ fontSize: 10, color: "var(--td-text-ghost)", textAlign: "center", padding: "8px 0" }}>Sin artículos</p>
-                              : orderItems.map((item, idx) => (
-                                <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", borderBottom: idx < orderItems.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
-                                  <span style={{ flex: 1, fontSize: 11, fontWeight: 700, color: "var(--td-text-hi)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.catalog?.product_name ?? `Artículo #${item.id}`}</span>
-                                  <span style={{ fontSize: 8, color: item.status === "delivered" ? "#34d399" : "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.08em", flexShrink: 0 }}>{item.status === "delivered" ? "Entregado" : "Pendiente"}</span>
-                                  <span style={{ fontSize: 10, color: "var(--td-text-ghost)", flexShrink: 0 }}>×{item.quantity}</span>
-                                  <span style={{ fontSize: 10, fontWeight: 700, color: "var(--td-text-md)", flexShrink: 0, width: 52, textAlign: "right" }}>{fmt(item.unit_price)}</span>
-                                  <span style={{ fontSize: 11, fontWeight: 900, color: "var(--td-text-hi)", flexShrink: 0, width: 62, textAlign: "right" }}>{fmt(item.subtotal)}</span>
-                                </div>
-                              ))}
+                              : (() => {
+                                  // Repartimos lo COBRADO (anticipo/liquidación = paidAmt) entre
+                                  // los items proporcional a su precio, para que la columna de
+                                  // montos sume el TOTAL COBRADO (ej. 100 preventa + 90 + 130 + 130 = 450).
+                                  // El precio total del folio queda como referencia chica.
+                                  const itemsSubtotal = orderItems.reduce((s, i) => s + (i.subtotal ?? 0), 0);
+                                  return orderItems.map((item, idx) => {
+                                    const itemPaid = itemsSubtotal > 0
+                                      ? paidAmt * ((item.subtotal ?? 0) / itemsSubtotal)
+                                      : (idx === 0 ? paidAmt : 0);
+                                    return (
+                                      <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", borderBottom: idx < orderItems.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
+                                        <span style={{ flex: 1, fontSize: 11, fontWeight: 700, color: "var(--td-text-hi)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.catalog?.product_name ?? `Artículo #${item.id}`}</span>
+                                        <span style={{ fontSize: 8, color: item.status === "delivered" ? "#34d399" : "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.08em", flexShrink: 0 }}>{item.status === "delivered" ? "Entregado" : "Pendiente"}</span>
+                                        <span style={{ fontSize: 10, color: "var(--td-text-ghost)", flexShrink: 0 }}>×{item.quantity}</span>
+                                        {/* Precio total del folio = referencia chica (NO es lo cobrado). */}
+                                        <span style={{ fontSize: 9, fontWeight: 600, color: "var(--td-text-ghost)", flexShrink: 0, width: 76, textAlign: "right" }} title="Precio del producto — no es lo cobrado">precio {fmt(item.subtotal ?? 0)}</span>
+                                        {/* Lo COBRADO de esta preventa — suma con los productos al total. */}
+                                        <span style={{ fontSize: 11, fontWeight: 900, color: "#34d399", flexShrink: 0, width: 62, textAlign: "right" }} title="Lo cobrado (anticipo/liquidación)">{fmt(itemPaid)}</span>
+                                      </div>
+                                    );
+                                  });
+                                })()}
                           </div>
 
                           {/* Regular sale items section (only for mixed) */}
@@ -6834,7 +6904,7 @@ export function SellPage() {
 
                           {/* Totals */}
                           <div style={{ display: "flex", justifyContent: "flex-end", gap: 16, paddingTop: 8, borderTop: `1px solid ${isMixed ? "rgba(139,92,246,0.15)" : "rgba(245,158,11,0.15)"}` }}>
-                            {paidAmt > 0 && <div style={{ textAlign: "right" }}><p style={{ margin: 0, fontSize: 8, fontWeight: 900, color: "var(--td-text-ghost)", textTransform: "uppercase" }}>Anticipo preventa</p><p style={{ margin: "2px 0 0", fontSize: 13, fontWeight: 900, color: "#34d399" }}>{fmt(paidAmt)}</p></div>}
+                            {paidAmt > 0 && <div style={{ textAlign: "right" }}><p style={{ margin: 0, fontSize: 8, fontWeight: 900, color: "var(--td-text-ghost)", textTransform: "uppercase" }}>{order.status === "delivered" ? "Liquidación" : "Anticipo preventa"}</p><p style={{ margin: "2px 0 0", fontSize: 13, fontWeight: 900, color: "#34d399" }}>{fmt(paidAmt)}</p></div>}
                             {isMixed && regularTotal > 0 && <div style={{ textAlign: "right" }}><p style={{ margin: 0, fontSize: 8, fontWeight: 900, color: "var(--td-text-ghost)", textTransform: "uppercase" }}>Productos</p><p style={{ margin: "2px 0 0", fontSize: 13, fontWeight: 900, color: "#E0221A" }}>{fmt(regularTotal)}</p></div>}
                             {!isMixed && balance > 0 && <div style={{ textAlign: "right" }}><p style={{ margin: 0, fontSize: 8, fontWeight: 900, color: "var(--td-text-ghost)", textTransform: "uppercase" }}>Saldo</p><p style={{ margin: "2px 0 0", fontSize: 13, fontWeight: 900, color: "#f59e0b" }}>{fmt(balance)}</p></div>}
                             <div style={{ textAlign: "right" }}><p style={{ margin: 0, fontSize: 8, fontWeight: 900, color: "var(--td-text-ghost)", textTransform: "uppercase" }}>{isMixed ? "Total cobrado" : "Total preventa"}</p><p style={{ margin: "2px 0 0", fontSize: 13, fontWeight: 900, color: isMixed ? "#a78bfa" : "var(--td-text-hi)" }}>{fmt(isMixed ? grandTotal : (order.total ?? 0))}</p></div>

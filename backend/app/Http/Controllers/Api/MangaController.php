@@ -82,6 +82,30 @@ class MangaController extends Controller
     }
 
     /**
+     * Resuelve el COSTO REAL del producto de librería.
+     *
+     * En librería el costo no se captura directo: se deriva del precio público
+     * y el margen de ganancia. `costo = precio × (1 − margen/100)`. Ej: precio
+     * 100, margen 30% → costo 70. Si el request manda `cost` explícito (otro
+     * flujo), se respeta. Este costo se persiste en `products.cost` y de ahí lo
+     * leen reportes (utilidad), el snapshot ADR-015 y la vista de caja.
+     */
+    private function resolveCost(array $data): ?float
+    {
+        if (isset($data['cost']) && $data['cost'] !== null) {
+            return round((float) $data['cost'], 2);
+        }
+
+        $price  = $data['public_price'] ?? null;
+        $margin = $data['profit_margin_percent'] ?? null;
+        if ($price !== null && $margin !== null && $margin >= 0 && $margin < 100) {
+            return round((float) $price * (1 - (float) $margin / 100), 2);
+        }
+
+        return null;
+    }
+
+    /**
      * POST /mangas — crea un producto con product_type='manga' + manga_details.
      */
     public function store(StoreMangaRequest $request): JsonResponse
@@ -94,7 +118,7 @@ class MangaController extends Controller
                 'name'         => $data['name'],
                 'sku'          => $data['code'] ?? ('MANGA-' . uniqid()),
                 'barcode'      => $data['code'] ?? null,
-                'cost'         => $data['cost'] ?? null,
+                'cost'         => $this->resolveCost($data),
                 'active'       => $data['active'] ?? true,
                 'product_type' => Product::TYPE_MANGA,
             ]);
@@ -162,7 +186,11 @@ class MangaController extends Controller
                 'name'    => $data['name']    ?? null,
                 'sku'     => $data['code']    ?? null,
                 'barcode' => $data['code']    ?? null,
-                'cost'    => $data['cost']    ?? null,
+                // Costo real derivado del precio público y el margen (la
+                // librería no captura costo directo; se calcula con %). Si el
+                // request no trae precio/margen, queda null y array_filter lo
+                // descarta → no pisa el costo existente.
+                'cost'    => $this->resolveCost($data),
                 'active'  => array_key_exists('active', $data) ? $data['active'] : null,
             ], fn ($v) => $v !== null);
 

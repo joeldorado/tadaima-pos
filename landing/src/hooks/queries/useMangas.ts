@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { getMangas } from '@tadaima/api'
 import { queryKeys } from '@/lib/queryKeys'
 
@@ -22,6 +22,7 @@ export function useMangasQuery(storeId?: number | null, options?: { enabled?: bo
     enabled: options?.enabled ?? true,
     staleTime: ONE_DAY_MS,
     gcTime: ONE_DAY_MS,
+    placeholderData: keepPreviousData,
     refetchOnWindowFocus: true,
     refetchOnReconnect: false,
   })

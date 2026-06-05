@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
-import { AlertTriangle, Search, Loader2, Phone, Mail } from "lucide-react";
+import { AlertTriangle, Search, Phone, Mail } from "lucide-react";
 import { useAuth } from "@tadaima/auth";
 import { usePreSaleOrdersQuery } from "@/hooks/queries/usePreSales";
+import { PreSalesSkeleton } from "./PreSalesSkeleton";
 import type { PreSaleOrder } from "@tadaima/api";
 
 /**
@@ -50,12 +51,7 @@ export function PreSaleVencidosPanel() {
   }, [orders, search]);
 
   if (ordersQuery.isPending) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 gap-3" style={{ color: "var(--td-text-ghost)" }}>
-        <Loader2 size={28} className="animate-spin" />
-        <p style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.18em", textTransform: "uppercase" }}>Cargando vencidos…</p>
-      </div>
-    );
+    return <PreSalesSkeleton variant="rows" />;
   }
 
   const fmtMoney = (n: number) => `$${n.toLocaleString("es-MX", { minimumFractionDigits: 2 })}`;
