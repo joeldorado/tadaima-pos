@@ -8,7 +8,7 @@ import {
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
-import { returnSale, getCashReport } from "@tadaima/api";
+import { returnSale, getCashReport, storageUrl } from "@tadaima/api";
 import { getTodayLocal, toLocalYmd, daysAgoLocal, BUSINESS_TZ } from "@/lib/date";
 import type { CashSessionReport } from "@tadaima/api";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
@@ -505,6 +505,157 @@ function SaleRow({
                 {fmt(sale.total + (sale.pre_sale_orders ?? []).reduce((s, o) => s + (o.paid_amount ?? 0), 0))}
               </span>
             </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Filas unificadas de la lista de Ventas ───────────────────────────────────
+// La lista mezcla ventas regulares (/sales) con movimientos de preventa:
+//  - "anticipo"    → folio pending/ready (apartado nuevo, saldo pendiente)
+//  - "liquidacion" → folio delivered (entregado/saldado)
+// Excluimos preventas con linked_sale_id != null: ésas se cobraron junto a una
+// venta regular y ya salen como hijas dentro de su SaleRow (evita doble conteo).
+type VentasRow =
+  | { kind: "sale"; key: string; ts: number; sale: SaleDetail }
+  | { kind: "presale"; key: string; ts: number; order: PreSaleOrder; movement: "anticipo" | "liquidacion" };
+
+/** Método de pago de un folio derivado de sus pagos. "Varios" si hay mezcla. */
+function getPreSaleMethodName(order: PreSaleOrder): string {
+  const names = Array.from(
+    new Set((order.payments ?? []).map(p => p.payment_method?.name).filter((n): n is string => !!n))
+  );
+  if (names.length === 0) return "—";
+  if (names.length === 1) return names[0] ?? "—";
+  return "Varios";
+}
+
+// ─── PreSaleMovementRow expandible ────────────────────────────────────────────
+function PreSaleMovementRow({
+  order, movement, rank,
+}: {
+  order: PreSaleOrder;
+  movement: "anticipo" | "liquidacion";
+  rank: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const items = order.items ?? [];
+  const itemCount = items.reduce((s, it) => s + (it.quantity ?? 0), 0);
+  const paymentName = getPreSaleMethodName(order);
+  const cobrado = order.paid_amount ?? 0;
+  const isLiq = movement === "liquidacion";
+  const accent = isLiq ? "#22c55e" : "#f59e0b";
+  const dateStr = isLiq ? (order.updated_at || order.created_at) : order.created_at;
+
+  return (
+    <div className="rounded-2xl overflow-hidden transition-all group" style={{ border: `1px solid ${accent}33` }}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-white/[0.03]"
+        style={{ background: `${accent}0d` }}
+      >
+        <span className="text-[9px] font-black w-5 text-center flex-shrink-0" style={{ color: "var(--td-text-lo)" }}>{rank}</span>
+
+        <ChevronRight
+          size={12}
+          className={`transition-transform flex-shrink-0 group-hover:opacity-60 ${open ? "rotate-90" : ""}`}
+          style={{ color: accent }}
+        />
+
+        {/* Badge de preventa en lugar de thumbnails de producto */}
+        <div className="flex items-center justify-center flex-shrink-0 rounded-lg" style={{ width: 32, height: 32, background: `${accent}1f`, border: `1px solid ${accent}40` }}>
+          <Bookmark size={15} style={{ color: accent }} />
+        </div>
+
+        <div className="flex-shrink-0 w-[115px]">
+          <p className="text-xs font-bold" style={{ color: "var(--td-text-hi)" }}>{fmtDateTime(dateStr)}</p>
+        </div>
+
+        <div className="flex-1 min-w-0 hidden lg:block">
+          <div className="flex items-center gap-2">
+            <span className="text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded flex-shrink-0"
+              style={{ background: `${accent}26`, color: accent, border: `1px solid ${accent}59` }}>
+              {isLiq ? "Liquidación" : "Anticipo"}
+            </span>
+            <p className="text-[9px] font-black uppercase tracking-widest truncate" style={{ color: "var(--td-text-lo)" }}>{order.code}</p>
+            {order.customer?.name && (
+              <p className="text-[10px] truncate" style={{ color: "var(--td-text-md)" }}>{order.customer.name}</p>
+            )}
+          </div>
+          {order.user?.name && (
+            <div className="flex items-center gap-1 mt-0.5 text-[9px] font-bold truncate" style={{ color: "var(--td-text-lo)" }} title={`Registró ${order.user.name}`}>
+              <UserIcon size={9} />
+              <span className="uppercase tracking-wider">Atendió:</span>
+              <span className="truncate" style={{ color: "var(--td-text-md)" }}>{order.user.name}</span>
+            </div>
+          )}
+        </div>
+
+        <span className={`text-[8px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full border flex-shrink-0 ${methodBg(paymentName)}`}>
+          {paymentName}
+        </span>
+
+        <div className="flex-shrink-0 text-center w-10 hidden sm:block">
+          <p className="text-xs font-bold" style={{ color: "var(--td-text-md)" }}>{itemCount}</p>
+          <p className="text-[7px] uppercase" style={{ color: "var(--td-text-lo)" }}>arts.</p>
+        </div>
+
+        <div className="ml-auto flex-shrink-0 text-right">
+          <p className="text-sm font-black" style={{ color: "var(--td-text-hi)" }}>{fmt(cobrado)}</p>
+          <p className="text-[8px] font-bold uppercase tracking-widest" style={{ color: accent }}>
+            {isLiq ? "liquidación" : "anticipo"}
+          </p>
+        </div>
+      </button>
+
+      {open && (
+        <div className="px-5 py-4 space-y-2" style={{ borderTop: `1px solid ${accent}33`, background: "rgba(0,0,0,0.15)" }}>
+          {items.length === 0 && (
+            <p className="text-[10px] text-center py-3" style={{ color: "var(--td-text-lo)" }}>Sin detalle de artículos</p>
+          )}
+          {items.map(it => (
+            <div key={it.id} className="flex items-center gap-3 py-2 last:border-0" style={{ borderBottom: "1px solid var(--td-panel-border)" }}>
+              <ProductThumb src={it.catalog?.image_path ? storageUrl(it.catalog.image_path) : undefined} name={it.catalog?.product_name} size={44} rounded="rounded-xl" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-bold truncate" style={{ color: "var(--td-text-hi)" }}>
+                  {it.catalog?.product_name ?? `Producto #${it.product_id ?? "?"}`}
+                </p>
+              </div>
+              <div className="flex items-center gap-5 flex-shrink-0 text-right">
+                <div className="text-center">
+                  <p className="text-xs font-black" style={{ color: "var(--td-text-md)" }}>×{it.quantity}</p>
+                  <p className="text-[8px] uppercase" style={{ color: "var(--td-text-lo)" }}>cant.</p>
+                </div>
+                <div className="text-right w-[58px]">
+                  <p className="text-xs font-bold" style={{ color: "var(--td-text-md)" }}>{fmt(it.unit_price)}</p>
+                  <p className="text-[8px] uppercase" style={{ color: "var(--td-text-lo)" }}>unit.</p>
+                </div>
+                <div className="text-right w-[70px]">
+                  <p className="text-sm font-black" style={{ color: "var(--td-text-hi)" }}>{fmt(it.unit_price * it.quantity)}</p>
+                  <p className="text-[8px] uppercase" style={{ color: "var(--td-text-lo)" }}>subtotal</p>
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {/* Desglose total / cobrado / saldo del folio */}
+          <div className="mt-2 pt-2 space-y-1" style={{ borderTop: `1px dashed ${accent}40` }}>
+            <div className="flex justify-between text-[10px]">
+              <span style={{ color: "var(--td-text-lo)" }}>Total del folio</span>
+              <span className="font-bold" style={{ color: "var(--td-text-md)" }}>{fmt(order.total ?? 0)}</span>
+            </div>
+            <div className="flex justify-between text-[10px]">
+              <span style={{ color: "var(--td-text-lo)" }}>{isLiq ? "Pagado (acumulado)" : "Anticipo pagado"}</span>
+              <span className="font-black" style={{ color: "#10b981" }}>{fmt(cobrado)}</span>
+            </div>
+            {(order.balance ?? 0) > 0.01 && (
+              <div className="flex justify-between text-[10px]">
+                <span style={{ color: "var(--td-text-lo)" }}>Saldo pendiente</span>
+                <span className="font-black" style={{ color: "#f59e0b" }}>{fmt(order.balance ?? 0)}</span>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1613,20 +1764,74 @@ export function SalesPage() {
     [filteredSales]
   );
 
-  const displayedSales = useMemo(() => {
-    if (!searchSale.trim()) return sortedSales;
+  // Movimientos de preventa para mezclar en la Lista de Ventas. Solo cuando el
+  // filtro de método permite preventas (mismo criterio que filteredPreSales).
+  // Excluimos linked_sale_id != null (ya salen como hijas de su SaleRow).
+  const preSaleMovementRows = useMemo<VentasRow[]>(() => {
+    if (filterMethod !== "all" && filterMethod !== "varios") return [];
+    return preSaleOrders
+      .filter(p => p.linked_sale_id == null)
+      .filter(p => p.status === "pending" || p.status === "ready" || p.status === "delivered")
+      .map(p => {
+        const movement: "anticipo" | "liquidacion" = p.status === "delivered" ? "liquidacion" : "anticipo";
+        const dateStr = movement === "liquidacion" ? (p.updated_at || p.created_at) : p.created_at;
+        return { kind: "presale" as const, key: `pre-${p.id}`, ts: new Date(dateStr).getTime(), order: p, movement };
+      });
+  }, [preSaleOrders, filterMethod]);
+
+  // Lista unificada (ventas + anticipos + liquidaciones) ordenada por fecha desc,
+  // con el buscador aplicado a ambos tipos de fila.
+  const displayedRows = useMemo<VentasRow[]>(() => {
+    const saleRows: VentasRow[] = sortedSales.map(s => ({
+      kind: "sale" as const,
+      key: `sale-${s.id}`,
+      ts: new Date(s.sold_at || s.created_at).getTime(),
+      sale: s,
+    }));
+    const merged = [...saleRows, ...preSaleMovementRows].sort((a, b) => b.ts - a.ts);
+    if (!searchSale.trim()) return merged;
     const q = searchSale.toLowerCase();
-    return sortedSales.filter(s =>
-      String(s.id).includes(q) ||
-      (s.customer?.name || "").toLowerCase().includes(q) ||
-      getPaymentMethodName(s).toLowerCase().includes(q) ||
-      (s.items || []).some(i => {
-        const info = productMap[String(i.product_id)];
-        return (i.product?.name || info?.name || "").toLowerCase().includes(q) ||
-               (i.product?.sku  || info?.sku  || "").toLowerCase().includes(q);
-      })
-    );
-  }, [sortedSales, searchSale, productMap]);
+    return merged.filter(row => {
+      if (row.kind === "sale") {
+        const s = row.sale;
+        return (
+          String(s.id).includes(q) ||
+          (s.customer?.name || "").toLowerCase().includes(q) ||
+          getPaymentMethodName(s).toLowerCase().includes(q) ||
+          (s.items || []).some(i => {
+            const info = productMap[String(i.product_id)];
+            return (i.product?.name || info?.name || "").toLowerCase().includes(q) ||
+                   (i.product?.sku  || info?.sku  || "").toLowerCase().includes(q);
+          })
+        );
+      }
+      const o = row.order;
+      const movLabel = row.movement === "liquidacion" ? "liquidación" : "anticipo";
+      return (
+        o.code.toLowerCase().includes(q) ||
+        (o.customer?.name || "").toLowerCase().includes(q) ||
+        getPreSaleMethodName(o).toLowerCase().includes(q) ||
+        movLabel.includes(q) ||
+        (o.items ?? []).some(it => (it.catalog?.product_name || "").toLowerCase().includes(q))
+      );
+    });
+  }, [sortedSales, preSaleMovementRows, searchSale, productMap]);
+
+  // Stats del header del tab Ventas (incluyen movimientos de preventa).
+  const displayedItemsCount = useMemo(
+    () => displayedRows.reduce((a, r) =>
+      a + (r.kind === "sale"
+        ? (r.sale.items?.reduce((b, i) => b + i.quantity, 0) ?? 0)
+        : (r.order.items ?? []).reduce((b, it) => b + (it.quantity ?? 0), 0)), 0),
+    [displayedRows]
+  );
+  const displayedTotalReceived = useMemo(
+    () => displayedRows.reduce((a, r) =>
+      a + (r.kind === "sale"
+        ? r.sale.total + (r.sale.pre_sale_orders ?? []).reduce((s, o) => s + (o.paid_amount ?? 0), 0)
+        : (r.order.paid_amount ?? 0)), 0),
+    [displayedRows]
+  );
 
   // ── Agregado por producto ──────────────────────────────────────────────────
   interface ProductStat {
@@ -1918,7 +2123,7 @@ export function SalesPage() {
         <div className="flex items-center justify-between px-8 pt-7 pb-0" style={{ borderBottom: "1px solid var(--td-panel-border)" }}>
           <div className="flex items-end gap-1">
             {([
-              { key: "ventas",    label: "Lista de Ventas", icon: Receipt,   count: displayedSales.length },
+              { key: "ventas",    label: "Lista de Ventas", icon: Receipt,   count: displayedRows.length },
               { key: "productos", label: "Por Producto",    icon: Package,   count: displayedProducts.length },
               // El tab de flujo y reporte solo aparecen para admin/gerente.
               ...(canSeeFinancials
@@ -1956,12 +2161,12 @@ export function SalesPage() {
                 <div className="text-right">
                   <p className="text-[8px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>Artículos vendidos</p>
                   <p className="text-sm font-black" style={{ color: "var(--td-text-hi)" }}>
-                    {displayedSales.reduce((a, s) => a + (s.items?.reduce((b, i) => b + i.quantity, 0) ?? 0), 0)}
+                    {displayedItemsCount}
                   </p>
                 </div>
                 <div className="text-right">
                   <p className="text-[8px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>Total recibido</p>
-                  <p className="text-sm font-black" style={{ color: T.redBright }}>{fmt(displayedSales.reduce((a, s) => a + s.total, 0))}</p>
+                  <p className="text-sm font-black" style={{ color: T.redBright }}>{fmt(displayedTotalReceived)}</p>
                 </div>
               </>
             ) : (
@@ -2025,14 +2230,18 @@ export function SalesPage() {
                       <div className="h-3 w-20 rounded-full" style={{ background: "rgba(255,255,255,0.08)" }} />
                     </div>
                   ))
-                ) : displayedSales.length === 0 ? (
+                ) : displayedRows.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-20" style={{ opacity: 0.15 }}>
                     <Receipt size={40} className="mb-3" />
                     <p className="text-[10px] font-black uppercase tracking-widest">Sin ventas en este período</p>
                   </div>
                 ) : (
-                  displayedSales.map((sale, idx) => (
-                    <SaleRow key={`${sale.id}-${idx}`} sale={sale} productMap={productMap} rank={idx + 1} onReturn={handleReturn} />
+                  displayedRows.map((row, idx) => (
+                    row.kind === "sale" ? (
+                      <SaleRow key={row.key} sale={row.sale} productMap={productMap} rank={idx + 1} onReturn={handleReturn} />
+                    ) : (
+                      <PreSaleMovementRow key={row.key} order={row.order} movement={row.movement} rank={idx + 1} />
+                    )
                   ))
                 )}
               </div>

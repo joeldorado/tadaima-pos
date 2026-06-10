@@ -2730,8 +2730,13 @@ export function SellPage() {
         void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
         void queryClient.invalidateQueries({ queryKey: queryKeys.salesDrafts.all });
         void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleCatalogs.all });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all });
+        // refetchType:'all' refetchea también las queries INACTIVAS (SalesPage
+        // está desmontada mientras el cajero está en Caja). Sin esto solo se
+        // marcaban stale y al ir a Ventas se veía el cache viejo ~1s antes de
+        // actualizar. Con 'all' la lista de Ventas se pre-calienta en background
+        // y al navegar ya está fresca (anticipo/liquidación/venta visibles).
+        void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all, refetchType: 'all' });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all, refetchType: 'all' });
         setPendingMesaCloseId(mesaId);
         triggerPrintFlow(mixedTicket);
 
@@ -2938,9 +2943,11 @@ export function SellPage() {
         };
         void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
         void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleCatalogs.all });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all });
+        // refetchType:'all' — pre-calienta la lista de Ventas (inactiva) para
+        // que el nuevo folio/anticipo ya aparezca al ir de Caja a Ventas.
+        void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all, refetchType: 'all' });
         void queryClient.invalidateQueries({ queryKey: queryKeys.salesDrafts.all });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all, refetchType: 'all' });
         setPendingMesaCloseId(mesaId);
         triggerPrintFlow(mixedTicket);
       } catch (err: unknown) {
@@ -3064,7 +3071,9 @@ export function SellPage() {
       void queryClient.invalidateQueries({ queryKey: queryKeys.historial.all });
       void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
       void queryClient.invalidateQueries({ queryKey: queryKeys.salesDrafts.all });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all });
+      // refetchType:'all' — pre-calienta la lista de Ventas (inactiva) para que
+      // la venta recién cobrada ya aparezca al ir de Caja a Ventas.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all, refetchType: 'all' });
       setPendingMesaCloseId(mesaId);
       triggerPrintFlow(completedSale);
     } catch (err: unknown) {

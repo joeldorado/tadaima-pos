@@ -28,5 +28,18 @@ backend/.env
 backend/.env.*
 backend/database/database.sqlite*
 
+# Artefactos locales que NO son parte del build (ya excluidos en .dockerignore).
+# Evitan subir ~560MB de basura al contexto de Cloud Build.
+CSP_502m_app.pkg
+everything-claude-code-main/
+tienda-T/
+tienda-T-develop/
+tienda-T-develop.zip
+skills/
+skills.zip
+ai-agents/
+ai-agents.zip
+ai-page-design-prompts.*
+
 # Docs (no se necesitan en la imagen)
 *.md
