@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\AppNotification;
+use App\Models\PreSaleCatalog;
 use App\Models\Product;
 use App\Models\Store;
 use App\Models\User;
@@ -150,14 +151,119 @@ class NotificationsController extends Controller
         ], 'Aviso enviado correctamente.', 201);
     }
 
+    /**
+     * POST /notifications/presale-assign-alert
+     *
+     * El cajero (o gerente) pide que se habilite un catálogo de preventa en su
+     * tienda (la tienda no tiene entrada en store_limits → en Caja sale "Sin
+     * asignar"). Destinatarios: mismos que el aviso de stock — cajero avisa a
+     * gerente de su tienda + admins; gerente avisa a admins. Idempotente por
+     * (destinatario, tienda, catálogo): re-enviar actualiza y marca unread.
+     */
+    public function storePreSaleAssignAlert(Request $request): JsonResponse
+    {
+        $payload = $request->validate([
+            'catalog_id' => ['required', 'integer', 'exists:pre_sale_catalogs,id'],
+        ]);
+
+        $sender = $request->user();
+        $isAdmin = $sender->hasRole(self::ADMIN_ROLES);
+        $isManager = $sender->hasRole(['gerente']) && ! $isAdmin;
+        $isCashier = $sender->hasRole(['cajero']) && ! $isAdmin;
+
+        if (! $isManager && ! $isCashier) {
+            return $this->error('Solo gerente o cajero pueden enviar avisos.', 403);
+        }
+
+        if (! $sender->store_id) {
+            return $this->error('El usuario no tiene tienda asignada.', 422);
+        }
+
+        $store = Store::with('manager')->findOrFail($sender->store_id);
+        $catalog = PreSaleCatalog::findOrFail((int) $payload['catalog_id']);
+
+        $recipients = $this->resolveRecipients($sender, $store, $isCashier, $isManager);
+        if ($recipients->isEmpty()) {
+            return $this->success([
+                'created_or_updated' => 0,
+                'recipients' => [],
+            ], 'No hay destinatarios para este aviso.');
+        }
+
+        // Tipo propio (no stock_alert_*) para que reference_id = catálogo no
+        // colisione con avisos de productos de la misma tienda.
+        $notificationType = sprintf('presale_assign_s%d', $store->id);
+        $roleLabel = $isManager ? 'Gerente' : 'Cajero';
+        $message = sprintf(
+            '%s %s pide habilitar la preventa "%s" en %s: asígnale cupo en el catálogo (tab Stock).',
+            $roleLabel,
+            $sender->name,
+            $catalog->product_name,
+            $store->name,
+        );
+
+        $createdOrUpdated = [];
+        foreach ($recipients as $recipient) {
+            $notification = AppNotification::updateOrCreate(
+                [
+                    'user_id'      => $recipient->id,
+                    'type'         => $notificationType,
+                    'reference_id' => $catalog->id,
+                ],
+                [
+                    'message'    => $message,
+                    'read_at'    => null,
+                    'created_at' => now(),
+                ],
+            );
+
+            $createdOrUpdated[] = [
+                'notification_id' => $notification->id,
+                'user_id' => $recipient->id,
+                'user_name' => $recipient->name,
+            ];
+        }
+
+        return $this->success([
+            'created_or_updated' => count($createdOrUpdated),
+            'recipients' => $createdOrUpdated,
+        ], 'Aviso enviado correctamente.', 201);
+    }
+
     private function resolveRecipients(User $sender, Store $store, bool $isCashier, bool $isManager): Collection
     {
         $recipients = collect();
 
-        if ($isCashier && $store->manager_id && $store->manager_id !== $sender->id) {
-            $manager = $store->manager;
-            if ($manager && $manager->active) {
+        if ($isCashier) {
+            // La relación gerente↔tienda del sistema es users.store_id + rol
+            // gerente (igual que el RBAC de controllers). stores.manager_id casi
+            // nunca está poblado (las tiendas creadas por UI lo dejan NULL) —
+            // confiar solo en él dejaba al gerente sin avisos (bug QA 2026-06-11).
+            $managers = User::query()
+                ->where('active', true)
+                ->where('store_id', $store->id)
+                ->where('id', '!=', $sender->id)
+                ->whereExists(function ($query) {
+                    $query->selectRaw('1')
+                        ->from('model_has_roles')
+                        ->join('roles', 'roles.id', '=', 'model_has_roles.role_id')
+                        ->whereColumn('model_has_roles.model_id', 'users.id')
+                        ->where('model_has_roles.model_type', User::class)
+                        ->where('roles.name', 'gerente');
+                })
+                ->get();
+
+            foreach ($managers as $manager) {
                 $recipients->push($manager);
+            }
+
+            // Compat: si la tienda sí tiene manager_id (aunque ese usuario no
+            // tenga la tienda en su store_id), también recibe el aviso.
+            if ($store->manager_id && $store->manager_id !== $sender->id) {
+                $manager = $store->manager;
+                if ($manager && $manager->active) {
+                    $recipients->push($manager);
+                }
             }
         }
 

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreUserRequest;
 use App\Http\Requests\UpdateUserRequest;
 use App\Http\Resources\UserResource;
+use App\Models\Store;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -91,10 +92,29 @@ class UserController extends Controller
     public function store(StoreUserRequest $request): JsonResponse
     {
         $user = DB::transaction(function () use ($request) {
-            $user = User::create($request->only([
+            $data = $request->only([
                 'name', 'email', 'password', 'phone', 'address',
                 'company_id', 'store_id', 'active', 'can_view_cost',
-            ]));
+            ]);
+
+            // La UI no manda company_id → derivarlo del admin que crea, o de la
+            // tienda asignada. Sin esto el usuario nace con company NULL y no
+            // puede crear tiendas/bodegas ni ver los settings de la empresa
+            // (bug QA 2026-06-10).
+            $data['company_id'] ??= $request->user()?->company_id
+                ?? ($request->filled('store_id') ? Store::find($request->store_id)?->company_id : null);
+
+            // Gerente con tienda asignada ve costos de fábrica (decisión
+            // 2026-06-10): se enciende can_view_cost al crearlo; el admin puede
+            // apagarlo después desde Permisos de Precios sin tocar el rol.
+            if (! $request->filled('can_view_cost') && ! empty($data['store_id']) && $request->filled('role_id')) {
+                $roleName = DB::table('roles')->where('id', $request->role_id)->value('name');
+                if (in_array($roleName, ['gerente', 'manager'], true)) {
+                    $data['can_view_cost'] = true;
+                }
+            }
+
+            $user = User::create($data);
 
             if ($request->filled('role_id')) {
                 DB::table('model_has_roles')->insert([
@@ -181,6 +201,14 @@ class UserController extends Controller
                 'model_id'   => $user->id,
             ]);
         });
+
+        // Misma regla que en el alta: al volverse gerente (con tienda asignada)
+        // se le enciende la visibilidad de costos; el admin puede apagarla
+        // después desde Permisos de Precios.
+        $roleName = DB::table('roles')->where('id', $request->role_id)->value('name');
+        if (in_array($roleName, ['gerente', 'manager'], true) && $user->store_id !== null && ! $user->can_view_cost) {
+            $user->update(['can_view_cost' => true]);
+        }
 
         return $this->success(['roles' => $user->fresh()->roles], 'Rol asignado.');
     }

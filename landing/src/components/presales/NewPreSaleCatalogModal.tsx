@@ -25,6 +25,18 @@ const TS  = "var(--td-text-md)";
 const TM  = "var(--td-text-lo)";
 const RED = "var(--td-red)";
 
+// Días de gracia sugeridos entre la llegada del producto y el límite de retiro.
+const PICKUP_DAYS_AFTER_ARRIVAL = 10;
+
+/** Suma días a una fecha "YYYY-MM-DD" sin pasar por UTC (evita el corrimiento
+ *  de un día en zonas negativas como México al usar toISOString). */
+function addDaysToYmd(ymd: string, days: number): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const dt = new Date(y!, (m ?? 1) - 1, (d ?? 1) + days);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
+}
+
 const inputStyle: React.CSSProperties = {
   width: "100%", padding: "11px 14px", borderRadius: 16,
   border: "1px solid var(--td-input-border)", background: "var(--td-input-bg)",
@@ -109,10 +121,27 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
   const [name, setName]               = useState(catalog?.product_name ?? "");
   const [categoryId, setCategoryId]   = useState<number | "">(catalog?.category?.id ?? "");
   const [supplierId, setSupplierId]   = useState<number | "">(catalog?.supplier?.id ?? "");
-  const [advance, setAdvance]         = useState(catalog?.advance_payment != null ? String(catalog.advance_payment) : "");
+  // Catálogo nuevo: anticipo arranca en $100 (base típica del negocio, editable).
+  const [advance, setAdvance]         = useState(
+    catalog ? (catalog.advance_payment != null ? String(catalog.advance_payment) : "") : "100"
+  );
   const [limit, setLimit]             = useState(catalog?.preorder_limit != null ? String(catalog.preorder_limit) : "");
   const [arrivalDate, setArrivalDate] = useState(catalog?.arrival_date ?? "");
   const [pickupDate, setPickupDate]   = useState(catalog?.pickup_deadline ?? "");
+  // Último valor de retiro que ESTE form puso automáticamente. Si el usuario
+  // lo cambió a mano, ya no lo pisamos al mover la fecha de llegada.
+  const autoPickupRef = useRef("");
+
+  const handleArrivalDateChange = (value: string) => {
+    setArrivalDate(value);
+    if (!value) return;
+    // Precarga "Fecha límite de retiro" = llegada + 10 días, como base editable.
+    if (pickupDate === "" || pickupDate === autoPickupRef.current) {
+      const suggested = addDaysToYmd(value, PICKUP_DAYS_AFTER_ARRIVAL);
+      autoPickupRef.current = suggested;
+      setPickupDate(suggested);
+    }
+  };
   const [cost, setCost]               = useState(catalog?.cost != null ? String(catalog.cost) : "");
   const [publishNow, setPublishNow]   = useState(false);
 
@@ -138,6 +167,13 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
   // Selector "Agregar tienda": qué tienda se va a sumar a la lista
   const [pendingStoreId, setPendingStoreId] = useState<number | "">("");
   const [pendingQty, setPendingQty]         = useState("");
+
+  // Preselecciona cuando solo hay una tienda disponible (p.ej. gerente con una sola tienda)
+  useEffect(() => {
+    const selectable = restrictedStoreId != null ? stores.filter(s => s.id === restrictedStoreId) : stores;
+    const available = selectable.filter(s => !(s.id in storeLimits));
+    if (pendingStoreId === "" && available.length === 1) setPendingStoreId(available[0]!.id);
+  }, [stores, storeLimits, restrictedStoreId, pendingStoreId]);
   // Tienda en modo edición de qty (para mostrar input inline en lugar del valor)
   const [editingStoreId, setEditingStoreId] = useState<number | null>(null);
   const [editingQty, setEditingQty]         = useState("");
@@ -192,7 +228,7 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
   // y el botón se pinta de rojo solo cuando la lista queda vacía.
   const missingFields: string[] = [];
   if (!name.trim()) missingFields.push("Nombre del producto");
-  if (!price1 || Number(price1) <= 0) missingFields.push("Precio base (P1)");
+  if (!price1 || Number(price1) <= 0) missingFields.push("Precio Normal (P1)");
   if (arrivalDate && pickupDate && new Date(pickupDate) < new Date(arrivalDate)) {
     missingFields.push("Fecha de retiro inválida (anterior a la llegada)");
   }
@@ -200,7 +236,7 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
 
   const handleSave = async () => {
     if (!name.trim()) { toast.error("Nombre del producto es requerido"); setTab("general"); return; }
-    if (!price1 || Number(price1) <= 0) { toast.error("El precio base (P1) es requerido"); setTab("precios"); return; }
+    if (!price1 || Number(price1) <= 0) { toast.error("El Precio Normal (P1) es requerido"); setTab("precios"); return; }
 
     // La fecha límite de retiro debe ser igual o posterior a la fecha de llegada.
     if (arrivalDate && pickupDate && new Date(pickupDate) < new Date(arrivalDate)) {
@@ -418,7 +454,7 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div>
                   <Label>Fecha de llegada</Label>
-                  <input type="date" value={arrivalDate} onChange={e => setArrivalDate(e.target.value)} style={inputStyle} />
+                  <input type="date" value={arrivalDate} onChange={e => handleArrivalDateChange(e.target.value)} style={inputStyle} />
                 </div>
                 <div>
                   <Label>Fecha límite de retiro</Label>
@@ -481,29 +517,47 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
 
               <div style={{ borderTop: "1px solid var(--td-panel-border)", paddingTop: 14 }} />
 
-              {[
-                { key: "P1 (Base) *", value: price1, set: setPrice1 },
-                { key: "P2",          value: price2, set: setPrice2 },
-                { key: "P3",          value: price3, set: setPrice3 },
-                { key: "P4",          value: price4, set: setPrice4 },
-                { key: "P5",          value: price5, set: setPrice5 },
-              ].map(({ key, value, set }) => (
-                <div key={key} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  <div style={{ width: 52, flexShrink: 0 }}>
-                    <span style={{ fontSize: 11, fontWeight: 900, color: value ? TP : TM }}>{key}</span>
+              {/* Niveles de negocio (Normal/Socio/Mayorista) en el primer row,
+                  D/E en el segundo — mismo orden que productos y librerías. */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                {[
+                  { key: "Normal *",  value: price1, set: setPrice1 },
+                  { key: "Socio",     value: price2, set: setPrice2 },
+                  { key: "Mayorista", value: price3, set: setPrice3 },
+                ].map(({ key, value, set }) => (
+                  <div key={key}>
+                    <Label>{key}</Label>
+                    <div style={{ position: "relative" }}>
+                      <DollarSign size={11} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: TM, pointerEvents: "none" }} />
+                      <input
+                        type="number" min="0" step="0.01"
+                        value={value} onChange={e => set(e.target.value)}
+                        placeholder="0.00"
+                        style={{ ...inputStyle, paddingLeft: 26 }}
+                      />
+                    </div>
                   </div>
-                  <div style={{ position: "relative", flex: 1 }}>
-                    <DollarSign size={11} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: TM, pointerEvents: "none" }} />
-                    <input
-                      type="number" min="0" step="0.01"
-                      value={value} onChange={e => set(e.target.value)}
-                      placeholder="0.00"
-                      style={{ ...inputStyle, paddingLeft: 26 }}
-                    />
+                ))}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                {[
+                  { key: "Precio D", value: price4, set: setPrice4 },
+                  { key: "Precio E", value: price5, set: setPrice5 },
+                ].map(({ key, value, set }) => (
+                  <div key={key}>
+                    <Label>{key}</Label>
+                    <div style={{ position: "relative" }}>
+                      <DollarSign size={11} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: TM, pointerEvents: "none" }} />
+                      <input
+                        type="number" min="0" step="0.01"
+                        value={value} onChange={e => set(e.target.value)}
+                        placeholder="0.00"
+                        style={{ ...inputStyle, paddingLeft: 26 }}
+                      />
+                    </div>
                   </div>
-                  <span style={{ fontSize: 11, color: value ? TP : TM, width: 70, textAlign: "right", flexShrink: 0 }}>{fmt(value)}</span>
-                </div>
-              ))}
+                ))}
+              </div>
 
               {advance && Number(advance) > 0 && (
                 <div style={{ marginTop: 8, padding: "10px 14px", borderRadius: 14, background: "rgba(59,130,246,0.06)", border: "1px solid rgba(59,130,246,0.15)" }}>
@@ -602,12 +656,22 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
                     {assignedEntries.map(({ storeId, storeName, qty }) => {
                       const isEditing = editingStoreId === storeId;
                       const isZero = !isEditing && qty !== "" && Number(qty) === 0;
+                      // Restante por apartar (QA 2026-06-08): límite − reservados
+                      // activos de esa tienda. Solo hay reservas al editar un
+                      // catálogo existente (reserved_by_store viene de la API).
+                      const reserved = catalog?.reserved_by_store?.[String(storeId)] ?? 0;
+                      const restante = qty !== "" ? Math.max(0, Number(qty) - reserved) : null;
                       return (
                         <div key={storeId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 14, border: `1px solid ${isZero ? "rgba(220,38,38,0.3)" : "var(--td-input-border)"}`, background: "var(--td-input-bg)" }}>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: TP }}>{storeName}</p>
                             {isZero && (
                               <p style={{ margin: "2px 0 0", fontSize: 9, color: "#DC2626", fontWeight: 700 }}>Stock 0 — no podrá vender</p>
+                            )}
+                            {catalog && !isZero && reserved > 0 && (
+                              <p style={{ margin: "2px 0 0", fontSize: 9, fontWeight: 700, color: restante === 0 ? "#DC2626" : "#F59E0B" }}>
+                                Apartados: {reserved} · Restante por apartar: {restante ?? "—"}{restante === 0 ? " — agotado" : ""}
+                              </p>
                             )}
                           </div>
                           {isEditing ? (

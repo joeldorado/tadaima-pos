@@ -25,23 +25,21 @@ export function PreSalesPage() {
   const role = primaryRole(user?.roles);
   const isCashier = role === "cajero";
 
-  // Default tab: admin/gerente → folios; cajero → disponibles (lo más útil
-  // para arrancar el día, ver qué catálogos puede vender).
-  const [adminTab, setAdminTab] = useState<AdminTab>(isCashier ? "disponibles" : "folios");
+  // Default tab: admin/gerente → catálogos (decisión Joel 2026-06-11: al entrar
+  // a Preventas que cargue primero el catálogo); cajero → disponibles (lo más
+  // útil para arrancar el día, ver qué catálogos puede vender).
+  const [adminTab, setAdminTab] = useState<AdminTab>(isCashier ? "disponibles" : "catalogos");
 
   const storeId = !isAdmin && user?.store_id ? user.store_id : undefined;
-  const pendingQuery = usePreSaleOrdersQuery(
-    { status: "pending", per_page: 1, ...(storeId ? { store_id: storeId } : {}) },
+  // Badge de Folios: una sola query con status combinado (el backend acepta
+  // CSV y hace whereIn). Antes eran 2 requests (pending + ready) solo para
+  // sumar los totales.
+  const foliosBadgeQuery = usePreSaleOrdersQuery(
+    { status: "pending,ready", per_page: 1, ...(storeId ? { store_id: storeId } : {}) } as Parameters<typeof usePreSaleOrdersQuery>[0],
     { enabled: !!user }
   );
-  const readyQuery = usePreSaleOrdersQuery(
-    { status: "ready", per_page: 1, ...(storeId ? { store_id: storeId } : {}) },
-    { enabled: !!user }
-  );
-  const pCount = pendingQuery.data?.pagination.total ?? 0;
-  const rCount = readyQuery.data?.pagination.total ?? 0;
   const foliosPendingCount: number | null =
-    pendingQuery.isPending || readyQuery.isPending ? null : pCount + rCount;
+    foliosBadgeQuery.isPending ? null : (foliosBadgeQuery.data?.pagination.total ?? 0);
 
   // Tab config con visibilidad por rol:
   //  - "catalogos": admin + gerente (gestión completa). Decisión Joel 2026-05-27:

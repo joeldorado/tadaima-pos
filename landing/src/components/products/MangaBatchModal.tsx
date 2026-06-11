@@ -1,4 +1,4 @@
-import { useReducer, useState, useCallback, useRef, type CSSProperties } from 'react'
+import { useReducer, useState, useCallback, useEffect, useRef, type CSSProperties } from 'react'
 import {
   X, Plus, Trash2, Loader2, CheckCircle2, AlertCircle, BookOpen,
   DollarSign, Warehouse, Save, ChevronDown, ChevronRight,
@@ -8,6 +8,7 @@ import { createManga, updateMangaInventory, uploadMangaImage } from '@tadaima/ap
 import type { ApiError } from '@tadaima/api'
 import { EDITORIALS, MANGA_GENRES } from './mangaConstants'
 import { generateBarcode } from '@/lib/barcode'
+import { PRICE_FORM_LABELS } from '@/lib/priceLevels'
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 
@@ -113,7 +114,7 @@ function tomoReducer(state: VolumeRow[], action: TomoAction): VolumeRow[] {
   }
 }
 
-const PRICE_LABELS = ['Precio A (Default)', 'Precio B', 'Precio C', 'Precio D', 'Precio E'] as const
+const PRICE_LABELS = PRICE_FORM_LABELS
 const PRICE_KEYS   = ['price1', 'price2', 'price3', 'price4', 'price5'] as const
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -172,6 +173,13 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
 
   const assignedWarehouseIds = new Set(warehouseGroups.map(g => g.warehouseId))
   const availableLocs = locations.filter(l => !assignedWarehouseIds.has(l.warehouseId))
+
+  // Preselecciona cuando solo hay una tienda disponible (p.ej. gerente con una sola tienda)
+  useEffect(() => {
+    if (addWarehouseId === '' && availableLocs.length === 1) {
+      setAddWarehouseId(availableLocs[0]!.warehouseId)
+    }
+  }, [addWarehouseId, availableLocs])
 
   // ── Tomo handlers — also sync warehouse groups ─────────────────────────────
 
@@ -326,7 +334,7 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
         <div className="px-6 py-2.5 flex items-center gap-5" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
           {([
             { label: 'Nombre',             done: nombreOk },
-            { label: 'Precio A',           done: precioOk },
+            { label: 'Precio Normal',      done: precioOk },
             { label: `${tomos.length} tomo${tomos.length !== 1 ? 's' : ''}`, done: tomosOk },
           ]).map(item => (
             <div key={item.label} className="flex items-center gap-1.5">
@@ -485,7 +493,7 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
               </div>
 
               <p className="text-xs px-1" style={{ color: T.textMuted }}>
-                Aplican igual a todos los tomos del lote. Si Precio A queda vacío, se usa el Precio Público.
+                Aplican igual a todos los tomos del lote. Si Precio Normal queda vacío, se usa el Precio Público.
               </p>
             </div>
           )}

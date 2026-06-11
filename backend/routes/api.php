@@ -180,6 +180,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // ── Notifications ─────────────────────────────────────────────────────────
     Route::get('notifications',                    [NotificationsController::class, 'index']);
     Route::post('notifications/stock-alert',       [NotificationsController::class, 'storeStockAlert']);
+    Route::post('notifications/presale-assign-alert', [NotificationsController::class, 'storePreSaleAssignAlert']);
     Route::patch('notifications/{id}/read',        [NotificationsController::class, 'markRead']);
     Route::delete('notifications/{id}',            [NotificationsController::class, 'destroy']);
 
@@ -251,6 +252,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('sales',        [ReportsController::class, 'sales']);
         Route::get('inventory',    [ReportsController::class, 'inventory']);
         Route::get('cash',         [ReportsController::class, 'cash']);
+        Route::get('cash/{session}/detail', [ReportsController::class, 'cashDetail']);
         Route::get('top-products', [ReportsController::class, 'topProducts']);
         Route::get('customers',    [ReportsController::class, 'customers']);
         Route::get('pre-sales',    [ReportsController::class, 'preSales']);

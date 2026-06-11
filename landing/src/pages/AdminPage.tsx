@@ -12,7 +12,7 @@ import {
   X, Check, ChevronDown, Loader2, AlertTriangle,
   Eye, EyeOff, Lock, Globe, Phone,
   Mail, MapPin, ToggleLeft, ToggleRight,
-  UserCheck, Key, Clock, Trash2, Percent, Sparkles,
+  UserCheck, Key, Clock, Trash2, Percent, Sparkles, Search,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -38,6 +38,7 @@ import { useUsersQuery } from "@/hooks/queries/useUsers";
 import { useRolesQuery } from "@/hooks/queries/useRoles";
 import { useCategoriesQuery } from "@/hooks/queries/useCategories";
 import { queryKeys } from "@/lib/queryKeys";
+import { isValidEmail, isValidPhone } from "@/lib/validation";
 
 // ─── Design tokens (coherente con resto del sistema) ─────────────────────────
 const BG   = "var(--td-page-bg)";
@@ -71,6 +72,13 @@ const INPUT: React.CSSProperties = {
 const TP = "var(--td-text-hi)";
 const TS = "var(--td-text-md)";
 const TM = "var(--td-text-lo)";
+// Contenedor scrolleable para listas largas (usuarios, sucursales): alto máximo
+// relativo al viewport para que la lista no crezca infinito.
+const LIST_SCROLL: React.CSSProperties = {
+  maxHeight: "calc(100vh - 330px)",
+  overflowY: "auto",
+  paddingRight: 4,
+};
 
 // ─── Shared components ───────────────────────────────────────────────────────
 function Badge({ color, children }: { color: string; children: React.ReactNode }) {
@@ -99,6 +107,21 @@ function Btn({ onClick, children, variant = "ghost", disabled = false, style = {
     outline: { background: "transparent", color: TS, border: "1px solid var(--td-input-border)", borderRadius: 12, padding: "7px 14px", fontSize: 11, fontWeight: 700, cursor: "pointer" },
   };
   return <button onClick={onClick} disabled={disabled} style={{ ...styles[variant], ...style }}>{children}</button>;
+}
+
+function ListSearchBar({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
+  return (
+    <div style={{ position: "relative", marginBottom: 12 }}>
+      <Search size={14} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: TM, pointerEvents: "none" }} />
+      <input
+        type="text"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        style={{ ...INPUT, paddingLeft: 38 }}
+      />
+    </div>
+  );
 }
 
 function Modal({ title, onClose, children, width = 560 }: { title: string; onClose: () => void; children: React.ReactNode; width?: number }) {
@@ -177,6 +200,16 @@ function TabSucursales() {
     data: { name: "", address: "", phone: "", email: "", active: true },
   });
   const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState("");
+
+  const q = search.trim().toLowerCase();
+  const filteredStores = q
+    ? stores.filter(s =>
+        s.name.toLowerCase().includes(q) ||
+        (s.address ?? "").toLowerCase().includes(q) ||
+        (s.phone ?? "").toLowerCase().includes(q) ||
+        (s.email ?? "").toLowerCase().includes(q))
+    : stores;
 
   useEffect(() => {
     if (storesQuery.error) toast.error("Error al cargar sucursales");
@@ -193,6 +226,8 @@ function TabSucursales() {
   const save = async () => {
     const d = modal.data;
     if (!d.name.trim()) { toast.error("El nombre es requerido"); return; }
+    if (d.phone.trim() && !isValidPhone(d.phone)) { toast.error("Teléfono inválido: deben ser 10 dígitos (ej. 55 1234 5678)"); return; }
+    if (d.email.trim() && !isValidEmail(d.email)) { toast.error("Email inválido (ej. tienda@email.com)"); return; }
     setSaving(true);
     try {
       if (d.id) {
@@ -242,8 +277,10 @@ function TabSucursales() {
       {loading ? (
         <div style={{ textAlign: "center", padding: 40, color: TM }}><Loader2 size={24} className="animate-spin" /></div>
       ) : (
-        <div style={{ display: "grid", gap: 10 }}>
-          {stores.map(s => (
+        <>
+        <ListSearchBar value={search} onChange={setSearch} placeholder="Buscar sucursal por nombre, dirección, teléfono o email..." />
+        <div style={{ ...LIST_SCROLL, display: "grid", gap: 10 }}>
+          {filteredStores.map(s => (
             <div key={s.id} style={{ ...GLASS, borderRadius: 16, padding: "16px 20px", display: "flex", alignItems: "center", gap: 16 }}>
               <div style={{ width: 42, height: 42, borderRadius: 12, background: "var(--td-panel-bg)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                 <Store size={18} color={s.active ? "#00CC66" : TM} />
@@ -265,7 +302,9 @@ function TabSucursales() {
             </div>
           ))}
           {stores.length === 0 && <div style={{ textAlign: "center", padding: 40, color: TM, fontSize: 13 }}>No hay sucursales registradas</div>}
+          {stores.length > 0 && filteredStores.length === 0 && <div style={{ textAlign: "center", padding: 40, color: TM, fontSize: 13 }}>Sin resultados para "{search}"</div>}
         </div>
+        </>
       )}
       {modal.open && (
         <Modal title={modal.data.id ? "Editar Sucursal" : "Nueva Sucursal"} onClose={() => setModal({ open: false, data: { name: "", address: "", phone: "", email: "", active: true } })}>
@@ -492,6 +531,17 @@ function TabUsuarios() {
   // Avatar picker abre encima del modal de Editar Usuario cuando el admin
   // hace click en la foto. Solo aplica a usuarios existentes (necesita user_id real).
   const [avatarPicker, setAvatarPicker] = useState<{ userId: number; userName: string; currentUrl: string | null } | null>(null);
+  const [search, setSearch] = useState("");
+
+  const q = search.trim().toLowerCase();
+  const filteredUsers = q
+    ? users.filter(u =>
+        u.name.toLowerCase().includes(q) ||
+        u.email.toLowerCase().includes(q) ||
+        (u.phone ?? "").toLowerCase().includes(q) ||
+        u.roles.some(r => r.toLowerCase().includes(q)) ||
+        (u.store?.name ?? "").toLowerCase().includes(q))
+    : users;
 
   useEffect(() => {
     if (usersQuery.error || storesQuery.error || rolesQuery.error) toast.error("Error al cargar usuarios");
@@ -510,6 +560,8 @@ function TabUsuarios() {
     if (!modal) return;
     const d = modal.data;
     if (!d.name.trim() || !d.email.trim()) { toast.error("Nombre y email son requeridos"); return; }
+    if (!isValidEmail(d.email)) { toast.error("Email inválido (ej. correo@ejemplo.com)"); return; }
+    if (d.phone.trim() && !isValidPhone(d.phone)) { toast.error("Teléfono inválido: deben ser 10 dígitos (ej. 55 1234 5678)"); return; }
     setSaving(true);
     try {
       if (d.id) {
@@ -626,8 +678,10 @@ function TabUsuarios() {
       {loading ? (
         <div style={{ textAlign: "center", padding: 40, color: TM }}><Loader2 size={24} className="animate-spin" /></div>
       ) : (
-        <div style={{ display: "grid", gap: 10 }}>
-          {users.map(u => (
+        <>
+        <ListSearchBar value={search} onChange={setSearch} placeholder="Buscar usuario por nombre, email, teléfono, rol o tienda..." />
+        <div style={{ ...LIST_SCROLL, display: "grid", gap: 10 }}>
+          {filteredUsers.map(u => (
             <div key={u.id} style={{ ...GLASS, borderRadius: 16, padding: "14px 20px", display: "flex", alignItems: "center", gap: 16 }}>
               <UserAvatar name={u.name} avatarUrl={u.avatar_url} size={40} />
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -657,7 +711,9 @@ function TabUsuarios() {
             </div>
           ))}
           {users.length === 0 && <div style={{ textAlign: "center", padding: 40, color: TM, fontSize: 13 }}>No hay usuarios registrados</div>}
+          {users.length > 0 && filteredUsers.length === 0 && <div style={{ textAlign: "center", padding: 40, color: TM, fontSize: 13 }}>Sin resultados para "{search}"</div>}
         </div>
+        </>
       )}
       {modal?.open && (
         <Modal title={modal.data.id ? "Editar Usuario" : "Nuevo Usuario"} onClose={closeModal}>

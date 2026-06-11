@@ -63,4 +63,40 @@ class User extends Authenticatable
         $roles = (array) $roles;
         return count(array_intersect($this->roles, $roles)) > 0;
     }
+
+    /** Variantes de rol que cuentan como administrador en todo el sistema. */
+    public const ADMIN_ROLES = ['admin', 'super_admin', 'owner', 'dueño'];
+
+    public function isAdminRole(): bool
+    {
+        return $this->hasRole(self::ADMIN_ROLES);
+    }
+
+    /**
+     * Gate central de visibilidad de costos: admin siempre; el resto vía el
+     * flag can_view_cost (que se enciende solo al crear gerentes con tienda y
+     * el admin puede revocar en Permisos de Precios). Usado por TODOS los
+     * Resources que exponen `cost` — antes cada uno repetía su propia versión
+     * y SaleItem/PreSaleOrderItem ignoraban el flag.
+     */
+    public function canViewCost(): bool
+    {
+        return $this->isAdminRole() || (bool) $this->can_view_cost;
+    }
+
+    /**
+     * Scope de tienda server-side: admin opera sobre cualquier tienda; gerente y
+     * cajero SOLO sobre la suya. Un usuario sin store_id no puede operar ninguna
+     * (fail-closed). Usado por los guards de escritura cross-tienda.
+     */
+    public function canActOnStore(int|string|null $storeId): bool
+    {
+        if ($this->isAdminRole()) {
+            return true;
+        }
+
+        return $this->store_id !== null
+            && $storeId !== null
+            && (int) $storeId === (int) $this->store_id;
+    }
 }

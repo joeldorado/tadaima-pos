@@ -148,6 +148,9 @@ export function PreSaleCatalogsPanel({ restrictedStoreId = null }: { restrictedS
   const catalogsQuery = usePreSaleCatalogsQuery({ per_page: 200 });
   const catalogs: PreSaleCatalog[] = catalogsQuery.data?.data ?? [];
   const loading = catalogsQuery.isPending;
+  // Refetch en background con data en pantalla (los contadores vendidos /
+  // reservados pueden estar actualizándose) — se señala sin tapar la tabla.
+  const isRefreshing = catalogsQuery.isFetching && !loading;
   const invalidateCatalogs = () => queryClient.invalidateQueries({ queryKey: queryKeys.preSaleCatalogs.all });
   const [showNew, setShowNew]     = useState(false);
   const [editCatalog, setEditCatalog]       = useState<PreSaleCatalog | null>(null);
@@ -426,6 +429,14 @@ export function PreSaleCatalogsPanel({ restrictedStoreId = null }: { restrictedS
             {s === "all" ? `Todos (${counts.all})` : STATUS_CFG[s as PreSaleCatalogStatus].label}
           </button>
         ))}
+        {/* Señal de refetch en background — los contadores (vendidos/reservados)
+            en pantalla pueden ser los anteriores hasta que termine. */}
+        {isRefreshing && (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 10, fontSize: 10, fontWeight: 800, background: "rgba(255,170,0,0.1)", border: "1px solid rgba(255,170,0,0.3)", color: "#FFAA00", textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>
+            <Loader2 size={11} className="animate-spin" />
+            Actualizando…
+          </span>
+        )}
       </div>
 
       {/* Table */}

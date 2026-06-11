@@ -114,11 +114,12 @@ export function QuickStockModal({ productId, productName, kind = "product", onCl
 
   // Para no-admin con UNA sola tienda → preseleccionar y bloquear el selector.
   const lockedSingleStore = restrictedStoreId != null && visibleWarehouses.length === 1;
+  // Preselecciona cuando solo hay una opción disponible (aplica también a admin con una sola tienda).
   useEffect(() => {
-    if (lockedSingleStore && pendingWh === "" && availableWarehouses.length === 1) {
+    if (pendingWh === "" && availableWarehouses.length === 1) {
       setPendingWh(availableWarehouses[0]!.id);
     }
-  }, [lockedSingleStore, pendingWh, availableWarehouses]);
+  }, [pendingWh, availableWarehouses]);
 
   const canAdd = pendingWh !== "" && pendingQty !== "" && Number(pendingQty) >= 0;
 

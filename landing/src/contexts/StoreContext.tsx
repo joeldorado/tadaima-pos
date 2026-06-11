@@ -32,9 +32,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }): Reac
       const list = await getStores({ active: true })
       const adminRoles = ['admin', 'super_admin', 'owner', 'dueño']
       const userIsAdmin = user.roles?.some(r => adminRoles.includes(r.toLowerCase()))
-      // Show all stores when admin OR when user has no assigned store.
-      // Only filter by store_id when we are sure the user is a non-admin with a real assigned store.
-      const visible = (userIsAdmin || user.store_id == null)
+      // Hardening 2026-06-10 (plan QA): un gerente/cajero SIN tienda asignada
+      // antes veía TODAS las tiendas (entraba al branch de admin). Ahora
+      // fail-closed: no-admin sin store_id → lista vacía; el backend igual lo
+      // bloquea, pero la UI ya no le ofrece tiendas ajenas. Corregir = asignarle
+      // tienda en Admin → Usuarios.
+      const visible = userIsAdmin
         ? list
         : list.filter(s => s.id === user.store_id)
       setStores(visible)

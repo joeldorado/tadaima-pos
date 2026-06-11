@@ -5,15 +5,15 @@ import { queryKeys } from '@/lib/queryKeys'
 const ONE_DAY_MS = 24 * 60 * 60_000
 
 /**
- * Catálogos de preventa. Admin los publica raramente; cajero los lee como
- * referencia estática durante el día. Cache 24h, refresh manual desde el
- * botón "Actualizar" en Caja o al abrir caja (handleOpenCash invalida).
+ * Catálogos de preventa.
  *
- * `refetchOnMount: true` (default RQ) — solo refetch si está stale. Como
- * staleTime es 24h, navegar entre pantallas no dispara fetch, pero cuando admin
- * actualiza imagen / status / etc. y llama `invalidateQueries`, el SellPage en
- * otra tab/montaje sí refetcha al volver. Sin esto, la imagen recién subida no
- * aparece en Caja hasta recargar la página.
+ * QA 2026-06-11: el staleTime de 24h era para "el catálogo es data estática
+ * del admin", pero el payload trae CONTADORES vivos (reserved_count,
+ * reserved_by_store, sold_count) que cambian con cada folio vendido — el
+ * admin no veía ventas hechas en otra máquina hasta el día siguiente.
+ * Ahora: stale a los 2min + refetch al volver al tab. El cache persistido
+ * (gcTime 24h + IndexedDB) sigue pintando instantáneo; el refetch corre en
+ * background con keepPreviousData (no blankea).
  */
 export function usePreSaleCatalogsQuery(
   params?: Parameters<typeof getPreSaleCatalogs>[0],
@@ -23,10 +23,10 @@ export function usePreSaleCatalogsQuery(
     queryKey: queryKeys.preSaleCatalogs.list(params as Record<string, unknown> | undefined),
     queryFn: () => getPreSaleCatalogs(params),
     enabled: options?.enabled ?? true,
-    staleTime: ONE_DAY_MS,
+    staleTime: 2 * 60_000,
     gcTime: ONE_DAY_MS,
     placeholderData: keepPreviousData,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
     refetchOnReconnect: false,
   })
 }

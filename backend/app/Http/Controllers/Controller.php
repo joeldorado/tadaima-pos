@@ -25,4 +25,33 @@ abstract class Controller
 
         return response()->json($payload, $status);
     }
+
+    /**
+     * Gate de mutación de catálogo: 403 si el usuario NO es admin ni gerente.
+     * Cajero puede CREAR productos (alta rápida en caja) pero no editar/borrar.
+     */
+    protected function adminOrManagerGateError(): ?JsonResponse
+    {
+        $user = request()->user();
+        if ($user && ! $user->isAdminRole() && ! $user->hasRole(['gerente', 'manager'])) {
+            return $this->error('No tienes permiso para modificar el catálogo de productos.', 403);
+        }
+
+        return null;
+    }
+
+    /**
+     * Guard de scope de tienda: devuelve la respuesta 403 si el usuario
+     * autenticado NO puede operar sobre la tienda dada, o null si puede.
+     * Uso: if ($resp = $this->storeScopeError($request, $storeId)) return $resp;
+     */
+    protected function storeScopeError(\Illuminate\Http\Request $request, int|string|null $storeId): ?JsonResponse
+    {
+        $user = $request->user();
+        if ($user && ! $user->canActOnStore($storeId)) {
+            return $this->error('No tienes permiso para operar sobre datos de otra tienda.', 403);
+        }
+
+        return null;
+    }
 }

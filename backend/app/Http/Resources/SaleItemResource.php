@@ -9,7 +9,8 @@ class SaleItemResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
-        $isAdmin = $request->user()?->hasRole(['admin', 'super_admin', 'owner', 'dueño']) ?? false;
+        // admin O can_view_cost (gerentes lo traen de fábrica desde 2026-06-10)
+        $isAdmin = $request->user()?->canViewCost() ?? false;
 
         return [
             'id'         => $this->id,

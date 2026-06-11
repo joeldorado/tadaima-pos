@@ -1285,7 +1285,9 @@ export function SalesPage() {
   );
   const cashiers = cashiersQuery.data ?? [];
 
-  const salesParams: Record<string, unknown> = { per_page: 500 };
+  // El backend clampea per_page a 100 (SalesController::index) — pedir 500
+  // solo engañaba: igual llegaban 100.
+  const salesParams: Record<string, unknown> = { per_page: 100 };
   if (effectiveStoreId) salesParams.store_id = effectiveStoreId;
   if (filterStartDate) salesParams.from = filterStartDate;
   if (filterEndDate)   salesParams.to   = filterEndDate;
@@ -1345,15 +1347,16 @@ export function SalesPage() {
   //    fetcheando — distinguimos esto de un polling background usando
   //    `isFetching && !hasData`. Sin esto, el polling de 30s tira skeleton
   //    aunque haya data válida en pantalla.
+  // productsQuery NO bloquea la tabla: solo alimenta productMap (thumbnails);
+  // mientras carga, las filas salen sin imagen y se rellenan al llegar. Antes
+  // el catálogo completo (query pesada) retenía toda la lista de ventas.
   const isFirstLoad =
-    salesQuery.isPending || preSaleOrdersQuery.isPending || productsQuery.isPending;
+    salesQuery.isPending || preSaleOrdersQuery.isPending;
   const salesHasData       = (salesQuery.data?.data?.length ?? 0) > 0;
   const preSalesHasData    = (preSaleOrdersQuery.data?.data?.length ?? 0) > 0;
-  const productsHasData    = (productsQuery.data?.data?.length ?? 0) > 0;
   const isFreshFilterFetch =
     (salesQuery.isFetching       && !salesHasData) ||
-    (preSaleOrdersQuery.isFetching && !preSalesHasData) ||
-    (productsQuery.isFetching    && !productsHasData);
+    (preSaleOrdersQuery.isFetching && !preSalesHasData);
   const loading = isFirstLoad || isFreshFilterFetch;
 
   useEffect(() => {
@@ -1875,6 +1878,10 @@ export function SalesPage() {
   // estén visibles mientras se cambia el rango (antes Joel veía un spinner que
   // tapaba todo y no podía corregir el filtro hasta que el fetch acabara).
   const isFetching = salesQuery.isFetching || preSaleOrdersQuery.isFetching || productsQuery.isFetching;
+  // Refetch con data anterior en pantalla (keepPreviousData): la lista vieja
+  // sigue visible — sin señal el cambio de fecha parecía "no funcionar".
+  // Atenuamos la lista + chip "Cargando…" junto a los presets de período.
+  const isRefreshingList = (salesQuery.isFetching || preSaleOrdersQuery.isFetching) && !loading;
 
   // ─────────────────────────────────────────────────────────────────────────────
   return (
@@ -1970,6 +1977,18 @@ export function SalesPage() {
             </button>
           );
         })}
+
+        {/* Señal de refetch: con keepPreviousData la lista anterior queda en
+            pantalla y sin este chip el cambio de fecha parecía no responder. */}
+        {isRefreshingList && (
+          <span
+            className="flex items-center gap-1.5 h-[34px] px-3.5 rounded-full text-[10px] font-black uppercase tracking-widest"
+            style={{ background: "rgba(255,170,0,0.1)", border: "1px solid rgba(255,170,0,0.3)", color: "#FFAA00" }}
+          >
+            <Loader2 size={12} strokeWidth={3} className="animate-spin" />
+            Cargando…
+          </span>
+        )}
 
         {/* Rango personalizado — DOS pills separados para que el click target
             de cada fecha sea grande, claro y diferenciable. Antes era un solo
@@ -2211,8 +2230,13 @@ export function SalesPage() {
               </div>
 
               {/* Body con scroll interno. Sin esto la página entera scrollea
-                  y el header de columnas queda lejos cuando hay muchos records. */}
-              <div className="space-y-1.5 overflow-y-auto pr-1" style={{ maxHeight: "60vh" }}>
+                  y el header de columnas queda lejos cuando hay muchos records.
+                  Durante un refetch con data anterior visible, la lista se
+                  atenúa (es la lista vieja) hasta que llega el rango nuevo. */}
+              <div
+                className="space-y-1.5 overflow-y-auto pr-1 transition-opacity duration-200"
+                style={{ maxHeight: "60vh", opacity: isRefreshingList ? 0.45 : 1, pointerEvents: isRefreshingList ? "none" : "auto" }}
+              >
                 {loading ? (
                   // Skeleton: 5 filas con shimmer mientras cargan los datos
                   Array.from({ length: 5 }).map((_, i) => (

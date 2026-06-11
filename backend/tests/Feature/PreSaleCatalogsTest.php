@@ -167,4 +167,44 @@ class PreSaleCatalogsTest extends TestCase
         $this->assertCount(1, $items);
         $this->assertSame('published', $items[0]['status']);
     }
+
+    /**
+     * Regresión QA 2026-06-11: reserved_by_store debe llegar como OBJETO
+     * {"store_id": qty}. JsonResource::removeMissingValues aplica
+     * array_values() a arrays con keys 100% numéricas → {4:2} llegaba como
+     * [2] y la Caja no restaba apartados ("20 disponibles" con 2 vendidos).
+     */
+    public function test_reserved_by_store_is_keyed_by_store_id(): void
+    {
+        $catalog = $this->makeCatalog(['status' => PreSaleCatalog::STATUS_PUBLISHED]);
+        $store = Store::first();
+
+        $customer = Customer::create(['name' => 'Cliente Test']);
+        $order = \App\Models\PreSaleOrder::create([
+            'code'        => 'PREV-TEST1',
+            'customer_id' => $customer->id,
+            'store_id'    => $store->id,
+            'user_id'     => $this->user->id,
+            'status'      => \App\Models\PreSaleOrder::STATUS_PENDING,
+            'total'       => 200,
+        ]);
+        \App\Models\PreSaleOrderItem::create([
+            'pre_sale_order_id'   => $order->id,
+            'pre_sale_catalog_id' => $catalog->id,
+            'product_name'        => 'Test Product',
+            'quantity'            => 2,
+            'unit_price'          => 100,
+            'status'              => \App\Models\PreSaleOrderItem::STATUS_PENDING,
+        ]);
+
+        $response = $this->actingAs($this->user, 'sanctum')
+            ->getJson('/api/v1/pre-sale-catalogs');
+
+        $response->assertOk();
+        $row = collect($response->json('data.data'))->firstWhere('id', $catalog->id);
+        $this->assertIsArray($row['reserved_by_store']);
+        // Key = store id (string en JSON), no índice posicional.
+        $this->assertSame(2, $row['reserved_by_store'][(string) $store->id] ?? null);
+        $this->assertArrayNotHasKey(0, $row['reserved_by_store']);
+    }
 }

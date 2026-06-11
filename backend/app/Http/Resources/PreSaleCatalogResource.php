@@ -17,8 +17,10 @@ class PreSaleCatalogResource extends JsonResource
             'image_path'      => $this->image_path,
             // URL pública lista para usar en <img>. null si no hay imagen.
             'image_url'       => $this->image_path ? Storage::url($this->image_path) : null,
-            'cost'            => $this->cost,
-            'margin_percent'  => $this->margin_percent,
+            // Fuga QA 2026-06-10: cost y margen iban a TODOS los roles (hasta
+            // cajero). Ahora gated igual que el resto: admin o can_view_cost.
+            'cost'            => ($request->user()?->canViewCost() ?? false) ? $this->cost : null,
+            'margin_percent'  => ($request->user()?->canViewCost() ?? false) ? $this->margin_percent : null,
             'price_1'         => $this->price_1,
             'price_2'         => $this->price_2,
             'price_3'         => $this->price_3,
@@ -56,9 +58,14 @@ class PreSaleCatalogResource extends JsonResource
             // Reservados agrupados por tienda. Sin esto la Caja no puede calcular
             // "disponible en mi tienda" cuando hay store_limits — el reserved_count
             // global mezcla todas las tiendas.
+            // Cast a (object) OBLIGATORIO: JsonResource::removeMissingValues hace
+            // array_values() a los arrays cuyas keys sean todas numéricas (los
+            // store ids lo son) → {4:2} llegaba al frontend como [2] y el lookup
+            // por tienda fallaba (QA 2026-06-11: Caja mostraba el límite completo
+            // como "disponibles" sin restar apartados). Un objeto no se toca.
             'reserved_by_store' => $this->when(
                 $this->relationLoaded('activeOrderItems'),
-                fn () => $this->activeOrderItems
+                fn () => (object) $this->activeOrderItems
                     ->groupBy(fn ($it) => (int) ($it->order->store_id ?? 0))
                     ->map(fn ($group) => (int) $group->sum('quantity'))
                     ->reject(fn ($_, $storeId) => $storeId === 0)

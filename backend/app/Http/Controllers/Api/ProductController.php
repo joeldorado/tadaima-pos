@@ -172,6 +172,10 @@ class ProductController extends Controller
      */
     public function update(UpdateProductRequest $request, Product $product): JsonResponse
     {
+        if ($resp = $this->adminOrManagerGateError()) {
+            return $resp;
+        }
+
         // Snapshot ANTES de mutar — para construir el diff en el log.
         $before = $product->only(['name', 'sku', 'barcode', 'description', 'category_id', 'cost', 'active', 'product_type']);
 
@@ -258,6 +262,10 @@ class ProductController extends Controller
      */
     public function destroy(Product $product): JsonResponse
     {
+        if ($resp = $this->adminOrManagerGateError()) {
+            return $resp;
+        }
+
         $salesCount    = DB::table('sale_items')->where('product_id', $product->id)->count();
         $layawaysCount = DB::table('layaways')->where('product_id', $product->id)->count();
 
@@ -298,6 +306,10 @@ class ProductController extends Controller
      */
     public function forceDestroy(Product $product): JsonResponse
     {
+        if ($resp = $this->adminOrManagerGateError()) {
+            return $resp;
+        }
+
         $productSnapshot = ['id' => $product->id, 'name' => $product->name, 'sku' => $product->sku];
 
         DB::transaction(function () use ($product) {

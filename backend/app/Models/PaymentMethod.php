@@ -17,4 +17,14 @@ class PaymentMethod extends Model
                     ->withPivot('active')
                     ->withTimestamps();
     }
+
+    /**
+     * Clasificación tarjeta vs efectivo-like por nombre ("Tarjeta Débito",
+     * "Tarjeta Crédito" del seeder). Usada por el guard de restricciones de
+     * pago del checkout y por el bloqueo de cancelaciones con tarjeta.
+     */
+    public function isCard(): bool
+    {
+        return mb_stripos((string) $this->name, 'tarjeta') !== false;
+    }
 }

@@ -91,8 +91,14 @@ class SalesController extends Controller
     /**
      * GET /sales/{id}
      */
-    public function show(Sale $sale): JsonResponse
+    public function show(Sale $sale, Request $request): JsonResponse
     {
+        // Guard cross-tienda: gerente/cajero solo ven ventas de su tienda
+        // (la lista ya estaba scoped; el detalle por ID no).
+        if ($resp = $this->storeScopeError($request, $sale->store_id)) {
+            return $resp;
+        }
+
         $sale->load([
             'items.product', 'payments.paymentMethod', 'customer', 'user:id,name',
             'preSaleOrders.items.catalog:id,product_name',
@@ -113,6 +119,14 @@ class SalesController extends Controller
      */
     public function store(CheckoutRequest $request): JsonResponse
     {
+        // Guard cross-tienda: el checkout directo cobra (y descuenta stock)
+        // contra el store_id del body — debe ser la tienda del usuario.
+        if ($request->has('items')) {
+            if ($resp = $this->storeScopeError($request, $request->input('store_id'))) {
+                return $resp;
+            }
+        }
+
         try {
             if ($request->has('items')) {
                 $sale = $this->checkoutService->checkoutDirect(
@@ -145,6 +159,22 @@ class SalesController extends Controller
      */
     public function return(Sale $sale, Request $request): JsonResponse
     {
+        if ($resp = $this->storeScopeError($request, $sale->store_id)) {
+            return $resp;
+        }
+
+        // Misma regla que cancelaciones (Joel 2026-06-10): pagos con tarjeta
+        // no se devuelven — la comisión de terminal ya se pagó.
+        foreach ($sale->payments()->with('paymentMethod')->get() as $payment) {
+            if ($payment->paymentMethod?->isCard()) {
+                return $this->error(
+                    "No se puede devolver: esta venta tiene un pago con tarjeta ({$payment->paymentMethod->name}). " .
+                    'Las devoluciones con tarjeta no están permitidas.',
+                    422
+                );
+            }
+        }
+
         if ($sale->status !== Sale::STATUS_COMPLETED) {
             return $this->error('La venta no puede ser devuelta en su estado actual.', 422);
         }
@@ -194,6 +224,10 @@ class SalesController extends Controller
      */
     public function cancel(Sale $sale, Request $request, SaleCancellationService $service): JsonResponse
     {
+        if ($resp = $this->storeScopeError($request, $sale->store_id)) {
+            return $resp;
+        }
+
         $data = $request->validate([
             'items'              => ['nullable', 'array'],
             'items.*.sale_item_id' => ['required_with:items', 'integer'],

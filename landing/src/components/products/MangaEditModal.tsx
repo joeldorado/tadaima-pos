@@ -10,6 +10,7 @@ import { toast } from 'sonner'
 import { useAuth } from '@tadaima/auth'
 import { isAdmin as isAdminRole } from '@/lib/permisos'
 import { generateBarcode } from '@/lib/barcode'
+import { PRICE_FORM_LABELS } from '@/lib/priceLevels'
 
 // ─── Design tokens (same as MangaBatchModal) ──────────────────────────────────
 const T = {
@@ -47,7 +48,7 @@ const T = {
   redBright:     '#FF4422',
 }
 
-const PRICE_LABELS = ['Precio A (Default)', 'Precio B', 'Precio C', 'Precio D', 'Precio E'] as const
+const PRICE_LABELS = PRICE_FORM_LABELS
 const PRICE_KEYS   = ['price_1', 'price_2', 'price_3', 'price_4', 'price_5'] as const
 
 type Tab = 'tomo' | 'precios' | 'inventario'
@@ -142,6 +143,13 @@ export function MangaEditModal({
   const availableWarehousesToAdd = allWarehouses.filter(
     w => !(w.id in quantities)
   )
+
+  // Preselecciona cuando solo hay una tienda disponible (p.ej. gerente con una sola tienda)
+  useEffect(() => {
+    if (pendingAddWh === '' && availableWarehousesToAdd.length === 1) {
+      setPendingAddWh(availableWarehousesToAdd[0]!.id)
+    }
+  }, [pendingAddWh, availableWarehousesToAdd])
 
   // ── Save state ────────────────────────────────────────────────────────────
   const [saving, setSaving] = useState(false)
@@ -254,7 +262,7 @@ export function MangaEditModal({
           <div className="px-6 py-2.5 flex items-center gap-5" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
             {([
               { label: 'Nombre', done: nombreOk },
-              { label: 'Precio A', done: precioOk },
+              { label: 'Precio Normal', done: precioOk },
             ]).map(item => (
               <div key={item.label} className="flex items-center gap-1.5">
                 {item.done

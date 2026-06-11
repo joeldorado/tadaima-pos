@@ -47,6 +47,10 @@ export function useBarcodeScanner({
     let allFast = true;
     let flushTimer: ReturnType<typeof setTimeout> | null = null;
     let keyEvents: KeyboardEvent[] = [];
+    // Lock anti-doble (QA 2026-06-08): la misma lectura repetida en <500ms se
+    // ignora (algunos lectores re-emiten, o el código quedaba tipeado en el
+    // input y se re-procesaba como segunda lectura).
+    let lastScan = { code: "", at: 0 };
 
     const reset = () => {
       buffer = "";
@@ -62,7 +66,29 @@ export function useBarcodeScanner({
     const flush = () => {
       if (allFast && buffer.length >= minLength) {
         const code = buffer;
+        const target = keyEvents[keyEvents.length - 1]?.target ?? null;
         keyEvents.forEach(ev => ev.preventDefault());
+
+        // preventDefault NO aplica retroactivo a eventos ya despachados: si
+        // las teclas cayeron en un input enfocado, el código quedó TIPEADO ahí
+        // y el buscador lo re-procesaba como segunda lectura (doble conteo,
+        // QA 2026-06-08). Se quita del input y se notifica a React.
+        if (isEditableTarget(target)) {
+          const el = target as HTMLInputElement;
+          if (typeof el.value === "string" && el.value.includes(code)) {
+            const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+            setter?.call(el, el.value.replace(code, ""));
+            el.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+        }
+
+        const now = performance.now();
+        if (code === lastScan.code && now - lastScan.at < 500) {
+          reset();
+          return true; // lectura duplicada — ignorada
+        }
+        lastScan = { code, at: now };
+
         reset();
         onScanRef.current(code);
         return true;

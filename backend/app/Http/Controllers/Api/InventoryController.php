@@ -10,6 +10,7 @@ use App\Http\Resources\InventoryResource;
 use App\Models\Inventory;
 use App\Models\InventoryMovement;
 use App\Models\SystemLog;
+use App\Models\Warehouse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -45,6 +46,15 @@ class InventoryController extends Controller
      */
     public function update(UpdateInventoryRequest $request, int $productId, int $warehouseId): JsonResponse
     {
+        // Guard cross-tienda: gerente/cajero solo ajustan bodegas de SU tienda.
+        $warehouse = Warehouse::find($warehouseId);
+        if (! $warehouse) {
+            return $this->error('Bodega no encontrada.', 404);
+        }
+        if ($resp = $this->storeScopeError($request, $warehouse->store_id)) {
+            return $resp;
+        }
+
         $newQty = (float) $request->quantity;
 
         [$record, $oldQty, $delta] = DB::transaction(function () use ($request, $productId, $warehouseId, $newQty) {
@@ -109,6 +119,16 @@ class InventoryController extends Controller
      */
     public function storeMovement(StoreInventoryMovementRequest $request): JsonResponse
     {
+        // Guard cross-tienda: solo se aceptan movimientos sobre bodegas de la
+        // tienda del usuario (admin: cualquiera).
+        $warehouse = Warehouse::find($request->warehouse_id);
+        if (! $warehouse) {
+            return $this->error('Bodega no encontrada.', 404);
+        }
+        if ($resp = $this->storeScopeError($request, $warehouse->store_id)) {
+            return $resp;
+        }
+
         try {
             $movement = DB::transaction(function () use ($request) {
             // Obtener inventario actual (lock para escritura concurrente)

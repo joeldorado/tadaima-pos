@@ -8,6 +8,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\MangaInventoryResource;
 use App\Models\Inventory;
 use App\Models\Product;
+use App\Models\Warehouse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -52,6 +53,15 @@ class MangaInventoryController extends Controller
     public function update(Request $request, int $mangaId, int $warehouseId): JsonResponse
     {
         $request->validate(['quantity' => ['required', 'integer', 'min:0']]);
+
+        // Guard cross-tienda: gerente/cajero solo ajustan bodegas de SU tienda.
+        $warehouse = Warehouse::find($warehouseId);
+        if (! $warehouse) {
+            return $this->error('Bodega no encontrada.', 404);
+        }
+        if ($resp = $this->storeScopeError($request, $warehouse->store_id)) {
+            return $resp;
+        }
 
         // Verificar que el id sea efectivamente un manga (defensivo).
         $product = Product::query()

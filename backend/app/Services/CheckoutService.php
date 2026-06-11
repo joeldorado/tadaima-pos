@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Inventory;
 use App\Models\InventoryMovement;
 use App\Models\Payment;
+use App\Models\PaymentMethod;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\SaleItem;
@@ -115,11 +116,14 @@ class CheckoutService
             }
 
             // ── 2. Cargar items y validar que no esté vacío ───────────────────
-            $draftItems = $draft->items()->with('product')->get();
+            $draftItems = $draft->items()->with('product.paymentMethod')->get();
 
             if ($draftItems->isEmpty()) {
                 throw new \DomainException('No hay productos en la venta.');
             }
+
+            // ── 2b. Restricciones de pago por producto (solo-efectivo, etc.) ──
+            $this->assertPaymentMethodsAllowed($draftItems, $paymentsData);
 
             // ── 3. Calcular montos ────────────────────────────────────────────
             $subtotal        = round($draftItems->sum('total'), 2);
@@ -411,5 +415,45 @@ class CheckoutService
         }
 
         return [round($totalCommission, 2), $result];
+    }
+
+    /**
+     * Guard server-side de restricciones de pago por producto (QA crítico
+     * 2026-06-08): un producto con allow_card=false NO puede cobrarse con
+     * tarjeta, y uno con allow_cash=false NO con efectivo/transferencia.
+     * Antes solo la UI lo validaba (y tenía el mapeo roto) — el backend
+     * aceptaba cualquier combinación. La clasificación tarjeta/efectivo es
+     * por nombre del método ("Tarjeta Débito"/"Tarjeta Crédito" del seeder).
+     *
+     * @throws \DomainException con mensaje legible
+     */
+    private function assertPaymentMethodsAllowed(Collection $draftItems, array $paymentsData): void
+    {
+        $methodIds = array_values(array_unique(array_column($paymentsData, 'payment_method_id')));
+        $methods   = PaymentMethod::whereIn('id', $methodIds)->get()->keyBy('id');
+
+        $usesCard = false;
+        $usesCash = false;
+        foreach ($methodIds as $id) {
+            if ($methods[$id]?->isCard()) {
+                $usesCard = true;
+            } else {
+                $usesCash = true; // efectivo, dólares, transferencia, etc.
+            }
+        }
+
+        foreach ($draftItems as $item) {
+            $restriction = $item->product?->paymentMethod;
+            $allowCash   = $restriction?->allow_cash ?? true;
+            $allowCard   = $restriction?->allow_card ?? true;
+            $name        = $item->product?->name ?? "Producto #{$item->product_id}";
+
+            if ($usesCard && ! $allowCard) {
+                throw new \DomainException("\"{$name}\" solo acepta efectivo — no se puede cobrar con tarjeta.");
+            }
+            if ($usesCash && ! $allowCash) {
+                throw new \DomainException("\"{$name}\" solo acepta tarjeta — no se puede cobrar en efectivo/transferencia.");
+            }
+        }
     }
 }

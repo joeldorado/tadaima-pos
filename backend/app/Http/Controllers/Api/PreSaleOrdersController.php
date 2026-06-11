@@ -79,6 +79,12 @@ class PreSaleOrdersController extends Controller
      */
     public function store(StorePreSaleOrderRequest $request): JsonResponse
     {
+        // Guard cross-tienda: el store_id del body debe ser la tienda del
+        // usuario (admin: cualquiera). Antes solo se validaba `exists`.
+        if ($resp = $this->storeScopeError($request, $request->validated()['store_id'] ?? null)) {
+            return $resp;
+        }
+
         try {
             $order = $this->service->createOrder($request->validated(), $request->user()->id);
 
@@ -130,6 +136,10 @@ class PreSaleOrdersController extends Controller
     {
         $order = PreSaleOrder::findOrFail($id);
 
+        if ($resp = $this->storeScopeError($request, $order->store_id)) {
+            return $resp;
+        }
+
         try {
             $payment = $this->service->addPayment($order, $request->validated(), $request->user()->id);
 
@@ -147,6 +157,11 @@ class PreSaleOrdersController extends Controller
     public function updateStatus(UpdatePreSaleOrderStatusRequest $request, int $id): JsonResponse
     {
         $order  = PreSaleOrder::findOrFail($id);
+
+        if ($resp = $this->storeScopeError($request, $order->store_id)) {
+            return $resp;
+        }
+
         $status = $request->validated()['status'];
         $notes  = $request->validated()['notes'] ?? null;
 
@@ -176,6 +191,11 @@ class PreSaleOrdersController extends Controller
      */
     public function deliverItem(Request $request, int $id, int $itemId): JsonResponse
     {
+        $parentOrder = PreSaleOrder::findOrFail($id);
+        if ($resp = $this->storeScopeError($request, $parentOrder->store_id)) {
+            return $resp;
+        }
+
         $item   = PreSaleOrderItem::where('pre_sale_order_id', $id)->findOrFail($itemId);
         $status = $request->validate(['status' => 'required|in:pending,delivered'])['status'];
 
@@ -226,6 +246,10 @@ class PreSaleOrdersController extends Controller
     public function cancel(int $id, Request $request, SaleCancellationService $service): JsonResponse
     {
         $order = PreSaleOrder::findOrFail($id);
+
+        if ($resp = $this->storeScopeError($request, $order->store_id)) {
+            return $resp;
+        }
 
         $data = $request->validate([
             'mode'            => ['required', 'string', 'in:full,liquidation_rollback'],

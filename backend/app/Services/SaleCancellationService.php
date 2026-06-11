@@ -52,6 +52,11 @@ class SaleCancellationService
             throw new \DomainException('Esta venta ya fue cancelada por completo.');
         }
 
+        // Regla de negocio (Joel 2026-06-10): ventas pagadas con tarjeta NO se
+        // cancelan — la comisión de terminal ya se pagó y la tienda pierde.
+        // El reverso de un cobro con tarjeta se maneja fuera del sistema.
+        $this->assertNoCardPayments($sale->payments()->with('paymentMethod')->get(), 'venta');
+
         return DB::transaction(function () use ($sale, $itemsToCancel, $reasonCode, $reasonText, $cancelledBy, $activeSessionId) {
             $sale->load('items.product');
 
@@ -193,6 +198,14 @@ class SaleCancellationService
             throw new \DomainException('Solo se puede revertir la liquidación de una preventa entregada (status=delivered).');
         }
 
+        // Regla de negocio (Joel 2026-06-10): pagos con tarjeta no se reversan.
+        // full → revisa TODOS los pagos del folio; rollback → solo el último
+        // (la liquidación, que es lo único que se reversa en ese modo).
+        $paymentsToCheck = $mode === SaleCancellation::MODE_LIQUIDATION_ROLLBACK
+            ? collect([$order->payments()->with('paymentMethod')->orderByDesc('id')->first()])->filter()
+            : $order->payments()->with('paymentMethod')->get();
+        $this->assertNoCardPayments($paymentsToCheck, 'preventa');
+
         return DB::transaction(function () use ($order, $mode, $reasonCode, $reasonText, $cancelledBy, $activeSessionId) {
             $order->load(['items.product', 'payments']);
             $wasDelivered = $order->status === PreSaleOrder::STATUS_DELIVERED;
@@ -332,6 +345,24 @@ class SaleCancellationService
             'notes'        => $notes,
             'user_id'      => $userId,
         ]);
+    }
+
+    /**
+     * Bloquea la cancelación si algún pago de la colección fue con tarjeta.
+     *
+     * @param \Illuminate\Support\Collection $payments pagos con paymentMethod cargado
+     * @throws \DomainException
+     */
+    private function assertNoCardPayments($payments, string $entidad): void
+    {
+        foreach ($payments as $payment) {
+            if ($payment->paymentMethod?->isCard()) {
+                throw new \DomainException(
+                    "No se puede cancelar: esta {$entidad} tiene un pago con tarjeta ({$payment->paymentMethod->name}). " .
+                    'Las cancelaciones con tarjeta no están permitidas.'
+                );
+            }
+        }
     }
 
     /**

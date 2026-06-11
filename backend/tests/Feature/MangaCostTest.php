@@ -26,7 +26,7 @@ class MangaCostTest extends TestCase
     {
         $company = Company::create(['name' => 'Tadaima Test']);
 
-        return User::create([
+        $user = User::create([
             'name' => 'Admin',
             'email' => 'admin@test.com',
             'password' => bcrypt('password'),
@@ -34,6 +34,17 @@ class MangaCostTest extends TestCase
             'active' => true,
             'can_view_cost' => true,
         ]);
+
+        // Editar mangas ahora requiere rol admin/gerente (gate 2026-06-10).
+        $roleId = \DB::table('roles')->insertGetId([
+            'name' => 'admin', 'guard_name' => 'api',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        \DB::table('model_has_roles')->insert([
+            'role_id' => $roleId, 'model_type' => User::class, 'model_id' => $user->id,
+        ]);
+
+        return $user;
     }
 
     public function test_store_derives_cost_from_public_price_and_margin(): void

@@ -2,15 +2,15 @@
 import { useState, useEffect, useMemo } from "react";
 import {
   Search, Shield, Check, Loader2, Save,
-  ChevronRight, Store, Package, AlertTriangle,
+  ChevronRight, Package, AlertTriangle,
   ToggleLeft, ToggleRight, DollarSign,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
-  getUsers, getStores, getProducts,
+  getUsers, getProducts,
   getSystemSettings, updateSystemSetting, updateUser,
 } from "@tadaima/api";
-import type { User as ApiUser, Store as ApiStore, Product } from "@tadaima/api";
+import type { User as ApiUser, Product } from "@tadaima/api";
 import { isEligibleForPermManagement } from "@/lib/permisos";
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
@@ -74,28 +74,6 @@ function toggleArr<T>(arr: T[], item: T): T[] {
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
-function Checkbox({ checked, onChange, label, disabled = false }: {
-  checked: boolean; onChange: () => void; label: string; disabled?: boolean;
-}) {
-  return (
-    <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1 }}>
-      <div
-        onClick={disabled ? undefined : onChange}
-        style={{
-          width: 16, height: 16, borderRadius: 4, flexShrink: 0,
-          background: checked ? RED : "var(--td-input-bg)",
-          border: `1px solid ${checked ? RED : "var(--td-input-border)"}`,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          cursor: disabled ? "not-allowed" : "pointer", transition: "all 0.15s",
-        }}
-      >
-        {checked && <Check size={10} color="#fff" strokeWidth={3} />}
-      </div>
-      <span style={{ fontSize: 12, color: TS }}>{label}</span>
-    </label>
-  );
-}
-
 function RadioBtn({ selected, onChange, label }: {
   selected: boolean; onChange: () => void; label: string;
 }) {
@@ -135,7 +113,6 @@ function SectionBox({ icon: Icon, title, children }: {
 // ─── Main component ───────────────────────────────────────────────────────────
 export function TabPermisos() {
   const [users, setUsers]         = useState<ApiUser[]>([]);
-  const [stores, setStores]       = useState<ApiStore[]>([]);
   const [products, setProducts]   = useState<Product[]>([]);
   const [permMap, setPermMap]     = useState<PermMap>({});
   const [loading, setLoading]     = useState(true);
@@ -154,10 +131,9 @@ export function TabPermisos() {
   // ── Load data ────────────────────────────────────────────────────────────
   useEffect(() => {
     setLoading(true);
-    Promise.all([getUsers(), getStores(), getProducts(), getSystemSettings()])
-      .then(([u, s, p, settings]) => {
+    Promise.all([getUsers(), getProducts(), getSystemSettings()])
+      .then(([u, p, settings]) => {
         setUsers(u);
-        setStores(s);
         setProducts(Array.isArray(p) ? p : (p as { data: Product[] }).data ?? []);
         const raw = settings[SETTINGS_KEY];
         if (raw) {
@@ -239,14 +215,9 @@ export function TabPermisos() {
   }
 
   // ── Perm helpers ──────────────────────────────────────────────────────────
-  function setStoreAccess(v: PricePerm["store_access"]) {
-    setPerm(p => ({ ...p, store_access: v, extra_store_ids: v !== "specific" ? [] : p.extra_store_ids }));
-  }
-
-  function toggleExtraStore(id: number) {
-    setPerm(p => ({ ...p, extra_store_ids: toggleArr(p.extra_store_ids, id) }));
-  }
-
+  // (2026-06-10) Se quitó la sección "Acceso a Precios por Tienda": el alcance
+  // de costos es siempre la tienda asignada; buscar stock de otras tiendas ya
+  // lo cubre Existencias. perm.store_access queda en su default "assigned".
   function setProductScope(v: PricePerm["product_scope"]) {
     setPerm(p => ({ ...p, product_scope: v, product_ids: v !== "specific" ? [] : p.product_ids }));
   }
@@ -403,49 +374,7 @@ export function TabPermisos() {
               </div>
             </SectionBox>
 
-            {/* 2. Acceso a tiendas */}
-            <SectionBox icon={Store} title="Acceso a Precios por Tienda">
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <RadioBtn
-                  selected={perm.store_access === "assigned"}
-                  onChange={() => setStoreAccess("assigned")}
-                  label="Solo su tienda asignada"
-                />
-                <RadioBtn
-                  selected={perm.store_access === "specific"}
-                  onChange={() => setStoreAccess("specific")}
-                  label="Tiendas específicas"
-                />
-                <RadioBtn
-                  selected={perm.store_access === "all"}
-                  onChange={() => setStoreAccess("all")}
-                  label="Todas las tiendas"
-                />
-              </div>
-
-              {perm.store_access === "specific" && (
-                <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--td-divider)" }}>
-                  {stores.length === 0 && (
-                    <p style={{ fontSize: 11, color: TM }}>No hay tiendas registradas.</p>
-                  )}
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    {stores.map(s => (
-                      <Checkbox
-                        key={s.id}
-                        checked={perm.extra_store_ids.includes(s.id) || s.id === selectedUser.store_id}
-                        onChange={() => {
-                          if (s.id !== selectedUser.store_id) toggleExtraStore(s.id);
-                        }}
-                        label={s.name + (s.id === selectedUser.store_id ? " (asignada)" : "")}
-                        disabled={s.id === selectedUser.store_id}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-            </SectionBox>
-
-            {/* 3. Productos */}
+            {/* 2. Productos */}
             <SectionBox icon={Package} title="Visibilidad por Producto">
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <RadioBtn

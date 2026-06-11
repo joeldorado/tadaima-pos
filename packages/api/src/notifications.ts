@@ -37,3 +37,14 @@ export async function sendStockAlert(input: SendStockAlertInput): Promise<SendSt
   const response = await apiClient.post<SendStockAlertResult>('/notifications/stock-alert', input)
   return response.data
 }
+
+/**
+ * El cajero/gerente pide habilitar un catálogo de preventa en su tienda
+ * (sin entrada en store_limits → "Sin asignar" en Caja). Notifica al gerente
+ * de la tienda + admins. Idempotente: re-enviar actualiza y marca unread.
+ * POST /notifications/presale-assign-alert
+ */
+export async function sendPreSaleAssignAlert(input: { catalog_id: number }): Promise<SendStockAlertResult> {
+  const response = await apiClient.post<SendStockAlertResult>('/notifications/presale-assign-alert', input)
+  return response.data
+}

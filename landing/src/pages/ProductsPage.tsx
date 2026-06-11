@@ -27,6 +27,7 @@ import { useStoresQuery } from "@/hooks/queries/useStores";
 import { useWarehousesQuery } from "@/hooks/queries/useWarehouses";
 import { queryKeys } from "@/lib/queryKeys";
 import { generateBarcode } from "@/lib/barcode";
+import { PRICE_FORM_LABELS } from "@/lib/priceLevels";
 
 function formatApiError(err: unknown, fallback: string): { title: string; detail: string } {
   const apiErr = err as ApiError;
@@ -290,9 +291,9 @@ function ProductDetailModal({
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-            <DetailField label="Precio A" value={<span className="text-lg font-black" style={{ color: "#00CC66" }}>{fmt(product.precioA)}</span>} />
-            <DetailField label="Precio B" value={<span className="text-sm font-bold">{product.precioB ? fmt(product.precioB) : "No configurado"}</span>} />
-            <DetailField label="Precio C" value={<span className="text-sm font-bold">{product.precioC ? fmt(product.precioC) : "No configurado"}</span>} />
+            <DetailField label="Precio Normal" value={<span className="text-lg font-black" style={{ color: "#00CC66" }}>{fmt(product.precioA)}</span>} />
+            <DetailField label="Precio Socio" value={<span className="text-sm font-bold">{product.precioB ? fmt(product.precioB) : "No configurado"}</span>} />
+            <DetailField label="Precio Mayorista" value={<span className="text-sm font-bold">{product.precioC ? fmt(product.precioC) : "No configurado"}</span>} />
             <DetailField label="Precio D" value={<span className="text-sm font-bold">{product.precioD ? fmt(product.precioD) : "No configurado"}</span>} />
             <DetailField label="Precio E" value={<span className="text-sm font-bold">{product.precioE ? fmt(product.precioE) : "No configurado"}</span>} />
           </div>
@@ -548,6 +549,13 @@ function ProductModal({
   const [addWarehouseId, setAddWarehouseId] = useState<number | ''>('');
   const [addQty, setAddQty] = useState<number | ''>('');
 
+  // Preselecciona el almacén cuando solo hay una opción (p.ej. gerente con una sola tienda)
+  useEffect(() => {
+    const assignedIds = new Set((formData.stockUbicaciones ?? []).map(u => u.warehouseId));
+    const available = locations.filter(l => !assignedIds.has(l.warehouseId));
+    if (addWarehouseId === '' && available.length === 1) setAddWarehouseId(available[0]!.warehouseId);
+  }, [locations, formData.stockUbicaciones, addWarehouseId]);
+
   // Load real inventory quantities from backend when editing an existing product
   useEffect(() => {
     if (!product) return
@@ -579,7 +587,7 @@ function ProductModal({
       return;
     }
     if ((formData.precioA ?? 0) <= 0) {
-      toast.error("Precio A es requerido");
+      toast.error("Precio Normal es requerido");
       setActiveTab("precios");
       return;
     }
@@ -620,7 +628,7 @@ function ProductModal({
         {!product && (() => {
           const checks = [
             { label: "Nombre", done: !!formData.nombre?.trim() },
-            { label: "Precio A", done: (formData.precioA ?? 0) > 0 },
+            { label: "Precio Normal", done: (formData.precioA ?? 0) > 0 },
             { label: "Inventario", done: (formData.stockUbicaciones ?? []).length > 0 },
           ];
           return (
@@ -839,9 +847,11 @@ function ProductModal({
                 </div>
               )}
 
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+              {/* Niveles de precio: 3 principales (Normal/Socio/Mayorista) en el
+                  primer row, D/E en el segundo. 5 en un row quedaban apretados. */}
+              <div className="grid grid-cols-3 gap-4">
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>Precio A (Default)</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>{PRICE_FORM_LABELS[0]}</label>
                   <input
                     type="number" value={formData.precioA || ''}
                     placeholder="0"
@@ -850,7 +860,7 @@ function ProductModal({
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>Precio B</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>{PRICE_FORM_LABELS[1]}</label>
                   <input
                     type="number" value={formData.precioB || ''}
                     placeholder="0"
@@ -859,7 +869,7 @@ function ProductModal({
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>Precio C</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>{PRICE_FORM_LABELS[2]}</label>
                   <input
                     type="number" value={formData.precioC || ''}
                     placeholder="0"
@@ -867,8 +877,10 @@ function ProductModal({
                     className="w-full px-4 py-3 rounded-2xl outline-none" style={T.input}
                   />
                 </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>Precio D</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>{PRICE_FORM_LABELS[3]}</label>
                   <input
                     type="number" value={formData.precioD || ''}
                     placeholder="0"
@@ -877,7 +889,7 @@ function ProductModal({
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>Precio E</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>{PRICE_FORM_LABELS[4]}</label>
                   <input
                     type="number" value={formData.precioE || ''}
                     placeholder="0"
@@ -1285,6 +1297,9 @@ export function ProductsPage() {
     setEditingProduct(undefined);
 
     if (isNew) {
+      // Toast persistente mientras se crea: el modal se cierra al instante y
+      // sin esto la tabla se ve vacía/stale sin señal de que algo está pasando.
+      const creatingToastId = toast.loading(`Creando "${p.nombre}"…`);
       createProduct({
         name: p.nombre,
         sku: p.sku,
@@ -1319,10 +1334,14 @@ export function ProductsPage() {
           )
         );
         void refreshProductCount();
-        void invalidateProducts();
+        // Esperar la invalidación (refetch de queries activas) antes del toast
+        // de éxito: cuando sale el ✓ el registro ya está visible en la tabla
+        // y en el catálogo de Caja (comparten el prefijo products.all).
+        await invalidateProducts();
+        toast.success(`Producto "${p.nombre}" creado`, { id: creatingToastId });
       }).catch((err: unknown) => {
         const { title, detail } = formatApiError(err, 'No se pudo crear el producto');
-        toast.error(title, { description: detail || undefined, duration: 8000 });
+        toast.error(title, { id: creatingToastId, description: detail || undefined, duration: 8000 });
         void invalidateProducts();
       });
     } else {
@@ -1347,10 +1366,12 @@ export function ProductsPage() {
           // Delete existing images before uploading the new one
           await Promise.allSettled(p.imageIds.map(id => removeProductImage(p.id, id)));
           void uploadProductImage(p.id, imageFile)
+            .then(() => toast.success(`Producto "${p.nombre}" actualizado`))
             .catch(() => { toast.error('Producto actualizado, pero no se pudo subir la imagen.'); })
             .finally(() => void invalidateProducts());
         } else {
           void invalidateProducts();
+          toast.success(`Producto "${p.nombre}" actualizado`);
         }
       }).catch((err: unknown) => {
         const msg = (err as { message?: string }).message ?? 'Error al actualizar producto';
@@ -2301,7 +2322,14 @@ export function ProductsPage() {
                 {table.getRowModel().rows.length === 0 ? (
                   <tr>
                     <td colSpan={columns.length} className="px-6 py-16 text-center text-sm" style={{ color: T.textMuted }}>
-                      No hay productos que coincidan con el filtro.
+                      {productsQuery.isFetching ? (
+                        <span className="inline-flex items-center gap-2">
+                          <Loader2 size={14} className="animate-spin" />
+                          Actualizando catálogo…
+                        </span>
+                      ) : (
+                        'No hay productos que coincidan con el filtro.'
+                      )}
                     </td>
                   </tr>
                 ) : (
@@ -2592,7 +2620,12 @@ export function ProductsPage() {
                     {mangaTable.getRowModel().rows.length === 0 ? (
                       <tr>
                         <td colSpan={mangaColumns.length} className="px-6 py-16 text-center text-sm" style={{ color: T.textMuted }}>
-                          {mangas.length === 0 ? 'No hay tomos registrados aún.' : 'Sin resultados para esa búsqueda.'}
+                          {mangasQuery.isFetching ? (
+                            <span className="inline-flex items-center gap-2">
+                              <Loader2 size={14} className="animate-spin" />
+                              Actualizando tomos…
+                            </span>
+                          ) : mangas.length === 0 ? 'No hay tomos registrados aún.' : 'Sin resultados para esa búsqueda.'}
                         </td>
                       </tr>
                     ) : (

@@ -133,3 +133,50 @@ export async function getCashReport(params?: ReportDateParams & { register_id?: 
   const response = await apiClient.get<CashReport>('/reports/cash', { params })
   return response.data
 }
+
+// ─── Desglose de un corte (tickets + preventa + movimientos) ────────────────
+
+export interface CashTicketItem {
+  name: string
+  sku: string | null
+  quantity: number
+  price: number
+  total: number
+}
+
+export interface CashTicket {
+  id: number
+  sold_at: string | null
+  cashier: string | null
+  customer: string | null
+  status: string
+  cancellation_status: string | null
+  subtotal: number
+  discount: number
+  total: number
+  items: CashTicketItem[]
+  payments: { method: string; amount: number }[]
+}
+
+export interface CashSessionDetail {
+  session: {
+    id: number
+    register: string | null
+    store: string | null
+    user: string | null
+    status: string
+    opened_at: string | null
+    closed_at: string | null
+    opening_cash: number
+    closing_cash: number | null
+  }
+  tickets: CashTicket[]
+  pre_sale_payments: { id: number; folio: string; status: string; method: string; amount: number; created_at: string }[]
+  movements: { id: number; type: string; amount: number; description: string | null; created_at: string }[]
+}
+
+/** GET /reports/cash/{sessionId}/detail — desglose completo del corte. */
+export async function getCashSessionDetail(sessionId: number): Promise<CashSessionDetail> {
+  const response = await apiClient.get<CashSessionDetail>(`/reports/cash/${sessionId}/detail`)
+  return response.data
+}

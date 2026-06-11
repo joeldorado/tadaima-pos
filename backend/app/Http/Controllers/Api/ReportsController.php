@@ -12,6 +12,22 @@ use Illuminate\Support\Facades\DB;
 
 class ReportsController extends Controller
 {
+    /**
+     * Scope de tienda por rol para reportes (QA roles 2026-06-10): admin filtra
+     * libre por query string; gerente/cajero SIEMPRE quedan anclados a su
+     * tienda (el store_id del request se ignora). Sin tienda asignada → -1
+     * (no matchea nada, fail-closed). Solo /reports/cash tenía esto antes.
+     */
+    private function scopedStoreId(Request $request): ?int
+    {
+        $user = $request->user();
+        if ($user && ! $user->isAdminRole()) {
+            return $user->store_id ?? -1;
+        }
+
+        return $request->integer('store_id') ?: null;
+    }
+
     // ─── Sales ────────────────────────────────────────────────────────────────
 
     /**
@@ -24,7 +40,7 @@ class ReportsController extends Controller
     {
         $from    = $request->input('from', now()->startOfMonth()->toDateString());
         $to      = $request->input('to',   now()->toDateString());
-        $storeId = $request->integer('store_id') ?: null;
+        $storeId = $this->scopedStoreId($request);
         $userId  = $request->integer('user_id')  ?: null;
 
         $base = Sale::query()
@@ -140,7 +156,7 @@ class ReportsController extends Controller
     public function inventory(Request $request): JsonResponse
     {
         $warehouseId = $request->integer('warehouse_id') ?: null;
-        $storeId     = $request->integer('store_id')     ?: null;
+        $storeId     = $this->scopedStoreId($request);
         $lowStock    = filter_var($request->input('low_stock', false), FILTER_VALIDATE_BOOLEAN);
         $threshold   = (float) ($request->input('threshold', 5));
 
@@ -209,7 +225,8 @@ class ReportsController extends Controller
         // RBAC: cajero forzado a su user_id + tienda; gerente a su tienda;
         // admin libre. Filtros del request se ignoran si intentan ver más.
         if (! $isAdmin) {
-            $storeId = $user?->store_id ?: $storeId;
+            // Fail-closed: sin tienda asignada NO cae al filtro del request.
+            $storeId = $user?->store_id ?? -1;
             if ($isCashier) {
                 $userId = $user->id;
             }
@@ -287,6 +304,117 @@ class ReportsController extends Controller
         ]);
     }
 
+    /**
+     * GET /reports/cash/{session}/detail
+     *
+     * Desglose completo de un corte (Joel 2026-06-10): cada ticket de la sesión
+     * con sus items y pagos, los abonos/liquidaciones de preventa que cobró ese
+     * cajero durante la sesión, y los movimientos de caja (entradas/salidas,
+     * incluye reversos de cancelación). RBAC igual que /reports/cash.
+     */
+    public function cashDetail(Request $request, CashRegisterSession $session): JsonResponse
+    {
+        $user      = $request->user();
+        $isAdmin   = $user && $user->isAdminRole();
+        $isCashier = $user && $user->hasRole(['cajero']) && ! $isAdmin;
+
+        $session->load(['register.store', 'user']);
+
+        if (! $isAdmin) {
+            $sessionStoreId = $session->register?->store_id;
+            if ($sessionStoreId === null || (int) $sessionStoreId !== (int) ($user->store_id ?? -1)) {
+                return $this->error('No tienes acceso a este corte.', 403);
+            }
+            if ($isCashier && (int) $session->user_id !== (int) $user->id) {
+                return $this->error('Solo puedes ver tus propios cortes.', 403);
+            }
+        }
+
+        // ── Tickets de la sesión, desglosados ────────────────────────────────
+        $tickets = Sale::with(['items.product:id,name,sku', 'payments.paymentMethod:id,name', 'customer:id,name', 'user:id,name'])
+            ->where('register_session_id', $session->id)
+            ->orderBy('sold_at')
+            ->get()
+            ->map(fn ($sale) => [
+                'id'                  => $sale->id,
+                'sold_at'             => $sale->sold_at?->toISOString(),
+                'cashier'             => $sale->user?->name,
+                'customer'            => $sale->customer?->name,
+                'status'              => $sale->status,
+                'cancellation_status' => $sale->cancellation_status,
+                'subtotal'            => (float) $sale->subtotal,
+                'discount'            => (float) $sale->discount,
+                'total'               => (float) $sale->total,
+                'items'               => $sale->items->map(fn ($i) => [
+                    'name'     => $i->product?->name ?? "#{$i->product_id}",
+                    'sku'      => $i->product?->sku,
+                    'quantity' => (float) $i->quantity,
+                    'price'    => (float) $i->price,
+                    'total'    => (float) $i->total,
+                ])->values(),
+                'payments'            => $sale->payments->map(fn ($p) => [
+                    'method' => $p->paymentMethod?->name ?? '—',
+                    'amount' => (float) $p->amount,
+                ])->values(),
+            ])->values();
+
+        // ── Abonos/liquidaciones de preventa cobrados en esta sesión ─────────
+        // (la tabla no liga sesión: se toma cajero + ventana del corte)
+        $windowEnd = $session->closed_at ?? now();
+        $preSalePayments = DB::table('pre_sale_order_payments')
+            ->join('pre_sale_orders', 'pre_sale_orders.id', '=', 'pre_sale_order_payments.pre_sale_order_id')
+            ->leftJoin('payment_methods', 'payment_methods.id', '=', 'pre_sale_order_payments.payment_method_id')
+            ->where('pre_sale_order_payments.cashier_id', $session->user_id)
+            ->whereBetween('pre_sale_order_payments.created_at', [$session->opened_at, $windowEnd])
+            ->orderBy('pre_sale_order_payments.created_at')
+            ->get([
+                'pre_sale_order_payments.id',
+                'pre_sale_order_payments.amount',
+                'pre_sale_order_payments.created_at',
+                'pre_sale_orders.code',
+                'pre_sale_orders.status as order_status',
+                'payment_methods.name as method',
+            ])
+            ->map(fn ($p) => [
+                'id'         => $p->id,
+                'folio'      => $p->code,
+                'status'     => $p->order_status,
+                'method'     => $p->method ?? '—',
+                'amount'     => (float) $p->amount,
+                'created_at' => $p->created_at,
+            ]);
+
+        // ── Movimientos de caja (incluye reversos de cancelación) ────────────
+        $movements = DB::table('cash_movements')
+            ->where('register_session_id', $session->id)
+            ->orderBy('created_at')
+            ->get(['id', 'type', 'amount', 'description', 'created_at'])
+            ->map(fn ($m) => [
+                'id'          => $m->id,
+                'type'        => $m->type,
+                'amount'      => (float) $m->amount,
+                'description' => $m->description,
+                'created_at'  => $m->created_at,
+            ]);
+
+        return $this->success([
+            'session' => [
+                'id'           => $session->id,
+                'register'     => $session->register?->name,
+                'store'        => $session->register?->store?->name,
+                'user'         => $session->user?->name,
+                'status'       => $session->status,
+                'opened_at'    => $session->opened_at?->toISOString(),
+                'closed_at'    => $session->closed_at?->toISOString(),
+                'opening_cash' => (float) $session->opening_cash,
+                'closing_cash' => $session->closing_cash !== null ? (float) $session->closing_cash : null,
+            ],
+            'tickets'           => $tickets,
+            'pre_sale_payments' => $preSalePayments,
+            'movements'         => $movements,
+        ]);
+    }
+
     // ─── Top Products ─────────────────────────────────────────────────────────
 
     /**
@@ -300,7 +428,7 @@ class ReportsController extends Controller
     {
         $from    = $request->input('from', now()->startOfMonth()->toDateString());
         $to      = $request->input('to',   now()->toDateString());
-        $storeId = $request->integer('store_id') ?: null;
+        $storeId = $this->scopedStoreId($request);
         $limit   = min((int) ($request->input('limit', 20)), 100);
 
         // Products
@@ -376,7 +504,7 @@ class ReportsController extends Controller
     {
         $from    = $request->input('from', now()->startOfMonth()->toDateString());
         $to      = $request->input('to',   now()->toDateString());
-        $storeId = $request->integer('store_id') ?: null;
+        $storeId = $this->scopedStoreId($request);
         $limit   = min((int) ($request->input('limit', 20)), 100);
 
         $rows = DB::table('sales')
@@ -433,7 +561,7 @@ class ReportsController extends Controller
     {
         $from    = $request->input('from', now()->startOfMonth()->toDateString());
         $to      = $request->input('to',   now()->toDateString());
-        $storeId = $request->integer('store_id') ?: null;
+        $storeId = $this->scopedStoreId($request);
 
         // New schema — total revenue from items, collected from payments
         $newOrders = DB::table('pre_sale_orders')

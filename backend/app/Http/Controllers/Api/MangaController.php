@@ -169,6 +169,10 @@ class MangaController extends Controller
      */
     public function update(UpdateMangaRequest $request, Product $manga): JsonResponse
     {
+        if ($resp = $this->adminOrManagerGateError()) {
+            return $resp;
+        }
+
         // Route model binding: {manga} resuelve a Product. Validamos que sea
         // realmente un manga para evitar editar productos regulares por esta vía.
         if ($manga->product_type !== Product::TYPE_MANGA) {
@@ -295,6 +299,10 @@ class MangaController extends Controller
      */
     public function destroy(Product $manga): JsonResponse
     {
+        if ($resp = $this->adminOrManagerGateError()) {
+            return $resp;
+        }
+
         if ($manga->product_type !== Product::TYPE_MANGA) {
             return $this->error('El producto no es de tipo manga.', 422);
         }

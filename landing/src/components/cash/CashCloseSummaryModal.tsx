@@ -1,5 +1,7 @@
-import { X, Printer, CheckCircle2, AlertTriangle } from "lucide-react";
-import type { CashSessionReport } from "@tadaima/api";
+import { X, Printer, CheckCircle2, AlertTriangle, Loader2 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { getCashSessionDetail } from "@tadaima/api";
+import type { CashSessionReport, CashSessionDetail, CashTicket } from "@tadaima/api";
 
 interface CashCloseSummaryModalProps {
   session: CashSessionReport;
@@ -22,7 +24,33 @@ const fmt = (n: number): string =>
 const fmtDate = (iso: string | null): string =>
   iso ? new Date(iso).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" }) : "—";
 
-function buildPrintHtml(s: CashSessionReport): string {
+/** Bloque de tickets desglosados para la impresión del corte. */
+function buildTicketsHtml(detail: CashSessionDetail | null): string {
+  if (!detail || detail.tickets.length === 0) return "";
+  const tickets = detail.tickets.map(t => {
+    const cancelled = t.status === "returned" || t.cancellation_status === "full";
+    const items = t.items.map(i =>
+      `<div class="row"><span>${i.quantity} × ${i.name}</span><span>${fmt(i.total)}</span></div>`
+    ).join("");
+    const pays = t.payments.map(p => `${p.method} ${fmt(p.amount)}`).join(" + ");
+    return `<div class="row" style="font-weight:900; margin-top:4px"><span>#${t.id}${cancelled ? " CANCELADO" : ""}</span><span>${fmt(t.total)}</span></div>${items}<div class="row" style="color:#555"><span>${pays}</span><span></span></div>`;
+  }).join("");
+  const presale = detail.pre_sale_payments.map(p =>
+    `<div class="row"><span>${p.folio} · ${p.method}</span><span>+${fmt(p.amount)}</span></div>`
+  ).join("");
+  const movs = detail.movements.map(m =>
+    `<div class="row"><span>${m.description || m.type}</span><span>${m.type === "salida" ? "-" : "+"}${fmt(m.amount)}</span></div>`
+  ).join("");
+  return `
+    <div class="divider"></div>
+    <div class="sub">DESGLOSE DE TICKETS</div>
+    ${tickets}
+    ${presale ? `<div class="divider"></div><div class="sub">PREVENTA</div>${presale}` : ""}
+    ${movs ? `<div class="divider"></div><div class="sub">MOVIMIENTOS</div>${movs}` : ""}
+  `;
+}
+
+function buildPrintHtml(s: CashSessionReport, detail: CashSessionDetail | null = null): string {
   const diff = s.difference ?? 0;
   return `
     <html><head><title>Corte ${s.id}</title><style>
@@ -49,20 +77,30 @@ function buildPrintHtml(s: CashSessionReport): string {
       <div class="row total"><span>Esperado</span><span>${fmt(s.expected_cash)}</span></div>
       <div class="row total"><span>Cerrado</span><span>${s.closing_cash != null ? fmt(s.closing_cash) : "—"}</span></div>
       ${s.closing_cash != null ? `<div class="row total" style="color: ${Math.abs(diff) < 0.01 ? "green" : "red"}"><span>Diferencia</span><span>${diff >= 0 ? "+" : ""}${fmt(diff)}</span></div>` : ""}
+      ${buildTicketsHtml(detail)}
       <div class="sub" style="margin-top: 10px">Generado ${new Date().toLocaleString("es-MX")}</div>
     </body></html>
   `;
 }
 
-function doPrint(s: CashSessionReport): void {
+function doPrint(s: CashSessionReport, detail: CashSessionDetail | null = null): void {
   const w = window.open("", "_blank", "width=340,height=600");
   if (!w) return;
-  w.document.write(buildPrintHtml(s));
+  w.document.write(buildPrintHtml(s, detail));
   w.document.close();
   setTimeout(() => w.print(), 300);
 }
 
 export function CashCloseSummaryModal({ session: s, open, onClose }: CashCloseSummaryModalProps) {
+  // Desglose del corte (tickets + preventa + movimientos) — Joel 2026-06-10.
+  const detailQuery = useQuery({
+    queryKey: ["cash-session-detail", s.id],
+    queryFn: () => getCashSessionDetail(s.id),
+    enabled: open,
+    staleTime: 60_000,
+  });
+  const detail = detailQuery.data ?? null;
+
   if (!open) return null;
   const diff = s.difference ?? 0;
   const isMatch = s.closing_cash != null && Math.abs(diff) < 0.01;
@@ -142,9 +180,53 @@ export function CashCloseSummaryModal({ session: s, open, onClose }: CashCloseSu
           )}
         </div>
 
+        {/* Desglose de tickets del corte */}
+        <div style={{ marginBottom: 18 }}>
+          <p style={{ margin: "0 0 8px", fontSize: 10, fontWeight: 900, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.12em" }}>
+            Desglose del corte
+          </p>
+          {detailQuery.isPending ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: 14, color: "var(--td-text-lo)", fontSize: 11 }}>
+              <Loader2 size={14} className="animate-spin" /> Cargando tickets…
+            </div>
+          ) : !detail ? (
+            <p style={{ fontSize: 11, color: "var(--td-text-lo)", padding: "8px 0" }}>No se pudo cargar el desglose.</p>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 300, overflowY: "auto", paddingRight: 4 }}>
+              {detail.tickets.map(t => <TicketRow key={t.id} ticket={t} />)}
+              {detail.tickets.length === 0 && (
+                <p style={{ fontSize: 11, color: "var(--td-text-lo)", margin: 0 }}>Sin ventas en esta sesión.</p>
+              )}
+
+              {detail.pre_sale_payments.length > 0 && (
+                <div style={{ padding: "10px 12px", background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", borderRadius: 12 }}>
+                  <p style={{ margin: "0 0 6px", fontSize: 9, fontWeight: 900, color: "#F59E0B", textTransform: "uppercase", letterSpacing: "0.1em" }}>Preventa (anticipos / liquidaciones)</p>
+                  {detail.pre_sale_payments.map(p => (
+                    <Row key={p.id} label={`${p.folio} · ${p.method}`} value={`+${fmt(p.amount)}`} valueColor="#F59E0B" />
+                  ))}
+                </div>
+              )}
+
+              {detail.movements.length > 0 && (
+                <div style={{ padding: "10px 12px", background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", borderRadius: 12 }}>
+                  <p style={{ margin: "0 0 6px", fontSize: 9, fontWeight: 900, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.1em" }}>Movimientos de caja</p>
+                  {detail.movements.map(m => (
+                    <Row
+                      key={m.id}
+                      label={m.description || m.type}
+                      value={`${m.type === "salida" ? "-" : "+"}${fmt(m.amount)}`}
+                      valueColor={m.type === "salida" ? "#DC2626" : "#10b981"}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         {/* Footer */}
         <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={() => doPrint(s)}
+          <button onClick={() => doPrint(s, detail)}
             style={{
               flex: 1, padding: "12px", borderRadius: 14,
               background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)",
@@ -167,6 +249,42 @@ export function CashCloseSummaryModal({ session: s, open, onClose }: CashCloseSu
             Cerrar
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** Ticket desglosado: encabezado (folio/hora/total) + items + métodos de pago. */
+function TicketRow({ ticket: t }: { ticket: CashTicket }) {
+  const cancelled = t.status === "returned" || t.cancellation_status === "full";
+  const partial = t.cancellation_status === "partial";
+  return (
+    <div style={{ padding: "10px 12px", background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", borderRadius: 12, opacity: cancelled ? 0.55 : 1 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+        <span style={{ fontSize: 11, fontWeight: 900, color: "var(--td-text-hi)" }}>
+          Ticket #{t.id}
+          {t.customer ? ` · ${t.customer}` : ""}
+          {cancelled && <span style={{ color: "#DC2626", marginLeft: 6 }}>CANCELADO</span>}
+          {partial && <span style={{ color: "#F59E0B", marginLeft: 6 }}>CANC. PARCIAL</span>}
+        </span>
+        <span style={{ fontSize: 9, color: "var(--td-text-lo)" }}>
+          {t.sold_at ? new Date(t.sold_at).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }) : ""}
+        </span>
+      </div>
+      {t.items.map((i, idx) => (
+        <div key={idx} style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--td-text-md)", padding: "1px 0" }}>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginRight: 8 }}>
+            {i.quantity} × {i.name}
+          </span>
+          <span style={{ flexShrink: 0 }}>{fmt(i.total)}</span>
+        </div>
+      ))}
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, paddingTop: 6, borderTop: "1px dashed var(--td-card-border)" }}>
+        <span style={{ fontSize: 9, color: "var(--td-text-lo)" }}>
+          {t.payments.map(p => `${p.method} ${fmt(p.amount)}`).join(" + ") || "—"}
+          {t.discount > 0 ? ` · desc ${fmt(t.discount)}` : ""}
+        </span>
+        <span style={{ fontSize: 11, fontWeight: 900, color: "var(--td-text-hi)" }}>{fmt(t.total)}</span>
       </div>
     </div>
   );

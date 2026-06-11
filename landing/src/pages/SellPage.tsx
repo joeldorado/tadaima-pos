@@ -9,7 +9,7 @@ import {
   Mail,
   TriangleAlert, PackageX, Bookmark, Calendar, PackageCheck, ClipboardList, Banknote,
   Truck, CheckCircle2, Printer, History, Receipt, RefreshCw,
-  ShoppingCart, Crown, Circle, Trash2, XCircle, Clock,
+  ShoppingCart, Crown, Circle, Trash2, XCircle, Clock, Bell,
 } from "lucide-react";
 import { ImageWithFallback } from "@/components/figma/ImageWithFallback";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -19,7 +19,7 @@ import { CameraScannerModal } from "@/components/CameraScannerModal";
 import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
 const tadaimaLogo = null // TODO: replace with real logo asset
 import { toast } from "sonner";
-import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, closeSession, forceCloseSession, getActiveSession, createLayaway, getCustomers, createCustomer, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getPreSaleOrders, getSales, getProductsLight, storageUrl, getCashReport } from "@tadaima/api";
+import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, closeSession, forceCloseSession, getActiveSession, createLayaway, getCustomers, createCustomer, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getPreSaleOrders, getSales, getProductsLight, storageUrl, getCashReport, sendPreSaleAssignAlert } from "@tadaima/api";
 import type { OpenSessionConflict } from "@tadaima/api";
 import type { CashSessionReport } from "@tadaima/api";
 import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
@@ -38,11 +38,13 @@ import { useCustomersAllQuery } from "@/hooks/queries/useCustomers";
 import { useTodayHistorialQuery } from "@/hooks/queries/useHistorial";
 import { queryKeys } from "@/lib/queryKeys";
 import { getTodayLocal } from "@/lib/date";
+import { PRICE_LEVEL_LABELS, PRICE_LEVEL_COLORS, PRICE_LEVEL_RGB } from "@/lib/priceLevels";
 import type { CashSession, CashRegisterInfo, PaymentMethod as ApiPaymentMethod, PreSaleCatalog, PreSaleOrder, PreSaleOrderItem, SaleDetail, Terminal, ExternalCardLookup } from "@tadaima/api";
 import type { HistorialEntry } from "@/hooks/queries/useHistorial";
 import { useCartDraftStore } from "@/stores/cartDraftStore";
 import { useActiveStore } from "@/contexts/StoreContext";
 import { useAuth } from "@tadaima/auth";
+import { isAdmin as isAdminRole } from "@/lib/permisos";
 import { CancelTicketModal } from "@/components/cancel/CancelTicketModal";
 import { motion as Motion, AnimatePresence } from "motion/react";
 
@@ -160,12 +162,12 @@ function getItemPrice(item: CartItem): number {
 
 function getPriceLevels(p: Product) {
   const levels: { level: PriceLevel; label: string; price: number }[] = [
-    { level: "a", label: "Precio A", price: p.price_a || 0 },
+    { level: "a", label: PRICE_LEVEL_LABELS.a, price: p.price_a || 0 },
   ];
-  if (p.price_b && p.price_b > 0) levels.push({ level: "b", label: "Precio B", price: p.price_b });
-  if (p.price_c && p.price_c > 0) levels.push({ level: "c", label: "Precio C", price: p.price_c });
-  if (p.price_d && p.price_d > 0) levels.push({ level: "d", label: "Precio D", price: p.price_d });
-  if (p.price_e && p.price_e > 0) levels.push({ level: "e", label: "Precio E", price: p.price_e });
+  if (p.price_b && p.price_b > 0) levels.push({ level: "b", label: PRICE_LEVEL_LABELS.b, price: p.price_b });
+  if (p.price_c && p.price_c > 0) levels.push({ level: "c", label: PRICE_LEVEL_LABELS.c, price: p.price_c });
+  if (p.price_d && p.price_d > 0) levels.push({ level: "d", label: PRICE_LEVEL_LABELS.d, price: p.price_d });
+  if (p.price_e && p.price_e > 0) levels.push({ level: "e", label: PRICE_LEVEL_LABELS.e, price: p.price_e });
   return levels;
 }
 
@@ -262,7 +264,9 @@ const pill = (active: boolean) =>
 export function SellPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const isAdmin = user?.roles?.includes("admin") ?? false;
+  // Usa el helper central: antes `includes("admin")` no detectaba
+  // super_admin/owner/dueño y un dueño no veía el panel de cambiar tienda.
+  const isAdmin = isAdminRole(user?.roles);
   const { activeStore, stores, setActiveStore, isLoading: storeLoading } = useActiveStore();
 
   const draftStore = useCartDraftStore();
@@ -426,6 +430,11 @@ export function SellPage() {
             ? { tienda: p.stock_total, bodega: 0, preventa: 0, dañado: 0 }
             : undefined,
           active: p.active,
+          // QA crítico 2026-06-08: sin estos flags, itemAcceptsMethod/payBlocked
+          // siempre pasaban y un producto solo-efectivo se cobraba con tarjeta.
+          allow_cash: p.allow_cash ?? true,
+          allow_card: p.allow_card ?? true,
+          payment_restriction: p.allow_card === false && p.allow_cash !== false ? "cash_only" : undefined,
         } as Product;
       });
   }, [productsQuery.data]);
@@ -525,6 +534,9 @@ export function SellPage() {
           ? { tienda: p.stock_total, bodega: 0, preventa: 0, dañado: 0 }
           : undefined,
         active: p.active,
+        allow_cash: p.allow_cash ?? true,
+        allow_card: p.allow_card ?? true,
+        payment_restriction: p.allow_card === false && p.allow_cash !== false ? "cash_only" : undefined,
       }) as Product);
     return extra.length > 0 ? [...topProducts, ...extra] : topProducts;
   }, [topProducts, productsSearchQuery.data]);
@@ -630,6 +642,25 @@ export function SellPage() {
   const [preSaleOrdersExpired, setPreSaleOrdersExpired] = useState<PreSaleOrder[]>([]);
   const [pickerLoading, setPickerLoading] = useState(false);
   const [pickerSearch, setPickerSearch] = useState("");
+  // Aviso "asigna esta preventa a mi tienda" — estado por catálogo para
+  // deshabilitar el botón mientras envía y mostrar "Avisado ✓" después.
+  const [presaleAlertState, setPresaleAlertState] = useState<Record<number, 'sending' | 'sent'>>({});
+
+  const handlePresaleAssignAlert = async (catalog: PreSaleCatalog) => {
+    if (presaleAlertState[catalog.id]) return;
+    setPresaleAlertState(prev => ({ ...prev, [catalog.id]: 'sending' }));
+    try {
+      await sendPreSaleAssignAlert({ catalog_id: catalog.id });
+      setPresaleAlertState(prev => ({ ...prev, [catalog.id]: 'sent' }));
+      toast.success("Aviso enviado", { description: "Tu gerente y el admin recibirán la solicitud para habilitar esta preventa." });
+    } catch (err: unknown) {
+      setPresaleAlertState(prev => {
+        const { [catalog.id]: _omit, ...rest } = prev;
+        return rest;
+      });
+      toast.error((err as { message?: string })?.message ?? "No se pudo enviar el aviso");
+    }
+  };
 
   // ── Búsqueda rápida por folio ──
   const [folioInput, setFolioInput] = useState("");
@@ -1701,11 +1732,14 @@ export function SellPage() {
     
   const totalUSD       = tc > 0 ? currentPayAmount / tc : 0;
 
-  const hasCashOnly = activeMesa.items.some(i => i.product.payment_restriction === "cash_only");
-  const payBlocked  = hasCashOnly && !["Efectivo", "Dólares"].includes(activeMesa.paymentMethod);
+  // Bloqueo por método incompatible (QA crítico 2026-06-08): si CUALQUIER item
+  // del carrito no acepta el método actual (solo-efectivo con Tarjeta, o
+  // solo-tarjeta con Efectivo/Transferencia), el cobro se bloquea. Antes esta
+  // variable existía pero no se usaba en ningún lado.
+  const payBlocked = activeMesa.items.some(i => !itemAcceptsMethod(i, activeMesa.paymentMethod));
 
   const hasCatalogItems = activeMesa.items.some(i => i.sellingCatalogId != null);
-  const checkoutDisabled = activeMesa.items.length === 0 || isProcessing ||
+  const checkoutDisabled = activeMesa.items.length === 0 || isProcessing || payBlocked ||
     (activeMesa.isPreventa && !activeMesa.loadedPreSaleOrderId && !hasCatalogItems && totalDeposit <= 0);
 
   const apartarDisabled = activeMesa.items.length === 0 || !activeMesa.customerId || apartarProcessing;
@@ -2329,6 +2363,10 @@ export function SellPage() {
       `<tr><td style="padding:2px 0;font-size:10px">${i.name}</td><td style="text-align:center;padding:2px 4px;font-size:10px">×${i.quantity}</td><td style="text-align:right;font-size:10px">${fmt(i.price * i.quantity)}</td></tr>`
     ).join("");
 
+    // Saldo restante de la preventa (QA 2026-06-08): en anticipo nuevo es
+    // total − anticipo; en liquidación el folio queda en ceros.
+    const preSaleTotal = (sale.preSaleItems ?? []).reduce((s, i) => s + i.unitPrice * i.quantity, 0);
+    const preSaleSaldo = sale.preSaleIsLiquidation ? 0 : Math.max(0, preSaleTotal - (sale.preSaleAnticipo ?? 0));
     const preSaleSection = sale.preSaleCode ? `
       <div class="divider"></div>
       <div style="font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:4px">
@@ -2341,7 +2379,9 @@ export function SellPage() {
           ).join("")}
         </tbody>
         <tfoot>
-          <tr><td colspan="2" style="font-size:9px;padding-top:4px">Anticipo pagado</td><td style="text-align:right;font-size:10px;font-weight:900;padding-top:4px">${fmt(sale.preSaleAnticipo ?? 0)}</td></tr>
+          <tr><td colspan="2" style="font-size:9px;padding-top:4px">Total preventa</td><td style="text-align:right;font-size:10px;padding-top:4px">${fmt(preSaleTotal)}</td></tr>
+          <tr><td colspan="2" style="font-size:9px">${sale.preSaleIsLiquidation ? "Liquidación pagada" : "Anticipo pagado"}</td><td style="text-align:right;font-size:10px;font-weight:900">${fmt(sale.preSaleAnticipo ?? 0)}</td></tr>
+          <tr><td colspan="2" style="font-size:10px;font-weight:900">${preSaleSaldo > 0 ? "SALDO RESTANTE" : "SALDO"}</td><td style="text-align:right;font-size:11px;font-weight:900">${preSaleSaldo > 0 ? fmt(preSaleSaldo) : `${fmt(0)} ✓ LIQUIDADO`}</td></tr>
         </tfoot>
       </table>` : "";
 
@@ -2567,6 +2607,15 @@ export function SellPage() {
 
   const handleCheckout = async () => {
     if (!activeMesa.items.length) return;
+
+    // Guard de método incompatible — también cubre los atajos de Enter que
+    // llaman handleCheckout directo sin pasar por el disabled del botón.
+    const incompatibles = activeMesa.items.filter(i => !itemAcceptsMethod(i, activeMesa.paymentMethod));
+    if (incompatibles.length > 0) {
+      const names = incompatibles.map(i => i.product.name).slice(0, 3).join(", ");
+      toast.error(`No se puede cobrar con ${activeMesa.paymentMethod}: ${names}${incompatibles.length > 3 ? "…" : ""}. Cambia el método de pago o separa la venta.`, { duration: 6000 });
+      return;
+    }
 
     // Bug 10/15: bloquear checkout si algún item no se sincronizó con el backend.
     // Sin esto, el usuario verá un total en pantalla pero el draft del backend tiene
@@ -4200,23 +4249,23 @@ export function SellPage() {
                           <ImageWithFallback src={p.image || ""} className="w-16 h-16 rounded-xl object-cover bg-black shrink-0 shadow-lg" />
 
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm font-black text-white truncate" style={{ color: "var(--td-text-hi)" }}>{p.name}</p>
-                            <p className="text-[10px] uppercase tracking-[0.15em] mt-0.5" style={{ color: "var(--td-text-ghost)" }}>{p.sku}</p>
+                            <p className="text-base font-black text-white truncate" style={{ color: "var(--td-text-hi)" }}>{p.name}</p>
+                            <p className="text-[11px] uppercase tracking-[0.15em] mt-0.5" style={{ color: "var(--td-text-ghost)" }}>{p.sku}</p>
 
                             {/* Stock Breakdown */}
                             <div className="flex gap-3 mt-2 flex-wrap">
                               <div className="flex items-center gap-1.5">
                                 <div className={`w-1.5 h-1.5 rounded-full ${!activeMesa.isPreventa ? 'bg-emerald-500' : 'bg-white/10'}`} />
-                                <span className={`text-[9px] font-black uppercase tracking-widest ${!activeMesa.isPreventa ? 'text-white' : 'text-white/30'}`}>Tienda: {p.stock_details?.tienda || 0}</span>
+                                <span className={`text-[11px] font-black uppercase tracking-widest ${!activeMesa.isPreventa ? 'text-white' : 'text-white/30'}`}>Tienda: {p.stock_details?.tienda || 0}</span>
                               </div>
                               <div className="flex items-center gap-1.5">
                                 <div className={`w-1.5 h-1.5 rounded-full ${activeMesa.isPreventa ? 'bg-amber-500 animate-pulse' : 'bg-amber-500/20'}`} />
-                                <span className={`text-[9px] font-black uppercase tracking-widest ${activeMesa.isPreventa ? 'text-amber-500' : 'text-white/30'}`}>Preventa: {p.stock_details?.preventa || 0}</span>
+                                <span className={`text-[11px] font-black uppercase tracking-widest ${activeMesa.isPreventa ? 'text-amber-500' : 'text-white/30'}`}>Preventa: {p.stock_details?.preventa || 0}</span>
                               </div>
                               {(p.stock_details?.dañado ?? 0) > 0 && (
                                 <div className="flex items-center gap-1.5">
-                                  <TriangleAlert size={8} className="text-orange-400" />
-                                  <span className="text-[9px] font-black uppercase tracking-widest text-orange-400">
+                                  <TriangleAlert size={10} className="text-orange-400" />
+                                  <span className="text-[11px] font-black uppercase tracking-widest text-orange-400">
                                     Dañado: {p.stock_details?.dañado || 0}
                                   </span>
                                 </div>
@@ -4224,33 +4273,35 @@ export function SellPage() {
                             </div>
                           </div>
 
-                          {/* Price buttons — click each to add at that level. stopPropagation evita doble-fire del onClick del row. */}
-                          <div className="flex flex-col gap-1 items-end shrink-0">
-                            <button
-                              onClick={e => { e.stopPropagation(); void addToCart(p, "a"); setSearch(""); }}
-                              className="flex items-center gap-2 px-2.5 py-1 rounded-lg hover:bg-white/10 transition-colors text-right"
-                            >
-                              <span className="text-[8px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-ghost)" }}>Precio A</span>
-                              <p className="text-sm font-black" style={{ color: "var(--td-text-hi)" }}>{fmt(p.price_a)}</p>
-                            </button>
-                            {p.price_b && p.price_b > 0 && (
-                              <button
-                                onClick={e => { e.stopPropagation(); void addToCart(p, "b"); setSearch(""); }}
-                                className="flex items-center gap-2 px-2.5 py-1 rounded-lg hover:bg-amber-500/10 transition-colors text-right"
-                              >
-                                <span className="text-[8px] font-black uppercase tracking-widest text-amber-500/50">Precio B</span>
-                                <p className="text-[11px] font-black text-amber-500">{fmt(p.price_b)}</p>
-                              </button>
-                            )}
-                            {p.price_c && p.price_c > 0 && (
-                              <button
-                                onClick={e => { e.stopPropagation(); void addToCart(p, "c"); setSearch(""); }}
-                                className="flex items-center gap-2 px-2.5 py-1 rounded-lg hover:bg-blue-500/10 transition-colors text-right"
-                              >
-                                <span className="text-[8px] font-black uppercase tracking-widest text-blue-500/40">Precio C</span>
-                                <p className="text-[11px] font-black text-blue-500">{fmt(p.price_c)}</p>
-                              </button>
-                            )}
+                          {/* Precios — un row grande por nivel ASIGNADO (Joel
+                              2026-06-10: 1=Normal, 2=Socio, 3=Mayorista; antes
+                              decían "Precio A/B/C" en 8px). Click agrega al
+                              carrito en ese nivel; stopPropagation evita
+                              doble-fire del onClick del row. */}
+                          <div className="flex flex-col gap-1.5 items-stretch shrink-0 min-w-[150px]">
+                            {getPriceLevels(p).map(lvl => {
+                              // Color de identidad por nivel (Normal=verde,
+                              // Socio=ámbar, Mayorista=azul) — Joel 2026-06-11.
+                              const rgb = PRICE_LEVEL_RGB[lvl.level];
+                              return (
+                                <button
+                                  key={lvl.level}
+                                  onClick={e => { e.stopPropagation(); void addToCart(p, lvl.level); setSearch(""); }}
+                                  className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl border transition-colors"
+                                  style={{ background: `rgba(${rgb},0.07)`, borderColor: `rgba(${rgb},0.25)` }}
+                                  onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = `rgba(${rgb},0.16)`; }}
+                                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = `rgba(${rgb},0.07)`; }}
+                                  title={`Agregar a ${lvl.label}`}
+                                >
+                                  <span className="text-[11px] font-black uppercase tracking-widest" style={{ color: `rgba(${rgb},0.9)` }}>
+                                    {lvl.label}
+                                  </span>
+                                  <span className="text-lg font-black" style={{ color: PRICE_LEVEL_COLORS[lvl.level] }}>
+                                    {fmt(lvl.price)}
+                                  </span>
+                                </button>
+                              );
+                            })}
                           </div>
                         </div>
                       ))
@@ -5489,35 +5540,73 @@ export function SellPage() {
               ? (catalog.reserved_by_store?.[String(activeStore.id)] ?? 0)
               : 0;
             const remaining = Math.max(0, limit - reserved);
-            const isAgotado = remaining <= 0;
+            // Sin entrada en store_limits = el gerente/admin aún no habilita esta
+            // tienda → "Sin asignar" (no es lo mismo que agotado: nunca tuvo cupo).
+            const isSinAsignar = storeLimitRow === undefined;
+            const isAgotado = !isSinAsignar && remaining <= 0;
+            const isBlocked = isSinAsignar || isAgotado;
 
             return (
               <button
-                onClick={() => { if (!isAgotado) addCatalogToCart(catalog); }}
+                onClick={() => { if (!isBlocked) addCatalogToCart(catalog); }}
+                // Sin asignar NO usa disabled: el badge "Avisar" interno necesita
+                // recibir clicks (un <button disabled> bloquea los hijos). El
+                // onClick del card ya está guardado con isBlocked.
                 disabled={isAgotado}
+                title={isSinAsignar ? "Esta tienda no tiene cupo asignado para esta preventa. Presiona Avisar para pedir a tu gerente que la habilite." : undefined}
                 style={{
                   textAlign: "left", borderRadius: 14,
                   background: isAgotado ? "rgba(224,34,26,0.03)" : "var(--td-card-bg)",
                   border: `1px solid ${isAgotado ? "rgba(224,34,26,0.25)" : "var(--td-card-border)"}`,
-                  cursor: isAgotado ? "not-allowed" : "pointer",
+                  cursor: isBlocked ? "not-allowed" : "pointer",
                   padding: "14px",
                   display: "flex", flexDirection: "column", gap: 8,
                   transition: "border-color 0.15s, transform 0.1s",
-                  opacity: isAgotado ? 0.55 : 1,
+                  opacity: isBlocked ? 0.55 : 1,
                 }}
-                onMouseEnter={e => { if (!isAgotado) { (e.currentTarget as HTMLButtonElement).style.borderColor = `${ac}0.4)`; (e.currentTarget as HTMLButtonElement).style.transform = "translateY(-1px)"; } }}
-                onMouseLeave={e => { if (!isAgotado) { (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--td-card-border)"; (e.currentTarget as HTMLButtonElement).style.transform = "translateY(0)"; } }}
+                onMouseEnter={e => { if (!isBlocked) { (e.currentTarget as HTMLButtonElement).style.borderColor = `${ac}0.4)`; (e.currentTarget as HTMLButtonElement).style.transform = "translateY(-1px)"; } }}
+                onMouseLeave={e => { if (!isBlocked) { (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--td-card-border)"; (e.currentTarget as HTMLButtonElement).style.transform = "translateY(0)"; } }}
               >
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
-                  <span style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--td-text-ghost)" }}>
+                  <span style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--td-text-ghost)" }}>
                     {catalog.category?.name ?? "Preventa"}
                   </span>
-                  {isAgotado ? (
-                    <span style={{ fontSize: 9, fontWeight: 900, padding: "2px 7px", borderRadius: 20, color: "#fff", background: "#DC2626", border: "1px solid rgba(220,38,38,0.5)" }}>
+                  {isSinAsignar ? (() => {
+                    const alertSt = presaleAlertState[catalog.id];
+                    return (
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <span style={{ fontSize: 10, fontWeight: 900, padding: "3px 8px", borderRadius: 20, color: "var(--td-text-ghost)", background: "rgba(148,163,184,0.12)", border: "1px solid rgba(148,163,184,0.25)" }}>
+                          Sin asignar
+                        </span>
+                        <span
+                          role="button"
+                          onClick={e => { e.stopPropagation(); void handlePresaleAssignAlert(catalog); }}
+                          title="Avisar al gerente y admin para que asignen cupo de esta preventa a tu tienda"
+                          style={{
+                            display: "inline-flex", alignItems: "center", gap: 3,
+                            fontSize: 10, fontWeight: 900, padding: "3px 8px", borderRadius: 20,
+                            cursor: alertSt ? "default" : "pointer",
+                            color: alertSt === 'sent' ? "#10b981" : "#F59E0B",
+                            background: alertSt === 'sent' ? "rgba(16,185,129,0.1)" : "rgba(245,158,11,0.12)",
+                            border: `1px solid ${alertSt === 'sent' ? "rgba(16,185,129,0.3)" : "rgba(245,158,11,0.3)"}`,
+                            opacity: alertSt === 'sending' ? 0.6 : 1,
+                          }}
+                        >
+                          {alertSt === 'sending'
+                            ? <Loader2 size={10} className="animate-spin" />
+                            : alertSt === 'sent'
+                              ? <CheckCircle2 size={10} />
+                              : <Bell size={10} />}
+                          {alertSt === 'sent' ? "Avisado" : "Avisar"}
+                        </span>
+                      </span>
+                    );
+                  })() : isAgotado ? (
+                    <span style={{ fontSize: 10, fontWeight: 900, padding: "3px 8px", borderRadius: 20, color: "#fff", background: "#DC2626", border: "1px solid rgba(220,38,38,0.5)" }}>
                       Agotado
                     </span>
                   ) : (
-                    <span style={{ fontSize: 9, fontWeight: 900, padding: "2px 7px", borderRadius: 20, color: "#F59E0B", background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.2)" }}>
+                    <span style={{ fontSize: 10, fontWeight: 900, padding: "3px 8px", borderRadius: 20, color: "#F59E0B", background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.2)" }}>
                       {remaining !== null ? `${remaining} disponible${remaining === 1 ? "" : "s"}` : "Disponible"}
                     </span>
                   )}
@@ -5534,33 +5623,49 @@ export function SellPage() {
                     onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
                   />
                 )}
-                <p style={{ margin: 0, fontSize: 12, fontWeight: 800, lineHeight: 1.3, color: "var(--td-text-hi)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                <p style={{ margin: 0, fontSize: 14, fontWeight: 800, lineHeight: 1.3, color: "var(--td-text-hi)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
                   {catalog.product_name}
                 </p>
                 {catalog.preorder_limit != null && (
-                  <p style={{ margin: 0, fontSize: 9, fontWeight: 700, color: "var(--td-text-lo)" }}>
+                  <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: "var(--td-text-lo)" }}>
                     {catalog.reserved_count ?? 0} / {catalog.preorder_limit} reservados
                   </p>
                 )}
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                  {prices.map((x, i) => (
-                    <button
-                      key={x.level}
-                      onClick={e => { e.stopPropagation(); if (!isAgotado) addCatalogToCart(catalog, x.level); }}
-                      disabled={isAgotado}
-                      style={{ fontSize: 9, fontWeight: 800, padding: "3px 8px", borderRadius: 6, cursor: isAgotado ? "not-allowed" : "pointer", background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.3)", color: "#F59E0B", transition: "background 0.12s", opacity: isAgotado ? 0.4 : 1 }}
-                      onMouseEnter={e => { if (!isAgotado) (e.currentTarget as HTMLElement).style.background = "rgba(245,158,11,0.25)"; }}
-                      onMouseLeave={e => { if (!isAgotado) (e.currentTarget as HTMLElement).style.background = "rgba(245,158,11,0.12)"; }}
-                    >
-                      P{i + 1} {fmt(x.price)}
-                    </button>
-                  ))}
+                <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                  {prices.map(x => {
+                    // Color de identidad por nivel (Normal=verde, Socio=ámbar,
+                    // Mayorista=azul) + botón grande full-width — Joel 2026-06-11.
+                    const rgb = PRICE_LEVEL_RGB[x.level];
+                    return (
+                      <button
+                        key={x.level}
+                        onClick={e => { e.stopPropagation(); if (!isBlocked) addCatalogToCart(catalog, x.level); }}
+                        disabled={isBlocked}
+                        style={{
+                          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+                          width: "100%", padding: "7px 12px", borderRadius: 10,
+                          cursor: isBlocked ? "not-allowed" : "pointer",
+                          background: `rgba(${rgb},0.1)`, border: `1px solid rgba(${rgb},0.32)`,
+                          transition: "background 0.12s", opacity: isBlocked ? 0.4 : 1,
+                        }}
+                        onMouseEnter={e => { if (!isBlocked) (e.currentTarget as HTMLElement).style.background = `rgba(${rgb},0.22)`; }}
+                        onMouseLeave={e => { if (!isBlocked) (e.currentTarget as HTMLElement).style.background = `rgba(${rgb},0.1)`; }}
+                      >
+                        <span style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", color: `rgba(${rgb},0.9)` }}>
+                          {PRICE_LEVEL_LABELS[x.level]}
+                        </span>
+                        <span style={{ fontSize: 15, fontWeight: 900, color: PRICE_LEVEL_COLORS[x.level] }}>
+                          {fmt(x.price)}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
                 <div style={{ borderTop: "1px solid var(--td-card-border)", paddingTop: 8, display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
-                  <p style={{ margin: 0, fontSize: 9, color: "var(--td-text-ghost)", fontWeight: 700 }}>
+                  <p style={{ margin: 0, fontSize: 11, color: "var(--td-text-ghost)", fontWeight: 700 }}>
                     {catalog.advance_payment > 0 ? `Anticipo mín. ${fmt(catalog.advance_payment)}` : "Sin anticipo mínimo"}
                   </p>
-                  <p style={{ margin: 0, fontSize: 16, fontWeight: 900, color: "#F59E0B" }}>{fmt(catalog.price_1 ?? 0)}</p>
+                  <p style={{ margin: 0, fontSize: 18, fontWeight: 900, color: "#F59E0B" }}>{fmt(catalog.price_1 ?? 0)}</p>
                 </div>
               </button>
             );
@@ -6836,6 +6941,8 @@ export function SellPage() {
                               preSaleCode: order.code,
                               preSaleItems: orderItems.map(i => ({ name: i.catalog?.product_name ?? `Artículo #${i.id}`, quantity: i.quantity, unitPrice: i.unit_price })),
                               preSaleAnticipo: paidAmt,
+                              // delivered → el ticket muestra "SALDO $0 ✓ LIQUIDADO"
+                              preSaleIsLiquidation: order.status === "delivered",
                             });
                           }}
                           role="button" title="Imprimir ticket"

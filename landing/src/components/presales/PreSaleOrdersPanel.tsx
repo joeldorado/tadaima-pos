@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { PreSalesSkeleton } from "./PreSalesSkeleton";
 import type { PreSaleOrder, PreSaleOrderStatus } from "@tadaima/api";
 import { useAuth } from "@tadaima/auth";
+import { isAdmin as isAdminRole } from "@/lib/permisos";
 import { useActiveStore } from "@/contexts/StoreContext";
 import { useQueryClient } from "@tanstack/react-query";
 import { usePreSaleOrdersQuery } from "@/hooks/queries/usePreSales";
@@ -31,24 +32,39 @@ const PAGE_SIZE = 15;
 export function PreSaleOrdersPanel() {
   const { user } = useAuth();
   const { stores } = useActiveStore();
-  const isAdmin = user?.roles?.includes("admin") || user?.roles?.includes("gerente");
+  // Solo admin cambia el filtro de tienda en Folios (modelo de roles
+  // 2026-06-10): gerente queda anclado a su tienda igual que cajero. Antes
+  // gerente entraba como "admin" aquí y veía el dropdown de TODAS las tiendas.
+  const isAdmin = isAdminRole(user?.roles);
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<PreSaleOrderStatus | "all">("all");
   const [storeFilter, setStoreFilter] = useState<number | "all">("all");
   const [page, setPage] = useState(1);
 
+  // Debounce del buscador: antes cada tecla cambiaba la queryKey → un request
+  // por letra ("PREV-00019" = 10 requests). Ahora 1 request 300ms después de
+  // dejar de teclear.
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
   const queryClient = useQueryClient();
   const params: Record<string, unknown> = { per_page: PAGE_SIZE, page };
   if (statusFilter !== "all") params.status = statusFilter;
   if (!isAdmin && user?.store_id) params.store_id = user.store_id;
   else if (isAdmin && storeFilter !== "all") params.store_id = storeFilter;
-  if (search.trim()) params.code = search.trim();
+  if (debouncedSearch) params.code = debouncedSearch;
 
   const ordersQuery = usePreSaleOrdersQuery(params as Parameters<typeof usePreSaleOrdersQuery>[0]);
   const orders: PreSaleOrder[] = ordersQuery.data?.data ?? [];
   const total = ordersQuery.data?.pagination.total ?? 0;
   const loading = ordersQuery.isPending;
+  // Refetch con la lista anterior en pantalla (keepPreviousData) — se atenúa
+  // la tabla + chip "Cargando…" para que el cambio de filtro se note.
+  const isRefreshing = ordersQuery.isFetching && !loading;
   const fetchOrders = () => queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all });
 
   useEffect(() => {
@@ -108,17 +124,32 @@ export function PreSaleOrdersPanel() {
           </select>
         )}
 
+        {/* Chip de refetch — la tabla muestra la lista anterior (keepPreviousData),
+            sin esta señal el cambio de filtro/búsqueda parecía no responder. */}
+        {isRefreshing && (
+          <span
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest"
+            style={{ background: "rgba(255,170,0,0.1)", border: "1px solid rgba(255,170,0,0.3)", color: "#FFAA00" }}
+          >
+            <Loader2 size={11} className="animate-spin" />
+            Cargando…
+          </span>
+        )}
+
         <button
           onClick={() => void fetchOrders()}
           className="ml-auto p-2 rounded-xl bg-white/[0.04] border border-white/10 text-white/40 hover:text-white hover:bg-white/10 transition-all"
           title="Actualizar"
         >
-          <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+          <RefreshCw size={14} className={loading || isRefreshing ? "animate-spin" : ""} />
         </button>
       </div>
 
       {/* Table */}
-      <div className="rounded-2xl border border-white/[0.07] overflow-hidden" style={{ background: "var(--td-card-bg)" }}>
+      <div
+        className="rounded-2xl border border-white/[0.07] overflow-hidden transition-opacity duration-200"
+        style={{ background: "var(--td-card-bg)", opacity: isRefreshing ? 0.45 : 1, pointerEvents: isRefreshing ? "none" : "auto" }}
+      >
         {loading ? (
           <div className="p-4"><PreSalesSkeleton variant="rows" /></div>
         ) : orders.length === 0 ? (
