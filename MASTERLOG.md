@@ -621,7 +621,12 @@ docker compose up --build -d
 - **Ventas:** `useSalesQuery` con `keepPreviousData` + staleTime 30s→5min; la tabla ya NO espera al catálogo de productos (solo thumbnails); `per_page` 500→100 (el backend clampea a 100). Cambio de fecha visible: chip ámbar "Cargando…" en la barra de Periodo + lista atenuada (opacity .45, sin clicks) durante el refetch.
 - **Preventas:** `usePreSaleCatalogsQuery` staleTime 24h→**2min** + `refetchOnWindowFocus` (el payload trae contadores vivos; el admin no veía ventas de otra máquina). Folios: buscador con debounce 300ms (antes 1 request por tecla), chip "Cargando…" + tabla atenuada, botón refresh girando. Catálogos: chip "Actualizando…". Badge del tab Folios: 1 query (`status=pending,ready` CSV) en vez de 2.
 
-**Deploy:** rev `tadaima-00069-c95` (todo lo del 06-10 + hoy) y `tadaima-00070-*` (fix reserved_by_store). Verificado contra prod: login + `/pre-sale-catalogs` devuelve `reserved_by_store` como objeto.
+**Deploy:** rev `tadaima-00069-c95` (todo lo del 06-10 + hoy) y **`tadaima-00070-bmp`** (fix reserved_by_store) — 100% tráfico. Verificado contra prod: `/pre-sale-catalogs` devuelve `reserved_by_store` como objeto (`{"4":1}`).
+
+**Cierre de sesión — push + rama de Ruben:**
+- Commits `8009d37` + `941e2c6` en `dev/qa-handoff`; **`develop` (rama de Ruben) fast-forward al mismo punto** y pusheada.
+- **QA de Ruben apunta a PROD (decisión Joel, en vez de regenerar SQLite):** `pos-app/.env` ya apuntaba a prod; `landing/.env.example` documenta `VITE_API_URL=https://tadaima.poslite.com.mx` → Ruben corre solo `npm run dev`, sin Laravel/DB/proxy local.
+- Excluidos del repo: `backend/tadaimaposlite` (SQLite suelto) y `pos-app/` (repo propio).
 
 ### Sesión 2026-06-03 — Corte del gerente en reportes (IVA, preventas), ventana de Cortes, Excel, repo móvil + deploy
 
