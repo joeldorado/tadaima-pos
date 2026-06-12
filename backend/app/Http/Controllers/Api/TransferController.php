@@ -24,6 +24,11 @@ class TransferController extends Controller
         return $user !== null && $user->hasRole(self::ADMIN_ROLES);
     }
 
+    private function isManagerUser(?User $user): bool
+    {
+        return $user !== null && $user->hasRole(['gerente', 'manager']);
+    }
+
     /** Aplica el scope por tienda al query de transferencias para usuarios no-admin. */
     private function scopeToUserStore($query, ?User $user): void
     {
@@ -102,15 +107,26 @@ class TransferController extends Controller
      */
     public function store(StoreTransferRequest $request): JsonResponse
     {
-        // RBAC: el gerente/cajero sólo puede crear traslados cuya bodega origen
-        // pertenezca a su propia tienda. Antes podía mandar productos desde
-        // cualquier tienda (bug QA Web 5).
+        // RBAC — flujo 2026-06-11 (alineado a la UI de Ruben):
+        // - Solo admin y gerente crean traslados (cajero fuera).
+        // - El gerente SOLICITA viendo stock de todas las tiendas: puede usar
+        //   cualquier bodega ORIGEN, pero su tienda debe ser origen o destino
+        //   (típico: pedir stock de otra sucursal hacia la suya). Solo admin
+        //   completa el traslado, así que la solicitud queda pending.
         $user = $request->user();
         if (! $this->isAdminUser($user)) {
+            if (! $this->isManagerUser($user)) {
+                return $this->error('Solo admin o gerente pueden crear traslados.', 403);
+            }
             $storeId = $user?->store_id;
             $fromWarehouse = Warehouse::find($request->input('from_warehouse_id'));
-            if (! $storeId || ! $fromWarehouse || (int) $fromWarehouse->store_id !== (int) $storeId) {
-                return $this->error('Solo puedes crear traslados desde la bodega de tu tienda.', 403);
+            $toWarehouse   = Warehouse::find($request->input('to_warehouse_id'));
+            $touchesOwnStore = $storeId && (
+                (int) ($fromWarehouse?->store_id ?? 0) === (int) $storeId
+                || (int) ($toWarehouse?->store_id ?? 0) === (int) $storeId
+            );
+            if (! $touchesOwnStore) {
+                return $this->error('El traslado debe tener tu tienda como origen o destino.', 403);
             }
         }
 
@@ -164,8 +180,10 @@ class TransferController extends Controller
      */
     public function complete(Transfer $transfer): JsonResponse
     {
-        if (! $this->canAccessTransfer($transfer, request()->user())) {
-            return $this->error('No tienes acceso a este traslado.', 403);
+        // Flujo 2026-06-11: SOLO admin ejecuta el movimiento de inventario
+        // (el gerente solicita; la UI ya lo bloquea — esto es el enforcement real).
+        if (! $this->isAdminUser(request()->user())) {
+            return $this->error('Solo admin puede completar traslados.', 403);
         }
 
         try {
@@ -183,8 +201,17 @@ class TransferController extends Controller
      */
     public function cancel(Transfer $transfer): JsonResponse
     {
-        if (! $this->canAccessTransfer($transfer, request()->user())) {
+        $user = request()->user();
+
+        if (! $this->canAccessTransfer($transfer, $user)) {
             return $this->error('No tienes acceso a este traslado.', 403);
+        }
+
+        // Flujo 2026-06-11: cancela admin o el gerente que CREÓ la solicitud.
+        $isCreatorManager = $this->isManagerUser($user)
+            && (int) $transfer->user_id === (int) ($user?->id ?? 0);
+        if (! $this->isAdminUser($user) && ! $isCreatorManager) {
+            return $this->error('Solo admin o el gerente creador pueden cancelar este traslado.', 403);
         }
 
         try {
