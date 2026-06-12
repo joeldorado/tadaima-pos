@@ -16,7 +16,7 @@ import { useTransfersQuery } from "@/hooks/queries/useTransfers";
 import { useWarehousesQuery } from "@/hooks/queries/useWarehouses";
 import { queryKeys } from "@/lib/queryKeys";
 import { useAuth } from "@tadaima/auth";
-import { isAdmin as isAdminRole } from "@/lib/permisos";
+import { isAdmin as isAdminRole, isManager as isManagerRole } from "@/lib/permisos";
 
 // ─── Paleta Tadaima ───────────────────────────────────────────────────────────
 const T = {
@@ -104,11 +104,19 @@ function getStatusInfo(status: Transfer["status"]) {
 export function TransfersPage() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  // RBAC: gerente/cajero solo opera sobre traslados que tocan SU tienda.
-  // El backend ya filtra (TransferController::scopeToUserStore), aquí afinamos
-  // la UI para que el selector de origen no muestre bodegas de otras tiendas.
+  // Flujo de negocio 2026-06-11:
+  // - Solo admin y gerente pueden usar esta pantalla.
+  // - Gerente puede solicitar viendo stock de TODAS las tiendas.
+  // - Solo admin puede completar/cancelar traslados.
   const isAdminUser = isAdminRole(user?.roles ?? []);
-  const userStoreId = user?.store_id ?? null;
+  const isManagerUser = isManagerRole(user?.roles ?? []);
+  const currentUserId = user?.id ?? null;
+  const canRequestTransfers = isAdminUser || isManagerUser;
+  const canApproveTransfers = isAdminUser;
+  const canCancelTransfer = (transfer: Transfer) => {
+    if (isAdminUser) return true;
+    return isManagerUser && currentUserId !== null && transfer.user_id === currentUserId;
+  };
   const transfersQuery = useTransfersQuery({ per_page: 100 });
   const warehousesQuery = useWarehousesQuery({ active: true });
   const transfers: Transfer[] = transfersQuery.data?.data ?? [];
@@ -177,14 +185,12 @@ export function TransfersPage() {
   const availableOriginWarehouses = useMemo(() => {
     return selectedProductInventory
       .filter(row => row.quantity > 0 && row.warehouse !== null)
-      // RBAC: si no es admin, el origen DEBE ser una bodega de su propia tienda.
-      .filter(row => isAdminUser || row.warehouse?.store_id === userStoreId)
       .map(row => ({
         id: row.warehouse_id,
         name: row.warehouse?.name ?? "Bodega",
         quantity: row.quantity,
       }));
-  }, [selectedProductInventory, isAdminUser, userStoreId]);
+  }, [selectedProductInventory]);
 
   const selectedProductFromAvailable = useMemo(
     () => availableOriginWarehouses.find(row => String(row.id) === fromWhId)?.quantity ?? 0,
@@ -395,6 +401,10 @@ export function TransfersPage() {
     if (!fromWhId || !toWhId)       { toast.error("Selecciona origen y destino"); return; }
     if (fromWhId === toWhId)        { toast.error("Origen y destino no pueden ser iguales"); return; }
     if (items.length === 0)         { toast.error("Agrega al menos un producto"); return; }
+    if (transferMode === "complete" && !canApproveTransfers) {
+      toast.error("Solo Admin puede completar transferencias");
+      return;
+    }
     const itemWithoutStock = items.find(item => {
       const available = itemStock[item.product_id]?.fromAvailable;
       return typeof available === "number" && available < 1;
@@ -443,6 +453,10 @@ export function TransfersPage() {
   };
 
   const handleComplete = async (id: number) => {
+    if (!canApproveTransfers) {
+      toast.error("Solo Admin puede completar transferencias");
+      return;
+    }
     setActionLoading(prev => ({ ...prev, [id]: true }));
     try {
       await completeTransfer(id);
@@ -456,6 +470,12 @@ export function TransfersPage() {
   };
 
   const handleCancel = async (id: number) => {
+    const transfer = transfers.find(item => item.id === id);
+    const allowed = transfer ? canCancelTransfer(transfer) : false;
+    if (!allowed) {
+      toast.error("Solo Admin o el gerente creador pueden cancelar esta transferencia");
+      return;
+    }
     setActionLoading(prev => ({ ...prev, [id]: true }));
     try {
       await cancelTransfer(id);
@@ -534,14 +554,17 @@ export function TransfersPage() {
   return (
     <div className="min-h-screen flex flex-col" style={{ background: T.bgGrad }}>
 
+      {canRequestTransfers ? (
+      <>
+
       {/* ── Navbar ──────────────────────────────────────────────────────────── */}
-      <header className="h-20 shrink-0 flex items-center justify-between px-8 z-20 relative" style={{ borderBottom: T.divider }}>
+      <header className="min-h-20 shrink-0 flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 sm:gap-4 px-4 sm:px-6 lg:px-8 py-3 z-20 relative" style={{ borderBottom: T.divider }}>
         <div className="flex items-center gap-4">
           <div className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center border border-white/10">
             <Truck size={24} style={{ color: T.redBright }} />
           </div>
           <div>
-            <h1 className="text-xl font-black tracking-tight flex items-center gap-2" style={{ color: T.textPrimary }}>
+            <h1 className="text-lg sm:text-xl font-black tracking-tight flex items-center gap-2" style={{ color: T.textPrimary }}>
               MOVIMIENTOS <span style={{ color: T.redBright }}>DE STOCK</span>
             </h1>
             <p className="text-[10px] font-black uppercase tracking-widest opacity-40" style={{ color: T.textSecondary }}>
@@ -552,7 +575,7 @@ export function TransfersPage() {
 
         <button
           onClick={() => setIsModalOpen(true)}
-          className="flex items-center gap-2 px-6 py-3 font-black text-[11px] uppercase tracking-widest transition-all hover:scale-105 active:scale-95"
+          className="w-full sm:w-auto justify-center flex items-center gap-2 px-5 sm:px-6 py-3 font-black text-[11px] uppercase tracking-widest transition-all hover:scale-105 active:scale-95"
           style={T.btnRed}
         >
           <Plus size={16} strokeWidth={3} />
@@ -560,13 +583,13 @@ export function TransfersPage() {
         </button>
       </header>
 
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex flex-col xl:flex-row overflow-hidden">
 
         {/* ── Lista ───────────────────────────────────────────────────────── */}
-        <div className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-6 sm:space-y-8 custom-scrollbar">
 
           {/* Search + filter */}
-          <div className="flex items-center justify-between gap-6">
+          <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4 sm:gap-6">
             <div className="flex-1 relative group">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2" size={18} style={{ color: T.textMuted }} />
               <input
@@ -578,7 +601,7 @@ export function TransfersPage() {
                 style={T.input}
               />
             </div>
-            <div className="flex items-center gap-1.5 p-1.5 rounded-[22px] bg-white/5 border border-white/5">
+            <div className="flex items-center gap-1.5 p-1.5 rounded-[22px] bg-white/5 border border-white/5 overflow-x-auto">
               {(["all", "pending", "completed", "cancelled"] as const).map(s => (
                 <button
                   key={s}
@@ -613,14 +636,14 @@ export function TransfersPage() {
                 <motion.div
                   key={trf.id}
                   layout
-                  className="group rounded-[32px] border border-white/5 overflow-hidden flex"
+                  className="group rounded-[28px] sm:rounded-[32px] border border-white/5 overflow-hidden flex flex-col lg:flex-row"
                   style={T.glass}
                 >
                   <div className="w-2 shrink-0" style={{ background: s.color }} />
-                  <div className="flex-1 p-6 flex items-center gap-10">
+                  <div className="flex-1 p-4 sm:p-6 flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-8">
 
                     {/* ID + status */}
-                    <div className="w-40 shrink-0 space-y-3">
+                    <div className="w-full lg:w-40 shrink-0 space-y-3">
                       <p className="text-lg font-black text-white">#{trf.id}</p>
                       <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest" style={{ background: s.bg, color: s.color }}>
                         <StatusIcon size={12} />
@@ -629,7 +652,7 @@ export function TransfersPage() {
                     </div>
 
                     {/* Route */}
-                    <div className="flex-1 flex items-center justify-between px-10 border-x border-white/5">
+                    <div className="w-full lg:flex-1 flex items-center justify-between lg:px-8 py-2 lg:py-0 border-y lg:border-y-0 lg:border-x border-white/5">
                       <div className="flex flex-col">
                         <span className="text-[9px] font-black text-red-500 uppercase tracking-widest">Origen</span>
                         <span className="text-sm font-bold text-white">{trf.from_warehouse?.name ?? "—"}</span>
@@ -645,9 +668,9 @@ export function TransfersPage() {
                     </div>
 
                     {/* Actions */}
-                    <div className="w-52 shrink-0 flex flex-col items-end gap-3">
+                    <div className="w-full lg:w-52 shrink-0 flex flex-col items-start lg:items-end gap-3">
                       <p className="text-[10px] font-bold text-white/40">{trf.created_at.split("T")[0]}</p>
-                      {trf.status === "pending" && (
+                      {trf.status === "pending" && canApproveTransfers && (
                         <div className="flex gap-2">
                           <button
                             onClick={() => void handleComplete(trf.id)}
@@ -657,6 +680,21 @@ export function TransfersPage() {
                           >
                             {busy ? <Loader2 size={10} className="animate-spin" /> : "Completar"}
                           </button>
+                          {canCancelTransfer(trf) && (
+                            <button
+                              onClick={() => void handleCancel(trf.id)}
+                              disabled={busy}
+                              className="text-[10px] font-black uppercase px-3 py-1.5 rounded-xl transition-all hover:scale-105 disabled:opacity-40"
+                              style={{ background: "rgba(255,68,34,0.12)", color: "#FF4422" }}
+                            >
+                              Cancelar
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {trf.status === "pending" && !canApproveTransfers && canCancelTransfer(trf) && (
+                        <div className="flex gap-2">
                           <button
                             onClick={() => void handleCancel(trf.id)}
                             disabled={busy}
@@ -676,7 +714,7 @@ export function TransfersPage() {
         </div>
 
         {/* ── Sidebar ─────────────────────────────────────────────────────── */}
-        <div className="w-80 shrink-0 border-l border-white/5 p-8 space-y-8 bg-white/[0.02] backdrop-blur-3xl overflow-y-auto">
+        <div className="w-full xl:w-80 shrink-0 border-t xl:border-t-0 xl:border-l border-white/5 p-4 sm:p-6 lg:p-8 space-y-6 sm:space-y-8 bg-white/[0.02] backdrop-blur-3xl overflow-y-auto">
           <div className="space-y-1">
             <p className="text-[10px] font-black uppercase tracking-[0.3em] text-red-500">Logística Tadaima</p>
             <h3 className="text-lg font-black text-white">Estado de Flujo</h3>
@@ -709,10 +747,21 @@ export function TransfersPage() {
           </div>
         </div>
       </div>
+      </>
+      ) : (
+        <div className="p-10">
+          <div className="max-w-xl rounded-3xl border border-white/10 bg-white/5 p-6">
+            <h2 className="text-lg font-black uppercase tracking-wide text-white">Acceso restringido</h2>
+            <p className="mt-2 text-sm text-white/70">
+              Esta pantalla solo esta disponible para perfiles Admin y Gerente.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* ── Modal: Nueva Transferencia ───────────────────────────────────── */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+      {isModalOpen && canRequestTransfers && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6">
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -722,15 +771,15 @@ export function TransfersPage() {
           <motion.div
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="relative w-full max-w-4xl rounded-[48px] flex flex-col shadow-2xl max-h-[90vh] overflow-hidden"
+            className="relative w-full max-w-5xl rounded-[26px] sm:rounded-[40px] lg:rounded-[48px] flex flex-col shadow-2xl max-h-[95vh] sm:max-h-[90vh] overflow-hidden"
             style={T.glass}
           >
             {/* Header */}
-            <div className="px-8 py-5 flex items-start justify-between gap-6 shrink-0" style={{ borderBottom: `1px solid ${T.fieldBorder}` }}>
+            <div className="px-4 sm:px-6 lg:px-8 py-4 sm:py-5 flex flex-col gap-4 sm:gap-6 shrink-0" style={{ borderBottom: `1px solid ${T.fieldBorder}` }}>
               <div className="min-w-0 flex-1">
                 <h2 className="text-2xl font-black uppercase tracking-tighter" style={{ color: T.panelText }}>Nueva Transferencia</h2>
-                <div className="mt-2 flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-3">
+                <div className="mt-2 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                  <div className="flex items-center gap-3 overflow-x-auto pb-1">
                     {[
                       { step: 1 as const, label: "Datos" },
                       { step: 2 as const, label: "Revisión" },
@@ -769,7 +818,7 @@ export function TransfersPage() {
                     })}
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center flex-wrap gap-2">
                     <button
                       type="button"
                       onClick={() => setTransferMode("pending")}
@@ -801,7 +850,7 @@ export function TransfersPage() {
               </div>
               <button
                 onClick={() => { setIsModalOpen(false); resetModal(); }}
-                className="w-10 h-10 rounded-xl flex items-center justify-center transition-colors"
+                className="w-10 h-10 rounded-xl flex items-center justify-center transition-colors self-end"
                 style={{ background: T.routeChip, color: T.softText, border: `1px solid ${T.fieldBorder}` }}
               >
                 <X size={20} />
@@ -809,7 +858,7 @@ export function TransfersPage() {
             </div>
 
             {/* Body */}
-            <div className="p-8 flex flex-col gap-5 overflow-y-auto custom-scrollbar">
+            <div className="p-4 sm:p-6 lg:p-8 flex flex-col gap-5 overflow-y-auto custom-scrollbar">
 
               {currentStep === 1 && (
                 <div className="space-y-6">
@@ -817,7 +866,7 @@ export function TransfersPage() {
                     <p className="text-[10px] font-black uppercase tracking-[0.28em]" style={{ color: T.softText }}>Paso 1</p>
                     <h3 className="mt-1 text-xl font-black" style={{ color: T.panelText }}>Datos</h3>
 
-                    <div className="mt-5 grid grid-cols-[1.35fr_1fr_1fr_0.5fr_auto_auto] gap-3 items-end">
+                    <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-[1.35fr_1fr_1fr_0.5fr_auto_auto] gap-3 items-end">
                       <div className="space-y-2 relative">
                         <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: T.softText }}>Buscar artículo</label>
                         <input
@@ -905,7 +954,7 @@ export function TransfersPage() {
                       <button
                         type="button"
                         onClick={() => setDraftQtyInput(String(Math.max(1, selectedProductFromAvailable)))}
-                        className="h-[54px] rounded-2xl px-4 text-[10px] font-black uppercase tracking-wider"
+                        className="h-[54px] w-full sm:w-auto rounded-2xl px-4 text-[10px] font-black uppercase tracking-wider"
                         style={T.softButton}
                       >
                         Todo
@@ -914,7 +963,7 @@ export function TransfersPage() {
                       <button
                         type="button"
                         onClick={() => { void addSelectedProductToTransfer(); }}
-                        className="h-[54px] rounded-2xl px-5 text-[10px] font-black uppercase tracking-wider"
+                        className="h-[54px] w-full sm:w-auto rounded-2xl px-5 text-[10px] font-black uppercase tracking-wider"
                         style={{ background: T.redBright, color: "#fff", border: `1px solid ${T.fieldBorder}` }}
                       >
                         Agregar
@@ -941,7 +990,7 @@ export function TransfersPage() {
                     <p className="text-[10px] font-black uppercase tracking-[0.28em]" style={{ color: T.softText }}>Artículos</p>
                     <h3 className="mt-1 text-lg font-black" style={{ color: T.panelText }}>Artículos</h3>
 
-                    <div className="mt-4 grid grid-cols-[minmax(0,1.3fr)_150px_150px_120px_110px_56px] gap-3 px-2 text-[10px] font-black uppercase tracking-[0.18em]" style={{ color: T.softText }}>
+                    <div className="mt-4 hidden lg:grid grid-cols-[minmax(0,1.3fr)_150px_150px_120px_110px_56px] gap-3 px-2 text-[10px] font-black uppercase tracking-[0.18em]" style={{ color: T.softText }}>
                       <span>Artículo</span>
                       <span>Origen</span>
                       <span>Destino</span>
@@ -960,7 +1009,7 @@ export function TransfersPage() {
                       {items.map(item => (
                         <div
                           key={item.product_id}
-                          className="grid grid-cols-[minmax(0,1.3fr)_150px_150px_120px_110px_56px] gap-3 items-center rounded-2xl p-4"
+                          className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.3fr)_150px_150px_120px_110px_56px] gap-3 items-center rounded-2xl p-4"
                           style={{ background: T.fieldBg, border: `1px solid ${T.fieldBorder}` }}
                         >
                           <div className="min-w-0">
@@ -968,12 +1017,15 @@ export function TransfersPage() {
                             <p className="text-[9px] font-black uppercase" style={{ color: T.softText }}>{item.sku}</p>
                           </div>
                           <div className="text-xs font-bold truncate" style={{ color: T.panelText }}>
+                            <span className="mr-1 lg:hidden text-[10px] uppercase" style={{ color: T.softText }}>Origen:</span>
                             {warehouses.find(w => String(w.id) === fromWhId)?.name ?? "—"}
                           </div>
                           <div className="text-xs font-bold truncate" style={{ color: T.panelText }}>
+                            <span className="mr-1 lg:hidden text-[10px] uppercase" style={{ color: T.softText }}>Destino:</span>
                             {warehouses.find(w => String(w.id) === toWhId)?.name ?? "—"}
                           </div>
                           <div className="text-[10px] font-black uppercase" style={{ color: T.softText }}>
+                            <span className="mr-1 lg:hidden">Actual/Max:</span>
                             {item.quantity} / {itemStock[item.product_id]?.fromAvailable ?? "—"}
                           </div>
                           <div className="flex items-center gap-2">
@@ -1011,7 +1063,7 @@ export function TransfersPage() {
               )}
 
               {currentStep === 2 && (
-                <div className="grid grid-cols-[1.1fr_0.9fr] gap-6">
+                <div className="grid grid-cols-1 xl:grid-cols-[1.1fr_0.9fr] gap-6">
                   <div className="rounded-[28px] p-5 flex flex-col min-h-[380px]" style={{ background: T.panelBg, border: `1px solid ${T.fieldBorder}` }}>
                     <div className="mb-4 shrink-0">
                       <p className="text-[10px] font-black uppercase tracking-[0.28em]" style={{ color: T.softText }}>Paso 2</p>
@@ -1028,7 +1080,7 @@ export function TransfersPage() {
                       {items.map(item => (
                         <div
                           key={item.product_id}
-                          className="p-4 rounded-2xl flex justify-between items-center gap-4"
+                          className="p-4 rounded-2xl flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4"
                           style={{ background: T.fieldBg, border: `1px solid ${T.fieldBorder}` }}
                         >
                           <div className="flex-1 min-w-0">
@@ -1043,7 +1095,7 @@ export function TransfersPage() {
                               </span>
                             </div>
                           </div>
-                          <div className="flex items-center gap-3 shrink-0">
+                          <div className="w-full sm:w-auto flex items-center gap-2 sm:gap-3 justify-between sm:justify-start shrink-0">
                             <button
                               type="button"
                               onClick={() => setItemQtyToMax(item.product_id)}
@@ -1134,7 +1186,7 @@ export function TransfersPage() {
             </div>
 
             {/* Footer */}
-            <div className="px-8 py-6 flex gap-5 shrink-0" style={{ borderTop: `1px solid ${T.fieldBorder}`, background: T.panelBg }}>
+            <div className="px-4 sm:px-6 lg:px-8 py-4 sm:py-6 flex flex-col sm:flex-row gap-3 sm:gap-5 shrink-0" style={{ borderTop: `1px solid ${T.fieldBorder}`, background: T.panelBg }}>
               <button
                 onClick={() => {
                   if (currentStep > 1) {
