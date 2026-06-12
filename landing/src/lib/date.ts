@@ -1,19 +1,16 @@
 import { useEffect, useState } from "react";
 
 /**
- * Zona horaria del NEGOCIO. Todas las tiendas operan en hora de México y el
- * backend filtra "hoy" con esta misma zona (`App\Support\DateRange` →
- * `America/Mexico_City`). El "hoy" del frontend DEBE calcularse en esta zona,
- * NO en la del dispositivo.
- *
- * Por qué no la zona del dispositivo: una tablet/Mac configurada en otra zona
- * (p.ej. Tijuana UTC-7) calcula un día distinto cerca de medianoche. Una venta
- * hecha a las 00:04 hora MX (= 23:04 en Tijuana) se archiva en el día MX por el
- * backend, pero el dispositivo pide el día anterior → la venta "desaparece" del
- * historial del día. Anclando a la zona del negocio, frontend y backend siempre
- * coinciden. (Bug 2026-06-04.)
+ * Zona horaria del NEGOCIO. Decisión Joel 2026-06-11 (cierra el TODO #117):
+ * las tiendas Tadaima operan en TIJUANA, así que el día de negocio corre en
+ * `America/Tijuana` — antes estaba en America/Mexico_City y a las 11pm de
+ * Tijuana el "Hoy" brincaba al día siguiente (medianoche CDMX) dejando la
+ * lista de Ventas vacía. El backend usa la misma zona (`App\Support\DateRange`
+ * + env BUSINESS_TIMEZONE). El "hoy" del frontend DEBE calcularse en esta
+ * zona, NO en la del dispositivo (bug 2026-06-04): así una caja con el SO mal
+ * configurado no cambia el día de negocio.
  */
-export const BUSINESS_TZ = "America/Mexico_City";
+export const BUSINESS_TZ = "America/Tijuana";
 
 /** YYYY-MM-DD de un Date en la zona del negocio (robusto vía formatToParts). */
 function ymdInBusinessTz(d: Date): string {

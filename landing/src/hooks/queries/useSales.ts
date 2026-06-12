@@ -21,7 +21,7 @@ import { queryKeys } from '@/lib/queryKeys'
  */
 export function useSalesQuery(
   params?: Parameters<typeof getSales>[0],
-  options?: { enabled?: boolean }
+  options?: { enabled?: boolean; refetchIntervalMs?: number | false }
 ) {
   return useQuery({
     queryKey: queryKeys.sales.list(params as Record<string, unknown> | undefined),
@@ -29,5 +29,11 @@ export function useSalesQuery(
     enabled: options?.enabled ?? true,
     staleTime: 5 * 60_000,
     placeholderData: keepPreviousData,
+    // Polling casi-live opcional (decisión Joel 2026-06-12): SOLO corre
+    // mientras la query está montada Y la tab enfocada
+    // (refetchIntervalInBackground default false) — al salir de la pantalla
+    // se apaga solo. Cubre cross-máquina: gerente/admin ven ventas hechas
+    // en otras cajas sin tocar nada.
+    refetchInterval: options?.refetchIntervalMs || false,
   })
 }

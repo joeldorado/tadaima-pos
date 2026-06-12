@@ -5,7 +5,7 @@ import { useTheme } from "@/contexts/ThemeContext";
 import {
   ShoppingCart, Package, LogOut, Home, Store,
   Users, Receipt, UserCircle2, ClipboardList, ArrowLeftRight, BarChart2,
-  Settings, Sun, Moon, PackageSearch,
+  Settings, Sun, Moon, PackageSearch, Wallet,
 } from "lucide-react";
 import { NotificationBadge } from "@/components/notifications/NotificationBadge";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -15,6 +15,7 @@ import { UserAvatar } from "@/components/UserAvatar";
 // import { ExpiringDraftsModal } from "@/components/ExpiringDraftsModal";
 import { useEffect, useState } from "react";
 import { primaryRole, canAccessPage, type PageKey } from "@/lib/permisos";
+import { useActiveStore } from "@/contexts/StoreContext";
 import { useQueryClient } from "@tanstack/react-query";
 import { getProductsLight, apiClient } from "@tadaima/api";
 import { queryKeys } from "@/lib/queryKeys";
@@ -33,6 +34,7 @@ const ALL_NAV_ITEMS: NavItem[] = [
   { to: "/products",  label: "Productos", icon: Package,         page: "products"  },
   { to: "/buscar-tiendas", label: "Existencias", icon: PackageSearch, page: "stock_search" },
   { to: "/sales",     label: "Ventas",    icon: Receipt,         page: "sales"     },
+  { to: "/cortes",    label: "Cortes",    icon: Wallet,          page: "cash_cuts" },
   { to: "/clients",   label: "Clientes",  icon: UserCircle2,     page: "clients"   },
   { to: "/pre-sales", label: "Preventas", icon: ClipboardList,   page: "presales"  },
   { to: "/transfers", label: "Traslados", icon: ArrowLeftRight,  page: "transfers" },
@@ -41,14 +43,15 @@ const ALL_NAV_ITEMS: NavItem[] = [
 ];
 
 const NAV_BY_ROLE: Record<string, PageKey[]> = {
-  admin:   ["inicio", "products", "stock_search", "sales", "clients", "presales", "transfers", "reports"],
+  admin:   ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers", "reports"],
   // Gerente: sin Tiendas. Solo gestiona la suya; el switcher del header basta
   // para alternar entre tiendas asignadas. La página /stores es CRUD admin.
   // Reportes oculto — solo admin ve ganancia bruta y agregados cross-tienda.
-  gerente: ["inicio", "products", "stock_search", "sales", "clients", "presales", "transfers"],
+  // "Cajas" (cortes de caja) visible a los 3 roles — backend acota por rol.
+  gerente: ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers"],
   // Cajero: sin Tiendas, con Preventas para ver catálogos disponibles +
   // difusión + vencidos de su sucursal. "Buscar en Tiendas" para localizar stock.
-  cajero:  ["inicio", "products", "stock_search", "sales", "presales"],
+  cajero:  ["inicio", "products", "stock_search", "sales", "cash_cuts", "presales"],
   unknown: ["inicio"],
 };
 
@@ -61,6 +64,28 @@ export function Layout() {
   const role = primaryRole(user?.roles);
   const allowedPages = NAV_BY_ROLE[role] ?? NAV_BY_ROLE.unknown;
   const navItems = ALL_NAV_ITEMS.filter(item => allowedPages.includes(item.page));
+
+  // Chip de tienda bajo el logo: #id + iniciales del nombre. Con varios users
+  // de la misma tienda en pantalla (QA multi-ventana) permite confirmar de un
+  // vistazo que ambos están en la MISMA tienda (Joel 2026-06-11).
+  const { activeStore } = useActiveStore();
+  const storeInitials = (activeStore?.name ?? "")
+    .split(/[\s\-_·]+/)
+    .filter(Boolean)
+    .map(w => w[0]!.toUpperCase())
+    .slice(0, 4)
+    .join("");
+
+  // Rol visible bajo el chip de tienda — con varias ventanas de QA abiertas
+  // (gerente + cajero de la misma tienda) se distingue al instante quién es
+  // quién (Joel 2026-06-11). Color por rol: admin rojo, gerente ámbar,
+  // cajero azul.
+  const ROLE_BADGE: Record<string, { label: string; color: string; bg: string; border: string }> = {
+    admin:   { label: "Admin",   color: "#F87171", bg: "rgba(248,113,113,0.10)", border: "rgba(248,113,113,0.3)" },
+    gerente: { label: "Gerente", color: "#F59E0B", bg: "rgba(245,158,11,0.10)",  border: "rgba(245,158,11,0.3)" },
+    cajero:  { label: "Cajero",  color: "#60A5FA", bg: "rgba(96,165,250,0.10)",  border: "rgba(96,165,250,0.3)" },
+  };
+  const roleBadge = ROLE_BADGE[role];
 
   // Prefetch top 200 productos light en cuanto hay sesión, antes de que el
   // cajero navegue a Caja. Cuando llegue allí ya está cacheado.
@@ -108,7 +133,11 @@ export function Layout() {
     >
       {/* ── Sidebar ──────────────────────────────────────────────────────────── */}
       <aside
-        className="glass-dark w-[76px] flex flex-col items-center py-5 gap-4 shrink-0 relative z-10 animate-in fade-in slide-in-from-left duration-300"
+        // z-20: el menú del avatar (z-50) vive DENTRO del stacking context del
+        // aside (glass-dark = backdrop-filter); las secciones del Dashboard son
+        // `relative z-10` y al venir después en el DOM tapaban el popup
+        // (QA Joel 2026-06-11). Los modales (z-50+, fixed) siguen por encima.
+        className="glass-dark w-[76px] flex flex-col items-center py-5 gap-4 shrink-0 relative z-20 animate-in fade-in slide-in-from-left duration-300"
       >
 
         {/* Logo */}
@@ -141,6 +170,47 @@ export function Layout() {
             Tadaima
           </span>
         </div>
+
+        {/* Tienda activa (#id + iniciales, tooltip = nombre completo) + rol */}
+        {(activeStore || roleBadge) && (
+          <div
+            className="flex flex-col items-center gap-0.5 -mt-2"
+            title={activeStore?.name ?? ""}
+          >
+            {activeStore && (
+              <span style={{
+                fontSize: 10, fontWeight: 900, lineHeight: 1,
+                padding: "3px 8px", borderRadius: 8,
+                color: "var(--td-red)",
+                background: "rgba(224,34,26,0.10)",
+                border: "1px solid rgba(224,34,26,0.25)",
+              }}>
+                #{activeStore.id}
+              </span>
+            )}
+            {storeInitials && (
+              <span style={{
+                fontSize: 9, fontWeight: 800, lineHeight: 1.4,
+                letterSpacing: "0.12em",
+                color: "var(--td-text-lo)",
+              }}>
+                {storeInitials}
+              </span>
+            )}
+            {roleBadge && (
+              <span style={{
+                fontSize: 8, fontWeight: 900, lineHeight: 1,
+                padding: "2px 6px", borderRadius: 6, marginTop: 1,
+                textTransform: "uppercase", letterSpacing: "0.08em",
+                color: roleBadge.color,
+                background: roleBadge.bg,
+                border: `1px solid ${roleBadge.border}`,
+              }}>
+                {roleBadge.label}
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Divider */}
         <div className="w-8 h-px" style={{ background: "var(--td-divider)" }} />

@@ -1,10 +1,25 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
-  TrendingUp, DollarSign, ShoppingBag, Users, BarChart3, Loader2,
-  CreditCard, CalendarDays, ChevronDown, X, ChevronRight,
-  Package, Receipt, PackageX, ChevronUp, ImageOff, RotateCcw, AlertTriangle,
+  TrendingUp, DollarSign, ShoppingBag, BarChart3, Loader2,
+  CreditCard, CalendarDays, ChevronDown, X, ChevronRight, ChevronLeft,
+  Package, Receipt, ImageOff, RotateCcw, AlertTriangle,
   Store, Printer, User as UserIcon, FileText, Download, Bookmark, FileSpreadsheet,
+  Maximize2, Minimize2,
 } from "lucide-react";
+import {
+  Button as AriaButton,
+  CalendarCell,
+  CalendarGrid,
+  CalendarGridBody,
+  CalendarGridHeader,
+  CalendarHeaderCell,
+  CalendarHeading,
+  Dialog,
+  DialogTrigger,
+  Popover,
+  RangeCalendar,
+} from "react-aria-components";
+import { parseDate } from "@internationalized/date";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
@@ -19,6 +34,7 @@ import { useStoresQuery } from "@/hooks/queries/useStores";
 import { useUsersQuery } from "@/hooks/queries/useUsers";
 import { useExchangeRateQuery } from "@/hooks/queries/useSystemSettings";
 import { queryKeys } from "@/lib/queryKeys";
+import { invalidateAfterSale } from "@/lib/optimisticSale";
 import type { SaleDetail, PreSaleOrder, Product, Store as StoreType } from "@tadaima/api";
 import { useAuth } from "@tadaima/auth";
 import { toast } from "sonner";
@@ -57,14 +73,25 @@ interface ProductInfo {
   imagen: string;
 }
 
+/** Nombre corto para la UI: el catálogo de métodos trae variantes ("Tarjeta
+ * débito", "Tarjeta de crédito") que no caben en la columna — basta "Tarjeta"
+ * (Joel 2026-06-12). El desglose por método y el filtro usan includes
+ * ("tarjeta") así que la normalización no los rompe. */
+const shortMethodName = (name: string): string =>
+  /tarjeta/i.test(name) ? "Tarjeta" : name;
+
 function getPaymentMethodName(sale: SaleDetail): string {
   const first = sale.payments?.[0];
   if (!first) return "Efectivo";
-  return first.payment_method?.name ?? "Efectivo";
+  return shortMethodName(first.payment_method?.name ?? "Efectivo");
 }
 
 const fmt = (n: number) =>
   new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", minimumFractionDigits: 0 }).format(n);
+
+// % de comisión efectivo (comisión/venta) — sin decimales de ruido: 6% se ve
+// "6%", 3.55% se ve "3.55%".
+const fmtPct = (p: number) => `${Number(p.toFixed(2))}%`;
 
 const fmtDate = (dateStr: string) => {
   if (!dateStr) return "DD/MM/YYYY";
@@ -174,7 +201,7 @@ function printTicket(sale: SaleDetail) {
 }
 
 // ─── Thumbnail de producto ────────────────────────────────────────────────────
-function ProductThumb({ src, name, size = 44, rounded = "rounded-xl" }: { src?: string; name?: string; size?: number; rounded?: string }) {
+function ProductThumb({ src, name, size = 44, rounded = "rounded-xl" }: { src?: string | undefined; name?: string | undefined; size?: number; rounded?: string }) {
   const [err, setErr] = useState(false);
   if (!src || err) {
     return (
@@ -194,6 +221,205 @@ function ProductThumb({ src, name, size = 44, rounded = "rounded-xl" }: { src?: 
       className={`flex-shrink-0 ${rounded} object-cover`}
       style={{ width: size, height: size, border: "1px solid var(--td-panel-border)" }}
     />
+  );
+}
+
+const SALES_LIST_GRID_TEMPLATE = "20px 12px 80px 115px 108px minmax(180px,1fr) 150px 104px 52px 92px";
+
+function toYmdFromDateValue(value: { year: number; month: number; day: number }): string {
+  return `${value.year}-${String(value.month).padStart(2, "0")}-${String(value.day).padStart(2, "0")}`;
+}
+
+function SalesDateRangePicker({
+  startDate,
+  endDate,
+  isActive,
+  isFetching = false,
+  onChange,
+}: {
+  startDate: string;
+  endDate: string;
+  isActive: boolean;
+  /** true mientras las queries de ventas/preventas refetchean — con
+      keepPreviousData la tabla no blankea, así que este es el único
+      feedback visible de que el rango elegido ya está cargando. */
+  isFetching?: boolean;
+  onChange: (start: string, end: string) => void;
+}) {
+  const selectedRange = useMemo(() => ({
+    start: parseDate(startDate || getTodayLocal()),
+    end: parseDate(endDate || startDate || getTodayLocal()),
+  }), [startDate, endDate]);
+
+  const triggerLabel = `${fmtDate(startDate)} - ${fmtDate(endDate)}`;
+
+  return (
+    <DialogTrigger>
+      {/* Debe ser el Button de react-aria: DialogTrigger pasa el press por
+          PressResponder y un <button> nativo nunca lo recibe (popover muerto). */}
+      <AriaButton
+        className="flex items-center gap-2 rounded-full h-[34px] px-4 transition-all outline-none"
+        style={{
+          background: "var(--td-panel-bg)",
+          border: `1px solid ${isActive ? "rgba(255,68,34,0.4)" : "var(--td-panel-border)"}`,
+          color: "var(--td-text-hi)",
+          minWidth: 286,
+        }}
+      >
+        {isFetching ? (
+          <Loader2 size={11} className="animate-spin" style={{ color: T.redBright, flexShrink: 0 }} />
+        ) : (
+          <CalendarDays size={11} style={{ color: isActive ? T.redBright : "var(--td-text-lo)", flexShrink: 0 }} />
+        )}
+        <span className="text-[10px] font-bold tracking-widest uppercase text-left whitespace-nowrap">
+          {triggerLabel}
+        </span>
+      </AriaButton>
+
+      <Popover
+        placement="bottom end"
+        offset={12}
+        className="rounded-[28px] p-0 outline-none"
+        style={{
+          // bg sólido (no el glass translúcido): la tabla de ventas se
+          // transparentaba detrás del calendario
+          background: "var(--td-popup-bg)",
+          border: "1px solid var(--td-panel-border)",
+          boxShadow: "0 24px 80px rgba(0,0,0,0.48), inset 0 1px 0 rgba(255,255,255,0.04)",
+        }}
+      >
+        <Dialog className="outline-none">
+          <div className="w-[680px] max-w-[calc(100vw-32px)] p-5">
+            <RangeCalendar
+              aria-label="Rango de fechas de ventas"
+              value={selectedRange}
+              onChange={(range) => {
+                if (!range?.start || !range?.end) return;
+                onChange(toYmdFromDateValue(range.start), toYmdFromDateValue(range.end));
+              }}
+              visibleDuration={{ months: 2 }}
+              pageBehavior="single"
+              className="w-full"
+            >
+              <div className="flex items-center gap-3">
+                <AriaButton
+                  slot="previous"
+                  className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-black/20 text-white/60 transition-colors hover:border-white/20 hover:text-white"
+                >
+                  <ChevronLeft size={15} />
+                </AriaButton>
+
+                <div className="grid flex-1 grid-cols-2 gap-4">
+                  <CalendarHeading className="text-center text-[11px] font-black uppercase tracking-[0.18em]" style={{ color: "var(--td-text-hi)" }} />
+                  <CalendarHeading offset={{ months: 1 }} className="text-center text-[11px] font-black uppercase tracking-[0.18em]" style={{ color: "var(--td-text-hi)" }} />
+                </div>
+
+                <AriaButton
+                  slot="next"
+                  className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-black/20 text-white/60 transition-colors hover:border-white/20 hover:text-white"
+                >
+                  <ChevronRight size={15} />
+                </AriaButton>
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-4">
+                <CalendarGrid
+                  weekdayStyle="short"
+                  className="w-full border-separate border-spacing-y-1.5"
+                >
+                  <CalendarGridHeader>
+                    {(day) => (
+                      <CalendarHeaderCell className="pb-2 text-center text-[10px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>
+                        {day}
+                      </CalendarHeaderCell>
+                    )}
+                  </CalendarGridHeader>
+                  <CalendarGridBody>
+                    {(date) => (
+                      <CalendarCell
+                        date={date}
+                        className={({ isSelected, isSelectionStart, isSelectionEnd, isFocusVisible, isOutsideMonth, isDisabled }) =>
+                          [
+                            "flex h-10 w-10 items-center justify-center rounded-xl text-sm font-bold transition-all outline-none",
+                            "data-[hovered]:bg-white/8",
+                            isOutsideMonth ? "text-white/20" : "text-white/80",
+                            isDisabled ? "opacity-25" : "",
+                            isSelected ? "text-white bg-[var(--td-red)]" : "bg-black/10",
+                            isSelectionStart || isSelectionEnd ? "ring-2 ring-[#FF7A59]" : "",
+                            isFocusVisible ? "ring-2 ring-white/70" : "",
+                          ].join(" ")
+                        }
+                      />
+                    )}
+                  </CalendarGridBody>
+                </CalendarGrid>
+
+                <CalendarGrid
+                  offset={{ months: 1 }}
+                  weekdayStyle="short"
+                  className="w-full border-separate border-spacing-y-1.5"
+                >
+                  <CalendarGridHeader>
+                    {(day) => (
+                      <CalendarHeaderCell className="pb-2 text-center text-[10px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>
+                        {day}
+                      </CalendarHeaderCell>
+                    )}
+                  </CalendarGridHeader>
+                  <CalendarGridBody>
+                    {(date) => (
+                      <CalendarCell
+                        date={date}
+                        className={({ isSelected, isSelectionStart, isSelectionEnd, isFocusVisible, isOutsideMonth, isDisabled }) =>
+                          [
+                            "flex h-10 w-10 items-center justify-center rounded-xl text-sm font-bold transition-all outline-none",
+                            "data-[hovered]:bg-white/8",
+                            isOutsideMonth ? "text-white/20" : "text-white/80",
+                            isDisabled ? "opacity-25" : "",
+                            isSelected ? "text-white bg-[var(--td-red)]" : "bg-black/10",
+                            isSelectionStart || isSelectionEnd ? "ring-2 ring-[#FF7A59]" : "",
+                            isFocusVisible ? "ring-2 ring-white/70" : "",
+                          ].join(" ")
+                        }
+                      />
+                    )}
+                  </CalendarGridBody>
+                </CalendarGrid>
+              </div>
+            </RangeCalendar>
+
+            <div
+              className="mt-4 flex items-center justify-between rounded-2xl px-4 py-3"
+              style={{ background: "rgba(0,0,0,0.16)", border: "1px solid rgba(255,255,255,0.06)" }}
+            >
+              <div className="flex items-center gap-3 text-[10px] font-black uppercase tracking-[0.14em]" style={{ color: "var(--td-text-lo)" }}>
+                <span>
+                  <span style={{ color: "var(--td-text-hi)" }}>Desde</span> {fmtDate(startDate)}
+                  <span className="mx-2 opacity-50">•</span>
+                  <span style={{ color: "var(--td-text-hi)" }}>Hasta</span> {fmtDate(endDate)}
+                </span>
+                {isFetching && (
+                  <span className="flex items-center gap-1.5" style={{ color: "#FF7A59" }}>
+                    <Loader2 size={11} className="animate-spin" />
+                    Actualizando…
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => {
+                  const today = getTodayLocal();
+                  onChange(today, today);
+                }}
+                className="rounded-full px-3 py-1.5 text-[10px] font-black uppercase tracking-widest transition-all"
+                style={{ background: "rgba(255,68,34,0.12)", border: "1px solid rgba(255,68,34,0.28)", color: "#FF7A59" }}
+              >
+                Hoy
+              </button>
+            </div>
+          </div>
+        </Dialog>
+      </Popover>
+    </DialogTrigger>
   );
 }
 
@@ -219,7 +445,8 @@ function SaleRow({
       {/* ── Fila principal ── */}
       <button
         onClick={() => setOpen(v => !v)}
-        className="w-full flex items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-white/[0.03]"
+        className="w-full flex lg:grid items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-white/[0.03]"
+        style={{ gridTemplateColumns: SALES_LIST_GRID_TEMPLATE }}
       >
         <span className="text-[9px] font-black w-5 text-center flex-shrink-0" style={{ color: "var(--td-text-lo)" }}>{rank}</span>
 
@@ -234,7 +461,12 @@ function SaleRow({
             const info = productMap[String(item.product_id)];
             return (
               <div key={i} className="rounded-lg border-2 overflow-hidden" style={{ width: 32, height: 32, borderColor: "var(--td-page-bg)" }}>
-                <ProductThumb src={info?.imagen} name={info?.name || item.product?.name} size={32} rounded="rounded-none" />
+                <ProductThumb
+                  {...(info?.imagen ? { src: info.imagen } : {})}
+                  {...((info?.name || item.product?.name) ? { name: info?.name || item.product?.name } : {})}
+                  size={32}
+                  rounded="rounded-none"
+                />
               </div>
             );
           })}
@@ -250,48 +482,81 @@ function SaleRow({
           <p className="text-xs font-bold" style={{ color: "var(--td-text-hi)" }}>{fmtDateTime(sale.sold_at || sale.created_at)}</p>
         </div>
 
-        <div className="flex-1 min-w-0 hidden lg:block">
-          <div className="flex items-center gap-2">
-            <p className="text-[9px] font-black uppercase tracking-widest truncate" style={{ color: "var(--td-text-lo)" }}>#{sale.id}</p>
-            {sale.customer?.name && (
-              <p className="text-[10px] truncate" style={{ color: "var(--td-text-md)" }}>{sale.customer.name}</p>
-            )}
-          </div>
-          {sale.user?.name && (
-            <div
-              className="flex items-center gap-1 mt-0.5 text-[9px] font-bold truncate"
-              style={{ color: "var(--td-text-lo)" }}
-              title={`Vendido por ${sale.user.name}`}
-            >
-              <UserIcon size={9} />
-              <span className="uppercase tracking-wider">Vendió:</span>
-              <span className="truncate" style={{ color: "var(--td-text-md)" }}>{sale.user.name}</span>
+        <div className="w-[108px] flex-shrink-0 hidden lg:flex flex-col items-center justify-center text-center">
+          <p className="text-[10px] font-black uppercase tracking-[0.12em]" style={{ color: "var(--td-text-hi)" }}>#{sale.id}</p>
+          <p className="text-[7px] uppercase tracking-[0.14em]" style={{ color: "var(--td-text-lo)" }}>ticket</p>
+        </div>
+
+        <div className="flex-1 min-w-0 hidden lg:flex items-center justify-center text-center">
+          {sale.customer?.name ? (
+            <p className="text-[10px] truncate" style={{ color: "var(--td-text-md)" }}>
+              {sale.customer.name}
+            </p>
+          ) : (
+            <div className="w-full flex items-center justify-center">
+              <span className="text-[9px] font-bold uppercase tracking-[0.12em]" style={{ color: "var(--td-text-lo)" }}>
+                Sin cliente
+              </span>
             </div>
           )}
         </div>
 
-        <span className={`text-[8px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full border flex-shrink-0 ${methodBg(paymentName)}`}>
+        <div className="w-[150px] flex-shrink-0 hidden lg:flex items-center">
+          <div
+            className="flex items-center gap-1 text-[9px] font-bold truncate"
+            style={{ color: "var(--td-text-lo)" }}
+            title={sale.user?.name || "Sin cajero"}
+          >
+            <UserIcon size={9} />
+            <span className="truncate" style={{ color: "var(--td-text-md)" }}>{sale.user?.name || "—"}</span>
+          </div>
+        </div>
+
+        <span className={`w-[104px] text-center text-[9px] font-black uppercase tracking-[0.12em] px-2.5 py-1 rounded-full border flex-shrink-0 ${methodBg(paymentName)}`}>
           {paymentName}
         </span>
 
-        <div className="flex-shrink-0 text-center w-10 hidden sm:block">
+        <div className="flex-shrink-0 text-center w-[52px] hidden sm:block">
           <p className="text-xs font-bold" style={{ color: "var(--td-text-md)" }}>{itemCount}</p>
           <p className="text-[7px] uppercase" style={{ color: "var(--td-text-lo)" }}>arts.</p>
         </div>
 
         {/* Total cobrado = sale.total (productos regulares) + anticipos de
             preventas creadas en el mismo ticket. Sin esto el row mostraba
-            solo $100 cuando el cobro real fue $200 (producto + anticipo). */}
-        <div className="ml-auto flex-shrink-0 text-right">
-          <p className="text-sm font-black" style={{ color: "var(--td-text-hi)" }}>
-            {fmt(sale.total + (sale.pre_sale_orders ?? []).reduce((s, o) => s + (o.paid_amount ?? 0), 0))}
-          </p>
-          {(sale.pre_sale_orders ?? []).length > 0 && (
-            <p className="text-[8px] font-bold uppercase tracking-widest" style={{ color: "#f59e0b" }}>
-              + anticipo
-            </p>
-          )}
-        </div>
+            solo $100 cuando el cobro real fue $200 (producto + anticipo).
+            Cancelada total: en vez del $0 (edit-in-place) se muestra −$X en
+            ROJO = lo que se regresó (Joel 2026-06-12). SIMBÓLICO: el total ya
+            descuenta la cancelación, este monto NO se suma a agregados. */}
+        {(() => {
+          const cancelled = sale.cancelled_amount ?? 0;
+          const isFullCancel = sale.status === "returned" || sale.cancellation_status === "full";
+          if (isFullCancel && cancelled > 0) {
+            return (
+              <div className="w-[92px] flex-shrink-0 text-right">
+                <p className="text-sm font-black" style={{ color: "#f87171" }}>−{fmt(cancelled)}</p>
+                <p className="text-[8px] font-bold uppercase tracking-widest" style={{ color: "#f87171" }}>
+                  cancelada
+                </p>
+              </div>
+            );
+          }
+          return (
+            <div className="w-[92px] flex-shrink-0 text-right">
+              <p className="text-sm font-black" style={{ color: "var(--td-text-hi)" }}>
+                {fmt(sale.total + (sale.pre_sale_orders ?? []).reduce((s, o) => s + (o.paid_amount ?? 0), 0))}
+              </p>
+              {sale.cancellation_status === "partial" && cancelled > 0 ? (
+                <p className="text-[8px] font-bold uppercase tracking-widest" style={{ color: "#f87171" }}>
+                  −{fmt(cancelled)} canc.
+                </p>
+              ) : (sale.pre_sale_orders ?? []).length > 0 && (
+                <p className="text-[8px] font-bold uppercase tracking-widest" style={{ color: "#f59e0b" }}>
+                  + anticipo
+                </p>
+              )}
+            </div>
+          );
+        })()}
       </button>
 
       {/* ── Detalle expandido ── */}
@@ -311,7 +576,7 @@ function SaleRow({
                 className="flex items-center gap-3 py-2 last:border-0"
                 style={{ borderBottom: "1px solid var(--td-panel-border)" }}
               >
-                <ProductThumb src={img} name={name} size={44} rounded="rounded-xl" />
+                <ProductThumb {...(img ? { src: img } : {})} name={name} size={44} rounded="rounded-xl" />
 
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-bold truncate" style={{ color: "var(--td-text-hi)" }}>{name}</p>
@@ -335,6 +600,34 @@ function SaleRow({
               </div>
             );
           })}
+
+          {/* Detalle de lo cancelado (ADR-016) — snapshot de items + monto
+              reversado en ROJO. Simbólico: el total de la venta ya descuenta
+              la cancelación (Joel 2026-06-12). */}
+          {(sale.cancelled_items ?? []).length > 0 && (
+            <div className="mt-3 p-3 rounded-xl space-y-1" style={{ background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.2)" }}>
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: "#f87171" }}>
+                  Cancelado · se regresó
+                </p>
+                <p className="text-sm font-black" style={{ color: "#f87171" }}>−{fmt(sale.cancelled_amount ?? 0)}</p>
+              </div>
+              {(sale.cancelled_items ?? []).map((ci, idx) => (
+                <div key={idx} className="flex items-center gap-3 py-1" style={{ borderTop: "1px solid rgba(239,68,68,0.12)" }}>
+                  <p className="flex-1 min-w-0 text-xs font-bold truncate" style={{ color: "var(--td-text-md)" }}>
+                    {ci.name}
+                    {ci.sku && <span className="ml-2 text-[8px] uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>{ci.sku}</span>}
+                  </p>
+                  <span className="text-[10px] font-black flex-shrink-0" style={{ color: "var(--td-text-md)" }}>×{ci.quantity}</span>
+                  <span className="text-[10px] font-bold w-[60px] text-right flex-shrink-0" style={{ color: "var(--td-text-lo)" }}>{fmt(ci.price)}</span>
+                  <span className="text-xs font-black w-[80px] text-right flex-shrink-0" style={{ color: "#f87171" }}>−{fmt(ci.line_total)}</span>
+                </div>
+              ))}
+              <p className="text-[8px] pt-1" style={{ color: "var(--td-text-lo)" }}>
+                Monto ya descontado del total y de los reportes — no se resta dos veces.
+              </p>
+            </div>
+          )}
 
           {/* Preventas creadas en el mismo ticket (cobro mixto). El backend
               las trae via Sale.preSaleOrders; si el campo viene, mostramos
@@ -525,7 +818,14 @@ type VentasRow =
 /** Método de pago de un folio derivado de sus pagos. "Varios" si hay mezcla. */
 function getPreSaleMethodName(order: PreSaleOrder): string {
   const names = Array.from(
-    new Set((order.payments ?? []).map(p => p.payment_method?.name).filter((n): n is string => !!n))
+    new Set(
+      (order.payments ?? [])
+        .map(p => p.payment_method?.name)
+        .filter((n): n is string => !!n)
+        // "Tarjeta débito"/"Tarjeta de crédito" → "Tarjeta" (también colapsa
+        // débito+crédito en un solo nombre en vez de "Varios").
+        .map(shortMethodName)
+    )
   );
   if (names.length === 0) return "—";
   if (names.length === 1) return names[0] ?? "—";
@@ -553,8 +853,8 @@ function PreSaleMovementRow({
     <div className="rounded-2xl overflow-hidden transition-all group" style={{ border: `1px solid ${accent}33` }}>
       <button
         onClick={() => setOpen(v => !v)}
-        className="w-full flex items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-white/[0.03]"
-        style={{ background: `${accent}0d` }}
+        className="w-full flex lg:grid items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-white/[0.03]"
+        style={{ background: `${accent}0d`, gridTemplateColumns: SALES_LIST_GRID_TEMPLATE }}
       >
         <span className="text-[9px] font-black w-5 text-center flex-shrink-0" style={{ color: "var(--td-text-lo)" }}>{rank}</span>
 
@@ -573,36 +873,44 @@ function PreSaleMovementRow({
           <p className="text-xs font-bold" style={{ color: "var(--td-text-hi)" }}>{fmtDateTime(dateStr)}</p>
         </div>
 
-        <div className="flex-1 min-w-0 hidden lg:block">
-          <div className="flex items-center gap-2">
-            <span className="text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded flex-shrink-0"
-              style={{ background: `${accent}26`, color: accent, border: `1px solid ${accent}59` }}>
-              {isLiq ? "Liquidación" : "Anticipo"}
-            </span>
-            <p className="text-[9px] font-black uppercase tracking-widest truncate" style={{ color: "var(--td-text-lo)" }}>{order.code}</p>
-            {order.customer?.name && (
-              <p className="text-[10px] truncate" style={{ color: "var(--td-text-md)" }}>{order.customer.name}</p>
-            )}
-          </div>
-          {order.user?.name && (
-            <div className="flex items-center gap-1 mt-0.5 text-[9px] font-bold truncate" style={{ color: "var(--td-text-lo)" }} title={`Registró ${order.user.name}`}>
-              <UserIcon size={9} />
-              <span className="uppercase tracking-wider">Atendió:</span>
-              <span className="truncate" style={{ color: "var(--td-text-md)" }}>{order.user.name}</span>
+        <div className="w-[108px] flex-shrink-0 hidden lg:flex flex-col items-center justify-center text-center">
+          <p className="text-[10px] font-black uppercase tracking-[0.12em]" style={{ color: "var(--td-text-hi)" }}>#{order.id}</p>
+          <p className="text-[7px] uppercase tracking-[0.14em]" style={{ color: accent }}>
+            {order.code}
+          </p>
+        </div>
+
+        <div className="flex-1 min-w-0 hidden lg:flex items-center justify-center text-center">
+          {order.customer?.name ? (
+            <p className="text-[10px] truncate" style={{ color: "var(--td-text-md)" }}>
+              {order.customer.name}
+            </p>
+          ) : (
+            <div className="w-full flex items-center justify-center">
+              <span className="text-[9px] font-bold uppercase tracking-[0.12em]" style={{ color: "var(--td-text-lo)" }}>
+                Sin cliente
+              </span>
             </div>
           )}
         </div>
 
-        <span className={`text-[8px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full border flex-shrink-0 ${methodBg(paymentName)}`}>
+        <div className="w-[150px] flex-shrink-0 hidden lg:flex items-center">
+          <div className="flex items-center gap-1 text-[9px] font-bold truncate" style={{ color: "var(--td-text-lo)" }} title={order.user?.name || "Sin cajero"}>
+            <UserIcon size={9} />
+            <span className="truncate" style={{ color: "var(--td-text-md)" }}>{order.user?.name || "—"}</span>
+          </div>
+        </div>
+
+        <span className={`w-[104px] text-center text-[9px] font-black uppercase tracking-[0.12em] px-2.5 py-1 rounded-full border flex-shrink-0 ${methodBg(paymentName)}`}>
           {paymentName}
         </span>
 
-        <div className="flex-shrink-0 text-center w-10 hidden sm:block">
+        <div className="flex-shrink-0 text-center w-[52px] hidden sm:block">
           <p className="text-xs font-bold" style={{ color: "var(--td-text-md)" }}>{itemCount}</p>
           <p className="text-[7px] uppercase" style={{ color: "var(--td-text-lo)" }}>arts.</p>
         </div>
 
-        <div className="ml-auto flex-shrink-0 text-right">
+        <div className="w-[92px] flex-shrink-0 text-right">
           <p className="text-sm font-black" style={{ color: "var(--td-text-hi)" }}>{fmt(cobrado)}</p>
           <p className="text-[8px] font-bold uppercase tracking-widest" style={{ color: accent }}>
             {isLiq ? "liquidación" : "anticipo"}
@@ -617,7 +925,12 @@ function PreSaleMovementRow({
           )}
           {items.map(it => (
             <div key={it.id} className="flex items-center gap-3 py-2 last:border-0" style={{ borderBottom: "1px solid var(--td-panel-border)" }}>
-              <ProductThumb src={it.catalog?.image_path ? storageUrl(it.catalog.image_path) : undefined} name={it.catalog?.product_name} size={44} rounded="rounded-xl" />
+              <ProductThumb
+                {...(it.catalog?.image_path ? { src: storageUrl(it.catalog.image_path) } : {})}
+                {...(it.catalog?.product_name ? { name: it.catalog.product_name } : {})}
+                size={44}
+                rounded="rounded-xl"
+              />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-bold truncate" style={{ color: "var(--td-text-hi)" }}>
                   {it.catalog?.product_name ?? `Producto #${it.product_id ?? "?"}`}
@@ -670,17 +983,41 @@ function PreSaleMovementRow({
 // IVA sobre la comisión de terminal. En México la terminal cobra IVA (16%) sobre
 // su comisión; el gerente lo resta en su corte semanal para obtener la venta real
 // que le queda a la tienda. La tienda absorbe comisión + IVA (no se cobra al cliente).
-const IVA_COMISION_RATE = 0.16;
+// Tasa DEFAULT — editable desde el header del Reporte del Día (Joel
+// 2026-06-11); se persiste en localStorage por dispositivo.
+const DEFAULT_IVA_COMISION_PCT = 16;
+const IVA_PCT_STORAGE_KEY = "tadaima:iva-comision-pct";
+
+function loadIvaComisionPct(): number {
+  // OJO: Number(null) === 0 — sin nada guardado el viejo código arrancaba la
+  // variable en 0 en vez del default 16 (Joel 2026-06-12). Un 0 guardado
+  // tampoco se respeta: el 0 es ajuste de sesión (input vacío) y al recargar
+  // se vuelve al default.
+  const raw = localStorage.getItem(IVA_PCT_STORAGE_KEY);
+  if (raw === null || raw.trim() === "") return DEFAULT_IVA_COMISION_PCT;
+  const v = Number(raw);
+  return Number.isFinite(v) && v > 0 && v <= 100 ? v : DEFAULT_IVA_COMISION_PCT;
+}
 
 // Fila de producto en el corte del gerente (tablas 1,2,4,5). Costo/utilidad
-// solo se muestran a admin; `tieneCosto` indica si hubo algún costo registrado.
+// gateados por canViewCost; `tieneCosto` indica si hubo costo registrado.
 interface CorteProdRow {
   key: string; name: string; fecha: string; // fecha YYYY-MM-DD (zona negocio)
+  /** Precio unitario de la línea — el mismo producto a precios distintos sale
+   * en renglones separados: cant × precio = venta (Joel 2026-06-12). */
+  precioUnit: number;
   cantidad: number; venta: number; costo: number; tieneCosto: boolean;
+  /** Comisión de terminal repartida a esta línea (solo tabla Tarjeta).
+   * Viene del snapshot commission_amount de cada venta — cada terminal puede
+   * tener % distinto, por eso se calcula POR FILA y no con un % global. */
+  comision: number;
 }
-interface CorteAbonoRow { key: string; name: string; fecha: string; cantidad: number; abono: number }
-interface CorteTotal { cantidad: number; venta: number; costo: number }
-interface CorteAbonoTotal { cantidad: number; abono: number }
+// Apartados con costo + fórmulas del Excel (Joel 2026-06-12): Venta = precio
+// total apartado, Resta = Venta − Abono (por liquidar), Utilidad esperada =
+// Venta − Costo (se realiza al liquidar). Costo del snapshot ADR-015.
+interface CorteAbonoRow { key: string; name: string; fecha: string; cantidad: number; venta: number; abono: number; costo: number; tieneCosto: boolean }
+interface CorteTotal { cantidad: number; venta: number; costo: number; comision: number }
+interface CorteAbonoTotal { cantidad: number; venta: number; abono: number; costo: number }
 interface ManagerCorte {
   ventasNormales: { rows: CorteProdRow[]; total: CorteTotal };
   ventasTarjeta:  { rows: CorteProdRow[]; total: CorteTotal };
@@ -720,18 +1057,18 @@ interface DailyReport {
   ventasNetasReales: number;
 }
 
-// Sub-tabs del corte del gerente — cada chip navega a una de las 5 tablas.
-type CorteTab = "normales" | "tarjeta" | "abonos" | "liquidacion" | "vencidas";
+// Sub-tabs del corte del gerente (Joel 2026-06-12): Efectivo+Tarjeta se
+// fusionaron en "Ventas" (2 columnas lado a lado) y Apartados+Liquidaciones
+// en "Preventas". El print/PDF/Excel siguen emitiendo las 5 tablas.
+type CorteTab = "ventas" | "preventas" | "vencidas";
 const CORTE_TABS: Array<{ id: CorteTab; label: string }> = [
-  { id: "normales",    label: "Ventas normales" },
-  { id: "tarjeta",     label: "Ventas con tarjeta" },
-  { id: "abonos",      label: "Abonos preventa" },
-  { id: "liquidacion", label: "Preventa liquidación" },
-  { id: "vencidas",    label: "Preventa vencidas" },
+  { id: "ventas",    label: "Ventas" },
+  { id: "preventas", label: "Preventas" },
+  { id: "vencidas",  label: "Preventa vencidas" },
 ];
 
 function ReporteDelDia({
-  report, fromDate, toDate, storeName, isAdmin,
+  report, fromDate, toDate, storeName, isAdmin, ivaPct, onIvaPctChange,
 }: {
   report: DailyReport;
   fromDate: string;
@@ -741,13 +1078,22 @@ function ReporteDelDia({
   storeId?: number | null;
   /** Solo admin ve columnas Costo/Utilidad (backend gate de cost). */
   isAdmin: boolean;
+  /** % de IVA sobre la comisión de terminal — editable aquí, persiste por
+   * dispositivo. Recalcula footer de Tarjeta y todo el reporte al vuelo. */
+  ivaPct: number;
+  onIvaPctChange: (pct: number) => void;
 }) {
   const isSameDay = fromDate === toDate;
   const periodLabel = isSameDay
     ? new Date(fromDate + "T12:00").toLocaleDateString("es-MX", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })
     : `${fromDate} → ${toDate}`;
 
-  const [corteTab, setCorteTab] = useState<CorteTab>("normales");
+  const [corteTab, setCorteTab] = useState<CorteTab>("ventas");
+
+  // Texto del input de IVA — string local para poder BORRARLO sin que el 0
+  // controlado se re-inserte y pelee (Joel 2026-06-12). Vacío = 0 en la
+  // sesión (placeholder lo indica); el default real de la variable es 16.
+  const [ivaInput, setIvaInput] = useState<string>(ivaPct > 0 ? String(ivaPct) : "");
 
   const handlePrint = () => printDailyReport(report, fromDate, toDate, storeName, isAdmin);
   const handlePdf   = () => exportDailyReportPdf(report, fromDate, toDate, storeName, isAdmin);
@@ -755,8 +1101,116 @@ function ReporteDelDia({
 
   return (
     <div id="reporte-dia-print" className="space-y-4">
-      {/* Header con acciones */}
-      <div className="flex items-start justify-between flex-wrap gap-3">
+      {/* Sub-tabs (chips) + control de IVA s/comisión (derecha). */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-2">
+          {CORTE_TABS.map(t => {
+            const active = corteTab === t.id;
+            return (
+              <button
+                key={t.id}
+                onClick={() => setCorteTab(t.id)}
+                className="px-3 py-2 rounded-full text-[10px] font-black uppercase tracking-widest transition-all hover:scale-[1.02]"
+                style={active
+                  ? { background: "linear-gradient(135deg, #CC2200, #FF4422)", border: "1px solid rgba(255,120,90,0.3)", color: "#fff" }
+                  : { background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)", color: "var(--td-text-md)" }}
+              >
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* IVA sobre la comisión de terminal — Joel 2026-06-11: visible y
+            editable (el SAT lo puede cambiar / hay terminales sin IVA).
+            Es el impuesto sobre la comisión, NO el % de comisión. */}
+        <label className="flex items-center gap-2 rounded-full px-3 h-[34px] cursor-text"
+          title="IVA que la terminal cobra sobre su comisión. Aplica a todas las terminales por igual."
+          style={{ background: "rgba(245,158,11,0.07)", border: "1px solid rgba(245,158,11,0.3)" }}>
+          <span className="text-[9px] font-black uppercase tracking-widest whitespace-nowrap" style={{ color: "#F59E0B" }}>
+            IVA s/comisión
+          </span>
+          <input
+            type="number"
+            min={0}
+            max={100}
+            step={0.5}
+            placeholder="0"
+            value={ivaInput}
+            onChange={e => {
+              const raw = e.target.value;
+              setIvaInput(raw);
+              const v = raw.trim() === "" ? 0 : Number(raw);
+              onIvaPctChange(Number.isFinite(v) ? v : 0);
+            }}
+            className="w-12 bg-transparent text-right outline-none text-xs font-black tabular-nums"
+            style={{ color: "var(--td-text-hi)" }}
+          />
+          <span className="text-xs font-black" style={{ color: "var(--td-text-lo)" }}>%</span>
+        </label>
+      </div>
+
+      {/* Vista activa según el sub-tab. Las vistas fusionadas pintan DOS
+          tablas lado a lado (apiladas en pantallas angostas), cada una con
+          su título centrado, scroll interno y total sticky al fondo. */}
+      {corteTab === "ventas" && (
+        <CorteDuo
+          left={
+            <CorteProdTable
+              title="Efectivo"
+              rows={report.corte.ventasNormales.rows}
+              total={report.corte.ventasNormales.total}
+              isAdmin={isAdmin}
+              centered
+            />
+          }
+          right={
+            <CorteProdTable
+              title="Tarjeta"
+              rows={report.corte.ventasTarjeta.rows}
+              total={report.corte.ventasTarjeta.total}
+              isAdmin={isAdmin}
+              centered
+              showComision
+              ivaPct={ivaPct}
+            />
+          }
+        />
+      )}
+      {corteTab === "preventas" && (
+        <CorteDuo
+          left={
+            <CorteAbonoTable
+              title="1 · Apartados"
+              rows={report.corte.abonos.rows}
+              total={report.corte.abonos.total}
+              isAdmin={isAdmin}
+              centered
+            />
+          }
+          right={
+            <CorteProdTable
+              title="2 · Liquidaciones"
+              rows={report.corte.liquidacion.rows}
+              total={report.corte.liquidacion.total}
+              isAdmin={isAdmin}
+              centered
+            />
+          }
+        />
+      )}
+      {corteTab === "vencidas" && (
+        <CorteProdTable
+          title="Preventa vencidas"
+          rows={report.corte.vencidas.rows}
+          total={report.corte.vencidas.total}
+          isAdmin={isAdmin}
+        />
+      )}
+
+      {/* Desc del reporte + acciones — abajo (Joel 2026-06-12): primero las
+          tablas, al final imprimir/exportar. */}
+      <div className="flex items-center justify-between flex-wrap gap-3 pt-2 border-t" style={{ borderColor: "var(--td-panel-border)" }}>
         <div>
           <p className="text-[8px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>Reporte del Día · {storeName}</p>
           <p className="text-base font-black mt-1 capitalize" style={{ color: "var(--td-text-hi)" }}>{periodLabel}</p>
@@ -786,186 +1240,392 @@ function ReporteDelDia({
           </button>
         </div>
       </div>
-
-      {/* Sub-tabs (chips) — navegan entre las 5 tablas del corte. */}
-      <div className="flex flex-wrap gap-2">
-        {CORTE_TABS.map(t => {
-          const active = corteTab === t.id;
-          return (
-            <button
-              key={t.id}
-              onClick={() => setCorteTab(t.id)}
-              className="px-3 py-2 rounded-full text-[10px] font-black uppercase tracking-widest transition-all hover:scale-[1.02]"
-              style={active
-                ? { background: "linear-gradient(135deg, #CC2200, #FF4422)", border: "1px solid rgba(255,120,90,0.3)", color: "#fff" }
-                : { background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)", color: "var(--td-text-md)" }}
-            >
-              {t.label}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Tabla activa según el sub-tab. */}
-      {corteTab === "normales" && (
-        <CorteProdTable
-          title="Ventas normales"
-          subtitle="Efectivo · transferencia · dólares (no tarjeta, no preventa)"
-          rows={report.corte.ventasNormales.rows}
-          total={report.corte.ventasNormales.total}
-          isAdmin={isAdmin}
-        />
-      )}
-      {corteTab === "tarjeta" && (
-        <CorteProdTable
-          title="Ventas con tarjeta"
-          subtitle="Ventas cobradas con tarjeta (terminal)"
-          rows={report.corte.ventasTarjeta.rows}
-          total={report.corte.ventasTarjeta.total}
-          isAdmin={isAdmin}
-        />
-      )}
-      {corteTab === "abonos" && (
-        <CorteAbonoTable
-          rows={report.corte.abonos.rows}
-          total={report.corte.abonos.total}
-        />
-      )}
-      {corteTab === "liquidacion" && (
-        <CorteProdTable
-          title="Preventa liquidación"
-          subtitle="Folios entregados / liquidados en el periodo"
-          rows={report.corte.liquidacion.rows}
-          total={report.corte.liquidacion.total}
-          isAdmin={isAdmin}
-        />
-      )}
-      {corteTab === "vencidas" && (
-        <CorteProdTable
-          title="Preventa vencidas"
-          subtitle="Folios expirados en el periodo"
-          rows={report.corte.vencidas.rows}
-          total={report.corte.vencidas.total}
-          isAdmin={isAdmin}
-        />
-      )}
     </div>
   );
 }
 
-// Tabla de corte por producto (tablas 1, 2, 4, 5). Costo/Utilidad solo admin.
+// Altura FIJA de los paneles del corte: lo que quede de viewport tras header
+// de página + tab bar + filtros + sub-tabs (~430px), con piso de 320px para
+// laptops chicas. CSS puro — no hace falta medir con JS. Fija (no max) para
+// que las 2 columnas (Efectivo|Tarjeta, Apartados|Liquidaciones) midan SIEMPRE
+// lo mismo y el Total quede anclado al fondo parejo (Joel 2026-06-12).
+const CORTE_TABLE_MAX_H = "max(320px, calc(100vh - 430px))";
+// thead/tfoot sticky necesitan fondo SÓLIDO (el var es translúcido y las
+// filas se transparentaban al pasar por debajo).
+const CORTE_STICKY_BG = "var(--td-popup-bg)";
+
+// Tabla de corte por producto (Efectivo/Tarjeta/Liquidaciones/Vencidas).
+// Costo/Utilidad solo admin. Scroll interno + header y Total sticky (el
+// total siempre visible aunque la lista sea larga — Joel 2026-06-12).
 function CorteProdTable({
-  title, subtitle, rows, total, isAdmin,
+  title, rows, total, isAdmin, centered = false, showComision = false, ivaPct = DEFAULT_IVA_COMISION_PCT,
 }: {
   title: string;
-  subtitle: string;
   rows: CorteProdRow[];
   total: CorteTotal;
   isAdmin: boolean;
+  /** Título centrado — para las vistas fusionadas de 2 columnas. */
+  centered?: boolean;
+  /** Solo tabla Tarjeta: columna Comisión por fila (cada terminal puede
+   * tener % distinto — el monto viene repartido del snapshot por venta). */
+  showComision?: boolean;
+  /** % de IVA sobre comisión (editable en el header del Reporte). */
+  ivaPct?: number;
 }) {
-  const utilidad = total.venta - total.costo;
+  // ── Fórmulas (espejo del Excel de corte del gerente) ──────────────────────
+  // Efectivo:  Utilidad = Venta − Costo
+  // Tarjeta:   Comisión = Venta × % terminal (snapshot por venta)
+  //            IVA = Comisión × ivaPct (general, editable en el header)
+  //            Venta real = Venta − Comisión − IVA
+  //            Utilidad = Venta real − Costo
+  const ivaRate = ivaPct / 100;
+  const ivaComisionTotal = total.comision * ivaRate;
+  const ventaRealTotal = total.venta - total.comision - ivaComisionTotal;
+  const utilidad = (showComision ? ventaRealTotal : total.venta) - total.costo;
+  // "Sin costo" = costo null O costo $0 guardado: en ambos casos la utilidad
+  // sale inflada (venta completa) — el producto necesita captura de costo.
+  const sinCostoCount = rows.filter(r => !r.tieneCosto || r.costo <= 0).length;
+  const formulaLabel = showComision
+    ? `Comisión = Venta × % terminal · IVA = Comisión × ${fmtPct(ivaPct)} · Venta real = Venta − Comisión − IVA · Utilidad = Venta real − Costo`
+    : "Utilidad = Venta − Costo";
+  // Mismo colgroup en la tabla del body y la del footer (table-layout fixed)
+  // → columnas perfectamente alineadas aunque sean dos <table> separadas.
+  const colGroup = (
+    <colgroup>
+      <col style={{ width: 92 }} />
+      <col />
+      <col style={{ width: 64 }} />
+      <col style={{ width: 104 }} />
+      <col style={{ width: 112 }} />
+      {showComision && <col style={{ width: 104 }} />}
+      {showComision && <col style={{ width: 88 }} />}
+      {showComision && <col style={{ width: 112 }} />}
+      {isAdmin && <col style={{ width: 168 }} />}
+      {isAdmin && <col style={{ width: 112 }} />}
+    </colgroup>
+  );
   return (
-    <ReportSection title={title}>
-      <p className="text-[10px] font-bold mb-3" style={{ color: "var(--td-text-lo)" }}>{subtitle}</p>
-      {rows.length === 0 ? (
-        <p className="text-xs py-6 text-center" style={{ color: "var(--td-text-lo)" }}>Sin movimientos en el periodo.</p>
-      ) : (
-        <div className="overflow-x-auto rounded-xl" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)" }}>
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="text-[9px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)", position: "sticky", top: 0, background: "var(--td-card-bg)" }}>
-                <th className="text-left py-2 px-3">Fecha</th>
-                <th className="text-left py-2 px-3">Producto</th>
-                <th className="text-right py-2 px-3">Cantidad</th>
-                <th className="text-right py-2 px-3">Venta</th>
-                {isAdmin && <th className="text-right py-2 px-3">Costo</th>}
-                {isAdmin && <th className="text-right py-2 px-3">Utilidad</th>}
-              </tr>
-            </thead>
+    <ReportSection title={title} subtitle={formulaLabel} centered={centered}>
+      {/* Panel de ALTURA FIJA (flex column): el body scrollea en medio y el
+          Total vive en una banda aparte anclada al fondo — las 2 columnas de
+          la vista fusionada siempre terminan parejas. */}
+      <div className="flex flex-col rounded-xl overflow-hidden" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", height: CORTE_TABLE_MAX_H }}>
+        {rows.length === 0 ? (
+          <p className="flex-1 flex items-center justify-center text-sm" style={{ color: "var(--td-text-lo)" }}>Sin movimientos en el periodo.</p>
+        ) : (
+          <div className="flex-1 min-h-0 overflow-y-auto overflow-x-auto">
+            <table className="w-full text-sm" style={{ tableLayout: "fixed" }}>
+              {colGroup}
+              <thead>
+                <tr className="text-[10px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)", position: "sticky", top: 0, zIndex: 1, background: CORTE_STICKY_BG }}>
+                  <th className="text-left py-2.5 px-3">Fecha</th>
+                  <th className="text-left py-2.5 px-3">Producto</th>
+                  <th className="text-right py-2.5 px-3">Cant.</th>
+                  <th className="text-right py-2.5 px-3">P. Unit</th>
+                  <th className="text-right py-2.5 px-3">Venta</th>
+                  {showComision && <th className="text-right py-2.5 px-3" style={{ color: "#F59E0B" }}>Comisión</th>}
+                  {showComision && <th className="text-right py-2.5 px-3" style={{ color: "#F59E0B" }}>IVA {fmtPct(ivaPct)}</th>}
+                  {showComision && <th className="text-right py-2.5 px-3">Venta real</th>}
+                  {isAdmin && <th className="text-right py-2.5 px-3">Costo</th>}
+                  {isAdmin && <th className="text-right py-2.5 px-3">Utilidad</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(r => {
+                  // Tarjeta: utilidad sobre la venta REAL (− comisión − IVA),
+                  // como el Excel del gerente. Efectivo: venta − costo.
+                  const ivaRow = r.comision * ivaRate;
+                  const ventaReal = r.venta - r.comision - ivaRow;
+                  const util = (showComision ? ventaReal : r.venta) - r.costo;
+                  return (
+                    <tr key={r.key} className="border-t" style={{ borderColor: "var(--td-divider)" }}>
+                      <td className="py-2.5 px-3 whitespace-nowrap tabular-nums text-xs" style={{ color: "var(--td-text-lo)" }}>{fmtDate(r.fecha)}</td>
+                      <td className="py-2.5 px-3 font-bold truncate" style={{ color: "var(--td-text-hi)" }} title={r.name}>{r.name}</td>
+                      {/* Desglose por detalle: cant × precio unit = venta. */}
+                      <td className="py-2.5 px-3 text-right tabular-nums" style={{ color: "var(--td-text-md)" }}>{r.cantidad}</td>
+                      <td className="py-2.5 px-3 text-right tabular-nums" style={{ color: "var(--td-text-md)" }}>{fmt(r.precioUnit)}</td>
+                      <td className="py-2.5 px-3 text-right font-black tabular-nums" style={{ color: "var(--td-text-hi)" }}>{fmt(r.venta)}</td>
+                      {showComision && (
+                        <td className="py-2.5 px-3 text-right tabular-nums font-bold whitespace-nowrap" style={{ color: "#F59E0B" }}>
+                          {/* % efectivo de la fila (comisión/venta): cada terminal
+                              tiene su % (ej. Banorte 6% vs otra 16%) y así se VE
+                              cuál se aplicó, no solo el monto. */}
+                          −{fmt(r.comision)}
+                          {r.venta > 0 && r.comision > 0 && (
+                            <span className="ml-1.5 px-1.5 py-0.5 rounded text-[8px] font-black align-middle"
+                              style={{ background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.3)" }}>
+                              {fmtPct((r.comision / r.venta) * 100)}
+                            </span>
+                          )}
+                        </td>
+                      )}
+                      {showComision && (
+                        <td className="py-2.5 px-3 text-right tabular-nums" style={{ color: "#F59E0B" }}>−{fmt(ivaRow)}</td>
+                      )}
+                      {showComision && (
+                        <td className="py-2.5 px-3 text-right font-black tabular-nums" style={{ color: "var(--td-text-hi)" }}>{fmt(ventaReal)}</td>
+                      )}
+                      {isAdmin && (() => {
+                        // Sin costo = null O $0 guardado (cubre productos creados
+                        // con costo 0): número en ROJO + flag, para que se vea de
+                        // inmediato que la utilidad de esa fila está inflada.
+                        const sinCosto = !r.tieneCosto || r.costo <= 0;
+                        return (
+                          <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap"
+                            style={{ color: sinCosto ? "#f87171" : "var(--td-text-md)", fontWeight: sinCosto ? 800 : undefined }}>
+                            {sinCosto ? (
+                              <span className="inline-flex items-center gap-1.5">
+                                {fmt(r.tieneCosto ? r.costo : 0)}
+                                <span className="px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider" style={{ background: "rgba(220,38,38,0.15)", color: "#f87171", border: "1px solid rgba(220,38,38,0.3)" }}>sin costo</span>
+                              </span>
+                            ) : fmt(r.costo)}
+                          </td>
+                        );
+                      })()}
+                      {isAdmin && <td className="py-2.5 px-3 text-right font-bold tabular-nums" style={{ color: util >= 0 ? "#10b981" : "#DC2626" }}>{fmt(util)}</td>}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {/* Footer Total — banda fija al fondo del panel, fuera del scroll. */}
+        <div className="shrink-0 border-t-2" style={{ borderColor: "var(--td-panel-border)", background: CORTE_STICKY_BG }}>
+          <table className="w-full text-sm" style={{ tableLayout: "fixed" }}>
+            {colGroup}
             <tbody>
-              {rows.map(r => {
-                const util = r.venta - r.costo;
-                return (
-                  <tr key={r.key} className="border-t" style={{ borderColor: "var(--td-divider)" }}>
-                    <td className="py-2 px-3 whitespace-nowrap tabular-nums" style={{ color: "var(--td-text-lo)" }}>{fmtDate(r.fecha)}</td>
-                    <td className="py-2 px-3 font-bold" style={{ color: "var(--td-text-hi)" }}>{r.name}</td>
-                    <td className="py-2 px-3 text-right tabular-nums" style={{ color: "var(--td-text-md)" }}>{r.cantidad}</td>
-                    <td className="py-2 px-3 text-right font-black tabular-nums" style={{ color: "var(--td-text-hi)" }}>{fmt(r.venta)}</td>
-                    {isAdmin && <td className="py-2 px-3 text-right tabular-nums" style={{ color: "var(--td-text-md)" }}>{r.tieneCosto ? fmt(r.costo) : "—"}</td>}
-                    {isAdmin && <td className="py-2 px-3 text-right font-bold tabular-nums" style={{ color: util >= 0 ? "#10b981" : "#DC2626" }}>{r.tieneCosto ? fmt(util) : "—"}</td>}
-                  </tr>
-                );
-              })}
-            </tbody>
-            <tfoot>
-              <tr className="border-t-2" style={{ borderColor: "var(--td-panel-border)" }}>
-                <td className="py-2 px-3" />
-                <td className="py-2 px-3 text-[10px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-hi)" }}>Total</td>
-                <td className="py-2 px-3 text-right font-black tabular-nums" style={{ color: "var(--td-text-hi)" }}>{total.cantidad}</td>
-                <td className="py-2 px-3 text-right font-black tabular-nums" style={{ color: "var(--td-text-hi)" }}>{fmt(total.venta)}</td>
-                {isAdmin && <td className="py-2 px-3 text-right font-black tabular-nums" style={{ color: "var(--td-text-hi)" }}>{fmt(total.costo)}</td>}
-                {isAdmin && <td className="py-2 px-3 text-right font-black tabular-nums" style={{ color: utilidad >= 0 ? "#10b981" : "#DC2626" }}>{fmt(utilidad)}</td>}
+              <tr>
+                <td className="py-2.5 px-3" />
+                <td className="py-2.5 px-3 text-[11px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-hi)" }}>Total</td>
+                <td className="py-2.5 px-3 text-right font-black tabular-nums" style={{ color: "var(--td-text-hi)" }}>{total.cantidad}</td>
+                <td className="py-2.5 px-3" />
+                <td className="py-2.5 px-3 text-right font-black tabular-nums" style={{ color: "var(--td-text-hi)" }}>{fmt(total.venta)}</td>
+                {showComision && (
+                  <td className="py-2.5 px-3 text-right font-black tabular-nums whitespace-nowrap" style={{ color: "#F59E0B" }}>
+                    −{fmt(total.comision)}
+                    {total.venta > 0 && total.comision > 0 && (
+                      <span className="ml-1.5 px-1.5 py-0.5 rounded text-[8px] font-black align-middle"
+                        style={{ background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.3)" }}>
+                        {fmtPct((total.comision / total.venta) * 100)}
+                      </span>
+                    )}
+                  </td>
+                )}
+                {showComision && (
+                  <td className="py-2.5 px-3 text-right font-black tabular-nums" style={{ color: "#F59E0B" }}>−{fmt(ivaComisionTotal)}</td>
+                )}
+                {showComision && (
+                  <td className="py-2.5 px-3 text-right font-black tabular-nums" style={{ color: "var(--td-text-hi)" }}>{fmt(ventaRealTotal)}</td>
+                )}
+                {isAdmin && (
+                  <td className="py-2.5 px-3 text-right font-black tabular-nums whitespace-nowrap" style={{ color: "var(--td-text-hi)" }}>
+                    {fmt(total.costo)}
+                    {sinCostoCount > 0 && (
+                      <span className="ml-1.5 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider align-middle" style={{ background: "rgba(220,38,38,0.15)", color: "#f87171", border: "1px solid rgba(220,38,38,0.3)" }}>{sinCostoCount} sin costo</span>
+                    )}
+                  </td>
+                )}
+                {isAdmin && <td className="py-2.5 px-3 text-right font-black tabular-nums" style={{ color: utilidad >= 0 ? "#10b981" : "#DC2626" }}>{fmt(utilidad)}</td>}
               </tr>
-            </tfoot>
+            </tbody>
           </table>
+        </div>
+      </div>
+
+      {/* Totales de comisión (solo tabla Tarjeta): suma de la columna + IVA
+          16% sobre la comisión + neto real que le queda a la tienda (la
+          tienda absorbe comisión e IVA, nunca el cliente). */}
+      {showComision && total.comision > 0 && (
+        <div className="mt-2 flex items-center justify-between flex-wrap gap-2 rounded-xl px-3 py-2.5"
+          style={{ background: "rgba(245,158,11,0.07)", border: "1px solid rgba(245,158,11,0.25)" }}>
+          {/* OJO copy: el 16% es el IVA que la terminal cobra SOBRE su comisión
+              (impuesto fijo, igual para todas las terminales) — NO el % de
+              comisión, ese varía por terminal y se ve por fila en la columna. */}
+          <span className="text-[10px] font-black uppercase tracking-[0.12em]" style={{ color: "#F59E0B" }}>
+            Comisión terminal
+          </span>
+          <span className="text-[11px] font-bold tabular-nums" style={{ color: "var(--td-text-md)" }}>
+            Comisiones −{fmt(total.comision)}
+            <span className="mx-1.5 opacity-40">·</span>
+            + IVA de la comisión ({fmtPct(ivaPct)}) −{fmt(ivaComisionTotal)}
+            <span className="mx-1.5 opacity-40">·</span>
+            <span style={{ color: "var(--td-text-hi)" }}>Neto a la tienda {fmt(total.venta - total.comision - ivaComisionTotal)}</span>
+          </span>
         </div>
       )}
     </ReportSection>
   );
 }
 
-// Tabla de abonos preventa (tabla 3). Columnas: Producto | Cantidad | Abono.
+// Vista fusionada de 2 tablas con expand/colapso (Joel 2026-06-11): el botón
+// expande una tabla a TODO el ancho empujando la otra fuera (transición de
+// grid-template-columns); el botón de la expandida regresa a 2 columnas.
+// En pantallas angostas (<xl) siguen apiladas y el expand no aplica.
+function CorteDuo({ left, right }: { left: React.ReactNode; right: React.ReactNode }) {
+  const [expanded, setExpanded] = useState<"left" | "right" | null>(null);
+  const cols = expanded === "left" ? "1fr 0fr" : expanded === "right" ? "0fr 1fr" : "1fr 1fr";
+  const panel = (side: "left" | "right") => {
+    const isExpanded = expanded === side;
+    const isCollapsed = expanded !== null && !isExpanded;
+    return (
+      <div
+        className="relative min-w-0 overflow-hidden"
+        style={{ opacity: isCollapsed ? 0 : 1, transition: "opacity .35s ease" }}
+        aria-hidden={isCollapsed}
+      >
+        <button
+          onClick={() => setExpanded(isExpanded ? null : side)}
+          title={isExpanded ? "Volver a 2 columnas" : "Expandir esta tabla"}
+          className="absolute top-0 right-0 z-10 hidden xl:flex h-7 w-7 items-center justify-center rounded-lg transition-all hover:scale-110"
+          style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)", color: "var(--td-text-md)" }}
+        >
+          {isExpanded ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+        </button>
+        {side === "left" ? left : right}
+      </div>
+    );
+  };
+  return (
+    <div
+      className="grid grid-cols-1 xl:[grid-template-columns:var(--duo-cols)] items-start"
+      style={{
+        "--duo-cols": cols,
+        gap: expanded ? 0 : 16,
+        transition: "grid-template-columns .45s cubic-bezier(.4,0,.2,1), gap .45s cubic-bezier(.4,0,.2,1)",
+      } as React.CSSProperties}
+    >
+      {panel("left")}
+      {panel("right")}
+    </div>
+  );
+}
+
+// Tabla de abonos/apartados de preventa. Columnas: Fecha | Producto | Cant |
+// Venta | Abono | Resta (+ Costo | Utilidad gateadas). Fórmulas del Excel del
+// gerente (Joel 2026-06-12): Resta = Venta − Abono; Utilidad = Venta − Costo
+// (se realiza al liquidar — aquí es la esperada del apartado).
 function CorteAbonoTable({
-  rows, total,
+  title = "Abonos preventa", rows, total, isAdmin, centered = false,
 }: {
+  title?: string;
   rows: CorteAbonoRow[];
   total: CorteAbonoTotal;
+  /** Costo/Utilidad solo para quien puede ver costos (admin ∥ flag). */
+  isAdmin: boolean;
+  centered?: boolean;
 }) {
+  const restaTotal = total.venta - total.abono;
+  const utilidadTotal = total.venta - total.costo;
+  const sinCostoCount = rows.filter(r => !r.tieneCosto || r.costo <= 0).length;
+  const formulaLabel = isAdmin
+    ? "Resta = Venta − Abono · Utilidad (al liquidar) = Venta − Costo · Abono repartido proporcional a la venta del item"
+    : "Resta = Venta − Abono · Abono repartido proporcional a la venta del item";
+  const colGroup = (
+    <colgroup>
+      <col style={{ width: 92 }} />
+      <col />
+      <col style={{ width: 64 }} />
+      <col style={{ width: 112 }} />
+      <col style={{ width: 112 }} />
+      <col style={{ width: 112 }} />
+      {isAdmin && <col style={{ width: 168 }} />}
+      {isAdmin && <col style={{ width: 112 }} />}
+    </colgroup>
+  );
   return (
-    <ReportSection title="Abonos preventa">
-      <p className="text-[10px] font-bold mb-3" style={{ color: "var(--td-text-lo)" }}>Anticipos cobrados de folios pendientes / listos</p>
-      {rows.length === 0 ? (
-        <p className="text-xs py-6 text-center" style={{ color: "var(--td-text-lo)" }}>Sin abonos en el periodo.</p>
-      ) : (
-        <div className="overflow-x-auto rounded-xl" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)" }}>
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="text-[9px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)", position: "sticky", top: 0, background: "var(--td-card-bg)" }}>
-                <th className="text-left py-2 px-3">Fecha</th>
-                <th className="text-left py-2 px-3">Producto</th>
-                <th className="text-right py-2 px-3">Cantidad</th>
-                <th className="text-right py-2 px-3">Abono</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map(r => (
-                <tr key={r.key} className="border-t" style={{ borderColor: "var(--td-divider)" }}>
-                  <td className="py-2 px-3 whitespace-nowrap tabular-nums" style={{ color: "var(--td-text-lo)" }}>{fmtDate(r.fecha)}</td>
-                  <td className="py-2 px-3 font-bold" style={{ color: "var(--td-text-hi)" }}>{r.name}</td>
-                  <td className="py-2 px-3 text-right tabular-nums" style={{ color: "var(--td-text-md)" }}>{r.cantidad}</td>
-                  <td className="py-2 px-3 text-right font-black tabular-nums" style={{ color: "var(--td-text-hi)" }}>{fmt(r.abono)}</td>
+    <ReportSection title={title} subtitle={formulaLabel} centered={centered}>
+      {/* Panel de altura fija con footer anclado — mismo patrón que
+          CorteProdTable para que las 2 columnas terminen parejas. */}
+      <div className="flex flex-col rounded-xl overflow-hidden" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", height: CORTE_TABLE_MAX_H }}>
+        {rows.length === 0 ? (
+          <p className="flex-1 flex items-center justify-center text-sm" style={{ color: "var(--td-text-lo)" }}>Sin abonos en el periodo.</p>
+        ) : (
+          <div className="flex-1 min-h-0 overflow-y-auto overflow-x-auto">
+            <table className="w-full text-sm" style={{ tableLayout: "fixed" }}>
+              {colGroup}
+              <thead>
+                <tr className="text-[10px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)", position: "sticky", top: 0, zIndex: 1, background: CORTE_STICKY_BG }}>
+                  <th className="text-left py-2.5 px-3">Fecha</th>
+                  <th className="text-left py-2.5 px-3">Producto</th>
+                  <th className="text-right py-2.5 px-3">Cant.</th>
+                  <th className="text-right py-2.5 px-3">Venta</th>
+                  <th className="text-right py-2.5 px-3">Abono</th>
+                  <th className="text-right py-2.5 px-3" style={{ color: "#F59E0B" }}>Resta</th>
+                  {isAdmin && <th className="text-right py-2.5 px-3">Costo</th>}
+                  {isAdmin && <th className="text-right py-2.5 px-3">Utilidad</th>}
                 </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr className="border-t-2" style={{ borderColor: "var(--td-panel-border)" }}>
-                <td className="py-2 px-3" />
-                <td className="py-2 px-3 text-[10px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-hi)" }}>Total</td>
-                <td className="py-2 px-3 text-right font-black tabular-nums" style={{ color: "var(--td-text-hi)" }}>{total.cantidad}</td>
-                <td className="py-2 px-3 text-right font-black tabular-nums" style={{ color: "var(--td-text-hi)" }}>{fmt(total.abono)}</td>
+              </thead>
+              <tbody>
+                {rows.map(r => {
+                  const resta = r.venta - r.abono;
+                  const util = r.venta - r.costo;
+                  const sinCosto = !r.tieneCosto || r.costo <= 0;
+                  return (
+                    <tr key={r.key} className="border-t" style={{ borderColor: "var(--td-divider)" }}>
+                      <td className="py-2.5 px-3 whitespace-nowrap tabular-nums text-xs" style={{ color: "var(--td-text-lo)" }}>{fmtDate(r.fecha)}</td>
+                      <td className="py-2.5 px-3 font-bold truncate" style={{ color: "var(--td-text-hi)" }} title={r.name}>{r.name}</td>
+                      <td className="py-2.5 px-3 text-right tabular-nums" style={{ color: "var(--td-text-md)" }}>{r.cantidad}</td>
+                      <td className="py-2.5 px-3 text-right tabular-nums" style={{ color: "var(--td-text-md)" }}>{fmt(r.venta)}</td>
+                      <td className="py-2.5 px-3 text-right font-black tabular-nums" style={{ color: "var(--td-text-hi)" }}>{fmt(r.abono)}</td>
+                      <td className="py-2.5 px-3 text-right tabular-nums font-bold" style={{ color: resta > 0.009 ? "#F59E0B" : "#10b981" }}>{fmt(resta)}</td>
+                      {isAdmin && (
+                        <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap"
+                          style={{ color: sinCosto ? "#f87171" : "var(--td-text-md)", fontWeight: sinCosto ? 800 : undefined }}>
+                          {sinCosto ? (
+                            <span className="inline-flex items-center gap-1.5">
+                              {fmt(r.tieneCosto ? r.costo : 0)}
+                              <span className="px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider" style={{ background: "rgba(220,38,38,0.15)", color: "#f87171", border: "1px solid rgba(220,38,38,0.3)" }}>sin costo</span>
+                            </span>
+                          ) : fmt(r.costo)}
+                        </td>
+                      )}
+                      {isAdmin && <td className="py-2.5 px-3 text-right font-bold tabular-nums" style={{ color: util >= 0 ? "#10b981" : "#DC2626" }}>{fmt(util)}</td>}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div className="shrink-0 border-t-2" style={{ borderColor: "var(--td-panel-border)", background: CORTE_STICKY_BG }}>
+          <table className="w-full text-sm" style={{ tableLayout: "fixed" }}>
+            {colGroup}
+            <tbody>
+              <tr>
+                <td className="py-2.5 px-3" />
+                <td className="py-2.5 px-3 text-[11px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-hi)" }}>Total</td>
+                <td className="py-2.5 px-3 text-right font-black tabular-nums" style={{ color: "var(--td-text-hi)" }}>{total.cantidad}</td>
+                <td className="py-2.5 px-3 text-right font-black tabular-nums" style={{ color: "var(--td-text-hi)" }}>{fmt(total.venta)}</td>
+                <td className="py-2.5 px-3 text-right font-black tabular-nums" style={{ color: "var(--td-text-hi)" }}>{fmt(total.abono)}</td>
+                <td className="py-2.5 px-3 text-right font-black tabular-nums" style={{ color: restaTotal > 0.009 ? "#F59E0B" : "#10b981" }}>{fmt(restaTotal)}</td>
+                {isAdmin && (
+                  <td className="py-2.5 px-3 text-right font-black tabular-nums whitespace-nowrap" style={{ color: "var(--td-text-hi)" }}>
+                    {fmt(total.costo)}
+                    {sinCostoCount > 0 && (
+                      <span className="ml-1.5 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider align-middle" style={{ background: "rgba(220,38,38,0.15)", color: "#f87171", border: "1px solid rgba(220,38,38,0.3)" }}>{sinCostoCount} sin costo</span>
+                    )}
+                  </td>
+                )}
+                {isAdmin && <td className="py-2.5 px-3 text-right font-black tabular-nums" style={{ color: utilidadTotal >= 0 ? "#10b981" : "#DC2626" }}>{fmt(utilidadTotal)}</td>}
               </tr>
-            </tfoot>
+            </tbody>
           </table>
         </div>
-      )}
+      </div>
     </ReportSection>
   );
 }
 
-function ReportSection({ title, children }: { title: string; children: React.ReactNode }) {
+function ReportSection({ title, subtitle, children, centered = false }: { title: string; subtitle?: string | undefined; children: React.ReactNode; centered?: boolean }) {
   return (
     <div className="rounded-2xl p-4" style={{ background: "rgba(0,0,0,0.15)", border: "1px solid var(--td-panel-border)" }}>
-      <p className="text-[9px] font-black uppercase tracking-widest mb-3" style={{ color: "var(--td-text-lo)" }}>{title}</p>
+      <p className={`font-black uppercase tracking-widest ${subtitle ? "mb-1" : "mb-3"} ${centered ? "text-center text-[11px]" : "text-[9px]"}`} style={{ color: centered ? "var(--td-text-hi)" : "var(--td-text-lo)" }}>{title}</p>
+      {subtitle && (
+        // Fórmula del cálculo a la vista (Joel 2026-06-11) — para validar
+        // contra el Excel de corte; luego se decide si se queda.
+        <p className={`mb-3 text-[9px] font-bold tracking-wide ${centered ? "text-center" : ""}`} style={{ color: "var(--td-text-lo)" }}>{subtitle}</p>
+      )}
       {children}
     </div>
   );
@@ -1003,16 +1663,30 @@ function printDailyReport(r: DailyReport, fromDate: string, toDate: string, stor
     return `<h2>${title}</h2><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody><tfoot>${foot}</tfoot></table>`;
   };
 
-  // Tabla de abonos (Fecha | Producto | Cantidad | Abono).
+  // Tabla de abonos (Fecha | Producto | Cantidad | Venta | Abono | Resta
+  // [| Costo | Utilidad]) — mismas columnas/fórmulas que la pantalla.
   const abonoTable = (): string => {
     const rows = c.abonos.rows;
+    const t = c.abonos.total;
+    const head = isAdmin
+      ? "<th>Fecha</th><th>Producto</th><th class='right'>Cantidad</th><th class='right'>Venta</th><th class='right'>Abono</th><th class='right'>Resta</th><th class='right'>Costo</th><th class='right'>Utilidad</th>"
+      : "<th>Fecha</th><th>Producto</th><th class='right'>Cantidad</th><th class='right'>Venta</th><th class='right'>Abono</th><th class='right'>Resta</th>";
     const body = rows.length === 0
-      ? `<tr><td colspan="4" style="text-align:center;color:#999">Sin abonos</td></tr>`
-      : rows.map(row => `<tr><td>${fmtDate(row.fecha)}</td><td>${row.name}</td><td class='right'>${row.cantidad}</td><td class='right'>${fmt(row.abono)}</td></tr>`).join("");
+      ? `<tr><td colspan="${isAdmin ? 8 : 6}" style="text-align:center;color:#999">Sin abonos</td></tr>`
+      : rows.map(row => {
+          const base = `<td>${fmtDate(row.fecha)}</td><td>${row.name}</td><td class='right'>${row.cantidad}</td><td class='right'>${fmt(row.venta)}</td><td class='right'>${fmt(row.abono)}</td><td class='right'>${fmt(row.venta - row.abono)}</td>`;
+          return isAdmin
+            ? `<tr>${base}<td class='right'>${row.tieneCosto ? fmt(row.costo) : "—"}</td><td class='right'>${row.tieneCosto ? fmt(row.venta - row.costo) : "—"}</td></tr>`
+            : `<tr>${base}</tr>`;
+        }).join("");
+    const footBase = `<td></td><td>Total</td><td class='right'>${t.cantidad}</td><td class='right'>${fmt(t.venta)}</td><td class='right'>${fmt(t.abono)}</td><td class='right'>${fmt(t.venta - t.abono)}</td>`;
+    const foot = isAdmin
+      ? `<tr class='total'>${footBase}<td class='right'>${fmt(t.costo)}</td><td class='right'>${fmt(t.venta - t.costo)}</td></tr>`
+      : `<tr class='total'>${footBase}</tr>`;
     return `<h2>Abonos preventa</h2><table>
-      <thead><tr><th>Fecha</th><th>Producto</th><th class='right'>Cantidad</th><th class='right'>Abono</th></tr></thead>
+      <thead><tr>${head}</tr></thead>
       <tbody>${body}</tbody>
-      <tfoot><tr class='total'><td></td><td>Total</td><td class='right'>${c.abonos.total.cantidad}</td><td class='right'>${fmt(c.abonos.total.abono)}</td></tr></tfoot>
+      <tfoot>${foot}</tfoot>
     </table>`;
   };
 
@@ -1092,15 +1766,30 @@ function exportDailyReportPdf(r: DailyReport, fromDate: string, toDate: string, 
   prodTable("Ventas normales", c.ventasNormales.rows, c.ventasNormales.total);
   prodTable("Ventas con tarjeta", c.ventasTarjeta.rows, c.ventasTarjeta.total);
 
+  // Apartados con Venta/Resta (+ Costo/Utilidad admin) — espejo de pantalla.
   autoTable(doc, {
-    head: [["Fecha", "Abonos preventa", "Cantidad", "Abono"]],
-    body: c.abonos.rows.map(row => [fmtDate(row.fecha), row.name, String(row.cantidad), fmt(row.abono)]),
-    foot: [["", "Total", String(c.abonos.total.cantidad), fmt(c.abonos.total.abono)]],
+    head: isAdmin
+      ? [["Fecha", "Abonos preventa", "Cantidad", "Venta", "Abono", "Resta", "Costo", "Utilidad"]]
+      : [["Fecha", "Abonos preventa", "Cantidad", "Venta", "Abono", "Resta"]],
+    body: c.abonos.rows.map(row => {
+      const base = [fmtDate(row.fecha), row.name, String(row.cantidad), fmt(row.venta), fmt(row.abono), fmt(row.venta - row.abono)];
+      return isAdmin
+        ? [...base, row.tieneCosto ? fmt(row.costo) : "—", row.tieneCosto ? fmt(row.venta - row.costo) : "—"]
+        : base;
+    }),
+    foot: (() => {
+      const base = ["", "Total", String(c.abonos.total.cantidad), fmt(c.abonos.total.venta), fmt(c.abonos.total.abono), fmt(c.abonos.total.venta - c.abonos.total.abono)];
+      return isAdmin
+        ? [[...base, fmt(c.abonos.total.costo), fmt(c.abonos.total.venta - c.abonos.total.costo)]]
+        : [base];
+    })(),
     theme: "striped",
     headStyles: { fillColor: [204, 34, 0] },
     footStyles: { fillColor: [240, 240, 240], textColor: 20, fontStyle: "bold" },
     styles: { fontSize: 9 },
-    columnStyles: { 2: { halign: "right" }, 3: { halign: "right", fontStyle: "bold" } },
+    columnStyles: isAdmin
+      ? { 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right", fontStyle: "bold" }, 5: { halign: "right" }, 6: { halign: "right" }, 7: { halign: "right", fontStyle: "bold" } }
+      : { 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right", fontStyle: "bold" }, 5: { halign: "right" } },
   });
 
   prodTable("Preventa liquidación", c.liquidacion.rows, c.liquidacion.total);
@@ -1165,17 +1854,27 @@ async function exportDailyReportXlsx(r: DailyReport, fromDate: string, toDate: s
   prodTable("Ventas normales", c.ventasNormales.rows, c.ventasNormales.total);
   prodTable("Ventas con tarjeta", c.ventasTarjeta.rows, c.ventasTarjeta.total);
 
-  // Tabla de abonos (Fecha | Producto | Cantidad | Abono).
+  // Tabla de abonos (Fecha | Producto | Cantidad | Venta | Abono | Resta
+  // [| Costo | Utilidad]) — fórmulas del Excel: Resta = Venta − Abono,
+  // Utilidad = Venta − Costo.
   sectionTitle("Abonos preventa");
-  const abonoHead = ws.addRow(["Fecha", "Producto", "Cantidad", "Abono"]);
+  const abonoHead = isAdmin
+    ? ws.addRow(["Fecha", "Producto", "Cantidad", "Venta", "Abono", "Resta", "Costo", "Utilidad"])
+    : ws.addRow(["Fecha", "Producto", "Cantidad", "Venta", "Abono", "Resta"]);
   abonoHead.font = { bold: true };
   c.abonos.rows.forEach(row => {
-    const xr = ws.addRow([fmtDate(row.fecha), row.name, row.cantidad, row.abono]);
-    money(xr, 4);
+    const resta = row.venta - row.abono;
+    const xr = isAdmin
+      ? ws.addRow([fmtDate(row.fecha), row.name, row.cantidad, row.venta, row.abono, resta, row.tieneCosto ? row.costo : 0, row.tieneCosto ? row.venta - row.costo : 0])
+      : ws.addRow([fmtDate(row.fecha), row.name, row.cantidad, row.venta, row.abono, resta]);
+    if (isAdmin) money(xr, 4, 5, 6, 7, 8); else money(xr, 4, 5, 6);
   });
-  const abonoTotal = ws.addRow(["", "Total", c.abonos.total.cantidad, c.abonos.total.abono]);
+  const at = c.abonos.total;
+  const abonoTotal = isAdmin
+    ? ws.addRow(["", "Total", at.cantidad, at.venta, at.abono, at.venta - at.abono, at.costo, at.venta - at.costo])
+    : ws.addRow(["", "Total", at.cantidad, at.venta, at.abono, at.venta - at.abono]);
   abonoTotal.font = { bold: true };
-  money(abonoTotal, 4);
+  if (isAdmin) money(abonoTotal, 4, 5, 6, 7, 8); else money(abonoTotal, 4, 5, 6);
   ws.addRow([]);
 
   prodTable("Preventa liquidación", c.liquidacion.rows, c.liquidacion.total);
@@ -1198,6 +1897,10 @@ export function SalesPage() {
   const isAdmin   = user?.roles?.some(r => ["admin","super_admin","owner","dueño"].includes(r.toLowerCase())) ?? false;
   const isGerente = user?.roles?.some(r => r.toLowerCase() === "gerente") ?? false;
   const isCashier = user?.roles?.some(r => r.toLowerCase() === "cajero") ?? false;
+  // Costo/Utilidad en el Reporte: admin o quien tenga el flag can_view_cost
+  // (gerente con tienda lo recibe automático — decisión 2026-06-10). Mismo
+  // gate que el backend usa para mandar `cost` en los payloads.
+  const canViewCost = isAdmin || !!user?.can_view_cost;
   const canPickStore = isAdmin;
   // Cajero no ve cards de finanzas (ingresos, por cobrar, totales). Gerente y
   // admin sí — gerente para su tienda, admin para todas o la que elija.
@@ -1210,9 +1913,6 @@ export function SalesPage() {
   const canFilterByCashier = isAdmin || isGerente;
 
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
-  // Refs a los <input type="date"> para abrir el native picker en cualquier
-  // clic del pill (Chromium/Firefox soportan input.showPicker()).
-  const dateInputRefs = useRef<Array<HTMLInputElement | null>>([null, null]);
   const effectiveStoreId: number | null = canPickStore ? selectedStoreId : (user?.store_id ?? null);
 
   // Default: filtro "Hoy" al primer render — Joel quiere que las ventas del
@@ -1232,6 +1932,17 @@ export function SalesPage() {
   const [activeTab, setActiveTab]             = useState<"ventas" | "productos" | "flujo" | "reporte">("ventas");
   const [searchSale, setSearchSale]           = useState("");
   const [searchProduct, setSearchProduct]     = useState("");
+  // % de IVA sobre la comisión de terminal — editable en el header del
+  // Reporte del Día; persiste por dispositivo (localStorage).
+  const [ivaComisionPct, setIvaComisionPct]   = useState<number>(loadIvaComisionPct);
+  const handleIvaPctChange = (pct: number) => {
+    const clamped = Math.min(100, Math.max(0, pct));
+    setIvaComisionPct(clamped);
+    // 0 (input vacío) vale durante la sesión pero NO se persiste: al recargar
+    // la variable regresa al default 16 (Joel 2026-06-12).
+    if (clamped > 0) localStorage.setItem(IVA_PCT_STORAGE_KEY, String(clamped));
+    else localStorage.removeItem(IVA_PCT_STORAGE_KEY);
+  };
 
   // Preset date shortcuts
   const setPreset = (preset: "today" | "week" | "month") => {
@@ -1305,8 +2016,14 @@ export function SalesPage() {
   if (filterStartDate) preSaleOrdersParams.from = filterStartDate;
   if (filterEndDate)   preSaleOrdersParams.to   = filterEndDate;
 
-  const salesQuery = useSalesQuery(salesParams as Parameters<typeof useSalesQuery>[0]);
-  const preSaleOrdersQuery = usePreSaleOrdersQuery(preSaleOrdersParams as Parameters<typeof usePreSaleOrdersQuery>[0]);
+  // Polling casi-live (Joel 2026-06-12): SOLO mientras esta pantalla está
+  // montada y la tab enfocada — admin/gerente ven ventas/folios hechos en
+  // OTRAS máquinas sin tocar nada. El cajero no lo necesita: sus movimientos
+  // ya aparecen al instante por la escritura optimista del checkout.
+  const LIVE_POLL_MS = 20_000;
+  const livePoll = { refetchIntervalMs: isCashier ? (false as const) : LIVE_POLL_MS };
+  const salesQuery = useSalesQuery(salesParams as Parameters<typeof useSalesQuery>[0], livePoll);
+  const preSaleOrdersQuery = usePreSaleOrdersQuery(preSaleOrdersParams as Parameters<typeof usePreSaleOrdersQuery>[0], livePoll);
   const productsQuery = useProductsQuery();
 
   // Reporte del Día — sesiones de caja del rango filtrado. Backend RBAC ya
@@ -1360,15 +2077,34 @@ export function SalesPage() {
   const loading = isFirstLoad || isFreshFilterFetch;
 
   useEffect(() => {
-    if (salesQuery.error || preSaleOrdersQuery.error || productsQuery.error) {
-      toast.error("Error al cargar datos financieros");
-    }
-  }, [salesQuery.error, preSaleOrdersQuery.error, productsQuery.error]);
+    // Con el polling de 20s, un refetch de fondo que falla una sola vez
+    // (red, sleep de la laptop, timeout de Cloud Run) deja `error` seteado
+    // aunque la data anterior siga en pantalla — eso NO amerita toast (y se
+    // repetiría en cada poll fallido). Solo avisamos cuando la falla deja a
+    // la pantalla sin datos que mostrar.
+    const failures: Array<[string, unknown]> = [
+      ["ventas", salesQuery.isError && !salesQuery.data ? salesQuery.error : null],
+      ["preventas", preSaleOrdersQuery.isError && !preSaleOrdersQuery.data ? preSaleOrdersQuery.error : null],
+      ["productos", productsQuery.isError && !productsQuery.data ? productsQuery.error : null],
+    ];
+    const failed = failures.filter(([, e]) => e != null);
+    if (failed.length === 0) return;
+    const detail = (failed[0]?.[1] as { message?: string } | null)?.message;
+    const which = failed.map(([name]) => name).join(", ");
+    toast.error(`Error al cargar ${which}${detail ? `: ${detail}` : ""}`);
+  }, [
+    salesQuery.isError, salesQuery.error, salesQuery.data,
+    preSaleOrdersQuery.isError, preSaleOrdersQuery.error, preSaleOrdersQuery.data,
+    productsQuery.isError, productsQuery.error, productsQuery.data,
+  ]);
 
   const handleReturn = async (saleId: number) => {
     try {
       await returnSale(saleId);
-      void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all });
+      // La devolución regresa el stock (InventoryMovement 'devolucion') —
+      // invalidación central: catálogo de Caja, Existencias, historial,
+      // lista de ventas y dashboards (bug QA 2026-06-11).
+      invalidateAfterSale(queryClient);
       toast.success("Devolución registrada. Inventario restaurado.");
     } catch {
       toast.error("Error al procesar la devolución");
@@ -1435,12 +2171,13 @@ export function SalesPage() {
   // filteredPreSales (ya scopeados por rango + tienda) y suma data de cortes
   // de caja (cashReportQuery) y TC del día (exchangeRateQuery).
   const dailyReport = useMemo(() => {
+    const ivaRate = ivaComisionPct / 100;
     // A) Resumen ejecutivo
     const subtotal     = filteredSales.reduce((a, s) => a + (s.subtotal ?? s.total), 0);
     const descuento    = filteredSales.reduce((a, s) => a + (s.discount ?? 0), 0);
     const ventasNetas  = filteredSales.reduce((a, s) => a + s.total, 0);
     const comisionTotal = filteredSales.reduce((a, s) => a + (s.commission_amount ?? 0), 0);
-    const ivaComisionTotal = comisionTotal * IVA_COMISION_RATE;
+    const ivaComisionTotal = comisionTotal * ivaRate;
     const netoDespuesComision = ventasNetas - comisionTotal - ivaComisionTotal;
     const ticketsCount = filteredSales.length;
     const promedio     = ticketsCount > 0 ? ventasNetas / ticketsCount : 0;
@@ -1459,7 +2196,7 @@ export function SalesPage() {
       });
     });
     const methodsRows = Array.from(byMethod.entries())
-      .map(([name, b]) => ({ name, ...b, iva: b.commission * IVA_COMISION_RATE }))
+      .map(([name, b]) => ({ name, ...b, iva: b.commission * ivaRate }))
       .sort((a, b) => b.amount - a.amount);
 
     // C) Preventas
@@ -1598,7 +2335,7 @@ export function SalesPage() {
       if (sess.status === "open") row.hasOpenSession = true;
     });
     const cashierRows: CashierRow[] = Array.from(cashierMap.values())
-      .map(r => ({ ...r, iva: r.commission * IVA_COMISION_RATE }))
+      .map(r => ({ ...r, iva: r.commission * ivaRate }))
       .sort((a, b) => b.revenue - a.revenue);
 
     // H) Cancelaciones (ADR-016 Fase 1) — solo visibilidad por ahora.
@@ -1607,7 +2344,10 @@ export function SalesPage() {
     const ventasCanceladas    = filteredSales.filter(s => s.status === "returned");
     const preventasCanceladas = filteredPreSales.filter(p => p.status === "cancelled");
     const cancelacionesCount  = ventasCanceladas.length + preventasCanceladas.length;
-    const montoVentasCanceladas    = ventasCanceladas.reduce((a, s) => a + s.total, 0);
+    // Monto reversado real: `cancelled_amount` del log ADR-016 (la venta
+    // editada in-place queda en total=0, sumar s.total daba siempre $0).
+    // Incluye también las cancelaciones PARCIALES de ventas activas.
+    const montoVentasCanceladas    = filteredSales.reduce((a, s) => a + (s.cancelled_amount ?? 0), 0);
     const montoPreventasCanceladas = preventasCanceladas.reduce((a, p) => a + (p.paid_amount ?? 0), 0);
     const montoCanceladoTotal      = montoVentasCanceladas + montoPreventasCanceladas;
     const ventasNetasReales        = ventasNetas - montoCanceladoTotal;
@@ -1625,32 +2365,46 @@ export function SalesPage() {
         return n.includes("tarjeta") || n.includes("card");
       });
 
-    // Acumulador por producto con venta/costo/utilidad.
+    // Acumulador por producto con venta/costo/utilidad (+comisión en Tarjeta).
     type ProdCorte = {
-      key: string; name: string; fecha: string;
+      key: string; name: string; fecha: string; precioUnit: number;
       cantidad: number; venta: number; costo: number; tieneCosto: boolean;
+      comision: number;
     };
-    // Agrupamos por PRODUCTO + FECHA (zona negocio) → cada renglón muestra su
-    // fecha de venta. En el corte "Hoy" cada producto sale una vez con la fecha
-    // del día; en un rango, una vez por día que se vendió.
-    const accSaleItems = (sales: SaleDetail[]): ProdCorte[] => {
+    // Agrupamos por PRODUCTO + FECHA + PRECIO UNITARIO (Joel 2026-06-12): el
+    // mismo producto vendido a precios distintos (Normal vs Socio, dañado,
+    // re-precio) sale en renglones separados → cant × precio = venta, sin
+    // promedios que confundan.
+    //
+    // withComision (tabla Tarjeta): cada terminal puede tener % de comisión
+    // distinto, así que NO se aplica un % global — se reparte el snapshot
+    // commission_amount de CADA venta entre sus items, proporcional a la venta
+    // del item. La suma de la columna = suma real de comisiones del periodo.
+    const accSaleItems = (sales: SaleDetail[], withComision = false): ProdCorte[] => {
       const map = new Map<string, ProdCorte>();
       sales.forEach(s => {
         const fecha = toLocalYmd(new Date(s.sold_at || s.created_at));
-        (s.items ?? []).forEach(it => {
+        const items = s.items ?? [];
+        const saleVenta = items.reduce((a, it) => a + (it.price ?? 0) * (it.quantity ?? 0), 0);
+        const saleComision = withComision ? (s.commission_amount ?? 0) : 0;
+        items.forEach((it, idx) => {
           const name = it.product?.name ?? `#${it.product_id}`;
-          const key = `${fecha}|${name}`;
-          const row = map.get(key) ?? { key, name, fecha, cantidad: 0, venta: 0, costo: 0, tieneCosto: false };
+          const precioUnit = it.price ?? 0;
+          const key = `${fecha}|${name}|${precioUnit}`;
+          const row = map.get(key) ?? { key, name, fecha, precioUnit, cantidad: 0, venta: 0, costo: 0, tieneCosto: false, comision: 0 };
           const qty = it.quantity ?? 0;
+          const itemVenta = precioUnit * qty;
           // cost: snapshot histórico (item.cost) → fallback product.cost actual.
           const unitCost = it.cost ?? it.product?.cost;
           row.cantidad += qty;
-          row.venta    += (it.price ?? 0) * qty;
+          row.venta    += itemVenta;
+          // Reparto proporcional; fallback: todo al primer item si la venta es 0.
+          row.comision += saleVenta > 0 ? saleComision * (itemVenta / saleVenta) : (idx === 0 ? saleComision : 0);
           if (unitCost != null) { row.costo += unitCost * qty; row.tieneCosto = true; }
           map.set(key, row);
         });
       });
-      return Array.from(map.values()).sort((a, b) => b.fecha.localeCompare(a.fecha) || b.venta - a.venta);
+      return Array.from(map.values()).sort((a, b) => b.fecha.localeCompare(a.fecha) || a.name.localeCompare(b.name) || b.venta - a.venta);
     };
 
     // Para preventa el item NO trae `product` ni `price`: usa catalog.product_name
@@ -1661,9 +2415,10 @@ export function SalesPage() {
         const fecha = toLocalYmd(new Date(p.updated_at || p.created_at));
         (p.items ?? []).forEach(it => {
           const name = it.catalog?.product_name ?? `#${it.product_id ?? "?"}`;
-          const key = `${fecha}|${name}`;
-          const row = map.get(key) ?? { key, name, fecha, cantidad: 0, venta: 0, costo: 0, tieneCosto: false };
           const qty = it.quantity ?? 0;
+          const precioUnit = it.unit_price ?? (qty > 0 ? (it.subtotal ?? 0) / qty : 0);
+          const key = `${fecha}|${name}|${precioUnit}`;
+          const row = map.get(key) ?? { key, name, fecha, precioUnit, cantidad: 0, venta: 0, costo: 0, tieneCosto: false, comision: 0 };
           // Venta del item de preventa: subtotal si viene, si no unit_price*qty.
           row.venta += it.subtotal ?? ((it.unit_price ?? 0) * qty);
           row.cantidad += qty;
@@ -1671,12 +2426,13 @@ export function SalesPage() {
           map.set(key, row);
         });
       });
-      return Array.from(map.values()).sort((a, b) => b.fecha.localeCompare(a.fecha) || b.venta - a.venta);
+      return Array.from(map.values()).sort((a, b) => b.fecha.localeCompare(a.fecha) || a.name.localeCompare(b.name) || b.venta - a.venta);
     };
 
     // Tablas 1 y 2: ventas regulares (excluye preventas, ya separadas).
+    // Tarjeta lleva la comisión repartida por fila (withComision).
     const ventasNormalesRows = accSaleItems(filteredSales.filter(s => !isCardSale(s) && s.status !== "returned"));
-    const ventasTarjetaRows  = accSaleItems(filteredSales.filter(s =>  isCardSale(s) && s.status !== "returned"));
+    const ventasTarjetaRows  = accSaleItems(filteredSales.filter(s => isCardSale(s) && s.status !== "returned"), true);
 
     // Tabla 3: Abonos preventa (status pending | ready). Se agrupa por PRODUCTO.
     // Decisión sobre el reparto del `paid_amount` (anticipo) del folio:
@@ -1684,7 +2440,7 @@ export function SalesPage() {
     // VENTA de cada item dentro del folio (item.subtotal / total del folio). Si
     // el folio no tiene venta calculable, se asigna todo al primer item. Así el
     // total de "Abono" de la tabla = suma de paid_amount de los folios.
-    type AbonoRow = { key: string; name: string; fecha: string; cantidad: number; abono: number };
+    type AbonoRow = { key: string; name: string; fecha: string; cantidad: number; venta: number; abono: number; costo: number; tieneCosto: boolean };
     const abonoMap = new Map<string, AbonoRow>();
     filteredPreSales
       .filter(p => p.status === "pending" || p.status === "ready")
@@ -1696,9 +2452,15 @@ export function SalesPage() {
         items.forEach((it, idx) => {
           const name = it.catalog?.product_name ?? `#${it.product_id ?? "?"}`;
           const key = `${fecha}|${name}`;
-          const row = abonoMap.get(key) ?? { key, name, fecha, cantidad: 0, abono: 0 };
-          row.cantidad += it.quantity ?? 0;
-          const itemVenta = it.subtotal ?? (it.unit_price ?? 0) * (it.quantity ?? 0);
+          const row = abonoMap.get(key) ?? { key, name, fecha, cantidad: 0, venta: 0, abono: 0, costo: 0, tieneCosto: false };
+          const qty = it.quantity ?? 0;
+          row.cantidad += qty;
+          const itemVenta = it.subtotal ?? (it.unit_price ?? 0) * qty;
+          row.venta += itemVenta;
+          // Costo del snapshot ADR-015 (pre_sale_order_items.cost) — admin-gated
+          // en el backend, para gerente sin flag llega null y la columna marca
+          // "sin costo".
+          if (it.cost != null) { row.costo += it.cost * qty; row.tieneCosto = true; }
           // Reparto proporcional; fallback: todo al primer item si no hay venta.
           row.abono += totalVenta > 0 ? paid * (itemVenta / totalVenta) : (idx === 0 ? paid : 0);
           abonoMap.set(key, row);
@@ -1719,6 +2481,7 @@ export function SalesPage() {
       cantidad: rows.reduce((a, r) => a + r.cantidad, 0),
       venta:    rows.reduce((a, r) => a + r.venta, 0),
       costo:    rows.reduce((a, r) => a + r.costo, 0),
+      comision: rows.reduce((a, r) => a + r.comision, 0),
     });
 
     return {
@@ -1752,12 +2515,17 @@ export function SalesPage() {
       corte: {
         ventasNormales:  { rows: ventasNormalesRows, total: sumCorte(ventasNormalesRows) },
         ventasTarjeta:   { rows: ventasTarjetaRows,  total: sumCorte(ventasTarjetaRows) },
-        abonos:          { rows: abonosRows, total: { cantidad: abonosRows.reduce((a, r) => a + r.cantidad, 0), abono: abonosRows.reduce((a, r) => a + r.abono, 0) } },
+        abonos:          { rows: abonosRows, total: {
+          cantidad: abonosRows.reduce((a, r) => a + r.cantidad, 0),
+          venta:    abonosRows.reduce((a, r) => a + r.venta, 0),
+          abono:    abonosRows.reduce((a, r) => a + r.abono, 0),
+          costo:    abonosRows.reduce((a, r) => a + r.costo, 0),
+        } },
         liquidacion:     { rows: liquidacionRows, total: sumCorte(liquidacionRows) },
         vencidas:        { rows: vencidasRows, total: sumCorte(vencidasRows) },
       },
     };
-  }, [filteredSales, filteredPreSales, preSaleOrders, cashReportQuery.data, exchangeRateQuery.data]);
+  }, [filteredSales, filteredPreSales, preSaleOrders, cashReportQuery.data, exchangeRateQuery.data, ivaComisionPct]);
 
   // ── Lista de ventas ────────────────────────────────────────────────────────
   const sortedSales = useMemo(
@@ -1881,7 +2649,16 @@ export function SalesPage() {
   // Refetch con data anterior en pantalla (keepPreviousData): la lista vieja
   // sigue visible — sin señal el cambio de fecha parecía "no funcionar".
   // Atenuamos la lista + chip "Cargando…" junto a los presets de período.
-  const isRefreshingList = (salesQuery.isFetching || preSaleOrdersQuery.isFetching) && !loading;
+  // SOLO cuando isPlaceholderData (la data en pantalla es de OTRO filtro):
+  // el polling de 20s y los refetch en background del MISMO filtro son
+  // silenciosos — si no hay nada nuevo no se nota nada, y si hay, la fila
+  // simplemente aparece en la lista (Joel 2026-06-12).
+  const isRefreshingList =
+    ((salesQuery.isFetching && salesQuery.isPlaceholderData) ||
+      (preSaleOrdersQuery.isFetching && preSaleOrdersQuery.isPlaceholderData)) && !loading;
+  const ventasPanelHeight = canSeeKpiRow
+    ? "clamp(360px, calc(100vh - 470px), 760px)"
+    : "clamp(420px, calc(100vh - 340px), 820px)";
 
   // ─────────────────────────────────────────────────────────────────────────────
   return (
@@ -1946,170 +2723,6 @@ export function SalesPage() {
         </div>
       </header>
 
-      {/* ── Filtro principal: ocupa todo el ancho arriba de la tabla. Joel pidió
-          que el periodo sea lo primero y se vea siempre activo cuál preset
-          está seleccionado (Hoy por default). ──
-          relative + z-50 fuerza a este panel a pintar encima del panel de
-          tabla que viene después en el DOM, así el dropdown 'Todos los pagos'
-          no queda tapado cuando se despliega hacia abajo. */}
-      <div className="rounded-[24px] p-4 flex flex-wrap items-center gap-3 relative z-50" style={T.glass}>
-        <div className="flex items-center gap-2">
-          <CalendarDays size={14} style={{ color: T.redBright }} />
-          <span className="text-[10px] font-black uppercase tracking-[0.18em]" style={{ color: "var(--td-text-md)" }}>
-            Periodo
-          </span>
-        </div>
-
-        {/* Chips de preset — el activo va con gradient rojo y borde luminoso */}
-        {(["today", "week", "month"] as const).map(p => {
-          const active = activePreset === p;
-          return (
-            <button
-              key={p}
-              onClick={() => setPreset(p)}
-              className="h-[34px] px-4 rounded-full text-[10px] font-black uppercase tracking-widest transition-all"
-              style={active
-                ? { background: "linear-gradient(135deg,#CC2200,#FF4422)", color: "#fff", border: "1px solid rgba(255,80,50,0.4)", boxShadow: "0 4px 18px rgba(204,34,0,0.4)" }
-                : { background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)", color: "var(--td-text-md)" }
-              }
-            >
-              {p === "today" ? "Hoy" : p === "week" ? "7 días" : "Este mes"}
-            </button>
-          );
-        })}
-
-        {/* Señal de refetch: con keepPreviousData la lista anterior queda en
-            pantalla y sin este chip el cambio de fecha parecía no responder. */}
-        {isRefreshingList && (
-          <span
-            className="flex items-center gap-1.5 h-[34px] px-3.5 rounded-full text-[10px] font-black uppercase tracking-widest"
-            style={{ background: "rgba(255,170,0,0.1)", border: "1px solid rgba(255,170,0,0.3)", color: "#FFAA00" }}
-          >
-            <Loader2 size={12} strokeWidth={3} className="animate-spin" />
-            Cargando…
-          </span>
-        )}
-
-        {/* Rango personalizado — DOS pills separados para que el click target
-            de cada fecha sea grande, claro y diferenciable. Antes era un solo
-            pill compartido y se batallaba para acertar al inicio vs fin. */}
-        {([
-          { value: filterStartDate, set: setFilterStartDate, label: "Desde", placeholder: "—" },
-          { value: filterEndDate,   set: setFilterEndDate,   label: "Hasta", placeholder: "—", min: filterStartDate },
-        ] as const).map((d, i) => {
-          const inputRef = (el: HTMLInputElement | null) => { dateInputRefs.current[i] = el; };
-          // Forzamos la apertura del native date picker en cualquier click del pill.
-          // Sin esto el navegador a veces solo enfoca el input (sin abrir) cuando
-          // se clickea fuera del ícono pequeño nativo.
-          const openPicker = (e: React.MouseEvent) => {
-            const input = dateInputRefs.current[i];
-            if (!input) return;
-            if (typeof input.showPicker === "function") {
-              e.preventDefault();
-              try { input.showPicker(); } catch { /* algunos browsers exigen gesto distinto */ }
-            }
-          };
-          return (
-            <div
-              key={i}
-              role="button"
-              tabIndex={0}
-              onClick={openPicker}
-              className="relative flex items-center gap-2 rounded-full h-[34px] cursor-pointer transition-all"
-              style={{
-                padding: "0 12px 0 14px",
-                background: "var(--td-panel-bg)",
-                border: `1px solid ${activePreset === "custom" ? "rgba(255,68,34,0.4)" : "var(--td-panel-border)"}`,
-                minWidth: 130,
-              }}
-              onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.borderColor = "rgba(255,68,34,0.6)"; }}
-              onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.borderColor = activePreset === "custom" ? "rgba(255,68,34,0.4)" : "var(--td-panel-border)"; }}
-            >
-              <CalendarDays size={11} style={{ color: "var(--td-text-lo)", flexShrink: 0, pointerEvents: "none" }} />
-              <span className="text-[8px] font-black uppercase tracking-widest pointer-events-none select-none" style={{ color: "var(--td-text-lo)" }}>
-                {d.label}
-              </span>
-              <span className="text-[10px] font-bold tracking-widest uppercase pointer-events-none select-none"
-                style={{ color: d.value ? "var(--td-text-hi)" : "var(--td-text-lo)" }}>
-                {fmtDate(d.value) || d.placeholder}
-              </span>
-              <input
-                ref={inputRef}
-                type="date"
-                value={d.value}
-                {...(("min" in d) && d.min ? { min: d.min } : {})}
-                onChange={e => d.set(e.target.value)}
-                // Cubre todo el pill como fallback si el browser no soporta
-                // showPicker(). Mantenemos opacity-0 para que se vea el label.
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                tabIndex={-1}
-              />
-            </div>
-          );
-        })}
-
-        <div className="flex-1 min-w-0" />
-
-        {/* Filtro de cajero — solo gerente/admin lo ven. Cajero no necesita
-            (siempre se le fuerza a su user_id en backend). */}
-        {canFilterByCashier && cashiers.length > 0 && (
-          <div className="flex items-center gap-2 rounded-full px-3 h-[34px]"
-            style={{ background: "var(--td-panel-bg)", border: `1px solid ${filterCashierId ? "rgba(255,68,34,0.4)" : "var(--td-panel-border)"}` }}>
-            <Receipt size={12} style={{ color: filterCashierId ? T.redBright : "var(--td-text-lo)" }} />
-            <select
-              value={filterCashierId ?? ""}
-              onChange={e => setFilterCashierId(e.target.value ? Number(e.target.value) : null)}
-              className="bg-transparent outline-none text-[10px] font-bold uppercase tracking-widest cursor-pointer"
-              style={{ color: "var(--td-text-hi)" }}
-            >
-              <option value="">Todos los cajeros</option>
-              {cashiers.map(c => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-          </div>
-        )}
-
-        {/* Método de pago — secundario, en la misma fila */}
-        <div className="relative">
-          <button onClick={() => setIsMethodOpen(v => !v)}
-            className="flex items-center gap-2 rounded-full px-4 h-[34px] transition-colors"
-            style={{ background: "var(--td-panel-bg)", border: `1px solid ${filterMethod !== "all" ? "rgba(255,68,34,0.4)" : "var(--td-panel-border)"}` }}>
-            <CreditCard size={12} style={{ color: filterMethod !== "all" ? T.redBright : "var(--td-text-lo)" }} />
-            <span className="text-[10px] font-bold uppercase tracking-widest whitespace-nowrap" style={{ color: "var(--td-text-hi)" }}>
-              {methodOptions.find(o => o.value === filterMethod)?.label}
-            </span>
-            <ChevronDown size={10} style={{ color: "var(--td-text-lo)" }} className="ml-1" />
-          </button>
-          {isMethodOpen && (
-            <div className="absolute top-[calc(100%+6px)] right-0 w-48 rounded-2xl overflow-hidden shadow-2xl"
-              style={{
-                zIndex: 60,
-                // --td-popup-bg es opaco por tema (#13091e dark / #ffffff light).
-                // Antes usábamos --td-panel-bg que tiene alpha y dejaba ver la
-                // tabla detrás del dropdown.
-                background: "var(--td-popup-bg)",
-                border: "1px solid var(--td-popup-border)",
-                boxShadow: "0 12px 40px rgba(0,0,0,0.4)",
-              }}>
-              {methodOptions.map(opt => (
-                <button key={opt.value} onClick={() => { setFilterMethod(opt.value); setIsMethodOpen(false); }}
-                  className="w-full text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest transition-colors"
-                  style={{
-                    color: filterMethod === opt.value ? T.redBright : "var(--td-text-md)",
-                    background: filterMethod === opt.value ? "rgba(255,68,34,0.08)" : "transparent",
-                  }}
-                  onMouseEnter={e => { if (filterMethod !== opt.value) (e.target as HTMLElement).style.background = "var(--td-panel-border)"; }}
-                  onMouseLeave={e => { if (filterMethod !== opt.value) (e.target as HTMLElement).style.background = "transparent"; }}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
       {/* ── KPIs ── Solo admin. Gerente y cajero NO ven agregados del row.
           Gerente sí ve el tab de Flujo de Caja Semanal abajo. */}
       {canSeeKpiRow && (
@@ -2136,20 +2749,20 @@ export function SalesPage() {
       )}
 
       {/* ══════════ LISTAS ══════════ */}
-      <div className="rounded-[36px] overflow-hidden" style={T.glass}>
+      <div className="rounded-[36px] overflow-visible" style={T.glass}>
 
         {/* Tab bar */}
-        <div className="flex items-center justify-between px-8 pt-7 pb-0" style={{ borderBottom: "1px solid var(--td-panel-border)" }}>
+        <div className="flex flex-col gap-4 px-8 pt-7 pb-4" style={{ borderBottom: "1px solid var(--td-panel-border)" }}>
           <div className="flex items-end gap-1">
             {([
               { key: "ventas",    label: "Lista de Ventas", icon: Receipt,   count: displayedRows.length },
-              { key: "productos", label: "Por Producto",    icon: Package,   count: displayedProducts.length },
-              // El tab de flujo y reporte solo aparecen para admin/gerente.
+              // Reporte en 2ª posición (Joel 2026-06-12) — solo admin/gerente.
               ...(canSeeFinancials
-                ? [
-                    { key: "reporte" as const, label: "Reporte del Día",       icon: FileText,  count: null as number | null },
-                    { key: "flujo"   as const, label: "Flujo de Caja Semanal", icon: BarChart3, count: null as number | null },
-                  ]
+                ? [{ key: "reporte" as const, label: "Reporte", icon: FileText, count: null as number | null }]
+                : []),
+              { key: "productos", label: "Por Producto",    icon: Package,   count: displayedProducts.length },
+              ...(canSeeFinancials
+                ? [{ key: "flujo" as const, label: "Flujo de Caja Semanal", icon: BarChart3, count: null as number | null }]
                 : []),
             ] as const).map(t => (
               <button
@@ -2174,31 +2787,96 @@ export function SalesPage() {
             ))}
           </div>
 
-          <div className="hidden md:flex items-center gap-6 pb-1">
-            {activeTab === "ventas" ? (
-              <>
-                <div className="text-right">
-                  <p className="text-[8px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>Artículos vendidos</p>
-                  <p className="text-sm font-black" style={{ color: "var(--td-text-hi)" }}>
-                    {displayedItemsCount}
-                  </p>
+          <div className="flex flex-wrap items-center justify-end gap-2 relative z-50">
+            {(["today", "week", "month"] as const).map(p => {
+              const active = activePreset === p;
+              return (
+                <button
+                  key={p}
+                  onClick={() => setPreset(p)}
+                  className="h-[34px] px-4 rounded-full text-[10px] font-black uppercase tracking-widest transition-all"
+                  style={active
+                    ? { background: "linear-gradient(135deg,#CC2200,#FF4422)", color: "#fff", border: "1px solid rgba(255,80,50,0.4)", boxShadow: "0 4px 18px rgba(204,34,0,0.4)" }
+                    : { background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)", color: "var(--td-text-md)" }
+                  }
+                >
+                  {p === "today" ? "Hoy" : p === "week" ? "7 días" : "Este mes"}
+                </button>
+              );
+            })}
+
+            <SalesDateRangePicker
+              startDate={filterStartDate}
+              endDate={filterEndDate}
+              isActive={activePreset === "custom"}
+              isFetching={salesQuery.isFetching || preSaleOrdersQuery.isFetching}
+              onChange={(start, end) => {
+                setFilterStartDate(start);
+                setFilterEndDate(end);
+              }}
+            />
+
+            {canFilterByCashier && cashiers.length > 0 && (
+              <div className="flex items-center gap-2 rounded-full px-3 h-[34px]"
+                style={{ background: "var(--td-panel-bg)", border: `1px solid ${filterCashierId ? "rgba(255,68,34,0.4)" : "var(--td-panel-border)"}` }}>
+                <Receipt size={12} style={{ color: filterCashierId ? T.redBright : "var(--td-text-lo)" }} />
+                <select
+                  value={filterCashierId ?? ""}
+                  onChange={e => setFilterCashierId(e.target.value ? Number(e.target.value) : null)}
+                  className="bg-transparent outline-none text-[10px] font-bold uppercase tracking-widest cursor-pointer"
+                  style={{ color: "var(--td-text-hi)" }}
+                >
+                  <option value="">Todos los cajeros</option>
+                  {cashiers.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className="relative">
+              <button onClick={() => setIsMethodOpen(v => !v)}
+                className="flex items-center gap-2 rounded-full px-4 h-[34px] transition-colors"
+                style={{ background: "var(--td-panel-bg)", border: `1px solid ${filterMethod !== "all" ? "rgba(255,68,34,0.4)" : "var(--td-panel-border)"}` }}>
+                <CreditCard size={12} style={{ color: filterMethod !== "all" ? T.redBright : "var(--td-text-lo)" }} />
+                <span className="text-[10px] font-bold uppercase tracking-widest whitespace-nowrap" style={{ color: "var(--td-text-hi)" }}>
+                  {methodOptions.find(o => o.value === filterMethod)?.label}
+                </span>
+                <ChevronDown size={10} style={{ color: "var(--td-text-lo)" }} className="ml-1" />
+              </button>
+              {isMethodOpen && (
+                <div className="absolute top-[calc(100%+6px)] right-0 w-48 rounded-2xl overflow-hidden shadow-2xl"
+                  style={{
+                    zIndex: 60,
+                    background: "var(--td-popup-bg)",
+                    border: "1px solid var(--td-popup-border)",
+                    boxShadow: "0 12px 40px rgba(0,0,0,0.4)",
+                  }}>
+                  {methodOptions.map(opt => (
+                    <button key={opt.value} onClick={() => { setFilterMethod(opt.value); setIsMethodOpen(false); }}
+                      className="w-full text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest transition-colors"
+                      style={{
+                        color: filterMethod === opt.value ? T.redBright : "var(--td-text-md)",
+                        background: filterMethod === opt.value ? "rgba(255,68,34,0.08)" : "transparent",
+                      }}
+                      onMouseEnter={e => { if (filterMethod !== opt.value) (e.target as HTMLElement).style.background = "var(--td-panel-border)"; }}
+                      onMouseLeave={e => { if (filterMethod !== opt.value) (e.target as HTMLElement).style.background = "transparent"; }}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
                 </div>
-                <div className="text-right">
-                  <p className="text-[8px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>Total recibido</p>
-                  <p className="text-sm font-black" style={{ color: T.redBright }}>{fmt(displayedTotalReceived)}</p>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="text-right">
-                  <p className="text-[8px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>Productos únicos</p>
-                  <p className="text-sm font-black" style={{ color: "var(--td-text-hi)" }}>{displayedProducts.length}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-[8px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>Total ingresado</p>
-                  <p className="text-sm font-black" style={{ color: T.redBright }}>{fmt(displayedProducts.reduce((a, p) => a + p.totalRevenue, 0))}</p>
-                </div>
-              </>
+              )}
+            </div>
+
+            {isRefreshingList && (
+              <span
+                className="flex items-center gap-1.5 h-[34px] px-3.5 rounded-full text-[10px] font-black uppercase tracking-widest"
+                style={{ background: "rgba(255,170,0,0.1)", border: "1px solid rgba(255,170,0,0.3)", color: "#FFAA00" }}
+              >
+                <Loader2 size={12} strokeWidth={3} className="animate-spin" />
+                Cargando…
+              </span>
             )}
           </div>
         </div>
@@ -2208,66 +2886,112 @@ export function SalesPage() {
           {/* ══ Tab: Lista de Ventas ══ */}
           {activeTab === "ventas" && (
             <>
-              <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5"
-                style={{ background: "rgba(0,0,0,0.2)", border: "1px solid var(--td-panel-border)" }}>
-                <Receipt size={13} style={{ color: "var(--td-text-lo)" }} className="flex-shrink-0" />
-                <input value={searchSale} onChange={e => setSearchSale(e.target.value)}
-                  placeholder="Buscar por ID, cliente, método de pago, producto…"
-                  className="flex-1 bg-transparent outline-none text-xs"
-                  style={{ color: "var(--td-text-hi)" }} />
-                {searchSale && <button onClick={() => setSearchSale("")} className="hover:opacity-70 transition-opacity" style={{ color: "var(--td-text-lo)" }}><X size={12} /></button>}
-              </div>
-
-              <div className="flex items-center gap-4 px-4 py-1.5 text-[8px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)", borderBottom: "1px solid var(--td-panel-border)" }}>
-                <span className="w-5">#</span>
-                <span className="w-3" />
-                <span style={{ width: 80 }} />
-                <span className="w-[115px]">Fecha</span>
-                <span className="flex-1 hidden lg:block">ID / Cliente</span>
-                <span>Método</span>
-                <span className="w-10 text-center hidden sm:block">Arts.</span>
-                <span className="ml-auto">Total</span>
-              </div>
-
-              {/* Body con scroll interno. Sin esto la página entera scrollea
-                  y el header de columnas queda lejos cuando hay muchos records.
-                  Durante un refetch con data anterior visible, la lista se
-                  atenúa (es la lista vieja) hasta que llega el rango nuevo. */}
               <div
-                className="space-y-1.5 overflow-y-auto pr-1 transition-opacity duration-200"
-                style={{ maxHeight: "60vh", opacity: isRefreshingList ? 0.45 : 1, pointerEvents: isRefreshingList ? "none" : "auto" }}
+                className="rounded-[26px] overflow-hidden flex flex-col"
+                style={{
+                  height: ventasPanelHeight,
+                  background: "rgba(0,0,0,0.16)",
+                  border: "1px solid var(--td-panel-border)",
+                }}
               >
-                {loading ? (
-                  // Skeleton: 5 filas con shimmer mientras cargan los datos
-                  Array.from({ length: 5 }).map((_, i) => (
-                    <div
-                      key={`sk-${i}`}
-                      className="flex items-center gap-4 px-4 py-3 rounded-2xl animate-pulse"
-                      style={{ background: "rgba(255,255,255,0.03)", border: "1px solid var(--td-panel-border)" }}
-                    >
-                      <div className="w-9 h-9 rounded-xl" style={{ background: "rgba(255,255,255,0.06)" }} />
-                      <div className="flex-1 space-y-1.5">
-                        <div className="h-2.5 w-32 rounded-full" style={{ background: "rgba(255,255,255,0.08)" }} />
-                        <div className="h-2 w-20 rounded-full" style={{ background: "rgba(255,255,255,0.05)" }} />
-                      </div>
-                      <div className="h-2.5 w-16 rounded-full" style={{ background: "rgba(255,255,255,0.05)" }} />
-                      <div className="h-3 w-20 rounded-full" style={{ background: "rgba(255,255,255,0.08)" }} />
-                    </div>
-                  ))
-                ) : displayedRows.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-20" style={{ opacity: 0.15 }}>
-                    <Receipt size={40} className="mb-3" />
-                    <p className="text-[10px] font-black uppercase tracking-widest">Sin ventas en este período</p>
+                <div className="p-4 pb-3">
+                  <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5"
+                    style={{ background: "rgba(0,0,0,0.2)", border: "1px solid var(--td-panel-border)" }}>
+                    <Receipt size={13} style={{ color: "var(--td-text-lo)" }} className="flex-shrink-0" />
+                    <input value={searchSale} onChange={e => setSearchSale(e.target.value)}
+                      placeholder="Buscar por No. Ticket, cliente, cajero, método de pago, producto…"
+                      className="flex-1 bg-transparent outline-none text-xs"
+                      style={{ color: "var(--td-text-hi)" }} />
+                    {searchSale && <button onClick={() => setSearchSale("")} className="hover:opacity-70 transition-opacity" style={{ color: "var(--td-text-lo)" }}><X size={12} /></button>}
                   </div>
-                ) : (
-                  displayedRows.map((row, idx) => (
-                    row.kind === "sale" ? (
-                      <SaleRow key={row.key} sale={row.sale} productMap={productMap} rank={idx + 1} onReturn={handleReturn} />
+                </div>
+
+                <div
+                  className="flex lg:grid items-center gap-4 px-4 py-2 rounded-xl mx-4"
+                  style={{
+                    gridTemplateColumns: SALES_LIST_GRID_TEMPLATE,
+                    color: "var(--td-text-lo)",
+                    borderBottom: "1px solid var(--td-panel-border)",
+                    background: "rgba(26,14,20,0.96)",
+                    backdropFilter: "blur(10px)",
+                    boxShadow: "0 6px 14px rgba(0,0,0,0.18)",
+                  }}
+                >
+                  <span className="w-5 text-[9px] font-black uppercase tracking-[0.14em]">#</span>
+                  <span className="w-3" />
+                  <span style={{ width: 80 }} />
+                  <span className="w-[115px] text-[10px] font-black uppercase tracking-[0.16em]">Fecha</span>
+                  <span className="w-[108px] hidden lg:block text-[10px] font-black uppercase tracking-[0.16em] text-center">No. Ticket</span>
+                  <span className="flex-1 hidden lg:block text-[10px] font-black uppercase tracking-[0.16em] text-center">Cliente</span>
+                  <span className="w-[150px] hidden lg:block text-[10px] font-black uppercase tracking-[0.16em]">Cajero</span>
+                  <span className="w-[104px] text-center text-[10px] font-black uppercase tracking-[0.16em]">Método pago</span>
+                  <span className="w-[52px] text-center hidden sm:block text-[10px] font-black uppercase tracking-[0.16em]">Artículos</span>
+                  <span className="w-[92px] text-right text-[10px] font-black uppercase tracking-[0.16em]">Total</span>
+                </div>
+
+                <div
+                  className="flex-1 min-h-0 overflow-y-auto px-4 pb-3 pr-3 transition-opacity duration-200"
+                  style={{ opacity: isRefreshingList ? 0.45 : 1, pointerEvents: isRefreshingList ? "none" : "auto" }}
+                >
+                  <div className="space-y-1.5 pt-3">
+                    {loading ? (
+                      Array.from({ length: 5 }).map((_, i) => (
+                        <div
+                          key={`sk-${i}`}
+                          className="flex items-center gap-4 px-4 py-3 rounded-2xl animate-pulse"
+                          style={{ background: "rgba(255,255,255,0.03)", border: "1px solid var(--td-panel-border)" }}
+                        >
+                          <div className="w-9 h-9 rounded-xl" style={{ background: "rgba(255,255,255,0.06)" }} />
+                          <div className="flex-1 space-y-1.5">
+                            <div className="h-2.5 w-32 rounded-full" style={{ background: "rgba(255,255,255,0.08)" }} />
+                            <div className="h-2 w-20 rounded-full" style={{ background: "rgba(255,255,255,0.05)" }} />
+                          </div>
+                          <div className="h-2.5 w-16 rounded-full" style={{ background: "rgba(255,255,255,0.05)" }} />
+                          <div className="h-3 w-20 rounded-full" style={{ background: "rgba(255,255,255,0.08)" }} />
+                        </div>
+                      ))
+                    ) : displayedRows.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-20" style={{ opacity: 0.15 }}>
+                        <Receipt size={40} className="mb-3" />
+                        <p className="text-[10px] font-black uppercase tracking-widest">Sin ventas en este período</p>
+                      </div>
                     ) : (
-                      <PreSaleMovementRow key={row.key} order={row.order} movement={row.movement} rank={idx + 1} />
-                    )
-                  ))
-                )}
+                      displayedRows.map((row, idx) => (
+                        row.kind === "sale" ? (
+                          <SaleRow key={row.key} sale={row.sale} productMap={productMap} rank={idx + 1} onReturn={handleReturn} />
+                        ) : (
+                          <PreSaleMovementRow key={row.key} order={row.order} movement={row.movement} rank={idx + 1} />
+                        )
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div
+                  className="flex items-center justify-end gap-3 px-5 py-3"
+                  style={{
+                    borderTop: "1px solid var(--td-panel-border)",
+                    background: "rgba(22,12,17,0.96)",
+                    backdropFilter: "blur(10px)",
+                  }}
+                >
+                  <div className="flex items-end gap-8 flex-wrap justify-end ml-auto">
+                    <div className="flex items-center gap-5">
+                      <div className="text-right">
+                        <p className="text-[8px] font-black uppercase tracking-[0.16em]" style={{ color: "var(--td-text-lo)" }}>Movs.</p>
+                        <p className="text-sm font-black" style={{ color: "var(--td-text-hi)" }}>{displayedRows.length}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[8px] font-black uppercase tracking-[0.16em]" style={{ color: "var(--td-text-lo)" }}>Vendidos</p>
+                        <p className="text-sm font-black" style={{ color: "var(--td-text-hi)" }}>{displayedItemsCount}</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[8px] font-black uppercase tracking-[0.16em]" style={{ color: "var(--td-text-lo)" }}>Gran total</p>
+                      <p className="text-xl font-black" style={{ color: "#10B981" }}>{fmt(displayedTotalReceived)}</p>
+                    </div>
+                  </div>
+                </div>
               </div>
             </>
           )}
@@ -2381,7 +3105,9 @@ export function SalesPage() {
               toDate={filterEndDate || getTodayLocal()}
               storeName={activeStoreName}
               storeId={effectiveStoreId ?? null}
-              isAdmin={isAdmin}
+              isAdmin={canViewCost}
+              ivaPct={ivaComisionPct}
+              onIvaPctChange={handleIvaPctChange}
             />
           )}
 

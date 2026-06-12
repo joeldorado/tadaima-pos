@@ -7,6 +7,7 @@ import { LoginPage } from '@/pages/LoginPage'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { SellPage } from '@/pages/SellPage'
 import { SalesPage } from '@/pages/SalesPage'
+import { CashCutsPage } from '@/pages/CashCutsPage'
 import { ProductsPage } from '@/pages/ProductsPage'
 import { StockSearchPage } from '@/pages/StockSearchPage'
 import { ClientsPage } from '@/pages/ClientsPage'
@@ -50,6 +51,7 @@ export const router = createBrowserRouter([
       { index: true, Component: IndexPage },
       { path: 'caja', Component: SellPage },
       { path: 'sales',     element: <ProtectedRoute requiresPage="sales"><SalesPage /></ProtectedRoute> },
+      { path: 'cortes',    element: <ProtectedRoute requiresPage="cash_cuts"><CashCutsPage /></ProtectedRoute> },
       { path: 'products',  element: <ProtectedRoute requiresPage="products"><ProductsPage /></ProtectedRoute> },
       { path: 'buscar-tiendas', element: <ProtectedRoute requiresPage="stock_search"><StockSearchPage /></ProtectedRoute> },
       { path: 'transfers', element: <ProtectedRoute requiresPage="transfers"><TransfersPage /></ProtectedRoute> },

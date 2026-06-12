@@ -2,6 +2,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { X, Search, Package, ChevronLeft, ChevronRight, LayoutGrid, Zap, RefreshCw } from "lucide-react";
 import { ImageWithFallback } from "@/components/figma/ImageWithFallback";
+import { PRICE_LEVEL_LABELS, PRICE_LEVEL_COLORS, PRICE_LEVEL_RGB } from "@/lib/priceLevels";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface CatalogProduct {
@@ -18,9 +19,12 @@ interface CatalogProduct {
   stock?: number;
   stock_details?: { tienda: number; bodega: number; preventa: number; dañado: number };
   payment_restriction?: string;
+  product_type?: string;
+  volume_number?: number | null;
 }
 
 type Level = "a" | "b" | "c" | "d" | "e";
+type CatalogKind = "productos" | "tomos";
 
 interface Props {
   products: CatalogProduct[];
@@ -48,11 +52,11 @@ interface Props {
 const PAGE_SIZE = 120;
 
 const PRICE_META: { key: keyof CatalogProduct; level: Level; label: string; color: string; hoverBg: string; hoverBorder: string }[] = [
-  { key: "price_a", level: "a", label: "Precio A", color: "var(--td-text-hi)",  hoverBg: "var(--td-hover-bg)",           hoverBorder: "var(--td-card-border)" },
-  { key: "price_b", level: "b", label: "Precio B", color: "#F59E0B",            hoverBg: "rgba(245,158,11,0.10)",         hoverBorder: "rgba(245,158,11,0.30)" },
-  { key: "price_c", level: "c", label: "Precio C", color: "#60A5FA",            hoverBg: "rgba(96,165,250,0.10)",         hoverBorder: "rgba(96,165,250,0.30)" },
-  { key: "price_d", level: "d", label: "Precio D", color: "#A78BFA",            hoverBg: "rgba(167,139,250,0.10)",        hoverBorder: "rgba(167,139,250,0.30)" },
-  { key: "price_e", level: "e", label: "Precio E", color: "#34D399",            hoverBg: "rgba(52,211,153,0.10)",         hoverBorder: "rgba(52,211,153,0.30)" },
+  { key: "price_a", level: "a", label: PRICE_LEVEL_LABELS.a, color: PRICE_LEVEL_COLORS.a, hoverBg: "rgba(16,185,129,0.10)",  hoverBorder: "rgba(16,185,129,0.30)" },
+  { key: "price_b", level: "b", label: PRICE_LEVEL_LABELS.b, color: PRICE_LEVEL_COLORS.b, hoverBg: "rgba(245,158,11,0.10)", hoverBorder: "rgba(245,158,11,0.30)" },
+  { key: "price_c", level: "c", label: PRICE_LEVEL_LABELS.c, color: PRICE_LEVEL_COLORS.c, hoverBg: "rgba(59,130,246,0.10)", hoverBorder: "rgba(59,130,246,0.30)" },
+  { key: "price_d", level: "d", label: PRICE_LEVEL_LABELS.d, color: PRICE_LEVEL_COLORS.d, hoverBg: "rgba(139,92,246,0.10)", hoverBorder: "rgba(139,92,246,0.30)" },
+  { key: "price_e", level: "e", label: PRICE_LEVEL_LABELS.e, color: PRICE_LEVEL_COLORS.e, hoverBg: "rgba(236,72,153,0.10)", hoverBorder: "rgba(236,72,153,0.30)" },
 ];
 
 const fmt = (n: number) =>
@@ -69,9 +73,186 @@ function stockBadge(stock: number | undefined): { label: string; color: string; 
   return                          { label: `×${stock}`, color: "#FFFFFF", bg: "#16A34A" };
 }
 
+// ─── Card media ───────────────────────────────────────────────────────────────
+// Con imagen: cuadro 1:1 con badges flotantes. Sin imagen: para tomos/libros
+// mostramos un bloque centrado con VOL + número; para el resto conservamos la
+// franja compacta (QA Joel 2026-06-11).
+function CardMedia({ image, badge, isCashOnly, volume }: {
+  image?: string;
+  badge: { label: string; color: string; bg: string };
+  isCashOnly: boolean;
+  volume?: number | null;
+}) {
+  const hasVolume = volume != null;
+
+  if (!image) {
+    if (hasVolume) {
+      return (
+        <div style={{
+          position: "relative",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: 92,
+          padding: "12px 10px",
+          background: "linear-gradient(180deg, rgba(38,27,32,0.96) 0%, rgba(27,20,24,0.94) 100%)",
+          borderBottom: "1px solid var(--td-card-border)",
+        }}>
+          {isCashOnly && (
+            <span style={{
+              position: "absolute",
+              top: 8,
+              left: 8,
+              display: "inline-flex", alignItems: "center", gap: 3,
+              padding: "2px 6px", borderRadius: 6,
+              fontSize: 8, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em",
+              color: "#FBBF24", background: "rgba(251,191,36,0.15)",
+              border: "1px solid rgba(251,191,36,0.3)",
+            }}>
+              <Zap size={8} />
+              Efectivo
+            </span>
+          )}
+          <span style={{
+            position: "absolute",
+            top: 8,
+            right: 8,
+            padding: "3px 8px", borderRadius: 8,
+            fontSize: 11, fontWeight: 900, letterSpacing: "0.04em",
+            color: badge.color, background: badge.bg,
+          }}>
+            {badge.label}
+          </span>
+
+          <div style={{
+            width: 56,
+            height: 56,
+            borderRadius: 18,
+            background: "linear-gradient(135deg,#990000,#CC2200)",
+            border: "1px solid rgba(255,120,90,0.22)",
+            boxShadow: "0 10px 24px rgba(153,0,0,0.26), inset 0 1px 0 rgba(255,200,180,0.16)",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "#fff",
+          }}>
+            <span style={{ fontSize: 11, fontWeight: 900, lineHeight: 1, letterSpacing: "0.08em", opacity: 0.88 }}>
+              VOL
+            </span>
+            <span style={{ fontSize: 20, fontWeight: 900, lineHeight: 1.05 }}>
+              {volume}
+            </span>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div style={{
+        display: "flex", alignItems: "center", gap: 6,
+        padding: "8px 10px",
+        background: "var(--td-panel-bg)",
+        borderBottom: "1px solid var(--td-card-border)",
+      }}>
+        <Package size={14} color="var(--td-text-ghost)" />
+        {isCashOnly && (
+          <span style={{
+            display: "inline-flex", alignItems: "center", gap: 3,
+            padding: "2px 6px", borderRadius: 6,
+            fontSize: 8, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em",
+            color: "#FBBF24", background: "rgba(251,191,36,0.15)",
+            border: "1px solid rgba(251,191,36,0.3)",
+          }}>
+            <Zap size={8} />
+            Efectivo
+          </span>
+        )}
+        <span style={{
+          marginLeft: "auto",
+          padding: "3px 8px", borderRadius: 8,
+          fontSize: 11, fontWeight: 900, letterSpacing: "0.04em",
+          color: badge.color, background: badge.bg,
+        }}>
+          {badge.label}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ position: "relative", width: "100%", paddingTop: "100%", background: "var(--td-panel-bg)", overflow: "hidden" }}>
+      <ImageWithFallback
+        src={image}
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", display: "block", padding: 6 }}
+      />
+      {/* Stock badge */}
+      <div style={{
+        position: "absolute", top: 6, right: 6,
+        padding: "3px 8px", borderRadius: 8,
+        fontSize: 11, fontWeight: 900, letterSpacing: "0.04em",
+        color: badge.color, background: badge.bg,
+        boxShadow: "0 2px 6px rgba(0,0,0,0.35)",
+      }}>
+        {badge.label}
+      </div>
+      {isCashOnly && (
+        <div style={{
+          position: "absolute", top: 5, left: 5,
+          padding: "2px 6px", borderRadius: 6,
+          fontSize: 8, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em",
+          color: "#FBBF24", background: "rgba(251,191,36,0.15)",
+          backdropFilter: "blur(4px)",
+          border: "1px solid rgba(251,191,36,0.3)",
+          display: "flex", alignItems: "center", gap: 3,
+        }}>
+          <Zap size={8} />
+          Efectivo
+        </div>
+      )}
+      {hasVolume && (
+        <div style={{
+          position: "absolute",
+          left: 8,
+          bottom: 8,
+          padding: "4px 8px",
+          borderRadius: 8,
+          fontSize: 11,
+          fontWeight: 900,
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+          color: "#FF7A59",
+          background: "rgba(204,34,0,0.18)",
+          border: "1px solid rgba(204,34,0,0.34)",
+          backdropFilter: "blur(6px)",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.28)",
+        }}>
+          Vol. {volume}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Pill "Tomo N" — distingue tomos de la misma serie en librería (QA 2026-06-11).
+function VolumePill({ volume }: { volume: number }) {
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center",
+      padding: "2px 7px", borderRadius: 7, flexShrink: 0,
+      fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.04em",
+      color: "#FF7A59", background: "rgba(204,34,0,0.15)",
+      border: "1px solid rgba(204,34,0,0.3)",
+    }}>
+      Vol. {volume}
+    </span>
+  );
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 export function ProductCatalogModal({ products, onSelect, onClose, title = "Catálogo de Productos", preventaMode = false, availableStock, reservedByMesa, onRefresh, isRefreshing }: Props) {
   const [query, setQuery]       = useState("");
+  const [kind, setKind]         = useState<CatalogKind>("productos");
   const [category, setCategory] = useState("Todos");
   const [page, setPage]         = useState(1);
   const searchRef               = useRef<HTMLInputElement>(null);
@@ -88,12 +269,26 @@ export function ProductCatalogModal({ products, onSelect, onClose, title = "Cat�
     return () => window.removeEventListener("keydown", handler);
   }, [onClose]);
 
-  useEffect(() => { setPage(1); }, [query, category]);
+  const isTomo = useCallback((p: CatalogProduct) =>
+    p.product_type === "manga" || p.volume_number != null,
+  []);
+
+  const kindFiltered = useMemo(() => (
+    products.filter(p => kind === "tomos" ? isTomo(p) : !isTomo(p))
+  ), [products, kind, isTomo]);
+
+  useEffect(() => { setPage(1); }, [query, category, kind]);
 
   const categories = useMemo(() => {
-    const cats = Array.from(new Set(products.map(p => p.category).filter(Boolean))).sort();
+    const cats = Array.from(new Set(kindFiltered.map(p => p.category).filter(Boolean))).sort();
     return ["Todos", ...cats];
-  }, [products]);
+  }, [kindFiltered]);
+
+  useEffect(() => {
+    if (category !== "Todos" && !categories.includes(category)) {
+      setCategory("Todos");
+    }
+  }, [category, categories]);
 
   // Stock efectivo para esta caja = el mismo que muestra el badge
   // (stock de la tienda − reservado en otras cajas). `undefined` = desconocido.
@@ -104,7 +299,7 @@ export function ProductCatalogModal({ products, onSelect, onClose, title = "Cat�
   );
 
   const filtered = useMemo(() => {
-    let list = products;
+    let list = kindFiltered;
     if (category !== "Todos") list = list.filter(p => p.category === category);
     if (query.trim()) {
       const q = query.toLowerCase();
@@ -121,11 +316,12 @@ export function ProductCatalogModal({ products, onSelect, onClose, title = "Cat�
       const bOut = effectiveStock(b) === 0 ? 1 : 0;
       return aOut - bOut;
     });
-  }, [products, query, category, effectiveStock]);
+  }, [kindFiltered, query, category, effectiveStock]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage   = Math.min(page, totalPages);
   const paginated  = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+  const kindLabelPlural = kind === "tomos" ? "tomos" : "productos";
 
   const handleSelect = useCallback((p: CatalogProduct, level: Level = "a") => {
     onSelect(p, level);
@@ -170,7 +366,7 @@ export function ProductCatalogModal({ products, onSelect, onClose, title = "Cat�
         <div style={{ flex: 1 }}>
           <p style={{ margin: 0, fontSize: 13, fontWeight: 900, color: "var(--td-text-hi)", letterSpacing: "-0.01em" }}>{title}</p>
           <p style={{ margin: 0, fontSize: 9, color: "var(--td-text-ghost)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em" }}>
-            {filtered.length.toLocaleString()} productos{query ? " encontrados" : ""}
+            {filtered.length.toLocaleString()} {kindLabelPlural}{query ? " encontrados" : ""}
           </p>
         </div>
 
@@ -225,6 +421,36 @@ export function ProductCatalogModal({ products, onSelect, onClose, title = "Cat�
       </div>
 
       {/* ── Category pills ──────────────────────────────────────────────────── */}
+      <div style={{
+        display: "flex", gap: 8, padding: "10px 20px",
+        overflowX: "auto", flexShrink: 0,
+        borderBottom: "1px solid var(--td-panel-border)",
+        background: "var(--td-panel-bg)",
+      }}
+        className="no-scrollbar"
+      >
+        {([
+          { id: "productos" as const, label: `Productos · ${products.filter(p => !isTomo(p)).length}` },
+          { id: "tomos" as const, label: `Tomos · ${products.filter(p => isTomo(p)).length}` },
+        ]).map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setKind(tab.id)}
+            style={{
+              flexShrink: 0,
+              padding: "7px 14px", borderRadius: 999,
+              fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em",
+              cursor: "pointer", transition: "all 0.15s",
+              background: kind === tab.id ? "linear-gradient(135deg,#BB1100,#E0221A)" : "var(--td-card-bg)",
+              border: kind === tab.id ? "1px solid rgba(224,34,26,0.4)" : "1px solid var(--td-card-border)",
+              color: kind === tab.id ? "#fff" : "var(--td-text-lo)",
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
       {categories.length > 2 && (
         <div style={{
           display: "flex", gap: 6, padding: "10px 20px",
@@ -259,7 +485,9 @@ export function ProductCatalogModal({ products, onSelect, onClose, title = "Cat�
         {paginated.length === 0 ? (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 16, opacity: 0.3 }}>
             <Package size={40} color="var(--td-text-lo)" />
-            <p style={{ color: "var(--td-text-lo)", fontSize: 12, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", margin: 0 }}>Sin resultados</p>
+            <p style={{ color: "var(--td-text-lo)", fontSize: 12, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", margin: 0 }}>
+              Sin {kindLabelPlural}
+            </p>
           </div>
         ) : (
           <div style={{
@@ -305,37 +533,8 @@ export function ProductCatalogModal({ products, onSelect, onClose, title = "Cat�
                       position: "relative",
                     }}
                   >
-                    {/* Image */}
-                    <div style={{ position: "relative", width: "100%", paddingTop: "100%", background: "var(--td-panel-bg)", overflow: "hidden" }}>
-                      <ImageWithFallback
-                        src={p.image || ""}
-                        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", display: "block", padding: 6 }}
-                      />
-                      {/* Stock badge */}
-                      <div style={{
-                        position: "absolute", top: 6, right: 6,
-                        padding: "3px 8px", borderRadius: 8,
-                        fontSize: 11, fontWeight: 900, letterSpacing: "0.04em",
-                        color: badge.color, background: badge.bg,
-                        boxShadow: "0 2px 6px rgba(0,0,0,0.35)",
-                      }}>
-                        {badge.label}
-                      </div>
-                      {isCashOnly && (
-                        <div style={{
-                          position: "absolute", top: 5, left: 5,
-                          padding: "2px 6px", borderRadius: 6,
-                          fontSize: 8, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em",
-                          color: "#FBBF24", background: "rgba(251,191,36,0.15)",
-                          backdropFilter: "blur(4px)",
-                          border: "1px solid rgba(251,191,36,0.3)",
-                          display: "flex", alignItems: "center", gap: 3,
-                        }}>
-                          <Zap size={8} />
-                          Efectivo
-                        </div>
-                      )}
-                    </div>
+                    {/* Image / franja compacta sin foto */}
+                    <CardMedia image={p.image} badge={badge} isCashOnly={isCashOnly} volume={p.volume_number} />
 
                     {/* Name + SKU */}
                     <div style={{ padding: "8px 10px 4px", flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
@@ -345,7 +544,10 @@ export function ProductCatalogModal({ products, onSelect, onClose, title = "Cat�
                         display: "-webkit-box", WebkitLineClamp: 2,
                         WebkitBoxOrient: "vertical", overflow: "hidden",
                       }}>{p.name}</p>
-                      <p style={{ margin: 0, fontSize: 9, fontWeight: 700, color: "var(--td-text-ghost)", fontFamily: "monospace", textTransform: "uppercase" }}>{p.sku}</p>
+                      <div style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
+                        {p.volume_number != null && <VolumePill volume={p.volume_number} />}
+                        <p style={{ margin: 0, fontSize: 9, fontWeight: 700, color: "var(--td-text-ghost)", fontFamily: "monospace", textTransform: "uppercase", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.sku}</p>
+                      </div>
                       {otherCajaReservations.length > 0 && (
                         <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 2 }}>
                           {otherCajaReservations.map(r => (
@@ -515,70 +717,45 @@ export function ProductCatalogModal({ products, onSelect, onClose, title = "Cat�
                     (e.currentTarget as HTMLDivElement).style.transform = "translateY(0)";
                   }}
                 >
-                  {/* Image */}
-                  <div style={{ position: "relative", width: "100%", paddingTop: "100%", background: "var(--td-panel-bg)", overflow: "hidden" }}>
-                    <ImageWithFallback
-                      src={p.image || ""}
-                      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", display: "block", padding: 6 }}
-                    />
-                    {/* Stock badge */}
-                    <div style={{
-                      position: "absolute", top: 6, right: 6,
-                      padding: "3px 8px", borderRadius: 8,
-                      fontSize: 11, fontWeight: 900, letterSpacing: "0.04em",
-                      color: badge.color, background: badge.bg,
-                      boxShadow: "0 2px 6px rgba(0,0,0,0.35)",
-                    }}>
-                      {badge.label}
-                    </div>
-                    {isCashOnly && (
-                      <div style={{
-                        position: "absolute", top: 5, left: 5,
-                        padding: "2px 6px", borderRadius: 6,
-                        fontSize: 8, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em",
-                        color: "#FBBF24", background: "rgba(251,191,36,0.15)",
-                        backdropFilter: "blur(4px)",
-                        border: "1px solid rgba(251,191,36,0.3)",
-                        display: "flex", alignItems: "center", gap: 3,
-                      }}>
-                        <Zap size={8} />
-                        Efectivo
-                      </div>
-                    )}
-                  </div>
+                  {/* Image / franja compacta sin foto */}
+                  <CardMedia image={p.image} badge={badge} isCashOnly={isCashOnly} volume={p.volume_number} />
 
                   {/* Name + SKU */}
-                  <div style={{ padding: "8px 10px 4px", flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
+                  <div style={{ padding: "10px 12px 6px", flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
                     <p style={{
-                      margin: 0, fontSize: 11, fontWeight: 800, lineHeight: 1.25,
+                      margin: 0, fontSize: 14, fontWeight: 900, lineHeight: 1.25,
                       color: "var(--td-text-hi)",
                       display: "-webkit-box", WebkitLineClamp: 2,
                       WebkitBoxOrient: "vertical", overflow: "hidden",
                     }}>{p.name}</p>
-                    <p style={{ margin: 0, fontSize: 9, fontWeight: 700, color: "var(--td-text-ghost)", fontFamily: "monospace", textTransform: "uppercase" }}>{p.sku}</p>
+                    <div style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
+                      {p.volume_number != null && <VolumePill volume={p.volume_number} />}
+                      <p style={{ margin: 0, fontSize: 10, fontWeight: 800, color: "var(--td-text-ghost)", fontFamily: "monospace", textTransform: "uppercase", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.sku}</p>
+                    </div>
                   </div>
 
-                  {/* ── Prices: 3 per row (row 1 max 3, row 2 max 2) ── */}
+                  {/* ── Prices: filas grandes como Preventas ─────────────────── */}
                   <div style={{
-                    padding: "4px 6px 8px",
-                    display: "grid",
-                    gridTemplateColumns: "repeat(3, 1fr)",
-                    gap: 3,
+                    padding: "2px 10px 10px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 7,
                   }}>
                     {activePrices.map(({ key, level, label, color, hoverBg, hoverBorder }) => {
                       const price = p[key] as number;
+                      const rgb = PRICE_LEVEL_RGB[level];
                       return (
                         <button
                           key={level}
                           onClick={e => { e.stopPropagation(); handleSelect(p, level); }}
                           style={{
-                            padding: "5px 4px", borderRadius: 8,
-                            textAlign: "center",
-                            background: "transparent",
-                            border: "1px solid transparent",
+                            padding: "8px 12px", borderRadius: 10,
+                            textAlign: "left",
+                            background: `rgba(${rgb},0.10)`,
+                            border: `1px solid rgba(${rgb},0.32)`,
                             cursor: "pointer",
                             transition: "background 0.1s, border-color 0.1s",
-                            display: "flex", flexDirection: "column", alignItems: "center", gap: 1,
+                            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
                           }}
                           onMouseEnter={e => {
                             const b = e.currentTarget as HTMLButtonElement;
@@ -587,12 +764,14 @@ export function ProductCatalogModal({ products, onSelect, onClose, title = "Cat�
                           }}
                           onMouseLeave={e => {
                             const b = e.currentTarget as HTMLButtonElement;
-                            b.style.background = "transparent";
-                            b.style.borderColor = "transparent";
+                            b.style.background = `rgba(${rgb},0.10)`;
+                            b.style.borderColor = `rgba(${rgb},0.32)`;
                           }}
                         >
-                          <span style={{ fontSize: 7, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", color, opacity: 0.7, lineHeight: 1.2 }}>{label}</span>
-                          <span style={{ fontSize: level === "a" ? 12 : 11, fontWeight: 900, color, lineHeight: 1.3 }}>{fmt(price)}</span>
+                          <span style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color, lineHeight: 1.2 }}>
+                            {label}
+                          </span>
+                          <span style={{ fontSize: 16, fontWeight: 900, color, lineHeight: 1.1 }}>{fmt(price)}</span>
                         </button>
                       );
                     })}

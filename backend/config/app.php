@@ -69,6 +69,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Business Timezone
+    |--------------------------------------------------------------------------
+    |
+    | Zona horaria del NEGOCIO (no del servidor): define dónde empieza y
+    | termina el "día" para filtros de ventas/reportes (App\Support\DateRange).
+    | Las tiendas Tadaima operan en Tijuana. Debe coincidir con BUSINESS_TZ
+    | del frontend (landing/src/lib/date.ts).
+    |
+    */
+
+    'business_timezone' => env('BUSINESS_TIMEZONE', 'America/Tijuana'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Locale Configuration
     |--------------------------------------------------------------------------
     |

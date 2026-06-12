@@ -16,13 +16,14 @@ class CashRegisterSession extends Model
     protected $table = 'cash_register_sessions';
 
     protected $fillable = [
-        'register_id', 'user_id', 'opened_at', 'closed_at',
+        'register_id', 'user_id', 'opened_at', 'closed_at', 'local_date',
         'opening_cash', 'closing_cash', 'status',
     ];
 
     protected $casts = [
         'opened_at'    => 'datetime',
         'closed_at'    => 'datetime',
+        'local_date'   => 'date:Y-m-d',
         'opening_cash' => 'float',
         'closing_cash' => 'float',
     ];

@@ -105,9 +105,9 @@ class CashRegisterService
      *
      * @throws \DomainException
      */
-    public function close(CashRegisterSession $session, float $closingCash): CashRegisterSession
+    public function close(CashRegisterSession $session, float $closingCash, ?string $localDate = null): CashRegisterSession
     {
-        return DB::transaction(function () use ($session, $closingCash) {
+        return DB::transaction(function () use ($session, $closingCash, $localDate) {
             $session = CashRegisterSession::lockForUpdate()->find($session->id);
 
             if ($session->status !== CashRegisterSession::STATUS_OPEN) {
@@ -117,6 +117,10 @@ class CashRegisterService
             $session->update([
                 'status'       => CashRegisterSession::STATUS_CLOSED,
                 'closed_at'    => now(),
+                // Día de negocio del corte: lo manda la UI (zona del
+                // dispositivo del cajero). Fallback: zona del negocio
+                // (force-close y clientes viejos sin el campo).
+                'local_date'   => $localDate ?? now(\App\Support\DateRange::timezone())->toDateString(),
                 'closing_cash' => $closingCash,
             ]);
 

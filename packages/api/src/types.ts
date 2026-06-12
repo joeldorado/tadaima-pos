@@ -48,6 +48,8 @@ export interface Product {
   /** Sum of all warehouse quantities (precomputed by backend via withSum) */
   stock_total: number
   images: Array<{ id: number; image_path: string; url: string; sort_order: number }>
+  /** Discriminador producto normal vs tomo de librería (default 'product'). */
+  product_type?: 'product' | 'manga'
   created_at: string
   updated_at: string
 }
@@ -233,6 +235,20 @@ export interface SaleDetail {
   /** ADR-016 — 'none' | 'partial' | 'full'. Indica si la venta tuvo cancelaciones. */
   cancellation_status?: 'none' | 'partial' | 'full'
   last_cancelled_at?: string | null
+  /**
+   * ADR-016 — monto reversado por cancelaciones (suma de amount_refunded).
+   * SIMBÓLICO: la venta se edita in-place así que `total` YA lo descuenta;
+   * mostrar en rojo (−$X) pero NUNCA restarlo de agregados.
+   */
+  cancelled_amount?: number
+  /** Snapshot de los items cancelados (qty/precio al momento de cancelar). */
+  cancelled_items?: Array<{
+    name: string
+    sku: string | null
+    quantity: number
+    price: number
+    line_total: number
+  }>
   customer: { id: number; name: string; tier: string | null } | null
   /** Usuario que registró la venta (cajero/gerente/admin). Eager-loaded por SalesController. */
   user: { id: number; name: string } | null

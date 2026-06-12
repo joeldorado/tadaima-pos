@@ -158,6 +158,16 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
   const nombreOk = !!series.nombre.trim()
   const precioOk = !!series.precioPublico.trim() && parseFloat(series.precioPublico) > 0
   const tomosOk  = tomos.some(t => t.numero.trim() !== '' || t.isbn.trim() !== '')
+  // Stock obligatorio: cada tomo pendiente necesita cantidad > 0 en al menos
+  // una tienda. Antes el botón se activaba con solo nombre+precio y se creaban
+  // tomos sin existencias (QA Joel 2026-06-11 — la tienda preseleccionada no
+  // cuenta como stock asignado hasta darle "Agregar" y capturar cantidades).
+  const stockOk = warehouseGroups.length > 0 && tomos
+    .filter(t => t.status !== 'ok')
+    .every(t => warehouseGroups.reduce((sum, g) => {
+      const s = g.tomoStocks.find(ts => ts.tomoId === t.id)
+      return sum + (parseInt(s?.cantidad || '0') || 0)
+    }, 0) > 0)
 
   const tabValid: Record<Tab, boolean> = {
     tomos:      nombreOk,
@@ -165,7 +175,7 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
     inventario: tomosOk,
   }
 
-  const canSave = nombreOk && precioOk && tomosOk && !submitting
+  const canSave = nombreOk && precioOk && tomosOk && stockOk && !submitting
 
   const successCount = tomos.filter(t => t.status === 'ok').length
   const errorCount   = tomos.filter(t => t.status === 'error').length
@@ -336,6 +346,7 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
             { label: 'Nombre',             done: nombreOk },
             { label: 'Precio Normal',      done: precioOk },
             { label: `${tomos.length} tomo${tomos.length !== 1 ? 's' : ''}`, done: tomosOk },
+            { label: 'Stock',              done: stockOk },
           ]).map(item => (
             <div key={item.label} className="flex items-center gap-1.5">
               {item.done
@@ -453,7 +464,18 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
                     style={{ ...T.input, color: T.redBright }}
                     type="number" min="0" step="0.01" placeholder="0.00"
                     value={series.precioPublico}
-                    onChange={e => setSeries(s => ({ ...s, precioPublico: e.target.value }))}
+                    onChange={e => {
+                      const v = e.target.value
+                      // Precio Normal = Precio Público: autollena y sigue en
+                      // sync mientras el usuario no lo edite a mano (vacío o
+                      // igual al público anterior) — Joel 2026-06-11.
+                      setPrices(p =>
+                        p.price1 === '' || p.price1 === series.precioPublico
+                          ? { ...p, price1: v }
+                          : p
+                      )
+                      setSeries(s => ({ ...s, precioPublico: v }))
+                    }}
                   />
                 </div>
                 <div className="space-y-1.5">

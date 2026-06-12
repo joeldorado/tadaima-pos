@@ -12,6 +12,10 @@ class CloseCashSessionRequest extends FormRequest
     {
         return [
             'closing_cash' => ['required', 'numeric', 'min:0'],
+            // Fecha de negocio del corte según el DISPOSITIVO del cajero
+            // (a las 11:30pm Tijuana, closed_at UTC ya cae en "mañana" —
+            // esta fecha fija sin ambigüedad a qué día pertenece el corte).
+            'local_date'   => ['nullable', 'date_format:Y-m-d'],
         ];
     }
 }

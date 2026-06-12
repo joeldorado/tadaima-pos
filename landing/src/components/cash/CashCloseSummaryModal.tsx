@@ -83,7 +83,8 @@ function buildPrintHtml(s: CashSessionReport, detail: CashSessionDetail | null =
   `;
 }
 
-function doPrint(s: CashSessionReport, detail: CashSessionDetail | null = null): void {
+/** Impresión 58mm del corte (resumen + desglose). Reusada por la página Cortes. */
+export function printCashCut(s: CashSessionReport, detail: CashSessionDetail | null = null): void {
   const w = window.open("", "_blank", "width=340,height=600");
   if (!w) return;
   w.document.write(buildPrintHtml(s, detail));
@@ -105,7 +106,6 @@ export function CashCloseSummaryModal({ session: s, open, onClose }: CashCloseSu
   const diff = s.difference ?? 0;
   const isMatch = s.closing_cash != null && Math.abs(diff) < 0.01;
   const isShort = s.closing_cash != null && diff < -0.01;
-  const isOver  = s.closing_cash != null && diff > 0.01;
 
   return (
     <div style={{
@@ -226,7 +226,7 @@ export function CashCloseSummaryModal({ session: s, open, onClose }: CashCloseSu
 
         {/* Footer */}
         <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={() => doPrint(s, detail)}
+          <button onClick={() => printCashCut(s, detail)}
             style={{
               flex: 1, padding: "12px", borderRadius: 14,
               background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)",

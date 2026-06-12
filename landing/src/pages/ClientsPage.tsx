@@ -16,6 +16,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useCustomersQuery } from "@/hooks/queries/useCustomers";
 import { queryKeys } from "@/lib/queryKeys";
+import { isValidEmail, isValidPhone } from "@/lib/validation";
 
 // ─── Paleta Tadaima ───────────────────────────────────────────────────────────
 const T = {
@@ -104,10 +105,21 @@ export function ClientsPage() {
     [queryClient]
   );
 
+  // Validación inline (Joel 2026-06-12): label rojo bajo el campo en cuanto
+  // el dato es inválido — mismo regex compartido que Sucursales/Usuarios.
+  const phoneError = form.phone.trim() && !isValidPhone(form.phone)
+    ? "Teléfono inválido — deben ser 10 dígitos (ej. 55 1234 5678)" : null;
+  const emailError = form.email.trim() && !isValidEmail(form.email)
+    ? "Correo inválido (ej. cliente@correo.com)" : null;
+
   // ── Guardar (crear o actualizar) ───────────────────────────────────────────
   const handleSave = async () => {
     if (!form.name.trim()) {
       toast.error("El nombre es obligatorio");
+      return;
+    }
+    if (phoneError || emailError) {
+      toast.error(phoneError ?? emailError ?? "");
       return;
     }
 
@@ -490,8 +502,11 @@ export function ClientsPage() {
                     onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
                     placeholder="+52..."
                     className="w-full px-6 py-4 rounded-3xl outline-none border transition-all font-bold text-sm"
-                    style={T.input}
+                    style={{ ...T.input, ...(phoneError ? { borderColor: "rgba(248,113,113,0.7)" } : {}) }}
                   />
+                  {phoneError && (
+                    <p className="text-[10px] font-bold text-red-400 ml-4">{phoneError}</p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase tracking-widest text-white/30 ml-4">Correo Electrónico</label>
@@ -501,8 +516,11 @@ export function ClientsPage() {
                     onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
                     placeholder="cliente@correo.com"
                     className="w-full px-6 py-4 rounded-3xl outline-none border transition-all font-bold text-sm"
-                    style={T.input}
+                    style={{ ...T.input, ...(emailError ? { borderColor: "rgba(248,113,113,0.7)" } : {}) }}
                   />
+                  {emailError && (
+                    <p className="text-[10px] font-bold text-red-400 ml-4">{emailError}</p>
+                  )}
                 </div>
               </div>
               <div className="space-y-2">

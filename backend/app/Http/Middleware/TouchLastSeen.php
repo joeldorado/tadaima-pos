@@ -23,15 +23,25 @@ class TouchLastSeen
 
     public function handle(Request $request, Closure $next): Response
     {
-        $user = $request->user();
+        // Corre DESPUÉS del pipeline: este middleware va en el grupo `api` y se
+        // ejecuta antes que `auth:sanctum` (middleware de ruta) — en la ida con
+        // bearer token $request->user() aún es null. Tras $next ya hay user.
+        $response = $next($request);
+
+        $user = $request->user() ?? $request->user('sanctum');
         if ($user) {
             $now = now();
             $previous = $user->last_seen_at;
-            if (! $previous || $now->diffInSeconds($previous) >= self::DEDUPE_SECONDS) {
-                // updateQuietly para no disparar listeners/observers ajenos.
+            // OJO Carbon 3: diffInSeconds es CON SIGNO — $now->diffInSeconds($pasado)
+            // da negativo, por lo que el dedupe original nunca volvía a escribir
+            // después del primer touch y todos los usuarios aparecían
+            // "desconectados" en /users/online (QA 2026-06-11).
+            if (! $previous || $previous->diffInSeconds($now) >= self::DEDUPE_SECONDS) {
+                // saveQuietly para no disparar listeners/observers ajenos.
                 $user->forceFill(['last_seen_at' => $now])->saveQuietly();
             }
         }
-        return $next($request);
+
+        return $response;
     }
 }
