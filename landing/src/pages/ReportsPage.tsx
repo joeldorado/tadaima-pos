@@ -3,7 +3,7 @@ import {
   TrendingUp, Package, Users, BarChart3,
   DollarSign, ArrowUpRight,
   ShoppingBag, Star, Calendar, Printer, Store,
-  ChevronDown, ChevronRight, Clock, RefreshCw,
+  ChevronDown, ChevronRight, Clock, RefreshCw, ChevronLeft,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@tadaima/auth";
@@ -18,6 +18,20 @@ import { getTodayLocal, daysAgoLocal, toLocalYmd, BUSINESS_TZ } from "@/lib/date
 import { queryKeys } from "@/lib/queryKeys";
 import type { SalesReport, InventoryReport, TopProductsReport, CustomersReport } from "@tadaima/api";
 import type { SaleDetail, Store as StoreType } from "@tadaima/api";
+import {
+  Button as AriaButton,
+  CalendarCell,
+  CalendarGrid,
+  CalendarGridBody,
+  CalendarGridHeader,
+  CalendarHeaderCell,
+  CalendarHeading,
+  Dialog,
+  DialogTrigger,
+  Popover,
+  RangeCalendar,
+} from "react-aria-components";
+import { parseDate } from "@internationalized/date";
 
 // ─── Design tokens ─────────────────────────────────────────────────────────────
 const BG   = "var(--td-page-bg)";
@@ -40,14 +54,49 @@ const fmt = (n: number) =>
 // Formato anclado a la zona del NEGOCIO (México), no la del dispositivo: una
 // Mac/tablet en otra zona (Tijuana) mostraría la hora corrida ~1h y el día
 // equivocado cerca de medianoche.
-const fmtDate = (iso: string) =>
-  new Date(iso).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric", timeZone: BUSINESS_TZ });
+const fmtDate = (iso: string) => {
+  const [y, m, d] = iso.split("-").map(Number);
+  const safeUtcNoon = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  return safeUtcNoon.toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric", timeZone: BUSINESS_TZ });
+};
 
 const fmtTime = (iso: string) =>
   new Date(iso).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", timeZone: BUSINESS_TZ });
 
+// ─── Date conversion helpers ──────────────────────────────────────────────────
+const parseYmd = (iso: string) => parseDate(iso);
+const toYmdFromDateValue = (value: ReturnType<typeof parseDate>) =>
+  `${value.year}-${String(value.month).padStart(2, "0")}-${String(value.day).padStart(2, "0")}`;
+
+// Suma 1 día para hacer el end date inclusivo (RangeCalendar lo trata como exclusivo)
+const addDays = (iso: string, days: number): string => {
+  const [y, m, d] = iso.split("-").map(Number);
+  const utc = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  utc.setUTCDate(utc.getUTCDate() + days);
+  const ny = utc.getUTCFullYear();
+  const nm = String(utc.getUTCMonth() + 1).padStart(2, "0");
+  const nd = String(utc.getUTCDate()).padStart(2, "0");
+  return `${ny}-${nm}-${nd}`;
+};
+
 // "cortes" se movió a la página /cajas (visible a los 3 roles) — Joel 2026-06-12.
+// Calcula el lunes de la semana actual (en la zona del negocio)
+const getMondayThisWeek = (today: string): string => {
+  const d = new Date(today + "T00:00:00Z");
+  const day = d.getUTCDay();
+  const diff = d.getUTCDate() - day + (day === 0 ? -6 : 1); // Ajusta para lunes
+  d.setUTCDate(diff);
+  return d.toISOString().split('T')[0];
+};
+
 type TabId = "ventas" | "inventario" | "productos" | "clientes";
+
+const REPORT_TABS: { id: TabId; label: string; icon: React.ElementType }[] = [
+  { id: "ventas", label: "Ventas", icon: TrendingUp },
+  { id: "inventario", label: "Inventario", icon: Package },
+  { id: "productos", label: "Top Productos", icon: Star },
+  { id: "clientes", label: "Top Clientes", icon: Users },
+];
 
 // ─── Ticket print helper ───────────────────────────────────────────────────────
 function printTicket(sale: SaleDetail) {
@@ -124,6 +173,7 @@ export function ReportsPage() {
 
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<TabId>("ventas");
+  const [isTabSelectorOpen, setIsTabSelectorOpen] = useState(false);
 
   // Fechas en la zona del NEGOCIO (México), no la del dispositivo (ver
   // lib/date.ts). El primer día del mes se deriva del "hoy" del negocio para
@@ -258,6 +308,9 @@ export function ReportsPage() {
     return map;
   }, [sales]);
 
+  const activeTabMeta = REPORT_TABS.find(tab => tab.id === activeTab) ?? REPORT_TABS[0];
+  const hiddenTabs = REPORT_TABS.filter(tab => tab.id !== activeTab);
+
   // ─── Shared UI ───────────────────────────────────────────────────────────────
   const thStyle: React.CSSProperties = { padding: "10px 16px", fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: TM, textAlign: "left" };
   const tdStyle: React.CSSProperties = { padding: "10px 16px", fontSize: 12, color: TS, borderBottom: DIV };
@@ -266,65 +319,86 @@ export function ReportsPage() {
     <div className="min-h-screen" style={{ background: BG, color: TP }}>
       <div className="max-w-screen-xl mx-auto p-8 space-y-8">
 
-        {/* ── Header ──────────────────────────────────────────────────────── */}
-        <div>
-          <h1 className="text-3xl font-black tracking-tight mb-1" style={{ color: TP }}>
-            Centro de <span style={{ color: RED }}>Reportes</span>
-          </h1>
-          <p className="text-[10px] font-black uppercase tracking-[0.2em]" style={{ color: TM }}>
-            Auditoría y Análisis · Tadaima
-            {!isAdmin && user?.store && (
-              <span className="ml-2" style={{ color: RED }}>· {user.store.name}</span>
-            )}
-          </p>
-        </div>
-
-        {/* ── Tabs + refresh ──────────────────────────────────────────────── */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex gap-2 p-1.5 rounded-2xl bg-white/5 border border-white/5 w-fit">
-            {([
-              { id: "ventas",     label: "Ventas",        icon: TrendingUp },
-              { id: "inventario", label: "Inventario",    icon: Package    },
-              { id: "productos",  label: "Top Productos", icon: Star       },
-              { id: "clientes",   label: "Top Clientes",  icon: Users      },
-            ] as { id: TabId; label: string; icon: React.ElementType }[]).map(tab => (
-              <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
-                style={activeTab === tab.id
-                  ? { background: "linear-gradient(135deg,#CC2200,#FF4422)", color: "#fff" }
-                  : { color: TM }}
-              >
-                <tab.icon size={13} />{tab.label}
-              </button>
-            ))}
+        {/* ── Header + tabs ───────────────────────────────────────────────── */}
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+          <div>
+            <h1 className="text-3xl font-black tracking-tight mb-1" style={{ color: TP }}>
+              Centro de <span style={{ color: RED }}>Reportes</span>
+            </h1>
+            <p className="text-[10px] font-black uppercase tracking-[0.2em]" style={{ color: TM }}>
+              Auditoría y Análisis · Tadaima
+              {!isAdmin && user?.store && (
+                <span className="ml-2" style={{ color: RED }}>· {user.store.name}</span>
+              )}
+            </p>
           </div>
 
-          {/* Botón refresh manual — invalida el dominio del tab activo.
-              No hay polling: admin entra → fresh; vuelve al tab → fresh
-              (refetchOnWindowFocus). Si quiere ver lo último mientras está
-              en la pantalla, click acá. */}
-          <button
-            onClick={() => {
-              if (activeTab === "ventas") {
-                void queryClient.invalidateQueries({ queryKey: queryKeys.reports.sales() });
-                void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all });
-              } else if (activeTab === "inventario") {
-                void queryClient.invalidateQueries({ queryKey: queryKeys.reports.inventory() });
-              } else if (activeTab === "productos") {
-                void queryClient.invalidateQueries({ queryKey: queryKeys.reports.topProducts() });
-              } else if (activeTab === "clientes") {
-                void queryClient.invalidateQueries({ queryKey: queryKeys.reports.customers() });
-              }
-              toast.success("Actualizando reporte…");
-            }}
-            disabled={isFetchingActive}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-50"
-            style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: TM }}
-            title="Forzar refresh del reporte actual"
-          >
-            <RefreshCw size={13} className={isFetchingActive ? "animate-spin" : ""} />
-            {refreshing ? "Actualizando…" : "Actualizar"}
-          </button>
+          {/* ── Selector de tab colapsable + refresh ─────────────────────── */}
+          <div className="flex items-center gap-2 flex-wrap xl:justify-end">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsTabSelectorOpen(prev => !prev)}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
+                style={{ 
+                  background: "linear-gradient(135deg,#CC2200,#FF4422)", 
+                  color: "#fff",
+                  transform: isTabSelectorOpen ? "translateY(4px)" : "translateY(0px)"
+                }}
+                aria-expanded={isTabSelectorOpen}
+                aria-label="Abrir selector de sección de reportes"
+              >
+                <activeTabMeta.icon size={13} />
+                {activeTabMeta.label}
+                <ChevronDown size={13} className={`transition-transform ${isTabSelectorOpen ? "rotate-180" : "rotate-0"}`} />
+              </button>
+
+              <div
+                className={`flex items-center gap-2 overflow-hidden transition-all duration-700 ease-out ${isTabSelectorOpen ? "max-w-[780px] opacity-100 translate-x-0" : "max-w-0 opacity-0 -translate-x-3 pointer-events-none"}`}
+              >
+                {hiddenTabs.map(tab => (
+                  <button
+                    key={tab.id}
+                    onClick={() => {
+                      setActiveTab(tab.id);
+                      setIsTabSelectorOpen(false);
+                    }}
+                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all hover:scale-[1.02] active:scale-95"
+                    style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: TM }}
+                  >
+                    <tab.icon size={13} />
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Botón refresh manual — invalida el dominio del tab activo.
+                No hay polling: admin entra → fresh; vuelve al tab → fresh
+                (refetchOnWindowFocus). Si quiere ver lo último mientras está
+                en la pantalla, click acá. */}
+            <button
+              onClick={() => {
+                if (activeTab === "ventas") {
+                  void queryClient.invalidateQueries({ queryKey: queryKeys.reports.sales() });
+                  void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all });
+                } else if (activeTab === "inventario") {
+                  void queryClient.invalidateQueries({ queryKey: queryKeys.reports.inventory() });
+                } else if (activeTab === "productos") {
+                  void queryClient.invalidateQueries({ queryKey: queryKeys.reports.topProducts() });
+                } else if (activeTab === "clientes") {
+                  void queryClient.invalidateQueries({ queryKey: queryKeys.reports.customers() });
+                }
+                toast.success("Actualizando reporte…");
+              }}
+              disabled={isFetchingActive}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-50"
+              style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: TM }}
+              title="Forzar refresh del reporte actual"
+            >
+              <RefreshCw size={13} className={isFetchingActive ? "animate-spin" : ""} />
+              {refreshing ? "Actualizando…" : "Actualizar"}
+            </button>
+          </div>
         </div>
 
         {/* ── Filter bar ──────────────────────────────────────────────────── */}
@@ -342,19 +416,16 @@ export function ReportsPage() {
               const pm  = mm === 1 ? 12 : mm - 1;
               const lastDayPrev = new Date(Date.UTC(yy, mm - 1, 0)).getUTCDate();
               const yesterday        = daysAgoLocal(1);
-              const sevenAgo         = daysAgoLocal(6);
-              const thirtyAgo        = daysAgoLocal(29);
+              const mondayThisWeek   = getMondayThisWeek(today);
+              const firstOfMonth     = `${yy}-${String(mm).padStart(2, "0")}-01`;
               const firstOfLastMonth = `${pmY}-${String(pm).padStart(2, "0")}-01`;
               const lastOfLastMonth  = `${pmY}-${String(pm).padStart(2, "0")}-${String(lastDayPrev).padStart(2, "0")}`;
-              const firstOfYear      = `${yy}-01-01`;
               const presets = [
                 { label: "Hoy",         from: today,            to: today },
                 { label: "Ayer",        from: yesterday,        to: yesterday },
-                { label: "7 días",      from: sevenAgo,         to: today },
-                { label: "30 días",     from: thirtyAgo,        to: today },
+                { label: "Semana actual", from: mondayThisWeek, to: today },
                 { label: "Este mes",    from: firstOfMonth,     to: today },
                 { label: "Mes pasado",  from: firstOfLastMonth, to: lastOfLastMonth },
-                { label: "Este año",    from: firstOfYear,      to: today },
               ];
               return presets.map(p => {
                 const active = from === p.from && to === p.to;
@@ -373,31 +444,148 @@ export function ReportsPage() {
 
             <div className="w-px h-5 mx-1" style={{ background: "var(--td-divider)" }} />
 
-            {/* Date range — Inicio / Fin con labels visibles */}
-            <div className="flex items-end gap-2">
-              <div className="flex flex-col gap-0.5">
-                <label className="text-[9px] font-black uppercase tracking-widest" style={{ color: TM }}>Inicio</label>
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl" style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)" }}>
-                  <Calendar size={12} style={{ color: TM }} />
-                  <input type="date" value={from} onChange={e => setFrom(e.target.value)}
-                    max={to}
-                    className="text-sm font-bold outline-none bg-transparent"
-                    style={{ color: TP, minWidth: 130 }} />
-                </div>
-              </div>
-              <span className="text-xs font-black pb-2" style={{ color: TM }}>→</span>
-              <div className="flex flex-col gap-0.5">
-                <label className="text-[9px] font-black uppercase tracking-widest" style={{ color: TM }}>Fin</label>
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl" style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)" }}>
-                  <Calendar size={12} style={{ color: TM }} />
-                  <input type="date" value={to} onChange={e => setTo(e.target.value)}
-                    min={from}
-                    max={today}
-                    className="text-sm font-bold outline-none bg-transparent"
-                    style={{ color: TP, minWidth: 130 }} />
-                </div>
-              </div>
-            </div>
+            {/* Date range picker — Bonito con Popover */}
+            <DialogTrigger>
+              <AriaButton
+                className="flex items-center gap-2 rounded-xl px-3 py-1.5 text-[10px] font-black uppercase tracking-widest transition-all outline-none"
+                style={{
+                  background: "var(--td-panel-bg)",
+                  border: "1px solid var(--td-panel-border)",
+                  color: TP,
+                }}
+              >
+                <Calendar size={12} style={{ color: TM }} />
+                <span style={{ color: TM }}>{fmtDate(from)}</span>
+                <span style={{ color: TM }}>→</span>
+                <span style={{ color: TM }}>{fmtDate(to)}</span>
+              </AriaButton>
+
+              <Popover
+                placement="bottom start"
+                offset={8}
+                shouldCloseOnBlur={true}
+                className="rounded-2xl p-0 outline-none"
+                style={{
+                  background: "var(--td-popup-bg)",
+                  border: "1px solid var(--td-panel-border)",
+                  boxShadow: "0 24px 80px rgba(0,0,0,0.48), inset 0 1px 0 rgba(255,255,255,0.04)",
+                }}
+              >
+                <Dialog className="outline-none">
+                  <div className="w-[660px] max-w-[calc(100vw-32px)] p-4">
+                    <RangeCalendar
+                      aria-label="Rango de fechas de reporte"
+                      value={{ start: parseYmd(from), end: parseYmd(to) }}
+                      onChange={(range) => {
+                        if (!range?.start || !range?.end) return;
+                        const startStr = toYmdFromDateValue(range.start);
+                        const endStr = toYmdFromDateValue(range.end);
+                        if (startStr <= endStr) {
+                          setFrom(startStr);
+                          setTo(endStr);
+                        }
+                      }}
+                      maxValue={parseYmd(today)}
+                      minValue={parseYmd(daysAgoLocal(365))}
+                      visibleDuration={{ months: 2 }}
+                      pageBehavior="single"
+                      className="w-full"
+                    >
+                      <div className="flex items-center justify-between gap-2 mb-4">
+                        <AriaButton
+                          slot="previous"
+                          className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-black/20 text-white/60 transition-colors hover:border-white/20 hover:text-white"
+                        >
+                          <ChevronLeft size={14} />
+                        </AriaButton>
+
+                        <div className="grid flex-1 grid-cols-2 gap-3">
+                          <CalendarHeading className="text-center text-[10px] font-black uppercase tracking-[0.18em]" style={{ color: TP }} />
+                          <CalendarHeading offset={{ months: 1 }} className="text-center text-[10px] font-black uppercase tracking-[0.18em]" style={{ color: TP }} />
+                        </div>
+
+                        <AriaButton
+                          slot="next"
+                          className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-black/20 text-white/60 transition-colors hover:border-white/20 hover:text-white"
+                        >
+                          <ChevronRight size={14} />
+                        </AriaButton>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <CalendarGrid weekdayStyle="short" className="w-full border-separate border-spacing-y-1">
+                          <CalendarGridHeader>
+                            {(day) => (
+                              <CalendarHeaderCell className="pb-2 text-center text-[9px] font-black uppercase tracking-widest" style={{ color: TM }}>
+                                {day}
+                              </CalendarHeaderCell>
+                            )}
+                          </CalendarGridHeader>
+                          <CalendarGridBody>
+                            {(date) => (
+                              <CalendarCell
+                                date={date}
+                                className={({ isSelected, isSelectionStart, isSelectionEnd, isFocusVisible, isOutsideMonth, isDisabled }) =>
+                                  [
+                                    "flex h-8 w-8 items-center justify-center rounded-lg text-[9px] font-bold transition-all outline-none",
+                                    "data-[hovered]:bg-white/8",
+                                    isOutsideMonth ? "text-white/20" : "text-white/80",
+                                    isDisabled ? "opacity-25" : "",
+                                    isSelected ? "text-white bg-[#FF4422]" : "bg-black/10",
+                                    isSelectionStart || isSelectionEnd ? "ring-1 ring-[#FF7A59]" : "",
+                                    isFocusVisible ? "ring-1 ring-white/70" : "",
+                                  ].join(" ")
+                                }
+                              />
+                            )}
+                          </CalendarGridBody>
+                        </CalendarGrid>
+
+                        <CalendarGrid offset={{ months: 1 }} weekdayStyle="short" className="w-full border-separate border-spacing-y-1">
+                          <CalendarGridHeader>
+                            {(day) => (
+                              <CalendarHeaderCell className="pb-2 text-center text-[9px] font-black uppercase tracking-widest" style={{ color: TM }}>
+                                {day}
+                              </CalendarHeaderCell>
+                            )}
+                          </CalendarGridHeader>
+                          <CalendarGridBody>
+                            {(date) => (
+                              <CalendarCell
+                                date={date}
+                                className={({ isSelected, isSelectionStart, isSelectionEnd, isFocusVisible, isOutsideMonth, isDisabled }) =>
+                                  [
+                                    "flex h-8 w-8 items-center justify-center rounded-lg text-[9px] font-bold transition-all outline-none",
+                                    "data-[hovered]:bg-white/8",
+                                    isOutsideMonth ? "text-white/20" : "text-white/80",
+                                    isDisabled ? "opacity-25" : "",
+                                    isSelected ? "text-white bg-[#FF4422]" : "bg-black/10",
+                                    isSelectionStart || isSelectionEnd ? "ring-1 ring-[#FF7A59]" : "",
+                                    isFocusVisible ? "ring-1 ring-white/70" : "",
+                                  ].join(" ")
+                                }
+                              />
+                            )}
+                          </CalendarGridBody>
+                        </CalendarGrid>
+                      </div>
+                    </RangeCalendar>
+
+                    <div
+                      className="mt-4 flex items-center justify-between rounded-lg px-3 py-2 text-[9px]"
+                      style={{ background: "rgba(0,0,0,0.16)", border: "1px solid rgba(255,255,255,0.06)" }}
+                    >
+                      <div className="font-black uppercase tracking-[0.12em]" style={{ color: TM }}>
+                        <span style={{ color: TP }}>Desde</span>
+                        <span className="mx-1.5">{fmtDate(from)}</span>
+                        <span style={{ color: TM }}>•</span>
+                        <span className="mx-1.5"><span style={{ color: TP }}>Hasta</span> {fmtDate(to)}</span>
+                      </div>
+                    </div>
+                  </div>
+                </Dialog>
+              </Popover>
+            </DialogTrigger>
 
             {/* Store select — admin only */}
             {isAdmin && stores.length > 0 && (
