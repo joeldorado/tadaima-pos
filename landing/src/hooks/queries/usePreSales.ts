@@ -17,7 +17,7 @@ const ONE_DAY_MS = 24 * 60 * 60_000
  */
 export function usePreSaleCatalogsQuery(
   params?: Parameters<typeof getPreSaleCatalogs>[0],
-  options?: { enabled?: boolean }
+  options?: { enabled?: boolean; refetchIntervalMs?: number | false }
 ) {
   return useQuery({
     queryKey: queryKeys.preSaleCatalogs.list(params as Record<string, unknown> | undefined),
@@ -28,6 +28,10 @@ export function usePreSaleCatalogsQuery(
     placeholderData: keepPreviousData,
     refetchOnWindowFocus: true,
     refetchOnReconnect: false,
+    // Polling casi-live opcional (Joel 2026-06-12): el caller lo prende SOLO
+    // mientras la ventana relevante está visible (p.ej. modal de Preventas en
+    // Caja). Corre únicamente con la query montada y la tab enfocada.
+    refetchInterval: options?.refetchIntervalMs || false,
   })
 }
 
@@ -47,7 +51,7 @@ export function usePreSaleCatalogsQuery(
  */
 export function usePreSaleOrdersQuery(
   params?: Parameters<typeof getPreSaleOrders>[0],
-  options?: { enabled?: boolean }
+  options?: { enabled?: boolean; refetchIntervalMs?: number | false }
 ) {
   return useQuery({
     queryKey: queryKeys.preSaleOrders.list(params as Record<string, unknown> | undefined),
@@ -58,5 +62,10 @@ export function usePreSaleOrdersQuery(
     placeholderData: keepPreviousData,
     refetchOnWindowFocus: true,
     refetchOnReconnect: false,
+    // Polling casi-live opcional (Joel 2026-06-12) — solo montada + tab
+    // enfocada y solo donde el caller lo pide. Cubre el caso cross-máquina
+    // que el trade-off de 2026-05-28 dejó fuera (admin marca ready en su PC
+    // → el cajero lo ve sin necesitar focus ni "Actualizar").
+    refetchInterval: options?.refetchIntervalMs || false,
   })
 }

@@ -159,6 +159,36 @@ class SaleCancellationTest extends TestCase
         $this->assertEquals(300.0, (float) $cm->amount);
     }
 
+    public function test_sales_payload_exposes_cancelled_amount_and_snapshot(): void
+    {
+        // La cancelación edita la venta in-place (total queda en $0) — la UI
+        // necesita el monto reversado SIMBÓLICO + detalle de lo cancelado
+        // (Joel 2026-06-12). No debe restarse de agregados: total ya lo refleja.
+        $product = $this->makeProduct(cost: 60.0);
+        $sale    = $this->makeSale($product, qty: 2, price: 1200.0); // total 2400
+
+        $this->service->cancelSale(
+            sale: $sale,
+            itemsToCancel: [],
+            reasonCode: SaleCancellation::REASON_CLIENTE_DEVUELVE,
+            reasonText: null,
+            cancelledBy: $this->admin,
+            activeSessionId: $this->session->id,
+        );
+
+        $resp = $this->actingAs($this->admin)->getJson('/api/v1/sales');
+        $resp->assertOk();
+
+        $row = collect($resp->json('data.data'))->firstWhere('id', $sale->id);
+        $this->assertNotNull($row, 'la venta cancelada sigue saliendo en la lista');
+        $this->assertEquals(0.0, (float) $row['total'], 'total queda en 0 (edit-in-place)');
+        $this->assertEquals(2400.0, (float) $row['cancelled_amount'], 'monto reversado simbólico');
+        $this->assertCount(1, $row['cancelled_items']);
+        $this->assertSame('Naruto Vol. 1', $row['cancelled_items'][0]['name']);
+        $this->assertEquals(2, (float) $row['cancelled_items'][0]['quantity']);
+        $this->assertEquals(2400.0, (float) $row['cancelled_items'][0]['line_total']);
+    }
+
     public function test_partial_cancel_keeps_sale_active_and_decrements_qty(): void
     {
         $product = $this->makeProduct();

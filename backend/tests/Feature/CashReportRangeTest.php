@@ -1,0 +1,203 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Models\CashRegister;
+use App\Models\CashRegisterSession;
+use App\Models\Company;
+use App\Models\Store;
+use App\Models\User;
+use App\Support\DateRange;
+use Carbon\Carbon;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
+use Tests\TestCase;
+
+/**
+ * Filtro de fechas de GET /reports/cash (Cortes) — bugs QA 2026-06-11:
+ *
+ * 1. `whereDate('opened_at')` comparaba la fecha UTC del timestamp: una caja
+ *    abierta a las 7pm Tijuana (= 02:00 UTC del día siguiente) desaparecía
+ *    del filtro "hoy". Ahora el rango se convierte zona-negocio → UTC con
+ *    DateRange (mismo patrón que ventas).
+ *
+ * 2. Solo filtraba por fecha de APERTURA: un corte que abre un día y cierra
+ *    al siguiente (o sigue abierto varios días) no salía en los días
+ *    posteriores. Ahora se filtra por TRASLAPE del rango con la vida de la
+ *    sesión [opened_at, closed_at|ahora].
+ */
+class CashReportRangeTest extends TestCase
+{
+    use RefreshDatabase;
+
+    private Company $company;
+    private Store $store;
+    private CashRegister $register;
+    private User $admin;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->company = Company::create(['name' => 'Tadaima Test']);
+        $this->store = Store::create([
+            'company_id' => $this->company->id,
+            'name' => 'Tienda Test',
+            'active' => true,
+        ]);
+        $this->register = CashRegister::create([
+            'store_id' => $this->store->id,
+            'name' => 'Caja Test',
+            'active' => true,
+        ]);
+        $this->admin = User::create([
+            'name' => 'Admin',
+            'email' => 'admin@test.com',
+            'password' => bcrypt('password'),
+            'company_id' => $this->company->id,
+            'store_id' => $this->store->id,
+            'active' => true,
+        ]);
+        $roleId = DB::table('roles')->where('name', 'admin')->value('id')
+            ?? DB::table('roles')->insertGetId([
+                'name' => 'admin',
+                'guard_name' => 'api',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        DB::table('model_has_roles')->insert([
+            'role_id' => $roleId,
+            'model_type' => User::class,
+            'model_id' => $this->admin->id,
+        ]);
+    }
+
+    private function makeSession(Carbon $openedAtUtc, ?Carbon $closedAtUtc): CashRegisterSession
+    {
+        return CashRegisterSession::create([
+            'register_id' => $this->register->id,
+            'user_id' => $this->admin->id,
+            'opening_cash' => 0,
+            'status' => $closedAtUtc
+                ? CashRegisterSession::STATUS_CLOSED
+                : CashRegisterSession::STATUS_OPEN,
+            'opened_at' => $openedAtUtc,
+            'closed_at' => $closedAtUtc,
+        ]);
+    }
+
+    private function sessionIdsFor(string $from, string $to): array
+    {
+        $res = $this->actingAs($this->admin)
+            ->getJson("/api/v1/reports/cash?from={$from}&to={$to}")
+            ->assertOk()
+            ->json('data.sessions');
+
+        return array_column($res ?? [], 'id');
+    }
+
+    public function test_corte_nocturno_aparece_en_el_dia_de_negocio(): void
+    {
+        $tz = DateRange::timezone();
+        // Abierta 7pm y cerrada 11pm hora del negocio: en UTC ambas caen en
+        // el día SIGUIENTE (Tijuana UTC-7/-8). El whereDate viejo la perdía.
+        $hoy = Carbon::parse('2026-06-11 19:00:00', $tz);
+        $session = $this->makeSession($hoy->copy()->utc(), $hoy->copy()->addHours(4)->utc());
+
+        $this->assertContains($session->id, $this->sessionIdsFor('2026-06-11', '2026-06-11'));
+        $this->assertNotContains($session->id, $this->sessionIdsFor('2026-06-10', '2026-06-10'));
+    }
+
+    public function test_corte_que_cruza_medianoche_sale_en_ambos_dias(): void
+    {
+        $tz = DateRange::timezone();
+        // Abre 10pm del día 10, cierra 1am del día 11 (hora negocio).
+        $apertura = Carbon::parse('2026-06-10 22:00:00', $tz);
+        $cierre   = Carbon::parse('2026-06-11 01:00:00', $tz);
+        $session = $this->makeSession($apertura->utc(), $cierre->utc());
+
+        $this->assertContains($session->id, $this->sessionIdsFor('2026-06-10', '2026-06-10'));
+        $this->assertContains($session->id, $this->sessionIdsFor('2026-06-11', '2026-06-11'));
+        $this->assertNotContains($session->id, $this->sessionIdsFor('2026-06-12', '2026-06-12'));
+    }
+
+    public function test_caja_aun_abierta_de_dias_anteriores_sigue_apareciendo(): void
+    {
+        $tz = DateRange::timezone();
+        // Abrió hace 3 días y nadie la ha cerrado → debe salir en el filtro
+        // de hoy (su vida sigue corriendo).
+        $apertura = Carbon::parse('2026-06-08 10:00:00', $tz);
+        $session = $this->makeSession($apertura->utc(), null);
+
+        $this->assertContains($session->id, $this->sessionIdsFor('2026-06-11', '2026-06-11'));
+        $this->assertContains($session->id, $this->sessionIdsFor('2026-06-08', '2026-06-08'));
+        // Antes de abrir, no existe.
+        $this->assertNotContains($session->id, $this->sessionIdsFor('2026-06-07', '2026-06-07'));
+    }
+
+    public function test_cerrar_caja_guarda_local_date_mandada_por_la_ui(): void
+    {
+        $tz = DateRange::timezone();
+        CashRegisterSession::create([
+            'register_id'  => $this->register->id,
+            'user_id'      => $this->admin->id,
+            'opening_cash' => 100,
+            'status'       => CashRegisterSession::STATUS_OPEN,
+            'opened_at'    => Carbon::parse('2026-06-11 19:00:00', $tz)->utc(),
+        ]);
+
+        $res = $this->actingAs($this->admin)
+            ->postJson('/api/v1/cash/close', [
+                'closing_cash' => 150,
+                'local_date'   => '2026-06-11',
+            ])
+            ->assertOk();
+
+        $this->assertSame('2026-06-11', $res->json('data.local_date'));
+        $this->assertDatabaseHas('cash_register_sessions', [
+            'id'         => $res->json('data.id'),
+            'local_date' => '2026-06-11',
+        ]);
+    }
+
+    public function test_cerrar_caja_sin_local_date_usa_fallback_zona_negocio(): void
+    {
+        CashRegisterSession::create([
+            'register_id'  => $this->register->id,
+            'user_id'      => $this->admin->id,
+            'opening_cash' => 100,
+            'status'       => CashRegisterSession::STATUS_OPEN,
+            'opened_at'    => now()->subHours(2),
+        ]);
+
+        $res = $this->actingAs($this->admin)
+            ->postJson('/api/v1/cash/close', ['closing_cash' => 100])
+            ->assertOk();
+
+        $this->assertSame(
+            now(DateRange::timezone())->toDateString(),
+            $res->json('data.local_date'),
+        );
+    }
+
+    public function test_local_date_manda_sobre_el_traslape_utc(): void
+    {
+        $tz = DateRange::timezone();
+        // Corte de las 11:30pm del día 11: closed_at en UTC (y hasta su vida
+        // en zona negocio si cerrara pasada la medianoche) tocaría el día 12.
+        // Con local_date=06-11 el corte pertenece SOLO al 11.
+        $session = CashRegisterSession::create([
+            'register_id'  => $this->register->id,
+            'user_id'      => $this->admin->id,
+            'opening_cash' => 0,
+            'status'       => CashRegisterSession::STATUS_CLOSED,
+            'opened_at'    => Carbon::parse('2026-06-11 19:00:00', $tz)->utc(),
+            'closed_at'    => Carbon::parse('2026-06-12 00:30:00', $tz)->utc(),
+            'local_date'   => '2026-06-11',
+        ]);
+
+        $this->assertContains($session->id, $this->sessionIdsFor('2026-06-11', '2026-06-11'));
+        // Sin local_date, el traslape lo metería también al día 12.
+        $this->assertNotContains($session->id, $this->sessionIdsFor('2026-06-12', '2026-06-12'));
+    }
+}

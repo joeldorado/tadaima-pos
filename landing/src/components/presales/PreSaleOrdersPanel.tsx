@@ -58,13 +58,20 @@ export function PreSaleOrdersPanel() {
   else if (isAdmin && storeFilter !== "all") params.store_id = storeFilter;
   if (debouncedSearch) params.code = debouncedSearch;
 
-  const ordersQuery = usePreSaleOrdersQuery(params as Parameters<typeof usePreSaleOrdersQuery>[0]);
+  // Polling casi-live (Joel 2026-06-12): solo mientras el panel está montado
+  // y la tab enfocada — folios/abonos hechos en otras cajas aparecen solos.
+  const ordersQuery = usePreSaleOrdersQuery(
+    params as Parameters<typeof usePreSaleOrdersQuery>[0],
+    { refetchIntervalMs: 20_000 },
+  );
   const orders: PreSaleOrder[] = ordersQuery.data?.data ?? [];
   const total = ordersQuery.data?.pagination.total ?? 0;
   const loading = ordersQuery.isPending;
   // Refetch con la lista anterior en pantalla (keepPreviousData) — se atenúa
-  // la tabla + chip "Cargando…" para que el cambio de filtro se note.
-  const isRefreshing = ordersQuery.isFetching && !loading;
+  // la tabla + chip "Cargando…" para que el cambio de filtro se note. SOLO
+  // con isPlaceholderData (data de OTRO filtro): el polling del mismo filtro
+  // es silencioso, los folios nuevos simplemente aparecen.
+  const isRefreshing = ordersQuery.isFetching && ordersQuery.isPlaceholderData && !loading;
   const fetchOrders = () => queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all });
 
   useEffect(() => {

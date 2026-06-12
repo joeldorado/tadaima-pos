@@ -148,7 +148,17 @@ export function StockSearchPage() {
                         : <PackageSearch size={18} style={{ color: 'var(--td-text-lo)' }} />}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-bold truncate" style={{ color: 'var(--td-text-hi)' }}>{p.name}</p>
+                      <p className="text-sm font-bold truncate" style={{ color: 'var(--td-text-hi)' }}>
+                        {p.name}
+                        {p.volume_number != null && (
+                          <span
+                            className="ml-2 px-1.5 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider align-middle"
+                            style={{ color: '#60A5FA', background: 'rgba(96,165,250,0.12)', border: '1px solid rgba(96,165,250,0.3)' }}
+                          >
+                            Tomo {p.volume_number}
+                          </span>
+                        )}
+                      </p>
                       <p className="text-[11px] font-mono truncate" style={{ color: 'var(--td-text-lo)' }}>
                         {p.sku || 'Sin SKU'} · {p.prices.price_1 ? fmt(p.prices.price_1) : '—'}
                       </p>

@@ -10,7 +10,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import type { Store } from "@tadaima/api";
 import {
   ShoppingCart, Package, Store as StoreIcon, AlertTriangle, LayoutDashboard,
-  Boxes, CheckCircle2, Lock, ArrowRight,
+  Boxes, CheckCircle2, ArrowRight,
   TrendingUp, Bookmark, PackageX, Loader2, X,
   Shield, Settings, ArrowLeftRight, Users, ImageIcon, Wallet,
   Clock, RefreshCw,
@@ -103,44 +103,6 @@ function SetupStep({ n, title, desc, required, done }: SetupStepProps) {
   );
 }
 
-
-interface ActionCardProps {
-  icon: React.ElementType;
-  title: string;
-  desc: string;
-  onClick: () => void;
-  accent?: boolean;
-  disabled?: boolean;
-}
-
-function ActionCard({ icon: Icon, title, desc, onClick, accent = false, disabled = false }: ActionCardProps) {
-  return (
-    <div
-      onClick={disabled ? undefined : onClick}
-      className={`glass-dark rounded-2xl p-5 flex flex-col gap-3 w-44 text-left transition-all relative overflow-hidden ${
-        disabled ? "cursor-not-allowed" : "cursor-pointer hover:scale-[1.03] active:scale-100"
-      }`}
-      style={{ border: "1px solid var(--td-panel-border)", opacity: disabled ? 0.45 : 1 }}
-    >
-      {disabled && (
-        <div className="absolute top-3 right-3 w-5 h-5 rounded-full flex items-center justify-center bg-white/8">
-          <Lock size={10} className="text-white/40" />
-        </div>
-      )}
-      <div className="w-10 h-10 rounded-xl flex items-center justify-center"
-        style={{
-          background: accent && !disabled ? RED_DIM : "var(--td-panel-bg)",
-          border: `1px solid ${accent && !disabled ? RED_BRD : "var(--td-panel-border)"}`,
-        }}>
-        <Icon size={18} style={{ color: accent && !disabled ? RED : "var(--td-icon-inactive)" }} />
-      </div>
-      <div>
-        <div className="text-sm font-semibold text-white/85">{title}</div>
-        <div className="text-[11px] text-white/30 mt-0.5">{desc}</div>
-      </div>
-    </div>
-  );
-}
 
 interface NoStoreBannerProps {
   isAdmin: boolean;
@@ -843,6 +805,42 @@ export function DashboardPage() {
       ) : (
         /* Gerente */
         <>
+          {/* Arriba: data del gerente (perfil compacto) junto a sus cajeros.
+              Sin KPIs ni stats de ventas — eso vive en Ventas/Reportes. */}
+          {isGerente && (
+            <div className="mb-8 relative z-10 rounded-2xl p-5 flex items-center gap-4 max-w-md"
+              style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)" }}>
+              <button
+                onClick={() => setShowAvatarPicker(true)}
+                title={user?.avatar_url ? "Cambiar foto" : "Elegir foto"}
+                className="shrink-0 relative hover:opacity-80 transition-opacity"
+              >
+                <UserAvatar name={user?.name ?? ""} avatarUrl={user?.avatar_url ?? null} size={64} />
+                <span className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full flex items-center justify-center"
+                  style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)" }}>
+                  <ImageIcon size={11} style={{ color: "var(--td-text-md)" }} />
+                </span>
+              </button>
+              <div className="min-w-0 flex-1">
+                <span className="inline-block px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-[0.14em]"
+                  style={{ background: "rgba(245,158,11,0.12)", color: "#F59E0B", border: "1px solid rgba(245,158,11,0.3)" }}>
+                  Gerente
+                </span>
+                <div className="text-lg font-black truncate mt-1" style={{ color: "var(--td-text-hi)" }}>{user?.name ?? "—"}</div>
+                <div className="text-xs truncate" style={{ color: "var(--td-text-md)" }}>{user?.email}</div>
+                {activeStore && (
+                  <div className="inline-flex items-center gap-1.5 mt-2 px-2.5 py-1 rounded-full"
+                    style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)" }}>
+                    <StoreIcon size={10} style={{ color: "var(--td-text-ghost)" }} />
+                    <span className="text-[9px] font-black uppercase tracking-[0.12em]" style={{ color: "var(--td-text-md)" }}>
+                      {activeStore.name}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Cajeros conectados — lista compacta de la tienda activa */}
           {isGerente && activeStore && (
             <div className="mb-8 relative z-10">
@@ -946,28 +944,8 @@ export function DashboardPage() {
                 </button>
               </div>
 
-              {/* Totales del día */}
-              {dailyCashQuery.data && dailyCashQuery.data.sessions.length > 0 && (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-                  <div className="rounded-xl p-3" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid var(--td-panel-border)" }}>
-                    <p className="text-[9px] font-black uppercase tracking-widest text-white/30">Sesiones</p>
-                    <p className="text-lg font-black text-white mt-1">{dailyCashQuery.data.summary.total_sessions}</p>
-                  </div>
-                  <div className="rounded-xl p-3" style={{ background: "rgba(224,34,26,0.08)", border: "1px solid rgba(224,34,26,0.25)" }}>
-                    <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: "rgba(224,34,26,0.7)" }}>Ventas del día</p>
-                    <p className="text-lg font-black text-white mt-1">{fmt(dailyCashQuery.data.summary.total_sales)}</p>
-                  </div>
-                  <div className="rounded-xl p-3" style={{ background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.25)" }}>
-                    <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: "rgba(16,185,129,0.75)" }}>Entradas</p>
-                    <p className="text-lg font-black text-white mt-1">{fmt(dailyCashQuery.data.summary.total_entradas)}</p>
-                  </div>
-                  <div className="rounded-xl p-3" style={{ background: "rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.25)" }}>
-                    <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: "rgba(245,158,11,0.75)" }}>Salidas</p>
-                    <p className="text-lg font-black text-white mt-1">{fmt(dailyCashQuery.data.summary.total_salidas)}</p>
-                  </div>
-                </div>
-              )}
-
+              {/* Sin stats de ventas/entradas/salidas aquí (decisión Joel
+                  2026-06-11): esos números ya viven en Ventas y Reportes. */}
               {dailyCashQuery.isPending ? (
                 <div className="flex items-center justify-center py-6">
                   <Loader2 size={18} className="animate-spin text-white/30" />
@@ -1037,32 +1015,24 @@ export function DashboardPage() {
             </div>
           )}
 
-          {/* Acceso rápido — Caja + Productos */}
-          <div className="mb-8 relative z-10">
-            <SectionLabel>Acciones rápidas</SectionLabel>
-            <div className="flex gap-4 flex-wrap">
-              <ActionCard
-                icon={ShoppingCart}
-                title="Abrir Caja"
-                desc={
-                  !hasStores   ? "Sin tiendas disponibles" :
-                  !hasProducts ? "Sin productos"           :
-                  activeStore  ? activeStore.name          : "Selecciona una tienda"
-                }
-                onClick={handleCaja}
-                accent
-                disabled={!hasStores || !hasProducts}
-              />
-              <ActionCard
-                icon={Package}
-                title="Productos"
-                desc={hasStores ? "Ver catálogo" : "Sin tiendas disponibles"}
-                onClick={() => navigate("/products")}
-                disabled={!hasStores}
-              />
-            </div>
-          </div>
+          {/* "Acciones rápidas" (Abrir Caja/Productos) eliminadas (Joel
+              2026-06-11): el sidebar ya tiene esos accesos — estaban de más. */}
         </>
+      )}
+
+      {showAvatarPicker && user && (
+        <AvatarPicker
+          userId={user.id}
+          userName={user.name}
+          currentAvatarUrl={user.avatar_url ?? null}
+          open
+          onClose={() => setShowAvatarPicker(false)}
+          onSaved={() => {
+            void queryClient.invalidateQueries({ queryKey: queryKeys.users.all });
+            window.dispatchEvent(new Event("tadaima:auth-refresh"));
+            setShowAvatarPicker(false);
+          }}
+        />
       )}
 
       {showPicker && (

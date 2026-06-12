@@ -49,6 +49,9 @@ class SalesController extends Controller
                 // el frontend separa el ticket de la nueva preventa como si
                 // fueran ventas distintas.
                 'preSaleOrders.items.catalog:id,product_name',
+                // ADR-016 — monto reversado + snapshot de lo cancelado: la venta
+                // editada in-place queda en $0 y la UI necesita el −$X simbólico.
+                'cancellations',
             ])
             ->when($request->user_id, fn ($q) => $q->where('user_id', $request->user_id))
             ->when($request->status,  fn ($q) => $q->where('status', $request->status))
@@ -102,6 +105,7 @@ class SalesController extends Controller
         $sale->load([
             'items.product', 'payments.paymentMethod', 'customer', 'user:id,name',
             'preSaleOrders.items.catalog:id,product_name',
+            'cancellations',
         ]);
 
         return $this->success(new SaleResource($sale));

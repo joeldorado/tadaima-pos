@@ -4,20 +4,31 @@ import { getProducts, getProductsLight, type GetProductsParams, type ProductLigh
 import { queryKeys } from '@/lib/queryKeys'
 
 const ONE_DAY_MS = 24 * 60 * 60_000
+// Cross-máquina no hay invalidación posible (BroadcastChannel solo cubre tabs
+// del mismo browser): un tomo/producto creado por el gerente en otra PC no
+// aparecía para el cajero hasta 24h o refresh manual (QA 2026-06-11). Con 5min
+// + refetchOnWindowFocus, volver a enfocar la ventana lo trae en background;
+// el render sigue siendo instantáneo (gcTime 24h + IndexedDB).
+const CATALOG_STALE_MS = 5 * 60_000
 
 const TOP_PAGE_SIZE = 200
 const BACKGROUND_PAGES = 5 // 200 × 5 = 1000 productos extra en background
 
 /**
  * Catálogo de productos completo. Para admin (ProductsPage) que necesita
- * todos los campos para editar. Cache 24h.
+ * todos los campos para editar. Fresh 5min, persistido 24h.
  */
-export function useProductsQuery(storeId?: number | null) {
+export function useProductsQuery(
+  storeId?: number | null,
+  options?: { refetchIntervalMs?: number | false }
+) {
   const params = storeId ? { store_id: storeId } : undefined
   return useQuery({
     queryKey: queryKeys.products.list(params),
     queryFn: () => getProducts(params),
-    staleTime: ONE_DAY_MS,
+    // Polling casi-live opcional (Joel 2026-06-12) — solo montada + tab enfocada.
+    refetchInterval: options?.refetchIntervalMs || false,
+    staleTime: CATALOG_STALE_MS,
     gcTime: ONE_DAY_MS,
     // Al cambiar de tienda mantenemos el catálogo anterior en pantalla mientras
     // llega el nuevo → no parpadea a "Cargando" (el skeleton solo sale en la
@@ -39,12 +50,19 @@ export function useProductsQuery(storeId?: number | null) {
  * IndexedDB o del prefetch post-login). Para búsquedas más amplias usa
  * useProductsSearchQuery, que va al servidor con debounce.
  */
-export function useProductsLightQuery(storeId?: number | null) {
+export function useProductsLightQuery(
+  storeId?: number | null,
+  options?: { refetchIntervalMs?: number | false }
+) {
   const params: GetProductsParams = { active: true, sort: 'top', ...(storeId ? { store_id: storeId } : {}) }
   return useQuery({
     queryKey: [...queryKeys.products.all, 'light', 'top', params],
     queryFn: () => getProductsLight({ ...params, per_page: TOP_PAGE_SIZE, page: 1 } as Parameters<typeof getProductsLight>[0]),
-    staleTime: ONE_DAY_MS,
+    // Polling casi-live opcional (Joel 2026-06-12): en Caja se prende SOLO
+    // mientras el modal de catálogo está abierto — el cajero ve productos/
+    // tomos nuevos creados en otra máquina sin refrescar.
+    refetchInterval: options?.refetchIntervalMs || false,
+    staleTime: CATALOG_STALE_MS,
     gcTime: ONE_DAY_MS,
     refetchOnWindowFocus: true,
     // refetchOnMount default (true): cuando ProductsPage crea/edita/borra

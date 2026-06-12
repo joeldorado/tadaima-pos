@@ -38,10 +38,12 @@ class ProductController extends Controller
         $type = $request->filled('type') ? (string) $request->get('type') : null;
         $needsMangaDetails = $type === Product::TYPE_MANGA;
 
+        // Light siempre carga mangaDetails: la Caja necesita volume_number para
+        // distinguir tomos de la misma serie en el catálogo (QA 2026-06-11).
         $relations = $light
-            ? ['price', 'images', 'paymentMethod']
+            ? ['price', 'images', 'paymentMethod', 'mangaDetails']
             : ['category', 'price', 'images', 'paymentMethod'];
-        if ($needsMangaDetails) {
+        if ($needsMangaDetails && ! $light) {
             $relations[] = 'mangaDetails';
         }
 

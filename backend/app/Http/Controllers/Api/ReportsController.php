@@ -232,9 +232,30 @@ class ReportsController extends Controller
             }
         }
 
+        // Rango en zona del NEGOCIO → UTC (mismo patrón que ventas). Antes
+        // whereDate comparaba la fecha UTC del timestamp: una caja abierta a
+        // las 7pm Tijuana (= 02:00 UTC del día sig.) se salía del filtro.
+        $fromUtc = \App\Support\DateRange::fromUtc($from);
+        $toUtc   = \App\Support\DateRange::toUtc($to);
+
         $sessions = CashRegisterSession::with(['register.store', 'user'])
-            ->whereDate('opened_at', '>=', $from)
-            ->whereDate('opened_at', '<=', $to)
+            // Cortes con `local_date` (fecha del dispositivo del cajero,
+            // mandada por la UI al cerrar — Joel 2026-06-11) se filtran por
+            // ese día directo. Cortes sin la fecha (abiertos, legacy) caen al
+            // TRASLAPE con la vida de la sesión: una caja puede abrir un día
+            // y cerrar al siguiente — el corte sale en cualquier día que
+            // toque su vida [opened_at, closed_at|ahora].
+            ->when($fromUtc || $toUtc, fn ($q) => $q->where(fn ($outer) => $outer
+                ->where(fn ($byDate) => $byDate
+                    ->whereNotNull('local_date')
+                    ->where('local_date', '>=', $from)
+                    ->where('local_date', '<=', $to))
+                ->orWhere(fn ($overlap) => $overlap
+                    ->whereNull('local_date')
+                    ->when($toUtc,   fn ($o) => $o->where('opened_at', '<=', $toUtc))
+                    ->when($fromUtc, fn ($o) => $o->where(fn ($w) => $w
+                        ->whereNull('closed_at')
+                        ->orWhere('closed_at', '>=', $fromUtc))))))
             ->when($registerId, fn ($q) => $q->where('register_id', $registerId))
             ->when($userId,     fn ($q) => $q->where('user_id',     $userId))
             ->when($storeId, fn ($q) => $q->whereHas('register', fn ($r) => $r->where('store_id', $storeId)))

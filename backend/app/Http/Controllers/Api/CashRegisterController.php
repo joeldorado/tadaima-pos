@@ -243,7 +243,11 @@ class CashRegisterController extends Controller
         }
 
         try {
-            $session = $this->service->close($session, (float) $request->input('closing_cash', 0));
+            $session = $this->service->close(
+                $session,
+                (float) $request->input('closing_cash', 0),
+                $request->input('local_date'),
+            );
         } catch (\DomainException $e) {
             return $this->error($e->getMessage(), 422);
         }

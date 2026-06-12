@@ -27,7 +27,7 @@ import { useStoresQuery } from "@/hooks/queries/useStores";
 import { useWarehousesQuery } from "@/hooks/queries/useWarehouses";
 import { queryKeys } from "@/lib/queryKeys";
 import { generateBarcode } from "@/lib/barcode";
-import { PRICE_FORM_LABELS } from "@/lib/priceLevels";
+import { PRICE_FORM_LABELS, PRICE_LEVEL_LABELS, PRICE_LEVEL_COLORS, PRICE_LEVEL_RGB } from "@/lib/priceLevels";
 
 function formatApiError(err: unknown, fallback: string): { title: string; detail: string } {
   const apiErr = err as ApiError;
@@ -254,6 +254,14 @@ function ProductDetailModal({
   canViewCost: boolean;
   highlightStoreId?: number | null;
 }) {
+  const priceRows = [
+    { level: "a", price: product.precioA },
+    { level: "b", price: product.precioB },
+    { level: "c", price: product.precioC },
+    { level: "d", price: product.precioD },
+    { level: "e", price: product.precioE },
+  ].filter((row): row is { level: "a" | "b" | "c" | "d" | "e"; price: number } => Number(row.price) > 0);
+
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={onClose} />
@@ -290,12 +298,51 @@ function ProductDetailModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-            <DetailField label="Precio Normal" value={<span className="text-lg font-black" style={{ color: "#00CC66" }}>{fmt(product.precioA)}</span>} />
-            <DetailField label="Precio Socio" value={<span className="text-sm font-bold">{product.precioB ? fmt(product.precioB) : "No configurado"}</span>} />
-            <DetailField label="Precio Mayorista" value={<span className="text-sm font-bold">{product.precioC ? fmt(product.precioC) : "No configurado"}</span>} />
-            <DetailField label="Precio D" value={<span className="text-sm font-bold">{product.precioD ? fmt(product.precioD) : "No configurado"}</span>} />
-            <DetailField label="Precio E" value={<span className="text-sm font-bold">{product.precioE ? fmt(product.precioE) : "No configurado"}</span>} />
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: T.textMuted }}>
+                Niveles de precio
+              </p>
+              <span className="text-[10px] font-bold uppercase tracking-[0.14em]" style={{ color: T.textMuted }}>
+                {priceRows.length === 1 ? "1 nivel activo" : `${priceRows.length} niveles activos`}
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {priceRows.map(({ level, price }) => {
+                const rgb = PRICE_LEVEL_RGB[level];
+                return (
+                  <div
+                    key={`detail-${product.id}-${level}`}
+                    className="rounded-[24px] px-4 py-3.5"
+                    style={{
+                      background: `rgba(${rgb},0.10)`,
+                      border: `1px solid rgba(${rgb},0.30)`,
+                      boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04)",
+                    }}
+                  >
+                    <div className="flex items-end justify-between gap-4">
+                      <div className="min-w-0">
+                        <p
+                          className="text-[11px] font-black uppercase tracking-[0.16em] mb-1"
+                          style={{ color: `rgba(${rgb},0.92)` }}
+                        >
+                          {PRICE_LEVEL_LABELS[level]}
+                        </p>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.12em]" style={{ color: T.textMuted }}>
+                          Precio de venta
+                        </p>
+                      </div>
+                      <span
+                        className="text-[2rem] leading-none font-black tabular-nums shrink-0"
+                        style={{ color: PRICE_LEVEL_COLORS[level] }}
+                      >
+                        {fmt(price)}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           {canViewCost && (
@@ -1198,13 +1245,21 @@ export function ProductsPage() {
   const [selectedForWhatsapp, setSelectedForWhatsapp] = useState<number[]>([]);
 
   const queryClient = useQueryClient();
-  const productsQuery = useProductsQuery(selectedStoreId);
+  // Polling casi-live (Joel 2026-06-12): solo mientras el TAB correspondiente
+  // está visible y la tab del browser enfocada — productos/tomos creados en
+  // otra máquina aparecen solos, sin refrescar y sin señal visual (la lista
+  // solo cambia si hay algo nuevo).
+  const LIVE_POLL_MS = 20_000;
+  const productsQuery = useProductsQuery(selectedStoreId, {
+    refetchIntervalMs: pageSection === 'tomos' ? false : LIVE_POLL_MS,
+  });
   // Librerías: se cargan al entrar a su tab, PERO también en background una vez
   // que el catálogo de productos terminó de cargar → al dar clic en "Tomos" ya
   // están en cache (instantáneo). El spinner de tomos sigue gateado a su tab,
   // así que el prefetch no muestra "Cargando" en la vista de productos.
   const mangasQuery = useMangasQuery(selectedStoreId, {
     enabled: pageSection === 'tomos' || productsQuery.isSuccess,
+    refetchIntervalMs: pageSection === 'tomos' ? LIVE_POLL_MS : false,
   });
   const storesQuery = useStoresQuery({ active: true, enabled: isAdmin });
   const warehousesQuery = useWarehousesQuery({ active: true });
@@ -1251,7 +1306,13 @@ export function ProductsPage() {
   }, [queryClient]);
 
   const products = useMemo(
-    () => productsQuery.data?.data.map(apiProductToProducto) ?? [],
+    // GET /products devuelve TODO (incluye mangas — la Caja los necesita).
+    // El tab "Productos" solo muestra los normales; los tomos viven en su
+    // tab "Tomos / Manga". Sin este filtro un tomo recién creado aparecía
+    // duplicado como producto normal (QA Joel 2026-06-11).
+    () => (productsQuery.data?.data ?? [])
+      .filter(p => (p.product_type ?? 'product') !== 'manga')
+      .map(apiProductToProducto),
     [productsQuery.data]
   );
   const stockMap = useMemo(() => {
@@ -2190,7 +2251,14 @@ export function ProductsPage() {
             const totalStock = getTotalStock(p.id);
             const totalComprometido = 0; // committed stock not available from inventory API yet
             const disponible = totalStock - totalComprometido;
-            const priceCount = [p.precioA, p.precioB, p.precioC].filter(pr => pr && pr > 0).length;
+            const priceRows = [
+              { level: "a", price: p.precioA },
+              { level: "b", price: p.precioB },
+              { level: "c", price: p.precioC },
+              { level: "d", price: p.precioD },
+              { level: "e", price: p.precioE },
+            ].filter((row): row is { level: "a" | "b" | "c" | "d" | "e"; price: number } => Number(row.price) > 0);
+            const priceCount = priceRows.length;
             const lowStock = disponible > 0 && disponible <= 10 && !p.esUnico;
             const unicoLow = disponible > 0 && disponible <= 10 && p.esUnico;
 
@@ -2230,7 +2298,6 @@ export function ProductsPage() {
                       />
                       <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent opacity-60" />
                       <div className="absolute top-2 left-2 flex flex-col items-start gap-1 z-10">
-                        {priceCount > 1 && <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-black/65 text-white/90 backdrop-blur-md">{priceCount} precios</span>}
                         {p.soloEfectivo && <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#D97706] text-white">Solo Efectivo</span>}
                       </div>
                       <div className="absolute top-2 right-2 flex flex-col items-end gap-1 z-10">
@@ -2243,37 +2310,92 @@ export function ProductsPage() {
                         {disponible <= 0 && !p.esUnico && <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-red-600/90 text-white">Sin Stock</span>}
                       </div>
                     </div>
-                    <div className="p-4 pt-3">
+                    <div className="p-4 pt-3 flex flex-col gap-3">
                       <p className="text-[10px] font-black uppercase tracking-widest mb-1" style={{ color: T.textMuted }}>{p.sku}</p>
-                      <h3 className="font-bold text-sm leading-snug mb-3 line-clamp-2 h-10" style={{ color: T.textPrimary }}>{p.nombre}</h3>
+                      <h3 className="font-black text-base leading-snug line-clamp-2 min-h-[2.75rem]" style={{ color: T.textPrimary }}>{p.nombre}</h3>
+                      <div className="flex flex-col gap-2">
+                        {priceRows.map(({ level, price }) => {
+                          const rgb = PRICE_LEVEL_RGB[level];
+                          return (
+                            <div
+                              key={`${p.id}-${level}`}
+                              className="flex items-center justify-between gap-3 rounded-2xl px-3 py-2.5"
+                              style={{
+                                background: `rgba(${rgb},0.10)`,
+                                border: `1px solid rgba(${rgb},0.30)`,
+                              }}
+                            >
+                              <span
+                                className="text-[11px] font-black uppercase tracking-[0.14em]"
+                                style={{ color: `rgba(${rgb},0.92)` }}
+                              >
+                                {PRICE_LEVEL_LABELS[level]}
+                              </span>
+                              <span className="text-[1.9rem] leading-none font-black tabular-nums" style={{ color: PRICE_LEVEL_COLORS[level] }}>
+                                {fmt(price)}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
                       <div className="flex items-center justify-between border-t border-white/5 pt-3">
-                        <p className="text-lg font-black" style={{ color: '#00CC66' }}>{fmt(p.precioA)}</p>
-                        <div className="px-2.5 py-1 rounded-full text-[10px] font-black" style={{ background: lowStock ? T.redBright : unicoLow ? '#D97706' : "rgba(30,120,60,0.8)", color: "#fff" }}>{disponible} disp.</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {priceCount > 1 && <span className="px-2 py-0.5 rounded-full text-[10px] font-black border border-white/10 text-white/55">{priceCount} precios</span>}
+                          {p.categoria && <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-white/8 text-white/45 truncate max-w-[120px]">{p.categoria}</span>}
+                        </div>
+                        <div className="px-3 py-1 rounded-full text-[11px] font-black" style={{ background: lowStock ? T.redBright : unicoLow ? '#D97706' : "rgba(30,120,60,0.8)", color: "#fff" }}>{disponible} disp.</div>
                       </div>
                     </div>
                   </>
                 ) : (
                   /* ── Sin imagen — layout compacto ── */
-                  <div className="p-4 flex flex-col gap-2.5">
+                  <div className="p-4 flex flex-col gap-3">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <p className="text-[10px] font-black uppercase tracking-widest mb-0.5" style={{ color: T.textMuted }}>{p.sku}</p>
-                        <h3 className="font-bold text-sm leading-snug line-clamp-3" style={{ color: T.textPrimary }}>{p.nombre}</h3>
+                        <h3 className="font-black text-base leading-snug line-clamp-3" style={{ color: T.textPrimary }}>{p.nombre}</h3>
                       </div>
                       <div className="flex flex-col items-end gap-0.5 shrink-0">
-                        <div className="px-2 py-0.5 rounded-full text-[10px] font-black" style={{ background: disponible <= 0 ? T.redBright : lowStock ? T.redBright : unicoLow ? "#D97706" : "rgba(30,120,60,0.8)", color: "#fff" }}>
+                        <div className="px-2.5 py-1 rounded-full text-[10px] font-black" style={{ background: disponible <= 0 ? T.redBright : lowStock ? T.redBright : unicoLow ? "#D97706" : "rgba(30,120,60,0.8)", color: "#fff" }}>
                           {disponible <= 0 ? "Sin stock" : `${disponible} disp.`}
                         </div>
                         {unicoLow && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ color: '#FFAA00', background: 'rgba(255,170,0,0.12)', border: '1px solid rgba(255,170,0,0.25)' }}>único</span>}
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-1">
-                      {priceCount > 1 && <span className="px-2 py-0.5 rounded-full text-[10px] font-black border border-white/10 text-white/50">{priceCount} precios</span>}
                       {p.soloEfectivo && <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#D97706]/20 text-[#D97706]">Solo Efectivo</span>}
+                      {priceCount > 1 && <span className="px-2 py-0.5 rounded-full text-[10px] font-black border border-white/10 text-white/50">{priceCount} precios</span>}
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      {priceRows.map(({ level, price }) => {
+                        const rgb = PRICE_LEVEL_RGB[level];
+                        return (
+                          <div
+                            key={`${p.id}-${level}`}
+                            className="flex items-center justify-between gap-3 rounded-2xl px-3 py-2.5"
+                            style={{
+                              background: `rgba(${rgb},0.10)`,
+                              border: `1px solid rgba(${rgb},0.30)`,
+                            }}
+                          >
+                            <span
+                              className="text-[11px] font-black uppercase tracking-[0.14em]"
+                              style={{ color: `rgba(${rgb},0.92)` }}
+                            >
+                              {PRICE_LEVEL_LABELS[level]}
+                            </span>
+                            <span className="text-[1.55rem] leading-none font-black tabular-nums" style={{ color: PRICE_LEVEL_COLORS[level] }}>
+                              {fmt(price)}
+                            </span>
+                          </div>
+                        );
+                      })}
                     </div>
                     <div className="flex items-center justify-between border-t border-white/5 pt-2">
-                      <p className="text-base font-black" style={{ color: '#00CC66' }}>{fmt(p.precioA)}</p>
-                      {p.categoria && <span className="text-[10px] font-bold truncate max-w-[100px]" style={{ color: T.textMuted }}>{p.categoria}</span>}
+                      {p.categoria ? <span className="text-[10px] font-bold truncate max-w-[120px]" style={{ color: T.textMuted }}>{p.categoria}</span> : <span />}
+                      <span className="text-[10px] font-bold uppercase tracking-[0.14em]" style={{ color: T.textMuted }}>
+                        {priceCount === 1 ? "1 precio" : `${priceCount} precios`}
+                      </span>
                     </div>
                   </div>
                 )}

@@ -4,7 +4,7 @@ import {
   Search, ShoppingBag, X, Plus, Minus, Check, SlidersHorizontal,
   ScanLine, Zap, Loader2, Settings2, Smartphone,
   AlertTriangle, ArrowLeftRight, Maximize2, LayoutGrid,
-  Tag, ChevronDown, ChevronUp, ChevronRight, ChevronLeft, ArrowLeft,
+  Tag, ChevronDown, ChevronUp, ChevronRight, ChevronLeft, ArrowLeft, CreditCard, DollarSign,
   Users, UserPlus, User, Phone, AlertCircle,
   Mail,
   TriangleAlert, PackageX, Bookmark, Calendar, PackageCheck, ClipboardList, Banknote,
@@ -37,7 +37,9 @@ import { usePreSaleCatalogsQuery, usePreSaleOrdersQuery } from "@/hooks/queries/
 import { useCustomersAllQuery } from "@/hooks/queries/useCustomers";
 import { useTodayHistorialQuery } from "@/hooks/queries/useHistorial";
 import { queryKeys } from "@/lib/queryKeys";
+import { prependSaleToSalesCaches, prependPreSaleOrderToCaches, patchPreSaleOrderInCaches, decrementProductStockInCaches, invalidateAfterSale } from "@/lib/optimisticSale";
 import { getTodayLocal } from "@/lib/date";
+import { isValidEmail, isValidPhone } from "@/lib/validation";
 import { PRICE_LEVEL_LABELS, PRICE_LEVEL_COLORS, PRICE_LEVEL_RGB } from "@/lib/priceLevels";
 import type { CashSession, CashRegisterInfo, PaymentMethod as ApiPaymentMethod, PreSaleCatalog, PreSaleOrder, PreSaleOrderItem, SaleDetail, Terminal, ExternalCardLookup } from "@tadaima/api";
 import type { HistorialEntry } from "@/hooks/queries/useHistorial";
@@ -78,6 +80,8 @@ interface Product {
   allow_cash?: boolean;
   allow_card?: boolean;
   active?: boolean;
+  product_type?: string;
+  volume_number?: number | null;
 }
 
 interface Customer {
@@ -251,14 +255,8 @@ const BG     = "var(--td-page-bg)";
 const PANEL  = "var(--td-panel-bg)";
 const BORDER = "1px solid var(--td-panel-border)";
 const RED    = "var(--td-red)";
-const RED_G  = "var(--td-red-g)";
 const CARD   = "var(--td-card-bg)";
 const CARD_B = "1px solid var(--td-card-border)";
-
-const pill = (active: boolean) =>
-  active
-    ? { background: RED_G, color: "#fff", border: "1px solid var(--td-red-brd)" }
-    : { background: "var(--td-input-bg)", color: "var(--td-text-lo)", border: "1px solid var(--td-input-border)" };
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export function SellPage() {
@@ -296,11 +294,19 @@ export function SellPage() {
   const isCheckoutLockedRef = useRef(false);
 
   const queryClient = useQueryClient();
+  // Estados de modal declarados ANTES de las queries para condicionar el
+  // polling (Joel 2026-06-12): el cajero solo pollea catálogo/preventas
+  // mientras la ventana correspondiente está ABIERTA — al cerrarla se apaga.
+  const [showCatalog, setShowCatalog] = useState(false);
+  const [showPreSalesModal, setShowPreSalesModal] = useState(false);
+  const LIVE_POLL_MS = 20_000;
   // IMPORTANTE: pasar activeStore.id para que el endpoint retorne stock POR TIENDA.
   // Sin esto, `stock_total` viene global (sumando todas las tiendas) y el cajero ve
   // 10 unidades en el catálogo cuando en su tienda hay 0 — al cobrar el backend
   // rechaza con "Stock insuficiente: Disponible 0".
-  const productsQuery       = useProductsLightQuery(activeStore?.id);
+  const productsQuery       = useProductsLightQuery(activeStore?.id, {
+    refetchIntervalMs: showCatalog ? LIVE_POLL_MS : false,
+  });
   // Decisión 2026-05-28 (Joel): quitado el prefetch agresivo de páginas 2..6
   // (`useBackgroundProductsPrefetch`). Antes traía 1000 productos extra al
   // abrir caja. Ahora solo top-200 + búsqueda server-side bajo demanda.
@@ -311,8 +317,14 @@ export function SellPage() {
   // cada vez que el cajero clickeaba "Preventas". Ahora se cargan una vez (al
   // montar SellPage) y se mantienen en cache. Botón "Actualizar" del SellPage
   // y handleOpenCash invalidan para forzar refetch.
-  const preSaleCatalogsQuery = usePreSaleCatalogsQuery({ status: 'published', per_page: 200 });
-  const preSaleOrdersQuery   = usePreSaleOrdersQuery({ per_page: 200 });
+  const preSaleCatalogsQuery = usePreSaleCatalogsQuery(
+    { status: 'published', per_page: 200 },
+    { refetchIntervalMs: showPreSalesModal ? LIVE_POLL_MS : false },
+  );
+  const preSaleOrdersQuery   = usePreSaleOrdersQuery(
+    { per_page: 200 },
+    { refetchIntervalMs: showPreSalesModal ? LIVE_POLL_MS : false },
+  );
 
   // Clientes locales cacheados 1h. Filtro local instantáneo, Supabase como fallback.
   const customersAllQuery = useCustomersAllQuery(500);
@@ -435,6 +447,8 @@ export function SellPage() {
           allow_cash: p.allow_cash ?? true,
           allow_card: p.allow_card ?? true,
           payment_restriction: p.allow_card === false && p.allow_cash !== false ? "cash_only" : undefined,
+          product_type: p.product_type ?? "product",
+          volume_number: p.volume_number ?? null,
         } as Product;
       });
   }, [productsQuery.data]);
@@ -537,11 +551,13 @@ export function SellPage() {
         allow_cash: p.allow_cash ?? true,
         allow_card: p.allow_card ?? true,
         payment_restriction: p.allow_card === false && p.allow_cash !== false ? "cash_only" : undefined,
+        product_type: p.product_type ?? "product",
+        volume_number: p.volume_number ?? null,
       }) as Product);
     return extra.length > 0 ? [...topProducts, ...extra] : topProducts;
   }, [topProducts, productsSearchQuery.data]);
 
-  const [showCatalog, setShowCatalog] = useState(false);
+  // showCatalog se declara arriba (junto a las queries) para condicionar el polling.
   const [selectedCat, setSelectedCat] = useState("Todo");
   const [showDiscount, setShowDiscount] = useState(false);
   const [customerSearch, setCustomerSearch] = useState("");
@@ -596,6 +612,8 @@ export function SellPage() {
   // ADR-016 Fase 1 — filtro del historial. 'all' default; 'cancelled' muestra
   // solo ventas con status='returned' y preventas con status='cancelled'.
   const [historialFilter, setHistorialFilter] = useState<'all' | 'cancelled'>('all');
+  // Buscador del historial full-screen: ticket #, folio, cliente, producto o método.
+  const [historialSearch, setHistorialSearch] = useState("");
   const [expandedEntryKey, setExpandedEntryKey]     = useState<string | null>(null);
   // ADR-016 Fase 3 — qué ticket está siendo cancelado (modal)
   const [cancelTarget, setCancelTarget] = useState<
@@ -634,7 +652,7 @@ export function SellPage() {
   const [mixedPairs, setMixedPairs] = useState<Array<{ preSaleOrderId: number; saleId: number }>>([]);
 
   // ── Modal unificado de Preventas ──
-  const [showPreSalesModal, setShowPreSalesModal] = useState(false);
+  // showPreSalesModal se declara arriba (junto a las queries) para condicionar el polling.
   const [preSalesTab, setPreSalesTab] = useState<'venta' | 'liquidar' | 'completadas' | 'vencidas' | 'difusion'>('venta');
   const [preSaleCatalogs, setPreSaleCatalogs] = useState<PreSaleCatalog[]>([]);
   const [preSaleOrdersPending, setPreSaleOrdersPending] = useState<PreSaleOrder[]>([]);
@@ -1065,12 +1083,24 @@ export function SellPage() {
       toast.error("Nombre requerido");
       return;
     }
+    // Mismos regex compartidos que Sucursales/Usuarios (lib/validation.ts) —
+    // el label inline ya avisa; esto cubre el submit por Enter.
+    const phoneTrim = p.createForm.phone.trim();
+    const emailTrim = p.createForm.email.trim();
+    if (phoneTrim && !isValidPhone(phoneTrim)) {
+      toast.error("Teléfono inválido: deben ser 10 dígitos (ej. 55 1234 5678)");
+      return;
+    }
+    if (emailTrim && !isValidEmail(emailTrim)) {
+      toast.error("Correo inválido (ej. cliente@correo.com)");
+      return;
+    }
     setAssignCustomerPopup(prev => prev ? { ...prev, createForm: { ...prev.createForm, saving: true } } : null);
     try {
       const newCust = await createCustomer({
         name,
-        phone: p.createForm.phone.trim() || undefined,
-        email: p.createForm.email.trim() || undefined,
+        phone: phoneTrim || undefined,
+        email: emailTrim || undefined,
       });
       const cust: Customer = {
         id: String(newCust.id), name: newCust.name,
@@ -2317,7 +2347,9 @@ export function SellPage() {
     const amount = parseFloat(closeCashAmount) || 0;
     setClosingCashLoading(true);
     try {
-      const closedSession = await closeSession(amount);
+      // Manda el día local del corte — el timestamp UTC del backend ya cae
+      // en "mañana" después de las 11pm Tijuana (el corte se iba al día 12).
+      const closedSession = await closeSession(amount, getTodayLocal());
       // Limpiar la caché de sesión activa SINCRÓNICAMENTE antes de cualquier
       // setState. El efecto de auto-asignación (línea ~553) lee `cashSession`
       // de la caché — si dejamos la versión vieja "open" y solo invalidamos,
@@ -2359,9 +2391,14 @@ export function SellPage() {
     const win = window.open("", "_blank", "width=340,height=600");
     if (!win) return;
 
-    const regularRows = sale.items.map(i =>
-      `<tr><td style="padding:2px 0;font-size:10px">${i.name}</td><td style="text-align:center;padding:2px 4px;font-size:10px">×${i.quantity}</td><td style="text-align:right;font-size:10px">${fmt(i.price * i.quantity)}</td></tr>`
-    ).join("");
+    const regularTotal = sale.items.reduce((s, i) => s + i.price * i.quantity, 0);
+    // Formato clásico de ticket (Joel 2026-06-12): nombre en su línea y abajo
+    // "cant × precio unitario" + importe. Antes salía "×2 $800" (importe de la
+    // línea) y se leía como si cada pieza costara $800.
+    const itemRows = (name: string, qty: number, unitPrice: number) => `
+      <tr><td colspan="3" style="padding:3px 0 0;font-size:10px">${name}</td></tr>
+      <tr><td colspan="2" style="padding:0 0 3px 8px;font-size:9px;color:#555">${qty} × ${fmt(unitPrice)}</td><td style="text-align:right;font-size:10px;font-weight:700;vertical-align:bottom;padding-bottom:3px">${fmt(unitPrice * qty)}</td></tr>`;
+    const regularRows = sale.items.map(i => itemRows(i.name, i.quantity, i.price)).join("");
 
     // Saldo restante de la preventa (QA 2026-06-08): en anticipo nuevo es
     // total − anticipo; en liquidación el folio queda en ceros.
@@ -2374,9 +2411,7 @@ export function SellPage() {
       </div>
       <table>
         <tbody>
-          ${(sale.preSaleItems ?? []).map(i =>
-            `<tr><td style="padding:2px 0;font-size:10px">${i.name}</td><td style="text-align:center;padding:2px 4px;font-size:10px">×${i.quantity}</td><td style="text-align:right;font-size:10px">${fmt(i.unitPrice * i.quantity)}</td></tr>`
-          ).join("")}
+          ${(sale.preSaleItems ?? []).map(i => itemRows(i.name, i.quantity, i.unitPrice)).join("")}
         </tbody>
         <tfoot>
           <tr><td colspan="2" style="font-size:9px;padding-top:4px">Total preventa</td><td style="text-align:right;font-size:10px;padding-top:4px">${fmt(preSaleTotal)}</td></tr>
@@ -2396,7 +2431,8 @@ export function SellPage() {
       <div class="divider"></div>
       <table><tfoot>
         ${sale.preSaleAnticipo ? `<tr><td colspan="2" style="font-size:9px">Anticipo preventa</td><td style="text-align:right;font-size:9px">${fmt(sale.preSaleAnticipo)}</td></tr>` : ""}
-        ${sale.items.length > 0 ? `<tr><td colspan="2" style="font-size:9px">Productos</td><td style="text-align:right;font-size:9px">${fmt(sale.items.reduce((s, i) => s + i.price * i.quantity, 0))}</td></tr>` : ""}
+        ${sale.items.length > 0 ? `<tr><td colspan="2" style="font-size:9px">Productos</td><td style="text-align:right;font-size:9px">${fmt(regularTotal)}</td></tr>` : ""}
+        <tr><td colspan="2" style="font-size:9px;padding-top:4px">Subtotal</td><td style="text-align:right;font-size:9px;padding-top:4px">${fmt((sale.preSaleAnticipo ?? 0) + regularTotal)}</td></tr>
         <tr class="total-row"><td colspan="2">TOTAL COBRADO</td><td style="text-align:right">${fmt(sale.total)}</td></tr>
       </tfoot></table>` : "";
 
@@ -2686,6 +2722,15 @@ export function SellPage() {
               }],
             });
             regularSaleId = saleResult?.id;
+            // Escritura optimista: la respuesta del POST ya ES la fila que la
+            // lista de Ventas va a traer — la insertamos al cache (con el
+            // vendedor, que el endpoint de checkout no eager-loadea) y
+            // descontamos stock sin esperar el refetch de 1-3s contra prod.
+            prependSaleToSalesCaches(queryClient, {
+              ...(saleResult as unknown as SaleDetail),
+              user: user ? { id: Number(user.id), name: user.name ?? "" } : null,
+            });
+            decrementProductStockInCaches(queryClient, directItems);
           }
         }
 
@@ -2706,6 +2751,8 @@ export function SellPage() {
             ...(regularSaleId != null ? { linked_sale_id: regularSaleId } : {}),
           });
           newOrderCode = newOrder.code;
+          // Folio nuevo visible al instante en Folios/Ventas (mismo browser).
+          prependPreSaleOrderToCaches(queryClient, newOrder, activeStore.id);
         }
 
         // 3. Liquidar la preventa cargada (al final → si algo trona arriba, queda sin liquidar)
@@ -2715,7 +2762,15 @@ export function SellPage() {
             payment_method_id: payMethodId,
           });
         }
-        await updatePreSaleOrderStatus(activeMesa.loadedPreSaleOrderId, { status: "delivered" });
+        const deliveredOrder = await updatePreSaleOrderStatus(activeMesa.loadedPreSaleOrderId, { status: "delivered" });
+        // Liquidación visible al instante: el folio cacheado pasa a delivered
+        // (saldo 0) sin esperar el refetch. Solo copiamos los computados si el
+        // endpoint los trae (dependen de relaciones cargadas).
+        patchPreSaleOrderInCaches(queryClient, activeMesa.loadedPreSaleOrderId, {
+          status: "delivered",
+          ...(deliveredOrder?.paid_amount != null ? { paid_amount: deliveredOrder.paid_amount } : {}),
+          balance: deliveredOrder?.balance ?? 0,
+        });
 
         // Snapshots para ticket antes de limpiar
         const mesaId             = activeMesa.id;
@@ -2773,19 +2828,7 @@ export function SellPage() {
           } : {}),
         };
 
-        void queryClient.invalidateQueries({ queryKey: queryKeys.historial.all });
-        // Sale + folios changed stock and reservation counts → refresh cached data
-        // so the next time the cashier opens the catalog the numbers are correct.
-        void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.salesDrafts.all });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleCatalogs.all });
-        // refetchType:'all' refetchea también las queries INACTIVAS (SalesPage
-        // está desmontada mientras el cajero está en Caja). Sin esto solo se
-        // marcaban stale y al ir a Ventas se veía el cache viejo ~1s antes de
-        // actualizar. Con 'all' la lista de Ventas se pre-calienta en background
-        // y al navegar ya está fresca (anticipo/liquidación/venta visibles).
-        void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all, refetchType: 'all' });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all, refetchType: 'all' });
+        invalidateAfterSale(queryClient, { presale: true });
         setPendingMesaCloseId(mesaId);
         triggerPrintFlow(mixedTicket);
 
@@ -2915,6 +2958,14 @@ export function SellPage() {
               }],
             });
             regularSaleId = saleResult?.id;
+            // Escritura optimista — venta visible en Ventas y stock descontado
+            // en el catálogo al instante (el refetch de la invalidación
+            // reconcilia con el servidor en background).
+            prependSaleToSalesCaches(queryClient, {
+              ...(saleResult as unknown as SaleDetail),
+              user: user ? { id: Number(user.id), name: user.name ?? "" } : null,
+            });
+            decrementProductStockInCaches(queryClient, directItems);
           }
         }
 
@@ -2929,6 +2980,9 @@ export function SellPage() {
           ...(catalogDeposit > 0 ? { advance_amount: catalogDeposit, payment_method_id: payMethodId } : {}),
           ...(regularSaleId != null ? { linked_sale_id: regularSaleId } : {}),
         });
+
+        // Folio nuevo (anticipo) visible al instante en Folios/Ventas.
+        prependPreSaleOrderToCaches(queryClient, order, activeStore.id);
 
         // Keep in-memory pair for historial grouping in the same session
         if (regularSaleId != null) {
@@ -2990,13 +3044,7 @@ export function SellPage() {
           })),
           preSaleAnticipo: catalogDeposit,
         };
-        void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleCatalogs.all });
-        // refetchType:'all' — pre-calienta la lista de Ventas (inactiva) para
-        // que el nuevo folio/anticipo ya aparezca al ir de Caja a Ventas.
-        void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all, refetchType: 'all' });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.salesDrafts.all });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all, refetchType: 'all' });
+        invalidateAfterSale(queryClient, { presale: true });
         setPendingMesaCloseId(mesaId);
         triggerPrintFlow(mixedTicket);
       } catch (err: unknown) {
@@ -3096,6 +3144,15 @@ export function SellPage() {
         }],
       });
 
+      // Escritura optimista — la venta aparece en la lista de Ventas y el
+      // stock baja en el catálogo de Caja al soltar el botón, sin esperar el
+      // refetch de 1-3s contra prod (la invalidación de abajo reconcilia).
+      prependSaleToSalesCaches(queryClient, {
+        ...(saleResult as unknown as SaleDetail),
+        user: user ? { id: Number(user.id), name: user.name ?? "" } : null,
+      });
+      decrementProductStockInCaches(queryClient, saleItems);
+
       toast.success(`¡Venta registrada! ${fmt(total)}`);
       const mesaId = activeMesa.id;
       setCashReceived("");
@@ -3117,12 +3174,7 @@ export function SellPage() {
         ...(receivedUsdSnapshot > 0 ? { amountReceivedUsd: receivedUsdSnapshot } : {}),
         change: changeSnapshot > 0 ? changeSnapshot : undefined,
       };
-      void queryClient.invalidateQueries({ queryKey: queryKeys.historial.all });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.salesDrafts.all });
-      // refetchType:'all' — pre-calienta la lista de Ventas (inactiva) para que
-      // la venta recién cobrada ya aparezca al ir de Caja a Ventas.
-      void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all, refetchType: 'all' });
+      invalidateAfterSale(queryClient);
       setPendingMesaCloseId(mesaId);
       triggerPrintFlow(completedSale);
     } catch (err: unknown) {
@@ -3894,7 +3946,7 @@ export function SellPage() {
                           placeholder="WhatsApp / teléfono"
                           value={activeMesa.customerPhone || ""}
                           onChange={e => updMesa(activeMesa.id, m => ({ ...m, customerPhone: e.target.value }))}
-                          className="w-full bg-amber-500/5 border border-amber-500/30 rounded-2xl pl-11 pr-4 py-2.5 text-sm font-bold text-white placeholder:text-amber-500/30 focus:border-amber-500/50 outline-none transition-all"
+                          className={`w-full bg-amber-500/5 border rounded-2xl pl-11 pr-4 py-2.5 text-sm font-bold text-white placeholder:text-amber-500/30 outline-none transition-all ${activeMesa.customerPhone?.trim() && !isValidPhone(activeMesa.customerPhone) ? "border-red-500/60 focus:border-red-500/80" : "border-amber-500/30 focus:border-amber-500/50"}`}
                         />
                       </div>
                       <button
@@ -3908,6 +3960,10 @@ export function SellPage() {
                         <X size={15} />
                       </button>
                     </div>
+                    {/* Label de error inline — regex compartido con Sucursales/Usuarios (Joel 2026-06-12) */}
+                    {activeMesa.customerPhone?.trim() && !isValidPhone(activeMesa.customerPhone) && (
+                      <p className="text-[10px] font-bold text-red-400 ml-1 -mt-1">Teléfono inválido — deben ser 10 dígitos (ej. 55 1234 5678)</p>
+                    )}
 
                     <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
                       <div className="relative">
@@ -3919,13 +3975,17 @@ export function SellPage() {
                           placeholder="Correo electrónico (opcional)"
                           value={activeMesa.customerEmail || ""}
                           onChange={e => updMesa(activeMesa.id, m => ({ ...m, customerEmail: e.target.value }))}
-                          className="w-full bg-amber-500/5 border border-amber-500/20 rounded-2xl pl-10 pr-4 py-2.5 text-sm font-bold text-white placeholder:text-amber-500/25 focus:border-amber-500/40 outline-none transition-all"
+                          className={`w-full bg-amber-500/5 border rounded-2xl pl-10 pr-4 py-2.5 text-sm font-bold text-white placeholder:text-amber-500/25 outline-none transition-all ${activeMesa.customerEmail?.trim() && !isValidEmail(activeMesa.customerEmail) ? "border-red-500/60 focus:border-red-500/80" : "border-amber-500/20 focus:border-amber-500/40"}`}
                         />
                       </div>
                       <button
-                        disabled={isRegisteringCustomer || !activeMesa.customerName?.trim()}
+                        disabled={isRegisteringCustomer || !activeMesa.customerName?.trim()
+                          || !!(activeMesa.customerPhone?.trim() && !isValidPhone(activeMesa.customerPhone))
+                          || !!(activeMesa.customerEmail?.trim() && !isValidEmail(activeMesa.customerEmail))}
                         onClick={async () => {
                           if (!activeMesa.customerName?.trim()) return;
+                          if (activeMesa.customerPhone?.trim() && !isValidPhone(activeMesa.customerPhone)) return;
+                          if (activeMesa.customerEmail?.trim() && !isValidEmail(activeMesa.customerEmail)) return;
                           setIsRegisteringCustomer(true);
                           try {
                             const newCust = await createCustomer({
@@ -3962,6 +4022,9 @@ export function SellPage() {
                         {isRegisteringCustomer ? "Guardando…" : "Guardar cliente"}
                       </button>
                     </div>
+                    {activeMesa.customerEmail?.trim() && !isValidEmail(activeMesa.customerEmail) && (
+                      <p className="text-[10px] font-bold text-red-400 ml-1 -mt-1">Correo inválido (ej. cliente@correo.com)</p>
+                    )}
                   </div>
                 ) : (
                   <div className="flex flex-col gap-2">
@@ -4249,7 +4312,18 @@ export function SellPage() {
                           <ImageWithFallback src={p.image || ""} className="w-16 h-16 rounded-xl object-cover bg-black shrink-0 shadow-lg" />
 
                           <div className="flex-1 min-w-0">
-                            <p className="text-base font-black text-white truncate" style={{ color: "var(--td-text-hi)" }}>{p.name}</p>
+                            <p className="text-base font-black text-white truncate" style={{ color: "var(--td-text-hi)" }}>
+                              {p.name}
+                              {p.volume_number != null && (
+                                <span style={{
+                                  marginLeft: 8, padding: "1px 7px", borderRadius: 6, verticalAlign: "middle",
+                                  fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em",
+                                  color: "#60A5FA", background: "rgba(96,165,250,0.12)", border: "1px solid rgba(96,165,250,0.3)",
+                                }}>
+                                  Tomo {p.volume_number}
+                                </span>
+                              )}
+                            </p>
                             <p className="text-[11px] uppercase tracking-[0.15em] mt-0.5" style={{ color: "var(--td-text-ghost)" }}>{p.sku}</p>
 
                             {/* Stock Breakdown */}
@@ -4412,7 +4486,13 @@ export function SellPage() {
                 {activeMesa.items.map((item, idx) => (
                   (() => {
                     const hasItemImage = !!item.product.image?.trim();
-                    const shouldHideImageSlot = (item.sellingCatalogId != null || item.isFromPreSale) && !hasItemImage;
+                    const shouldHideImageSlot = !hasItemImage;
+                    const priceLevels = getPriceLevels(item.product);
+                    const unitPrice = getItemPrice(item);
+                    const lineTotal = unitPrice * item.quantity;
+                    const activePriceLabel = PRICE_LEVEL_LABELS[item.priceLevel] ?? "Precio";
+                    const activePriceColor = item.isDamaged ? "#F97316" : (PRICE_LEVEL_COLORS[item.priceLevel] ?? "var(--td-text-hi)");
+                    const activePriceRgb = item.isDamaged ? "249,115,22" : (PRICE_LEVEL_RGB[item.priceLevel] ?? "255,255,255");
 
                     return (
                   <Motion.div 
@@ -4461,7 +4541,6 @@ export function SellPage() {
                             Solo Efectivo
                           </span>
                         )}
-                        {/* Advertencia cuando el método de pago activo no está permitido en este producto */}
                         {activeMesa.paymentMethod === "Tarjeta" && item.product.allow_card === false && (
                           <span className="px-1.5 py-0.5 rounded bg-red-500/10 border border-red-500/30 text-[7px] font-black text-red-400 uppercase tracking-widest flex items-center gap-1">
                             <TriangleAlert size={8} />
@@ -4481,22 +4560,10 @@ export function SellPage() {
                           </span>
                         )}
                       </div>
-                      
-                      {/* Price Levels */}
-                      <div className="flex gap-2 mt-2 flex-wrap">
-                        {getPriceLevels(item.product).map(lvl => (
-                          <button
-                            key={lvl.level}
-                            onClick={() => changeLevel(item.product.id, lvl.level)}
-                            className="text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg border transition-all"
-                            style={item.priceLevel === lvl.level ? pill(true) : pill(false)}
-                          >
-                            {lvl.label} {fmt(lvl.price)}
-                          </button>
-                        ))}
 
-                        {/* Botón Dañado */}
-                        {(item.product.stock_damaged ?? 0) > 0 && (
+                      {/* Botón Dañado */}
+                      {(item.product.stock_damaged ?? 0) > 0 && (
+                        <div className="flex gap-2 mt-2 flex-wrap">
                           <button
                             onClick={() => toggleDamaged(item.product.id)}
                             className={`text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg border transition-all flex items-center gap-1 ${
@@ -4508,12 +4575,12 @@ export function SellPage() {
                             <TriangleAlert size={9} />
                             Dañado
                           </button>
-                        )}
-                      </div>
+                        </div>
+                      )}
 
                       {/* ── Anticipo individual (solo items de preventa: catálogo o ya cargados de orden) ── */}
                       {(item.sellingCatalogId != null || item.isFromPreSale) && (() => {
-                        const itemTotal = getItemPrice(item) * item.quantity;
+                        const itemTotal = lineTotal;
                         const dep = item.depositAmount ?? 0;
                         const full = dep >= itemTotal && itemTotal > 0;
                         return (
@@ -4577,46 +4644,89 @@ export function SellPage() {
                       )}
                     </div>
 
-                    {item.isFromPreSale ? (
-                      <div className="flex items-center justify-center w-10 h-10 rounded-xl border border-amber-500/20 bg-amber-500/5">
-                        <span className="text-sm font-black text-amber-400/60">{item.quantity}</span>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-3 bg-black/40 p-1.5 rounded-xl border border-white/5">
-                        <button
-                          onClick={() => { void changeQty(item.product.id, -1); }}
-                          className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition-colors text-white/40"
-                        >
-                          <Minus size={14} />
-                        </button>
-                        <span className="w-8 text-center text-base font-black text-white">{item.quantity}</span>
-                        <button
-                          onClick={() => { void changeQty(item.product.id, 1); }}
-                          className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition-colors text-white/40"
-                        >
-                          <Plus size={14} />
-                        </button>
-                      </div>
-                    )}
+                    <div className="ml-auto flex shrink-0 items-center gap-3 self-stretch">
+                      {!item.isFromPreSale && priceLevels.length > 0 && (
+                        <div className="w-[188px] self-center">
+                          <div className="relative">
+                            <select
+                              value={item.priceLevel}
+                              onChange={e => changeLevel(item.product.id, e.target.value as PriceLevel)}
+                              className="w-full appearance-none rounded-2xl px-4 py-3 pr-10 text-[11px] font-black uppercase tracking-[0.14em] outline-none transition-colors"
+                              style={{
+                                color: activePriceColor,
+                                border: `1px solid rgba(${activePriceRgb},0.32)`,
+                                background: `rgba(${activePriceRgb},0.12)`,
+                              }}
+                            >
+                              {priceLevels.map(lvl => (
+                                <option key={lvl.level} value={lvl.level}>
+                                  {lvl.label} {fmt(lvl.price)}
+                                </option>
+                              ))}
+                            </select>
+                            <ChevronDown size={13} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" style={{ color: activePriceColor }} />
+                          </div>
+                        </div>
+                      )}
 
-                    <div className="text-right min-w-[100px]">
+                      {item.isFromPreSale ? (
+                        <div className="flex h-[54px] w-[84px] items-center justify-center rounded-2xl border border-amber-500/20 bg-amber-500/5">
+                          <span className="text-lg font-black text-amber-300">{item.quantity}</span>
+                        </div>
+                      ) : (
+                        <div className="flex h-[54px] items-center gap-3 rounded-2xl border border-white/5 bg-black/40 px-3">
+                          <button
+                            onClick={() => { void changeQty(item.product.id, -1); }}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg text-white/40 transition-colors hover:bg-white/10"
+                          >
+                            <Minus size={14} />
+                          </button>
+                          <span className="w-8 text-center text-base font-black text-white">{item.quantity}</span>
+                          <button
+                            onClick={() => { void changeQty(item.product.id, 1); }}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg text-white/40 transition-colors hover:bg-white/10"
+                          >
+                            <Plus size={14} />
+                          </button>
+                        </div>
+                      )}
+
+                      <div className="min-w-[118px] text-center">
                       {item.sellingCatalogId != null ? (() => {
                         const anticipo = item.depositAmount ?? 0;
-                        const lineTotal = getItemPrice(item) * item.quantity;
                         return (
                           <>
-                            <p className="text-base font-black text-amber-300" title="Anticipo a cobrar ahora">
+                            <p className="text-[9px] font-black uppercase tracking-widest text-white/25">
+                              Anticipo
+                            </p>
+                            <p className="text-[28px] leading-none font-black text-amber-300" title="Anticipo a cobrar ahora">
                               {fmt(anticipo)}
                             </p>
-                            <p className="text-[11px] font-black text-white/40 mt-0.5">
+                            <p className="mt-1 text-center text-[13px] font-black text-white/55">
+                              {item.quantity} × {fmt(unitPrice)}
+                            </p>
+                            <p className="text-[10px] font-black text-white/25 mt-0.5">
                               de {fmt(lineTotal)}
                             </p>
                           </>
                         );
                       })() : (
-                        <p className={`text-base font-black ${item.isDamaged ? "text-orange-400" : item.isFromPreSale ? "text-amber-400/70" : "text-white"}`}>
-                          {fmt(getItemPrice(item) * item.quantity)}
-                        </p>
+                        <>
+                          <p className="text-[10px] font-black uppercase tracking-[0.16em] text-white/45">
+                            Subtotal
+                          </p>
+                          <p className={`text-[30px] leading-none font-black ${item.isDamaged ? "text-orange-400" : item.isFromPreSale ? "text-amber-400/70" : "text-white"}`}>
+                            {fmt(lineTotal)}
+                          </p>
+                          <p className="mt-1 text-center text-[14px] font-black text-white/65">
+                            {item.quantity} × {fmt(unitPrice)}
+                          </p>
+                          {!item.isFromPreSale && item.isDamaged && (
+                            <p className="text-[10px] font-black uppercase tracking-widest text-white/22 mt-0.5">
+                              Precio base {activePriceLabel}
+                            </p>
+                          )}
+                        </>
                       )}
 
                       {/* Aviso de stock bajo (solo venta regular, ≤5 unidades restantes en la tienda). */}
@@ -4669,12 +4779,15 @@ export function SellPage() {
                           {item.preSaleItemDelivered ? "↩ Pendiente" : "✓ Entregado"}
                         </button>
                       )}
+                      </div>
+
                       {!item.preSaleItemDelivered && (
                         <button
                           onClick={() => { void removeFromCart(item.product.id); }}
-                          className="text-[10px] font-bold text-white/20 hover:text-[#E0221A] mt-1 transition-colors block"
+                          className="inline-flex h-[54px] min-w-[118px] items-center justify-center gap-1.5 self-center rounded-2xl border border-[#E0221A]/25 bg-[#E0221A]/10 px-4 text-[12px] font-black text-[#FF8A80] transition-colors hover:bg-[#E0221A]/16 hover:text-white"
                         >
-                          Eliminar
+                          <Trash2 size={13} />
+                          Borrar
                         </button>
                       )}
                     </div>
@@ -5180,9 +5293,17 @@ export function SellPage() {
                     {(() => {
                       const active = activeMesa.paymentMethod;
                       const allOptions: PaymentMethod[] = ["Efectivo", "Tarjeta", "Transferencia"];
+                      // Icono por método (Joel 2026-06-12): se distingue de un
+                      // vistazo si el cobro es con tarjeta o efectivo.
+                      const methodIcon = (pm: PaymentMethod, cls: string) => {
+                        if (pm === "Tarjeta") return <CreditCard size={13} className={cls} />;
+                        if (pm === "Transferencia") return <ArrowLeftRight size={13} className={cls} />;
+                        if (pm === "Dólares") return <DollarSign size={13} className={cls} />;
+                        return <Banknote size={13} className={cls} />;
+                      };
                       const renderLabel = (pm: PaymentMethod, isActive: boolean) => (
-                        <div className="flex items-center justify-center gap-1.5 text-[11px] font-black uppercase tracking-widest leading-none">
-                          {pm === "Efectivo" && <Zap size={13} className={isActive ? 'text-white' : 'text-[#E0221A]'} />}
+                        <div className="flex items-center justify-center gap-1.5 text-[11px] font-black uppercase tracking-widest leading-none shrink-0">
+                          {methodIcon(pm, isActive ? 'text-white' : 'text-[#E0221A]')}
                           {pm}
                         </div>
                       );
@@ -5191,7 +5312,7 @@ export function SellPage() {
                           <div className="flex w-full h-[52px] rounded-2xl overflow-hidden" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", color: "var(--td-text-hi)" }}>
                             <button
                               onClick={() => setPaymentMenuOpen(o => !o)}
-                              className="flex-1 flex items-center justify-center gap-1.5 hover:bg-white/5 transition-colors"
+                              className="flex-1 min-w-0 flex items-center justify-center gap-1.5 hover:bg-white/5 transition-colors"
                             >
                               {renderLabel(active, false)}
                               {/* Menú abre HACIA ARRIBA porque vive al fondo del sidebar.
@@ -5211,18 +5332,23 @@ export function SellPage() {
                               </button>
                             )}
                             {active === "Tarjeta" && (
+                              // Decisión Joel 2026-06-12: el nombre de la terminal NO
+                              // cabe sin apretar todo → el botón dice solo "Tarjeta" y
+                              // la terminal queda como icono compacto: lectora + ✓ verde
+                              // si hay asignada (nombre en tooltip), ⚠ ámbar si falta.
                               <button
                                 onClick={(e) => { e.stopPropagation(); setPaymentMenuOpen(false); setShowTerminalModal(true); }}
-                                className={`px-2 border-l flex items-center gap-1 text-[8px] font-black tracking-wider hover:bg-white/5 transition-colors ${activeTerminal ? "" : "animate-pulse"}`}
+                                className={`px-2.5 border-l flex items-center gap-1 hover:bg-white/5 transition-colors shrink-0 ${activeTerminal ? "" : "animate-pulse"}`}
                                 style={{ borderColor: "var(--td-card-border)", color: activeTerminal ? "var(--td-text-md)" : "#FFAA00" }}
-                                title={activeTerminal ? "Cambiar terminal" : "Elegir terminal para cobrar con tarjeta"}
+                                title={activeTerminal ? `Terminal: ${activeTerminal.name} — clic para cambiar` : "Elegir terminal para cobrar con tarjeta"}
                               >
+                                <Smartphone size={12} />
                                 {activeTerminal ? (
-                                  <span className="truncate max-w-[60px]">{activeTerminal.name}</span>
+                                  <Check size={10} className="text-emerald-500" strokeWidth={4} />
                                 ) : (
-                                  <><AlertTriangle size={9} /></>
+                                  <AlertTriangle size={10} />
                                 )}
-                                <ChevronDown size={9} className="opacity-60" />
+                                <ChevronDown size={9} className="opacity-60 shrink-0" />
                               </button>
                             )}
                           </div>
@@ -5239,7 +5365,12 @@ export function SellPage() {
                                 style={{ background: "var(--td-popup-bg)", backdropFilter: "blur(20px)" }}
                               >
                                 {allOptions.filter(pm => pm !== active).map(pm => {
-                                  const isBlocked = hasCashOnly && (pm === "Tarjeta" || pm === "Transferencia");
+                                  // Bloquea la opción si ALGÚN item del carrito no acepta ese
+                                  // método (preventa/cash_only → no Tarjeta; allow_cash=false →
+                                  // no Efectivo). Mismo criterio que payBlocked y el guard del
+                                  // backend. Antes referenciaba `hasCashOnly`, variable que
+                                  // nunca existió → ReferenceError al abrir el menú (QA 06-12).
+                                  const isBlocked = activeMesa.items.some(i => !itemAcceptsMethod(i, pm));
                                   return (
                                     <button
                                       key={pm}
@@ -5443,6 +5574,18 @@ export function SellPage() {
                 )}
               </div>
 
+              {/* Re-busca terminales sin cerrar el modal (Joel 2026-06-12):
+                  el admin da de alta una terminal en otra ventana/máquina y
+                  el cajero la trae sin recargar la página. */}
+              <button
+                onClick={() => { void terminalsQuery.refetch(); }}
+                disabled={terminalsQuery.isFetching}
+                className="mt-4 w-full flex items-center justify-center gap-2 py-3 rounded-2xl border border-emerald-500/30 bg-transparent text-emerald-400/80 text-[10px] font-black uppercase tracking-widest hover:bg-emerald-500/10 hover:border-emerald-500/50 hover:text-emerald-400 transition-all disabled:opacity-50 disabled:cursor-default"
+              >
+                <RefreshCw size={12} className={terminalsQuery.isFetching ? "animate-spin" : ""} />
+                {terminalsQuery.isFetching ? "Buscando…" : "Buscar terminales"}
+              </button>
+
               {isAdmin && (
                 <div className="mt-8 pt-6 border-t border-white/5">
                   <div className="p-4 rounded-2xl bg-emerald-500/[0.04] border border-emerald-500/10">
@@ -5545,6 +5688,12 @@ export function SellPage() {
             const isSinAsignar = storeLimitRow === undefined;
             const isAgotado = !isSinAsignar && remaining <= 0;
             const isBlocked = isSinAsignar || isAgotado;
+            const availabilityChip =
+              remaining <= 0
+                ? { color: "#FFFFFF", background: "#DC2626", border: "1px solid rgba(220,38,38,0.5)" }
+                : remaining <= 5
+                  ? { color: "#F59E0B", background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.24)" }
+                  : { color: "#10B981", background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.28)" };
 
             return (
               <button
@@ -5567,10 +5716,7 @@ export function SellPage() {
                 onMouseEnter={e => { if (!isBlocked) { (e.currentTarget as HTMLButtonElement).style.borderColor = `${ac}0.4)`; (e.currentTarget as HTMLButtonElement).style.transform = "translateY(-1px)"; } }}
                 onMouseLeave={e => { if (!isBlocked) { (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--td-card-border)"; (e.currentTarget as HTMLButtonElement).style.transform = "translateY(0)"; } }}
               >
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
-                  <span style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--td-text-ghost)" }}>
-                    {catalog.category?.name ?? "Preventa"}
-                  </span>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6 }}>
                   {isSinAsignar ? (() => {
                     const alertSt = presaleAlertState[catalog.id];
                     return (
@@ -5606,7 +5752,7 @@ export function SellPage() {
                       Agotado
                     </span>
                   ) : (
-                    <span style={{ fontSize: 10, fontWeight: 900, padding: "3px 8px", borderRadius: 20, color: "#F59E0B", background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.2)" }}>
+                    <span style={{ fontSize: 10, fontWeight: 900, padding: "3px 8px", borderRadius: 20, color: availabilityChip.color, background: availabilityChip.background, border: availabilityChip.border }}>
                       {remaining !== null ? `${remaining} disponible${remaining === 1 ? "" : "s"}` : "Disponible"}
                     </span>
                   )}
@@ -5626,10 +5772,39 @@ export function SellPage() {
                 <p style={{ margin: 0, fontSize: 14, fontWeight: 800, lineHeight: 1.3, color: "var(--td-text-hi)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
                   {catalog.product_name}
                 </p>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 10,
+                    padding: "4px 0 0",
+                  }}
+                >
+                  <span style={{ fontSize: 10, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--td-text-ghost)" }}>
+                    Anticipo mín.
+                  </span>
+                  <span style={{ fontSize: 18, fontWeight: 900, lineHeight: 1, color: catalog.advance_payment > 0 ? "#F97316" : "var(--td-text-lo)" }}>
+                    {catalog.advance_payment > 0 ? fmt(catalog.advance_payment) : "Sin anticipo"}
+                  </span>
+                </div>
                 {catalog.preorder_limit != null && (
-                  <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: "var(--td-text-lo)" }}>
-                    {catalog.reserved_count ?? 0} / {catalog.preorder_limit} reservados
-                  </p>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 10,
+                      padding: "2px 0 0",
+                    }}
+                  >
+                    <span style={{ fontSize: 10, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--td-text-ghost)" }}>
+                      Reservados
+                    </span>
+                    <span style={{ fontSize: 17, fontWeight: 900, color: "var(--td-text-hi)" }}>
+                      {catalog.reserved_count ?? 0} / {catalog.preorder_limit}
+                    </span>
+                  </div>
                 )}
                 <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
                   {prices.map(x => {
@@ -5660,12 +5835,6 @@ export function SellPage() {
                       </button>
                     );
                   })}
-                </div>
-                <div style={{ borderTop: "1px solid var(--td-card-border)", paddingTop: 8, display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
-                  <p style={{ margin: 0, fontSize: 11, color: "var(--td-text-ghost)", fontWeight: 700 }}>
-                    {catalog.advance_payment > 0 ? `Anticipo mín. ${fmt(catalog.advance_payment)}` : "Sin anticipo mínimo"}
-                  </p>
-                  <p style={{ margin: 0, fontSize: 18, fontWeight: 900, color: "#F59E0B" }}>{fmt(catalog.price_1 ?? 0)}</p>
                 </div>
               </button>
             );
@@ -6166,8 +6335,12 @@ export function SellPage() {
                     ★ Preventa · {lastCompletedSale.preSaleCode}
                   </p>
                   {(lastCompletedSale.preSaleItems ?? []).map((it, i) => (
-                    <div key={`pv${i}`} style={{ display: "flex", justifyContent: "space-between", padding: "2px 0" }}>
-                      <span style={{ fontSize: 11, color: "var(--td-text-hi)", fontWeight: 700 }}>{it.name} ×{it.quantity}</span>
+                    <div key={`pv${i}`} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", padding: "2px 0" }}>
+                      <span style={{ fontSize: 11, color: "var(--td-text-hi)", fontWeight: 700 }}>
+                        {it.name}
+                        {/* cant × unitario para no leer el importe como precio por pieza */}
+                        <span style={{ display: "block", fontSize: 9, color: "var(--td-text-ghost)", fontWeight: 700 }}>{it.quantity} × {fmt(it.unitPrice)}</span>
+                      </span>
                       <span style={{ fontSize: 10, color: "var(--td-text-ghost)", fontWeight: 700 }}>{fmt(it.unitPrice * it.quantity)}</span>
                     </div>
                   ))}
@@ -6183,8 +6356,11 @@ export function SellPage() {
                 <p style={{ margin: "0 0 4px", fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--td-text-ghost)" }}>Productos</p>
               )}
               {lastCompletedSale.items.map((item, i) => (
-                <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: i < lastCompletedSale.items.length - 1 ? "1px solid var(--td-card-border)" : "none" }}>
-                  <span style={{ fontSize: 11, color: "var(--td-text-hi)", fontWeight: 700 }}>{item.name} ×{item.quantity}</span>
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", padding: "3px 0", borderBottom: i < lastCompletedSale.items.length - 1 ? "1px solid var(--td-card-border)" : "none" }}>
+                  <span style={{ fontSize: 11, color: "var(--td-text-hi)", fontWeight: 700 }}>
+                    {item.name}
+                    <span style={{ display: "block", fontSize: 9, color: "var(--td-text-ghost)", fontWeight: 700 }}>{item.quantity} × {fmt(item.price)}</span>
+                  </span>
                   <span style={{ fontSize: 11, color: "var(--td-text-md)", fontWeight: 700 }}>{fmt(item.price * item.quantity)}</span>
                 </div>
               ))}
@@ -6407,33 +6583,51 @@ export function SellPage() {
                         placeholder="Nombre del cliente *"
                         style={{ background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 10, padding: "11px 14px", fontSize: 14, fontWeight: 700, color: "var(--td-input-text)", outline: "none" }}
                       />
-                      {/* Teléfono + Email en grid 2-col — compactos, ambos opcionales */}
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                        <input
-                          type="tel"
-                          value={p.createForm.phone}
-                          onChange={e => setAssignCustomerPopup(prev => prev ? { ...prev, createForm: { ...prev.createForm, phone: e.target.value } } : null)}
-                          onKeyDown={e => { if (e.key === "Enter" && p.createForm.name.trim() && !p.createForm.saving) void submitCreateCustomer(); }}
-                          placeholder="Teléfono"
-                          style={{ background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 10, padding: "9px 12px", fontSize: 12, fontWeight: 700, color: "var(--td-input-text)", outline: "none", minWidth: 0 }}
-                        />
-                        <input
-                          type="email"
-                          value={p.createForm.email}
-                          onChange={e => setAssignCustomerPopup(prev => prev ? { ...prev, createForm: { ...prev.createForm, email: e.target.value } } : null)}
-                          onKeyDown={e => { if (e.key === "Enter" && p.createForm.name.trim() && !p.createForm.saving) void submitCreateCustomer(); }}
-                          placeholder="Correo"
-                          style={{ background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 10, padding: "9px 12px", fontSize: 12, fontWeight: 700, color: "var(--td-input-text)", outline: "none", minWidth: 0 }}
-                        />
-                      </div>
-                      <button
-                        onClick={() => { void submitCreateCustomer(); }}
-                        disabled={p.createForm.saving || !p.createForm.name.trim()}
-                        style={{ marginTop: 2, padding: "11px 14px", borderRadius: 10, background: "#10b981", border: "none", color: "#fff", fontSize: 12, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", cursor: p.createForm.saving ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, opacity: (p.createForm.saving || !p.createForm.name.trim()) ? 0.5 : 1 }}
-                      >
-                        {p.createForm.saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
-                        Crear y asignar
-                      </button>
+                      {/* Teléfono + Email en grid 2-col — compactos, ambos opcionales.
+                          Validación inline (Joel 2026-06-12): borde + label rojo en
+                          cuanto el dato es inválido; el botón se bloquea. */}
+                      {(() => {
+                        const popupPhoneBad = !!p.createForm.phone.trim() && !isValidPhone(p.createForm.phone);
+                        const popupEmailBad = !!p.createForm.email.trim() && !isValidEmail(p.createForm.email);
+                        const popupBlocked = p.createForm.saving || !p.createForm.name.trim() || popupPhoneBad || popupEmailBad;
+                        const errStyle: React.CSSProperties = { margin: "4px 2px 0", fontSize: 10, fontWeight: 700, color: "#f87171" };
+                        return (
+                          <>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                              <div style={{ minWidth: 0 }}>
+                                <input
+                                  type="tel"
+                                  value={p.createForm.phone}
+                                  onChange={e => setAssignCustomerPopup(prev => prev ? { ...prev, createForm: { ...prev.createForm, phone: e.target.value } } : null)}
+                                  onKeyDown={e => { if (e.key === "Enter" && p.createForm.name.trim() && !p.createForm.saving) void submitCreateCustomer(); }}
+                                  placeholder="Teléfono"
+                                  style={{ width: "100%", background: "var(--td-input-bg)", border: `1px solid ${popupPhoneBad ? "rgba(248,113,113,0.7)" : "var(--td-input-border)"}`, borderRadius: 10, padding: "9px 12px", fontSize: 12, fontWeight: 700, color: "var(--td-input-text)", outline: "none", minWidth: 0 }}
+                                />
+                                {popupPhoneBad && <p style={errStyle}>Teléfono inválido — 10 dígitos</p>}
+                              </div>
+                              <div style={{ minWidth: 0 }}>
+                                <input
+                                  type="email"
+                                  value={p.createForm.email}
+                                  onChange={e => setAssignCustomerPopup(prev => prev ? { ...prev, createForm: { ...prev.createForm, email: e.target.value } } : null)}
+                                  onKeyDown={e => { if (e.key === "Enter" && p.createForm.name.trim() && !p.createForm.saving) void submitCreateCustomer(); }}
+                                  placeholder="Correo"
+                                  style={{ width: "100%", background: "var(--td-input-bg)", border: `1px solid ${popupEmailBad ? "rgba(248,113,113,0.7)" : "var(--td-input-border)"}`, borderRadius: 10, padding: "9px 12px", fontSize: 12, fontWeight: 700, color: "var(--td-input-text)", outline: "none", minWidth: 0 }}
+                                />
+                                {popupEmailBad && <p style={errStyle}>Correo inválido (ej. cliente@correo.com)</p>}
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => { void submitCreateCustomer(); }}
+                              disabled={popupBlocked}
+                              style={{ marginTop: 2, padding: "11px 14px", borderRadius: 10, background: "#10b981", border: "none", color: "#fff", fontSize: 12, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", cursor: p.createForm.saving ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, opacity: popupBlocked ? 0.5 : 1 }}
+                            >
+                              {p.createForm.saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                              Crear y asignar
+                            </button>
+                          </>
+                        );
+                      })()}
                     </div>
                   )}
                 </div>
@@ -6661,50 +6855,88 @@ export function SellPage() {
           onClose={() => setCancelTarget(null)}
           onSuccess={() => {
             setCancelTarget(null);
-            // Invalida cache de historial + cancelaciones (sección H del reporte
-            // y tab admin) para que ambos se refresquen en bg.
-            void queryClient.invalidateQueries({ queryKey: queryKeys.historial.all });
+            // Cancelar devuelve stock y reversa caja — invalidación central
+            // (historial, productos, inventario, ventas, folios, dashboards)
+            // + el tab admin de cancelaciones.
             void queryClient.invalidateQueries({ queryKey: ['saleCancellations'] });
-            void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all });
-            void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all });
-            // Cancelar devuelve el stock (InventoryMovement 'devolucion'). Sin
-            // esto el catálogo de Caja seguía mostrando "1 disp." cuando ya son 2
-            // (bug QA Ruben 2026-05-30). Refresca productos + catálogos de preventa.
-            void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
-            void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleCatalogs.all });
+            invalidateAfterSale(queryClient, { presale: true });
           }}
         />
       )}
 
       {showHistorialModal && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-          <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)" }}
-            onClick={() => setShowHistorialModal(false)} />
-          <div style={{ position: "relative", background: "var(--td-popup-bg)", border: "1px solid var(--td-popup-border)", borderRadius: 28, padding: 28, width: "100%", maxWidth: 560, maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
+        /* Full-screen estilo dashboard (mismo patrón que el catálogo de
+           Productos/Preventas) — el modal centrado de 560px se veía apretado
+           con muchas ventas (Joel 2026-06-12). */
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 400,
+          background: "var(--td-popup-bg)",
+          backdropFilter: "blur(24px)",
+          display: "flex", flexDirection: "column",
+        }}>
 
             {/* Header */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <div style={{ width: 40, height: 40, borderRadius: 12, background: "rgba(224,34,26,0.1)", border: "1px solid rgba(224,34,26,0.25)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <History size={18} color="#E0221A" />
-                </div>
-                <div>
-                  <h3 style={{ margin: 0, fontSize: 15, fontWeight: 900, color: "var(--td-text-hi)" }}>Historial del Día</h3>
-                  <p style={{ margin: "2px 0 0", fontSize: 9, fontWeight: 700, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.15em", display: "flex", alignItems: "center", gap: 6 }}>
-                    {activeStore?.name ?? "Tienda"} · {historialEntries.length} eventos hoy
-                    {historialRefreshing && (
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "#E0221A", opacity: 0.8 }}>
-                        <Loader2 size={9} className="animate-spin" /> actualizando
-                      </span>
-                    )}
-                  </p>
-                </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 20px", borderBottom: "1px solid var(--td-panel-border)", background: "var(--td-panel-bg)", flexShrink: 0 }}>
+              <div style={{ width: 40, height: 40, borderRadius: 12, background: "rgba(224,34,26,0.1)", border: "1px solid rgba(224,34,26,0.25)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <History size={18} color="#E0221A" />
               </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <h3 style={{ margin: 0, fontSize: 15, fontWeight: 900, color: "var(--td-text-hi)" }}>Historial del Día</h3>
+                <p style={{ margin: "2px 0 0", fontSize: 9, fontWeight: 700, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.15em", display: "flex", alignItems: "center", gap: 6 }}>
+                  {activeStore?.name ?? "Tienda"} · {historialEntries.length} eventos hoy
+                  {historialRefreshing && (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "#E0221A", opacity: 0.8 }}>
+                      <Loader2 size={9} className="animate-spin" /> actualizando
+                    </span>
+                  )}
+                </p>
+              </div>
+
+              {/* Buscador inteligente: ticket #, folio, cliente, producto, SKU o método */}
+              <div style={{ position: "relative", width: 320 }}>
+                <Search size={14} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "var(--td-text-ghost)", pointerEvents: "none" }} />
+                <input
+                  type="text"
+                  value={historialSearch}
+                  onChange={e => setHistorialSearch(e.target.value)}
+                  placeholder="Ticket, folio, cliente, producto, método…"
+                  style={{
+                    width: "100%", boxSizing: "border-box",
+                    background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)",
+                    borderRadius: 12, padding: "9px 12px 9px 34px",
+                    fontSize: 12, color: "var(--td-input-text)", outline: "none",
+                  }}
+                />
+                {historialSearch && (
+                  <button onClick={() => setHistorialSearch("")}
+                    style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "var(--td-text-ghost)", padding: 2 }}>
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+
+              <button
+                onClick={() => { void fetchHistorial(); }}
+                title="Actualizar historial"
+                style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 12, color: "var(--td-text-lo)", padding: "9px 14px", fontSize: 10, fontWeight: 900, cursor: "pointer", textTransform: "uppercase", letterSpacing: "0.12em", flexShrink: 0 }}
+              >
+                <RefreshCw size={13} className={historialRefreshing ? "animate-spin" : ""} />
+                Actualizar
+              </button>
+
               <button onClick={() => setShowHistorialModal(false)}
-                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--td-text-ghost)", padding: 4 }}>
-                <X size={18} />
+                title="Cerrar"
+                style={{ width: 38, height: 38, borderRadius: 12, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", cursor: "pointer", color: "var(--td-text-lo)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <X size={17} />
               </button>
             </div>
+
+            {/* Contenido centrado, ancho de lectura cómodo. height 100% +
+                minHeight 0 EXPLÍCITOS en toda la cadena: sin esto el alto
+                dependía del stretch implícito del flex y la lista del
+                historial no scrolleaba (Joel 2026-06-11). */}
+            <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", justifyContent: "center" }}>
+            <div style={{ width: "100%", maxWidth: 1000, height: "100%", padding: "16px 20px 20px", boxSizing: "border-box", display: "flex", flexDirection: "column", minHeight: 0 }}>
 
             {/* ADR-016 Fase 1 — Tabs/filtros del historial */}
             {(() => {
@@ -6756,8 +6988,9 @@ export function SellPage() {
               );
             })()}
 
-            {/* List */}
-            <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
+            {/* List — minHeight 0 obligatorio para que el flex permita
+                encoger y el overflowY scrollee de verdad. */}
+            <div className="td-scroll-visible" style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6, paddingRight: 4 }}>
               {historialLoading ? (
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 40 }}>
                   <Loader2 size={24} style={{ color: "#E0221A" }} className="animate-spin" />
@@ -6773,7 +7006,7 @@ export function SellPage() {
                   const pairedSaleIds = new Set(mixedPairs.map(p => p.saleId));
 
                   // ADR-016 Fase 1: aplica filtro de tab.
-                  const filteredEntries = historialFilter === 'cancelled'
+                  const tabEntries = historialFilter === 'cancelled'
                     ? historialEntries.filter(e => {
                         if (e.type === 'sale') {
                           const s = e.data as SaleDetail;
@@ -6783,12 +7016,31 @@ export function SellPage() {
                       })
                     : historialEntries;
 
+                  // Buscador: ticket #, folio, cliente, producto, SKU o método de pago.
+                  const q = historialSearch.trim().toLowerCase();
+                  const filteredEntries = !q ? tabEntries : tabEntries.filter(e => {
+                    if (e.type === 'sale') {
+                      const s = e.data as SaleDetail;
+                      return String(s.id ?? '').includes(q)
+                        || (s.customer?.name ?? '').toLowerCase().includes(q)
+                        || (s.items ?? []).some(i =>
+                          (i.product?.name ?? '').toLowerCase().includes(q)
+                          || (i.product?.sku ?? '').toLowerCase().includes(q))
+                        || (s.payments ?? []).some(p => (p.payment_method?.name ?? '').toLowerCase().includes(q));
+                    }
+                    const o = e.data;
+                    return (o.code ?? '').toLowerCase().includes(q)
+                      || (o.customer?.name ?? '').toLowerCase().includes(q)
+                      || (o.items ?? []).some(i => (i.catalog?.product_name ?? '').toLowerCase().includes(q))
+                      || (o.payments ?? []).some(p => (p.payment_method?.name ?? '').toLowerCase().includes(q));
+                  });
+
                   if (filteredEntries.length === 0) {
                     return (
                       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 40, opacity: 0.3 }}>
                         <Receipt size={36} style={{ marginBottom: 8 }} />
                         <p style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em" }}>
-                          {historialFilter === 'cancelled' ? 'No hay cancelaciones hoy' : 'Sin eventos registrados hoy'}
+                          {q ? `Sin resultados para "${historialSearch.trim()}"` : historialFilter === 'cancelled' ? 'No hay cancelaciones hoy' : 'Sin eventos registrados hoy'}
                         </p>
                       </div>
                     );
@@ -6806,6 +7058,12 @@ export function SellPage() {
                     const sale = entry.data;
                     const first = sale.payments?.[0];
                     const method = first?.payment_method?.name ?? "Efectivo";
+                    // Label corto: "Tarjeta débito/crédito" no cabe — basta "Tarjeta".
+                    const methodLabel = /tarjeta/i.test(method) ? "Tarjeta" : method;
+                    // Tarjeta NO se cancela/devuelve (la tienda pierde la comisión —
+                    // decisión Joel 2026-06-10; el backend ya lo bloquea con 422).
+                    // Ocultamos el botón para no invitar al error.
+                    const hasCardPayment = (sale.payments ?? []).some(p => /tarjeta|card/i.test(p.payment_method?.name ?? ""));
                     const itemCount = sale.items?.reduce((s, i) => s + i.quantity, 0) ?? 0;
                     const dateStr = sale.sold_at || sale.created_at;
                     const discount = (sale as unknown as Record<string, unknown>).discount_amount as number | undefined;
@@ -6821,13 +7079,26 @@ export function SellPage() {
                               {sale.customer?.name && <span style={{ fontSize: 10, color: "var(--td-text-ghost)", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sale.customer.name}</span>}
                             </div>
                             <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
-                              <span style={{ fontSize: 9, fontWeight: 700, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.08em" }}>{method}</span>
+                              <span style={{ fontSize: 9, fontWeight: 700, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.08em" }}>{methodLabel}</span>
                               <span style={{ fontSize: 9, color: "var(--td-text-ghost)" }}>· {itemCount} art.</span>
                               {sale.status === "returned" && <span style={{ fontSize: 9, fontWeight: 900, color: "#f87171", background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.30)", borderRadius: 999, padding: "2px 8px", textTransform: "uppercase", letterSpacing: "0.08em" }}>Cancelada</span>}
                               {sale.status !== "returned" && sale.cancellation_status === "partial" && <span style={{ fontSize: 9, fontWeight: 900, color: "#fbbf24", background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.30)", borderRadius: 999, padding: "2px 8px", textTransform: "uppercase", letterSpacing: "0.08em" }}>Cancelada parcial</span>}
                             </div>
                           </div>
-                          <span style={{ fontSize: 14, fontWeight: 900, color: sale.status === "returned" ? "#f87171" : "var(--td-text-hi)", flexShrink: 0, textDecoration: sale.status === "returned" ? "line-through" : "none", opacity: sale.status === "returned" ? 0.6 : 1 }}>{fmt(sale.total)}</span>
+                          {/* Cancelada total: −$X en ROJO = lo que se regresó (el
+                              total quedó en $0 por el edit-in-place y no decía
+                              nada). SIMBÓLICO: no se suma a ningún total — el
+                              corte ya lo descuenta (Joel 2026-06-12). */}
+                          {sale.status === "returned" && (sale.cancelled_amount ?? 0) > 0 ? (
+                            <span style={{ fontSize: 14, fontWeight: 900, color: "#f87171", flexShrink: 0 }}>−{fmt(sale.cancelled_amount ?? 0)}</span>
+                          ) : (
+                            <span style={{ fontSize: 14, fontWeight: 900, color: sale.status === "returned" ? "#f87171" : "var(--td-text-hi)", flexShrink: 0, textDecoration: sale.status === "returned" ? "line-through" : "none", opacity: sale.status === "returned" ? 0.6 : 1 }}>
+                              {fmt(sale.total)}
+                              {sale.cancellation_status === "partial" && (sale.cancelled_amount ?? 0) > 0 && (
+                                <span style={{ display: "block", fontSize: 9, fontWeight: 800, color: "#f87171", textDecoration: "none" }}>−{fmt(sale.cancelled_amount ?? 0)} canc.</span>
+                              )}
+                            </span>
+                          )}
                           <div onClick={e => { e.stopPropagation(); doPrintTicket({ id: sale.id, total: sale.total, paymentMethod: method, ...(sale.customer?.name ? { customerName: sale.customer.name } : {}), items: (sale.items || []).map(i => ({ name: i.product?.name || String(i.product_id), quantity: i.quantity, price: i.price })), soldAt: dateStr }); }}
                             role="button" title="Reimprimir ticket"
                             style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 9, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--td-text-lo)" }}
@@ -6835,7 +7106,7 @@ export function SellPage() {
                             onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = "var(--td-input-bg)"; (e.currentTarget as HTMLDivElement).style.borderColor = "var(--td-input-border)"; (e.currentTarget as HTMLDivElement).style.color = "var(--td-text-lo)"; }}>
                             <Printer size={13} />
                           </div>
-                          {sale.status !== "returned" && (
+                          {sale.status !== "returned" && !hasCardPayment && (
                             <div onClick={e => { e.stopPropagation(); setCancelTarget({ kind: 'sale', sale }); }}
                               role="button" title="Cancelar venta"
                               style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 9, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--td-text-lo)" }}
@@ -6860,6 +7131,27 @@ export function SellPage() {
                                   </div>
                                 ))}
                             </div>
+                            {/* Detalle de lo cancelado (ADR-016) — snapshot + monto
+                                regresado en rojo. Simbólico: el total ya lo descuenta. */}
+                            {(sale.cancelled_items ?? []).length > 0 && (
+                              <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 10, background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.2)" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                                  <p style={{ margin: 0, fontSize: 8, fontWeight: 900, color: "#f87171", textTransform: "uppercase", letterSpacing: "0.12em" }}>Cancelado · se regresó</p>
+                                  <p style={{ margin: 0, fontSize: 12, fontWeight: 900, color: "#f87171" }}>−{fmt(sale.cancelled_amount ?? 0)}</p>
+                                </div>
+                                {(sale.cancelled_items ?? []).map((ci, ciIdx) => (
+                                  <div key={ciIdx} style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0", borderTop: "1px solid rgba(239,68,68,0.12)" }}>
+                                    <span style={{ flex: 1, fontSize: 10, fontWeight: 700, color: "var(--td-text-md)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ci.name}</span>
+                                    <span style={{ fontSize: 9, color: "var(--td-text-ghost)", flexShrink: 0 }}>×{ci.quantity}</span>
+                                    <span style={{ fontSize: 9, fontWeight: 700, color: "var(--td-text-ghost)", flexShrink: 0, width: 52, textAlign: "right" }}>{fmt(ci.price)}</span>
+                                    <span style={{ fontSize: 10, fontWeight: 900, color: "#f87171", flexShrink: 0, width: 66, textAlign: "right" }}>−{fmt(ci.line_total)}</span>
+                                  </div>
+                                ))}
+                                <p style={{ margin: "4px 0 0", fontSize: 8, color: "var(--td-text-ghost)" }}>
+                                  Ya descontado del total y del corte — no se resta dos veces.
+                                </p>
+                              </div>
+                            )}
                             <div style={{ display: "flex", justifyContent: "flex-end", gap: 16, paddingTop: 8, borderTop: "1px solid var(--td-card-border)" }}>
                               {typeof discount === "number" && discount > 0 && <div style={{ textAlign: "right" }}><p style={{ margin: 0, fontSize: 8, fontWeight: 900, color: "var(--td-text-ghost)", textTransform: "uppercase" }}>Descuento</p><p style={{ margin: "2px 0 0", fontSize: 12, fontWeight: 900, color: "#f59e0b" }}>-{fmt(discount)}</p></div>}
                               {(sale.payments || []).length > 1 && (sale.payments || []).map((pay, pi) => (
@@ -7034,14 +7326,8 @@ export function SellPage() {
               )}
             </div>
 
-            {/* Refresh */}
-            <button
-              onClick={() => { void fetchHistorial(); }}
-              style={{ marginTop: 14, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 14, color: "var(--td-text-lo)", padding: "10px", fontSize: 10, fontWeight: 900, cursor: "pointer", textTransform: "uppercase", letterSpacing: "0.12em", width: "100%" }}
-            >
-              Actualizar historial
-            </button>
-          </div>
+            </div>
+            </div>
         </div>
       )}
 

@@ -38,6 +38,9 @@ export interface ProductLight {
   allow_cash: boolean
   allow_card: boolean
   stock_total: number
+  product_type?: 'product' | 'manga'
+  /** Número de tomo (solo mangas) — distingue tomos de la misma serie en Caja. */
+  volume_number?: number | null
 }
 
 /**

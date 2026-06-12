@@ -28,6 +28,27 @@ class SaleResource extends JsonResource
             'cancellation_status' => $this->cancellation_status ?? 'none',
             'last_cancelled_at'   => $this->last_cancelled_at?->toISOString(),
 
+            // ADR-016 — monto reversado + detalle de lo cancelado (Joel
+            // 2026-06-12). SIMBÓLICO para la UI: la venta se edita in-place,
+            // así que `total` YA descuenta la cancelación — este monto NO debe
+            // restarse otra vez de ningún agregado.
+            'cancelled_amount' => $this->when(
+                $this->relationLoaded('cancellations'),
+                fn () => (float) $this->cancellations->sum('amount_refunded'),
+            ),
+            'cancelled_items' => $this->when(
+                $this->relationLoaded('cancellations'),
+                fn () => $this->cancellations
+                    ->flatMap(fn ($c) => collect($c->items_snapshot ?? [])->map(fn ($i) => [
+                        'name'       => $i['name'] ?? '',
+                        'sku'        => $i['sku'] ?? null,
+                        'quantity'   => (float) ($i['qty_cancelled'] ?? 0),
+                        'price'      => (float) ($i['price'] ?? 0),
+                        'line_total' => (float) ($i['line_total'] ?? 0),
+                    ]))
+                    ->values(),
+            ),
+
             'customer' => $this->when(
                 $this->relationLoaded('customer') && $this->customer,
                 fn () => [

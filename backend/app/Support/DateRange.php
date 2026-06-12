@@ -17,10 +17,17 @@ use Carbon\Carbon;
  */
 class DateRange
 {
-    /** Zona horaria del negocio. Configurable vía env BUSINESS_TIMEZONE. */
+    /**
+     * Zona horaria del negocio. Configurable vía env BUSINESS_TIMEZONE
+     * (config/app.php → business_timezone). Default America/Tijuana — decisión
+     * Joel 2026-06-11 (cierra TODO #117): las tiendas operan en Tijuana; con
+     * CDMX el día de negocio brincaba a las 11pm locales y el "Hoy" del POS
+     * quedaba vacío. DEBE coincidir con BUSINESS_TZ del frontend
+     * (landing/src/lib/date.ts).
+     */
     public static function timezone(): string
     {
-        return (string) config('app.business_timezone', 'America/Mexico_City');
+        return (string) config('app.business_timezone', 'America/Tijuana');
     }
 
     /** Convierte 'YYYY-MM-DD' (hora local) a Carbon UTC al inicio del día. */

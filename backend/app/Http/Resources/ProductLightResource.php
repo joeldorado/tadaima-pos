@@ -68,6 +68,12 @@ class ProductLightResource extends JsonResource
             // necesita. Default 'product' por compatibilidad con rows que aún
             // no tienen la columna en envs viejos.
             'product_type' => $this->product_type ?? 'product',
+
+            // Número de tomo para mangas — la Caja lo muestra junto al nombre
+            // para distinguir tomos de la misma serie (QA 2026-06-11).
+            'volume_number' => $this->relationLoaded('mangaDetails')
+                ? $this->mangaDetails?->volume_number
+                : null,
         ];
     }
 }

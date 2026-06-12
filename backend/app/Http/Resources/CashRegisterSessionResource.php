@@ -20,6 +20,7 @@ class CashRegisterSessionResource extends JsonResource
             'closing_cash' => $this->closing_cash,
             'opened_at'    => $this->opened_at?->toISOString(),
             'closed_at'    => $this->closed_at?->toISOString(),
+            'local_date'   => $this->local_date?->format('Y-m-d'),
 
             'balance' => $movementsLoaded ? $this->balance : null,
 
