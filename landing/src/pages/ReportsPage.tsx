@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import {
   TrendingUp, Package, Users, BarChart3,
-  DollarSign, ArrowUpRight,
+  DollarSign,
   ShoppingBag, Star, Calendar, Printer, Store,
   ChevronDown, ChevronRight, Clock, RefreshCw, ChevronLeft,
 } from "lucide-react";
@@ -168,8 +168,6 @@ function printTicket(sale: SaleDetail) {
 export function ReportsPage() {
   const { user } = useAuth();
   const isAdmin   = user?.roles?.some(r => ["admin","super_admin","owner","dueño"].includes(r.toLowerCase())) ?? false;
-  // Ganancia / costo real: admin siempre, otros solo si admin les activó el permiso.
-  const canViewCost = isAdmin || !!user?.can_view_cost;
 
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<TabId>("ventas");
@@ -284,13 +282,43 @@ export function ReportsPage() {
     return [...map.values()].sort((a, b) => b.date.localeCompare(a.date));
   }, [salesReport]);
 
-  // Ganancia bruta = ingresos ventas + anticipos preventa − descuentos − comisiones
-  const gananciaBruta = useMemo(() => {
-    if (!salesReport) return 0;
-    return salesReport.summary.total_revenue
-      + salesReport.pre_sale_summary.total_amount
-      - salesReport.summary.total_discount
-      - salesReport.summary.total_commission;
+  const paymentBreakdown = useMemo(() => {
+    if (!salesReport) {
+      return {
+        total: 0,
+        card: 0,
+        cash: 0,
+        deposits: 0,
+      };
+    }
+
+    let card = 0;
+    let cash = 0;
+    let deposits = 0;
+
+    for (const row of salesReport.by_payment_method) {
+      const name = (row.payment_method ?? "").toLowerCase();
+      if (name.includes("tarjeta") || name.includes("credit") || name.includes("debito") || name.includes("tpv") || name.includes("terminal")) {
+        card += row.amount;
+      } else if (name.includes("deposit") || name.includes("transfer") || name.includes("spei")) {
+        deposits += row.amount;
+      } else if (name.includes("efectivo") || name.includes("cash")) {
+        cash += row.amount;
+      } else if (name.includes("dolar") || name.includes("dólar") || name.includes("usd")) {
+        // USD se suma al bucket de efectivo por operación de caja.
+        cash += row.amount;
+      } else {
+        // Métodos no mapeados se consolidan en efectivo para evitar ruido visual.
+        cash += row.amount;
+      }
+    }
+
+    return {
+      total: salesReport.summary.total_revenue,
+      card,
+      cash,
+      deposits,
+    };
   }, [salesReport]);
 
   // Sales grouped by date — for expandable daily rows
@@ -623,64 +651,24 @@ export function ReportsPage() {
               <div className="space-y-6">
 
                 {/* ── KPI Cards ── */}
-                {/* Row 1: Ganancia bruta (prominent) + Ingresos + Anticipos */}
-                <div className={`grid grid-cols-1 ${canViewCost ? "md:grid-cols-3" : "md:grid-cols-2"} gap-4`}>
-                  {/* Ganancia bruta — solo visible para usuarios con permiso de ver costos */}
-                  {canViewCost && (
-                    <div style={{ ...GLASS, borderRadius: 24, padding: "22px 26px", border: `1px solid ${gananciaBruta >= 0 ? "rgba(0,204,102,0.25)" : "rgba(255,68,34,0.25)"}` }}>
-                      <div className="flex items-center justify-between mb-3">
-                        <TrendingUp size={20} style={{ color: gananciaBruta >= 0 ? "#00CC66" : RED }} />
-                        <span className="text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full" style={{ background: "rgba(0,204,102,0.1)", color: "#00CC66" }}>
-                          Ventas + Anticipos − Desc. − Com.
-                        </span>
-                      </div>
-                      <p className="text-[9px] font-black uppercase tracking-widest mb-1" style={{ color: TM }}>Ganancia bruta del período</p>
-                      <p className="text-3xl font-black italic" style={{ color: gananciaBruta >= 0 ? "#00CC66" : RED }}>{fmt(gananciaBruta)}</p>
-                    </div>
-                  )}
-
-                  {/* Ingresos ventas regulares */}
-                  <div style={{ ...GLASS, borderRadius: 24, padding: "22px 26px" }}>
-                    <div className="flex items-center justify-between mb-3">
-                      <DollarSign size={18} style={{ color: "#4499FF" }} />
-                      <ArrowUpRight size={12} style={{ color: TM }} />
-                    </div>
-                    <p className="text-[9px] font-black uppercase tracking-widest mb-1" style={{ color: TM }}>Ingresos ventas</p>
-                    <p className="text-2xl font-black italic" style={{ color: "#4499FF" }}>{fmt(salesReport.summary.total_revenue)}</p>
-                    <p className="text-[9px] mt-1" style={{ color: TM }}>{salesReport.summary.total_count} ticket{salesReport.summary.total_count !== 1 ? "s" : ""}</p>
-                  </div>
-
-                  {/* Anticipos preventa */}
-                  <div style={{ ...GLASS, borderRadius: 24, padding: "22px 26px", border: salesReport.pre_sale_summary.total_count > 0 ? "1px solid rgba(170,102,255,0.2)" : undefined }}>
-                    <div className="flex items-center justify-between mb-3">
-                      <Clock size={18} style={{ color: "#BB77FF" }} />
-                      <span className="text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full" style={{ background: "rgba(170,102,255,0.1)", color: "#BB77FF" }}>Preventa</span>
-                    </div>
-                    <p className="text-[9px] font-black uppercase tracking-widest mb-1" style={{ color: TM }}>Anticipos cobrados</p>
-                    <p className="text-2xl font-black italic" style={{ color: salesReport.pre_sale_summary.total_count > 0 ? "#BB77FF" : TM }}>
-                      {salesReport.pre_sale_summary.total_count > 0 ? fmt(salesReport.pre_sale_summary.total_amount) : "—"}
-                    </p>
-                    {salesReport.pre_sale_summary.total_count > 0 && (
-                      <p className="text-[9px] mt-1" style={{ color: TM }}>{salesReport.pre_sale_summary.total_count} folio{salesReport.pre_sale_summary.total_count !== 1 ? "s" : ""}</p>
-                    )}
-                  </div>
-                </div>
-
-                {/* Row 2: Transacciones + Descuentos + Comisiones */}
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
                   {[
-                    { label: "Transacciones",  val: String(salesReport.summary.total_count),           color: "#00CC66", icon: ShoppingBag, sub: "ventas regulares" },
-                    { label: "Descuentos",      val: fmt(salesReport.summary.total_discount),           color: "#FFAA00", icon: BarChart3,   sub: salesReport.summary.total_discount > 0 ? "aplicados al período" : "sin descuentos" },
-                    { label: "Comisiones TPV",  val: fmt(salesReport.summary.total_commission),         color: "#FF8866", icon: Store,       sub: salesReport.summary.total_commission > 0 ? "cargos de terminal" : "sin comisiones" },
+                    { label: "Total cobrado", val: fmt(paymentBreakdown.total), color: "#00CC66", icon: DollarSign, sub: `${salesReport.summary.total_count} transacciones` },
+                    { label: "Pago con tarjeta", val: fmt(paymentBreakdown.card), color: "#4499FF", icon: Store, sub: paymentBreakdown.card > 0 ? "TPV / débito / crédito" : "sin movimientos" },
+                    { label: "Pago en efectivo", val: fmt(paymentBreakdown.cash), color: "#33CC88", icon: ShoppingBag, sub: paymentBreakdown.cash > 0 ? "incluye cobro en USD" : "sin movimientos" },
+                    { label: "Depósitos", val: fmt(paymentBreakdown.deposits), color: "#BB77FF", icon: Clock, sub: paymentBreakdown.deposits > 0 ? "transferencias / SPEI" : "sin depósitos" },
                   ].map((kpi, i) => (
-                    <div key={i} style={{ ...GLASS, borderRadius: 20, padding: "16px 20px" }}>
-                      <div className="flex items-center justify-between mb-2">
-                        <kpi.icon size={15} style={{ color: kpi.color }} />
-                        <ArrowUpRight size={11} style={{ color: TM }} />
+                    <div key={i} className="min-h-[124px] flex flex-col" style={{ ...GLASS, borderRadius: 20, padding: "12px 20px" }}>
+                      <div className="flex items-center gap-2">
+                        <kpi.icon size={15} style={{ color: kpi.color, flexShrink: 0 }} />
+                        <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: TM }}>{kpi.label}</p>
                       </div>
-                      <p className="text-[9px] font-black uppercase tracking-widest mb-0.5" style={{ color: TM }}>{kpi.label}</p>
-                      <p className="text-xl font-black italic" style={{ color: kpi.color }}>{kpi.val}</p>
-                      <p className="text-[8px] mt-0.5" style={{ color: TM }}>{kpi.sub}</p>
+
+                      <div className="flex-1 flex items-center justify-center">
+                        <p className="text-5xl font-black italic leading-none text-center" style={{ color: kpi.color }}>{kpi.val}</p>
+                      </div>
+
+                      <p className="text-[9px] text-center" style={{ color: TM }}>{kpi.sub}</p>
                     </div>
                   ))}
                 </div>
