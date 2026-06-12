@@ -770,8 +770,16 @@ export function TransfersPage() {
             style={T.glass}
           >
             {/* Header */}
-            <div className="px-4 sm:px-6 lg:px-8 py-4 sm:py-5 flex flex-col gap-4 sm:gap-6 shrink-0" style={{ borderBottom: `1px solid ${T.fieldBorder}` }}>
-              <div className="min-w-0 flex-1">
+            <div className="relative px-4 sm:px-6 lg:px-8 py-4 sm:py-5 flex flex-col gap-3 shrink-0" style={{ borderBottom: `1px solid ${T.fieldBorder}` }}>
+              {/* Botón cerrar — esquina superior derecha */}
+              <button
+                onClick={() => { setIsModalOpen(false); resetModal(); }}
+                className="absolute top-4 right-4 w-9 h-9 rounded-xl flex items-center justify-center transition-colors z-10"
+                style={{ background: T.routeChip, color: T.softText, border: `1px solid ${T.fieldBorder}` }}
+              >
+                <X size={18} />
+              </button>
+              <div className="min-w-0 flex-1 pr-12">
                 <h2 className="text-2xl font-black uppercase tracking-tighter" style={{ color: T.panelText }}>Nueva Transferencia</h2>
                 <div className="mt-2 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
                   <div className="flex items-center gap-3 overflow-x-auto pb-1">
@@ -843,13 +851,6 @@ export function TransfersPage() {
                   </div>
                 </div>
               </div>
-              <button
-                onClick={() => { setIsModalOpen(false); resetModal(); }}
-                className="w-10 h-10 rounded-xl flex items-center justify-center transition-colors self-end"
-                style={{ background: T.routeChip, color: T.softText, border: `1px solid ${T.fieldBorder}` }}
-              >
-                <X size={20} />
-              </button>
             </div>
 
             {/* Body */}
