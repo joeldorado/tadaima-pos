@@ -55,15 +55,29 @@ export function LoginPage(): React.JSX.Element {
         {/* Logo / Title */}
         <div className="flex flex-col items-center gap-2 mb-8">
           <div
+            className="flex items-center justify-center overflow-hidden"
             style={{
               background: '#fff',
               borderRadius: 10,
-              padding: '6px 9px',
+              width: 268,
+              height: 124,
+              padding: 10,
               boxShadow: '0 0 18px rgba(204,34,0,0.4)',
               border: '1px solid rgba(204,34,0,0.15)',
             }}
           >
-            <span style={{ fontSize: 18, fontWeight: 900, color: RED, letterSpacing: '-0.02em' }}>
+            <img
+              src="/tadaima-logo.jpeg"
+              alt="Tadaima"
+              style={{ width: '130%', height: '130%', objectFit: 'contain' }}
+              onError={e => {
+                const el = e.currentTarget;
+                el.style.display = 'none';
+                const fallback = el.nextElementSibling as HTMLElement | null;
+                if (fallback) fallback.style.display = 'block';
+              }}
+            />
+            <span style={{ fontSize: 18, fontWeight: 900, color: RED, letterSpacing: '-0.02em', display: 'none' }}>
               Tadaima
             </span>
           </div>
@@ -145,7 +159,7 @@ export function LoginPage(): React.JSX.Element {
                   background: 'none',
                   border: 'none',
                   cursor: 'pointer',
-                  color: 'rgba(255,255,255,0.35)',
+                  color: '#111111',
                   padding: 0,
                   display: 'flex',
                   alignItems: 'center',

@@ -117,13 +117,27 @@ export function Layout() {
           style={{
             background: "#fff",
             borderRadius: "10px",
-            padding: "5px 7px",
+            padding: "4px",
             width: "52px",
+            height: "52px",
             boxShadow: "0 0 18px rgba(204,34,0,0.4), 0 4px 10px rgba(0,0,0,0.25)",
             border: "1px solid rgba(204,34,0,0.15)",
+            overflow: "hidden",
           }}
         >
-          <span style={{ fontSize: 13, fontWeight: 900, color: "var(--td-red)", letterSpacing: "-0.02em", display: "block" }}>
+          <img
+            src="/tadaima-logo.jpeg"
+            alt="Tadaima"
+            style={{ width: "100%", height: "100%", objectFit: "contain" }}
+            onError={e => {
+              // Fallback al texto si no se encuentra la imagen
+              const el = e.currentTarget;
+              el.style.display = "none";
+              const fallback = el.nextElementSibling as HTMLElement | null;
+              if (fallback) fallback.style.display = "block";
+            }}
+          />
+          <span style={{ fontSize: 13, fontWeight: 900, color: "var(--td-red)", letterSpacing: "-0.02em", display: "none" }}>
             Tadaima
           </span>
         </div>
