@@ -17,6 +17,7 @@ import { ProductCatalogModal } from "@/components/ProductCatalogModal";
 import { PreSaleDifusionPanel } from "@/components/presales/PreSaleDifusionPanel";
 import { CameraScannerModal } from "@/components/CameraScannerModal";
 import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
+import { useViewportMaxHeight } from "@/hooks/useViewportMaxHeight";
 const tadaimaLogo = null // TODO: replace with real logo asset
 import { toast } from "sonner";
 import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, closeSession, forceCloseSession, getActiveSession, createLayaway, getCustomers, createCustomer, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getPreSaleOrders, getSales, getProductsLight, storageUrl, getCashReport, sendPreSaleAssignAlert } from "@tadaima/api";
@@ -599,6 +600,10 @@ export function SellPage() {
   const [printNeverAsk, setPrintNeverAsk]           = useState(false);
   const [showHistorialModal, setShowHistorialModal] = useState(false);
   const [showCortesModal, setShowCortesModal] = useState(false);
+  // Max-height de la lista de tickets del Historial basado en el alto REAL de
+  // la pantalla (mide su top vs window.innerHeight) → scroll interno garantizado
+  // sin depender de la cadena flex (Joel 2026-06-13).
+  const [historialListRef, historialListMaxH] = useViewportMaxHeight(20);
   // Historial del día vía React Query: cacheado + persistido en IndexedDB.
   // Apertura del modal instantánea con la última versión; background refetch
   // tras cada checkout/cancelación gracias a las invalidaciones.
@@ -6988,9 +6993,11 @@ export function SellPage() {
               );
             })()}
 
-            {/* List — minHeight 0 obligatorio para que el flex permita
-                encoger y el overflowY scrollee de verdad. */}
-            <div className="td-scroll-visible" style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6, paddingRight: 4 }}>
+            {/* List — max-height anclado al alto real de la pantalla (mide su
+                top vs window.innerHeight) para que el scroll se maneje SIEMPRE
+                internamente, sin depender solo de la cadena flex. minHeight 0
+                se mantiene como respaldo del flex. */}
+            <div ref={historialListRef} className="td-scroll-visible" style={{ flex: 1, minHeight: 0, maxHeight: historialListMaxH, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6, paddingRight: 4 }}>
               {historialLoading ? (
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 40 }}>
                   <Loader2 size={24} style={{ color: "#E0221A" }} className="animate-spin" />

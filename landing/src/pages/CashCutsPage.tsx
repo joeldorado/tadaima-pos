@@ -10,6 +10,7 @@ import type { CashReport, CashSessionReport, Store as StoreType } from "@tadaima
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { printCashCut } from "@/components/cash/CashCloseSummaryModal";
 import { useStoresQuery } from "@/hooks/queries/useStores";
+import { DateRangePicker } from "@/components/ui/DateRangePicker";
 import { getTodayLocal, daysAgoLocal, BUSINESS_TZ } from "@/lib/date";
 import { queryKeys } from "@/lib/queryKeys";
 
@@ -339,24 +340,15 @@ export function CashCutsPage() {
             );
           })}
 
-          <label className="flex items-center gap-2 ml-2">
-            <span className="text-[9px] font-black uppercase tracking-widest" style={{ color: TM }}>Desde</span>
-            <input
-              type="date" value={from} max={to}
-              onChange={(e) => { setFrom(e.target.value); setExpandedId(null); }}
-              className="px-3 py-2 rounded-xl text-xs"
-              style={INPUT}
+          <div className="ml-2">
+            <DateRangePicker
+              from={from}
+              to={to}
+              maxValue={today}
+              ariaLabel="Rango de fechas de cortes"
+              onChange={(f, t) => { setFrom(f); setTo(t); setExpandedId(null); }}
             />
-          </label>
-          <label className="flex items-center gap-2">
-            <span className="text-[9px] font-black uppercase tracking-widest" style={{ color: TM }}>Hasta</span>
-            <input
-              type="date" value={to} min={from} max={today}
-              onChange={(e) => { setTo(e.target.value); setExpandedId(null); }}
-              className="px-3 py-2 rounded-xl text-xs"
-              style={INPUT}
-            />
-          </label>
+          </div>
 
           {isAdmin && stores.length > 0 && (
             <label className="flex items-center gap-2 ml-auto">
