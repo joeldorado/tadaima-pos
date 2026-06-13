@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import {
-  TrendingUp, Package, Users, BarChart3,
+  TrendingUp, Package, Users,
   DollarSign,
   ShoppingBag, Star, Calendar, Printer, Store,
   ChevronDown, ChevronRight, Clock, RefreshCw, ChevronLeft,
@@ -14,7 +14,7 @@ import { ReportsSkeleton } from "@/components/reports/ReportsSkeleton";
 import { getSales } from "@tadaima/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useStoresQuery } from "@/hooks/queries/useStores";
-import { getTodayLocal, daysAgoLocal, toLocalYmd, BUSINESS_TZ } from "@/lib/date";
+import { getTodayLocal, daysAgoLocal, BUSINESS_TZ } from "@/lib/date";
 import { queryKeys } from "@/lib/queryKeys";
 import type { SalesReport, InventoryReport, TopProductsReport, CustomersReport } from "@tadaima/api";
 import type { SaleDetail, Store as StoreType } from "@tadaima/api";
@@ -55,9 +55,14 @@ const fmt = (n: number) =>
 // Mac/tablet en otra zona (Tijuana) mostraría la hora corrida ~1h y el día
 // equivocado cerca de medianoche.
 const fmtDate = (iso: string) => {
-  const [y, m, d] = iso.split("-").map(Number);
-  const safeUtcNoon = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
-  return safeUtcNoon.toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric", timeZone: BUSINESS_TZ });
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+    const [y, m, d] = iso.split("-").map(Number);
+    const safeUtcNoon = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+    return safeUtcNoon.toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric", timeZone: BUSINESS_TZ });
+  }
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return "Fecha inválida";
+  return parsed.toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric", timeZone: BUSINESS_TZ });
 };
 
 const fmtTime = (iso: string) =>
@@ -68,16 +73,6 @@ const parseYmd = (iso: string) => parseDate(iso);
 const toYmdFromDateValue = (value: ReturnType<typeof parseDate>) =>
   `${value.year}-${String(value.month).padStart(2, "0")}-${String(value.day).padStart(2, "0")}`;
 
-// Suma 1 día para hacer el end date inclusivo (RangeCalendar lo trata como exclusivo)
-const addDays = (iso: string, days: number): string => {
-  const [y, m, d] = iso.split("-").map(Number);
-  const utc = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
-  utc.setUTCDate(utc.getUTCDate() + days);
-  const ny = utc.getUTCFullYear();
-  const nm = String(utc.getUTCMonth() + 1).padStart(2, "0");
-  const nd = String(utc.getUTCDate()).padStart(2, "0");
-  return `${ny}-${nm}-${nd}`;
-};
 
 // "cortes" se movió a la página /cajas (visible a los 3 roles) — Joel 2026-06-12.
 // Calcula el lunes de la semana actual (en la zona del negocio)
@@ -90,12 +85,24 @@ const getMondayThisWeek = (today: string): string => {
 };
 
 type TabId = "ventas" | "inventario" | "productos" | "clientes";
+type SalesHistoryFilter = "all" | "cash" | "dollar" | "card" | "transfer" | "preSales" | "cancelled" | "notPicked";
 
 const REPORT_TABS: { id: TabId; label: string; icon: React.ElementType }[] = [
   { id: "ventas", label: "Ventas", icon: TrendingUp },
   { id: "inventario", label: "Inventario", icon: Package },
   { id: "productos", label: "Top Productos", icon: Star },
   { id: "clientes", label: "Top Clientes", icon: Users },
+];
+
+const SALES_HISTORY_FILTERS: Array<{ id: SalesHistoryFilter; label: string }> = [
+  { id: "all", label: "Todo" },
+  { id: "cash", label: "Efectivo" },
+  { id: "dollar", label: "Dólar" },
+  { id: "card", label: "Tarjeta" },
+  { id: "transfer", label: "Transferencia" },
+  { id: "preSales", label: "Preventas" },
+  { id: "cancelled", label: "Cancelados" },
+  { id: "notPicked", label: "No recogidas" },
 ];
 
 // ─── Ticket print helper ───────────────────────────────────────────────────────
@@ -188,7 +195,7 @@ export function ReportsPage() {
 
   const [lowStockOnly, setLowStockOnly] = useState(false);
   const [expandedId,   setExpandedId]   = useState<number | null>(null);
-  const [expandedDay,  setExpandedDay]  = useState<string | null>(null);
+  const [selectedFilters, setSelectedFilters] = useState<SalesHistoryFilter[]>(["all"]);
 
   const storesQuery = useStoresQuery({ active: true, enabled: isAdmin });
   const stores: StoreType[] = storesQuery.data ?? [];
@@ -205,7 +212,7 @@ export function ReportsPage() {
     enabled: activeTab === "ventas",
     staleTime: REPORTS_STALE,
   });
-  const salesListParams = { ...baseParams, per_page: 100, status: "completed" as const };
+  const salesListParams = { ...baseParams, per_page: 100 };
   const salesListQuery = useQuery({
     queryKey: queryKeys.sales.list(salesListParams),
     queryFn: () => getSales(salesListParams),
@@ -234,6 +241,42 @@ export function ReportsPage() {
   });
   const salesReport: SalesReport | null = salesReportQuery.data ?? null;
   const sales: SaleDetail[] = salesListQuery.data?.data ?? [];
+  const filteredSales = useMemo(() => {
+    const isCardMethod = (name: string) =>
+      name.includes("tarjeta") || name.includes("credit") || name.includes("debito") || name.includes("tpv") || name.includes("terminal");
+    const isCashMethod = (name: string) =>
+      name.includes("efectivo") || name.includes("cash");
+    const isDollarMethod = (name: string) =>
+      name.includes("dolar") || name.includes("dólar") || name.includes("usd");
+    const isTransferMethod = (name: string) =>
+      name.includes("transfer") || name.includes("deposit") || name.includes("spei");
+
+    return sales.filter((sale) => {
+      const methods = (sale.payments ?? [])
+        .map((p) => (p.payment_method?.name ?? "").toLowerCase())
+        .filter(Boolean);
+      const hasPreSales = (sale.pre_sale_orders?.length ?? 0) > 0;
+      const hasCancelled = (sale.cancellation_status && sale.cancellation_status !== "none")
+        || (sale.status ?? "").toLowerCase().includes("cancel");
+      const hasNotPicked = (sale.pre_sale_orders ?? []).some((o) => {
+        const status = (o.status ?? "").toLowerCase();
+        return status.includes("expired") || status.includes("vencid") || status.includes("no recog");
+      });
+
+      if (selectedFilters.includes("all") || selectedFilters.length === 0) return true;
+
+      return selectedFilters.some((filter) => {
+        if (filter === "cash") return methods.some((m) => isCashMethod(m) || isDollarMethod(m));
+        if (filter === "dollar") return methods.some((m) => isDollarMethod(m));
+        if (filter === "card") return methods.some((m) => isCardMethod(m));
+        if (filter === "transfer") return methods.some((m) => isTransferMethod(m));
+        if (filter === "preSales") return hasPreSales;
+        if (filter === "cancelled") return hasCancelled;
+        if (filter === "notPicked") return hasNotPicked;
+        return false;
+      });
+    });
+  }, [sales, selectedFilters]);
   const invReport: InventoryReport | null = invQuery.data ?? null;
   const topReport: TopProductsReport | null = topQuery.data ?? null;
   const custReport: CustomersReport | null = custQuery.data ?? null;
@@ -267,20 +310,6 @@ export function ReportsPage() {
     if (custQuery.error) toast.error("Error al cargar clientes");
   }, [custQuery.error]);
 
-  // Merge by_day + pre_sale_by_day for the daily breakdown table
-  const mergedByDay = useMemo(() => {
-    if (!salesReport) return [];
-    const map = new Map<string, { date: string; sales_count: number; sales_amount: number; ps_count: number; ps_amount: number }>();
-    for (const r of salesReport.by_day) {
-      map.set(r.date, { date: r.date, sales_count: r.count, sales_amount: r.amount, ps_count: 0, ps_amount: 0 });
-    }
-    for (const r of salesReport.pre_sale_by_day) {
-      const existing = map.get(r.date);
-      if (existing) { existing.ps_count = r.count; existing.ps_amount = r.amount; }
-      else map.set(r.date, { date: r.date, sales_count: 0, sales_amount: 0, ps_count: r.count, ps_amount: r.amount });
-    }
-    return [...map.values()].sort((a, b) => b.date.localeCompare(a.date));
-  }, [salesReport]);
 
   const paymentBreakdown = useMemo(() => {
     if (!salesReport) {
@@ -321,20 +350,6 @@ export function ReportsPage() {
     };
   }, [salesReport]);
 
-  // Sales grouped by date — for expandable daily rows
-  const salesByDate = useMemo(() => {
-    const map = new Map<string, SaleDetail[]>();
-    for (const sale of sales) {
-      // Agrupar por día del NEGOCIO (MX), no por la fecha UTC del timestamp:
-      // `.split("T")[0]` daba el día UTC y metía ventas de la madrugada MX en
-      // el día siguiente del gráfico.
-      const ts = sale.sold_at || sale.created_at;
-      const date = ts ? toLocalYmd(new Date(ts)) : "";
-      if (!map.has(date)) map.set(date, []);
-      map.get(date)!.push(sale);
-    }
-    return map;
-  }, [sales]);
 
   const activeTabMeta = REPORT_TABS.find(tab => tab.id === activeTab) ?? REPORT_TABS[0];
   const hiddenTabs = REPORT_TABS.filter(tab => tab.id !== activeTab);
@@ -673,141 +688,6 @@ export function ReportsPage() {
                   ))}
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {/* By payment method */}
-                  <div style={{ ...GLASS, borderRadius: 24, overflow: "hidden" }}>
-                    <div className="px-6 py-4" style={{ borderBottom: DIV }}>
-                      <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: TM }}>Por método de pago</p>
-                    </div>
-                    <table className="w-full">
-                      <thead><tr style={{ borderBottom: DIV }}>
-                        {["Método", "Tickets", "Monto"].map(h => <th key={h} style={thStyle}>{h}</th>)}
-                      </tr></thead>
-                      <tbody>
-                        {salesReport.by_payment_method.map((r, i) => (
-                          <tr key={i}>
-                            <td style={tdStyle}><span className="font-bold" style={{ color: TP }}>{r.payment_method}</span></td>
-                            <td style={tdStyle}>{r.count}</td>
-                            <td style={{ ...tdStyle, color: "#00CC66", fontWeight: 900 }}>{fmt(r.amount)}</td>
-                          </tr>
-                        ))}
-                        {salesReport.by_payment_method.length === 0 && (
-                          <tr><td colSpan={3} style={{ ...tdStyle, textAlign: "center", padding: 32 }}>Sin datos</td></tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {/* Daily breakdown — expandable corte por día */}
-                  <div style={{ ...GLASS, borderRadius: 24, overflow: "hidden" }}>
-                    <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: DIV }}>
-                      <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: TM }}>Corte por día</p>
-                      <span className="text-[9px] font-black px-2 py-0.5 rounded-full" style={{ background: "rgba(0,204,102,0.1)", color: "#00CC66" }}>{mergedByDay.length} día{mergedByDay.length !== 1 ? "s" : ""}</span>
-                    </div>
-                    <div className="overflow-y-auto" style={{ maxHeight: 480 }}>
-                      {mergedByDay.length === 0 && (
-                        <p style={{ ...tdStyle, textAlign: "center", padding: 32 }}>Sin ventas en el período</p>
-                      )}
-                      {mergedByDay.map((r) => {
-                        const isOpen = expandedDay === r.date;
-                        const daySales = salesByDate.get(r.date) ?? [];
-                        // Payment method breakdown for this day from individual sales
-                        const pmMap = new Map<string, number>();
-                        for (const sale of daySales) {
-                          for (const pay of (sale.payments ?? [])) {
-                            const pm = pay.payment_method?.name ?? "Otro";
-                            pmMap.set(pm, (pmMap.get(pm) ?? 0) + pay.amount);
-                          }
-                        }
-                        const dayTotal = r.sales_amount + r.ps_amount;
-                        const dayLabel = new Date(r.date + "T12:00:00").toLocaleDateString("es-MX", { weekday: "short", day: "2-digit", month: "short" });
-                        return (
-                          <div key={r.date} style={{ borderBottom: DIV }}>
-                            {/* Collapsed row */}
-                            <button
-                              onClick={() => setExpandedDay(isOpen ? null : r.date)}
-                              style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "12px 20px", background: "none", border: "none", cursor: "pointer", textAlign: "left" }}
-                            >
-                              {isOpen
-                                ? <ChevronDown size={12} style={{ flexShrink: 0, color: "#00CC66" }} />
-                                : <ChevronRight size={12} style={{ flexShrink: 0, color: TM }} />}
-                              <span style={{ flex: 1, fontSize: 12, fontWeight: 700, color: TP, textTransform: "capitalize" }}>{dayLabel}</span>
-                              <div style={{ display: "flex", gap: 20, alignItems: "center" }}>
-                                {r.sales_count > 0 && (
-                                  <span style={{ fontSize: 11, color: "#4499FF", fontWeight: 700 }}>{fmt(r.sales_amount)} <span style={{ fontSize: 9, color: TM }}>ventas</span></span>
-                                )}
-                                {r.ps_count > 0 && (
-                                  <span style={{ fontSize: 11, color: "#BB77FF", fontWeight: 700 }}>{fmt(r.ps_amount)} <span style={{ fontSize: 9, color: TM }}>prev.</span></span>
-                                )}
-                                <span style={{ fontSize: 13, fontWeight: 900, color: "#00CC66", minWidth: 80, textAlign: "right" }}>{fmt(dayTotal)}</span>
-                              </div>
-                            </button>
-
-                            {/* Expanded detail */}
-                            {isOpen && (
-                              <div style={{ background: "rgba(0,0,0,0.12)", padding: "12px 20px 16px", borderTop: DIV }}>
-
-                                {/* Payment method breakdown */}
-                                {pmMap.size > 0 && (
-                                  <div style={{ marginBottom: 14 }}>
-                                    <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: TM, marginBottom: 8 }}>Desglose por método de pago</p>
-                                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                                      {Array.from(pmMap.entries()).map(([pm, amt]) => (
-                                        <div key={pm} style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", borderRadius: 10, padding: "6px 12px" }}>
-                                          <p style={{ fontSize: 8, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: TM, marginBottom: 2 }}>{pm}</p>
-                                          <p style={{ fontSize: 13, fontWeight: 900, color: "#00CC66" }}>{fmt(amt)}</p>
-                                        </div>
-                                      ))}
-                                      {r.ps_amount > 0 && (
-                                        <div style={{ background: "rgba(170,102,255,0.06)", border: "1px solid rgba(170,102,255,0.2)", borderRadius: 10, padding: "6px 12px" }}>
-                                          <p style={{ fontSize: 8, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "#BB77FF", marginBottom: 2 }}>Anticipo preventa</p>
-                                          <p style={{ fontSize: 13, fontWeight: 900, color: "#BB77FF" }}>{fmt(r.ps_amount)}</p>
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* Individual tickets for this day */}
-                                {daySales.length > 0 && (
-                                  <div>
-                                    <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: TM, marginBottom: 8 }}>
-                                      Tickets del día ({daySales.length})
-                                    </p>
-                                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                                      {daySales.map(sale => {
-                                        const method = sale.payments?.[0]?.payment_method?.name ?? "—";
-                                        const time = new Date(sale.sold_at || sale.created_at).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", timeZone: BUSINESS_TZ });
-                                        const itemCount = sale.items?.reduce((s, i) => s + i.quantity, 0) ?? 0;
-                                        return (
-                                          <div key={sale.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 10px", background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", borderRadius: 9 }}>
-                                            <span style={{ fontSize: 9, fontWeight: 900, color: TM, minWidth: 28 }}>#{sale.id}</span>
-                                            <span style={{ fontSize: 10, color: TM, minWidth: 40 }}>{time}</span>
-                                            <span style={{ flex: 1, fontSize: 10, color: TS, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sale.customer?.name ?? "—"}</span>
-                                            <span style={{ fontSize: 9, color: TM }}>{itemCount} art.</span>
-                                            <span style={{ fontSize: 9, color: TM, minWidth: 52, textAlign: "right" }}>{method}</span>
-                                            <span style={{ fontSize: 11, fontWeight: 900, color: "#00CC66", minWidth: 60, textAlign: "right" }}>{fmt(sale.total)}</span>
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* Day total summary */}
-                                <div style={{ display: "flex", justifyContent: "flex-end", gap: 16, marginTop: 12, paddingTop: 10, borderTop: DIV }}>
-                                  {r.sales_count > 0 && <div style={{ textAlign: "right" }}><p style={{ fontSize: 8, fontWeight: 900, color: TM, textTransform: "uppercase" }}>Ventas</p><p style={{ fontSize: 12, fontWeight: 900, color: "#4499FF" }}>{fmt(r.sales_amount)}</p></div>}
-                                  {r.ps_count > 0 && <div style={{ textAlign: "right" }}><p style={{ fontSize: 8, fontWeight: 900, color: TM, textTransform: "uppercase" }}>Anticipos</p><p style={{ fontSize: 12, fontWeight: 900, color: "#BB77FF" }}>{fmt(r.ps_amount)}</p></div>}
-                                  <div style={{ textAlign: "right" }}><p style={{ fontSize: 8, fontWeight: 900, color: TM, textTransform: "uppercase" }}>Total del día</p><p style={{ fontSize: 14, fontWeight: 900, color: "#00CC66" }}>{fmt(dayTotal)}</p></div>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
 
                 {/* By store — admin only, no filter active */}
                 {isAdmin && !effectiveStoreId && salesReport.by_store && salesReport.by_store.length > 0 && (
@@ -832,6 +712,42 @@ export function ReportsPage() {
                   </div>
                 )}
 
+                {/* Filtros fuera de la tarjeta y centrados en la parte superior */}
+                <div className="flex flex-col items-center justify-center gap-3 pt-4">
+                  <div className="flex items-center justify-center gap-2 flex-wrap p-2.5 rounded-2xl" style={{ ...GLASS, width: "fit-content" }}>
+                    {SALES_HISTORY_FILTERS.map((f) => {
+                      const active = selectedFilters.includes(f.id);
+                      return (
+                        <button
+                          key={f.id}
+                          onClick={() => {
+                            setExpandedId(null);
+                            if (f.id === "all") {
+                              setSelectedFilters(["all"]);
+                            } else {
+                              setSelectedFilters((prev) => {
+                                const withoutAll = prev.filter((x) => x !== "all") as SalesHistoryFilter[];
+                                if (withoutAll.includes(f.id)) {
+                                  const next = withoutAll.filter((x) => x !== f.id);
+                                  return next.length === 0 ? ["all"] : next;
+                                } else {
+                                  return [...withoutAll, f.id];
+                                }
+                              });
+                            }
+                          }}
+                          className="px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all hover:scale-105 active:scale-95"
+                          style={active
+                            ? { background: "linear-gradient(135deg,#CC2200,#FF4422)", color: "#fff", border: "1px solid rgba(255,120,90,0.3)", boxShadow: "0 4px 12px rgba(255,68,34,0.25)" }
+                            : { background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)", color: TS }}
+                        >
+                          {f.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 {/* Sales history — expandable + reprint */}
                 <div style={{ ...GLASS, borderRadius: 24, overflow: "hidden" }}>
                   <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: DIV }}>
@@ -839,7 +755,7 @@ export function ReportsPage() {
                       Historial de ventas
                     </p>
                     <span className="text-[9px] font-black px-2 py-0.5 rounded-full" style={{ background: "rgba(68,153,255,0.12)", color: "#4499FF" }}>
-                      {sales.length} tickets
+                      {filteredSales.length} tickets
                     </span>
                   </div>
                   <div className="overflow-y-auto" style={{ maxHeight: 420 }}>
@@ -848,7 +764,7 @@ export function ReportsPage() {
                         {["Ticket", "Fecha", "Cliente", "Items", "Total", "Acciones"].map(h => <th key={h} style={thStyle}>{h}</th>)}
                       </tr></thead>
                       <tbody>
-                        {sales.map(sale => (
+                        {filteredSales.map(sale => (
                           <>
                             <tr key={sale.id} style={{ borderBottom: expandedId === sale.id ? "none" : DIV, cursor: "pointer" }}
                               onClick={() => setExpandedId(prev => prev === sale.id ? null : sale.id)}>
@@ -859,8 +775,8 @@ export function ReportsPage() {
                                 </div>
                               </td>
                               <td style={tdStyle}>
-                                <div style={{ fontSize: 11 }}>{fmtDate(sale.sold_at)}</div>
-                                <div style={{ fontSize: 10, color: TM }}>{fmtTime(sale.sold_at)}</div>
+                                <div style={{ fontSize: 11 }}>{fmtDate(sale.sold_at || sale.created_at)}</div>
+                                <div style={{ fontSize: 10, color: TM }}>{fmtTime(sale.sold_at || sale.created_at)}</div>
                               </td>
                               <td style={tdStyle}>{sale.customer?.name ?? <span style={{ color: TM }}>Público general</span>}</td>
                               <td style={tdStyle}>{sale.items.length}</td>
@@ -900,7 +816,7 @@ export function ReportsPage() {
                             )}
                           </>
                         ))}
-                        {sales.length === 0 && (
+                        {filteredSales.length === 0 && (
                           <tr><td colSpan={6} style={{ ...tdStyle, textAlign: "center", padding: 32 }}>Sin ventas en el período</td></tr>
                         )}
                       </tbody>
