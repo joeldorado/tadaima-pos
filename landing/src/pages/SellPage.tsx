@@ -18,6 +18,7 @@ import { PreSaleDifusionPanel } from "@/components/presales/PreSaleDifusionPanel
 import { CameraScannerModal } from "@/components/CameraScannerModal";
 import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
 import { useViewportMaxHeight } from "@/hooks/useViewportMaxHeight";
+import { PaymentRestrictionBadge, getPayRestriction } from "@/components/ui/PaymentRestrictionBadge";
 const tadaimaLogo = null // TODO: replace with real logo asset
 import { toast } from "sonner";
 import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, closeSession, forceCloseSession, getActiveSession, createLayaway, getCustomers, createCustomer, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getPreSaleOrders, getSales, getProductsLight, storageUrl, getCashReport, sendPreSaleAssignAlert } from "@tadaima/api";
@@ -4331,6 +4332,15 @@ export function SellPage() {
                             </p>
                             <p className="text-[11px] uppercase tracking-[0.15em] mt-0.5" style={{ color: "var(--td-text-ghost)" }}>{p.sku}</p>
 
+                            {/* Restricción de pago — pill notorio (Joel 2026-06-13)
+                                para que el cajero vea de inmediato si el artículo
+                                solo acepta efectivo o solo tarjeta. */}
+                            {getPayRestriction(p) && (
+                              <div className="mt-2">
+                                <PaymentRestrictionBadge restriction={getPayRestriction(p)} size="md" />
+                              </div>
+                            )}
+
                             {/* Stock Breakdown */}
                             <div className="flex gap-3 mt-2 flex-wrap">
                               <div className="flex items-center gap-1.5">
@@ -4541,11 +4551,7 @@ export function SellPage() {
                             Entregado
                           </span>
                         )}
-                        {item.product.payment_restriction === "cash_only" && (
-                          <span className="px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-[7px] font-black text-amber-500 uppercase tracking-widest">
-                            Solo Efectivo
-                          </span>
-                        )}
+                        <PaymentRestrictionBadge restriction={getPayRestriction(item.product)} size="sm" />
                         {activeMesa.paymentMethod === "Tarjeta" && item.product.allow_card === false && (
                           <span className="px-1.5 py-0.5 rounded bg-red-500/10 border border-red-500/30 text-[7px] font-black text-red-400 uppercase tracking-widest flex items-center gap-1">
                             <TriangleAlert size={8} />
