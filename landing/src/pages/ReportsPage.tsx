@@ -97,6 +97,9 @@ interface GroupedProduct {
   total_revenue: number;
   payment_breakdown: { [method: string]: number };
   price_breakdown: { [price: number]: number };
+  pre_sale_apartado?: number;
+  pre_sale_deuda?: number;
+  commission_amount?: number;
 }
 
 const REPORT_TABS: { id: TabId; label: string; icon: React.ElementType }[] = [
@@ -227,6 +230,15 @@ export function ReportsPage() {
   const groupedProducts = useMemo(() => {
     const map = new Map<number, GroupedProduct>();
 
+    const isCardMethod = (name: string) =>
+      name.includes("tarjeta") || name.includes("credit") || name.includes("debito") || name.includes("tpv") || name.includes("terminal");
+    const isCashMethod = (name: string) =>
+      name.includes("efectivo") || name.includes("cash");
+    const isDollarMethod = (name: string) =>
+      name.includes("dolar") || name.includes("dólar") || name.includes("usd");
+    const isTransferMethod = (name: string) =>
+      name.includes("transfer") || name.includes("deposit") || name.includes("spei");
+
     for (const sale of filteredSales) {
       let payMethodName = "Otro";
       if (sale.payments && sale.payments.length > 0) {
@@ -241,8 +253,26 @@ export function ReportsPage() {
         }
       }
 
+      const methods = (sale.payments ?? [])
+        .map((p) => (p.payment_method?.name ?? "").toLowerCase())
+        .filter(Boolean);
+      const hasCancelled = (sale.cancellation_status && sale.cancellation_status !== "none")
+        || (sale.status ?? "").toLowerCase().includes("cancel");
+
       // 1. Regular items
       for (const item of sale.items) {
+        // Filter regular items using OR matching: must match at least one selected filter criteria
+        const matchesRegularFilter = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.some(filter => {
+          if (filter === "cash") return methods.some(m => isCashMethod(m) || isDollarMethod(m));
+          if (filter === "dollar") return methods.some(m => isDollarMethod(m));
+          if (filter === "card") return methods.some(m => isCardMethod(m));
+          if (filter === "transfer") return methods.some(m => isTransferMethod(m));
+          if (filter === "cancelled") return hasCancelled;
+          return false;
+        });
+
+        if (!matchesRegularFilter) continue;
+
         const prodId = item.product_id;
         const prodName = item.product?.name ?? "Artículo Desconocido";
         const prodSku = item.product?.sku ?? "—";
@@ -260,6 +290,7 @@ export function ReportsPage() {
             total_revenue: 0,
             payment_breakdown: {},
             price_breakdown: {},
+            commission_amount: 0,
           });
         }
 
@@ -270,11 +301,37 @@ export function ReportsPage() {
 
         pGroup.payment_breakdown[payMethodName] = (pGroup.payment_breakdown[payMethodName] ?? 0) + qty;
         pGroup.price_breakdown[unitPrice] = (pGroup.price_breakdown[unitPrice] ?? 0) + qty;
+
+        // Proportional commission allocation based on item total compared to sale total
+        if (isCardMethod(payMethodName.toLowerCase()) && sale.total > 0) {
+          const ratio = itemTotal / sale.total;
+          const comm = (sale.commission_amount || 0) * ratio;
+          pGroup.commission_amount = (pGroup.commission_amount ?? 0) + comm;
+        }
       }
 
       // 2. Pre-sale items (Preventas)
       if (sale.pre_sale_orders) {
         for (const order of sale.pre_sale_orders) {
+          const orderStatus = (order.status ?? "").toLowerCase();
+          const orderIsCancelled = orderStatus.includes("cancel");
+          const orderIsNotPicked = orderStatus.includes("expired") || orderStatus.includes("vencid") || orderStatus.includes("no recog");
+
+          const matchesPreSaleFilter = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.some(filter => {
+            if (filter === "cash") return methods.some(m => isCashMethod(m) || isDollarMethod(m));
+            if (filter === "dollar") return methods.some(m => isDollarMethod(m));
+            if (filter === "card") return methods.some(m => isCardMethod(m));
+            if (filter === "transfer") return methods.some(m => isTransferMethod(m));
+            if (filter === "preSales") return true;
+            if (filter === "cancelled") return hasCancelled || orderIsCancelled;
+            if (filter === "notPicked") return orderIsNotPicked;
+            return false;
+          });
+
+          if (!matchesPreSaleFilter) continue;
+
+          const orderItemsTotal = order.items.reduce((sum, it) => sum + (it.unit_price * it.quantity), 0);
+
           for (const item of order.items) {
             // If product_id is null, generate a unique negative ID based on catalog ID to avoid collisions
             const prodId = item.product_id ?? (item.catalog ? item.catalog.id * -1 : -999);
@@ -283,6 +340,11 @@ export function ReportsPage() {
             const qty = item.quantity;
             const itemTotal = item.unit_price * item.quantity;
             const unitPrice = item.unit_price;
+
+            // Proportional allocation of paid_amount and balance based on item's total value vs order items total
+            const ratio = orderItemsTotal > 0 ? (itemTotal / orderItemsTotal) : (1 / order.items.length);
+            const itemApartado = (order.paid_amount || 0) * ratio;
+            const itemDeuda = (order.balance || 0) * ratio;
 
             if (!map.has(prodId)) {
               map.set(prodId, {
@@ -294,6 +356,8 @@ export function ReportsPage() {
                 total_revenue: 0,
                 payment_breakdown: {},
                 price_breakdown: {},
+                pre_sale_apartado: 0,
+                pre_sale_deuda: 0,
               });
             }
 
@@ -304,6 +368,9 @@ export function ReportsPage() {
 
             pGroup.payment_breakdown[payMethodName] = (pGroup.payment_breakdown[payMethodName] ?? 0) + qty;
             pGroup.price_breakdown[unitPrice] = (pGroup.price_breakdown[unitPrice] ?? 0) + qty;
+
+            pGroup.pre_sale_apartado = (pGroup.pre_sale_apartado ?? 0) + itemApartado;
+            pGroup.pre_sale_deuda = (pGroup.pre_sale_deuda ?? 0) + itemDeuda;
           }
         }
       }
@@ -445,7 +512,9 @@ export function ReportsPage() {
           "Cantidad Vendida",
           "Ingresos Totales",
           "Desglose de Precios",
-          "Desglose de Pagos"
+          "Desglose de Pagos",
+          "Apartado Preventa",
+          "Deuda Preventa"
         ]);
         headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
         headerRow.eachCell((cell) => {
@@ -469,7 +538,9 @@ export function ReportsPage() {
             prod.total_quantity,
             prod.total_revenue,
             pricesStr,
-            paymentsStr
+            paymentsStr,
+            prod.pre_sale_apartado || 0,
+            prod.pre_sale_deuda || 0
           ]);
           
           r.getCell(2).alignment = { horizontal: "center" };
@@ -477,6 +548,8 @@ export function ReportsPage() {
           r.getCell(4).alignment = { horizontal: "center" };
           r.getCell(5).numFmt = "$#,##0.00";
           r.getCell(5).font = { bold: true, color: { argb: "FF009944" } };
+          r.getCell(8).numFmt = "$#,##0.00";
+          r.getCell(9).numFmt = "$#,##0.00";
         });
 
         sheet.columns.forEach((column) => {
@@ -749,13 +822,24 @@ export function ReportsPage() {
             .map(([method, qty]) => `${qty} ud. con ${method}`)
             .join("\n");
 
+          let breakdownText = `PRECIOS:\n${pricesStr}\n\nPAGOS:\n${paymentsStr}`;
+          if ((prod.pre_sale_apartado && prod.pre_sale_apartado > 0) || (prod.pre_sale_deuda && prod.pre_sale_deuda > 0)) {
+            breakdownText += `\n\nPREVENTA:\n`;
+            if (prod.pre_sale_apartado && prod.pre_sale_apartado > 0) {
+              breakdownText += `Abonado/Apartado: ${fmt(prod.pre_sale_apartado)}\n`;
+            }
+            if (prod.pre_sale_deuda && prod.pre_sale_deuda > 0) {
+              breakdownText += `Pendiente/Deuda: ${fmt(prod.pre_sale_deuda)}\n`;
+            }
+          }
+
           return [
             prod.name,
             prod.sku,
             prod.sales_count,
             prod.total_quantity,
             fmt(prod.total_revenue),
-            `PRECIOS:\n${pricesStr}\n\nPAGOS:\n${paymentsStr}`
+            breakdownText
           ];
         });
 
@@ -1306,24 +1390,44 @@ export function ReportsPage() {
                                 <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: 11 }}>{prod.sku}</td>
                                 <td style={tdStyle}>{prod.sales_count}</td>
                                 <td style={{ ...tdStyle, fontWeight: 700, color: TP }}>{prod.total_quantity}</td>
-                                <td style={{ ...tdStyle, color: "#00CC66", fontWeight: 900 }}>{fmt(prod.total_revenue)}</td>
+                                <td style={{ ...tdStyle, verticalAlign: "middle" }}>
+                                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
+                                    <span style={{ color: "#00CC66", fontWeight: 900 }}>{fmt(prod.total_revenue)}</span>
+                                    {prod.commission_amount && prod.commission_amount > 0 ? (
+                                      <span style={{ fontSize: 9, color: TM, fontWeight: 500 }}>
+                                        {fmt(prod.total_revenue)} - {fmt(prod.commission_amount)} = <span style={{ color: "#00CC66", fontWeight: 800 }}>{fmt(prod.total_revenue - prod.commission_amount)}</span>
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                </td>
                               </tr>
                               {isExpanded && (
                                 <tr key={`${prod.id}-detail`}>
                                   <td colSpan={5} style={{ padding: "0 16px 12px", borderBottom: DIV, background: "rgba(255,255,255,0.02)" }}>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-3 pb-2">
+                                    <div className={`grid grid-cols-1 ${((prod.pre_sale_apartado && prod.pre_sale_apartado > 0) || (prod.pre_sale_deuda && prod.pre_sale_deuda > 0)) ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-6 pt-3 pb-2`}>
                                       {/* Métodos de Pago */}
                                       <div>
                                         <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: TM, marginBottom: 8 }}>
                                           Desglose por método de pago
                                         </p>
                                         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                                          {Object.entries(prod.payment_breakdown).map(([method, qty]) => (
-                                            <div key={method} className="flex items-center justify-between text-xs py-1.5 px-3" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", borderRadius: 9 }}>
-                                              <span style={{ color: TS, fontWeight: 700 }}>{method}</span>
-                                              <span style={{ color: TP, fontWeight: 900 }}>{qty} {qty === 1 ? "unidad" : "unidades"}</span>
-                                            </div>
-                                          ))}
+                                          {Object.entries(prod.payment_breakdown).map(([method, qty]) => {
+                                            const isCard = method.toLowerCase().includes("tarjeta") || method.toLowerCase().includes("credit") || method.toLowerCase().includes("debito") || method.toLowerCase().includes("tpv") || method.toLowerCase().includes("terminal");
+                                            return (
+                                              <div key={method} className="flex flex-col gap-1 py-1.5 px-3" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", borderRadius: 9 }}>
+                                                <div className="flex items-center justify-between text-xs">
+                                                  <span style={{ color: TS, fontWeight: 700 }}>{method}</span>
+                                                  <span style={{ color: TP, fontWeight: 900 }}>{qty} {qty === 1 ? "unidad" : "unidades"}</span>
+                                                </div>
+                                                {isCard && prod.commission_amount && prod.commission_amount > 0 && (
+                                                  <div className="flex items-center justify-between text-[10px] mt-0.5 pt-0.5 border-t border-dashed" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+                                                    <span style={{ color: TM }}>Comisión de terminal absorbida:</span>
+                                                    <span style={{ color: "#FF4422", fontWeight: 700 }}>{fmt(prod.commission_amount)}</span>
+                                                  </div>
+                                                )}
+                                              </div>
+                                            );
+                                          })}
                                         </div>
                                       </div>
 
@@ -1344,6 +1448,29 @@ export function ReportsPage() {
                                           })}
                                         </div>
                                       </div>
+
+                                      {/* Control de Preventa: Apartado y Deuda */}
+                                      {((prod.pre_sale_apartado && prod.pre_sale_apartado > 0) || (prod.pre_sale_deuda && prod.pre_sale_deuda > 0)) && (
+                                        <div>
+                                          <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: TM, marginBottom: 8 }}>
+                                            Información de Preventa
+                                          </p>
+                                          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                            {(prod.pre_sale_apartado && prod.pre_sale_apartado > 0) && (
+                                              <div className="flex items-center justify-between text-xs py-1.5 px-3" style={{ background: "rgba(0, 204, 102, 0.08)", border: "1px solid rgba(0, 204, 102, 0.15)", borderRadius: 9 }}>
+                                                <span style={{ color: TS, fontWeight: 700 }}>Total Abonado (Apartado)</span>
+                                                <span style={{ color: "#00CC66", fontWeight: 900 }}>{fmt(prod.pre_sale_apartado)}</span>
+                                              </div>
+                                            )}
+                                            {(prod.pre_sale_deuda && prod.pre_sale_deuda > 0) && (
+                                              <div className="flex items-center justify-between text-xs py-1.5 px-3" style={{ background: "rgba(255, 68, 34, 0.08)", border: "1px solid rgba(255, 68, 34, 0.15)", borderRadius: 9 }}>
+                                                <span style={{ color: TS, fontWeight: 700 }}>Total Deuda (Pendiente)</span>
+                                                <span style={{ color: "#FF4422", fontWeight: 900 }}>{fmt(prod.pre_sale_deuda)}</span>
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      )}
                                     </div>
                                   </td>
                                 </tr>
