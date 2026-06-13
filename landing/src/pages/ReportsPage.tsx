@@ -1,9 +1,10 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, Fragment } from "react";
 import {
   TrendingUp, Package, Users,
   DollarSign,
-  ShoppingBag, Star, Calendar, Printer, Store,
+  ShoppingBag, Star, Calendar, Store,
   ChevronDown, ChevronRight, Clock, RefreshCw, ChevronLeft,
+  FileSpreadsheet, FileDown,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@tadaima/auth";
@@ -65,8 +66,8 @@ const fmtDate = (iso: string) => {
   return parsed.toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric", timeZone: BUSINESS_TZ });
 };
 
-const fmtTime = (iso: string) =>
-  new Date(iso).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", timeZone: BUSINESS_TZ });
+// const fmtTime = (iso: string) =>
+//   new Date(iso).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", timeZone: BUSINESS_TZ });
 
 // ─── Date conversion helpers ──────────────────────────────────────────────────
 const parseYmd = (iso: string) => parseDate(iso);
@@ -87,6 +88,17 @@ const getMondayThisWeek = (today: string): string => {
 type TabId = "ventas" | "inventario" | "productos" | "clientes";
 type SalesHistoryFilter = "all" | "cash" | "dollar" | "card" | "transfer" | "preSales" | "cancelled" | "notPicked";
 
+interface GroupedProduct {
+  id: number;
+  name: string;
+  sku: string;
+  sales_count: number;
+  total_quantity: number;
+  total_revenue: number;
+  payment_breakdown: { [method: string]: number };
+  price_breakdown: { [price: number]: number };
+}
+
 const REPORT_TABS: { id: TabId; label: string; icon: React.ElementType }[] = [
   { id: "ventas", label: "Ventas", icon: TrendingUp },
   { id: "inventario", label: "Inventario", icon: Package },
@@ -104,72 +116,6 @@ const SALES_HISTORY_FILTERS: Array<{ id: SalesHistoryFilter; label: string }> = 
   { id: "cancelled", label: "Cancelados" },
   { id: "notPicked", label: "No recogidas" },
 ];
-
-// ─── Ticket print helper ───────────────────────────────────────────────────────
-function printTicket(sale: SaleDetail) {
-  const lines = sale.items.map(it =>
-    `<tr>
-      <td style="padding:2px 4px;font-size:11px">${it.product?.name ?? "Artículo"}</td>
-      <td style="padding:2px 4px;font-size:11px;text-align:center">×${it.quantity}</td>
-      <td style="padding:2px 4px;font-size:11px;text-align:right">${fmt(it.total)}</td>
-    </tr>`
-  ).join("");
-
-  const paymentRows = sale.payments.map(p =>
-    `<tr>
-      <td style="font-size:11px;padding:2px 4px">${p.payment_method?.name ?? "Pago"}</td>
-      <td style="font-size:11px;padding:2px 4px;text-align:right;font-weight:bold">${fmt(p.amount)}</td>
-    </tr>`
-  ).join("");
-
-  const html = `<!DOCTYPE html><html><head><title>Ticket #${sale.id}</title>
-  <style>
-    body{font-family:'Courier New',monospace;width:72mm;margin:0 auto;padding:8px}
-    hr{border:none;border-top:1px dashed #000;margin:6px 0}
-    table{width:100%;border-collapse:collapse}
-    .bold{font-weight:bold}
-    @media print{@page{margin:0;size:72mm auto}body{width:72mm}}
-  </style></head>
-  <body>
-    <div style="text-align:center;margin-bottom:6px">
-      <div style="font-size:15px;font-weight:900">TADAIMA</div>
-      <div style="font-size:9px;color:#555">Manga &amp; Hobby Store</div>
-    </div>
-    <hr>
-    <div style="font-size:9px;margin-bottom:6px">
-      <div class="bold">Ticket #${sale.id}</div>
-      <div>${fmtDate(sale.sold_at)} · ${fmtTime(sale.sold_at)}</div>
-      ${sale.customer ? `<div>Cliente: ${sale.customer.name}</div>` : ""}
-    </div>
-    <hr>
-    <table>
-      <thead><tr>
-        <th style="text-align:left;font-size:9px;padding:2px 4px">Artículo</th>
-        <th style="text-align:center;font-size:9px;padding:2px 4px">Qty</th>
-        <th style="text-align:right;font-size:9px;padding:2px 4px">Monto</th>
-      </tr></thead>
-      <tbody>${lines}</tbody>
-    </table>
-    <hr>
-    <table>
-      ${sale.discount > 0 ? `<tr><td style="font-size:10px;padding:1px 4px">Subtotal</td><td style="text-align:right;font-size:10px;padding:1px 4px">${fmt(sale.subtotal)}</td></tr>` : ""}
-      ${sale.discount > 0 ? `<tr><td style="font-size:10px;padding:1px 4px">Descuento</td><td style="text-align:right;font-size:10px;padding:1px 4px;color:#c00">-${fmt(sale.discount)}</td></tr>` : ""}
-      <tr><td style="font-size:13px;font-weight:900;padding:4px 4px 2px">TOTAL</td><td style="text-align:right;font-size:13px;font-weight:900;padding:4px 4px 2px">${fmt(sale.total)}</td></tr>
-    </table>
-    <hr>
-    <div style="font-size:9px;margin-bottom:4px;font-weight:900;text-transform:uppercase;letter-spacing:0.05em">Forma de pago</div>
-    <table>${paymentRows}</table>
-    <hr>
-    <div style="text-align:center;font-size:9px;color:#555;margin-top:6px">¡Gracias por tu compra!</div>
-  </body></html>`;
-
-  const win = window.open("", "_blank", "width=420,height=640");
-  if (!win) { toast.error("Permite ventanas emergentes para imprimir"); return; }
-  win.document.write(html);
-  win.document.close();
-  win.focus();
-  setTimeout(() => { win.print(); }, 300);
-}
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export function ReportsPage() {
@@ -194,7 +140,7 @@ export function ReportsPage() {
   const effectiveStoreId = isAdmin ? selectedStoreId : (user?.store_id ?? null);
 
   const [lowStockOnly, setLowStockOnly] = useState(false);
-  const [expandedId,   setExpandedId]   = useState<number | null>(null);
+  const [expandedIds,  setExpandedIds]  = useState<number[]>([]);
   const [selectedFilters, setSelectedFilters] = useState<SalesHistoryFilter[]>(["all"]);
 
   const storesQuery = useStoresQuery({ active: true, enabled: isAdmin });
@@ -277,6 +223,94 @@ export function ReportsPage() {
       });
     });
   }, [sales, selectedFilters]);
+
+  const groupedProducts = useMemo(() => {
+    const map = new Map<number, GroupedProduct>();
+
+    for (const sale of filteredSales) {
+      let payMethodName = "Otro";
+      if (sale.payments && sale.payments.length > 0) {
+        let mainPayment = sale.payments[0];
+        if (mainPayment) {
+          for (const p of sale.payments) {
+            if (p && p.amount > mainPayment.amount) {
+              mainPayment = p;
+            }
+          }
+          payMethodName = mainPayment.payment_method?.name ?? "Otro";
+        }
+      }
+
+      // 1. Regular items
+      for (const item of sale.items) {
+        const prodId = item.product_id;
+        const prodName = item.product?.name ?? "Artículo Desconocido";
+        const prodSku = item.product?.sku ?? "—";
+        const qty = item.quantity;
+        const itemTotal = item.total;
+        const unitPrice = item.price;
+
+        if (!map.has(prodId)) {
+          map.set(prodId, {
+            id: prodId,
+            name: prodName,
+            sku: prodSku,
+            sales_count: 0,
+            total_quantity: 0,
+            total_revenue: 0,
+            payment_breakdown: {},
+            price_breakdown: {},
+          });
+        }
+
+        const pGroup = map.get(prodId)!;
+        pGroup.sales_count += 1;
+        pGroup.total_quantity += qty;
+        pGroup.total_revenue += itemTotal;
+
+        pGroup.payment_breakdown[payMethodName] = (pGroup.payment_breakdown[payMethodName] ?? 0) + qty;
+        pGroup.price_breakdown[unitPrice] = (pGroup.price_breakdown[unitPrice] ?? 0) + qty;
+      }
+
+      // 2. Pre-sale items (Preventas)
+      if (sale.pre_sale_orders) {
+        for (const order of sale.pre_sale_orders) {
+          for (const item of order.items) {
+            // If product_id is null, generate a unique negative ID based on catalog ID to avoid collisions
+            const prodId = item.product_id ?? (item.catalog ? item.catalog.id * -1 : -999);
+            const prodName = item.catalog?.product_name ?? `Preventa #${item.id}`;
+            const prodSku = "PREVENTA";
+            const qty = item.quantity;
+            const itemTotal = item.unit_price * item.quantity;
+            const unitPrice = item.unit_price;
+
+            if (!map.has(prodId)) {
+              map.set(prodId, {
+                id: prodId,
+                name: prodName,
+                sku: prodSku,
+                sales_count: 0,
+                total_quantity: 0,
+                total_revenue: 0,
+                payment_breakdown: {},
+                price_breakdown: {},
+              });
+            }
+
+            const pGroup = map.get(prodId)!;
+            pGroup.sales_count += 1;
+            pGroup.total_quantity += qty;
+            pGroup.total_revenue += itemTotal;
+
+            pGroup.payment_breakdown[payMethodName] = (pGroup.payment_breakdown[payMethodName] ?? 0) + qty;
+            pGroup.price_breakdown[unitPrice] = (pGroup.price_breakdown[unitPrice] ?? 0) + qty;
+          }
+        }
+      }
+    }
+
+    return Array.from(map.values()).sort((a, b) => b.total_quantity - a.total_quantity);
+  }, [filteredSales]);
   const invReport: InventoryReport | null = invQuery.data ?? null;
   const topReport: TopProductsReport | null = topQuery.data ?? null;
   const custReport: CustomersReport | null = custQuery.data ?? null;
@@ -351,8 +385,492 @@ export function ReportsPage() {
   }, [salesReport]);
 
 
-  const activeTabMeta = REPORT_TABS.find(tab => tab.id === activeTab) ?? REPORT_TABS[0];
+    const activeTabMeta = (REPORT_TABS.find(tab => tab.id === activeTab) ?? REPORT_TABS[0]) as { id: TabId; label: string; icon: React.ElementType };
   const hiddenTabs = REPORT_TABS.filter(tab => tab.id !== activeTab);
+
+  const handleExportExcel = async () => {
+    try {
+      toast.info("Generando archivo de Excel...");
+      const ExcelJS = await import("exceljs");
+      const workbook = new ExcelJS.Workbook();
+      
+      workbook.creator = "Tadaima POS";
+      workbook.lastModifiedBy = "Tadaima POS";
+      workbook.created = new Date();
+      workbook.modified = new Date();
+      
+      if (activeTab === "ventas") {
+        const sheet = workbook.addWorksheet("Reporte de Ventas");
+        
+        sheet.mergeCells("A1:I1");
+        const titleCell = sheet.getCell("A1");
+        titleCell.value = "TADAIMA - REPORTE DE VENTAS";
+        titleCell.font = { name: "Arial", size: 14, bold: true, color: { argb: "FFFFFFFF" } };
+        titleCell.alignment = { vertical: "middle", horizontal: "center" };
+        titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF4422" } };
+        sheet.getRow(1).height = 35;
+        
+        sheet.mergeCells("A2:I2");
+        const subtitleCell = sheet.getCell("A2");
+        subtitleCell.value = `Periodo: ${fmtDate(from)} al ${fmtDate(to)}  |  Exportado: ${fmtDate(today)} ${new Date().toLocaleTimeString()}`;
+        subtitleCell.font = { name: "Arial", size: 10, italic: true };
+        subtitleCell.alignment = { vertical: "middle", horizontal: "center" };
+        sheet.getRow(2).height = 20;
+
+        sheet.addRow([]);
+
+        sheet.addRow(["RESUMEN DE COBROS"]).font = { bold: true, size: 11 };
+        sheet.addRow(["Total Cobrado", paymentBreakdown.total]);
+        sheet.addRow(["Pago con Tarjeta", paymentBreakdown.card]);
+        sheet.addRow(["Pago en Efectivo", paymentBreakdown.cash]);
+        sheet.addRow(["Depósitos", paymentBreakdown.deposits]);
+        
+        const summaryRows = [5, 6, 7, 8];
+        summaryRows.forEach((r, idx) => {
+          sheet.getCell(`B${r}`).numFmt = "$#,##0.00";
+          sheet.getCell(`B${r}`).alignment = { horizontal: "right" };
+          if (idx === 0) {
+            sheet.getCell(`A${r}`).font = { bold: true };
+            sheet.getCell(`B${r}`).font = { bold: true, color: { argb: "FF009944" } };
+          }
+        });
+
+        sheet.addRow([]);
+        sheet.addRow([]);
+
+        const headerRow = sheet.addRow([
+          "Producto",
+          "SKU",
+          "Nº Ventas (Tickets)",
+          "Cantidad Vendida",
+          "Ingresos Totales",
+          "Desglose de Precios",
+          "Desglose de Pagos"
+        ]);
+        headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+        headerRow.eachCell((cell) => {
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF333333" } };
+          cell.alignment = { vertical: "middle", horizontal: "center" };
+        });
+        sheet.getRow(headerRow.number).height = 25;
+
+        groupedProducts.forEach((prod) => {
+          const pricesStr = Object.entries(prod.price_breakdown)
+            .map(([price, qty]) => `${qty} ud. a ${price}`)
+            .join(" | ");
+          const paymentsStr = Object.entries(prod.payment_breakdown)
+            .map(([method, qty]) => `${qty} ud. con ${method}`)
+            .join(" | ");
+
+          const r = sheet.addRow([
+            prod.name,
+            prod.sku,
+            prod.sales_count,
+            prod.total_quantity,
+            prod.total_revenue,
+            pricesStr,
+            paymentsStr
+          ]);
+          
+          r.getCell(2).alignment = { horizontal: "center" };
+          r.getCell(3).alignment = { horizontal: "center" };
+          r.getCell(4).alignment = { horizontal: "center" };
+          r.getCell(5).numFmt = "$#,##0.00";
+          r.getCell(5).font = { bold: true, color: { argb: "FF009944" } };
+        });
+
+        sheet.columns.forEach((column) => {
+          if (column.values) {
+            let maxLength = 0;
+            column.values.forEach((v) => {
+              if (v) {
+                const strLen = String(v).length;
+                if (strLen > maxLength) maxLength = strLen;
+              }
+            });
+            column.width = Math.min(Math.max(maxLength + 3, 10), 40);
+          }
+        });
+      } else if (activeTab === "inventario") {
+        const sheet = workbook.addWorksheet("Inventario");
+        sheet.mergeCells("A1:E1");
+        const titleCell = sheet.getCell("A1");
+        titleCell.value = "TADAIMA - REPORTE DE INVENTARIO";
+        titleCell.font = { name: "Arial", size: 14, bold: true, color: { argb: "FFFFFFFF" } };
+        titleCell.alignment = { vertical: "middle", horizontal: "center" };
+        titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF4422" } };
+        sheet.getRow(1).height = 35;
+
+        sheet.mergeCells("A2:E2");
+        const subtitleCell = sheet.getCell("A2");
+        subtitleCell.value = `Exportado: ${fmtDate(today)} ${new Date().toLocaleTimeString()}`;
+        subtitleCell.font = { name: "Arial", size: 10, italic: true };
+        subtitleCell.alignment = { vertical: "middle", horizontal: "center" };
+        sheet.getRow(2).height = 20;
+
+        sheet.addRow([]);
+
+        const headerRow = sheet.addRow(["Producto", "SKU", "Bodega", "Tienda", "Cantidad"]);
+        headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+        headerRow.eachCell((cell) => {
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF333333" } };
+          cell.alignment = { vertical: "middle", horizontal: "center" };
+        });
+
+        invReport?.data.forEach((r) => {
+          const row = sheet.addRow([
+            r.product.name,
+            r.product.sku,
+            r.warehouse.name,
+            r.warehouse.store ?? "—",
+            r.quantity
+          ]);
+          row.getCell(2).alignment = { horizontal: "center" };
+          row.getCell(5).alignment = { horizontal: "center" };
+          if (r.quantity <= 5) {
+            row.getCell(5).font = { bold: true, color: { argb: "FFFF2200" } };
+          } else if (r.quantity <= 10) {
+            row.getCell(5).font = { bold: true, color: { argb: "FFFFAA00" } };
+          } else {
+            row.getCell(5).font = { bold: true, color: { argb: "FF009944" } };
+          }
+        });
+
+        sheet.columns.forEach((column) => {
+          if (column.values) {
+            let maxLength = 0;
+            column.values.forEach((v) => {
+              if (v) {
+                const strLen = String(v).length;
+                if (strLen > maxLength) maxLength = strLen;
+              }
+            });
+            column.width = Math.min(Math.max(maxLength + 3, 10), 40);
+          }
+        });
+      } else if (activeTab === "productos") {
+        const sheet = workbook.addWorksheet("Top Productos");
+        sheet.mergeCells("A1:G1");
+        const titleCell = sheet.getCell("A1");
+        titleCell.value = "TADAIMA - TOP PRODUCTOS VENDIDOS";
+        titleCell.font = { name: "Arial", size: 14, bold: true, color: { argb: "FFFFFFFF" } };
+        titleCell.alignment = { vertical: "middle", horizontal: "center" };
+        titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF4422" } };
+        sheet.getRow(1).height = 35;
+
+        sheet.mergeCells("A2:G2");
+        const subtitleCell = sheet.getCell("A2");
+        subtitleCell.value = `Periodo: ${fmtDate(from)} al ${fmtDate(to)}  |  Exportado: ${fmtDate(today)} ${new Date().toLocaleTimeString()}`;
+        subtitleCell.font = { name: "Arial", size: 10, italic: true };
+        subtitleCell.alignment = { vertical: "middle", horizontal: "center" };
+        sheet.getRow(2).height = 20;
+
+        sheet.addRow([]);
+
+        const headerRow = sheet.addRow(["Lugar", "Nombre", "SKU", "Tipo", "Veces Vendido", "Unidades Vendidas", "Ingresos Totales"]);
+        headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+        headerRow.eachCell((cell) => {
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF333333" } };
+          cell.alignment = { vertical: "middle", horizontal: "center" };
+        });
+
+        topReport?.data.forEach((r, idx) => {
+          const row = sheet.addRow([
+            idx + 1,
+            r.name,
+            r.sku,
+            r.type,
+            r.times_sold,
+            r.total_quantity,
+            r.total_revenue
+          ]);
+          row.getCell(1).alignment = { horizontal: "center" };
+          row.getCell(3).alignment = { horizontal: "center" };
+          row.getCell(4).alignment = { horizontal: "center" };
+          row.getCell(5).alignment = { horizontal: "center" };
+          row.getCell(6).alignment = { horizontal: "center" };
+          row.getCell(7).numFmt = "$#,##0.00";
+          row.getCell(7).font = { bold: true, color: { argb: "FF009944" } };
+        });
+
+        sheet.columns.forEach((column) => {
+          if (column.values) {
+            let maxLength = 0;
+            column.values.forEach((v) => {
+              if (v) {
+                const strLen = String(v).length;
+                if (strLen > maxLength) maxLength = strLen;
+              }
+            });
+            column.width = Math.min(Math.max(maxLength + 3, 10), 40);
+          }
+        });
+      } else if (activeTab === "clientes") {
+        const sheet = workbook.addWorksheet("Top Clientes");
+        sheet.mergeCells("A1:F1");
+        const titleCell = sheet.getCell("A1");
+        titleCell.value = "TADAIMA - TOP CLIENTES";
+        titleCell.font = { name: "Arial", size: 14, bold: true, color: { argb: "FFFFFFFF" } };
+        titleCell.alignment = { vertical: "middle", horizontal: "center" };
+        titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF4422" } };
+        sheet.getRow(1).height = 35;
+
+        sheet.mergeCells("A2:F2");
+        const subtitleCell = sheet.getCell("A2");
+        subtitleCell.value = `Periodo: ${fmtDate(from)} al ${fmtDate(to)}  |  Exportado: ${fmtDate(today)} ${new Date().toLocaleTimeString()}`;
+        subtitleCell.font = { name: "Arial", size: 10, italic: true };
+        subtitleCell.alignment = { vertical: "middle", horizontal: "center" };
+        sheet.getRow(2).height = 20;
+
+        sheet.addRow([]);
+
+        const headerRow = sheet.addRow(["Lugar", "Cliente", "Teléfono", "Compras", "Total Gastado", "Crédito"]);
+        headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+        headerRow.eachCell((cell) => {
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF333333" } };
+          cell.alignment = { vertical: "middle", horizontal: "center" };
+        });
+
+        custReport?.data.forEach((r, idx) => {
+          const row = sheet.addRow([
+            idx + 1,
+            r.name,
+            r.phone ?? "—",
+            r.total_purchases,
+            r.total_spent,
+            r.credit_balance
+          ]);
+          row.getCell(1).alignment = { horizontal: "center" };
+          row.getCell(3).alignment = { horizontal: "center" };
+          row.getCell(4).alignment = { horizontal: "center" };
+          row.getCell(5).numFmt = "$#,##0.00";
+          row.getCell(5).font = { bold: true, color: { argb: "FF009944" } };
+          row.getCell(6).numFmt = "$#,##0.00";
+        });
+
+        sheet.columns.forEach((column) => {
+          if (column.values) {
+            let maxLength = 0;
+            column.values.forEach((v) => {
+              if (v) {
+                const strLen = String(v).length;
+                if (strLen > maxLength) maxLength = strLen;
+              }
+            });
+            column.width = Math.min(Math.max(maxLength + 3, 10), 40);
+          }
+        });
+      }
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `tadaima_reporte_${activeTab}_${from}_${to}.xlsx`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+      toast.success("Excel descargado correctamente");
+    } catch (error) {
+      console.error(error);
+      toast.error("Error al exportar a Excel");
+    }
+  };
+
+  const handleExportPDF = async () => {
+    try {
+      toast.info("Generando archivo PDF...");
+      const { jsPDF } = await import("jspdf");
+      await import("jspdf-autotable");
+      
+      const doc = new jsPDF(activeTab === "ventas" ? "landscape" : "portrait", "pt", "letter");
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const darkColor = [30, 30, 30];
+      
+      doc.setFillColor(255, 68, 34);
+      doc.rect(0, 0, pageWidth, 60, "F");
+      
+      doc.setTextColor(255, 255, 255);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(16);
+      doc.text("TADAIMA - CENTRO DE REPORTES", 40, 36);
+      
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.text(`PERIODO: ${fmtDate(from).toUpperCase()} AL ${fmtDate(to).toUpperCase()}`, pageWidth - 40, 26, { align: "right" });
+      doc.text(`SECCIÓN: ${activeTabMeta.label.toUpperCase()}  |  EXPORTADO: ${fmtDate(today).toUpperCase()} ${new Date().toLocaleTimeString()}`, pageWidth - 40, 42, { align: "right" });
+      
+      let currentY = 90;
+
+      if (activeTab === "ventas") {
+        doc.setFillColor(245, 245, 247);
+        doc.rect(40, currentY, pageWidth - 80, 50, "F");
+        
+        doc.setTextColor(50, 50, 50);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        
+        const colWidth = (pageWidth - 80) / 4;
+        
+        doc.text("TOTAL COBRADO", 40 + 15, currentY + 18);
+        doc.setFontSize(13);
+        doc.setTextColor(0, 153, 68);
+        doc.text(fmt(paymentBreakdown.total), 40 + 15, currentY + 38);
+        
+        doc.setTextColor(50, 50, 50);
+        doc.setFontSize(8);
+        doc.text("PAGO TARJETA", 40 + colWidth + 15, currentY + 18);
+        doc.setFontSize(13);
+        doc.setTextColor(68, 153, 255);
+        doc.text(fmt(paymentBreakdown.card), 40 + colWidth + 15, currentY + 38);
+
+        doc.setTextColor(50, 50, 50);
+        doc.setFontSize(8);
+        doc.text("PAGO EFECTIVO", 40 + colWidth * 2 + 15, currentY + 18);
+        doc.setFontSize(13);
+        doc.setTextColor(51, 204, 136);
+        doc.text(fmt(paymentBreakdown.cash), 40 + colWidth * 2 + 15, currentY + 38);
+
+        doc.setTextColor(50, 50, 50);
+        doc.setFontSize(8);
+        doc.text("DEPÓSITOS", 40 + colWidth * 3 + 15, currentY + 18);
+        doc.setFontSize(13);
+        doc.setTextColor(187, 119, 255);
+        doc.text(fmt(paymentBreakdown.deposits), 40 + colWidth * 3 + 15, currentY + 38);
+        
+        currentY += 80;
+
+        const tableHeaders = [["Producto", "SKU", "Nº Ventas", "Cant. Vendida", "Total Ingresos", "Desglose Precios / Pagos"]];
+        const tableRows = groupedProducts.map(prod => {
+          const pricesStr = Object.entries(prod.price_breakdown)
+            .map(([price, qty]) => `${qty} ud. a ${fmt(parseFloat(price))}`)
+            .join("\n");
+          const paymentsStr = Object.entries(prod.payment_breakdown)
+            .map(([method, qty]) => `${qty} ud. con ${method}`)
+            .join("\n");
+
+          return [
+            prod.name,
+            prod.sku,
+            prod.sales_count,
+            prod.total_quantity,
+            fmt(prod.total_revenue),
+            `PRECIOS:\n${pricesStr}\n\nPAGOS:\n${paymentsStr}`
+          ];
+        });
+
+        (doc as any).autoTable({
+          startY: currentY,
+          head: tableHeaders,
+          body: tableRows,
+          theme: "striped",
+          headStyles: { fillColor: darkColor },
+          styles: { fontSize: 8, cellPadding: 6 },
+          columnStyles: {
+            0: { cellWidth: 150 },
+            1: { cellWidth: 80, halign: "center" },
+            2: { cellWidth: 60, halign: "center" },
+            3: { cellWidth: 60, halign: "center", fontStyle: "bold" },
+            4: { cellWidth: 80, halign: "right", fontStyle: "bold", textColor: [0, 153, 68] },
+            5: { cellWidth: 200 }
+          },
+          margin: { left: 40, right: 40 }
+        });
+      } else if (activeTab === "inventario") {
+        const tableHeaders = [["Producto", "SKU", "Bodega", "Tienda", "Cantidad"]];
+        const tableRows = (invReport?.data ?? []).map(r => [
+          r.product.name,
+          r.product.sku,
+          r.warehouse.name,
+          r.warehouse.store ?? "—",
+          r.quantity
+        ]);
+
+        (doc as any).autoTable({
+          startY: currentY,
+          head: tableHeaders,
+          body: tableRows,
+          theme: "striped",
+          headStyles: { fillColor: darkColor },
+          styles: { fontSize: 9, cellPadding: 8 },
+          columnStyles: {
+            0: { cellWidth: 200 },
+            1: { cellWidth: 100, halign: "center" },
+            2: { cellWidth: 110 },
+            3: { cellWidth: 70 },
+            4: { cellWidth: 50, halign: "center", fontStyle: "bold" }
+          },
+          margin: { left: 40, right: 40 }
+        });
+      } else if (activeTab === "productos") {
+        const tableHeaders = [["#", "Nombre del Producto", "SKU", "Tipo", "Veces Vendido", "Unidades", "Ingresos"]];
+        const tableRows = (topReport?.data ?? []).map((r, i) => [
+          i + 1,
+          r.name,
+          r.sku,
+          r.type,
+          r.times_sold,
+          r.total_quantity,
+          fmt(r.total_revenue)
+        ]);
+
+        (doc as any).autoTable({
+          startY: currentY,
+          head: tableHeaders,
+          body: tableRows,
+          theme: "striped",
+          headStyles: { fillColor: darkColor },
+          styles: { fontSize: 9, cellPadding: 8 },
+          columnStyles: {
+            0: { cellWidth: 30, halign: "center" },
+            1: { cellWidth: 200 },
+            2: { cellWidth: 90, halign: "center" },
+            3: { cellWidth: 50, halign: "center" },
+            4: { cellWidth: 50, halign: "center" },
+            5: { cellWidth: 50, halign: "center" },
+            6: { cellWidth: 70, halign: "right", fontStyle: "bold" }
+          },
+          margin: { left: 40, right: 40 }
+        });
+      } else if (activeTab === "clientes") {
+        const tableHeaders = [["#", "Cliente", "Teléfono", "Compras Realizadas", "Total Gastado", "Saldo Crédito"]];
+        const tableRows = (custReport?.data ?? []).map((r, i) => [
+          i + 1,
+          r.name,
+          r.phone ?? "—",
+          r.total_purchases,
+          fmt(r.total_spent),
+          fmt(r.credit_balance)
+        ]);
+
+        (doc as any).autoTable({
+          startY: currentY,
+          head: tableHeaders,
+          body: tableRows,
+          theme: "striped",
+          headStyles: { fillColor: darkColor },
+          styles: { fontSize: 9, cellPadding: 8 },
+          columnStyles: {
+            0: { cellWidth: 30, halign: "center" },
+            1: { cellWidth: 180 },
+            2: { cellWidth: 90, halign: "center" },
+            3: { cellWidth: 80, halign: "center" },
+            4: { cellWidth: 80, halign: "right", fontStyle: "bold" },
+            5: { cellWidth: 80, halign: "right" }
+          },
+          margin: { left: 40, right: 40 }
+        });
+      }
+
+      doc.save(`tadaima_reporte_${activeTab}_${from}_${to}.pdf`);
+      toast.success("PDF descargado correctamente");
+    } catch (error) {
+      console.error(error);
+      toast.error("Error al exportar a PDF");
+    }
+  };
+
+
 
   // ─── Shared UI ───────────────────────────────────────────────────────────────
   const thStyle: React.CSSProperties = { padding: "10px 16px", fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: TM, textAlign: "left" };
@@ -440,6 +958,30 @@ export function ReportsPage() {
             >
               <RefreshCw size={13} className={isFetchingActive ? "animate-spin" : ""} />
               {refreshing ? "Actualizando…" : "Actualizar"}
+            </button>
+
+            {/* Excel button */}
+            <button
+              onClick={handleExportExcel}
+              disabled={isFetchingActive}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-50"
+              style={{ background: "rgba(0,204,102,0.1)", border: "1px solid rgba(0,204,102,0.2)", color: "#00CC66" }}
+              title="Exportar reporte actual a Excel"
+            >
+              <FileSpreadsheet size={13} />
+              Excel
+            </button>
+
+            {/* PDF button */}
+            <button
+              onClick={handleExportPDF}
+              disabled={isFetchingActive}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-50"
+              style={{ background: "rgba(68,153,255,0.1)", border: "1px solid rgba(68,153,255,0.2)", color: "#4499FF" }}
+              title="Exportar reporte actual a PDF"
+            >
+              <FileDown size={13} />
+              PDF
             </button>
           </div>
         </div>
@@ -689,28 +1231,7 @@ export function ReportsPage() {
                 </div>
 
 
-                {/* By store — admin only, no filter active */}
-                {isAdmin && !effectiveStoreId && salesReport.by_store && salesReport.by_store.length > 0 && (
-                  <div style={{ ...GLASS, borderRadius: 24, overflow: "hidden" }}>
-                    <div className="px-6 py-4" style={{ borderBottom: DIV }}>
-                      <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: TM }}>Por tienda</p>
-                    </div>
-                    <table className="w-full">
-                      <thead><tr style={{ borderBottom: DIV }}>
-                        {["Tienda", "Tickets", "Total"].map(h => <th key={h} style={thStyle}>{h}</th>)}
-                      </tr></thead>
-                      <tbody>
-                        {salesReport.by_store.map((r, i) => (
-                          <tr key={i}>
-                            <td style={{ ...tdStyle, fontWeight: 700, color: TP }}>{r.store}</td>
-                            <td style={tdStyle}>{r.count}</td>
-                            <td style={{ ...tdStyle, color: "#00CC66", fontWeight: 900 }}>{fmt(r.amount)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+
 
                 {/* Filtros fuera de la tarjeta y centrados en la parte superior */}
                 <div className="flex flex-col items-center justify-center gap-3 pt-4">
@@ -721,7 +1242,7 @@ export function ReportsPage() {
                         <button
                           key={f.id}
                           onClick={() => {
-                            setExpandedId(null);
+                            setExpandedIds([]);
                             if (f.id === "all") {
                               setSelectedFilters(["all"]);
                             } else {
@@ -748,76 +1269,90 @@ export function ReportsPage() {
                   </div>
                 </div>
 
-                {/* Sales history — expandable + reprint */}
+                {/* Ventas por Producto — expandable details */}
                 <div style={{ ...GLASS, borderRadius: 24, overflow: "hidden" }}>
                   <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: DIV }}>
                     <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: TM }}>
-                      Historial de ventas
+                      Ventas por Producto
                     </p>
                     <span className="text-[9px] font-black px-2 py-0.5 rounded-full" style={{ background: "rgba(68,153,255,0.12)", color: "#4499FF" }}>
-                      {filteredSales.length} tickets
+                      {groupedProducts.length} productos
                     </span>
                   </div>
                   <div className="overflow-y-auto" style={{ maxHeight: 420 }}>
                     <table className="w-full">
                       <thead><tr style={{ borderBottom: DIV }}>
-                        {["Ticket", "Fecha", "Cliente", "Items", "Total", "Acciones"].map(h => <th key={h} style={thStyle}>{h}</th>)}
+                        {["Producto", "SKU", "Nº Ventas (Tickets)", "Cant. Vendida", "Ingresos Totales"].map(h => <th key={h} style={thStyle}>{h}</th>)}
                       </tr></thead>
                       <tbody>
-                        {filteredSales.map(sale => (
-                          <>
-                            <tr key={sale.id} style={{ borderBottom: expandedId === sale.id ? "none" : DIV, cursor: "pointer" }}
-                              onClick={() => setExpandedId(prev => prev === sale.id ? null : sale.id)}>
-                              <td style={{ ...tdStyle, fontWeight: 900, color: TP }}>
-                                <div className="flex items-center gap-1.5">
-                                  {expandedId === sale.id ? <ChevronDown size={12} style={{ color: TM }} /> : <ChevronRight size={12} style={{ color: TM }} />}
-                                  #{sale.id}
-                                </div>
-                              </td>
-                              <td style={tdStyle}>
-                                <div style={{ fontSize: 11 }}>{fmtDate(sale.sold_at || sale.created_at)}</div>
-                                <div style={{ fontSize: 10, color: TM }}>{fmtTime(sale.sold_at || sale.created_at)}</div>
-                              </td>
-                              <td style={tdStyle}>{sale.customer?.name ?? <span style={{ color: TM }}>Público general</span>}</td>
-                              <td style={tdStyle}>{sale.items.length}</td>
-                              <td style={{ ...tdStyle, color: "#00CC66", fontWeight: 900 }}>{fmt(sale.total)}</td>
-                              <td style={tdStyle}>
-                                <button
-                                  onClick={e => { e.stopPropagation(); printTicket(sale); }}
-                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black transition-all hover:scale-105 active:scale-95"
-                                  style={{ background: "rgba(68,153,255,0.12)", color: "#4499FF", border: "1px solid rgba(68,153,255,0.2)" }}
-                                >
-                                  <Printer size={11} /> Ticket
-                                </button>
-                              </td>
-                            </tr>
-                            {expandedId === sale.id && (
-                              <tr key={`${sale.id}-detail`}>
-                                <td colSpan={6} style={{ padding: "0 16px 12px", borderBottom: DIV, background: "rgba(255,255,255,0.02)" }}>
-                                  <div className="space-y-1 pt-2">
-                                    {sale.items.map(it => (
-                                      <div key={it.id} className="flex items-center justify-between text-xs py-1">
-                                        <span style={{ color: TS }}>{it.product?.name ?? "Artículo"}</span>
-                                        <span style={{ color: TM }}>x{it.quantity}</span>
-                                        <span style={{ color: TP, fontWeight: 700 }}>{fmt(it.total)}</span>
-                                      </div>
-                                    ))}
-                                    <div className="flex items-center gap-3 pt-1 flex-wrap">
-                                      {sale.payments.map(p => (
-                                        <span key={p.id} className="text-[10px] font-bold px-2 py-0.5 rounded-full"
-                                          style={{ background: "rgba(0,204,102,0.1)", color: "#00CC66" }}>
-                                          {p.payment_method?.name ?? "Pago"}: {fmt(p.amount)}
-                                        </span>
-                                      ))}
-                                    </div>
+                        {groupedProducts.map(prod => {
+                          const isExpanded = expandedIds.includes(prod.id);
+                          return (
+                            <Fragment key={prod.id}>
+                              <tr style={{ borderBottom: isExpanded ? "none" : DIV, cursor: "pointer" }}
+                                onClick={() => {
+                                  setExpandedIds(prev =>
+                                    prev.includes(prod.id)
+                                      ? prev.filter(x => x !== prod.id)
+                                      : [...prev, prod.id]
+                                  );
+                                }}>
+                                <td style={{ ...tdStyle, fontWeight: 900, color: TP }}>
+                                  <div className="flex items-center gap-1.5">
+                                    {isExpanded ? <ChevronDown size={12} style={{ color: TM }} /> : <ChevronRight size={12} style={{ color: TM }} />}
+                                    {prod.name}
                                   </div>
                                 </td>
+                                <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: 11 }}>{prod.sku}</td>
+                                <td style={tdStyle}>{prod.sales_count}</td>
+                                <td style={{ ...tdStyle, fontWeight: 700, color: TP }}>{prod.total_quantity}</td>
+                                <td style={{ ...tdStyle, color: "#00CC66", fontWeight: 900 }}>{fmt(prod.total_revenue)}</td>
                               </tr>
-                            )}
-                          </>
-                        ))}
-                        {filteredSales.length === 0 && (
-                          <tr><td colSpan={6} style={{ ...tdStyle, textAlign: "center", padding: 32 }}>Sin ventas en el período</td></tr>
+                              {isExpanded && (
+                                <tr key={`${prod.id}-detail`}>
+                                  <td colSpan={5} style={{ padding: "0 16px 12px", borderBottom: DIV, background: "rgba(255,255,255,0.02)" }}>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-3 pb-2">
+                                      {/* Métodos de Pago */}
+                                      <div>
+                                        <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: TM, marginBottom: 8 }}>
+                                          Desglose por método de pago
+                                        </p>
+                                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                          {Object.entries(prod.payment_breakdown).map(([method, qty]) => (
+                                            <div key={method} className="flex items-center justify-between text-xs py-1.5 px-3" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", borderRadius: 9 }}>
+                                              <span style={{ color: TS, fontWeight: 700 }}>{method}</span>
+                                              <span style={{ color: TP, fontWeight: 900 }}>{qty} {qty === 1 ? "unidad" : "unidades"}</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+
+                                      {/* Desglose por Precios de Venta */}
+                                      <div>
+                                        <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: TM, marginBottom: 8 }}>
+                                          Desglose por precios de venta
+                                        </p>
+                                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                          {Object.entries(prod.price_breakdown).map(([priceStr, qty]) => {
+                                            const priceVal = parseFloat(priceStr);
+                                            return (
+                                              <div key={priceStr} className="flex items-center justify-between text-xs py-1.5 px-3" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", borderRadius: 9 }}>
+                                                <span style={{ color: TS }}>Precio unitario: <span className="font-black" style={{ color: TP }}>{fmt(priceVal)}</span></span>
+                                                <span style={{ color: "#00CC66", fontWeight: 900 }}>{qty} {qty === 1 ? "unidad" : "unidades"}</span>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </Fragment>
+                          );
+                        })}
+                        {groupedProducts.length === 0 && (
+                          <tr><td colSpan={5} style={{ ...tdStyle, textAlign: "center", padding: 32 }}>Sin ventas en el período</td></tr>
                         )}
                       </tbody>
                     </table>
