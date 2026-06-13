@@ -128,6 +128,10 @@ export function invalidateAfterSale(
 ): void {
   void queryClient.invalidateQueries({ queryKey: queryKeys.historial.all });
   void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+  // El tab Productos→Tomos lee ['mangas'] (query distinta de ['products']);
+  // sin esto el stock del tomo vendido queda viejo aunque Existencias
+  // (['inventory']) sí refresque (QA Ruben 2026-06-13).
+  void queryClient.invalidateQueries({ queryKey: queryKeys.mangas.all });
   // Desglose por tienda (Existencias / detalle de producto) lee
   // ['inventory', 'by-product'] — sin esto muestra stock viejo.
   void queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all });
@@ -144,11 +148,13 @@ export function invalidateAfterSale(
 }
 
 /**
- * Descuenta stock vendido en TODOS los caches bajo ['products'] (catálogo
- * completo, light top, search, infinite, detail) sin esperar el refetch.
- * Camina recursivamente las formas conocidas (data/pages/items) y a cualquier
- * objeto con `id` vendido le resta quantity de `stock_total` (light) y/o
- * `stock` (full). Inmutable: solo clona las ramas que cambian.
+ * Descuenta stock vendido en TODOS los caches bajo ['products'] Y ['mangas']
+ * (catálogo completo, light top, search, infinite, detail; los tomos son
+ * products unificados con su propia query ['mangas'] en el tab Tomos) sin
+ * esperar el refetch. Camina recursivamente las formas conocidas
+ * (data/pages/items) y a cualquier objeto con `id` vendido le resta quantity
+ * de `stock_total` (light) y/o `stock` (full). Inmutable: solo clona las ramas
+ * que cambian.
  */
 export function decrementProductStockInCaches(
   queryClient: QueryClient,
@@ -161,8 +167,13 @@ export function decrementProductStockInCaches(
   }
   if (dec.size === 0) return;
 
+  // El id del tomo en ['mangas'] == product_id vendido (unificado en products),
+  // así que el mismo decrementDeep aplica a ambos caches.
   const entries = queryClient.getQueriesData<unknown>({ queryKey: queryKeys.products.all });
-  for (const [key, cached] of entries) {
+  for (const [key, cached] of [
+    ...entries,
+    ...queryClient.getQueriesData<unknown>({ queryKey: queryKeys.mangas.all }),
+  ]) {
     if (!cached) continue;
     const next = decrementDeep(cached, dec);
     if (next !== cached) queryClient.setQueryData(key, next);
