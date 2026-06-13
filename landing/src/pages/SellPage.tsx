@@ -7256,9 +7256,12 @@ export function SellPage() {
                           onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = isMixed ? "rgba(139,92,246,0.08)" : "rgba(245,158,11,0.08)"; (e.currentTarget as HTMLDivElement).style.color = isMixed ? "rgba(139,92,246,0.6)" : "rgba(245,158,11,0.6)"; }}>
                           <Printer size={13} />
                         </div>
-                        {order.status !== "cancelled" && (
+                        {/* Liquidada (delivered) ya NO se puede cancelar: el botón
+                            solo aparece para folios con anticipo pendiente
+                            (Joel 2026-06-13). */}
+                        {order.status !== "cancelled" && order.status !== "delivered" && (
                           <div onClick={e => { e.stopPropagation(); setCancelTarget({ kind: 'presale', order }); }}
-                            role="button" title={order.status === "delivered" ? "Cancelar / Rollback liquidación" : "Cancelar folio"}
+                            role="button" title="Cancelar folio"
                             style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 9, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.22)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "rgba(239,68,68,0.7)" }}
                             onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = "rgba(239,68,68,0.18)"; (e.currentTarget as HTMLDivElement).style.color = "#f87171"; }}
                             onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = "rgba(239,68,68,0.08)"; (e.currentTarget as HTMLDivElement).style.color = "rgba(239,68,68,0.7)"; }}>
