@@ -4,7 +4,7 @@ import {
   DollarSign,
   ShoppingBag, Star, Calendar, Store,
   ChevronDown, ChevronRight, Clock, RefreshCw, ChevronLeft,
-  FileSpreadsheet, FileDown,
+  FileSpreadsheet,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@tadaima/auth";
@@ -559,102 +559,422 @@ export function ReportsPage() {
       
       if (activeTab === "ventas") {
         const sheet = workbook.addWorksheet("Reporte de Ventas");
-        
-        sheet.mergeCells("A1:I1");
-        const titleCell = sheet.getCell("A1");
+
+        // Set row heights for title area
+        sheet.getRow(1).height = 25;
+        sheet.getRow(2).height = 20;
+        sheet.getRow(3).height = 20;
+        sheet.getRow(4).height = 20;
+        sheet.getRow(5).height = 15;
+
+        // Try to fetch and add the Tadaima logo image
+        try {
+          const logoResponse = await fetch("/tadaima-logo.jpeg");
+          if (logoResponse.ok) {
+            const logoBlob = await logoResponse.blob();
+            const logoArrayBuffer = await logoBlob.arrayBuffer();
+            const imageId = workbook.addImage({
+              buffer: logoArrayBuffer,
+              extension: "jpeg",
+            });
+            // Align beautifully in the top-left area spanning columns A to C, rows 1 to 4
+            sheet.addImage(imageId, {
+              tl: { col: 0.1, row: 0.1 },
+              ext: { width: 85, height: 85 },
+              editAs: "oneCell"
+            });
+          }
+        } catch (logoError) {
+          console.error("No se pudo incrustar el logotipo de Tadaima POS:", logoError);
+        }
+
+        // --- TITLE & METADATA SECTION (Columns D to I) ---
+        sheet.mergeCells("D1:H1");
+        const titleCell = sheet.getCell("D1");
         titleCell.value = "TADAIMA - REPORTE DE VENTAS";
-        titleCell.font = { name: "Arial", size: 14, bold: true, color: { argb: "FFFFFFFF" } };
+        titleCell.font = { name: "Arial", size: 13, bold: true, color: { argb: "FFFFFFFF" } };
         titleCell.alignment = { vertical: "middle", horizontal: "center" };
         titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF4422" } };
-        sheet.getRow(1).height = 35;
-        
-        sheet.mergeCells("A2:I2");
-        const subtitleCell = sheet.getCell("A2");
-        subtitleCell.value = `Periodo: ${fmtDate(from)} al ${fmtDate(to)}  |  Exportado: ${fmtDate(today)} ${new Date().toLocaleTimeString()}`;
-        subtitleCell.font = { name: "Arial", size: 10, italic: true };
-        subtitleCell.alignment = { vertical: "middle", horizontal: "center" };
-        sheet.getRow(2).height = 20;
 
-        sheet.addRow([]);
+        sheet.mergeCells("D2:H2");
+        const periodCell = sheet.getCell("D2");
+        periodCell.value = "Periodo: " + fmtDate(from) + " al " + fmtDate(to);
+        periodCell.font = { name: "Arial", size: 9, bold: true, color: { argb: "FF333333" } };
+        periodCell.alignment = { vertical: "middle", horizontal: "center" };
 
-        sheet.addRow(["RESUMEN DE COBROS"]).font = { bold: true, size: 11 };
-        sheet.addRow(["Total Cobrado", paymentBreakdown.total]);
-        sheet.addRow(["Pago con Tarjeta", paymentBreakdown.card]);
-        sheet.addRow(["Pago en Efectivo", paymentBreakdown.cash]);
-        sheet.addRow(["Depósitos", paymentBreakdown.deposits]);
-        
-        const summaryRows = [5, 6, 7, 8];
-        summaryRows.forEach((r, idx) => {
-          sheet.getCell(`B${r}`).numFmt = "$#,##0.00";
-          sheet.getCell(`B${r}`).alignment = { horizontal: "right" };
-          if (idx === 0) {
-            sheet.getCell(`A${r}`).font = { bold: true };
-            sheet.getCell(`B${r}`).font = { bold: true, color: { argb: "FF009944" } };
-          }
+        sheet.mergeCells("D3:H3");
+        const storeCell = sheet.getCell("D3");
+        const selectedStoreName = effectiveStoreId ? (stores.find((s) => s.id === effectiveStoreId)?.name ?? "Tienda #" + effectiveStoreId) : "Todas las tiendas";
+        storeCell.value = "Sucursal: " + selectedStoreName;
+        storeCell.font = { name: "Arial", size: 9, italic: true };
+        storeCell.alignment = { vertical: "middle", horizontal: "center" };
+
+        sheet.mergeCells("D4:H4");
+        const exportedCell = sheet.getCell("D4");
+        exportedCell.value = "Generado: " + fmtDate(today) + " " + new Date().toLocaleTimeString();
+        exportedCell.font = { name: "Arial", size: 8, color: { argb: "FF666666" } };
+        exportedCell.alignment = { vertical: "middle", horizontal: "center" };
+
+        // --- RESUMEN DE COBROS EN CAJA SECTION (Rows 6 to 10) ---
+        sheet.mergeCells("D6:H6");
+        const resHeader = sheet.getCell("D6");
+        resHeader.value = "RESUMEN DE COBROS EN CAJA";
+        resHeader.font = { name: "Arial", size: 10, bold: true, color: { argb: "FFFFFFFF" } };
+        resHeader.alignment = { vertical: "middle", horizontal: "center" };
+        resHeader.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF333333" } };
+        sheet.getRow(6).height = 20;
+
+        const summaryConcepts = [
+          { concept: "Ingreso Total Cobrado (Bruto)", value: paymentBreakdown.total, isTotal: true },
+          { concept: "Pago en Efectivo (incluye USD)", value: paymentBreakdown.cash },
+          { concept: "Pago con Tarjeta bancaria (TPV)", value: paymentBreakdown.card },
+          { concept: "Depósitos bancarios (Transferencia / SPEI)", value: paymentBreakdown.deposits },
+        ];
+
+        summaryConcepts.forEach((item, idx) => {
+          const rowNum = 7 + idx;
+          sheet.getRow(rowNum).height = 18;
+          sheet.mergeCells("D" + rowNum + ":F" + rowNum);
+          
+          const labelCell = sheet.getCell("D" + rowNum);
+          labelCell.value = item.concept;
+          labelCell.font = { name: "Arial", size: 9, bold: !!item.isTotal };
+          labelCell.alignment = { vertical: "middle", horizontal: "left" };
+
+          sheet.mergeCells("G" + rowNum + ":H" + rowNum);
+          const valCell = sheet.getCell("G" + rowNum);
+          valCell.value = item.value;
+          valCell.font = { name: "Arial", size: 9, bold: !!item.isTotal, ...(item.isTotal ? { color: { argb: "FF009944" } } : {}) };
+          valCell.numFmt = "$#,##0.00";
+          valCell.alignment = { vertical: "middle", horizontal: "right" };
         });
 
-        sheet.addRow([]);
-        sheet.addRow([]);
+        // Blank rows spacing
+        let currentExcelRow = 12;
+        sheet.getRow(currentExcelRow).height = 15;
 
-        const headerRow = sheet.addRow([
+        // --- Helper to style Section Headers ---
+        const styleSectionHeader = (rowNum: number, label: string, colorHex: string) => {
+          sheet.mergeCells("A" + rowNum + ":I" + rowNum);
+          const cell = sheet.getCell("A" + rowNum);
+          cell.value = label;
+          cell.font = { name: "Arial", size: 10, bold: true, color: { argb: "FFFFFFFF" } };
+          cell.alignment = { vertical: "middle", horizontal: "left" };
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: colorHex } };
+          sheet.getRow(rowNum).height = 24;
+        };
+
+        // --- Helper to style Header Rows ---
+        const styleHeaderRow = (headerRowInstance: any, colorHex: string) => {
+          headerRowInstance.font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFFFFFF" } };
+          headerRowInstance.eachCell((cell: any) => {
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: colorHex } };
+            cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+          });
+          sheet.getRow(headerRowInstance.number).height = 25;
+        };
+
+        // =========================================================================
+        // SECTION 1: DETALLE GENERAL DE VENTAS POR PRODUCTO
+        // =========================================================================
+        currentExcelRow++;
+        styleSectionHeader(currentExcelRow, " 1. DETALLE GENERAL DE VENTAS POR PRODUCTO (TODOS LOS PRODUCTOS)", "FF333333");
+
+        currentExcelRow++;
+        const tbl1Header = sheet.getRow(currentExcelRow);
+        tbl1Header.values = [
           "Producto",
           "SKU",
-          "Nº Ventas (Tickets)",
-          "Cantidad Vendida",
-          "Ingresos Totales",
-          "Desglose de Precios",
-          "Desglose de Pagos",
-          "Apartado Preventa",
-          "Deuda Preventa"
-        ]);
-        headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
-        headerRow.eachCell((cell) => {
-          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF333333" } };
-          cell.alignment = { vertical: "middle", horizontal: "center" };
-        });
-        sheet.getRow(headerRow.number).height = 25;
+          "Tickets",
+          "Cant.",
+          "Bruto",
+          "Comisión",
+          "Neto Real",
+          "Precios Unitarios",
+          "Desglose de Pagos"
+        ];
+        styleHeaderRow(tbl1Header, "FF555555");
 
         groupedProducts.forEach((prod) => {
+          currentExcelRow++;
           const pricesStr = Object.entries(prod.price_breakdown)
-            .map(([price, qty]) => `${qty} ud. a ${price}`)
-            .join(" | ");
+            .map(([price, qty]) => qty + " ud. a " + fmt(parseFloat(price)))
+            .join("\n");
           const paymentsStr = Object.entries(prod.payment_breakdown)
-            .map(([method, data]) => `${data.qty} ud. con ${method} (${fmt(data.revenue)})`)
-            .join(" | ");
+            .map(([method, data]) => data.qty + " ud. con " + method + " (" + fmt(data.revenue) + ")")
+            .join("\n");
 
-          const r = sheet.addRow([
+          const netRevenue = prod.total_revenue - (prod.commission_amount || 0);
+
+          const r = sheet.getRow(currentExcelRow);
+          r.values = [
             prod.name,
             prod.sku,
             prod.sales_count,
             prod.total_quantity,
             prod.total_revenue,
+            prod.commission_amount || 0,
+            netRevenue,
             pricesStr,
-            paymentsStr,
-            prod.pre_sale_apartado || 0,
-            prod.pre_sale_deuda || 0
-          ]);
+            paymentsStr
+          ];
           
-          r.getCell(2).alignment = { horizontal: "center" };
-          r.getCell(3).alignment = { horizontal: "center" };
-          r.getCell(4).alignment = { horizontal: "center" };
+          const lineCount = Math.max(
+            Object.keys(prod.price_breakdown).length,
+            Object.keys(prod.payment_breakdown).length,
+            1
+          );
+          r.height = 14 * lineCount + 10; // Dynamically adjusts to let rows breathe!
+
+          r.getCell(1).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+          r.getCell(2).alignment = { horizontal: "center", vertical: "middle" };
+          r.getCell(3).alignment = { horizontal: "center", vertical: "middle" };
+          r.getCell(4).alignment = { horizontal: "center", vertical: "middle" };
+          
           r.getCell(5).numFmt = "$#,##0.00";
-          r.getCell(5).font = { bold: true, color: { argb: "FF009944" } };
-          r.getCell(8).numFmt = "$#,##0.00";
-          r.getCell(9).numFmt = "$#,##0.00";
+          r.getCell(5).font = { name: "Arial", size: 9, color: { argb: "FF444444" } };
+          r.getCell(5).alignment = { horizontal: "right", vertical: "middle" };
+          
+          r.getCell(6).numFmt = "$#,##0.00";
+          r.getCell(6).font = { name: "Arial", size: 9, color: { argb: "FFFF2200" } };
+          r.getCell(6).alignment = { horizontal: "right", vertical: "middle" };
+          
+          r.getCell(7).numFmt = "$#,##0.00";
+          r.getCell(7).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
+          r.getCell(7).alignment = { horizontal: "right", vertical: "middle" };
+
+          r.getCell(8).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+          r.getCell(9).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
         });
 
-        sheet.columns.forEach((column) => {
+        // =========================================================================
+        // SECTION 2: DETALLE DE VENTAS CON TARJETA BANCARIA Y COMISIONES
+        // =========================================================================
+        const cardProducts = groupedProducts.filter(prod => 
+          Object.keys(prod.payment_breakdown).some(m => m.toLowerCase().includes("tarjeta") || m.toLowerCase().includes("credit") || m.toLowerCase().includes("debito") || m.toLowerCase().includes("tpv") || m.toLowerCase().includes("terminal"))
+        );
+
+        if (cardProducts.length > 0) {
+          currentExcelRow += 3;
+          styleSectionHeader(currentExcelRow, " 2. DESGLOSE DE COBROS CON TARJETA Y COMISIÓN DE TERMINAL", "FF2266BB");
+
+          currentExcelRow++;
+          const tbl2Header = sheet.getRow(currentExcelRow);
+          tbl2Header.values = [
+            "Producto",
+            "SKU",
+            "Cant. Tarjeta",
+            "Bruto Tarjeta",
+            "Comisión TPV",
+            "Neto Tarjeta",
+            "", "", ""
+          ];
+          styleHeaderRow(tbl2Header, "FF4488DD");
+
+          cardProducts.forEach((prod) => {
+            currentExcelRow++;
+            
+            // Extract only the units and revenue cobradas con tarjeta
+            let cardQty = 0;
+            let cardRevenue = 0;
+            Object.entries(prod.payment_breakdown).forEach(([method, data]) => {
+              const isCardMethodName = method.toLowerCase().includes("tarjeta") || method.toLowerCase().includes("credit") || method.toLowerCase().includes("debito") || method.toLowerCase().includes("tpv") || method.toLowerCase().includes("terminal");
+              if (isCardMethodName) {
+                cardQty += data.qty;
+                cardRevenue += data.revenue;
+              }
+            });
+
+            const r = sheet.getRow(currentExcelRow);
+            r.values = [
+              prod.name,
+              prod.sku,
+              cardQty,
+              cardRevenue,
+              prod.commission_amount || 0,
+              cardRevenue - (prod.commission_amount || 0),
+              "", "", ""
+            ];
+            r.height = 20;
+
+            r.getCell(1).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+            r.getCell(2).alignment = { horizontal: "center", vertical: "middle" };
+            r.getCell(3).alignment = { horizontal: "center", vertical: "middle" };
+            
+            r.getCell(4).numFmt = "$#,##0.00";
+            r.getCell(4).alignment = { horizontal: "right", vertical: "middle" };
+            r.getCell(5).numFmt = "$#,##0.00";
+            r.getCell(5).font = { name: "Arial", size: 9, color: { argb: "FFFF2200" } };
+            r.getCell(5).alignment = { horizontal: "right", vertical: "middle" };
+            
+            r.getCell(6).numFmt = "$#,##0.00";
+            r.getCell(6).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
+            r.getCell(6).alignment = { horizontal: "right", vertical: "middle" };
+          });
+        }
+
+        // =========================================================================
+        // SECTION 3: DETALLE DE VENTAS EN EFECTIVO (PESOS Y DÓLARES)
+        // =========================================================================
+        const cashProducts = groupedProducts.filter(prod => 
+          Object.keys(prod.payment_breakdown).some(m => m.toLowerCase().includes("efectivo") || m.toLowerCase().includes("cash") || m.toLowerCase().includes("dolar") || m.toLowerCase().includes("dólar") || m.toLowerCase().includes("usd") || m.toLowerCase().includes("otro") || m.toLowerCase().includes("unmapped"))
+        );
+
+        if (cashProducts.length > 0) {
+          currentExcelRow += 3;
+          styleSectionHeader(currentExcelRow, " 3. DESGLOSE DE VENTAS COBRADAS EN EFECTIVO (PESOS / DÓLARES / OTROS)", "FF009944");
+
+          currentExcelRow++;
+          const tbl3Header = sheet.getRow(currentExcelRow);
+          tbl3Header.values = [
+            "Producto",
+            "SKU",
+            "Cant. Efectivo",
+            "Monto Efectivo",
+            "", "", "", "", ""
+          ];
+          styleHeaderRow(tbl3Header, "FF33BB66");
+
+          cashProducts.forEach((prod) => {
+            currentExcelRow++;
+            
+            // Extract only the units and revenue cobradas con efectivo
+            let cashQty = 0;
+            let cashRevenue = 0;
+            Object.entries(prod.payment_breakdown).forEach(([method, data]) => {
+              const isCashMethodName = method.toLowerCase().includes("efectivo") || method.toLowerCase().includes("cash") || method.toLowerCase().includes("dolar") || method.toLowerCase().includes("dólar") || method.toLowerCase().includes("usd") || method.toLowerCase().includes("otro") || method.toLowerCase().includes("unmapped");
+              if (isCashMethodName) {
+                cashQty += data.qty;
+                cashRevenue += data.revenue;
+              }
+            });
+
+            const r = sheet.getRow(currentExcelRow);
+            r.values = [
+              prod.name,
+              prod.sku,
+              cashQty,
+              cashRevenue,
+              "", "", "", "", ""
+            ];
+            r.height = 20;
+
+            r.getCell(1).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+            r.getCell(2).alignment = { horizontal: "center", vertical: "middle" };
+            r.getCell(3).alignment = { horizontal: "center", vertical: "middle" };
+            
+            r.getCell(4).numFmt = "$#,##0.00";
+            r.getCell(4).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
+            r.getCell(4).alignment = { horizontal: "right", vertical: "middle" };
+          });
+        }
+
+        // =========================================================================
+        // SECTION 4: CONTROL DE PREVENTAS (ANTICIPOS Y SALDOS)
+        // =========================================================================
+        const preSaleProducts = groupedProducts.filter(prod => 
+          (prod.pre_sale_apartado && prod.pre_sale_apartado > 0) || (prod.pre_sale_deuda && prod.pre_sale_deuda > 0)
+        );
+
+        if (preSaleProducts.length > 0) {
+          currentExcelRow += 3;
+          styleSectionHeader(currentExcelRow, " 4. CONTROL Y AUDITORÍA DE PREVENTAS (ABONADO VS DEUDA PENDIENTE)", "FF8833EE");
+
+          currentExcelRow++;
+          const tbl4Header = sheet.getRow(currentExcelRow);
+          tbl4Header.values = [
+            "Producto",
+            "SKU",
+            "Cant. Preventa",
+            "Abonado (Apartado)",
+            "Pendiente (Deuda)",
+            "Pactado (Total)",
+            "", "", ""
+          ];
+          styleHeaderRow(tbl4Header, "FFAA66FF");
+
+          preSaleProducts.forEach((prod) => {
+            currentExcelRow++;
+            
+            const totalPactado = (prod.pre_sale_apartado || 0) + (prod.pre_sale_deuda || 0);
+
+            const r = sheet.getRow(currentExcelRow);
+            r.values = [
+              prod.name,
+              prod.sku,
+              prod.total_quantity, // All units in pre_sale_orders
+              prod.pre_sale_apartado || 0,
+              prod.pre_sale_deuda || 0,
+              totalPactado,
+              "", "", ""
+            ];
+            r.height = 20;
+
+            r.getCell(1).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+            r.getCell(2).alignment = { horizontal: "center", vertical: "middle" };
+            r.getCell(3).alignment = { horizontal: "center", vertical: "middle" };
+            
+            r.getCell(4).numFmt = "$#,##0.00";
+            r.getCell(4).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
+            r.getCell(4).alignment = { horizontal: "right", vertical: "middle" };
+            
+            r.getCell(5).numFmt = "$#,##0.00";
+            r.getCell(5).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFF2200" } };
+            r.getCell(5).alignment = { horizontal: "right", vertical: "middle" };
+            
+            r.getCell(6).numFmt = "$#,##0.00";
+            r.getCell(6).font = { name: "Arial", size: 9, color: { argb: "FF333333" } };
+            r.getCell(6).alignment = { horizontal: "right", vertical: "middle" };
+          });
+        }
+
+        // Set optimal columns width based only on real data rows to prevent large headers inflating sizes!
+        sheet.columns.forEach((column, colIdx) => {
+          const colNumber = colIdx + 1;
+          let maxLength = 8; // default fallback minimum
+          
           if (column.values) {
-            let maxLength = 0;
-            column.values.forEach((v) => {
-              if (v) {
-                const strLen = String(v).length;
+            column.values.forEach((v, rowIdx) => {
+              // Ignore row index 1 to 14 (title, logo, metadata, summary card, section headers)
+              if (rowIdx <= 14) return;
+              
+              if (v && typeof v !== "object") {
+                const str = String(v);
+                // Skip section headers or long text banners in the middle
+                if (str.startsWith(" 1. ") || str.startsWith(" 2. ") || str.startsWith(" 3. ") || str.startsWith(" 4. ")) return;
+                
+                // For Column 8 (Precios) and 9 (Desglose de Pagos), we'll wrap text, so don't let their full length expand the columns!
+                if (colNumber === 8 || colNumber === 9) {
+                  return;
+                }
+                
+                const strLen = str.length;
                 if (strLen > maxLength) maxLength = strLen;
               }
             });
-            column.width = Math.min(Math.max(maxLength + 3, 10), 40);
           }
+          
+          column.width = Math.min(Math.max(maxLength + 2, 9), 28);
         });
+
+        // Manual highly optimized override for pixel-perfect sizes without horizontal scroll!
+        // Giving each column just the right amount of breathing room ("respirar")!
+        sheet.getColumn(1).width = 28; // Producto (plenty of room for manga titles)
+        sheet.getColumn(1).alignment = { wrapText: true, vertical: "middle" };
+        sheet.getColumn(2).width = 17; // SKU (fully fits codes like "MANGA-6a2b8f5" or barcodes perfectly)
+        sheet.getColumn(2).alignment = { horizontal: "center", vertical: "middle" };
+        sheet.getColumn(3).width = 12.5; // Tickets & Cant. Tarjeta / Cant. Efectivo / Cant. Preventa (breathing room!)
+        sheet.getColumn(4).width = 13.5; // Cant. & Bruto Tarjeta / Monto Efectivo / Abonado (Apartado) (no cutoffs!)
+        sheet.getColumn(5).width = 13.5; // Bruto & Comisión TPV / Pendiente (Deuda) (perfect space!)
+        sheet.getColumn(6).width = 13.5; // Comisión & Neto Tarjeta / Pactado (Total) (fully readable!)
+        sheet.getColumn(7).width = 14;   // Neto Real (spacious!)
+        
+        // Enforce wrap text and moderate horizontal width on long description columns
+        sheet.getColumn(8).width = 19; // Precios Unitarios (nice list column width)
+        sheet.getColumn(8).alignment = { wrapText: true, vertical: "middle" };
+        
+        sheet.getColumn(9).width = 24; // Desglose de Pagos (nice list column width)
+        sheet.getColumn(9).alignment = { wrapText: true, vertical: "middle" };
       } else if (activeTab === "inventario") {
         const sheet = workbook.addWorksheet("Inventario");
         sheet.mergeCells("A1:E1");
@@ -841,210 +1161,6 @@ export function ReportsPage() {
     }
   };
 
-  const handleExportPDF = async () => {
-    try {
-      toast.info("Generando archivo PDF...");
-      const { jsPDF } = await import("jspdf");
-      await import("jspdf-autotable");
-      
-      const doc = new jsPDF(activeTab === "ventas" ? "landscape" : "portrait", "pt", "letter");
-      const pageWidth = doc.internal.pageSize.getWidth();
-      const darkColor = [30, 30, 30];
-      
-      doc.setFillColor(255, 68, 34);
-      doc.rect(0, 0, pageWidth, 60, "F");
-      
-      doc.setTextColor(255, 255, 255);
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(16);
-      doc.text("TADAIMA - CENTRO DE REPORTES", 40, 36);
-      
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(8);
-      doc.text(`PERIODO: ${fmtDate(from).toUpperCase()} AL ${fmtDate(to).toUpperCase()}`, pageWidth - 40, 26, { align: "right" });
-      doc.text(`SECCIÓN: ${activeTabMeta.label.toUpperCase()}  |  EXPORTADO: ${fmtDate(today).toUpperCase()} ${new Date().toLocaleTimeString()}`, pageWidth - 40, 42, { align: "right" });
-      
-      let currentY = 90;
-
-      if (activeTab === "ventas") {
-        doc.setFillColor(245, 245, 247);
-        doc.rect(40, currentY, pageWidth - 80, 50, "F");
-        
-        doc.setTextColor(50, 50, 50);
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(8);
-        
-        const colWidth = (pageWidth - 80) / 4;
-        
-        doc.text("TOTAL COBRADO", 40 + 15, currentY + 18);
-        doc.setFontSize(13);
-        doc.setTextColor(0, 153, 68);
-        doc.text(fmt(paymentBreakdown.total), 40 + 15, currentY + 38);
-        
-        doc.setTextColor(50, 50, 50);
-        doc.setFontSize(8);
-        doc.text("PAGO TARJETA", 40 + colWidth + 15, currentY + 18);
-        doc.setFontSize(13);
-        doc.setTextColor(68, 153, 255);
-        doc.text(fmt(paymentBreakdown.card), 40 + colWidth + 15, currentY + 38);
-
-        doc.setTextColor(50, 50, 50);
-        doc.setFontSize(8);
-        doc.text("PAGO EFECTIVO", 40 + colWidth * 2 + 15, currentY + 18);
-        doc.setFontSize(13);
-        doc.setTextColor(51, 204, 136);
-        doc.text(fmt(paymentBreakdown.cash), 40 + colWidth * 2 + 15, currentY + 38);
-
-        doc.setTextColor(50, 50, 50);
-        doc.setFontSize(8);
-        doc.text("DEPÓSITOS", 40 + colWidth * 3 + 15, currentY + 18);
-        doc.setFontSize(13);
-        doc.setTextColor(187, 119, 255);
-        doc.text(fmt(paymentBreakdown.deposits), 40 + colWidth * 3 + 15, currentY + 38);
-        
-        currentY += 80;
-
-        const tableHeaders = [["Producto", "SKU", "Nº Ventas", "Cant. Vendida", "Total Ingresos", "Desglose Precios / Pagos"]];
-        const tableRows = groupedProducts.map(prod => {
-          const pricesStr = Object.entries(prod.price_breakdown)
-            .map(([price, qty]) => `${qty} ud. a ${fmt(parseFloat(price))}`)
-            .join("\n");
-          const paymentsStr = Object.entries(prod.payment_breakdown)
-            .map(([method, data]) => `${data.qty} ud. con ${method} (${fmt(data.revenue)})`)
-            .join("\n");
-
-          let breakdownText = `PRECIOS:\n${pricesStr}\n\nPAGOS:\n${paymentsStr}`;
-          if ((prod.pre_sale_apartado && prod.pre_sale_apartado > 0) || (prod.pre_sale_deuda && prod.pre_sale_deuda > 0)) {
-            breakdownText += `\n\nPREVENTA:\n`;
-            if (prod.pre_sale_apartado && prod.pre_sale_apartado > 0) {
-              breakdownText += `Abonado/Apartado: ${fmt(prod.pre_sale_apartado)}\n`;
-            }
-            if (prod.pre_sale_deuda && prod.pre_sale_deuda > 0) {
-              breakdownText += `Pendiente/Deuda: ${fmt(prod.pre_sale_deuda)}\n`;
-            }
-          }
-
-          return [
-            prod.name,
-            prod.sku,
-            prod.sales_count,
-            prod.total_quantity,
-            fmt(prod.total_revenue),
-            breakdownText
-          ];
-        });
-
-        (doc as any).autoTable({
-          startY: currentY,
-          head: tableHeaders,
-          body: tableRows,
-          theme: "striped",
-          headStyles: { fillColor: darkColor },
-          styles: { fontSize: 8, cellPadding: 6 },
-          columnStyles: {
-            0: { cellWidth: 150 },
-            1: { cellWidth: 80, halign: "center" },
-            2: { cellWidth: 60, halign: "center" },
-            3: { cellWidth: 60, halign: "center", fontStyle: "bold" },
-            4: { cellWidth: 80, halign: "right", fontStyle: "bold", textColor: [0, 153, 68] },
-            5: { cellWidth: 200 }
-          },
-          margin: { left: 40, right: 40 }
-        });
-      } else if (activeTab === "inventario") {
-        const tableHeaders = [["Producto", "SKU", "Bodega", "Tienda", "Cantidad"]];
-        const tableRows = (invReport?.data ?? []).map(r => [
-          r.product.name,
-          r.product.sku,
-          r.warehouse.name,
-          r.warehouse.store ?? "—",
-          r.quantity
-        ]);
-
-        (doc as any).autoTable({
-          startY: currentY,
-          head: tableHeaders,
-          body: tableRows,
-          theme: "striped",
-          headStyles: { fillColor: darkColor },
-          styles: { fontSize: 9, cellPadding: 8 },
-          columnStyles: {
-            0: { cellWidth: 200 },
-            1: { cellWidth: 100, halign: "center" },
-            2: { cellWidth: 110 },
-            3: { cellWidth: 70 },
-            4: { cellWidth: 50, halign: "center", fontStyle: "bold" }
-          },
-          margin: { left: 40, right: 40 }
-        });
-      } else if (activeTab === "productos") {
-        const tableHeaders = [["#", "Nombre del Producto", "SKU", "Tipo", "Veces Vendido", "Unidades", "Ingresos"]];
-        const tableRows = (topReport?.data ?? []).map((r, i) => [
-          i + 1,
-          r.name,
-          r.sku,
-          r.type,
-          r.times_sold,
-          r.total_quantity,
-          fmt(r.total_revenue)
-        ]);
-
-        (doc as any).autoTable({
-          startY: currentY,
-          head: tableHeaders,
-          body: tableRows,
-          theme: "striped",
-          headStyles: { fillColor: darkColor },
-          styles: { fontSize: 9, cellPadding: 8 },
-          columnStyles: {
-            0: { cellWidth: 30, halign: "center" },
-            1: { cellWidth: 200 },
-            2: { cellWidth: 90, halign: "center" },
-            3: { cellWidth: 50, halign: "center" },
-            4: { cellWidth: 50, halign: "center" },
-            5: { cellWidth: 50, halign: "center" },
-            6: { cellWidth: 70, halign: "right", fontStyle: "bold" }
-          },
-          margin: { left: 40, right: 40 }
-        });
-      } else if (activeTab === "clientes") {
-        const tableHeaders = [["#", "Cliente", "Teléfono", "Compras Realizadas", "Total Gastado", "Saldo Crédito"]];
-        const tableRows = (custReport?.data ?? []).map((r, i) => [
-          i + 1,
-          r.name,
-          r.phone ?? "—",
-          r.total_purchases,
-          fmt(r.total_spent),
-          fmt(r.credit_balance)
-        ]);
-
-        (doc as any).autoTable({
-          startY: currentY,
-          head: tableHeaders,
-          body: tableRows,
-          theme: "striped",
-          headStyles: { fillColor: darkColor },
-          styles: { fontSize: 9, cellPadding: 8 },
-          columnStyles: {
-            0: { cellWidth: 30, halign: "center" },
-            1: { cellWidth: 180 },
-            2: { cellWidth: 90, halign: "center" },
-            3: { cellWidth: 80, halign: "center" },
-            4: { cellWidth: 80, halign: "right", fontStyle: "bold" },
-            5: { cellWidth: 80, halign: "right" }
-          },
-          margin: { left: 40, right: 40 }
-        });
-      }
-
-      doc.save(`tadaima_reporte_${activeTab}_${from}_${to}.pdf`);
-      toast.success("PDF descargado correctamente");
-    } catch (error) {
-      console.error(error);
-      toast.error("Error al exportar a PDF");
-    }
-  };
-
 
 
   // ─── Shared UI ───────────────────────────────────────────────────────────────
@@ -1147,17 +1263,7 @@ export function ReportsPage() {
               Excel
             </button>
 
-            {/* PDF button */}
-            <button
-              onClick={handleExportPDF}
-              disabled={isFetchingActive}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-50"
-              style={{ background: "rgba(68,153,255,0.1)", border: "1px solid rgba(68,153,255,0.2)", color: "#4499FF" }}
-              title="Exportar reporte actual a PDF"
-            >
-              <FileDown size={13} />
-              PDF
-            </button>
+
           </div>
         </div>
 
