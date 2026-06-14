@@ -95,7 +95,7 @@ interface GroupedProduct {
   sales_count: number;
   total_quantity: number;
   total_revenue: number;
-  payment_breakdown: { [method: string]: number };
+  payment_breakdown: { [method: string]: { qty: number; revenue: number } };
   price_breakdown: { [price: number]: number };
   pre_sale_apartado?: number;
   pre_sale_deuda?: number;
@@ -299,7 +299,13 @@ export function ReportsPage() {
         pGroup.total_quantity += qty;
         pGroup.total_revenue += itemTotal;
 
-        pGroup.payment_breakdown[payMethodName] = (pGroup.payment_breakdown[payMethodName] ?? 0) + qty;
+        if (!pGroup.payment_breakdown[payMethodName]) {
+          pGroup.payment_breakdown[payMethodName] = { qty: 0, revenue: 0 };
+        }
+        const pBreakdown = pGroup.payment_breakdown[payMethodName]!;
+        pBreakdown.qty += qty;
+        pBreakdown.revenue += itemTotal;
+
         pGroup.price_breakdown[unitPrice] = (pGroup.price_breakdown[unitPrice] ?? 0) + qty;
 
         // Proportional commission allocation based on item total compared to sale total
@@ -364,9 +370,16 @@ export function ReportsPage() {
             const pGroup = map.get(prodId)!;
             pGroup.sales_count += 1;
             pGroup.total_quantity += qty;
-            pGroup.total_revenue += itemTotal;
+            // The actual revenue that entered the POS is the paid amount (apartado), not the total price of the items!
+            pGroup.total_revenue += itemApartado;
 
-            pGroup.payment_breakdown[payMethodName] = (pGroup.payment_breakdown[payMethodName] ?? 0) + qty;
+            if (!pGroup.payment_breakdown[payMethodName]) {
+              pGroup.payment_breakdown[payMethodName] = { qty: 0, revenue: 0 };
+            }
+            const preBreakdown = pGroup.payment_breakdown[payMethodName]!;
+            preBreakdown.qty += qty;
+            preBreakdown.revenue += itemApartado;
+
             pGroup.price_breakdown[unitPrice] = (pGroup.price_breakdown[unitPrice] ?? 0) + qty;
 
             pGroup.pre_sale_apartado = (pGroup.pre_sale_apartado ?? 0) + itemApartado;
@@ -413,43 +426,121 @@ export function ReportsPage() {
 
 
   const paymentBreakdown = useMemo(() => {
-    if (!salesReport) {
-      return {
-        total: 0,
-        card: 0,
-        cash: 0,
-        deposits: 0,
-      };
-    }
-
+    let total = 0;
     let card = 0;
     let cash = 0;
     let deposits = 0;
+    const contributingSales = new Set<number>();
 
-    for (const row of salesReport.by_payment_method) {
-      const name = (row.payment_method ?? "").toLowerCase();
-      if (name.includes("tarjeta") || name.includes("credit") || name.includes("debito") || name.includes("tpv") || name.includes("terminal")) {
-        card += row.amount;
-      } else if (name.includes("deposit") || name.includes("transfer") || name.includes("spei")) {
-        deposits += row.amount;
-      } else if (name.includes("efectivo") || name.includes("cash")) {
-        cash += row.amount;
-      } else if (name.includes("dolar") || name.includes("dólar") || name.includes("usd")) {
-        // USD se suma al bucket de efectivo por operación de caja.
-        cash += row.amount;
-      } else {
-        // Métodos no mapeados se consolidan en efectivo para evitar ruido visual.
-        cash += row.amount;
+    const isCard = (name: string) =>
+      name.includes("tarjeta") || name.includes("credit") || name.includes("debito") || name.includes("tpv") || name.includes("terminal");
+    const isTransfer = (name: string) =>
+      name.includes("transfer") || name.includes("deposit") || name.includes("spei");
+
+    for (const sale of filteredSales) {
+      let contributed = false;
+
+      // 1. Process standard checkout payments
+      const showRegularItems = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.some(f => ["cash", "dollar", "card", "transfer", "cancelled"].includes(f));
+      if (showRegularItems && sale.items && sale.items.length > 0) {
+        const methods = (sale.payments ?? []).map(p => (p.payment_method?.name ?? "").toLowerCase()).filter(Boolean);
+        const hasCancelled = (sale.cancellation_status && sale.cancellation_status !== "none") || (sale.status ?? "").toLowerCase().includes("cancel");
+
+        const matchesRegularFilter = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.some(filter => {
+          if (filter === "cash") return methods.some(m => m.includes("efectivo") || m.includes("cash") || m.includes("dolar") || m.includes("dólar") || m.includes("usd"));
+          if (filter === "dollar") return methods.some(m => m.includes("dolar") || m.includes("dólar") || m.includes("usd"));
+          if (filter === "card") return methods.some(m => isCard(m));
+          if (filter === "transfer") return methods.some(m => isTransfer(m));
+          if (filter === "cancelled") return hasCancelled;
+          return false;
+        });
+
+        if (matchesRegularFilter) {
+          contributed = true;
+          if (sale.payments) {
+            for (const p of sale.payments) {
+              if (!p) continue;
+              const name = (p.payment_method?.name ?? "").toLowerCase();
+              const amount = p.amount || 0;
+
+              total += amount;
+              if (isCard(name)) {
+                card += amount;
+              } else if (isTransfer(name)) {
+                deposits += amount;
+              } else {
+                cash += amount;
+              }
+            }
+          }
+        }
+      }
+
+      // 2. Process pre-sale payments (anticipos) if the sale has them
+      const showPreSales = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.some(f => ["preSales", "notPicked", "cash", "dollar", "card", "transfer", "cancelled"].includes(f));
+      if (showPreSales && sale.pre_sale_orders && sale.pre_sale_orders.length > 0) {
+        for (const order of sale.pre_sale_orders) {
+          const orderStatus = (order.status ?? "").toLowerCase();
+          const orderIsCancelled = orderStatus.includes("cancel");
+          const orderIsNotPicked = orderStatus.includes("expired") || orderStatus.includes("vencid") || orderStatus.includes("no recog");
+          const hasCancelled = (sale.cancellation_status && sale.cancellation_status !== "none") || (sale.status ?? "").toLowerCase().includes("cancel");
+          const methods = (sale.payments ?? []).map(p => (p.payment_method?.name ?? "").toLowerCase()).filter(Boolean);
+
+          const matchesPreSaleFilter = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.some(filter => {
+            if (filter === "cash") return methods.some(m => m.includes("efectivo") || m.includes("cash") || m.includes("dolar") || m.includes("dólar") || m.includes("usd"));
+            if (filter === "dollar") return methods.some(m => m.includes("dolar") || m.includes("dólar") || m.includes("usd"));
+            if (filter === "card") return methods.some(m => isCard(m));
+            if (filter === "transfer") return methods.some(m => isTransfer(m));
+            if (filter === "preSales") return true;
+            if (filter === "cancelled") return hasCancelled || orderIsCancelled;
+            if (filter === "notPicked") return orderIsNotPicked;
+            return false;
+          });
+
+          if (matchesPreSaleFilter) {
+            const amount = order.paid_amount || 0;
+            if (amount > 0) {
+              contributed = true;
+              total += amount;
+
+              let method = "efectivo";
+              if (sale.payments && sale.payments.length > 0) {
+                let mainPayment = sale.payments[0];
+                if (mainPayment) {
+                  for (const pay of sale.payments) {
+                    if (pay && pay.amount > mainPayment.amount) {
+                      mainPayment = pay;
+                    }
+                  }
+                  method = (mainPayment.payment_method?.name ?? "").toLowerCase();
+                }
+              }
+
+              if (isCard(method)) {
+                card += amount;
+              } else if (isTransfer(method)) {
+                deposits += amount;
+              } else {
+                cash += amount;
+              }
+            }
+          }
+        }
+      }
+
+      if (contributed) {
+        contributingSales.add(sale.id);
       }
     }
 
     return {
-      total: salesReport.summary.total_revenue,
+      total,
       card,
       cash,
       deposits,
+      transactionCount: contributingSales.size,
     };
-  }, [salesReport]);
+  }, [filteredSales, selectedFilters]);
 
 
     const activeTabMeta = (REPORT_TABS.find(tab => tab.id === activeTab) ?? REPORT_TABS[0]) as { id: TabId; label: string; icon: React.ElementType };
@@ -528,7 +619,7 @@ export function ReportsPage() {
             .map(([price, qty]) => `${qty} ud. a ${price}`)
             .join(" | ");
           const paymentsStr = Object.entries(prod.payment_breakdown)
-            .map(([method, qty]) => `${qty} ud. con ${method}`)
+            .map(([method, data]) => `${data.qty} ud. con ${method} (${fmt(data.revenue)})`)
             .join(" | ");
 
           const r = sheet.addRow([
@@ -819,7 +910,7 @@ export function ReportsPage() {
             .map(([price, qty]) => `${qty} ud. a ${fmt(parseFloat(price))}`)
             .join("\n");
           const paymentsStr = Object.entries(prod.payment_breakdown)
-            .map(([method, qty]) => `${qty} ud. con ${method}`)
+            .map(([method, data]) => `${data.qty} ud. con ${method} (${fmt(data.revenue)})`)
             .join("\n");
 
           let breakdownText = `PRECIOS:\n${pricesStr}\n\nPAGOS:\n${paymentsStr}`;
@@ -1294,7 +1385,7 @@ export function ReportsPage() {
                 {/* ── KPI Cards ── */}
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
                   {[
-                    { label: "Total cobrado", val: fmt(paymentBreakdown.total), color: "#00CC66", icon: DollarSign, sub: `${salesReport.summary.total_count} transacciones` },
+                    { label: "Total cobrado", val: fmt(paymentBreakdown.total), color: "#00CC66", icon: DollarSign, sub: `${paymentBreakdown.transactionCount} ${paymentBreakdown.transactionCount === 1 ? 'transacción' : 'transacciones'}` },
                     { label: "Pago con tarjeta", val: fmt(paymentBreakdown.card), color: "#4499FF", icon: Store, sub: paymentBreakdown.card > 0 ? "TPV / débito / crédito" : "sin movimientos" },
                     { label: "Pago en efectivo", val: fmt(paymentBreakdown.cash), color: "#33CC88", icon: ShoppingBag, sub: paymentBreakdown.cash > 0 ? "incluye cobro en USD" : "sin movimientos" },
                     { label: "Depósitos", val: fmt(paymentBreakdown.deposits), color: "#BB77FF", icon: Clock, sub: paymentBreakdown.deposits > 0 ? "transferencias / SPEI" : "sin depósitos" },
@@ -1395,7 +1486,7 @@ export function ReportsPage() {
                                     <span style={{ color: "#00CC66", fontWeight: 900 }}>{fmt(prod.total_revenue)}</span>
                                     {prod.commission_amount && prod.commission_amount > 0 ? (
                                       <span style={{ fontSize: 9, color: TM, fontWeight: 500 }}>
-                                        {fmt(prod.total_revenue)} - {fmt(prod.commission_amount)} = <span style={{ color: "#00CC66", fontWeight: 800 }}>{fmt(prod.total_revenue - prod.commission_amount)}</span>
+                                        {fmt(prod.total_revenue)} - <span style={{ color: "#FF4422", fontWeight: 700 }}>{fmt(prod.commission_amount)}</span> = <span style={{ color: "#00CC66", fontWeight: 800 }}>{fmt(prod.total_revenue - prod.commission_amount)}</span>
                                       </span>
                                     ) : null}
                                   </div>
@@ -1411,13 +1502,16 @@ export function ReportsPage() {
                                           Desglose por método de pago
                                         </p>
                                         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                                          {Object.entries(prod.payment_breakdown).map(([method, qty]) => {
+                                          {Object.entries(prod.payment_breakdown).map(([method, data]) => {
                                             const isCard = method.toLowerCase().includes("tarjeta") || method.toLowerCase().includes("credit") || method.toLowerCase().includes("debito") || method.toLowerCase().includes("tpv") || method.toLowerCase().includes("terminal");
                                             return (
                                               <div key={method} className="flex flex-col gap-1 py-1.5 px-3" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", borderRadius: 9 }}>
                                                 <div className="flex items-center justify-between text-xs">
                                                   <span style={{ color: TS, fontWeight: 700 }}>{method}</span>
-                                                  <span style={{ color: TP, fontWeight: 900 }}>{qty} {qty === 1 ? "unidad" : "unidades"}</span>
+                                                  <div className="flex items-center gap-2">
+                                                    <span style={{ color: "#00CC66", fontWeight: 900 }}>{fmt(data.revenue)}</span>
+                                                    <span style={{ color: TP, fontWeight: 700, fontSize: 11 }}>({data.qty} {data.qty === 1 ? "unidad" : "unidades"})</span>
+                                                  </div>
                                                 </div>
                                                 {isCard && prod.commission_amount && prod.commission_amount > 0 && (
                                                   <div className="flex items-center justify-between text-[10px] mt-0.5 pt-0.5 border-t border-dashed" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
