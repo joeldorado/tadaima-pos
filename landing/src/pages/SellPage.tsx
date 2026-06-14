@@ -17,6 +17,8 @@ import { ProductCatalogModal } from "@/components/ProductCatalogModal";
 import { PreSaleDifusionPanel } from "@/components/presales/PreSaleDifusionPanel";
 import { CameraScannerModal } from "@/components/CameraScannerModal";
 import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
+import { useViewportMaxHeight } from "@/hooks/useViewportMaxHeight";
+import { PaymentRestrictionBadge, getPayRestriction } from "@/components/ui/PaymentRestrictionBadge";
 const tadaimaLogo = null // TODO: replace with real logo asset
 import { toast } from "sonner";
 import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, closeSession, forceCloseSession, getActiveSession, createLayaway, getCustomers, createCustomer, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getPreSaleOrders, getSales, getProductsLight, storageUrl, getCashReport, sendPreSaleAssignAlert } from "@tadaima/api";
@@ -599,6 +601,10 @@ export function SellPage() {
   const [printNeverAsk, setPrintNeverAsk]           = useState(false);
   const [showHistorialModal, setShowHistorialModal] = useState(false);
   const [showCortesModal, setShowCortesModal] = useState(false);
+  // Max-height de la lista de tickets del Historial basado en el alto REAL de
+  // la pantalla (mide su top vs window.innerHeight) → scroll interno garantizado
+  // sin depender de la cadena flex (Joel 2026-06-13).
+  const [historialListRef, historialListMaxH] = useViewportMaxHeight(20);
   // Historial del día vía React Query: cacheado + persistido en IndexedDB.
   // Apertura del modal instantánea con la última versión; background refetch
   // tras cada checkout/cancelación gracias a las invalidaciones.
@@ -4326,6 +4332,15 @@ export function SellPage() {
                             </p>
                             <p className="text-[11px] uppercase tracking-[0.15em] mt-0.5" style={{ color: "var(--td-text-ghost)" }}>{p.sku}</p>
 
+                            {/* Restricción de pago — pill notorio (Joel 2026-06-13)
+                                para que el cajero vea de inmediato si el artículo
+                                solo acepta efectivo o solo tarjeta. */}
+                            {getPayRestriction(p) && (
+                              <div className="mt-2">
+                                <PaymentRestrictionBadge restriction={getPayRestriction(p)} size="md" />
+                              </div>
+                            )}
+
                             {/* Stock Breakdown */}
                             <div className="flex gap-3 mt-2 flex-wrap">
                               <div className="flex items-center gap-1.5">
@@ -4536,11 +4551,7 @@ export function SellPage() {
                             Entregado
                           </span>
                         )}
-                        {item.product.payment_restriction === "cash_only" && (
-                          <span className="px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-[7px] font-black text-amber-500 uppercase tracking-widest">
-                            Solo Efectivo
-                          </span>
-                        )}
+                        <PaymentRestrictionBadge restriction={getPayRestriction(item.product)} size="sm" />
                         {activeMesa.paymentMethod === "Tarjeta" && item.product.allow_card === false && (
                           <span className="px-1.5 py-0.5 rounded bg-red-500/10 border border-red-500/30 text-[7px] font-black text-red-400 uppercase tracking-widest flex items-center gap-1">
                             <TriangleAlert size={8} />
@@ -6988,9 +6999,11 @@ export function SellPage() {
               );
             })()}
 
-            {/* List — minHeight 0 obligatorio para que el flex permita
-                encoger y el overflowY scrollee de verdad. */}
-            <div className="td-scroll-visible" style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6, paddingRight: 4 }}>
+            {/* List — max-height anclado al alto real de la pantalla (mide su
+                top vs window.innerHeight) para que el scroll se maneje SIEMPRE
+                internamente, sin depender solo de la cadena flex. minHeight 0
+                se mantiene como respaldo del flex. */}
+            <div ref={historialListRef} className="td-scroll-visible" style={{ flex: 1, minHeight: 0, maxHeight: historialListMaxH, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6, paddingRight: 4 }}>
               {historialLoading ? (
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 40 }}>
                   <Loader2 size={24} style={{ color: "#E0221A" }} className="animate-spin" />
@@ -7243,9 +7256,12 @@ export function SellPage() {
                           onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = isMixed ? "rgba(139,92,246,0.08)" : "rgba(245,158,11,0.08)"; (e.currentTarget as HTMLDivElement).style.color = isMixed ? "rgba(139,92,246,0.6)" : "rgba(245,158,11,0.6)"; }}>
                           <Printer size={13} />
                         </div>
-                        {order.status !== "cancelled" && (
+                        {/* Liquidada (delivered) ya NO se puede cancelar: el botón
+                            solo aparece para folios con anticipo pendiente
+                            (Joel 2026-06-13). */}
+                        {order.status !== "cancelled" && order.status !== "delivered" && (
                           <div onClick={e => { e.stopPropagation(); setCancelTarget({ kind: 'presale', order }); }}
-                            role="button" title={order.status === "delivered" ? "Cancelar / Rollback liquidación" : "Cancelar folio"}
+                            role="button" title="Cancelar folio"
                             style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 9, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.22)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "rgba(239,68,68,0.7)" }}
                             onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = "rgba(239,68,68,0.18)"; (e.currentTarget as HTMLDivElement).style.color = "#f87171"; }}
                             onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = "rgba(239,68,68,0.08)"; (e.currentTarget as HTMLDivElement).style.color = "rgba(239,68,68,0.7)"; }}>

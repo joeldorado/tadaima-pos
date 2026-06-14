@@ -4,6 +4,7 @@ import { motion as Motion } from "motion/react";
 import { toast } from "sonner";
 import { getCategories, getSuppliers, getStores, createSupplier, createCategory, createPreSaleCatalog, updatePreSaleCatalog, uploadPreSaleCatalogImage, removePreSaleCatalogImage } from "@tadaima/api";
 import type { ProductCategory, Supplier, PreSaleCatalog, Store } from "@tadaima/api";
+import { SingleDatePicker } from "@/components/ui/SingleDatePicker";
 
 interface Props {
   onClose: () => void;
@@ -454,11 +455,25 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div>
                   <Label>Fecha de llegada</Label>
-                  <input type="date" value={arrivalDate} onChange={e => handleArrivalDateChange(e.target.value)} style={inputStyle} />
+                  <SingleDatePicker
+                    value={arrivalDate}
+                    onChange={handleArrivalDateChange}
+                    ariaLabel="Fecha de llegada"
+                    placeholder="Elegir llegada"
+                  />
                 </div>
                 <div>
                   <Label>Fecha límite de retiro</Label>
-                  <input type="date" value={pickupDate} onChange={e => setPickupDate(e.target.value)} style={inputStyle} />
+                  {/* minValue = llegada → el calendario solo deja elegir a partir
+                      de que el producto llega (no antes). */}
+                  <SingleDatePicker
+                    value={pickupDate}
+                    onChange={setPickupDate}
+                    minValue={arrivalDate || undefined}
+                    ariaLabel="Fecha límite de retiro"
+                    placeholder="Elegir retiro"
+                    disabled={!arrivalDate}
+                  />
                 </div>
               </div>
 

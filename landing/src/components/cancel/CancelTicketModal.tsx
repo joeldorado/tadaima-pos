@@ -33,7 +33,8 @@ type Props = SaleProps | PreSaleProps
  * ADR-016 Fase 3 — Modal para cancelar venta o preventa.
  *
  * Sale: checkbox por item + qty editable + motivo + confirma.
- * Preventa: 2 botones (Cancelar folio / Rollback liquidación si delivered) + motivo.
+ * Preventa: acción única determinística por estado (liquidada → rollback de la
+ * liquidación; solo anticipo → cancelación completa) + motivo. Sin elección.
  */
 export function CancelTicketModal(props: Props) {
   const [reasonCode, setReasonCode] = useState<CancellationReason>('cliente_devuelve')
@@ -175,7 +176,13 @@ interface PreSaleBodyProps extends PreSaleProps {
 
 function PreSaleCancelBody({ order, onClose, onSuccess, cashSessionId, reasonCode, setReasonCode, reasonText, setReasonText, submitting, setSubmitting }: PreSaleBodyProps) {
   const isDelivered = order.status === 'delivered'
-  const [mode, setMode] = useState<'full' | 'liquidation_rollback'>(isDelivered ? 'liquidation_rollback' : 'full')
+  // Modo determinístico (Joel 2026-06-13): ya NO se le da a elegir al cajero.
+  //  - Liquidada (delivered) → SOLO rollback: el folio vuelve a "Listo ·
+  //    Liquidar", el stock entregado regresa y se reversa SOLO el cobro de la
+  //    liquidación (la venta de ese día). El anticipo se mantiene.
+  //  - Solo anticipo (no delivered) → cancelación completa (regresa anticipo +
+  //    stock), que ya funcionaba bien.
+  const mode: 'full' | 'liquidation_rollback' = isDelivered ? 'liquidation_rollback' : 'full'
 
   const handleSubmit = async () => {
     setSubmitting(true)
@@ -204,30 +211,24 @@ function PreSaleCancelBody({ order, onClose, onSuccess, cashSessionId, reasonCod
 
   return (
     <Shell title={`Cancelar Preventa ${order.code}`} onClose={onClose}>
-      <p className="text-xs mb-3" style={{ color: 'var(--td-text-lo)' }}>
-        {isDelivered
-          ? 'Esta preventa está LIQUIDADA. Puedes revertir solo la liquidación (folio vuelve a "Listo · Liquidar") o cancelar el folio entero.'
-          : 'Cancela el folio completo. Si tenía pagos previos (anticipo), salen de caja.'}
-      </p>
-
-      {/* Modo */}
-      <div className="grid grid-cols-1 gap-2 mb-4">
-        {isDelivered && (
-          <ModeButton
-            active={mode === 'liquidation_rollback'}
-            onClick={() => setMode('liquidation_rollback')}
-            icon={<RotateCcw size={16} />}
-            title="Rollback liquidación"
-            desc="Folio regresa a 'Listo · Liquidar'. Stock entregado vuelve al inventario. Se reversa SOLO el pago de la liquidación; el anticipo se mantiene."
-          />
-        )}
-        <ModeButton
-          active={mode === 'full'}
-          onClick={() => setMode('full')}
-          icon={<XCircle size={18} />}
-          title="Cancelar folio completo"
-          desc="Folio queda CANCELADO. Todos los pagos (anticipo + liquidación) se reversan como salida de caja."
-        />
+      {/* Explicación de la acción única (sin elección de modo). */}
+      <div
+        className="flex items-start gap-3 px-4 py-3 rounded-2xl mb-4"
+        style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.22)' }}
+      >
+        <div className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'rgba(239,68,68,0.16)', color: '#f87171' }}>
+          {isDelivered ? <RotateCcw size={16} /> : <XCircle size={18} />}
+        </div>
+        <div className="flex-1">
+          <p className="text-sm font-black" style={{ color: '#f87171' }}>
+            {isDelivered ? 'Revertir liquidación' : 'Cancelar folio completo'}
+          </p>
+          <p className="text-[11px] mt-0.5" style={{ color: 'var(--td-text-lo)' }}>
+            {isDelivered
+              ? 'Se cancela SOLO la venta de hoy: el folio vuelve a "Listo · Liquidar", el stock entregado regresa al inventario y se reversa el cobro de la liquidación. El anticipo se mantiene.'
+              : 'El folio queda CANCELADO. El anticipo se reversa como salida de caja y el stock regresa al inventario.'}
+          </p>
+        </div>
       </div>
 
       <ReasonPicker code={reasonCode} setCode={setReasonCode} text={reasonText} setText={setReasonText} />
@@ -299,29 +300,6 @@ function ReasonPicker({ code, setCode, text, setText }: { code: CancellationReas
         />
       </label>
     </>
-  )
-}
-
-function ModeButton({ active, onClick, icon, title, desc }: { active: boolean; onClick: () => void; icon: React.ReactNode; title: string; desc: string }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex items-start gap-3 px-4 py-3 rounded-2xl text-left transition-colors"
-      style={{
-        background: active ? 'rgba(239,68,68,0.10)' : 'var(--td-card-bg)',
-        border: `1px solid ${active ? 'rgba(239,68,68,0.35)' : 'var(--td-card-border)'}`,
-      }}
-    >
-      <div className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0" style={{
-        background: active ? 'rgba(239,68,68,0.18)' : 'rgba(255,255,255,0.05)',
-        color: active ? '#f87171' : 'var(--td-text-md)',
-      }}>{icon}</div>
-      <div className="flex-1">
-        <p className="text-sm font-black" style={{ color: active ? '#f87171' : 'var(--td-text-hi)' }}>{title}</p>
-        <p className="text-[11px] mt-0.5" style={{ color: 'var(--td-text-lo)' }}>{desc}</p>
-      </div>
-    </button>
   )
 }
 

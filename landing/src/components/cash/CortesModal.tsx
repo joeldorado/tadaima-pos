@@ -4,6 +4,7 @@ import { X, Clock, Lock, RefreshCw } from "lucide-react";
 import { getCashReport } from "@tadaima/api";
 import type { CashSessionReport } from "@tadaima/api";
 import { getTodayLocal } from "@/lib/date";
+import { DateRangePicker } from "@/components/ui/DateRangePicker";
 import { CashCloseSummaryModal } from "./CashCloseSummaryModal";
 
 interface CortesModalProps {
@@ -76,25 +77,14 @@ export function CortesModal({ open, onClose, storeId }: CortesModalProps) {
           </div>
 
           {/* Rango de fechas */}
-          <div className="flex flex-wrap items-end gap-3 px-5 py-3 border-b" style={{ borderColor: "var(--td-panel-border)" }}>
-            <label className="flex flex-col gap-1">
-              <span className="text-[9px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>Desde</span>
-              <input
-                type="date" value={from} max={to}
-                onChange={(e) => setFrom(e.target.value)}
-                className="px-3 py-2 rounded-xl text-xs"
-                style={{ background: "var(--td-input-bg, rgba(255,255,255,0.04))", border: "1px solid var(--td-panel-border)", color: "var(--td-text-hi)" }}
-              />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-[9px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>Hasta</span>
-              <input
-                type="date" value={to} min={from} max={getTodayLocal()}
-                onChange={(e) => setTo(e.target.value)}
-                className="px-3 py-2 rounded-xl text-xs"
-                style={{ background: "var(--td-input-bg, rgba(255,255,255,0.04))", border: "1px solid var(--td-panel-border)", color: "var(--td-text-hi)" }}
-              />
-            </label>
+          <div className="flex flex-wrap items-center gap-3 px-5 py-3 border-b" style={{ borderColor: "var(--td-panel-border)" }}>
+            <DateRangePicker
+              from={from}
+              to={to}
+              maxValue={getTodayLocal()}
+              ariaLabel="Rango de fechas de cortes"
+              onChange={(f, t) => { setFrom(f); setTo(t); }}
+            />
             <div className="ml-auto text-right">
               <div className="text-[9px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>
                 {sessions.length} corte{sessions.length === 1 ? "" : "s"}
