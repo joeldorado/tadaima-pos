@@ -9,6 +9,17 @@ import { StoreStockBreakdown } from '@/components/inventory/StoreStockBreakdown'
 const fmt = (n: number) =>
   new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN', minimumFractionDigits: 0 }).format(n)
 
+const STOCK_ACCENT = {
+  redBg: 'rgba(224,34,26,0.12)',
+  redBorder: 'rgba(224,34,26,0.22)',
+  greenBg: 'rgba(16,185,129,0.10)',
+  greenBorder: 'rgba(16,185,129,0.22)',
+  greenText: '#059669',
+  blueBg: 'rgba(59,130,246,0.12)',
+  blueBorder: 'rgba(59,130,246,0.24)',
+  blueText: '#2563eb',
+} as const
+
 /**
  * "Buscar en Tiendas" — buscador de existencias cross-sucursal.
  *
@@ -68,7 +79,7 @@ export function StockSearchPage() {
       <div className="flex items-center gap-3 mb-6">
         <div
           className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0"
-          style={{ background: 'rgba(224,34,26,0.12)', border: '1px solid rgba(224,34,26,0.22)' }}
+          style={{ background: STOCK_ACCENT.redBg, border: `1px solid ${STOCK_ACCENT.redBorder}` }}
         >
           <PackageSearch size={20} style={{ color: 'var(--td-red)' }} />
         </div>
@@ -80,11 +91,11 @@ export function StockSearchPage() {
         </div>
         <div
           className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl shrink-0"
-          style={{ background: 'rgba(0,200,100,0.10)', border: '1px solid rgba(0,200,100,0.22)' }}
+          style={{ background: STOCK_ACCENT.greenBg, border: `1px solid ${STOCK_ACCENT.greenBorder}` }}
           title="Scanner USB activo — escanea un código y el producto se selecciona solo"
         >
-          <Scan size={12} style={{ color: '#00CC66' }} />
-          <span className="text-[10px] font-black uppercase tracking-wider" style={{ color: '#00CC66' }}>Scanner listo</span>
+          <Scan size={12} style={{ color: STOCK_ACCENT.greenText }} />
+          <span className="text-[10px] font-black uppercase tracking-wider" style={{ color: STOCK_ACCENT.greenText }}>Scanner listo</span>
         </div>
       </div>
 
@@ -102,7 +113,7 @@ export function StockSearchPage() {
         {search && (
           <button
             onClick={() => { setSearch(''); setSelected(null); lastScanRef.current = null }}
-            className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+            className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg hover:bg-[var(--td-hover-bg)] transition-colors"
             title="Limpiar"
           >
             <X size={16} style={{ color: 'var(--td-text-lo)' }} />
@@ -135,13 +146,13 @@ export function StockSearchPage() {
                     onClick={() => setSelected(p)}
                     className="flex items-center gap-3 px-3 py-2.5 rounded-2xl text-left transition-colors"
                     style={{
-                      background: isSel ? 'rgba(224,34,26,0.10)' : 'var(--td-card-bg)',
-                      border: `1px solid ${isSel ? 'rgba(224,34,26,0.25)' : 'var(--td-card-border)'}`,
+                      background: isSel ? 'var(--td-red-dim)' : 'var(--td-card-bg)',
+                      border: `1px solid ${isSel ? 'var(--td-red-brd)' : 'var(--td-card-border)'}`,
                     }}
                   >
                     <div
                       className="w-11 h-11 rounded-xl overflow-hidden shrink-0 flex items-center justify-center"
-                      style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}
+                      style={{ background: 'var(--td-surface-muted)', border: '1px solid var(--td-panel-border)' }}
                     >
                       {p.image
                         ? <img src={p.image} alt={p.name} className="w-full h-full object-cover" loading="lazy" />
@@ -153,7 +164,7 @@ export function StockSearchPage() {
                         {p.volume_number != null && (
                           <span
                             className="ml-2 px-1.5 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider align-middle"
-                            style={{ color: '#60A5FA', background: 'rgba(96,165,250,0.12)', border: '1px solid rgba(96,165,250,0.3)' }}
+                            style={{ color: STOCK_ACCENT.blueText, background: STOCK_ACCENT.blueBg, border: `1px solid ${STOCK_ACCENT.blueBorder}` }}
                           >
                             Tomo {p.volume_number}
                           </span>

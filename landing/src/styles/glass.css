@@ -31,6 +31,13 @@
   --td-card-border:  rgba(255, 255, 255, 0.09);
   --td-hover-bg:     rgba(255, 255, 255, 0.08);
   --td-divider:      rgba(255, 255, 255, 0.07);
+  --td-surface-soft: rgba(255, 255, 255, 0.03);
+  --td-surface-muted: rgba(255, 255, 255, 0.05);
+  --td-surface-strong: rgba(0, 0, 0, 0.16);
+  --td-surface-stronger: rgba(0, 0, 0, 0.22);
+  --td-table-head-bg: rgba(26, 14, 20, 0.96);
+  --td-table-foot-bg: rgba(22, 12, 17, 0.96);
+  --td-chart-grid: rgba(255, 255, 255, 0.05);
 
   /* Popups */
   --td-popup-bg:     #13091e;
@@ -77,6 +84,13 @@
   --td-card-border:  rgba(0, 0, 0, 0.07);
   --td-hover-bg:     rgba(0, 0, 0, 0.055);
   --td-divider:      rgba(0, 0, 0, 0.08);
+  --td-surface-soft: rgba(0, 0, 0, 0.03);
+  --td-surface-muted: rgba(0, 0, 0, 0.045);
+  --td-surface-strong: rgba(255, 255, 255, 0.88);
+  --td-surface-stronger: rgba(255, 255, 255, 0.94);
+  --td-table-head-bg: rgba(255, 251, 251, 0.96);
+  --td-table-foot-bg: rgba(255, 255, 255, 0.94);
+  --td-chart-grid: rgba(0, 0, 0, 0.08);
 
   --td-popup-bg:     #ffffff;
   --td-popup-border: rgba(0, 0, 0, 0.10);

@@ -89,6 +89,20 @@ class PreSaleCatalogResource extends JsonResource
                 $this->relationLoaded('deliveredOrderItems'),
                 fn () => $this->delivered_count
             ),
+
+            // Entregados (liquidados) agrupados por tienda — espejo de
+            // reserved_by_store. Necesario para que el panel de catálogos muestre
+            // "Liquidados" SOLO de la tienda del gerente (y no el total global).
+            // Cast a (object) obligatorio (mismo motivo que reserved_by_store:
+            // array_values aplana las keys numéricas de store_id).
+            'delivered_by_store' => $this->when(
+                $this->relationLoaded('deliveredOrderItems'),
+                fn () => (object) $this->deliveredOrderItems
+                    ->groupBy(fn ($it) => (int) ($it->order->store_id ?? 0))
+                    ->map(fn ($group) => (int) $group->sum('quantity'))
+                    ->reject(fn ($_, $storeId) => $storeId === 0)
+                    ->toArray() // { "store_id": quantity }
+            ),
         ];
     }
 }

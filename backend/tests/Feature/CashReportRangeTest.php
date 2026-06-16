@@ -5,6 +5,12 @@ namespace Tests\Feature;
 use App\Models\CashRegister;
 use App\Models\CashRegisterSession;
 use App\Models\Company;
+use App\Models\Customer;
+use App\Models\Payment;
+use App\Models\PaymentMethod;
+use App\Models\PreSaleOrder;
+use App\Models\PreSaleOrderPayment;
+use App\Models\Sale;
 use App\Models\Store;
 use App\Models\User;
 use App\Support\DateRange;
@@ -199,5 +205,90 @@ class CashReportRangeTest extends TestCase
         $this->assertContains($session->id, $this->sessionIdsFor('2026-06-11', '2026-06-11'));
         // Sin local_date, el traslape lo metería también al día 12.
         $this->assertNotContains($session->id, $this->sessionIdsFor('2026-06-12', '2026-06-12'));
+    }
+
+    public function test_expected_cash_usa_solo_dinero_fisico_y_no_tarjeta(): void
+    {
+        $cash = PaymentMethod::create(['name' => 'Efectivo', 'active' => true]);
+        $card = PaymentMethod::create(['name' => 'Tarjeta Crédito', 'active' => true]);
+        $customer = Customer::create(['name' => 'Cliente Corte']);
+
+        $session = CashRegisterSession::create([
+            'register_id'  => $this->register->id,
+            'user_id'      => $this->admin->id,
+            'opening_cash' => 500,
+            'status'       => CashRegisterSession::STATUS_OPEN,
+            'opened_at'    => now()->subHour(),
+        ]);
+
+        $cashSale = Sale::create([
+            'store_id'            => $this->store->id,
+            'register_session_id' => $session->id,
+            'user_id'             => $this->admin->id,
+            'customer_id'         => $customer->id,
+            'subtotal'            => 100,
+            'discount'            => 0,
+            'total'               => 100,
+            'status'              => Sale::STATUS_COMPLETED,
+        ]);
+        Payment::create([
+            'sale_id'            => $cashSale->id,
+            'payment_method_id'  => $cash->id,
+            'amount'             => 100,
+            'commission_amount'  => 0,
+        ]);
+
+        $cardSale = Sale::create([
+            'store_id'            => $this->store->id,
+            'register_session_id' => $session->id,
+            'user_id'             => $this->admin->id,
+            'customer_id'         => $customer->id,
+            'subtotal'            => 250,
+            'discount'            => 0,
+            'total'               => 250,
+            'status'              => Sale::STATUS_COMPLETED,
+        ]);
+        Payment::create([
+            'sale_id'            => $cardSale->id,
+            'payment_method_id'  => $card->id,
+            'amount'             => 250,
+            'commission_amount'  => 0,
+        ]);
+
+        $order = PreSaleOrder::create([
+            'code'        => 'PREV-CORTE-001',
+            'store_id'    => $this->store->id,
+            'user_id'     => $this->admin->id,
+            'customer_id' => $customer->id,
+            'status'      => PreSaleOrder::STATUS_PENDING,
+        ]);
+        PreSaleOrderPayment::create([
+            'pre_sale_order_id' => $order->id,
+            'amount'            => 80,
+            'payment_method_id' => $cash->id,
+            'cashier_id'        => $this->admin->id,
+            'notes'             => 'Anticipo de prueba',
+        ]);
+
+        DB::table('cash_movements')->insert([
+            'register_session_id' => $session->id,
+            'type'                => 'salida',
+            'amount'              => 30,
+            'description'         => 'Retiro parcial',
+            'created_at'          => now(),
+        ]);
+
+        $report = $this->actingAs($this->admin)
+            ->getJson('/api/v1/reports/cash?from=' . now()->toDateString() . '&to=' . now()->toDateString())
+            ->assertOk()
+            ->json('data.sessions');
+
+        $row = collect($report)->firstWhere('id', $session->id);
+
+        $this->assertNotNull($row);
+        $this->assertEquals(350.0, (float) $row['total_sales']);
+        $this->assertEquals(80.0, (float) $row['total_pre_sale_payments']);
+        $this->assertEquals(180.0, (float) $row['cash_collected']);
+        $this->assertEquals(650.0, (float) $row['expected_cash']);
     }
 }

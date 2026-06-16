@@ -110,11 +110,13 @@ function CorteDetail({ session: s }: { session: CashSessionReport }) {
           Imprimir
         </button>
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 mb-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-9 gap-2 mb-4">
         <SummaryCell label="Abrió con" value={fmt(s.opening_cash)} />
-        <SummaryCell label={`Ventas (${s.sales_count})`} value={`+${fmt(s.total_sales)}`} color="#10b981" />
+        <SummaryCell label={`Ventas totales (${s.sales_count})`} value={fmt(s.total_sales)} />
+        <SummaryCell label="Cobrado en caja" value={`+${fmt(s.cash_collected)}`} color="#10b981" />
+        <SummaryCell label="Preventas cobradas" value={fmt(s.total_pre_sale_payments)} color={s.total_pre_sale_payments > 0 ? "#F59E0B" : undefined} />
         <SummaryCell label="Entradas" value={`+${fmt(s.total_entradas)}`} color={s.total_entradas > 0 ? "#10b981" : undefined} />
-        <SummaryCell label="Salidas" value={`-${fmt(s.total_salidas)}`} color={s.total_salidas > 0 ? "#DC2626" : undefined} />
+        <SummaryCell label="Salidas de caja" value={`-${fmt(s.total_salidas)}`} color={s.total_salidas > 0 ? "#DC2626" : undefined} />
         <SummaryCell label="Ajustes" value={`${s.total_ajustes > 0 ? "+" : ""}${fmt(s.total_ajustes)}`} />
         <SummaryCell label="Esperado en caja" value={fmt(s.expected_cash)} />
         <SummaryCell label="Cerró con" value={isClosed ? fmt(s.closing_cash!) : "—"} />
@@ -379,6 +381,7 @@ export function CashCutsPage() {
               </p>
               <div className="flex gap-4 items-center">
                 <KpiInline label="Ventas total" value={fmt(cashReport.summary.total_sales)} color="#00CC66" />
+                <KpiInline label="Cobrado en caja" value={fmt(cashReport.summary.total_cash_collected)} color="#10b981" />
                 <KpiInline label="Entradas" value={fmt(cashReport.summary.total_entradas)} color="#FFAA00" />
                 <KpiInline label="Salidas" value={fmt(cashReport.summary.total_salidas)} color={RED} />
               </div>
@@ -430,6 +433,9 @@ export function CashCutsPage() {
                         <div className="text-right shrink-0">
                           <p style={{ margin: 0, fontSize: 14, fontWeight: 900, color: TP }}>
                             {fmt(s.total_sales)}
+                          </p>
+                          <p style={{ margin: "2px 0 0", fontSize: 9, fontWeight: 800, color: TM }}>
+                            Caja {fmt(s.cash_collected)}
                           </p>
                           <span style={{
                             display: "inline-block", marginTop: 2,

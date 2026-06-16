@@ -17,6 +17,17 @@ interface StoreRow {
   quantity: number
 }
 
+const STOCK_THEME = {
+  mineBg: 'rgba(16,185,129,0.08)',
+  mineBorder: 'rgba(16,185,129,0.22)',
+  mineText: '#059669',
+  warnText: '#D97706',
+  okText: '#059669',
+  whatsappBg: 'rgba(37,211,102,0.12)',
+  whatsappBorder: 'rgba(37,211,102,0.28)',
+  whatsappText: '#16A34A',
+} as const
+
 /**
  * Desglose de existencias de un producto por tienda/sucursal.
  *
@@ -90,7 +101,7 @@ export function StoreStockBreakdown({
     <div className="flex flex-col gap-2.5">
       {rows.map(row => {
         const qty = row.quantity
-        const qtyColor = qty <= 0 ? 'var(--td-red)' : qty <= 10 ? '#FFAA00' : '#00CC66'
+        const qtyColor = qty <= 0 ? 'var(--td-red)' : qty <= 10 ? STOCK_THEME.warnText : STOCK_THEME.okText
         const isMine = highlightStoreId != null && row.storeId === highlightStoreId
         const showButtons = showContact && row.phone
         return (
@@ -98,23 +109,23 @@ export function StoreStockBreakdown({
             key={`${row.storeId ?? row.storeName}`}
             className="rounded-2xl px-4 py-3"
             style={{
-              background: isMine ? 'rgba(0,200,100,0.07)' : 'var(--td-card-bg)',
-              border: `1px solid ${isMine ? 'rgba(0,200,100,0.22)' : 'var(--td-card-border)'}`,
+              background: isMine ? STOCK_THEME.mineBg : 'var(--td-card-bg)',
+              border: `1px solid ${isMine ? STOCK_THEME.mineBorder : 'var(--td-card-border)'}`,
             }}
           >
             {/* Línea principal: tienda · estado · cantidad */}
             <div className="flex items-center gap-3">
               <div
                 className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
-                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
+                style={{ background: 'var(--td-surface-muted)', border: '1px solid var(--td-panel-border)' }}
               >
-                <Store size={16} style={{ color: isMine ? '#00CC66' : 'var(--td-text-md)' }} />
+                <Store size={16} style={{ color: isMine ? STOCK_THEME.mineText : 'var(--td-text-md)' }} />
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-bold truncate" style={{ color: 'var(--td-text-hi)' }}>
                   {row.storeName}
                   {isMine && (
-                    <span className="ml-2 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded" style={{ background: 'rgba(0,200,100,0.18)', color: '#00CC66' }}>
+                    <span className="ml-2 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded" style={{ background: 'rgba(16,185,129,0.16)', color: STOCK_THEME.mineText }}>
                       Tu tienda
                     </span>
                   )}
@@ -145,7 +156,7 @@ export function StoreStockBreakdown({
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors flex-1 justify-center"
-                  style={{ background: 'rgba(37,211,102,0.12)', border: '1px solid rgba(37,211,102,0.3)', color: '#25D366' }}
+                  style={{ background: STOCK_THEME.whatsappBg, border: `1px solid ${STOCK_THEME.whatsappBorder}`, color: STOCK_THEME.whatsappText }}
                   title={`WhatsApp a ${row.storeName}`}
                 >
                   <MessageCircle size={13} /> WhatsApp

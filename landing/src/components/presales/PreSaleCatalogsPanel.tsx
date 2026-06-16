@@ -9,8 +9,9 @@ import { queryKeys } from "@/lib/queryKeys";
 import {
   Package, Plus, Loader2, Search, X, ChevronLeft, ChevronRight,
   BookOpen, CheckCircle2, Archive, Ban, Pencil, Truck, Boxes, AlertTriangle, Star,
-  ChevronsUpDown, ChevronUp, ChevronDown,
+  ChevronsUpDown, ChevronUp, ChevronDown, MoreHorizontal,
 } from "lucide-react";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   useReactTable, getCoreRowModel, getSortedRowModel, getPaginationRowModel,
   flexRender,
@@ -92,6 +93,122 @@ function StatusBadge({ status }: { status: PreSaleCatalogStatus }) {
   );
 }
 
+// Pill numérica para las columnas Apartados / Liquidados. Atenuada en 0.
+function CountPill({ value, color }: { value: number; color: string }) {
+  const active = value > 0;
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", justifyContent: "center",
+      minWidth: 32, padding: "3px 10px", borderRadius: 8,
+      fontSize: 13, fontWeight: 800, fontVariantNumeric: "tabular-nums",
+      color: active ? color : TM,
+      background: active ? `${color}14` : "transparent",
+      border: `1px solid ${active ? `${color}33` : "transparent"}`,
+    }}>
+      {value}
+    </span>
+  );
+}
+
+// ─── Menú de acciones (Radix dropdown) ─────────────────────────────────────────
+// Reemplaza la fila de 3-4 botones por un solo dropdown accesible (teclado +
+// portal a body para que el overflow de la tabla no lo recorte). Estilos glass
+// con los tokens --td-* del proyecto para que combine con el panel.
+const MENU_CONTENT_STYLE: React.CSSProperties = {
+  minWidth: 190, padding: 6, borderRadius: 14, zIndex: 9999,
+  background: "var(--td-popup-bg)",
+  border: "1px solid var(--td-panel-border)",
+  boxShadow: "0 12px 40px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.04)",
+  backdropFilter: "blur(28px) saturate(160%)",
+  WebkitBackdropFilter: "blur(28px) saturate(160%)",
+};
+const MENU_SEP_STYLE: React.CSSProperties = { height: 1, background: "var(--td-panel-border)", margin: "5px 4px" };
+
+function MenuItem({ icon, label, color, highlight, disabled, onSelect }: {
+  icon: React.ReactNode; label: string; color?: string; highlight?: boolean; disabled?: boolean; onSelect?: () => void;
+}) {
+  const fg = color ?? TS;
+  const setHover = (el: HTMLElement, on: boolean) => {
+    if (disabled || highlight) return;
+    el.style.background = on ? "var(--td-card-bg)" : "transparent";
+  };
+  return (
+    <DropdownMenu.Item
+      disabled={!!disabled}
+      onSelect={() => onSelect?.()}
+      style={{
+        display: "flex", alignItems: "center", gap: 9,
+        padding: "8px 10px", borderRadius: 9, fontSize: 12, fontWeight: 800,
+        color: highlight ? "#000" : fg,
+        background: highlight ? (color ?? TS) : "transparent",
+        border: highlight ? `1px solid ${color ?? TS}` : "1px solid transparent",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.5 : 1, outline: "none", userSelect: "none",
+      }}
+      onMouseEnter={e => setHover(e.currentTarget, true)}
+      onMouseLeave={e => setHover(e.currentTarget, false)}
+      onFocus={e => setHover(e.currentTarget, true)}
+      onBlur={e => setHover(e.currentTarget, false)}
+    >
+      {icon}{label}
+    </DropdownMenu.Item>
+  );
+}
+
+function CatalogActionsMenu({ catalog: c, isBusy, onEdit, onConvert, onHistory, onTransition }: {
+  catalog: PreSaleCatalog; isBusy: boolean;
+  onEdit: () => void; onConvert: () => void; onHistory: () => void;
+  onTransition: (to: PreSaleCatalogStatus) => void;
+}) {
+  const isComplete = (c.sold_count ?? 0) > 0 && (c.sold_count ?? 0) === (c.delivered_count ?? 0);
+  const nextOpts   = (NEXT_STATUSES[c.status] ?? []).filter(o => !o.onlyWhenComplete || isComplete);
+  const hasSales   = (c.sold_count ?? 0) > 0;
+
+  return (
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger asChild>
+        <button
+          disabled={isBusy}
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 9,
+            fontSize: 11, fontWeight: 800, cursor: isBusy ? "not-allowed" : "pointer",
+            border: "1px solid var(--td-panel-border)", background: "var(--td-card-bg)", color: TS,
+            opacity: isBusy ? 0.5 : 1,
+          }}
+        >
+          {isBusy ? <Loader2 size={12} className="animate-spin" /> : <MoreHorizontal size={13} />}
+          Acciones
+          <ChevronDown size={11} style={{ opacity: 0.6 }} />
+        </button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content align="end" sideOffset={6} style={MENU_CONTENT_STYLE}>
+          <MenuItem icon={<Pencil size={13} />} label="Editar" onSelect={onEdit} />
+          {c.product === null ? (
+            <MenuItem icon={<Boxes size={13} />} label="Crear producto" color="#818CF8" onSelect={onConvert} />
+          ) : (
+            <MenuItem icon={<Boxes size={13} />} label="En inventario" color="#22C55E" disabled />
+          )}
+          {(nextOpts.length > 0 || hasSales) && <DropdownMenu.Separator style={MENU_SEP_STYLE} />}
+          {nextOpts.map(opt => (
+            <MenuItem
+              key={opt.to}
+              icon={STATUS_CFG[opt.to].icon}
+              label={opt.label}
+              color={STATUS_CFG[opt.to].color}
+              highlight={opt.highlight ?? false}
+              onSelect={() => onTransition(opt.to)}
+            />
+          ))}
+          {hasSales && (
+            <MenuItem icon={<Star size={13} />} label="Ver ventas" color="#A78BFA" onSelect={onHistory} />
+          )}
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
+}
+
 function ConfirmModal({ title, description, actionLabel, actionColor, storageKey, onConfirm, onCancel }: {
   title: string; description: string; actionLabel: string; actionColor: string; storageKey: string;
   onConfirm: () => void; onCancel: () => void;
@@ -145,7 +262,10 @@ function CompletedBlockModal({ catalog, onClose }: { catalog: PreSaleCatalog; on
 // ─── Panel ────────────────────────────────────────────────────────────────────
 export function PreSaleCatalogsPanel({ restrictedStoreId = null }: { restrictedStoreId?: number | null }) {
   const queryClient = useQueryClient();
-  const catalogsQuery = usePreSaleCatalogsQuery({ per_page: 200 });
+  // Polling casi-live 20s (solo con la ventana enfocada) — el panel mostraba
+  // stock/apartados viejos tras cancelar/vender en Caja, sobre todo multi-ventana
+  // (QA 2026-06-15). Mismo patrón que Caja y Ventas.
+  const catalogsQuery = usePreSaleCatalogsQuery({ per_page: 200 }, { refetchIntervalMs: 20_000 });
   const catalogs: PreSaleCatalog[] = catalogsQuery.data?.data ?? [];
   const loading = catalogsQuery.isPending;
   // Refetch en background con data en pantalla (los contadores vendidos /
@@ -208,8 +328,43 @@ export function PreSaleCatalogsPanel({ restrictedStoreId = null }: { restrictedS
     closed:    catalogs.filter(c => c.status === "closed").length,
   }), [catalogs]);
 
+  // Stock vendible por tienda. tope = store_limits.limit_qty (NO baja, es el
+  // máximo). disponible = tope − reservados (apartados pending/ready) — esto es
+  // lo que baja al vender, idéntico a Caja (PreSaleAvailableCatalogsPanel).
+  // Gerente → su tienda; admin → suma entre tiendas. null = sin asignar.
+  const stockInfo = (c: PreSaleCatalog): { limit: number; available: number } | null => {
+    const limits = c.store_limits ?? [];
+    if (limits.length === 0) return null;
+    const reservedByStore = c.reserved_by_store ?? {};
+    if (restrictedStoreId != null) {
+      const sl = limits.find(x => x.store_id === restrictedStoreId);
+      if (!sl) return null;
+      const reserved = reservedByStore[String(restrictedStoreId)] ?? 0;
+      return { limit: sl.limit_qty, available: Math.max(0, sl.limit_qty - reserved) };
+    }
+    const limit    = limits.reduce((s, x) => s + x.limit_qty, 0);
+    const reserved = Object.values(reservedByStore).reduce((s, n) => s + n, 0);
+    return { limit, available: Math.max(0, limit - reserved) };
+  };
+
+  // Apartados (pending/ready). Gerente → SOLO su tienda (reserved_by_store);
+  // admin → total entre tiendas. Antes el gerente veía el global (p.ej. 27 = suma
+  // de las 3 tiendas) cuando su tienda solo tenía 1 apartado.
+  const reservedForRow = (c: PreSaleCatalog): number => {
+    if (restrictedStoreId != null) return c.reserved_by_store?.[String(restrictedStoreId)] ?? 0;
+    return c.reserved_count ?? Math.max(0, (c.sold_count ?? 0) - (c.delivered_count ?? 0));
+  };
+
+  // Liquidados (entregados). Gerente → SOLO su tienda (delivered_by_store);
+  // admin → total. Sin delivered_by_store cae al global (compat).
+  const deliveredForRow = (c: PreSaleCatalog): number => {
+    if (restrictedStoreId != null) return c.delivered_by_store?.[String(restrictedStoreId)] ?? 0;
+    return c.delivered_count ?? 0;
+  };
+
   // ── Columns ────────────────────────────────────────────────────────────────
-  const columns = useMemo<ColumnDef<PreSaleCatalog>[]>(() => [
+  const columns = useMemo<ColumnDef<PreSaleCatalog>[]>(() => {
+    const cols: ColumnDef<PreSaleCatalog>[] = [
     {
       id: "product",
       header: "Producto",
@@ -262,26 +417,66 @@ export function PreSaleCatalogsPanel({ restrictedStoreId = null }: { restrictedS
       ),
     },
     {
-      id: "progress",
-      header: () => (
-        <>
-          <div style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase" as const, letterSpacing: "0.12em", color: TM }}>Límite</div>
-          <div style={{ fontSize: 7, fontWeight: 700, color: TM, opacity: 0.6, marginTop: 1, letterSpacing: "0.06em" }}>vendidos · entregados · límite</div>
-        </>
-      ),
-      accessorFn: r => r.sold_count ?? 0,
+      id: "limit",
+      header: "Límite de unidades",
+      // null = sin límite → al final del orden ascendente.
+      accessorFn: r => r.preorder_limit ?? Number.MAX_SAFE_INTEGER,
       meta: { tdStyle: { padding: "12px 14px", textAlign: "center" as const } },
       cell: ({ row: { original: c } }: CellContext<PreSaleCatalog, unknown>) => (
-        c.preorder_limit ? (
-          <span style={{ fontSize: 12, fontWeight: 800, color: TP, fontVariantNumeric: "tabular-nums" }}>
-            {c.sold_count ?? 0}
-            <span style={{ color: TM, fontWeight: 500 }}> / </span>
-            <span style={{ color: "#22C55E" }}>{c.delivered_count ?? 0}</span>
-            <span style={{ color: TM, fontWeight: 500 }}> / {c.preorder_limit}</span>
-          </span>
+        c.preorder_limit != null ? (
+          <span style={{ fontSize: 13, fontWeight: 800, color: TP, fontVariantNumeric: "tabular-nums" }}>{c.preorder_limit}</span>
         ) : (
-          <span style={{ fontSize: 10, color: TM }}>—</span>
+          <span style={{ fontSize: 10, color: TM }}>Sin límite</span>
         )
+      ),
+    },
+    {
+      id: "stock",
+      header: () => (
+        <>
+          <div style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase" as const, letterSpacing: "0.12em", color: TM }}>Stock</div>
+          <div style={{ fontSize: 7, fontWeight: 700, color: TM, opacity: 0.6, marginTop: 1, letterSpacing: "0.06em" }}>disponible · tope</div>
+        </>
+      ),
+      // -1 = sin asignar → al fondo del orden ascendente.
+      accessorFn: r => stockInfo(r)?.available ?? -1,
+      meta: { tdStyle: { padding: "12px 14px", textAlign: "center" as const } },
+      cell: ({ row: { original: c } }: CellContext<PreSaleCatalog, unknown>) => {
+        const info = stockInfo(c);
+        if (info == null) {
+          return (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 9px", borderRadius: 8, fontSize: 10, fontWeight: 800, color: "#DC2626", background: "rgba(220,38,38,0.08)", border: "1px solid rgba(220,38,38,0.25)" }}>
+              <AlertTriangle size={9} />Sin asignar
+            </span>
+          );
+        }
+        const out = info.available <= 0;
+        return (
+          <span style={{ fontSize: 13, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
+            <span style={{ color: out ? "#DC2626" : "#3B82F6" }}>{info.available}</span>
+            <span style={{ color: TM, fontWeight: 500 }}> / {info.limit}</span>
+          </span>
+        );
+      },
+    },
+    {
+      id: "reserved",
+      header: "Apartados",
+      // Apartados reales = folios pending/ready (solo anticipo, sin liquidar).
+      // Por tienda para el gerente (ver reservedForRow).
+      accessorFn: r => reservedForRow(r),
+      meta: { tdStyle: { padding: "12px 14px", textAlign: "center" as const } },
+      cell: ({ row: { original: c } }: CellContext<PreSaleCatalog, unknown>) => (
+        <CountPill value={reservedForRow(c)} color="#F59E0B" />
+      ),
+    },
+    {
+      id: "delivered",
+      header: "Liquidados",
+      accessorFn: r => deliveredForRow(r),
+      meta: { tdStyle: { padding: "12px 14px", textAlign: "center" as const } },
+      cell: ({ row: { original: c } }: CellContext<PreSaleCatalog, unknown>) => (
+        <CountPill value={deliveredForRow(c)} color="#22C55E" />
       ),
     },
     {
@@ -297,70 +492,34 @@ export function PreSaleCatalogsPanel({ restrictedStoreId = null }: { restrictedS
       enableSorting: false,
       meta: { tdStyle: { padding: "12px 14px" } },
       cell: ({ row: { original: c } }: CellContext<PreSaleCatalog, unknown>) => {
-        const isComplete = (c.sold_count ?? 0) > 0 && (c.sold_count ?? 0) === (c.delivered_count ?? 0);
-        const nextOpts   = (NEXT_STATUSES[c.status] ?? []).filter(o => !o.onlyWhenComplete || isComplete);
-        const isBusy     = transitioning === c.id;
+        const isBusy = transitioning === c.id;
 
         if (c.status === "completed") {
           return (
-            <button onClick={() => setHistoryCatalog(c)} style={{ padding: "4px 12px", borderRadius: 8, fontSize: 10, fontWeight: 800, cursor: "pointer", border: "1px solid rgba(167,139,250,0.35)", background: "rgba(167,139,250,0.08)", color: "#A78BFA", display: "flex", alignItems: "center", gap: 5 }}>
-              <Star size={9} />Ver historial
+            <button onClick={() => setHistoryCatalog(c)} style={{ padding: "6px 12px", borderRadius: 9, fontSize: 11, fontWeight: 800, cursor: "pointer", border: "1px solid rgba(167,139,250,0.35)", background: "rgba(167,139,250,0.08)", color: "#A78BFA", display: "inline-flex", alignItems: "center", gap: 5 }}>
+              <Star size={11} />Ver historial
             </button>
           );
         }
 
         return (
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <button onClick={() => setEditCatalog(c)} style={{ padding: "4px 10px", borderRadius: 8, fontSize: 10, fontWeight: 800, cursor: "pointer", border: "1px solid var(--td-panel-border)", background: "var(--td-card-bg)", color: TS, display: "flex", alignItems: "center", gap: 4 }}>
-              <Pencil size={9} />Editar
-            </button>
-
-            {c.product === null ? (
-              <button onClick={() => setConvertCatalog(c)} style={{ padding: "5px 12px", borderRadius: 8, fontSize: 10, fontWeight: 800, cursor: "pointer", border: "1px solid rgba(99,102,241,0.5)", background: "rgba(99,102,241,0.12)", color: "#818CF8", display: "flex", alignItems: "center", gap: 4, boxShadow: "0 0 10px rgba(99,102,241,0.2)" }}>
-                <Boxes size={9} />Crear producto
-              </button>
-            ) : (
-              <span title={c.product ? `Producto: ${c.product.name}` : undefined} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 10px", borderRadius: 8, fontSize: 10, fontWeight: 800, border: "1px solid rgba(34,197,94,0.25)", background: "rgba(34,197,94,0.08)", color: "#22C55E", cursor: "default" }}>
-                <Boxes size={9} />En inventario
-              </span>
-            )}
-
-            {nextOpts.map(opt => (
-              <button
-                key={opt.to}
-                disabled={isBusy}
-                onClick={() => requestTransition(c, opt.to)}
-                style={{
-                  padding: opt.highlight ? "5px 12px" : "4px 10px", borderRadius: 8, fontSize: 10, fontWeight: 800,
-                  cursor: isBusy ? "not-allowed" : "pointer",
-                  border: `1px solid ${STATUS_CFG[opt.to].color}${opt.highlight ? "99" : "44"}`,
-                  background: opt.highlight ? STATUS_CFG[opt.to].color : STATUS_CFG[opt.to].bg,
-                  color: opt.highlight ? "#000" : STATUS_CFG[opt.to].color,
-                  opacity: isBusy ? 0.5 : 1,
-                  display: "flex", alignItems: "center", gap: 4,
-                  boxShadow: opt.highlight ? `0 0 12px ${STATUS_CFG[opt.to].color}55` : "none",
-                }}
-              >
-                {isBusy ? <Loader2 size={9} className="animate-spin" /> : STATUS_CFG[opt.to].icon}
-                {opt.label}
-              </button>
-            ))}
-
-            {(c.sold_count ?? 0) > 0 && (
-              <button onClick={() => setHistoryCatalog(c)} style={{ padding: "4px 10px", borderRadius: 8, fontSize: 10, fontWeight: 800, cursor: "pointer", border: "1px solid rgba(167,139,250,0.35)", background: "rgba(167,139,250,0.08)", color: "#A78BFA", display: "flex", alignItems: "center", gap: 5 }}>
-                <Star size={9} />Ventas
-              </button>
-            )}
-
-            {nextOpts.length === 0 && (c.sold_count ?? 0) === 0 && (
-              <span style={{ fontSize: 10, color: TM }}>—</span>
-            )}
-          </div>
+          <CatalogActionsMenu
+            catalog={c}
+            isBusy={isBusy}
+            onEdit={() => setEditCatalog(c)}
+            onConvert={() => setConvertCatalog(c)}
+            onHistory={() => setHistoryCatalog(c)}
+            onTransition={to => requestTransition(c, to)}
+          />
         );
       },
     },
+    ];
+    // Gerente: oculta "Límite de unidades" (preorder_limit es un campo GLOBAL, no
+    // per-tienda → su límite real es el "tope" de Stock). Admin sí lo ve.
+    return cols.filter(col => !(col.id === "limit" && restrictedStoreId != null));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [transitioning]);
+  }, [transitioning, restrictedStoreId]);
 
   const table = useReactTable({
     data: filtered,
@@ -456,7 +615,7 @@ export function PreSaleCatalogsPanel({ restrictedStoreId = null }: { restrictedS
                   {hg.headers.map(header => {
                     const canSort = header.column.getCanSort();
                     const sorted  = header.column.getIsSorted();
-                    const isCenter = header.column.id === "progress";
+                    const isCenter = ["limit", "stock", "reserved", "delivered"].includes(header.column.id);
                     return (
                       <th
                         key={header.id}

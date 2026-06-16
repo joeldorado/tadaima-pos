@@ -136,7 +136,12 @@ export function invalidateAfterSale(
   // ['inventory', 'by-product'] — sin esto muestra stock viejo.
   void queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all });
   void queryClient.invalidateQueries({ queryKey: queryKeys.salesDrafts.all });
-  void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleCatalogs.all });
+  // refetchType:'all' → también refetchea instancias INACTIVAS. El panel de
+  // Catálogos de Preventa (módulo Preventas) está desmontado mientras se
+  // cancela/cobra en Caja; sin esto, el Stock/Apartados del gerente se queda
+  // viejo (QA 2026-06-15: cancelar en Caja liberó el apartado y Caja mostró 50,
+  // pero el panel del gerente seguía en 49).
+  void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleCatalogs.all, refetchType: "all" });
   // refetchType:'all' refetchea también queries INACTIVAS (SalesPage está
   // desmontada mientras el cajero cobra en Caja) → la lista de Ventas se
   // pre-calienta en background y al navegar ya está fresca.

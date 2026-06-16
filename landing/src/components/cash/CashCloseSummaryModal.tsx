@@ -13,7 +13,8 @@ interface CashCloseSummaryModalProps {
  * Modal del Corte de Caja — se abre al cerrar la sesión exitosamente o cuando
  * el admin pide reimprimir un corte histórico. Muestra:
  *  - Datos de la sesión (caja, cajero, horarios)
- *  - Efectivo inicial + ventas + entradas/salidas + ajustes
+ *  - Efectivo inicial + ventas totales + dinero que sí entró a caja
+ *  - (tarjeta queda visible, pero NO cuenta para el descuadre físico)
  *  - Esperado en caja vs cerrado real
  *  - Diferencia (descuadre) con badge verde/ámbar
  *  - Botón de imprimir que abre la versión print-friendly
@@ -70,9 +71,11 @@ function buildPrintHtml(s: CashSessionReport, detail: CashSessionDetail | null =
       <div class="row"><span>Cierre</span><span>${fmtDate(s.closed_at)}</span></div>
       <div class="divider"></div>
       <div class="row"><span>Efectivo inicial</span><span>${fmt(s.opening_cash)}</span></div>
-      <div class="row"><span>Ventas (${s.sales_count})</span><span>+${fmt(s.total_sales)}</span></div>
+      <div class="row"><span>Ventas totales (${s.sales_count})</span><span>${fmt(s.total_sales)}</span></div>
+      ${s.total_pre_sale_payments > 0 ? `<div class="row"><span>Preventas cobradas</span><span>${fmt(s.total_pre_sale_payments)}</span></div>` : ""}
+      <div class="row"><span>Cobrado en caja</span><span>+${fmt(s.cash_collected)}</span></div>
       ${s.total_entradas > 0 ? `<div class="row"><span>Entradas</span><span>+${fmt(s.total_entradas)}</span></div>` : ""}
-      ${s.total_salidas > 0 ? `<div class="row"><span>Salidas</span><span>-${fmt(s.total_salidas)}</span></div>` : ""}
+      ${s.total_salidas > 0 ? `<div class="row"><span>Salidas de caja</span><span>-${fmt(s.total_salidas)}</span></div>` : ""}
       ${s.total_ajustes !== 0 ? `<div class="row"><span>Ajustes</span><span>${s.total_ajustes > 0 ? "+" : ""}${fmt(s.total_ajustes)}</span></div>` : ""}
       <div class="row total"><span>Esperado</span><span>${fmt(s.expected_cash)}</span></div>
       <div class="row total"><span>Cerrado</span><span>${s.closing_cash != null ? fmt(s.closing_cash) : "—"}</span></div>
@@ -106,6 +109,7 @@ export function CashCloseSummaryModal({ session: s, open, onClose }: CashCloseSu
   const diff = s.difference ?? 0;
   const isMatch = s.closing_cash != null && Math.abs(diff) < 0.01;
   const isShort = s.closing_cash != null && diff < -0.01;
+  const outsideDrawer = Math.max(0, (s.total_sales + s.total_pre_sale_payments) - s.cash_collected);
 
   return (
     <div style={{
@@ -157,10 +161,22 @@ export function CashCloseSummaryModal({ session: s, open, onClose }: CashCloseSu
         {/* Resumen monetario */}
         <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 16 }}>
           <Row label="Efectivo inicial" value={fmt(s.opening_cash)} />
-          <Row label={`Ventas (${s.sales_count})`} value={`+${fmt(s.total_sales)}`} valueColor="#10b981" />
+          <Row label={`Ventas totales (${s.sales_count})`} value={fmt(s.total_sales)} />
+          {s.total_pre_sale_payments > 0 && (
+            <Row label="Preventas cobradas" value={fmt(s.total_pre_sale_payments)} valueColor="#F59E0B" />
+          )}
+          <Row label="Cobrado en caja" value={`+${fmt(s.cash_collected)}`} valueColor="#10b981" bold />
           {s.total_entradas > 0 && <Row label="Entradas" value={`+${fmt(s.total_entradas)}`} valueColor="#10b981" />}
-          {s.total_salidas > 0 && <Row label="Salidas" value={`-${fmt(s.total_salidas)}`} valueColor="#DC2626" />}
+          {s.total_salidas > 0 && <Row label="Salidas de caja" value={`-${fmt(s.total_salidas)}`} valueColor="#DC2626" />}
           {s.total_ajustes !== 0 && <Row label="Ajustes" value={`${s.total_ajustes > 0 ? "+" : ""}${fmt(s.total_ajustes)}`} />}
+        </div>
+
+        <div style={{ marginBottom: 16, padding: "10px 12px", background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.22)", borderRadius: 14 }}>
+          <p style={{ margin: 0, fontSize: 10, color: "var(--td-text-md)", lineHeight: 1.45 }}>
+            El faltante o sobrante se calcula con el dinero que sí debía quedar en caja.
+            Tarjeta no entra al esperado.
+            {outsideDrawer > 0 ? ` Fuera de caja: ${fmt(outsideDrawer)}.` : ""}
+          </p>
         </div>
 
         {/* Esperado / Cerrado / Diferencia */}

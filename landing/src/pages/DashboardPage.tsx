@@ -1000,6 +1000,9 @@ export function DashboardPage() {
                           <p style={{ margin: 0, fontSize: 13, fontWeight: 900, color: "var(--td-text-hi)" }}>
                             {fmt(s.total_sales)}
                           </p>
+                          <p style={{ margin: "2px 0 0", fontSize: 9, fontWeight: 800, color: "var(--td-text-ghost)" }}>
+                            Caja {fmt(s.cash_collected)}
+                          </p>
                           <span style={{
                             display: "inline-block", marginTop: 2,
                             padding: "1px 6px", borderRadius: 5,

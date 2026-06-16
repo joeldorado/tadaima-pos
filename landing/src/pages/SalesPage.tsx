@@ -4,7 +4,7 @@ import {
   CreditCard, CalendarDays, ChevronDown, X, ChevronRight, ChevronLeft,
   Package, Receipt, ImageOff, RotateCcw, AlertTriangle,
   Store, Printer, User as UserIcon, FileText, Download, Bookmark, FileSpreadsheet,
-  Maximize2, Minimize2,
+  Maximize2, Minimize2, Ban,
 } from "lucide-react";
 import {
   Button as AriaButton,
@@ -58,6 +58,13 @@ const T = {
     boxShadow: "0 4px 16px rgba(0,0,0,0.10)",
   } as React.CSSProperties,
   redBright: "#FF4422",
+  surfaceSoft: "var(--td-surface-soft)",
+  surfaceMuted: "var(--td-surface-muted)",
+  surfaceStrong: "var(--td-surface-strong)",
+  surfaceStronger: "var(--td-surface-stronger)",
+  tableHeadBg: "var(--td-table-head-bg)",
+  tableFootBg: "var(--td-table-foot-bg)",
+  chartGrid: "var(--td-chart-grid)",
   btnRed: {
     background: "linear-gradient(135deg, #CC2200 0%, #FF4422 100%)",
     borderRadius: "9999px",
@@ -66,6 +73,33 @@ const T = {
     color: "#ffffff",
   } as React.CSSProperties,
 };
+
+function paymentTone(method: string): React.CSSProperties {
+  const value = (method || "").toLowerCase();
+  if (value.includes("tarjeta")) {
+    return { background: "rgba(59,130,246,0.12)", border: "1px solid rgba(59,130,246,0.28)", color: "#2563eb" };
+  }
+  if (value.includes("dólar") || value.includes("dolar")) {
+    return { background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.3)", color: "#d97706" };
+  }
+  if (value.includes("transfer")) {
+    return { background: "rgba(14,165,233,0.12)", border: "1px solid rgba(14,165,233,0.28)", color: "#0284c7" };
+  }
+  return { background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.28)", color: "#059669" };
+}
+
+function productRankTone(index: number): React.CSSProperties {
+  if (index === 0) {
+    return { background: "rgba(245,158,11,0.14)", color: "#d97706", border: "1px solid rgba(245,158,11,0.28)" };
+  }
+  if (index === 1) {
+    return { background: "var(--td-surface-muted)", color: "var(--td-text-md)", border: "1px solid var(--td-panel-border)" };
+  }
+  if (index === 2) {
+    return { background: "rgba(234,88,12,0.12)", color: "#c2410c", border: "1px solid rgba(234,88,12,0.24)" };
+  }
+  return { background: "var(--td-surface-soft)", color: "var(--td-text-lo)", border: "1px solid var(--td-panel-border)" };
+}
 
 interface ProductInfo {
   name: string;
@@ -102,14 +136,6 @@ const fmtDate = (dateStr: string) => {
 
 const fmtDateTime = (dateStr: string) =>
   dateStr ? new Date(dateStr).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short", timeZone: BUSINESS_TZ }) : "—";
-
-const methodBg = (m: string) => {
-  const lm = (m || "").toLowerCase();
-  if (lm.includes("tarjeta"))  return "bg-blue-500/10 border-blue-500/25 text-blue-400";
-  if (lm.includes("dólar") || lm.includes("dolar")) return "bg-amber-500/10 border-amber-500/25 text-amber-400";
-  if (lm.includes("transfer")) return "bg-purple-500/10 border-purple-500/25 text-purple-400";
-  return "bg-emerald-500/10 border-emerald-500/25 text-emerald-400";
-};
 
 function printTicket(sale: SaleDetail) {
   const win = window.open("", "_blank", "width=340,height=600");
@@ -304,7 +330,8 @@ function SalesDateRangePicker({
               <div className="flex items-center gap-3">
                 <AriaButton
                   slot="previous"
-                  className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-black/20 text-white/60 transition-colors hover:border-white/20 hover:text-white"
+                  className="flex h-10 w-10 items-center justify-center rounded-2xl transition-colors"
+                  style={{ background: "var(--td-surface-muted)", border: "1px solid var(--td-panel-border)", color: "var(--td-text-md)" }}
                 >
                   <ChevronLeft size={15} />
                 </AriaButton>
@@ -316,7 +343,8 @@ function SalesDateRangePicker({
 
                 <AriaButton
                   slot="next"
-                  className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-black/20 text-white/60 transition-colors hover:border-white/20 hover:text-white"
+                  className="flex h-10 w-10 items-center justify-center rounded-2xl transition-colors"
+                  style={{ background: "var(--td-surface-muted)", border: "1px solid var(--td-panel-border)", color: "var(--td-text-md)" }}
                 >
                   <ChevronRight size={15} />
                 </AriaButton>
@@ -341,12 +369,12 @@ function SalesDateRangePicker({
                         className={({ isSelected, isSelectionStart, isSelectionEnd, isFocusVisible, isOutsideMonth, isDisabled }) =>
                           [
                             "flex h-10 w-10 items-center justify-center rounded-xl text-sm font-bold transition-all outline-none",
-                            "data-[hovered]:bg-white/8",
-                            isOutsideMonth ? "text-white/20" : "text-white/80",
+                            "data-[hovered]:bg-[var(--td-hover-bg)]",
+                            isOutsideMonth ? "text-[var(--td-text-ghost)]" : "text-[var(--td-text-hi)]",
                             isDisabled ? "opacity-25" : "",
-                            isSelected ? "text-white bg-[var(--td-red)]" : "bg-black/10",
+                            isSelected ? "text-white bg-[var(--td-red)]" : "bg-[var(--td-surface-muted)]",
                             isSelectionStart || isSelectionEnd ? "ring-2 ring-[#FF7A59]" : "",
-                            isFocusVisible ? "ring-2 ring-white/70" : "",
+                            isFocusVisible ? "ring-2 ring-[var(--td-red-brd)]" : "",
                           ].join(" ")
                         }
                       />
@@ -373,12 +401,12 @@ function SalesDateRangePicker({
                         className={({ isSelected, isSelectionStart, isSelectionEnd, isFocusVisible, isOutsideMonth, isDisabled }) =>
                           [
                             "flex h-10 w-10 items-center justify-center rounded-xl text-sm font-bold transition-all outline-none",
-                            "data-[hovered]:bg-white/8",
-                            isOutsideMonth ? "text-white/20" : "text-white/80",
+                            "data-[hovered]:bg-[var(--td-hover-bg)]",
+                            isOutsideMonth ? "text-[var(--td-text-ghost)]" : "text-[var(--td-text-hi)]",
                             isDisabled ? "opacity-25" : "",
-                            isSelected ? "text-white bg-[var(--td-red)]" : "bg-black/10",
+                            isSelected ? "text-white bg-[var(--td-red)]" : "bg-[var(--td-surface-muted)]",
                             isSelectionStart || isSelectionEnd ? "ring-2 ring-[#FF7A59]" : "",
-                            isFocusVisible ? "ring-2 ring-white/70" : "",
+                            isFocusVisible ? "ring-2 ring-[var(--td-red-brd)]" : "",
                           ].join(" ")
                         }
                       />
@@ -390,7 +418,7 @@ function SalesDateRangePicker({
 
             <div
               className="mt-4 flex items-center justify-between rounded-2xl px-4 py-3"
-              style={{ background: "rgba(0,0,0,0.16)", border: "1px solid rgba(255,255,255,0.06)" }}
+              style={{ background: "var(--td-surface-strong)", border: "1px solid var(--td-panel-border)" }}
             >
               <div className="flex items-center gap-3 text-[10px] font-black uppercase tracking-[0.14em]" style={{ color: "var(--td-text-lo)" }}>
                 <span>
@@ -445,7 +473,7 @@ function SaleRow({
       {/* ── Fila principal ── */}
       <button
         onClick={() => setOpen(v => !v)}
-        className="w-full flex lg:grid items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-white/[0.03]"
+        className="w-full flex lg:grid items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-[var(--td-hover-bg)]"
         style={{ gridTemplateColumns: SALES_LIST_GRID_TEMPLATE }}
       >
         <span className="text-[9px] font-black w-5 text-center flex-shrink-0" style={{ color: "var(--td-text-lo)" }}>{rank}</span>
@@ -512,7 +540,10 @@ function SaleRow({
           </div>
         </div>
 
-        <span className={`w-[104px] text-center text-[9px] font-black uppercase tracking-[0.12em] px-2.5 py-1 rounded-full border flex-shrink-0 ${methodBg(paymentName)}`}>
+        <span
+          className="w-[104px] text-center text-[9px] font-black uppercase tracking-[0.12em] px-2.5 py-1 rounded-full border flex-shrink-0"
+          style={paymentTone(paymentName)}
+        >
           {paymentName}
         </span>
 
@@ -561,7 +592,7 @@ function SaleRow({
 
       {/* ── Detalle expandido ── */}
       {open && (
-        <div className="px-5 py-4 space-y-2" style={{ borderTop: "1px solid var(--td-panel-border)", background: "rgba(0,0,0,0.15)" }}>
+        <div className="px-5 py-4 space-y-2" style={{ borderTop: "1px solid var(--td-panel-border)", background: T.surfaceStrong }}>
           {(sale.items || []).length === 0 && (
             <p className="text-[10px] text-center py-3" style={{ color: "var(--td-text-lo)" }}>Sin detalle de artículos</p>
           )}
@@ -605,7 +636,7 @@ function SaleRow({
               reversado en ROJO. Simbólico: el total de la venta ya descuenta
               la cancelación (Joel 2026-06-12). */}
           {(sale.cancelled_items ?? []).length > 0 && (
-            <div className="mt-3 p-3 rounded-xl space-y-1" style={{ background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.2)" }}>
+            <div className="mt-3 p-3 rounded-xl space-y-1" style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.22)" }}>
               <div className="flex items-center justify-between gap-2 mb-1">
                 <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: "#f87171" }}>
                   Cancelado · se regresó
@@ -644,7 +675,7 @@ function SaleRow({
                 const isLiquidacion = (order.balance ?? 0) <= 0.01 && (order.paid_amount ?? 0) > 0;
                 const statusKind: "liquidacion" | "anticipo" = isLiquidacion ? "liquidacion" : "anticipo";
                 return (
-                  <div key={order.id} className="rounded-xl p-3" style={{ background: "rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.18)" }}>
+                  <div key={order.id} className="rounded-xl p-3" style={{ background: "rgba(245,158,11,0.09)", border: "1px solid rgba(245,158,11,0.2)" }}>
                     <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
                       <div className="flex items-center gap-2 flex-wrap">
                         <Bookmark size={12} className="text-amber-400" />
@@ -660,7 +691,7 @@ function SaleRow({
                         </span>
                         {/* Status del folio (entrega) — secundario */}
                         <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded" style={{
-                          background: order.status === 'delivered' ? "rgba(34,197,94,0.10)" : "rgba(255,255,255,0.05)",
+                          background: order.status === 'delivered' ? "rgba(34,197,94,0.10)" : "var(--td-surface-soft)",
                           color: order.status === 'delivered' ? "#22c55e" : "var(--td-text-lo)",
                         }}>
                           {order.status === 'delivered' ? "Entregado"
@@ -673,7 +704,7 @@ function SaleRow({
 
                     {/* Items del folio */}
                     {order.items.map(it => (
-                      <div key={it.id} className="flex items-center gap-3 py-1.5" style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+                      <div key={it.id} className="flex items-center gap-3 py-1.5" style={{ borderTop: "1px solid var(--td-divider)" }}>
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-bold truncate" style={{ color: "var(--td-text-md)" }}>
                             {it.catalog?.product_name ?? `Producto #${it.product_id ?? "?"}`}
@@ -719,7 +750,7 @@ function SaleRow({
             const anticipos = (sale.pre_sale_orders ?? []).reduce((s, o) => s + (o.paid_amount ?? 0), 0);
             const totalCobrado = sale.total + anticipos;
             return (
-              <div className="mt-3 p-3 rounded-xl" style={{ background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.2)" }}>
+              <div className="mt-3 p-3 rounded-xl" style={{ background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.22)" }}>
                 <div className="flex justify-between text-[10px]" style={{ color: "var(--td-text-md)" }}>
                   <span>Productos</span>
                   <span className="font-bold">{fmt(sale.total)}</span>
@@ -813,7 +844,7 @@ function SaleRow({
 // venta regular y ya salen como hijas dentro de su SaleRow (evita doble conteo).
 type VentasRow =
   | { kind: "sale"; key: string; ts: number; sale: SaleDetail }
-  | { kind: "presale"; key: string; ts: number; order: PreSaleOrder; movement: "anticipo" | "liquidacion" };
+  | { kind: "presale"; key: string; ts: number; order: PreSaleOrder; movement: "anticipo" | "liquidacion" | "cancelacion" };
 
 /** Método de pago de un folio derivado de sus pagos. "Varios" si hay mezcla. */
 function getPreSaleMethodName(order: PreSaleOrder): string {
@@ -837,24 +868,31 @@ function PreSaleMovementRow({
   order, movement, rank,
 }: {
   order: PreSaleOrder;
-  movement: "anticipo" | "liquidacion";
+  movement: "anticipo" | "liquidacion" | "cancelacion";
   rank: number;
 }) {
   const [open, setOpen] = useState(false);
   const items = order.items ?? [];
   const itemCount = items.reduce((s, it) => s + (it.quantity ?? 0), 0);
   const paymentName = getPreSaleMethodName(order);
-  const cobrado = order.paid_amount ?? 0;
   const isLiq = movement === "liquidacion";
-  const accent = isLiq ? "#22c55e" : "#f59e0b";
-  const dateStr = isLiq ? (order.updated_at || order.created_at) : order.created_at;
+  const isCancel = movement === "cancelacion";
+  // Cancelación: en full-cancel los payments se borran (paid_amount=0); el monto
+  // a mostrar es lo reversado (cancelled_amount).
+  const cobrado = isCancel ? (order.cancelled_amount ?? 0) : (order.paid_amount ?? 0);
+  const movLabel = isCancel ? "cancelación" : isLiq ? "liquidación" : "anticipo";
+  const accent = isCancel ? "#f87171" : isLiq ? "#22c55e" : "#f59e0b";
+  const accentSurface = isCancel ? "rgba(239,68,68,0.08)" : isLiq ? "rgba(34,197,94,0.08)" : "rgba(245,158,11,0.09)";
+  const dateStr = isCancel
+    ? (order.last_cancelled_at || order.updated_at || order.created_at)
+    : isLiq ? (order.updated_at || order.created_at) : order.created_at;
 
   return (
     <div className="rounded-2xl overflow-hidden transition-all group" style={{ border: `1px solid ${accent}33` }}>
       <button
         onClick={() => setOpen(v => !v)}
-        className="w-full flex lg:grid items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-white/[0.03]"
-        style={{ background: `${accent}0d`, gridTemplateColumns: SALES_LIST_GRID_TEMPLATE }}
+        className="w-full flex lg:grid items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-[var(--td-hover-bg)]"
+        style={{ background: accentSurface, gridTemplateColumns: SALES_LIST_GRID_TEMPLATE }}
       >
         <span className="text-[9px] font-black w-5 text-center flex-shrink-0" style={{ color: "var(--td-text-lo)" }}>{rank}</span>
 
@@ -866,7 +904,7 @@ function PreSaleMovementRow({
 
         {/* Badge de preventa en lugar de thumbnails de producto */}
         <div className="flex items-center justify-center flex-shrink-0 rounded-lg" style={{ width: 32, height: 32, background: `${accent}1f`, border: `1px solid ${accent}40` }}>
-          <Bookmark size={15} style={{ color: accent }} />
+          {isCancel ? <Ban size={15} style={{ color: accent }} /> : <Bookmark size={15} style={{ color: accent }} />}
         </div>
 
         <div className="flex-shrink-0 w-[115px]">
@@ -901,7 +939,10 @@ function PreSaleMovementRow({
           </div>
         </div>
 
-        <span className={`w-[104px] text-center text-[9px] font-black uppercase tracking-[0.12em] px-2.5 py-1 rounded-full border flex-shrink-0 ${methodBg(paymentName)}`}>
+        <span
+          className="w-[104px] text-center text-[9px] font-black uppercase tracking-[0.12em] px-2.5 py-1 rounded-full border flex-shrink-0"
+          style={paymentTone(paymentName)}
+        >
           {paymentName}
         </span>
 
@@ -911,15 +952,17 @@ function PreSaleMovementRow({
         </div>
 
         <div className="w-[92px] flex-shrink-0 text-right">
-          <p className="text-sm font-black" style={{ color: "var(--td-text-hi)" }}>{fmt(cobrado)}</p>
+          <p className="text-sm font-black" style={{ color: isCancel ? accent : "var(--td-text-hi)" }}>
+            {isCancel ? `−${fmt(cobrado)}` : fmt(cobrado)}
+          </p>
           <p className="text-[8px] font-bold uppercase tracking-widest" style={{ color: accent }}>
-            {isLiq ? "liquidación" : "anticipo"}
+            {movLabel}
           </p>
         </div>
       </button>
 
       {open && (
-        <div className="px-5 py-4 space-y-2" style={{ borderTop: `1px solid ${accent}33`, background: "rgba(0,0,0,0.15)" }}>
+        <div className="px-5 py-4 space-y-2" style={{ borderTop: `1px solid ${accent}33`, background: "var(--td-surface-strong)" }}>
           {items.length === 0 && (
             <p className="text-[10px] text-center py-3" style={{ color: "var(--td-text-lo)" }}>Sin detalle de artículos</p>
           )}
@@ -960,10 +1003,10 @@ function PreSaleMovementRow({
               <span className="font-bold" style={{ color: "var(--td-text-md)" }}>{fmt(order.total ?? 0)}</span>
             </div>
             <div className="flex justify-between text-[10px]">
-              <span style={{ color: "var(--td-text-lo)" }}>{isLiq ? "Pagado (acumulado)" : "Anticipo pagado"}</span>
-              <span className="font-black" style={{ color: "#10b981" }}>{fmt(cobrado)}</span>
+              <span style={{ color: "var(--td-text-lo)" }}>{isCancel ? "Reversado al cancelar" : isLiq ? "Pagado (acumulado)" : "Anticipo pagado"}</span>
+              <span className="font-black" style={{ color: isCancel ? accent : "#10b981" }}>{isCancel ? `−${fmt(cobrado)}` : fmt(cobrado)}</span>
             </div>
-            {(order.balance ?? 0) > 0.01 && (
+            {!isCancel && (order.balance ?? 0) > 0.01 && (
               <div className="flex justify-between text-[10px]">
                 <span style={{ color: "var(--td-text-lo)" }}>Saldo pendiente</span>
                 <span className="font-black" style={{ color: "#f59e0b" }}>{fmt(order.balance ?? 0)}</span>
@@ -1252,7 +1295,7 @@ function ReporteDelDia({
 const CORTE_TABLE_MAX_H = "max(320px, calc(100vh - 430px))";
 // thead/tfoot sticky necesitan fondo SÓLIDO (el var es translúcido y las
 // filas se transparentaban al pasar por debajo).
-const CORTE_STICKY_BG = "var(--td-popup-bg)";
+const CORTE_STICKY_BG = "var(--td-table-head-bg)";
 
 // Tabla de corte por producto (Efectivo/Tarjeta/Liquidaciones/Vencidas).
 // Costo/Utilidad solo admin. Scroll interno + header y Total sticky (el
@@ -1619,7 +1662,7 @@ function CorteAbonoTable({
 
 function ReportSection({ title, subtitle, children, centered = false }: { title: string; subtitle?: string | undefined; children: React.ReactNode; centered?: boolean }) {
   return (
-    <div className="rounded-2xl p-4" style={{ background: "rgba(0,0,0,0.15)", border: "1px solid var(--td-panel-border)" }}>
+    <div className="rounded-2xl p-4" style={{ background: "var(--td-surface-strong)", border: "1px solid var(--td-panel-border)" }}>
       <p className={`font-black uppercase tracking-widest ${subtitle ? "mb-1" : "mb-3"} ${centered ? "text-center text-[11px]" : "text-[9px]"}`} style={{ color: centered ? "var(--td-text-hi)" : "var(--td-text-lo)" }}>{title}</p>
       {subtitle && (
         // Fórmula del cálculo a la vista (Joel 2026-06-11) — para validar
@@ -2008,10 +2051,11 @@ export function SalesPage() {
   else if (filterCashierId)   salesParams.user_id = filterCashierId;
 
   // Incluimos delivered+expired (además de pending/ready) para alimentar las
-  // tablas "Preventa liquidación" y "Preventa vencidas" del Reporte del Día.
-  // `filteredPreSales` y `todayRevenue` re-filtran a pending/ready client-side,
-  // así que ampliar aquí NO afecta esos cálculos ni la lista de ventas.
-  const preSaleOrdersParams: Record<string, unknown> = { per_page: 500, status: 'pending,ready,delivered,expired' };
+  // tablas "Preventa liquidación" y "Preventa vencidas" del Reporte del Día, y
+  // `cancelled` para que la Lista de Ventas muestre la cancelación de preventa.
+  // `filteredPreSales`, `todayRevenue` y las tablas del reporte re-filtran por
+  // status client-side, así que ampliar aquí NO afecta esos cálculos.
+  const preSaleOrdersParams: Record<string, unknown> = { per_page: 500, status: 'pending,ready,delivered,expired,cancelled' };
   if (effectiveStoreId) preSaleOrdersParams.store_id = effectiveStoreId;
   if (filterStartDate) preSaleOrdersParams.from = filterStartDate;
   if (filterEndDate)   preSaleOrdersParams.to   = filterEndDate;
@@ -2542,10 +2586,13 @@ export function SalesPage() {
     if (filterMethod !== "all" && filterMethod !== "varios") return [];
     return preSaleOrders
       .filter(p => p.linked_sale_id == null)
-      .filter(p => p.status === "pending" || p.status === "ready" || p.status === "delivered")
+      .filter(p => p.status === "pending" || p.status === "ready" || p.status === "delivered" || p.status === "cancelled")
       .map(p => {
-        const movement: "anticipo" | "liquidacion" = p.status === "delivered" ? "liquidacion" : "anticipo";
-        const dateStr = movement === "liquidacion" ? (p.updated_at || p.created_at) : p.created_at;
+        const movement: "anticipo" | "liquidacion" | "cancelacion" =
+          p.status === "cancelled" ? "cancelacion" : p.status === "delivered" ? "liquidacion" : "anticipo";
+        const dateStr = movement === "cancelacion"
+          ? (p.last_cancelled_at || p.updated_at || p.created_at)
+          : movement === "liquidacion" ? (p.updated_at || p.created_at) : p.created_at;
         return { kind: "presale" as const, key: `pre-${p.id}`, ts: new Date(dateStr).getTime(), order: p, movement };
       });
   }, [preSaleOrders, filterMethod]);
@@ -2577,7 +2624,7 @@ export function SalesPage() {
         );
       }
       const o = row.order;
-      const movLabel = row.movement === "liquidacion" ? "liquidación" : "anticipo";
+      const movLabel = row.movement === "liquidacion" ? "liquidación" : row.movement === "cancelacion" ? "cancelación" : "anticipo";
       return (
         o.code.toLowerCase().includes(q) ||
         (o.customer?.name || "").toLowerCase().includes(q) ||
@@ -2593,7 +2640,7 @@ export function SalesPage() {
     () => displayedRows.reduce((a, r) =>
       a + (r.kind === "sale"
         ? (r.sale.items?.reduce((b, i) => b + i.quantity, 0) ?? 0)
-        : (r.order.items ?? []).reduce((b, it) => b + (it.quantity ?? 0), 0)), 0),
+        : (r.movement === "cancelacion" ? 0 : (r.order.items ?? []).reduce((b, it) => b + (it.quantity ?? 0), 0))), 0),
     [displayedRows]
   );
   const displayedTotalReceived = useMemo(
@@ -2771,7 +2818,7 @@ export function SalesPage() {
                 className={`flex items-center gap-2.5 px-6 py-3.5 rounded-t-2xl text-[10px] font-black uppercase tracking-widest transition-all border-b-2 -mb-px ${
                   activeTab === t.key
                     ? "border-red-500 bg-gradient-to-b from-red-500/10 to-transparent"
-                    : "border-transparent hover:bg-white/[0.02]"
+                    : "border-transparent hover:bg-[var(--td-hover-bg)]"
                 }`}
                 style={{ color: activeTab === t.key ? "var(--td-text-hi)" : "var(--td-text-lo)" }}
               >
@@ -2890,13 +2937,13 @@ export function SalesPage() {
                 className="rounded-[26px] overflow-hidden flex flex-col"
                 style={{
                   height: ventasPanelHeight,
-                  background: "rgba(0,0,0,0.16)",
+                  background: T.surfaceStrong,
                   border: "1px solid var(--td-panel-border)",
                 }}
               >
                 <div className="p-4 pb-3">
                   <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5"
-                    style={{ background: "rgba(0,0,0,0.2)", border: "1px solid var(--td-panel-border)" }}>
+                    style={{ background: T.surfaceMuted, border: "1px solid var(--td-panel-border)" }}>
                     <Receipt size={13} style={{ color: "var(--td-text-lo)" }} className="flex-shrink-0" />
                     <input value={searchSale} onChange={e => setSearchSale(e.target.value)}
                       placeholder="Buscar por No. Ticket, cliente, cajero, método de pago, producto…"
@@ -2912,9 +2959,9 @@ export function SalesPage() {
                     gridTemplateColumns: SALES_LIST_GRID_TEMPLATE,
                     color: "var(--td-text-lo)",
                     borderBottom: "1px solid var(--td-panel-border)",
-                    background: "rgba(26,14,20,0.96)",
+                    background: T.tableHeadBg,
                     backdropFilter: "blur(10px)",
-                    boxShadow: "0 6px 14px rgba(0,0,0,0.18)",
+                    boxShadow: "0 6px 14px rgba(0,0,0,0.10)",
                   }}
                 >
                   <span className="w-5 text-[9px] font-black uppercase tracking-[0.14em]">#</span>
@@ -2939,15 +2986,15 @@ export function SalesPage() {
                         <div
                           key={`sk-${i}`}
                           className="flex items-center gap-4 px-4 py-3 rounded-2xl animate-pulse"
-                          style={{ background: "rgba(255,255,255,0.03)", border: "1px solid var(--td-panel-border)" }}
+                          style={{ background: T.surfaceSoft, border: "1px solid var(--td-panel-border)" }}
                         >
-                          <div className="w-9 h-9 rounded-xl" style={{ background: "rgba(255,255,255,0.06)" }} />
+                          <div className="w-9 h-9 rounded-xl" style={{ background: T.surfaceMuted }} />
                           <div className="flex-1 space-y-1.5">
-                            <div className="h-2.5 w-32 rounded-full" style={{ background: "rgba(255,255,255,0.08)" }} />
-                            <div className="h-2 w-20 rounded-full" style={{ background: "rgba(255,255,255,0.05)" }} />
+                            <div className="h-2.5 w-32 rounded-full" style={{ background: "var(--td-hover-bg)" }} />
+                            <div className="h-2 w-20 rounded-full" style={{ background: T.surfaceMuted }} />
                           </div>
-                          <div className="h-2.5 w-16 rounded-full" style={{ background: "rgba(255,255,255,0.05)" }} />
-                          <div className="h-3 w-20 rounded-full" style={{ background: "rgba(255,255,255,0.08)" }} />
+                          <div className="h-2.5 w-16 rounded-full" style={{ background: T.surfaceMuted }} />
+                          <div className="h-3 w-20 rounded-full" style={{ background: "var(--td-hover-bg)" }} />
                         </div>
                       ))
                     ) : displayedRows.length === 0 ? (
@@ -2971,7 +3018,7 @@ export function SalesPage() {
                   className="flex items-center justify-end gap-3 px-5 py-3"
                   style={{
                     borderTop: "1px solid var(--td-panel-border)",
-                    background: "rgba(22,12,17,0.96)",
+                    background: T.tableFootBg,
                     backdropFilter: "blur(10px)",
                   }}
                 >
@@ -3000,7 +3047,7 @@ export function SalesPage() {
           {activeTab === "productos" && (
             <>
               <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5"
-                style={{ background: "rgba(0,0,0,0.2)", border: "1px solid var(--td-panel-border)" }}>
+                style={{ background: T.surfaceMuted, border: "1px solid var(--td-panel-border)" }}>
                 <Package size={13} style={{ color: "var(--td-text-lo)" }} className="flex-shrink-0" />
                 <input value={searchProduct} onChange={e => setSearchProduct(e.target.value)}
                   placeholder="Buscar producto por nombre o SKU…"
@@ -3024,16 +3071,16 @@ export function SalesPage() {
                     <div
                       key={`pk-${i}`}
                       className="flex items-center gap-4 px-4 py-3 rounded-2xl animate-pulse"
-                      style={{ background: "rgba(255,255,255,0.03)", border: "1px solid var(--td-panel-border)" }}
+                      style={{ background: T.surfaceSoft, border: "1px solid var(--td-panel-border)" }}
                     >
-                      <div className="w-10 h-10 rounded-xl" style={{ background: "rgba(255,255,255,0.06)" }} />
+                      <div className="w-10 h-10 rounded-xl" style={{ background: T.surfaceMuted }} />
                       <div className="flex-1 space-y-1.5">
-                        <div className="h-2.5 w-40 rounded-full" style={{ background: "rgba(255,255,255,0.08)" }} />
-                        <div className="h-2 w-24 rounded-full" style={{ background: "rgba(255,255,255,0.05)" }} />
+                        <div className="h-2.5 w-40 rounded-full" style={{ background: "var(--td-hover-bg)" }} />
+                        <div className="h-2 w-24 rounded-full" style={{ background: T.surfaceMuted }} />
                       </div>
-                      <div className="h-2.5 w-10 rounded-full" style={{ background: "rgba(255,255,255,0.05)" }} />
-                      <div className="h-2.5 w-14 rounded-full" style={{ background: "rgba(255,255,255,0.05)" }} />
-                      <div className="h-3 w-20 rounded-full" style={{ background: "rgba(255,255,255,0.08)" }} />
+                      <div className="h-2.5 w-10 rounded-full" style={{ background: T.surfaceMuted }} />
+                      <div className="h-2.5 w-14 rounded-full" style={{ background: T.surfaceMuted }} />
+                      <div className="h-3 w-20 rounded-full" style={{ background: "var(--td-hover-bg)" }} />
                     </div>
                   ))
                 ) : displayedProducts.length === 0 ? (
@@ -3044,17 +3091,12 @@ export function SalesPage() {
                 ) : (
                   displayedProducts.map((p, idx) => {
                     const barPct = Math.round((p.totalRevenue / topRevenue) * 100);
-                    const rankCls =
-                      idx === 0 ? "bg-amber-400/20 text-amber-400 border-amber-400/30" :
-                      idx === 1 ? "bg-white/10 text-white/50 border-white/10" :
-                      idx === 2 ? "bg-orange-700/20 text-orange-500 border-orange-700/30" :
-                      "bg-white/5 text-white/20 border-white/5";
 
                     return (
                       <div key={p.product_id} className="rounded-2xl overflow-hidden transition-all" style={{ border: "1px solid var(--td-panel-border)" }}>
                         <div className="grid grid-cols-[56px_1fr_72px_72px_96px_112px] gap-3 items-center px-4 py-3.5">
                           <div className="flex flex-col items-center gap-1.5">
-                            <div className={`w-5 h-5 rounded-md border flex items-center justify-center text-[8px] font-black ${rankCls}`}>
+                            <div className="w-5 h-5 rounded-md border flex items-center justify-center text-[8px] font-black" style={productRankTone(idx)}>
                               {idx + 1}
                             </div>
                             <ProductThumb src={p.imagen} name={p.name} size={36} rounded="rounded-xl" />
@@ -3121,7 +3163,7 @@ export function SalesPage() {
                   { l: "Tarjeta",  v: methodsBreakdown["Tarjeta"]  || 0, c: "#60a5fa" },
                   { l: "Dólares",  v: methodsBreakdown["Dólares"]  || 0, c: "#fbbf24" },
                 ].map((m, i) => (
-                  <div key={i} className="rounded-2xl px-4 py-3" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid var(--td-panel-border)" }}>
+                  <div key={i} className="rounded-2xl px-4 py-3" style={{ background: T.surfaceSoft, border: "1px solid var(--td-panel-border)" }}>
                     <p className="text-[8px] font-black uppercase tracking-widest" style={{ color: m.c }}>{m.l}</p>
                     <p className="text-base font-black mt-1" style={{ color: "var(--td-text-hi)" }}>{fmt(m.v)}</p>
                   </div>
@@ -3129,7 +3171,7 @@ export function SalesPage() {
               </div>
 
               {/* Gráfico de revenue por día de la semana (Dom→Sáb) */}
-              <div className="rounded-2xl p-4" style={{ background: "rgba(0,0,0,0.15)", border: "1px solid var(--td-panel-border)" }}>
+              <div className="rounded-2xl p-4" style={{ background: T.surfaceStrong, border: "1px solid var(--td-panel-border)" }}>
                 <div className="flex items-center gap-2 mb-3">
                   <BarChart3 size={13} style={{ color: "var(--td-text-lo)" }} />
                   <span className="text-[9px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>
@@ -3145,7 +3187,7 @@ export function SalesPage() {
                           <stop offset="95%" stopColor="#FF4422" stopOpacity={0} />
                         </linearGradient>
                       </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
+                      <CartesianGrid strokeDasharray="3 3" stroke={T.chartGrid} vertical={false} />
                       <XAxis dataKey="day" tick={{ fontSize: 9, fill: "var(--td-text-lo)" }} axisLine={false} tickLine={false} />
                       <YAxis tick={{ fontSize: 9, fill: "var(--td-text-lo)" }} axisLine={false} tickLine={false} />
                       <Tooltip contentStyle={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)", borderRadius: "10px" }} itemStyle={{ color: "#FF4422", fontWeight: 900, fontSize: 11 }} />

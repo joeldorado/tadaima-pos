@@ -348,4 +348,52 @@ class SaleCancellationTest extends TestCase
         $this->assertEquals(0, $order->payments()->count(), 'todos los payments reversados');
         $this->assertEquals(100.0, (float) $cancellation->amount_refunded);
     }
+
+    public function test_pre_sale_orders_index_exposes_cancelled_amount(): void
+    {
+        $product = $this->makeProduct();
+        Inventory::create(['product_id' => $product->id, 'warehouse_id' => $this->warehouse->id, 'quantity' => 10]);
+
+        $customer = Customer::create(['name' => 'Cancelado']);
+        $catalog  = PreSaleCatalog::create([
+            'product_name'   => 'Test',
+            'product_id'     => $product->id,
+            'price_1'        => 200,
+            'status'         => PreSaleCatalog::STATUS_PUBLISHED,
+            'created_by'     => $this->admin->id,
+            'preorder_limit' => 5,
+        ]);
+        $catalog->storeLimits()->create(['store_id' => $this->store->id, 'limit_qty' => 5]);
+
+        $order = PreSaleOrder::create([
+            'code'        => 'PREV-CANC-IDX',
+            'store_id'    => $this->store->id,
+            'user_id'     => $this->admin->id,
+            'customer_id' => $customer->id,
+            'status'      => PreSaleOrder::STATUS_READY,
+        ]);
+        $order->items()->create([
+            'pre_sale_catalog_id' => $catalog->id,
+            'product_id'          => $product->id,
+            'quantity'            => 1,
+            'price_level'         => 1,
+            'unit_price'          => 200.0,
+            'status'              => 'pending',
+        ]);
+        $order->payments()->create(['amount' => 100.0, 'payment_method_id' => $this->cashMethod->id, 'cashier_id' => $this->admin->id]);
+
+        $this->service->cancelPreSaleOrder(
+            $order, SaleCancellation::MODE_FULL, SaleCancellation::REASON_NO_LLEGO, null, $this->admin, $this->session->id,
+        );
+
+        // El folio cancelado aparece en el index con el monto reversado, para que
+        // la Lista de Ventas muestre "Cancelación de preventa −$100".
+        $response = $this->actingAs($this->admin, 'sanctum')
+            ->getJson('/api/v1/pre-sale-orders?status=cancelled');
+
+        $response->assertOk();
+        $row = collect($response->json('data.data'))->firstWhere('id', $order->id);
+        $this->assertNotNull($row, 'el folio cancelado aparece en el index');
+        $this->assertEquals(100.0, (float) $row['cancelled_amount']);
+    }
 }
