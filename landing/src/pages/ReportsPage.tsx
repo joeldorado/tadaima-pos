@@ -10,17 +10,16 @@ import { toast } from "sonner";
 import { useAuth } from "@tadaima/auth";
 import {
   getSalesReport, getInventoryReport, getTopProductsReport, getCustomersReport,
+  getPreSaleOrders,
 } from "@tadaima/api";
 import { ReportsSkeleton } from "@/components/reports/ReportsSkeleton";
 import { getSales } from "@tadaima/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useStoresQuery } from "@/hooks/queries/useStores";
-import { usePreSaleOrdersQuery } from "@/hooks/queries/usePreSales";
-import type { PreSaleOrder } from "@tadaima/api";
-import { getTodayLocal, daysAgoLocal, toLocalYmd, BUSINESS_TZ } from "@/lib/date";
+import { getTodayLocal, daysAgoLocal, BUSINESS_TZ, toLocalYmd } from "@/lib/date";
 import { queryKeys } from "@/lib/queryKeys";
 import type { SalesReport, InventoryReport, TopProductsReport, CustomersReport } from "@tadaima/api";
-import type { SaleDetail, Store as StoreType } from "@tadaima/api";
+import type { SaleDetail, Store as StoreType, PreSaleOrder, PreSaleOrderPayment } from "@tadaima/api";
 import {
   Button as AriaButton,
   CalendarCell,
@@ -123,78 +122,20 @@ const SALES_HISTORY_FILTERS: Array<{ id: SalesHistoryFilter; label: string }> = 
 ];
 
 /**
- * Convierte un folio de preventa en SaleDetail sintéticos —UNO POR CADA PAGO
- * dentro del rango [from,to]— para que el Reporte (que solo itera /sales) cuente
- * los anticipos y liquidaciones por su FECHA DE PAGO, no de creación del folio.
- *
- * Por qué por pago: una preventa cobra anticipo un día y se liquida otro; cada
- * cobro debe caer en su día. El endpoint /sales no trae estos movimientos (una
- * liquidación sola no crea un Sale; liquidar un folio existente tampoco lo liga
- * al sale de productos — linked_sale_id solo se pone al CREAR folio nuevo).
- *
- *  - id = -p.id (id de pago, único global) → no choca con ventas reales.
- *  - items=[] → salta el bloque de venta regular.
- *  - pre_sale_orders=[folio con paid_amount = monto de ESTE pago] → la agregación
- *    reparte solo ese cobro entre los productos del folio.
- *  - balance: solo el pago MÁS reciente del folio lleva la deuda actual; los demás
- *    0, para no inflar la deuda pendiente en la auditoría.
- *  - created_at = fecha del pago → cae en el día correcto del reporte.
+ * Pagos de un folio de preventa cuya FECHA DE PAGO cae dentro del rango [from, to]
+ * (zona del negocio). Reportamos la preventa por fecha de pago, no de creación: así
+ * la liquidación del día cuenta aunque el folio se haya creado antes (y el anticipo
+ * cuenta su propio día). Espejea el filtro backend payment_from/payment_to.
  */
-function preSaleOrderToSyntheticSales(o: PreSaleOrder, from: string, to: string): SaleDetail[] {
-  const allPayments = o.payments ?? [];
-  const inRange = allPayments.filter(p => {
+function presalePaymentsInRange(
+  payments: PreSaleOrderPayment[] | null | undefined,
+  from: string,
+  to: string,
+): PreSaleOrderPayment[] {
+  return (payments ?? []).filter((p) => {
     const ymd = toLocalYmd(new Date(p.created_at));
     return ymd >= from && ymd <= to;
   });
-  if (inRange.length === 0) return [];
-
-  const lastPaymentId = allPayments.reduce((max, p) => (p.id > max ? p.id : max), -Infinity);
-  const items = (o.items ?? []).map(it => ({
-    id: it.id,
-    product_id: it.product_id,
-    quantity: it.quantity,
-    unit_price: it.unit_price,
-    price_level: it.price_level,
-    status: it.status,
-    catalog: it.catalog ? { id: it.catalog.id, product_name: it.catalog.product_name } : null,
-  }));
-
-  return inRange.map(p => ({
-    id: -p.id,
-    store_id: o.store?.id ?? null,
-    user_id: o.user?.id ?? null,
-    customer_id: o.customer?.id ?? null,
-    draft_id: null,
-    subtotal: 0,
-    discount: 0,
-    total: 0,
-    commission_amount: 0,
-    status: o.status,
-    cancellation_status: "none",
-    customer: o.customer ? { id: o.customer.id, name: o.customer.name, tier: null } : null,
-    user: o.user ? { id: o.user.id, name: o.user.name } : null,
-    items: [],
-    payments: [{
-      id: p.id,
-      payment_method_id: p.payment_method?.id ?? 0,
-      terminal_id: null,
-      amount: p.amount,
-      commission_amount: 0,
-      payment_method: p.payment_method,
-      created_at: p.created_at,
-    }],
-    pre_sale_orders: [{
-      id: o.id,
-      code: o.code,
-      status: o.status,
-      total: o.total ?? 0,
-      paid_amount: p.amount,
-      balance: p.id === lastPaymentId ? (o.balance ?? 0) : 0,
-      items,
-    }],
-    sold_at: p.created_at,
-    created_at: p.created_at,
-  }));
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -214,6 +155,7 @@ export function ReportsPage() {
 
   const [from, setFrom] = useState(firstOfMonth);
   const [to, setTo]     = useState(today);
+  const [activePreset, setActivePreset] = useState<string>("Este mes");
 
   // Store filter — admin can pick, others are locked to their store
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
@@ -232,11 +174,17 @@ export function ReportsPage() {
   // sirve del cache (instantáneo) en vez de refetch. El skeleton solo sale
   // cuando de verdad no hay datos para el filtro/tab actual.
   const REPORTS_STALE = 30_000;
+  // Polling live mientras se está EN esta pantalla: cada query solo refetchea
+  // cuando su tab está activo (gate `enabled`) y la pestaña en foco
+  // (refetchIntervalInBackground default false) → al salir de Reportes o pasar
+  // a otra pestaña el poll se detiene solo. 20s = mismo ritmo que Ventas/Caja.
+  const LIVE_POLL_MS = 20_000;
   const salesReportQuery = useQuery({
     queryKey: queryKeys.reports.sales(baseParams),
     queryFn: () => getSalesReport(baseParams),
     enabled: activeTab === "ventas",
     staleTime: REPORTS_STALE,
+    refetchInterval: LIVE_POLL_MS,
   });
   const salesListParams = { ...baseParams, per_page: 100 };
   const salesListQuery = useQuery({
@@ -244,22 +192,68 @@ export function ReportsPage() {
     queryFn: () => getSales(salesListParams),
     enabled: activeTab === "ventas",
     staleTime: REPORTS_STALE,
+    refetchInterval: LIVE_POLL_MS,
   });
-  // Preventas (anticipos/liquidaciones): el endpoint /sales no trae sus cobros
-  // (una liquidación sola no crea un Sale). Los traemos aparte filtrando por
-  // FECHA DE PAGO (payment_from/to) para contar las liquidaciones del día aunque
-  // el folio se haya creado antes, y los inyectamos como ventas sintéticas por
-  // pago más abajo. Incluye 'expired' para que el filtro "No recogidas" funcione.
-  const preSalePaymentsQuery = usePreSaleOrdersQuery(
-    { payment_from: from, payment_to: to, status: "pending,ready,delivered,expired", per_page: 300, ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}) },
-    { enabled: activeTab === "ventas" },
-  );
+
+  // Preventa POR FECHA DE PAGO (payment_from/to), no de creación: trae los folios
+  // con al menos un cobro (anticipo/liquidación) en el rango, aunque el folio se
+  // haya creado antes. Los montos se acotan a los pagos del rango más abajo.
+  const preSaleOrdersParams = {
+    payment_from: from,
+    payment_to: to,
+    status: "pending,ready,delivered,expired,cancelled",
+    ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}),
+    per_page: 500,
+  };
+  const preSaleOrdersQuery = useQuery({
+    queryKey: ["reports-presale-orders", preSaleOrdersParams],
+    queryFn: () => getPreSaleOrders(preSaleOrdersParams),
+    enabled: activeTab === "ventas",
+    staleTime: REPORTS_STALE,
+    refetchInterval: LIVE_POLL_MS,
+  });
+  const preSaleOrders: PreSaleOrder[] = preSaleOrdersQuery.data?.data ?? [];
+
+  const filteredPreSaleOrders = useMemo(() => {
+    const isCardMethod = (name: string) =>
+      name.includes("tarjeta") || name.includes("credit") || name.includes("debito") || name.includes("tpv") || name.includes("terminal");
+    const isCashMethod = (name: string) =>
+      name.includes("efectivo") || name.includes("cash");
+    const isDollarMethod = (name: string) =>
+      name.includes("dolar") || name.includes("dólar") || name.includes("usd");
+    const isTransferMethod = (name: string) =>
+      name.includes("transfer") || name.includes("deposit") || name.includes("spei");
+
+    return preSaleOrders.filter((order) => {
+      const orderStatus = (order.status ?? "").toLowerCase();
+      const orderIsCancelled = orderStatus.includes("cancel");
+      const orderIsNotPicked = orderStatus.includes("expired") || orderStatus.includes("vencid") || orderStatus.includes("no recog");
+
+      const methods = (order.payments ?? [])
+        .map((p) => (p.payment_method?.name ?? "").toLowerCase())
+        .filter(Boolean);
+
+      if (selectedFilters.includes("all") || selectedFilters.length === 0) return true;
+
+      return selectedFilters.some((filter) => {
+        if (filter === "cash") return methods.some((m) => isCashMethod(m) || isDollarMethod(m)) || (methods.length === 0);
+        if (filter === "dollar") return methods.some((m) => isDollarMethod(m));
+        if (filter === "card") return methods.some((m) => isCardMethod(m));
+        if (filter === "transfer") return methods.some((m) => isTransferMethod(m));
+        if (filter === "preSales") return true;
+        if (filter === "cancelled") return orderIsCancelled;
+        if (filter === "notPicked") return orderIsNotPicked;
+        return false;
+      });
+    });
+  }, [preSaleOrders, selectedFilters]);
   const invParams = { low_stock: lowStockOnly, ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}) };
   const invQuery = useQuery({
     queryKey: queryKeys.reports.inventory(invParams),
     queryFn: () => getInventoryReport(invParams),
     enabled: activeTab === "inventario",
     staleTime: REPORTS_STALE,
+    refetchInterval: LIVE_POLL_MS,
   });
   const topParams = { from, to, limit: 25, ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}) };
   const topQuery = useQuery({
@@ -267,28 +261,17 @@ export function ReportsPage() {
     queryFn: () => getTopProductsReport(topParams),
     enabled: activeTab === "productos",
     staleTime: REPORTS_STALE,
+    refetchInterval: LIVE_POLL_MS,
   });
   const custQuery = useQuery({
     queryKey: queryKeys.reports.customers(topParams),
     queryFn: () => getCustomersReport(topParams),
     enabled: activeTab === "clientes",
     staleTime: REPORTS_STALE,
+    refetchInterval: LIVE_POLL_MS,
   });
   const salesReport: SalesReport | null = salesReportQuery.data ?? null;
-  const realSales: SaleDetail[] = salesListQuery.data?.data ?? [];
-  // Mezcla ventas reales + un sintético POR CADA PAGO de preventa en el rango.
-  // Los cobros de preventa se cuentan SOLO por la vía sintética (por fecha de
-  // pago); por eso a las ventas reales les vaciamos pre_sale_orders, para no
-  // doblar el conteo (sus productos sí se cuentan vía sale.items). Todo lo que
-  // deriva de `sales` (groupedProducts, paymentBreakdown, KPIs, exports) queda
-  // correcto sin tocar la lógica de agregación.
-  const sales: SaleDetail[] = useMemo(() => {
-    const preSalePayments = (preSalePaymentsQuery.data?.data ?? [])
-      .flatMap(o => preSaleOrderToSyntheticSales(o, from, to));
-    if (preSalePayments.length === 0) return realSales;
-    const realWithoutPreSales = realSales.map(s => ({ ...s, pre_sale_orders: [] }));
-    return [...realWithoutPreSales, ...preSalePayments];
-  }, [realSales, preSalePaymentsQuery.data, from, to]);
+  const sales: SaleDetail[] = salesListQuery.data?.data ?? [];
   const filteredSales = useMemo(() => {
     const isCardMethod = (name: string) =>
       name.includes("tarjeta") || name.includes("credit") || name.includes("debito") || name.includes("tpv") || name.includes("terminal");
@@ -414,88 +397,86 @@ export function ReportsPage() {
           pGroup.commission_amount = (pGroup.commission_amount ?? 0) + comm;
         }
       }
+    }
 
-      // 2. Pre-sale items (Preventas)
-      if (sale.pre_sale_orders) {
-        for (const order of sale.pre_sale_orders) {
-          const orderStatus = (order.status ?? "").toLowerCase();
-          const orderIsCancelled = orderStatus.includes("cancel");
-          const orderIsNotPicked = orderStatus.includes("expired") || orderStatus.includes("vencid") || orderStatus.includes("no recog");
+    // 2. Pre-sale items (Preventas)
+    for (const order of filteredPreSaleOrders) {
+      // Solo los pagos cuya fecha cae en el rango (anticipo y/o liquidación del
+      // período). El monto reportado = lo COBRADO en el rango, no el acumulado.
+      const paymentsInRange = presalePaymentsInRange(order.payments, from, to);
+      const paidInRange = paymentsInRange.reduce((sum, p) => sum + (p.amount || 0), 0);
 
-          const matchesPreSaleFilter = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.some(filter => {
-            if (filter === "cash") return methods.some(m => isCashMethod(m) || isDollarMethod(m));
-            if (filter === "dollar") return methods.some(m => isDollarMethod(m));
-            if (filter === "card") return methods.some(m => isCardMethod(m));
-            if (filter === "transfer") return methods.some(m => isTransferMethod(m));
-            if (filter === "preSales") return true;
-            if (filter === "cancelled") return hasCancelled || orderIsCancelled;
-            if (filter === "notPicked") return orderIsNotPicked;
-            return false;
-          });
-
-          if (!matchesPreSaleFilter) continue;
-
-          const orderItemsTotal = order.items.reduce((sum, it) => sum + (it.unit_price * it.quantity), 0);
-
-          for (const item of order.items) {
-            // If product_id is null, generate a unique negative ID based on catalog ID to avoid collisions
-            const prodId = item.product_id ?? (item.catalog ? item.catalog.id * -1 : -999);
-            const prodName = item.catalog?.product_name ?? `Preventa #${item.id}`;
-            const prodSku = "PREVENTA";
-            const qty = item.quantity;
-            const itemTotal = item.unit_price * item.quantity;
-            const unitPrice = item.unit_price;
-
-            // Proportional allocation of paid_amount and balance based on item's total value vs order items total
-            const ratio = orderItemsTotal > 0 ? (itemTotal / orderItemsTotal) : (1 / order.items.length);
-            const itemApartado = (order.paid_amount || 0) * ratio;
-            const itemDeuda = (order.balance || 0) * ratio;
-
-            if (!map.has(prodId)) {
-              map.set(prodId, {
-                id: prodId,
-                name: prodName,
-                sku: prodSku,
-                sales_count: 0,
-                total_quantity: 0,
-                total_revenue: 0,
-                payment_breakdown: {},
-                price_breakdown: {},
-                pre_sale_apartado: 0,
-                pre_sale_deuda: 0,
-              });
-            }
-
-            const pGroup = map.get(prodId)!;
-            pGroup.sales_count += 1;
-            pGroup.total_quantity += qty;
-            // The actual revenue that entered the POS is the paid amount (apartado), not the total price of the items!
-            pGroup.total_revenue += itemApartado;
-
-            if (!pGroup.payment_breakdown[payMethodName]) {
-              pGroup.payment_breakdown[payMethodName] = { qty: 0, revenue: 0 };
-            }
-            const preBreakdown = pGroup.payment_breakdown[payMethodName]!;
-            preBreakdown.qty += qty;
-            preBreakdown.revenue += itemApartado;
-
-            pGroup.price_breakdown[unitPrice] = (pGroup.price_breakdown[unitPrice] ?? 0) + qty;
-
-            pGroup.pre_sale_apartado = (pGroup.pre_sale_apartado ?? 0) + itemApartado;
-            pGroup.pre_sale_deuda = (pGroup.pre_sale_deuda ?? 0) + itemDeuda;
+      let payMethodName = "Efectivo";
+      if (paymentsInRange.length > 0) {
+        let mainPayment = paymentsInRange[0]!;
+        for (const p of paymentsInRange) {
+          if (p && p.amount > mainPayment.amount) {
+            mainPayment = p;
           }
+        }
+        payMethodName = mainPayment.payment_method?.name ?? "Efectivo";
+      }
+
+      const orderItemsTotal = order.items ? order.items.reduce((sum, it) => sum + (it.unit_price * it.quantity), 0) : 0;
+
+      if (order.items) {
+        for (const item of order.items) {
+          // If product_id is null, generate a unique negative ID based on catalog ID to avoid collisions
+          const prodId = item.product_id ?? (item.catalog ? item.catalog.id * -1 : -999);
+          const prodName = item.catalog?.product_name ?? `Preventa #${item.id}`;
+          const prodSku = "PREVENTA";
+          const qty = item.quantity;
+          const itemTotal = item.unit_price * item.quantity;
+          const unitPrice = item.unit_price;
+
+          // Proportional allocation of paid-in-range and balance based on item's total value vs order items total
+          const ratio = orderItemsTotal > 0 ? (itemTotal / orderItemsTotal) : (1 / order.items.length);
+          const itemApartado = paidInRange * ratio;
+          const itemDeuda = (order.balance || 0) * ratio;
+
+          if (!map.has(prodId)) {
+            map.set(prodId, {
+              id: prodId,
+              name: prodName,
+              sku: prodSku,
+              sales_count: 0,
+              total_quantity: 0,
+              total_revenue: 0,
+              payment_breakdown: {},
+              price_breakdown: {},
+              pre_sale_apartado: 0,
+              pre_sale_deuda: 0,
+            });
+          }
+
+          const pGroup = map.get(prodId)!;
+          pGroup.sales_count += 1;
+          pGroup.total_quantity += qty;
+          pGroup.total_revenue += itemApartado;
+
+          if (!pGroup.payment_breakdown[payMethodName]) {
+            pGroup.payment_breakdown[payMethodName] = { qty: 0, revenue: 0 };
+          }
+          const preBreakdown = pGroup.payment_breakdown[payMethodName]!;
+          preBreakdown.qty += qty;
+          preBreakdown.revenue += itemApartado;
+
+          pGroup.price_breakdown[unitPrice] = (pGroup.price_breakdown[unitPrice] ?? 0) + qty;
+
+          pGroup.pre_sale_apartado = (pGroup.pre_sale_apartado ?? 0) + itemApartado;
+          pGroup.pre_sale_deuda = (pGroup.pre_sale_deuda ?? 0) + itemDeuda;
         }
       }
     }
 
     return Array.from(map.values()).sort((a, b) => b.total_quantity - a.total_quantity);
-  }, [filteredSales]);
+  }, [filteredSales, filteredPreSaleOrders, from, to]);
   const invReport: InventoryReport | null = invQuery.data ?? null;
   const topReport: TopProductsReport | null = topQuery.data ?? null;
   const custReport: CustomersReport | null = custQuery.data ?? null;
   // ¿La tab activa está fetcheando? ¿Ya tiene datos para mostrar?
   const isFetchingActive =
-    (activeTab === "ventas"     && (salesReportQuery.isFetching || salesListQuery.isFetching)) ||
+    (activeTab === "ventas"     && (salesReportQuery.isFetching || salesListQuery.isFetching || preSaleOrdersQuery.isFetching)) ||
     (activeTab === "inventario" && invQuery.isFetching) ||
     (activeTab === "productos"  && topQuery.isFetching) ||
     (activeTab === "clientes"   && custQuery.isFetching);
@@ -511,8 +492,8 @@ export function ReportsPage() {
   const refreshing = isFetchingActive && activeHasData;
 
   useEffect(() => {
-    if (salesReportQuery.error || salesListQuery.error) toast.error("Error al cargar reporte de ventas");
-  }, [salesReportQuery.error, salesListQuery.error]);
+    if (salesReportQuery.error || salesListQuery.error || preSaleOrdersQuery.error) toast.error("Error al cargar reporte de ventas");
+  }, [salesReportQuery.error, salesListQuery.error, preSaleOrdersQuery.error]);
   useEffect(() => {
     if (invQuery.error) toast.error("Error al cargar inventario");
   }, [invQuery.error]);
@@ -575,60 +556,47 @@ export function ReportsPage() {
         }
       }
 
-      // 2. Process pre-sale payments (anticipos) if the sale has them
-      const showPreSales = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.some(f => ["preSales", "notPicked", "cash", "dollar", "card", "transfer", "cancelled"].includes(f));
-      if (showPreSales && sale.pre_sale_orders && sale.pre_sale_orders.length > 0) {
-        for (const order of sale.pre_sale_orders) {
-          const orderStatus = (order.status ?? "").toLowerCase();
-          const orderIsCancelled = orderStatus.includes("cancel");
-          const orderIsNotPicked = orderStatus.includes("expired") || orderStatus.includes("vencid") || orderStatus.includes("no recog");
-          const hasCancelled = (sale.cancellation_status && sale.cancellation_status !== "none") || (sale.status ?? "").toLowerCase().includes("cancel");
-          const methods = (sale.payments ?? []).map(p => (p.payment_method?.name ?? "").toLowerCase()).filter(Boolean);
+      if (contributed) {
+        contributingSales.add(sale.id);
+      }
+    }
 
-          const matchesPreSaleFilter = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.some(filter => {
-            if (filter === "cash") return methods.some(m => m.includes("efectivo") || m.includes("cash") || m.includes("dolar") || m.includes("dólar") || m.includes("usd"));
-            if (filter === "dollar") return methods.some(m => m.includes("dolar") || m.includes("dólar") || m.includes("usd"));
-            if (filter === "card") return methods.some(m => isCard(m));
-            if (filter === "transfer") return methods.some(m => isTransfer(m));
-            if (filter === "preSales") return true;
-            if (filter === "cancelled") return hasCancelled || orderIsCancelled;
-            if (filter === "notPicked") return orderIsNotPicked;
-            return false;
-          });
+    // 2. Process pre-sale payments (anticipos) from filteredPreSaleOrders that are not linked to already processed sales
+    const processedLinkedSaleIds = new Set(filteredSales.map(s => s.id));
+    const showPreSales = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.some(f => ["preSales", "notPicked", "cash", "dollar", "card", "transfer", "cancelled"].includes(f));
+    
+    if (showPreSales) {
+      for (const order of filteredPreSaleOrders) {
+        // If it's linked to a sale that we already processed, ignore to avoid double-counting!
+        if (order.linked_sale_id && processedLinkedSaleIds.has(order.linked_sale_id)) {
+          continue;
+        }
 
-          if (matchesPreSaleFilter) {
-            const amount = order.paid_amount || 0;
+        // Solo los cobros cuya fecha cae en el rango (por fecha de pago, no de
+        // creación) — así el KPI suma lo realmente cobrado en el período.
+        const paymentsInRange = presalePaymentsInRange(order.payments, from, to);
+        if (paymentsInRange.length > 0) {
+          let orderContributed = false;
+          for (const p of paymentsInRange) {
+            if (!p) continue;
+            const amount = p.amount || 0;
             if (amount > 0) {
-              contributed = true;
+              orderContributed = true;
               total += amount;
-
-              let method = "efectivo";
-              if (sale.payments && sale.payments.length > 0) {
-                let mainPayment = sale.payments[0];
-                if (mainPayment) {
-                  for (const pay of sale.payments) {
-                    if (pay && pay.amount > mainPayment.amount) {
-                      mainPayment = pay;
-                    }
-                  }
-                  method = (mainPayment.payment_method?.name ?? "").toLowerCase();
-                }
-              }
-
-              if (isCard(method)) {
+              const name = (p.payment_method?.name ?? "").toLowerCase();
+              if (isCard(name)) {
                 card += amount;
-              } else if (isTransfer(method)) {
+              } else if (isTransfer(name)) {
                 deposits += amount;
               } else {
                 cash += amount;
               }
             }
           }
+          if (orderContributed) {
+            contributingSales.add(order.id * -1); // negative ID to avoid collision
+          }
         }
-      }
-
-      if (contributed) {
-        contributingSales.add(sale.id);
       }
     }
 
@@ -639,7 +607,7 @@ export function ReportsPage() {
       deposits,
       transactionCount: contributingSales.size,
     };
-  }, [filteredSales, selectedFilters]);
+  }, [filteredSales, filteredPreSaleOrders, selectedFilters, from, to]);
 
 
     const activeTabMeta = (REPORT_TABS.find(tab => tab.id === activeTab) ?? REPORT_TABS[0]) as { id: TabId; label: string; icon: React.ElementType };
@@ -1393,9 +1361,9 @@ export function ReportsPage() {
                 { label: "Mes pasado",  from: firstOfLastMonth, to: lastOfLastMonth },
               ];
               return presets.map(p => {
-                const active = from === p.from && to === p.to;
+                const active = activePreset === p.label;
                 return (
-                  <button key={p.label} onClick={() => { setFrom(p.from); setTo(p.to); }}
+                  <button key={p.label} onClick={() => { setFrom(p.from); setTo(p.to); setActivePreset(p.label); }}
                     className="px-3 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all hover:scale-105 active:scale-95"
                     style={active
                       ? { background: "linear-gradient(135deg,#CC2200,#FF4422)", color: "#fff", border: "1px solid rgba(255,120,90,0.3)" }
@@ -1448,6 +1416,7 @@ export function ReportsPage() {
                         if (startStr <= endStr) {
                           setFrom(startStr);
                           setTo(endStr);
+                          setActivePreset(""); // Clear selected preset on manual calendar selection
                         }
                       }}
                       maxValue={parseYmd(today)}
