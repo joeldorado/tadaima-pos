@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { useAuth } from "@tadaima/auth";
 import {
   getSalesReport, getInventoryReport, getTopProductsReport, getCustomersReport,
+  getPreSaleOrders,
 } from "@tadaima/api";
 import { ReportsSkeleton } from "@/components/reports/ReportsSkeleton";
 import { getSales } from "@tadaima/api";
@@ -18,7 +19,7 @@ import { useStoresQuery } from "@/hooks/queries/useStores";
 import { getTodayLocal, daysAgoLocal, BUSINESS_TZ } from "@/lib/date";
 import { queryKeys } from "@/lib/queryKeys";
 import type { SalesReport, InventoryReport, TopProductsReport, CustomersReport } from "@tadaima/api";
-import type { SaleDetail, Store as StoreType } from "@tadaima/api";
+import type { SaleDetail, Store as StoreType, PreSaleOrder } from "@tadaima/api";
 import {
   Button as AriaButton,
   CalendarCell,
@@ -169,6 +170,55 @@ export function ReportsPage() {
     enabled: activeTab === "ventas",
     staleTime: REPORTS_STALE,
   });
+
+  const preSaleOrdersParams = {
+    from,
+    to,
+    status: "pending,ready,delivered,expired,cancelled",
+    ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}),
+    per_page: 500,
+  };
+  const preSaleOrdersQuery = useQuery({
+    queryKey: ["reports-presale-orders", preSaleOrdersParams],
+    queryFn: () => getPreSaleOrders(preSaleOrdersParams),
+    enabled: activeTab === "ventas",
+    staleTime: REPORTS_STALE,
+  });
+  const preSaleOrders: PreSaleOrder[] = preSaleOrdersQuery.data?.data ?? [];
+
+  const filteredPreSaleOrders = useMemo(() => {
+    const isCardMethod = (name: string) =>
+      name.includes("tarjeta") || name.includes("credit") || name.includes("debito") || name.includes("tpv") || name.includes("terminal");
+    const isCashMethod = (name: string) =>
+      name.includes("efectivo") || name.includes("cash");
+    const isDollarMethod = (name: string) =>
+      name.includes("dolar") || name.includes("dólar") || name.includes("usd");
+    const isTransferMethod = (name: string) =>
+      name.includes("transfer") || name.includes("deposit") || name.includes("spei");
+
+    return preSaleOrders.filter((order) => {
+      const orderStatus = (order.status ?? "").toLowerCase();
+      const orderIsCancelled = orderStatus.includes("cancel");
+      const orderIsNotPicked = orderStatus.includes("expired") || orderStatus.includes("vencid") || orderStatus.includes("no recog");
+
+      const methods = (order.payments ?? [])
+        .map((p) => (p.payment_method?.name ?? "").toLowerCase())
+        .filter(Boolean);
+
+      if (selectedFilters.includes("all") || selectedFilters.length === 0) return true;
+
+      return selectedFilters.some((filter) => {
+        if (filter === "cash") return methods.some((m) => isCashMethod(m) || isDollarMethod(m)) || (methods.length === 0);
+        if (filter === "dollar") return methods.some((m) => isDollarMethod(m));
+        if (filter === "card") return methods.some((m) => isCardMethod(m));
+        if (filter === "transfer") return methods.some((m) => isTransferMethod(m));
+        if (filter === "preSales") return true;
+        if (filter === "cancelled") return orderIsCancelled;
+        if (filter === "notPicked") return orderIsNotPicked;
+        return false;
+      });
+    });
+  }, [preSaleOrders, selectedFilters]);
   const invParams = { low_stock: lowStockOnly, ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}) };
   const invQuery = useQuery({
     queryKey: queryKeys.reports.inventory(invParams),
@@ -316,88 +366,83 @@ export function ReportsPage() {
           pGroup.commission_amount = (pGroup.commission_amount ?? 0) + comm;
         }
       }
+    }
 
-      // 2. Pre-sale items (Preventas)
-      if (sale.pre_sale_orders) {
-        for (const order of sale.pre_sale_orders) {
-          const orderStatus = (order.status ?? "").toLowerCase();
-          const orderIsCancelled = orderStatus.includes("cancel");
-          const orderIsNotPicked = orderStatus.includes("expired") || orderStatus.includes("vencid") || orderStatus.includes("no recog");
-
-          const matchesPreSaleFilter = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.some(filter => {
-            if (filter === "cash") return methods.some(m => isCashMethod(m) || isDollarMethod(m));
-            if (filter === "dollar") return methods.some(m => isDollarMethod(m));
-            if (filter === "card") return methods.some(m => isCardMethod(m));
-            if (filter === "transfer") return methods.some(m => isTransferMethod(m));
-            if (filter === "preSales") return true;
-            if (filter === "cancelled") return hasCancelled || orderIsCancelled;
-            if (filter === "notPicked") return orderIsNotPicked;
-            return false;
-          });
-
-          if (!matchesPreSaleFilter) continue;
-
-          const orderItemsTotal = order.items.reduce((sum, it) => sum + (it.unit_price * it.quantity), 0);
-
-          for (const item of order.items) {
-            // If product_id is null, generate a unique negative ID based on catalog ID to avoid collisions
-            const prodId = item.product_id ?? (item.catalog ? item.catalog.id * -1 : -999);
-            const prodName = item.catalog?.product_name ?? `Preventa #${item.id}`;
-            const prodSku = "PREVENTA";
-            const qty = item.quantity;
-            const itemTotal = item.unit_price * item.quantity;
-            const unitPrice = item.unit_price;
-
-            // Proportional allocation of paid_amount and balance based on item's total value vs order items total
-            const ratio = orderItemsTotal > 0 ? (itemTotal / orderItemsTotal) : (1 / order.items.length);
-            const itemApartado = (order.paid_amount || 0) * ratio;
-            const itemDeuda = (order.balance || 0) * ratio;
-
-            if (!map.has(prodId)) {
-              map.set(prodId, {
-                id: prodId,
-                name: prodName,
-                sku: prodSku,
-                sales_count: 0,
-                total_quantity: 0,
-                total_revenue: 0,
-                payment_breakdown: {},
-                price_breakdown: {},
-                pre_sale_apartado: 0,
-                pre_sale_deuda: 0,
-              });
+    // 2. Pre-sale items (Preventas)
+    for (const order of filteredPreSaleOrders) {
+      let payMethodName = "Efectivo";
+      if (order.payments && order.payments.length > 0) {
+        let mainPayment = order.payments[0];
+        if (mainPayment) {
+          for (const p of order.payments) {
+            if (p && p.amount > mainPayment.amount) {
+              mainPayment = p;
             }
-
-            const pGroup = map.get(prodId)!;
-            pGroup.sales_count += 1;
-            pGroup.total_quantity += qty;
-            // The actual revenue that entered the POS is the paid amount (apartado), not the total price of the items!
-            pGroup.total_revenue += itemApartado;
-
-            if (!pGroup.payment_breakdown[payMethodName]) {
-              pGroup.payment_breakdown[payMethodName] = { qty: 0, revenue: 0 };
-            }
-            const preBreakdown = pGroup.payment_breakdown[payMethodName]!;
-            preBreakdown.qty += qty;
-            preBreakdown.revenue += itemApartado;
-
-            pGroup.price_breakdown[unitPrice] = (pGroup.price_breakdown[unitPrice] ?? 0) + qty;
-
-            pGroup.pre_sale_apartado = (pGroup.pre_sale_apartado ?? 0) + itemApartado;
-            pGroup.pre_sale_deuda = (pGroup.pre_sale_deuda ?? 0) + itemDeuda;
           }
+          payMethodName = mainPayment.payment_method?.name ?? "Efectivo";
+        }
+      }
+
+      const orderItemsTotal = order.items ? order.items.reduce((sum, it) => sum + (it.unit_price * it.quantity), 0) : 0;
+
+      if (order.items) {
+        for (const item of order.items) {
+          // If product_id is null, generate a unique negative ID based on catalog ID to avoid collisions
+          const prodId = item.product_id ?? (item.catalog ? item.catalog.id * -1 : -999);
+          const prodName = item.catalog?.product_name ?? `Preventa #${item.id}`;
+          const prodSku = "PREVENTA";
+          const qty = item.quantity;
+          const itemTotal = item.unit_price * item.quantity;
+          const unitPrice = item.unit_price;
+
+          // Proportional allocation of paid_amount and balance based on item's total value vs order items total
+          const ratio = orderItemsTotal > 0 ? (itemTotal / orderItemsTotal) : (1 / order.items.length);
+          const itemApartado = (order.paid_amount || 0) * ratio;
+          const itemDeuda = (order.balance || 0) * ratio;
+
+          if (!map.has(prodId)) {
+            map.set(prodId, {
+              id: prodId,
+              name: prodName,
+              sku: prodSku,
+              sales_count: 0,
+              total_quantity: 0,
+              total_revenue: 0,
+              payment_breakdown: {},
+              price_breakdown: {},
+              pre_sale_apartado: 0,
+              pre_sale_deuda: 0,
+            });
+          }
+
+          const pGroup = map.get(prodId)!;
+          pGroup.sales_count += 1;
+          pGroup.total_quantity += qty;
+          pGroup.total_revenue += itemApartado;
+
+          if (!pGroup.payment_breakdown[payMethodName]) {
+            pGroup.payment_breakdown[payMethodName] = { qty: 0, revenue: 0 };
+          }
+          const preBreakdown = pGroup.payment_breakdown[payMethodName]!;
+          preBreakdown.qty += qty;
+          preBreakdown.revenue += itemApartado;
+
+          pGroup.price_breakdown[unitPrice] = (pGroup.price_breakdown[unitPrice] ?? 0) + qty;
+
+          pGroup.pre_sale_apartado = (pGroup.pre_sale_apartado ?? 0) + itemApartado;
+          pGroup.pre_sale_deuda = (pGroup.pre_sale_deuda ?? 0) + itemDeuda;
         }
       }
     }
 
     return Array.from(map.values()).sort((a, b) => b.total_quantity - a.total_quantity);
-  }, [filteredSales]);
+  }, [filteredSales, filteredPreSaleOrders]);
   const invReport: InventoryReport | null = invQuery.data ?? null;
   const topReport: TopProductsReport | null = topQuery.data ?? null;
   const custReport: CustomersReport | null = custQuery.data ?? null;
   // ¿La tab activa está fetcheando? ¿Ya tiene datos para mostrar?
   const isFetchingActive =
-    (activeTab === "ventas"     && (salesReportQuery.isFetching || salesListQuery.isFetching)) ||
+    (activeTab === "ventas"     && (salesReportQuery.isFetching || salesListQuery.isFetching || preSaleOrdersQuery.isFetching)) ||
     (activeTab === "inventario" && invQuery.isFetching) ||
     (activeTab === "productos"  && topQuery.isFetching) ||
     (activeTab === "clientes"   && custQuery.isFetching);
@@ -413,8 +458,8 @@ export function ReportsPage() {
   const refreshing = isFetchingActive && activeHasData;
 
   useEffect(() => {
-    if (salesReportQuery.error || salesListQuery.error) toast.error("Error al cargar reporte de ventas");
-  }, [salesReportQuery.error, salesListQuery.error]);
+    if (salesReportQuery.error || salesListQuery.error || preSaleOrdersQuery.error) toast.error("Error al cargar reporte de ventas");
+  }, [salesReportQuery.error, salesListQuery.error, preSaleOrdersQuery.error]);
   useEffect(() => {
     if (invQuery.error) toast.error("Error al cargar inventario");
   }, [invQuery.error]);
@@ -477,60 +522,44 @@ export function ReportsPage() {
         }
       }
 
-      // 2. Process pre-sale payments (anticipos) if the sale has them
-      const showPreSales = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.some(f => ["preSales", "notPicked", "cash", "dollar", "card", "transfer", "cancelled"].includes(f));
-      if (showPreSales && sale.pre_sale_orders && sale.pre_sale_orders.length > 0) {
-        for (const order of sale.pre_sale_orders) {
-          const orderStatus = (order.status ?? "").toLowerCase();
-          const orderIsCancelled = orderStatus.includes("cancel");
-          const orderIsNotPicked = orderStatus.includes("expired") || orderStatus.includes("vencid") || orderStatus.includes("no recog");
-          const hasCancelled = (sale.cancellation_status && sale.cancellation_status !== "none") || (sale.status ?? "").toLowerCase().includes("cancel");
-          const methods = (sale.payments ?? []).map(p => (p.payment_method?.name ?? "").toLowerCase()).filter(Boolean);
+      if (contributed) {
+        contributingSales.add(sale.id);
+      }
+    }
 
-          const matchesPreSaleFilter = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.some(filter => {
-            if (filter === "cash") return methods.some(m => m.includes("efectivo") || m.includes("cash") || m.includes("dolar") || m.includes("dólar") || m.includes("usd"));
-            if (filter === "dollar") return methods.some(m => m.includes("dolar") || m.includes("dólar") || m.includes("usd"));
-            if (filter === "card") return methods.some(m => isCard(m));
-            if (filter === "transfer") return methods.some(m => isTransfer(m));
-            if (filter === "preSales") return true;
-            if (filter === "cancelled") return hasCancelled || orderIsCancelled;
-            if (filter === "notPicked") return orderIsNotPicked;
-            return false;
-          });
+    // 2. Process pre-sale payments (anticipos) from filteredPreSaleOrders that are not linked to already processed sales
+    const processedLinkedSaleIds = new Set(filteredSales.map(s => s.id));
+    const showPreSales = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.some(f => ["preSales", "notPicked", "cash", "dollar", "card", "transfer", "cancelled"].includes(f));
+    
+    if (showPreSales) {
+      for (const order of filteredPreSaleOrders) {
+        // If it's linked to a sale that we already processed, ignore to avoid double-counting!
+        if (order.linked_sale_id && processedLinkedSaleIds.has(order.linked_sale_id)) {
+          continue;
+        }
 
-          if (matchesPreSaleFilter) {
-            const amount = order.paid_amount || 0;
+        if (order.payments && order.payments.length > 0) {
+          let orderContributed = false;
+          for (const p of order.payments) {
+            if (!p) continue;
+            const amount = p.amount || 0;
             if (amount > 0) {
-              contributed = true;
+              orderContributed = true;
               total += amount;
-
-              let method = "efectivo";
-              if (sale.payments && sale.payments.length > 0) {
-                let mainPayment = sale.payments[0];
-                if (mainPayment) {
-                  for (const pay of sale.payments) {
-                    if (pay && pay.amount > mainPayment.amount) {
-                      mainPayment = pay;
-                    }
-                  }
-                  method = (mainPayment.payment_method?.name ?? "").toLowerCase();
-                }
-              }
-
-              if (isCard(method)) {
+              const name = (p.payment_method?.name ?? "").toLowerCase();
+              if (isCard(name)) {
                 card += amount;
-              } else if (isTransfer(method)) {
+              } else if (isTransfer(name)) {
                 deposits += amount;
               } else {
                 cash += amount;
               }
             }
           }
+          if (orderContributed) {
+            contributingSales.add(order.id * -1); // negative ID to avoid collision
+          }
         }
-      }
-
-      if (contributed) {
-        contributingSales.add(sale.id);
       }
     }
 
@@ -541,7 +570,7 @@ export function ReportsPage() {
       deposits,
       transactionCount: contributingSales.size,
     };
-  }, [filteredSales, selectedFilters]);
+  }, [filteredSales, filteredPreSaleOrders, selectedFilters]);
 
 
     const activeTabMeta = (REPORT_TABS.find(tab => tab.id === activeTab) ?? REPORT_TABS[0]) as { id: TabId; label: string; icon: React.ElementType };
