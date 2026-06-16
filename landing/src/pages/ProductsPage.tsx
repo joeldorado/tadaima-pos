@@ -105,6 +105,23 @@ const T = {
   } as CSSProperties,
 };
 
+const PRODUCT_THEME = {
+  surfaceSoft: "var(--td-surface-soft)",
+  surfaceMuted: "var(--td-surface-muted)",
+  surfaceStrong: "var(--td-surface-strong)",
+  surfaceStronger: "var(--td-surface-stronger)",
+  tableHead: "var(--td-table-head-bg)",
+  tableFoot: "var(--td-table-foot-bg)",
+  borderSubtle: "1px solid var(--td-card-border)",
+  borderPanel: "1px solid var(--td-panel-border)",
+};
+
+const SECONDARY_BUTTON = {
+  color: T.textSecondary,
+  background: PRODUCT_THEME.surfaceMuted,
+  border: PRODUCT_THEME.borderSubtle,
+} as CSSProperties;
+
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 type TipoProducto = "normal" | "libro" | "unico" | "temporal";
 type EtiquetaProducto = "en bodega" | "dañado" | "preventa";
@@ -213,7 +230,7 @@ function DetailChip({ children }: { children: React.ReactNode }) {
   return (
     <span
       className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider"
-      style={{ background: "rgba(255,255,255,0.06)", color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
+      style={{ background: PRODUCT_THEME.surfaceSoft, color: T.textSecondary, border: PRODUCT_THEME.borderSubtle }}
     >
       {children}
     </span>
@@ -224,7 +241,7 @@ function DetailField({ label, value }: { label: string; value: React.ReactNode }
   return (
     <div className="space-y-1.5">
       <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: T.textMuted }}>{label}</p>
-      <div className="rounded-2xl px-4 py-3" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", color: T.textPrimary }}>
+      <div className="rounded-2xl px-4 py-3" style={{ background: PRODUCT_THEME.surfaceMuted, border: PRODUCT_THEME.borderSubtle, color: T.textPrimary }}>
         {value}
       </div>
     </div>
@@ -266,7 +283,7 @@ function ProductDetailModal({
     <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={onClose} />
       <div className="relative w-full max-w-3xl max-h-[90vh] overflow-hidden rounded-[32px] flex flex-col" style={T.glass}>
-        <div className="p-6 border-b border-white/10 flex items-center justify-between gap-4">
+        <div className="p-6 flex items-center justify-between gap-4" style={{ borderBottom: PRODUCT_THEME.borderPanel }}>
           <div className="min-w-0">
             <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: T.redBright }}>Detalle de producto</p>
             <h2 className="text-xl font-black truncate" style={{ color: T.textPrimary }}>{product.nombre}</h2>
@@ -276,14 +293,14 @@ function ProductDetailModal({
               <DetailChip>{storeLabel}: {stock}</DetailChip>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 rounded-xl hover:bg-white/10 transition-colors">
+          <button onClick={onClose} className="p-2 rounded-xl transition-colors" style={SECONDARY_BUTTON}>
             <X size={20} style={{ color: T.textSecondary }} />
           </button>
         </div>
 
         <div className="p-6 overflow-y-auto space-y-6">
           <div className="flex flex-col md:flex-row gap-6">
-            <div className="w-40 h-40 rounded-[28px] overflow-hidden shrink-0 flex items-center justify-center" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)" }}>
+            <div className="w-40 h-40 rounded-[28px] overflow-hidden shrink-0 flex items-center justify-center" style={{ background: PRODUCT_THEME.surfaceMuted, border: PRODUCT_THEME.borderSubtle }}>
               {product.imagen ? (
                 <img src={product.imagen} alt={product.nombre} className="w-full h-full object-cover" />
               ) : (
@@ -386,7 +403,7 @@ function ProductDetailModal({
           </div>
         </div>
 
-        <div className="p-6 border-t border-white/10 flex items-center justify-between gap-3">
+        <div className="p-6 flex items-center justify-between gap-3" style={{ borderTop: PRODUCT_THEME.borderPanel }}>
           <p className="text-xs" style={{ color: T.textMuted }}>
             {canNotify ? "Puedes avisar al gerente/admin cuando el stock esté por agotarse." : "Vista solo lectura."}
           </p>
@@ -441,7 +458,7 @@ function MangaDetailModal({
     <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={onClose} />
       <div className="relative w-full max-w-3xl max-h-[90vh] overflow-hidden rounded-[32px] flex flex-col" style={T.glass}>
-        <div className="p-6 border-b border-white/10 flex items-center justify-between gap-4">
+        <div className="p-6 flex items-center justify-between gap-4" style={{ borderBottom: PRODUCT_THEME.borderPanel }}>
           <div className="min-w-0">
             <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: T.redBright }}>Detalle de tomo</p>
             <h2 className="text-xl font-black truncate" style={{ color: T.textPrimary }}>{manga.name}</h2>
@@ -451,14 +468,14 @@ function MangaDetailModal({
               <DetailChip>{storeLabel}: {stock}</DetailChip>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 rounded-xl hover:bg-white/10 transition-colors">
+          <button onClick={onClose} className="p-2 rounded-xl transition-colors" style={SECONDARY_BUTTON}>
             <X size={20} style={{ color: T.textSecondary }} />
           </button>
         </div>
 
         <div className="p-6 overflow-y-auto space-y-6">
           <div className="flex flex-col md:flex-row gap-6">
-            <div className="w-40 h-40 rounded-[28px] overflow-hidden shrink-0 flex items-center justify-center" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)" }}>
+            <div className="w-40 h-40 rounded-[28px] overflow-hidden shrink-0 flex items-center justify-center" style={{ background: PRODUCT_THEME.surfaceMuted, border: PRODUCT_THEME.borderSubtle }}>
               {manga.image_url ? (
                 <img src={manga.image_url} alt={manga.name} className="w-full h-full object-cover" />
               ) : (
@@ -501,7 +518,7 @@ function MangaDetailModal({
           </div>
         </div>
 
-        <div className="p-6 border-t border-white/10 flex items-center justify-between gap-3">
+        <div className="p-6 flex items-center justify-between gap-3" style={{ borderTop: PRODUCT_THEME.borderPanel }}>
           <p className="text-xs" style={{ color: T.textMuted }}>
             {canNotify ? "Puedes avisar al gerente/admin cuando este tomo se esté agotando." : "Vista solo lectura."}
           </p>
@@ -659,14 +676,14 @@ function ProductModal({
         className="relative w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-[32px] flex flex-col shadow-2xl"
         style={T.glass}
       >
-        <div className="p-6 border-b border-white/10 flex items-center justify-between">
+        <div className="p-6 flex items-center justify-between" style={{ borderBottom: PRODUCT_THEME.borderPanel }}>
           <div>
             <h2 className="text-xl font-black" style={{ color: T.textPrimary }}>
               {product ? "Editar Producto" : "Nuevo Producto"}
             </h2>
             <p className="text-xs" style={{ color: T.textSecondary }}>Configuración detallada de catálogo</p>
           </div>
-          <button onClick={onClose} className="p-2 rounded-xl hover:bg-white/10 transition-colors">
+          <button onClick={onClose} className="p-2 rounded-xl transition-colors" style={SECONDARY_BUTTON}>
             <X size={20} style={{ color: T.textSecondary }} />
           </button>
         </div>
@@ -679,7 +696,7 @@ function ProductModal({
             { label: "Inventario", done: (formData.stockUbicaciones ?? []).length > 0 },
           ];
           return (
-            <div className="px-6 py-2.5 flex items-center gap-5" style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+            <div className="px-6 py-2.5 flex items-center gap-5" style={{ borderBottom: PRODUCT_THEME.borderSubtle, background: PRODUCT_THEME.surfaceMuted }}>
               {checks.map(item => (
                 <div key={item.label} className="flex items-center gap-1.5">
                   {item.done
@@ -737,7 +754,7 @@ function ProductModal({
           {activeTab === "general" && (
             <div className="space-y-6">
               <div className="flex flex-col sm:flex-row gap-6">
-                <div className="w-36 h-36 rounded-[28px] overflow-hidden shrink-0 border-2 border-dashed border-white/10 flex flex-col items-center justify-center relative group transition-all hover:border-red-500/40 hover:bg-white/[0.02] shadow-inner" style={{ background: "rgba(255,255,255,0.01)", aspectRatio: "1/1" }}>
+                <div className="w-36 h-36 rounded-[28px] overflow-hidden shrink-0 border-2 border-dashed flex flex-col items-center justify-center relative group transition-all hover:border-red-500/40 shadow-inner" style={{ background: PRODUCT_THEME.surfaceMuted, borderColor: "var(--td-card-border)", aspectRatio: "1/1" }}>
                   {formData.imagen ? (
                     <>
                       <img src={formData.imagen} alt="Preview" className="absolute inset-0 w-full h-full object-cover" />
@@ -747,8 +764,8 @@ function ProductModal({
                       </div>
                     </>
                   ) : (
-                    <div className="flex flex-col items-center gap-2 text-white/20 group-hover:text-red-500/40 transition-colors">
-                      <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center mb-1">
+                    <div className="flex flex-col items-center gap-2 transition-colors" style={{ color: T.textMuted }}>
+                      <div className="w-10 h-10 rounded-full flex items-center justify-center mb-1" style={{ background: PRODUCT_THEME.surfaceSoft }}>
                         <Upload size={20} />
                       </div>
                       <span className="text-[9px] font-black uppercase tracking-widest text-center">Subir<br/>Imagen</span>
@@ -793,7 +810,8 @@ function ProductModal({
                         <button
                           type="button"
                           title="Generar código (sin lector)"
-                          className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-xl text-white/40 hover:text-red-500 hover:bg-red-500/10 transition-all"
+                          className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-xl hover:text-red-500 hover:bg-red-500/10 transition-all"
+                          style={{ color: T.textMuted }}
                           onClick={() => setFormData({ ...formData, sku: generateBarcode() })}
                         >
                           <Scan size={18} />
@@ -819,8 +837,8 @@ function ProductModal({
                               setFormData({...formData, categoria: newCat});
                             }
                           }}
-                          className="p-3 rounded-2xl transition-all hover:bg-white/10 shrink-0 border border-white/5"
-                          style={{ background: "rgba(255,255,255,0.03)" }}
+                          className="p-3 rounded-2xl transition-all shrink-0"
+                          style={SECONDARY_BUTTON}
                         >
                           <Plus size={18} style={{ color: T.redBright }} />
                         </button>
@@ -850,8 +868,8 @@ function ProductModal({
                           setFormData({...formData, proveedor: newProv});
                         }
                       }}
-                      className="p-3 rounded-2xl transition-all hover:bg-white/10 shrink-0 border border-white/5"
-                      style={{ background: "rgba(255,255,255,0.03)" }}
+                      className="p-3 rounded-2xl transition-all shrink-0"
+                      style={SECONDARY_BUTTON}
                     >
                       <Plus size={18} style={{ color: T.redBright }} />
                     </button>
@@ -864,7 +882,7 @@ function ProductModal({
           {activeTab === "precios" && (
             <div className="space-y-6">
               {canViewCost && (
-                <div className="grid grid-cols-2 gap-4 p-4 rounded-2xl bg-white/5 border border-white/5">
+                <div className="grid grid-cols-2 gap-4 p-4 rounded-2xl" style={{ background: PRODUCT_THEME.surfaceSoft, border: PRODUCT_THEME.borderSubtle }}>
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-black uppercase tracking-widest ml-1 flex items-center gap-1" style={{ color: T.redBright }}>
                       <CheckCircle2 size={10} /> Costo Real
@@ -946,7 +964,7 @@ function ProductModal({
                 </div>
               </div>
 
-              <div className="flex flex-col gap-3 p-4 rounded-2xl bg-white/5">
+              <div className="flex flex-col gap-3 p-4 rounded-2xl" style={{ background: PRODUCT_THEME.surfaceSoft, border: PRODUCT_THEME.borderSubtle }}>
                 <p className="text-[9px] font-black uppercase tracking-widest opacity-50">Métodos de pago aceptados</p>
                 <div className="flex items-center gap-6 flex-wrap">
                   <label className="flex items-center gap-2 cursor-pointer">
@@ -1012,7 +1030,7 @@ function ProductModal({
 
                 {/* No warehouses at all */}
                 {locations.length === 0 && (
-                  <div className="flex flex-col items-center gap-2 py-8 rounded-2xl" style={{ background: "rgba(255,255,255,0.03)", border: "1px dashed rgba(255,255,255,0.1)" }}>
+                  <div className="flex flex-col items-center gap-2 py-8 rounded-2xl" style={{ background: PRODUCT_THEME.surfaceMuted, border: `1px dashed var(--td-card-border)` }}>
                     <Warehouse size={28} style={{ color: T.textMuted }} />
                     <p className="text-xs text-center" style={{ color: T.textMuted }}>
                       No hay almacenes ni tiendas configurados.<br />
@@ -1023,7 +1041,7 @@ function ProductModal({
 
                 {/* Add form */}
                 {locations.length > 0 && available.length > 0 && (
-                  <div className="flex gap-2 items-end p-4 rounded-2xl" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                  <div className="flex gap-2 items-end p-4 rounded-2xl" style={{ background: PRODUCT_THEME.surfaceMuted, border: PRODUCT_THEME.borderSubtle }}>
                     <div className="flex-1">
                       <label className="text-[9px] font-black uppercase tracking-widest block mb-1.5" style={{ color: T.textMuted }}>Almacén / Tienda</label>
                       <select
@@ -1083,9 +1101,9 @@ function ProductModal({
                   const meta = locations.find(l => l.warehouseId === loc.warehouseId);
                   const qty = loc.quantity ?? loc.stock ?? 0;
                   return (
-                    <div key={idx} className="flex items-center gap-3 p-4 rounded-2xl" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                    <div key={idx} className="flex items-center gap-3 p-4 rounded-2xl" style={{ background: PRODUCT_THEME.surfaceMuted, border: PRODUCT_THEME.borderSubtle }}>
                       {/* Icon */}
-                      <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: "rgba(255,255,255,0.06)" }}>
+                      <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: PRODUCT_THEME.surfaceSoft }}>
                         <Warehouse size={14} style={{ color: T.textSecondary }} />
                       </div>
 
@@ -1137,7 +1155,7 @@ function ProductModal({
           })()}
         </div>
 
-        <div className="p-6 border-t border-white/10 flex items-center justify-between gap-4">
+        <div className="p-6 flex items-center justify-between gap-4" style={{ borderTop: PRODUCT_THEME.borderPanel }}>
            {canManage && product ? (
              <div className="flex items-center gap-2">
                <input
@@ -1160,8 +1178,8 @@ function ProductModal({
              )}
              <button
               onClick={onClose}
-              className="px-6 py-2.5 rounded-full text-sm font-bold transition-all hover:bg-white/5"
-              style={{ color: T.textSecondary }}
+              className="px-6 py-2.5 rounded-full text-sm font-bold transition-all"
+              style={SECONDARY_BUTTON}
             >
               Cancelar
             </button>
@@ -1668,7 +1686,7 @@ export function ProductsPage() {
           const val = info.getValue() as string;
           const cfg = {
             activo:     { label: 'Activo',       color: '#00CC66',   bg: 'rgba(0,180,90,0.15)'   },
-            inactivo:   { label: 'Inactivo',      color: T.textMuted, bg: 'rgba(255,255,255,0.06)' },
+            inactivo:   { label: 'Inactivo',      color: T.textMuted, bg: PRODUCT_THEME.surfaceSoft },
             sin_stock:  { label: 'Sin Stock',     color: T.redBright, bg: 'rgba(204,34,0,0.15)'   },
             bajo_stock: { label: 'Bajo Stock',    color: T.redBright, bg: 'rgba(204,34,0,0.12)'   },
             unico_bajo: { label: 'Único — agotándose', color: '#FFAA00', bg: 'rgba(255,170,0,0.1)' },
@@ -1699,7 +1717,7 @@ export function ProductsPage() {
                   className="px-3 py-1.5 rounded-xl text-[10px] font-black transition-all flex items-center gap-1.5"
                   style={notifiedKeys[`product:${p.id}`]
                     ? { color: "#22c55e", border: "1px solid rgba(34,197,94,0.35)", background: "rgba(34,197,94,0.10)" }
-                    : { color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
+                    : SECONDARY_BUTTON}
                   title="Notificar stock bajo"
                 >
                   {alertingKey === `product:${p.id}` ? <Loader2 size={11} className="animate-spin" /> : <AlertTriangle size={11} />}
@@ -1709,7 +1727,7 @@ export function ProductsPage() {
               <button
                 onClick={e => { e.stopPropagation(); setStockModalProduct({ id: p.id, name: p.nombre }); }}
                 className="px-3 py-1.5 rounded-xl text-[10px] font-black transition-all hover:bg-emerald-500/10 hover:text-emerald-300 flex items-center gap-1.5"
-                style={{ color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
+                style={SECONDARY_BUTTON}
                 title="Editar stock por tienda"
               >
                 <Warehouse size={11} />
@@ -1717,8 +1735,8 @@ export function ProductsPage() {
               </button>
               <button
                 onClick={e => { e.stopPropagation(); handleEdit(p); }}
-                className="px-3 py-1.5 rounded-xl text-[10px] font-black transition-all hover:bg-white/10"
-                style={{ color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
+                className="px-3 py-1.5 rounded-xl text-[10px] font-black transition-all"
+                style={SECONDARY_BUTTON}
               >
                 Editar
               </button>
@@ -1730,8 +1748,8 @@ export function ProductsPage() {
           <div className="flex items-center gap-2 justify-end">
             <button
               onClick={e => { e.stopPropagation(); openProductDetails(p); }}
-              className="px-3 py-1.5 rounded-xl text-[10px] font-black transition-all hover:bg-white/10"
-              style={{ color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
+              className="px-3 py-1.5 rounded-xl text-[10px] font-black transition-all"
+              style={SECONDARY_BUTTON}
             >
               Ver
             </button>
@@ -1741,7 +1759,7 @@ export function ProductsPage() {
                 className="px-3 py-1.5 rounded-xl text-[10px] font-black transition-all flex items-center gap-1.5"
                 style={notifiedKeys[`product:${p.id}`]
                   ? { color: "#22c55e", border: "1px solid rgba(34,197,94,0.35)", background: "rgba(34,197,94,0.10)" }
-                  : { color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
+                  : SECONDARY_BUTTON}
               >
                 {alertingKey === `product:${p.id}` ? <Loader2 size={11} className="animate-spin" /> : <AlertTriangle size={11} />}
                 {notifiedKeys[`product:${p.id}`] ? "Avisado" : "Avisar"}
@@ -1801,14 +1819,14 @@ export function ProductsPage() {
                 src={m.image_url}
                 alt={m.name}
                 className="shrink-0 w-10 h-10 rounded-xl object-cover"
-                style={{ minWidth: 40, border: '1px solid rgba(255,255,255,0.08)' }}
+                style={{ minWidth: 40, border: PRODUCT_THEME.borderSubtle }}
                 onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
               />
             ) : (
               <div className="shrink-0 w-10 h-10 rounded-xl flex flex-col items-center justify-center" style={{ background: 'linear-gradient(135deg,#990000,#CC2200)', minWidth: 40 }}>
                 {m.volume_number != null ? (
                   <>
-                    <span style={{ fontSize: 7, fontWeight: 700, color: 'rgba(255,255,255,0.7)', lineHeight: 1 }}>VOL</span>
+                    <span style={{ fontSize: 7, fontWeight: 700, color: 'rgba(255,255,255,0.78)', lineHeight: 1 }}>VOL</span>
                     <span style={{ fontSize: 13, fontWeight: 900, color: '#fff', lineHeight: 1.1 }}>{m.volume_number}</span>
                   </>
                 ) : (
@@ -1877,7 +1895,7 @@ export function ProductsPage() {
       cell: info => {
         const active = info.getValue();
         return (
-          <span className="px-2.5 py-1 rounded-full text-[10px] font-black" style={{ color: active ? '#00CC66' : T.textMuted, background: active ? 'rgba(0,180,90,0.15)' : 'rgba(255,255,255,0.06)' }}>
+          <span className="px-2.5 py-1 rounded-full text-[10px] font-black" style={{ color: active ? '#00CC66' : T.textMuted, background: active ? 'rgba(0,180,90,0.15)' : PRODUCT_THEME.surfaceSoft }}>
             {active ? 'Activo' : 'Inactivo'}
           </span>
         );
@@ -1899,7 +1917,7 @@ export function ProductsPage() {
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black transition-all"
                   style={notifiedKeys[`manga:${m.id}`]
                     ? { color: "#22c55e", border: "1px solid rgba(34,197,94,0.35)", background: "rgba(34,197,94,0.10)" }
-                    : { color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
+                    : SECONDARY_BUTTON}
                   title="Notificar stock bajo"
                 >
                   {alertingKey === `manga:${m.id}` ? <Loader2 size={11} className="animate-spin" /> : <AlertTriangle size={11} />}
@@ -1909,7 +1927,7 @@ export function ProductsPage() {
               <button
                 onClick={e => { e.stopPropagation(); setStockModalProduct({ id: m.id, name: `${m.name}${m.volume_number != null ? ` Vol. ${m.volume_number}` : ""}`, kind: "manga" }); }}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black transition-all hover:bg-emerald-500/10 hover:text-emerald-300"
-                style={{ color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
+                style={SECONDARY_BUTTON}
                 title="Editar stock por tienda"
               >
                 <Warehouse size={11} />
@@ -1917,8 +1935,8 @@ export function ProductsPage() {
               </button>
               <button
                 onClick={e => { e.stopPropagation(); setEditingManga(m); }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black transition-all hover:bg-white/10"
-                style={{ color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black transition-all"
+                style={SECONDARY_BUTTON}
                 title="Editar tomo"
               >
                 <Pencil size={11} />
@@ -1932,8 +1950,8 @@ export function ProductsPage() {
           <div className="flex items-center gap-2 justify-end">
             <button
               onClick={e => { e.stopPropagation(); openMangaDetails(m); }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black transition-all hover:bg-white/10"
-              style={{ color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black transition-all"
+              style={SECONDARY_BUTTON}
             >
               Ver
             </button>
@@ -1943,7 +1961,7 @@ export function ProductsPage() {
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black transition-all"
                 style={notifiedKeys[`manga:${m.id}`]
                   ? { color: "#22c55e", border: "1px solid rgba(34,197,94,0.35)", background: "rgba(34,197,94,0.10)" }
-                  : { color: T.textSecondary, border: "1px solid rgba(255,255,255,0.08)" }}
+                  : SECONDARY_BUTTON}
               >
                 {alertingKey === `manga:${m.id}` ? <Loader2 size={11} className="animate-spin" /> : <AlertTriangle size={11} />}
                 {notifiedKeys[`manga:${m.id}`] ? "Avisado" : "Avisar"}
@@ -2005,8 +2023,8 @@ export function ProductsPage() {
             <h1 className="text-2xl font-black tracking-tight" style={{ color: T.textPrimary }}>
               Almacén <span style={{ color: T.redBright }}>Tadaima</span>
             </h1>
-            <div className="flex p-1 rounded-xl bg-black/40 border border-white/5 ml-2 shadow-inner">
-              <span className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${canManage ? 'bg-red-600 text-white shadow-lg' : 'text-white/30'}`}>
+            <div className="flex p-1 rounded-xl ml-2 shadow-inner" style={{ background: PRODUCT_THEME.surfaceStrong, border: PRODUCT_THEME.borderSubtle }}>
+              <span className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${canManage ? 'bg-red-600 text-white shadow-lg' : ''}`} style={!canManage ? { color: T.textMuted } : undefined}>
                 {canManage ? (isGerente ? "Gerente" : "Admin") : "Almacén"}
               </span>
             </div>
@@ -2201,7 +2219,7 @@ export function ProductsPage() {
             style={T.input}
           />
         </div>
-        <div className="flex p-1 rounded-2xl shrink-0" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+        <div className="flex p-1 rounded-2xl shrink-0" style={{ background: PRODUCT_THEME.surfaceMuted, border: PRODUCT_THEME.borderSubtle }}>
           {(["list", "grid"] as const).map((mode) => (
             <button
               key={mode}
@@ -2338,10 +2356,10 @@ export function ProductsPage() {
                           );
                         })}
                       </div>
-                      <div className="flex items-center justify-between border-t border-white/5 pt-3">
+                      <div className="flex items-center justify-between pt-3" style={{ borderTop: PRODUCT_THEME.borderSubtle }}>
                         <div className="flex flex-wrap gap-1.5">
-                          {priceCount > 1 && <span className="px-2 py-0.5 rounded-full text-[10px] font-black border border-white/10 text-white/55">{priceCount} precios</span>}
-                          {p.categoria && <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-white/8 text-white/45 truncate max-w-[120px]">{p.categoria}</span>}
+                          {priceCount > 1 && <span className="px-2 py-0.5 rounded-full text-[10px] font-black" style={{ border: PRODUCT_THEME.borderSubtle, color: T.textMuted, background: PRODUCT_THEME.surfaceSoft }}>{priceCount} precios</span>}
+                          {p.categoria && <span className="px-2 py-0.5 rounded-full text-[10px] font-bold truncate max-w-[120px]" style={{ border: PRODUCT_THEME.borderSubtle, color: T.textSecondary, background: PRODUCT_THEME.surfaceSoft }}>{p.categoria}</span>}
                         </div>
                         <div className="px-3 py-1 rounded-full text-[11px] font-black" style={{ background: lowStock ? T.redBright : unicoLow ? '#D97706' : "rgba(30,120,60,0.8)", color: "#fff" }}>{disponible} disp.</div>
                       </div>
@@ -2364,7 +2382,7 @@ export function ProductsPage() {
                     </div>
                     <div className="flex flex-wrap gap-1">
                       {p.soloEfectivo && <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#D97706]/20 text-[#D97706]">Solo Efectivo</span>}
-                      {priceCount > 1 && <span className="px-2 py-0.5 rounded-full text-[10px] font-black border border-white/10 text-white/50">{priceCount} precios</span>}
+                      {priceCount > 1 && <span className="px-2 py-0.5 rounded-full text-[10px] font-black" style={{ border: PRODUCT_THEME.borderSubtle, color: T.textMuted, background: PRODUCT_THEME.surfaceSoft }}>{priceCount} precios</span>}
                     </div>
                     <div className="flex flex-col gap-2">
                       {priceRows.map(({ level, price }) => {
@@ -2391,7 +2409,7 @@ export function ProductsPage() {
                         );
                       })}
                     </div>
-                    <div className="flex items-center justify-between border-t border-white/5 pt-2">
+                    <div className="flex items-center justify-between pt-2" style={{ borderTop: PRODUCT_THEME.borderSubtle }}>
                       {p.categoria ? <span className="text-[10px] font-bold truncate max-w-[120px]" style={{ color: T.textMuted }}>{p.categoria}</span> : <span />}
                       <span className="text-[10px] font-bold uppercase tracking-[0.14em]" style={{ color: T.textMuted }}>
                         {priceCount === 1 ? "1 precio" : `${priceCount} precios`}
@@ -2411,7 +2429,7 @@ export function ProductsPage() {
             <table className="w-full text-left border-collapse">
               <thead style={{ position: "sticky", top: 0, zIndex: 10 }}>
                 {table.getHeaderGroups().map(headerGroup => (
-                  <tr key={headerGroup.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.06)", background: "var(--td-popup-bg)" }}>
+                  <tr key={headerGroup.id} style={{ borderBottom: PRODUCT_THEME.borderSubtle, background: PRODUCT_THEME.tableHead }}>
                     {headerGroup.headers.map(header => (
                       <th
                         key={header.id}
@@ -2419,7 +2437,7 @@ export function ProductsPage() {
                         style={{
                           color: T.textMuted,
                           cursor: header.column.getCanSort() ? 'pointer' : 'default',
-                          background: "var(--td-popup-bg)",
+                          background: PRODUCT_THEME.tableHead,
                         }}
                         onClick={header.column.getToggleSortingHandler()}
                       >
@@ -2459,8 +2477,8 @@ export function ProductsPage() {
                     <tr
                       key={row.id}
                       onClick={canEdit ? () => handleEdit(row.original) : () => openProductDetails(row.original)}
-                      className="group transition-colors hover:bg-white/[0.03] cursor-pointer"
-                      style={{ borderBottom: "1px solid rgba(255,255,255,0.03)" }}
+                      className="group transition-colors cursor-pointer"
+                      style={{ borderBottom: PRODUCT_THEME.borderSubtle }}
                     >
                       {row.getVisibleCells().map(cell => (
                         <td key={cell.id} className="px-6 py-4">
@@ -2477,7 +2495,7 @@ export function ProductsPage() {
           {/* ── Pagination ── */}
           <div
             className="flex items-center justify-between px-6 py-4 gap-4 flex-wrap"
-            style={{ borderTop: "1px solid rgba(255,255,255,0.06)", background: "rgba(0,0,0,0.12)" }}
+            style={{ borderTop: PRODUCT_THEME.borderSubtle, background: PRODUCT_THEME.tableFoot }}
           >
             <span className="text-[11px] font-semibold" style={{ color: T.textMuted }}>
               {filtered.length} productos · página {table.getState().pagination.pageIndex + 1} de {Math.max(1, table.getPageCount())}
@@ -2486,8 +2504,8 @@ export function ProductsPage() {
               <button
                 onClick={() => table.setPageIndex(0)}
                 disabled={!table.getCanPreviousPage()}
-                className="p-2 rounded-xl transition-all hover:bg-white/10 disabled:opacity-30"
-                style={{ color: T.textSecondary }}
+                className="p-2 rounded-xl transition-all disabled:opacity-30"
+                style={SECONDARY_BUTTON}
                 title="Primera página"
               >
                 <ChevronsLeft size={15} />
@@ -2495,8 +2513,8 @@ export function ProductsPage() {
               <button
                 onClick={() => table.previousPage()}
                 disabled={!table.getCanPreviousPage()}
-                className="p-2 rounded-xl transition-all hover:bg-white/10 disabled:opacity-30"
-                style={{ color: T.textSecondary }}
+                className="p-2 rounded-xl transition-all disabled:opacity-30"
+                style={SECONDARY_BUTTON}
                 title="Página anterior"
               >
                 <ChevronLeft size={15} />
@@ -2523,8 +2541,8 @@ export function ProductsPage() {
               <button
                 onClick={() => table.nextPage()}
                 disabled={!table.getCanNextPage()}
-                className="p-2 rounded-xl transition-all hover:bg-white/10 disabled:opacity-30"
-                style={{ color: T.textSecondary }}
+                className="p-2 rounded-xl transition-all disabled:opacity-30"
+                style={SECONDARY_BUTTON}
                 title="Página siguiente"
               >
                 <ChevronRight size={15} />
@@ -2532,8 +2550,8 @@ export function ProductsPage() {
               <button
                 onClick={() => table.setPageIndex(table.getPageCount() - 1)}
                 disabled={!table.getCanNextPage()}
-                className="p-2 rounded-xl transition-all hover:bg-white/10 disabled:opacity-30"
-                style={{ color: T.textSecondary }}
+                className="p-2 rounded-xl transition-all disabled:opacity-30"
+                style={SECONDARY_BUTTON}
                 title="Última página"
               >
                 <ChevronsRight size={15} />
@@ -2561,27 +2579,27 @@ export function ProductsPage() {
         return (
           <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-black/85 backdrop-blur-md" onClick={close} />
-            <div className="relative w-full max-w-md rounded-2xl p-6 shadow-2xl transition-all" style={{ background: '#1a1a1a', border: `1px solid ${isForce ? 'rgba(239,68,68,0.7)' : 'rgba(239,68,68,0.3)'}` }}>
+            <div className="relative w-full max-w-md rounded-2xl p-6 shadow-2xl transition-all" style={{ background: "var(--td-panel-bg)", border: `1px solid ${isForce ? 'rgba(239,68,68,0.7)' : 'rgba(239,68,68,0.3)'}` }}>
               <div className="flex items-start gap-3 mb-4">
                 <div className="w-12 h-12 rounded-full flex items-center justify-center shrink-0 animate-pulse" style={{ background: isForce ? 'rgba(239,68,68,0.25)' : 'rgba(239,68,68,0.12)' }}>
                   <AlertTriangle size={26} className="text-red-400" />
                 </div>
                 <div>
-                  <h3 className="font-black text-white text-lg uppercase tracking-wider">
+                  <h3 className="font-black text-lg uppercase tracking-wider" style={{ color: T.textPrimary }}>
                     {isForce ? '⚠️ Borrado total' : 'Eliminar producto'}
                   </h3>
-                  <p className="text-xs text-gray-400 mt-1">Esta acción <span className="text-red-400 font-bold">NO se puede deshacer</span>.</p>
+                  <p className="text-xs mt-1" style={{ color: T.textSecondary }}>Esta acción <span className="text-red-400 font-bold">NO se puede deshacer</span>.</p>
                 </div>
               </div>
 
               <div className="rounded-xl p-3 mb-4" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
-                <p className="font-bold text-white text-sm">{deleteTarget.nombre}</p>
-                <p className="text-[10px] text-gray-400 mt-0.5">SKU: {deleteTarget.sku || "—"}</p>
+                <p className="font-bold text-sm" style={{ color: T.textPrimary }}>{deleteTarget.nombre}</p>
+                <p className="text-[10px] mt-0.5" style={{ color: T.textSecondary }}>SKU: {deleteTarget.sku || "—"}</p>
               </div>
 
               {/* Radio: elegir modo */}
               <div className="space-y-2 mb-4">
-                <label className={`flex items-start gap-3 p-3 rounded-xl cursor-pointer transition-all ${!isForce ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-white/[0.02] border border-white/5 hover:bg-white/[0.04]'}`}>
+                <label className={`flex items-start gap-3 p-3 rounded-xl cursor-pointer transition-all ${!isForce ? 'bg-amber-500/10 border border-amber-500/30' : ''}`} style={!isForce ? undefined : { background: PRODUCT_THEME.surfaceMuted, border: PRODUCT_THEME.borderSubtle }}>
                   <input
                     type="radio"
                     name="deleteMode"
@@ -2591,14 +2609,14 @@ export function ProductsPage() {
                     className="mt-0.5 accent-amber-500"
                   />
                   <div className="flex-1">
-                    <p className="font-black text-sm text-white">Solo el producto</p>
-                    <p className="text-[11px] text-gray-400 mt-0.5">
+                    <p className="font-black text-sm" style={{ color: T.textPrimary }}>Solo el producto</p>
+                    <p className="text-[11px] mt-0.5" style={{ color: T.textSecondary }}>
                       Elimina imágenes, inventario y precios. <strong className="text-amber-400">Si tiene ventas o apartados activos, fallará</strong> y tendrás que cambiar a "Borrar TODO".
                     </p>
                   </div>
                 </label>
 
-                <label className={`flex items-start gap-3 p-3 rounded-xl cursor-pointer transition-all ${isForce ? 'bg-red-500/10 border border-red-500/40' : 'bg-white/[0.02] border border-white/5 hover:bg-white/[0.04]'}`}>
+                <label className={`flex items-start gap-3 p-3 rounded-xl cursor-pointer transition-all ${isForce ? 'bg-red-500/10 border border-red-500/40' : ''}`} style={isForce ? undefined : { background: PRODUCT_THEME.surfaceMuted, border: PRODUCT_THEME.borderSubtle }}>
                   <input
                     type="radio"
                     name="deleteMode"
@@ -2608,8 +2626,8 @@ export function ProductsPage() {
                     className="mt-0.5 accent-red-500"
                   />
                   <div className="flex-1">
-                    <p className="font-black text-sm text-white">⚠️ Borrar TODO (también ventas e historial)</p>
-                    <p className="text-[11px] text-gray-400 mt-0.5">
+                    <p className="font-black text-sm" style={{ color: T.textPrimary }}>⚠️ Borrar TODO (también ventas e historial)</p>
+                    <p className="text-[11px] mt-0.5" style={{ color: T.textSecondary }}>
                       Borra el producto Y todo lo relacionado: <strong className="text-red-400">ventas históricas, apartados, traspasos, inventario y precios</strong>. Datos contables se perderán.
                     </p>
                   </div>
@@ -2628,8 +2646,8 @@ export function ProductsPage() {
                     onChange={e => setForceConfirmText(e.target.value)}
                     placeholder={deleteTarget.nombre}
                     disabled={deleteLoading}
-                    className="w-full px-3 py-2 rounded-xl text-sm font-bold bg-black/40 border outline-none transition-all"
-                    style={{ borderColor: forceConfirmed ? '#10b981' : 'rgba(239,68,68,0.4)', color: forceConfirmed ? '#10b981' : '#fff' }}
+                    className="w-full px-3 py-2 rounded-xl text-sm font-bold border outline-none transition-all"
+                    style={{ ...T.input, borderColor: forceConfirmed ? '#10b981' : 'rgba(239,68,68,0.4)', color: forceConfirmed ? '#10b981' : T.textPrimary }}
                   />
                 </div>
               )}
@@ -2638,7 +2656,8 @@ export function ProductsPage() {
                 <button
                   onClick={close}
                   disabled={deleteLoading}
-                  className="px-5 py-2.5 rounded-xl text-sm font-bold text-gray-300 bg-white/5 hover:bg-white/10 transition-all"
+                  className="px-5 py-2.5 rounded-xl text-sm font-bold transition-all"
+                  style={SECONDARY_BUTTON}
                 >
                   Cancelar
                 </button>
@@ -2717,12 +2736,12 @@ export function ProductsPage() {
                 <table className="w-full text-left border-collapse">
                   <thead style={{ position: "sticky", top: 0, zIndex: 10 }}>
                     {mangaTable.getHeaderGroups().map(hg => (
-                      <tr key={hg.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', background: 'var(--td-popup-bg)' }}>
+                      <tr key={hg.id} style={{ borderBottom: PRODUCT_THEME.borderSubtle, background: PRODUCT_THEME.tableHead }}>
                         {hg.headers.map(header => (
                           <th
                             key={header.id}
                             className="px-6 py-5 text-[10px] font-black uppercase tracking-widest select-none whitespace-nowrap"
-                            style={{ color: T.textMuted, cursor: header.column.getCanSort() ? 'pointer' : 'default', background: 'var(--td-popup-bg)' }}
+                            style={{ color: T.textMuted, cursor: header.column.getCanSort() ? 'pointer' : 'default', background: PRODUCT_THEME.tableHead }}
                             onClick={header.column.getToggleSortingHandler()}
                           >
                             <div className="flex items-center gap-1.5">
@@ -2754,8 +2773,8 @@ export function ProductsPage() {
                       mangaTable.getRowModel().rows.map(row => (
                         <tr
                           key={row.id}
-                          className="group transition-colors hover:bg-white/[0.04] cursor-pointer"
-                          style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}
+                          className="group transition-colors cursor-pointer"
+                          style={{ borderBottom: PRODUCT_THEME.borderSubtle }}
                           onClick={() => canEdit ? setEditingManga(row.original) : openMangaDetails(row.original)}
                         >
                           {row.getVisibleCells().map(cell => (
@@ -2771,13 +2790,13 @@ export function ProductsPage() {
               </div>
 
               {/* Pagination — idéntica a productos */}
-              <div className="flex items-center justify-between px-6 py-4 gap-4 flex-wrap" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', background: 'rgba(0,0,0,0.12)' }}>
+              <div className="flex items-center justify-between px-6 py-4 gap-4 flex-wrap" style={{ borderTop: PRODUCT_THEME.borderSubtle, background: PRODUCT_THEME.tableFoot }}>
                 <span className="text-[11px] font-semibold" style={{ color: T.textMuted }}>
                   {filteredMangas.length} tomos · página {mangaTable.getState().pagination.pageIndex + 1} de {Math.max(1, mangaTable.getPageCount())}
                 </span>
                 <div className="flex items-center gap-1">
-                  <button onClick={() => mangaTable.setPageIndex(0)} disabled={!mangaTable.getCanPreviousPage()} className="p-2 rounded-xl transition-all hover:bg-white/10 disabled:opacity-30" style={{ color: T.textSecondary }}><ChevronsLeft size={15} /></button>
-                  <button onClick={() => mangaTable.previousPage()} disabled={!mangaTable.getCanPreviousPage()} className="p-2 rounded-xl transition-all hover:bg-white/10 disabled:opacity-30" style={{ color: T.textSecondary }}><ChevronLeft size={15} /></button>
+                  <button onClick={() => mangaTable.setPageIndex(0)} disabled={!mangaTable.getCanPreviousPage()} className="p-2 rounded-xl transition-all disabled:opacity-30" style={SECONDARY_BUTTON}><ChevronsLeft size={15} /></button>
+                  <button onClick={() => mangaTable.previousPage()} disabled={!mangaTable.getCanPreviousPage()} className="p-2 rounded-xl transition-all disabled:opacity-30" style={SECONDARY_BUTTON}><ChevronLeft size={15} /></button>
                   {Array.from({ length: mangaTable.getPageCount() }, (_, i) => i)
                     .filter(i => Math.abs(i - mangaTable.getState().pagination.pageIndex) <= 2)
                     .map(i => (
@@ -2786,8 +2805,8 @@ export function ProductsPage() {
                         {i + 1}
                       </button>
                     ))}
-                  <button onClick={() => mangaTable.nextPage()} disabled={!mangaTable.getCanNextPage()} className="p-2 rounded-xl transition-all hover:bg-white/10 disabled:opacity-30" style={{ color: T.textSecondary }}><ChevronRight size={15} /></button>
-                  <button onClick={() => mangaTable.setPageIndex(mangaTable.getPageCount() - 1)} disabled={!mangaTable.getCanNextPage()} className="p-2 rounded-xl transition-all hover:bg-white/10 disabled:opacity-30" style={{ color: T.textSecondary }}><ChevronsRight size={15} /></button>
+                  <button onClick={() => mangaTable.nextPage()} disabled={!mangaTable.getCanNextPage()} className="p-2 rounded-xl transition-all disabled:opacity-30" style={SECONDARY_BUTTON}><ChevronRight size={15} /></button>
+                  <button onClick={() => mangaTable.setPageIndex(mangaTable.getPageCount() - 1)} disabled={!mangaTable.getCanNextPage()} className="p-2 rounded-xl transition-all disabled:opacity-30" style={SECONDARY_BUTTON}><ChevronsRight size={15} /></button>
                   <select value={mangaTable.getState().pagination.pageSize} onChange={e => mangaTable.setPageSize(Number(e.target.value))} className="ml-2 px-2 py-1 rounded-xl text-xs font-bold outline-none" style={T.input}>
                     {[10, 20, 50].map(s => <option key={s} value={s}>{s} / página</option>)}
                   </select>

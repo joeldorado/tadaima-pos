@@ -47,6 +47,17 @@ const T = {
   redBright:     '#FF4422',
 }
 
+const SURFACE_SOFT = 'var(--td-surface-soft)'
+const SURFACE_MUTED = 'var(--td-surface-muted)'
+const SURFACE_STRONG = 'var(--td-surface-strong)'
+const BORDER_SUBTLE = '1px solid var(--td-card-border)'
+const BORDER_PANEL = '1px solid var(--td-panel-border)'
+const SECONDARY_BUTTON = {
+  color: T.textSecondary,
+  background: SURFACE_MUTED,
+  border: BORDER_SUBTLE,
+} as CSSProperties
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function extractMsg(err: unknown): string {
@@ -325,7 +336,7 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
         style={T.glass}
       >
         {/* ── Header ──────────────────────────────────────────────────────── */}
-        <div className="p-6 border-b border-white/10 flex items-center justify-between">
+        <div className="p-6 flex items-center justify-between" style={{ borderBottom: BORDER_PANEL }}>
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'rgba(204,34,0,0.15)', border: '1px solid rgba(204,34,0,0.3)', color: T.redBright }}>
               <BookOpen size={16} />
@@ -335,13 +346,13 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
               <p className="text-xs" style={{ color: T.textSecondary }}>Librería · Manga · Lote</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 rounded-xl hover:bg-white/10 transition-colors">
+          <button onClick={onClose} className="p-2 rounded-xl transition-colors" style={SECONDARY_BUTTON}>
             <X size={20} style={{ color: T.textSecondary }} />
           </button>
         </div>
 
         {/* ── Checklist bar ───────────────────────────────────────────────── */}
-        <div className="px-6 py-2.5 flex items-center gap-5" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+        <div className="px-6 py-2.5 flex items-center gap-5" style={{ borderBottom: BORDER_SUBTLE, background: SURFACE_MUTED }}>
           {([
             { label: 'Nombre',             done: nombreOk },
             { label: 'Precio Normal',      done: precioOk },
@@ -351,7 +362,7 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
             <div key={item.label} className="flex items-center gap-1.5">
               {item.done
                 ? <CheckCircle2 size={11} style={{ color: '#4ade80' }} />
-                : <div className="w-2.5 h-2.5 rounded-full border" style={{ borderColor: 'rgba(255,255,255,0.18)' }} />
+                : <div className="w-2.5 h-2.5 rounded-full border" style={{ borderColor: 'var(--td-card-border)' }} />
               }
               <span style={{ fontSize: 10, fontWeight: 600, color: item.done ? T.textMuted : T.textSecondary, textDecoration: item.done ? 'line-through' : 'none' }}>
                 {item.label}
@@ -441,9 +452,9 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
                   onClick={handleAddTomo}
                   disabled={submitting}
                   className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl text-sm font-bold transition-all"
-                  style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.1)', color: T.textMuted }}
+                  style={{ background: SURFACE_MUTED, border: '1px dashed var(--td-card-border)', color: T.textMuted }}
                   onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(204,34,0,0.4)'; e.currentTarget.style.color = T.redBright }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = T.textMuted }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--td-card-border)'; e.currentTarget.style.color = T.textMuted }}
                 >
                   <Plus size={14} /> Agregar tomo
                 </button>
@@ -456,7 +467,7 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
             <div className="space-y-6">
               {/* Mismo criterio que MangaEditModal: Margen % + Costo real
                   siempre visibles al dar de alta tomos (Joel 2026-05-25). */}
-              <div className="grid grid-cols-2 gap-4 p-4 rounded-2xl bg-white/5 border border-white/5">
+              <div className="grid grid-cols-2 gap-4 p-4 rounded-2xl" style={{ background: SURFACE_SOFT, border: BORDER_SUBTLE }}>
                 <div className="space-y-1.5">
                   <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>Precio Público (MXN) *</label>
                   <input
@@ -526,18 +537,18 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
 
               {/* No warehouses configured */}
               {locations.length === 0 && (
-                <div className="flex flex-col items-center gap-2 py-8 rounded-2xl" style={{ background: 'rgba(255,255,255,0.03)', border: '1px dashed rgba(255,255,255,0.1)' }}>
-                  <Warehouse size={28} style={{ color: 'rgba(255,255,255,0.15)' }} />
+                <div className="flex flex-col items-center gap-2 py-8 rounded-2xl" style={{ background: SURFACE_MUTED, border: '1px dashed var(--td-card-border)' }}>
+                  <Warehouse size={28} style={{ color: T.textMuted }} />
                   <p className="text-xs text-center" style={{ color: T.textMuted }}>
                     No hay almacenes configurados.<br />
-                    <span style={{ color: 'rgba(255,255,255,0.25)' }}>Ve a <strong>Tiendas</strong> para crear uno primero.</span>
+                    <span style={{ color: T.textSecondary }}>Ve a <strong>Tiendas</strong> para crear uno primero.</span>
                   </p>
                 </div>
               )}
 
               {/* Add warehouse form */}
               {locations.length > 0 && availableLocs.length > 0 && (
-                <div className="flex gap-2 items-end p-4 rounded-2xl" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                <div className="flex gap-2 items-end p-4 rounded-2xl" style={{ background: SURFACE_MUTED, border: BORDER_SUBTLE }}>
                   <div className="flex-1">
                     <label className="text-[9px] font-black uppercase tracking-widest block mb-1.5" style={{ color: T.textMuted }}>Agregar tienda / almacén</label>
                     <select
@@ -577,15 +588,15 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
                 const groupTotal = group.tomoStocks.reduce((s, ts) => s + (parseInt(ts.cantidad) || 0), 0)
 
                 return (
-                  <div key={group.id} className="rounded-2xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.08)' }}>
+                  <div key={group.id} className="rounded-2xl overflow-hidden" style={{ border: BORDER_SUBTLE }}>
                     {/* Group header */}
                     <div
                       className="flex items-center gap-3 px-4 py-3 cursor-pointer select-none"
-                      style={{ background: 'rgba(255,255,255,0.05)' }}
+                      style={{ background: SURFACE_SOFT }}
                       onClick={() => toggleGroup(group.id)}
                     >
-                      <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ background: 'rgba(255,255,255,0.07)' }}>
-                        <Warehouse size={13} style={{ color: 'rgba(255,255,255,0.5)' }} />
+                      <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ background: SURFACE_STRONG }}>
+                        <Warehouse size={13} style={{ color: T.textSecondary }} />
                       </div>
 
                       <div className="flex-1 min-w-0">
@@ -608,7 +619,7 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
                         <button
                           onClick={e => { e.stopPropagation(); removeGroup(group.id) }}
                           className="w-6 h-6 rounded-lg flex items-center justify-center transition-all hover:bg-red-500/20"
-                          style={{ color: 'rgba(255,255,255,0.3)' }}
+                          style={{ color: T.textMuted }}
                         >
                           <Trash2 size={12} />
                         </button>
@@ -621,7 +632,7 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
 
                     {/* Per-tomo rows */}
                     {group.expanded && (
-                      <div className="divide-y" style={{ borderTop: '1px solid rgba(255,255,255,0.05)', divideColor: 'rgba(255,255,255,0.04)' }}>
+                      <div className="divide-y" style={{ borderTop: BORDER_SUBTLE }}>
                         {group.tomoStocks.length === 0 && (
                           <p className="text-xs text-center py-4" style={{ color: T.textMuted }}>Sin tomos asignados.</p>
                         )}
@@ -631,7 +642,7 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
                           const tomoNum = tomo.numero !== '' ? parseInt(tomo.numero, 10) : (tomos.indexOf(tomo) + 1)
 
                           return (
-                            <div key={ts.tomoId} className="flex items-center gap-3 px-4 py-2.5" style={{ background: 'rgba(255,255,255,0.02)' }}>
+                            <div key={ts.tomoId} className="flex items-center gap-3 px-4 py-2.5" style={{ background: SURFACE_MUTED }}>
                               {/* Vol badge */}
                               <div className="shrink-0 w-9 h-9 rounded-xl flex flex-col items-center justify-center" style={{
                                 background: 'linear-gradient(135deg,#990000,#CC2200)',
@@ -664,7 +675,7 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
                               <button
                                 onClick={() => removeTomoFromGroup(group.id, ts.tomoId)}
                                 className="w-6 h-6 rounded-lg flex items-center justify-center transition-all hover:bg-red-500/20 shrink-0"
-                                style={{ color: 'rgba(255,255,255,0.25)' }}
+                                style={{ color: T.textMuted }}
                               >
                                 <Trash2 size={11} />
                               </button>
@@ -685,14 +696,14 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
         </div>
 
         {/* ── Footer ──────────────────────────────────────────────────────── */}
-        <div className="p-6 border-t border-white/10 flex items-center justify-between gap-4">
+        <div className="p-6 flex items-center justify-between gap-4" style={{ borderTop: BORDER_PANEL }}>
           <div className="text-xs" style={{ color: T.textMuted }}>
             {successCount > 0 && <span style={{ color: '#4ade80', fontWeight: 700 }}>{successCount} registrado{successCount !== 1 ? 's' : ''}</span>}
             {successCount > 0 && pendingCount > 0 && <span className="mx-1">·</span>}
             {pendingCount > 0 && <span>{pendingCount} pendiente{pendingCount !== 1 ? 's' : ''}</span>}
           </div>
           <div className="flex gap-3">
-            <button onClick={onClose} className="px-6 py-2.5 rounded-full text-sm font-bold transition-all hover:bg-white/5" style={{ color: T.textSecondary }}>
+            <button onClick={onClose} className="px-6 py-2.5 rounded-full text-sm font-bold transition-all" style={SECONDARY_BUTTON}>
               Cancelar
             </button>
             <button
@@ -724,7 +735,7 @@ function TomoCard({ tomo, index, onRemove, onChangeNumero, onChangeIsbn, onSetIm
   const isbnRef = useRef<HTMLInputElement>(null)
 
   const sc = {
-    idle:    { bg: 'rgba(255,255,255,0.04)', border: 'rgba(255,255,255,0.07)' },
+    idle:    { bg: SURFACE_MUTED, border: 'var(--td-card-border)' },
     loading: { bg: 'rgba(255,170,0,0.06)',   border: 'rgba(255,170,0,0.25)'   },
     ok:      { bg: 'rgba(0,180,100,0.07)',   border: 'rgba(0,180,100,0.25)'   },
     error:   { bg: 'rgba(204,34,0,0.07)',    border: 'rgba(204,34,0,0.3)'     },
@@ -818,7 +829,7 @@ function TomoCard({ tomo, index, onRemove, onChangeNumero, onChangeIsbn, onSetIm
         </div>
 
         {onRemove && !disabled && (
-          <button onClick={onRemove} className="p-2 rounded-xl transition-all hover:bg-red-500/20 hover:text-red-400 shrink-0 mt-5" style={{ color: 'rgba(255,255,255,0.3)' }}>
+          <button onClick={onRemove} className="p-2 rounded-xl transition-all hover:bg-red-500/20 hover:text-red-400 shrink-0 mt-5" style={{ color: T.textMuted }}>
             <Trash2 size={14} />
           </button>
         )}

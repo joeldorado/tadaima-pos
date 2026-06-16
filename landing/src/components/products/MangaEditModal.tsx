@@ -48,6 +48,17 @@ const T = {
   redBright:     '#FF4422',
 }
 
+const SURFACE_SOFT = 'var(--td-surface-soft)'
+const SURFACE_MUTED = 'var(--td-surface-muted)'
+const SURFACE_STRONG = 'var(--td-surface-strong)'
+const BORDER_SUBTLE = '1px solid var(--td-card-border)'
+const BORDER_PANEL = '1px solid var(--td-panel-border)'
+const SECONDARY_BUTTON = {
+  color: T.textSecondary,
+  background: SURFACE_MUTED,
+  border: BORDER_SUBTLE,
+} as CSSProperties
+
 const PRICE_LABELS = PRICE_FORM_LABELS
 const PRICE_KEYS   = ['price_1', 'price_2', 'price_3', 'price_4', 'price_5'] as const
 
@@ -243,7 +254,7 @@ export function MangaEditModal({
         <div className="relative w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-[32px] flex flex-col shadow-2xl" style={T.glass}>
 
           {/* ── Header ──────────────────────────────────────────────────────── */}
-          <div className="p-6 border-b border-white/10 flex items-center justify-between">
+          <div className="p-6 flex items-center justify-between" style={{ borderBottom: BORDER_PANEL }}>
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'rgba(204,34,0,0.15)', border: '1px solid rgba(204,34,0,0.3)', color: T.redBright }}>
                 <BookOpen size={16} />
@@ -253,13 +264,13 @@ export function MangaEditModal({
                 <p className="text-xs" style={{ color: T.textSecondary }}>{manga.name}{manga.volume_number != null ? ` · Vol. ${manga.volume_number}` : ''}</p>
               </div>
             </div>
-            <button onClick={() => !saving && onClose()} className="p-2 rounded-xl hover:bg-white/10 transition-colors">
+            <button onClick={() => !saving && onClose()} className="p-2 rounded-xl transition-colors" style={SECONDARY_BUTTON}>
               <X size={20} style={{ color: T.textSecondary }} />
             </button>
           </div>
 
           {/* ── Checklist bar ───────────────────────────────────────────────── */}
-          <div className="px-6 py-2.5 flex items-center gap-5" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+          <div className="px-6 py-2.5 flex items-center gap-5" style={{ borderBottom: BORDER_SUBTLE, background: SURFACE_MUTED }}>
             {([
               { label: 'Nombre', done: nombreOk },
               { label: 'Precio Normal', done: precioOk },
@@ -267,7 +278,7 @@ export function MangaEditModal({
               <div key={item.label} className="flex items-center gap-1.5">
                 {item.done
                   ? <CheckCircle2 size={11} style={{ color: '#4ade80' }} />
-                  : <div className="w-2.5 h-2.5 rounded-full border" style={{ borderColor: 'rgba(255,255,255,0.18)' }} />
+                  : <div className="w-2.5 h-2.5 rounded-full border" style={{ borderColor: 'var(--td-card-border)' }} />
                 }
                 <span style={{ fontSize: 10, fontWeight: 600, color: item.done ? T.textMuted : T.textSecondary, textDecoration: item.done ? 'line-through' : 'none' }}>
                   {item.label}
@@ -280,7 +291,7 @@ export function MangaEditModal({
                 type="button"
                 onClick={() => setActive(v => !v)}
                 className="relative w-9 h-5 rounded-full transition-all"
-                style={{ background: active ? T.redBright : 'rgba(255,255,255,0.12)' }}
+                style={{ background: active ? T.redBright : SURFACE_STRONG }}
               >
                 <span className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform" style={{ transform: active ? 'translateX(16px)' : 'translateX(0)' }} />
               </button>
@@ -350,7 +361,7 @@ export function MangaEditModal({
                 {/* Single volume card — same style as TomoCard in batch modal */}
                 <div className="space-y-3">
                   <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>Detalle del Tomo</label>
-                  <div className="p-4 rounded-2xl transition-all" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                  <div className="p-4 rounded-2xl transition-all" style={{ background: SURFACE_MUTED, border: BORDER_SUBTLE }}>
                     <div className="flex items-start gap-3">
 
                       {/* Image */}
@@ -431,7 +442,7 @@ export function MangaEditModal({
                     todos los roles necesitan ver/editar ese cálculo cuando
                     dan de alta o editan un tomo. NO afecta a productos
                     regulares (que mantienen el gate canViewCost). */}
-                <div className="grid grid-cols-2 gap-4 p-4 rounded-2xl bg-white/5 border border-white/5">
+                <div className="grid grid-cols-2 gap-4 p-4 rounded-2xl" style={{ background: SURFACE_SOFT, border: BORDER_SUBTLE }}>
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>Precio Público (MXN) *</label>
                     <input
@@ -488,7 +499,7 @@ export function MangaEditModal({
                     sin esto solo se podía editar stock de tiendas existentes,
                     nunca dar de alta en una nueva. */}
                 {availableWarehousesToAdd.length > 0 && (
-                  <div className="flex gap-2 items-end p-3 rounded-2xl" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div className="flex gap-2 items-end p-3 rounded-2xl" style={{ background: SURFACE_MUTED, border: BORDER_SUBTLE }}>
                     <div className="flex-1">
                       <label style={{ fontSize: 9, fontWeight: 900, textTransform: 'uppercase' as const, letterSpacing: '0.12em', color: T.textMuted, display: 'block', marginBottom: 4 }}>
                         Agregar tienda
@@ -545,7 +556,7 @@ export function MangaEditModal({
                       }}
                       style={{
                         padding: '8px 14px', borderRadius: 10,
-                        background: (pendingAddWh !== '' && pendingAddQty !== '') ? T.redBright : 'rgba(255,255,255,0.05)',
+                        background: (pendingAddWh !== '' && pendingAddQty !== '') ? T.redBright : SURFACE_SOFT,
                         color: (pendingAddWh !== '' && pendingAddQty !== '') ? '#fff' : T.textMuted,
                         border: 'none', fontSize: 10, fontWeight: 900, textTransform: 'uppercase' as const,
                         cursor: (pendingAddWh !== '' && pendingAddQty !== '') ? 'pointer' : 'not-allowed',
@@ -562,19 +573,19 @@ export function MangaEditModal({
                     <span className="text-sm" style={{ color: T.textMuted }}>Cargando inventario…</span>
                   </div>
                 ) : inventory.length === 0 ? (
-                  <div className="flex flex-col items-center gap-2 py-8 rounded-2xl" style={{ background: 'rgba(255,255,255,0.03)', border: '1px dashed rgba(255,255,255,0.1)' }}>
-                    <WarehouseIcon size={28} style={{ color: 'rgba(255,255,255,0.15)' }} />
-                    <p className="text-xs text-center" style={{ color: T.textMuted }}>Sin inventario asignado.<br /><span style={{ color: 'rgba(255,255,255,0.25)' }}>Usa "Agregar tienda" arriba para asignar stock.</span></p>
+                  <div className="flex flex-col items-center gap-2 py-8 rounded-2xl" style={{ background: SURFACE_MUTED, border: '1px dashed var(--td-card-border)' }}>
+                    <WarehouseIcon size={28} style={{ color: T.textMuted }} />
+                    <p className="text-xs text-center" style={{ color: T.textMuted }}>Sin inventario asignado.<br /><span style={{ color: T.textSecondary }}>Usa "Agregar tienda" arriba para asignar stock.</span></p>
                   </div>
                 ) : (
                   inventory.map(item => {
                     const wh = item.warehouse
                     const qty = quantities[item.warehouse_id] ?? String(item.quantity)
                     return (
-                      <div key={item.warehouse_id} className="rounded-2xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.08)' }}>
-                        <div className="flex items-center gap-3 px-4 py-3" style={{ background: 'rgba(255,255,255,0.05)' }}>
-                          <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ background: 'rgba(255,255,255,0.07)' }}>
-                            <WarehouseIcon size={13} style={{ color: 'rgba(255,255,255,0.5)' }} />
+                      <div key={item.warehouse_id} className="rounded-2xl overflow-hidden" style={{ border: BORDER_SUBTLE }}>
+                        <div className="flex items-center gap-3 px-4 py-3" style={{ background: SURFACE_SOFT }}>
+                          <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ background: SURFACE_STRONG }}>
+                            <WarehouseIcon size={13} style={{ color: T.textSecondary }} />
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
@@ -612,7 +623,7 @@ export function MangaEditModal({
           </div>
 
           {/* ── Footer ──────────────────────────────────────────────────────── */}
-          <div className="p-6 border-t border-white/10 flex items-center justify-between gap-4">
+          <div className="p-6 flex items-center justify-between gap-4" style={{ borderTop: BORDER_PANEL }}>
             <div>
               {isAdmin && (
                 <button
@@ -626,7 +637,7 @@ export function MangaEditModal({
               )}
             </div>
             <div className="flex gap-3">
-              <button onClick={() => !saving && onClose()} className="px-6 py-2.5 rounded-full text-sm font-bold transition-all hover:bg-white/5" style={{ color: T.textSecondary }}>
+              <button onClick={() => !saving && onClose()} className="px-6 py-2.5 rounded-full text-sm font-bold transition-all" style={SECONDARY_BUTTON}>
                 Cancelar
               </button>
               <button
@@ -650,23 +661,23 @@ export function MangaEditModal({
         return (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/85 backdrop-blur-md" onClick={() => { if (!deleting) { setShowDeleteDialog(false); setDeleteConfirmText(""); } }} />
-          <div className="relative w-full max-w-md rounded-2xl p-6 shadow-2xl" style={{ background: '#1a1a1a', border: '1px solid rgba(239,68,68,0.5)' }}>
+          <div className="relative w-full max-w-md rounded-2xl p-6 shadow-2xl" style={{ background: 'var(--td-panel-bg)', border: '1px solid rgba(239,68,68,0.5)' }}>
             <div className="flex items-start gap-3 mb-4">
               <div className="w-12 h-12 rounded-full bg-red-500/20 flex items-center justify-center shrink-0 animate-pulse">
                 <AlertTriangle size={26} className="text-red-400" />
               </div>
               <div>
-                <h3 className="font-black text-white text-lg uppercase tracking-wider">⚠️ Eliminar tomo</h3>
-                <p className="text-xs text-gray-400 mt-1">Esta acción <span className="text-red-400 font-bold">NO se puede deshacer</span>.</p>
+                <h3 className="font-black text-lg uppercase tracking-wider" style={{ color: T.textPrimary }}>⚠️ Eliminar tomo</h3>
+                <p className="text-xs mt-1" style={{ color: T.textSecondary }}>Esta acción <span className="text-red-400 font-bold">NO se puede deshacer</span>.</p>
               </div>
             </div>
             <div className="rounded-xl p-3 mb-4" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
-              <p className="font-bold text-white text-sm">{fullName}</p>
-              {manga.code && <p className="text-[10px] text-gray-400 mt-0.5">Código: {manga.code}</p>}
+              <p className="font-bold text-sm" style={{ color: T.textPrimary }}>{fullName}</p>
+              {manga.code && <p className="text-[10px] mt-0.5" style={{ color: T.textSecondary }}>Código: {manga.code}</p>}
             </div>
             <div className="rounded-xl p-3 mb-4 text-xs space-y-1" style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)' }}>
               <p className="text-red-400 font-bold">Se eliminará:</p>
-              <ul className="text-gray-300 list-disc list-inside space-y-0.5">
+              <ul className="list-disc list-inside space-y-0.5" style={{ color: T.textSecondary }}>
                 <li>Registro del tomo</li>
                 <li>Imagen del bucket</li>
                 <li>Inventario en todas las tiendas</li>
@@ -684,8 +695,8 @@ export function MangaEditModal({
                 onChange={e => setDeleteConfirmText(e.target.value)}
                 placeholder={fullName}
                 disabled={deleting}
-                className="w-full px-3 py-2 rounded-xl text-sm font-bold bg-black/40 border outline-none transition-all"
-                style={{ borderColor: confirmed ? '#10b981' : 'rgba(239,68,68,0.4)', color: confirmed ? '#10b981' : '#fff' }}
+                className="w-full px-3 py-2 rounded-xl text-sm font-bold border outline-none transition-all"
+                style={{ ...T.input, borderColor: confirmed ? '#10b981' : 'rgba(239,68,68,0.4)', color: confirmed ? '#10b981' : T.textPrimary }}
               />
             </div>
 
@@ -693,8 +704,8 @@ export function MangaEditModal({
               <button
                 onClick={() => { setShowDeleteDialog(false); setDeleteConfirmText(""); }}
                 disabled={deleting}
-                className="flex-1 py-2.5 rounded-xl text-sm font-bold transition-all hover:bg-white/10"
-                style={{ color: '#9ca3af', border: '1px solid rgba(255,255,255,0.08)' }}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold transition-all"
+                style={SECONDARY_BUTTON}
               >
                 Cancelar
               </button>

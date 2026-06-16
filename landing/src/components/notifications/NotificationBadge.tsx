@@ -176,7 +176,7 @@ export function NotificationBadge() {
             {/* List */}
             <div style={{ flex: 1, overflowY: "auto" }}>
               {notifications.length === 0 ? (
-                <div className="flex flex-col items-center gap-2 py-8 opacity-30">
+                <div className="flex flex-col items-center gap-2 py-8" style={{ color: "var(--td-text-ghost)" }}>
                   <Bell size={22} />
                   <p style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em" }}>
                     Sin notificaciones
@@ -189,8 +189,10 @@ export function NotificationBadge() {
                     className="flex items-start gap-3 px-4 py-3 transition-colors"
                     style={{
                       borderBottom: "1px solid var(--td-divider)",
-                      background: n.read_at ? "transparent" : "rgba(204,34,0,0.04)",
+                      background: n.read_at ? "transparent" : "var(--td-red-dim)",
                     }}
+                    onMouseEnter={e => { e.currentTarget.style.background = n.read_at ? "var(--td-surface-soft)" : "var(--td-nav-active-bg)"; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = n.read_at ? "transparent" : "var(--td-red-dim)"; }}
                   >
                     {!n.read_at && (
                       <span

@@ -29,6 +29,14 @@ import { useOnlineUsersQuery } from "@/hooks/queries/useUsers";
 const RED     = "var(--td-red)";
 const RED_DIM = "var(--td-red-dim)";
 const RED_BRD = "var(--td-red-brd)";
+const TEXT_HI = "var(--td-text-hi)";
+const TEXT_MD = "var(--td-text-md)";
+const TEXT_LO = "var(--td-text-lo)";
+const SURFACE_SOFT = "var(--td-surface-soft)";
+const SURFACE_MUTED = "var(--td-surface-muted)";
+const SURFACE_STRONG = "var(--td-surface-strong)";
+const BORDER_SUBTLE = "1px solid var(--td-card-border)";
+const BORDER_PANEL = "1px solid var(--td-panel-border)";
 
 const fmt = (n: number) =>
   new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", minimumFractionDigits: 0 }).format(n || 0);
@@ -71,23 +79,23 @@ interface SetupStepProps {
 
 function SetupStep({ n, title, desc, required, done }: SetupStepProps) {
   return (
-    <div className="flex items-start gap-3 py-3 border-b border-white/5 last:border-0">
+    <div className="flex items-start gap-3 py-3 last:border-0" style={{ borderBottom: BORDER_SUBTLE }}>
       <div className="shrink-0 mt-0.5">
         {done ? (
           <CheckCircle2 size={18} className="text-green-400" />
         ) : (
-          <div className="w-[18px] h-[18px] rounded-full flex items-center justify-center text-[9px] font-bold border border-white/20 text-white/40">
+          <div className="w-[18px] h-[18px] rounded-full flex items-center justify-center text-[9px] font-bold" style={{ border: BORDER_SUBTLE, color: TEXT_LO }}>
             {n}
           </div>
         )}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className={`text-sm font-semibold ${done ? "text-white/40 line-through" : "text-white/80"}`}>
+          <span className="text-sm font-semibold" style={{ color: done ? TEXT_LO : TEXT_HI, textDecoration: done ? "line-through" : "none" }}>
             {title}
           </span>
           {!required && (
-            <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-white/7 text-white/30">
+            <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold" style={{ background: SURFACE_SOFT, color: TEXT_LO, border: BORDER_SUBTLE }}>
               Opcional
             </span>
           )}
@@ -97,7 +105,7 @@ function SetupStep({ n, title, desc, required, done }: SetupStepProps) {
             </span>
           )}
         </div>
-        <p className="text-[11px] text-white/30 mt-0.5">{desc}</p>
+        <p className="text-[11px] mt-0.5" style={{ color: TEXT_LO }}>{desc}</p>
       </div>
     </div>
   );
@@ -118,8 +126,8 @@ function NoStoreBanner({ isAdmin, onGoToStores }: NoStoreBannerProps) {
         <AlertTriangle size={18} style={{ color: "#FF6644" }} />
       </div>
       <div className="flex-1">
-        <div className="text-sm font-semibold text-white/85 mb-1">Necesitas una tienda para comenzar</div>
-        <p className="text-xs text-white/40 leading-relaxed">
+        <div className="text-sm font-semibold mb-1" style={{ color: TEXT_HI }}>Necesitas una tienda para comenzar</div>
+        <p className="text-xs leading-relaxed" style={{ color: TEXT_MD }}>
           {isAdmin
             ? "Productos y Caja estarán disponibles una vez que registres al menos una tienda o sucursal."
             : "No hay tiendas configuradas en el sistema. Contacta al administrador para continuar."}
@@ -158,22 +166,22 @@ function StorePickerModal({ stores, isLoading, onSelect, onClose }: StorePickerM
               <StoreIcon size={16} style={{ color: RED }} />
             </div>
             <div>
-              <div className="text-sm font-semibold text-white/85">Seleccionar Tienda</div>
-              <div className="text-[11px] text-white/30">Para abrir la caja</div>
+              <div className="text-sm font-semibold" style={{ color: TEXT_HI }}>Seleccionar Tienda</div>
+              <div className="text-[11px]" style={{ color: TEXT_LO }}>Para abrir la caja</div>
             </div>
           </div>
-          <button onClick={onClose} className="text-white/30 hover:text-white transition-colors">
+          <button onClick={onClose} className="transition-colors" style={{ color: TEXT_LO }}>
             <X size={16} />
           </button>
         </div>
         {isLoading ? (
-          <p className="text-xs text-white/40 text-center py-6">Cargando tiendas...</p>
+          <p className="text-xs text-center py-6" style={{ color: TEXT_MD }}>Cargando tiendas...</p>
         ) : (
           <div className="flex flex-col gap-2">
             {stores.map(s => (
               <button key={s.id} onClick={() => onSelect(s)}
-                className="w-full text-left px-4 py-3 rounded-xl transition-colors hover:bg-white/10 text-sm font-medium text-white/75"
-                style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)" }}>
+                className="w-full text-left px-4 py-3 rounded-xl transition-colors text-sm font-medium"
+                style={{ background: "var(--td-panel-bg)", border: BORDER_PANEL, color: TEXT_HI }}>
                 {s.name}
               </button>
             ))}
@@ -203,7 +211,7 @@ function KPICard({ icon: Icon, label, value, sub, color, colorDim, loading, onCl
       onClick={onClick}
       className={`flex-1 min-w-[160px] rounded-2xl p-5 flex flex-col gap-3 ${onClick ? "cursor-pointer hover:opacity-90 transition-opacity" : ""}`}
       style={{
-        background: `linear-gradient(135deg, ${colorDim} 0%, rgba(0,0,0,0.3) 100%)`,
+        background: `linear-gradient(135deg, ${colorDim} 0%, var(--td-card-bg) 100%)`,
         border: `1px solid ${color}30`,
       }}
     >
@@ -217,11 +225,11 @@ function KPICard({ icon: Icon, label, value, sub, color, colorDim, loading, onCl
         </span>
       </div>
       {loading ? (
-        <Loader2 size={20} className="animate-spin text-white/20" />
+        <Loader2 size={20} className="animate-spin" style={{ color: TEXT_LO }} />
       ) : (
         <>
-          <div className="text-2xl font-black text-white">{value}</div>
-          {sub && <div className="text-[10px] font-bold text-white/30">{sub}</div>}
+          <div className="text-2xl font-black" style={{ color: TEXT_HI }}>{value}</div>
+          {sub && <div className="text-[10px] font-bold" style={{ color: TEXT_LO }}>{sub}</div>}
         </>
       )}
     </div>
@@ -232,7 +240,7 @@ function KPICard({ icon: Icon, label, value, sub, color, colorDim, loading, onCl
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <p style={{ fontSize: "9px", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,255,255,0.2)", marginBottom: "12px" }}>
+    <p style={{ fontSize: "9px", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: TEXT_LO, marginBottom: "12px" }}>
       {children}
     </p>
   );
@@ -255,8 +263,8 @@ function DashCard({ icon: Icon, title, desc, value, onClick, accent = false, dis
       onMouseEnter={e => { if (!disabled) (e.currentTarget as HTMLDivElement).style.transform = "scale(1.02)"; }}
       onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.transform = "scale(1)"; }}
       style={{
-        background: accent ? "linear-gradient(135deg, #BB1100 0%, #FF3322 100%)" : "rgba(255,255,255,0.04)",
-        border: `1px solid ${accent ? "rgba(204,34,0,0.35)" : "rgba(255,255,255,0.08)"}`,
+        background: accent ? "linear-gradient(135deg, #BB1100 0%, #FF3322 100%)" : SURFACE_MUTED,
+        border: accent ? "1px solid rgba(204,34,0,0.35)" : BORDER_SUBTLE,
         borderRadius: "16px",
         padding: "16px",
         display: "flex",
@@ -270,16 +278,16 @@ function DashCard({ icon: Icon, title, desc, value, onClick, accent = false, dis
       }}
     >
       {value !== undefined && (
-        <div style={{ position: "absolute", top: "14px", right: "14px", fontSize: "20px", fontWeight: 900, color: accent ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.75)", lineHeight: 1 }}>
+        <div style={{ position: "absolute", top: "14px", right: "14px", fontSize: "20px", fontWeight: 900, color: accent ? "rgba(255,255,255,0.9)" : TEXT_MD, lineHeight: 1 }}>
           {value}
         </div>
       )}
-      <div style={{ width: 40, height: 40, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", background: accent ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.06)", border: `1px solid ${accent ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.09)"}`, flexShrink: 0 }}>
-        <Icon size={18} style={{ color: accent ? "#fff" : "rgba(255,255,255,0.45)" }} />
+      <div style={{ width: 40, height: 40, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", background: accent ? "rgba(255,255,255,0.15)" : SURFACE_SOFT, border: accent ? "1px solid rgba(255,255,255,0.2)" : BORDER_SUBTLE, flexShrink: 0 }}>
+        <Icon size={18} style={{ color: accent ? "#fff" : TEXT_MD }} />
       </div>
       <div>
-        <div style={{ fontSize: "13px", fontWeight: 700, color: accent ? "#fff" : "rgba(255,255,255,0.82)", lineHeight: 1.2 }}>{title}</div>
-        {desc && <div style={{ fontSize: "11px", color: accent ? "rgba(255,255,255,0.55)" : "rgba(255,255,255,0.28)", marginTop: "3px" }}>{desc}</div>}
+        <div style={{ fontSize: "13px", fontWeight: 700, color: accent ? "#fff" : TEXT_HI, lineHeight: 1.2 }}>{title}</div>
+        {desc && <div style={{ fontSize: "11px", color: accent ? "rgba(255,255,255,0.65)" : TEXT_LO, marginTop: "3px" }}>{desc}</div>}
       </div>
     </div>
   );
@@ -633,11 +641,11 @@ export function DashboardPage() {
       {/* Header */}
       <div className="mb-8 relative z-10">
         <div className="flex items-center gap-2 mb-1">
-          <LayoutDashboard size={16} className="text-white/25" />
-          <span className="text-xs font-medium text-white/25">Dashboard</span>
+          <LayoutDashboard size={16} style={{ color: TEXT_LO }} />
+          <span className="text-xs font-medium" style={{ color: TEXT_LO }}>Dashboard</span>
         </div>
-        <h1 className="text-3xl font-bold text-white/85">Hola, {firstName}</h1>
-        <p className="text-sm text-white/35 mt-1">
+        <h1 className="text-3xl font-bold" style={{ color: TEXT_HI }}>Hola, {firstName}</h1>
+        <p className="text-sm mt-1" style={{ color: TEXT_MD }}>
           {!hasStores ? "Configura el sistema para empezar a operar" : "¿Qué quieres hacer hoy?"}
         </p>
       </div>
@@ -653,7 +661,7 @@ export function DashboardPage() {
           el row porque tiene visión cross-tienda y no tiene secciones abajo. */}
       {activeStore && !isGerente && (
         <div className="mb-8 relative z-10">
-          <p className="text-[10px] font-black uppercase tracking-widest text-white/20 mb-3">
+          <p className="text-[10px] font-black uppercase tracking-widest mb-3" style={{ color: TEXT_LO }}>
             Hoy · {activeStore.name}
           </p>
           <div className="flex gap-4 flex-wrap">
@@ -695,9 +703,9 @@ export function DashboardPage() {
       {isAdmin ? (
         <>
           {showSetup && (
-            <div className="glass-dark rounded-2xl p-6 mb-8 max-w-lg"
-              style={{ border: `1px solid ${RED_BRD}` }}>
-              <p className="text-xs font-semibold text-white/60 mb-4">Primeros pasos</p>
+            <div className="rounded-2xl p-6 mb-8 max-w-lg"
+              style={{ background: "var(--td-card-bg)", border: `1px solid ${RED_BRD}` }}>
+              <p className="text-xs font-semibold mb-4" style={{ color: TEXT_MD }}>Primeros pasos</p>
               <SetupStep n={1} title="Agrega una tienda" required done={hasStores}
                 desc="Registra al menos una sucursal o punto de venta" />
               <SetupStep n={2} title="Agrega un almacén" required={false} done={hasWarehouses}
@@ -848,8 +856,8 @@ export function DashboardPage() {
                 <SectionLabel>Cajeros conectados · {activeStore.name}</SectionLabel>
                 <button
                   onClick={() => onlineUsersQuery.refetch()}
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-white/10 transition-colors"
-                  style={{ color: "var(--td-text-ghost)" }}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-colors"
+                  style={{ color: TEXT_LO, background: SURFACE_MUTED, border: BORDER_SUBTLE }}
                   title="Refrescar"
                 >
                   <RefreshCw size={11} className={onlineUsersQuery.isFetching ? "animate-spin" : ""} />
@@ -858,13 +866,13 @@ export function DashboardPage() {
               </div>
               {onlineUsersQuery.isPending ? (
                 <div className="flex items-center justify-center py-6">
-                  <Loader2 size={18} className="animate-spin text-white/30" />
+                  <Loader2 size={18} className="animate-spin" style={{ color: TEXT_LO }} />
                 </div>
               ) : onlineCashiers.length === 0 ? (
-                <div className="glass-dark rounded-2xl p-6 text-center" style={{ border: "1px solid var(--td-panel-border)" }}>
-                  <Users size={20} className="mx-auto mb-2 text-white/25" />
-                  <p className="text-xs text-white/40">Ningún cajero conectado en este momento.</p>
-                  <p className="text-[10px] text-white/25 mt-1">Aparecen aquí cuando inician sesión en el POS.</p>
+                <div className="rounded-2xl p-6 text-center" style={{ background: "var(--td-card-bg)", border: BORDER_PANEL }}>
+                  <Users size={20} className="mx-auto mb-2" style={{ color: TEXT_LO }} />
+                  <p className="text-xs" style={{ color: TEXT_MD }}>Ningún cajero conectado en este momento.</p>
+                  <p className="text-[10px] mt-1" style={{ color: TEXT_LO }}>Aparecen aquí cuando inician sesión en el POS.</p>
                 </div>
               ) : (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "12px" }}>
@@ -878,8 +886,8 @@ export function DashboardPage() {
                         accent={hasOpenCash ? "rgba(16,185,129,0.22)" : "rgba(224,34,26,0.16)"}
                         style={{
                           background: hasOpenCash
-                            ? "linear-gradient(135deg, rgba(16,185,129,0.10) 0%, rgba(0,0,0,0.3) 100%)"
-                            : "rgba(255,255,255,0.04)",
+                            ? "linear-gradient(135deg, rgba(16,185,129,0.10) 0%, var(--td-card-bg) 100%)"
+                            : SURFACE_MUTED,
                           border: `1px solid ${hasOpenCash ? "rgba(16,185,129,0.30)" : "var(--td-panel-border)"}`,
                         }}
                       >
@@ -889,16 +897,16 @@ export function DashboardPage() {
                             className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full"
                             style={{
                               background: "#10b981",
-                              border: "2px solid var(--td-card-bg, #1a1a1a)",
+                              border: "2px solid var(--td-card-bg)",
                               boxShadow: "0 0 0 1px rgba(16,185,129,0.4)",
                             }}
                           />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="text-sm font-bold text-white/85 truncate">{u.name}</div>
+                          <div className="text-sm font-bold truncate" style={{ color: TEXT_HI }}>{u.name}</div>
                           <div className="flex items-center gap-1 mt-0.5">
-                            <Clock size={10} className="text-white/30" />
-                            <span className="text-[10px] font-semibold text-white/40">
+                            <Clock size={10} style={{ color: TEXT_LO }} />
+                            <span className="text-[10px] font-semibold" style={{ color: TEXT_MD }}>
                               {hasOpenCash
                                 ? `Abrió caja ${new Date(openSession.opened_at).toLocaleTimeString("es-MX", { timeStyle: "short", timeZone: BUSINESS_TZ })}`
                                 : timeAgo(u.last_seen_at)}
@@ -915,7 +923,7 @@ export function DashboardPage() {
                             </button>
                           ) : (
                             <span className="mt-1.5 inline-block px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider"
-                              style={{ background: "rgba(255,255,255,0.05)", color: "var(--td-text-ghost)", border: "1px solid var(--td-panel-border)" }}>
+                              style={{ background: SURFACE_SOFT, color: TEXT_LO, border: BORDER_PANEL }}>
                               Sin caja abierta
                             </span>
                           )}
@@ -935,8 +943,8 @@ export function DashboardPage() {
                 <SectionLabel>Cortes de hoy · {activeStore.name}</SectionLabel>
                 <button
                   onClick={() => dailyCashQuery.refetch()}
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-white/10 transition-colors"
-                  style={{ color: "var(--td-text-ghost)" }}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-colors"
+                  style={{ color: TEXT_LO, background: SURFACE_MUTED, border: BORDER_SUBTLE }}
                   title="Refrescar"
                 >
                   <RefreshCw size={11} className={dailyCashQuery.isFetching ? "animate-spin" : ""} />
@@ -948,13 +956,13 @@ export function DashboardPage() {
                   2026-06-11): esos números ya viven en Ventas y Reportes. */}
               {dailyCashQuery.isPending ? (
                 <div className="flex items-center justify-center py-6">
-                  <Loader2 size={18} className="animate-spin text-white/30" />
+                  <Loader2 size={18} className="animate-spin" style={{ color: TEXT_LO }} />
                 </div>
               ) : (dailyCashQuery.data?.sessions.length ?? 0) === 0 ? (
-                <div className="glass-dark rounded-2xl p-6 text-center" style={{ border: "1px solid var(--td-panel-border)" }}>
-                  <Wallet size={20} className="mx-auto mb-2 text-white/25" />
-                  <p className="text-xs text-white/40">Sin cortes hoy todavía.</p>
-                  <p className="text-[10px] text-white/25 mt-1">Aparecen aquí en cuanto un cajero abra o cierre caja.</p>
+                <div className="rounded-2xl p-6 text-center" style={{ background: "var(--td-card-bg)", border: BORDER_PANEL }}>
+                  <Wallet size={20} className="mx-auto mb-2" style={{ color: TEXT_LO }} />
+                  <p className="text-xs" style={{ color: TEXT_MD }}>Sin cortes hoy todavía.</p>
+                  <p className="text-[10px] mt-1" style={{ color: TEXT_LO }}>Aparecen aquí en cuanto un cajero abra o cierre caja.</p>
                 </div>
               ) : (
                 <div className="flex flex-col gap-2">

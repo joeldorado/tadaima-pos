@@ -11,8 +11,9 @@ interface PreSalesSkeletonProps {
 }
 
 const shimmer = "animate-pulse rounded-2xl";
-const SURFACE = "rgba(255,255,255,0.05)";
-const SURFACE_HI = "rgba(255,255,255,0.08)";
+const SURFACE = "var(--td-surface-soft)";
+const SURFACE_HI = "var(--td-surface-strong)";
+const SURFACE_MUTED = "var(--td-surface-muted)";
 
 export function PreSalesSkeleton({ variant }: PreSalesSkeletonProps) {
   return (
@@ -27,7 +28,7 @@ export function PreSalesSkeleton({ variant }: PreSalesSkeletonProps) {
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-5">
           {Array.from({ length: 8 }).map((_, i) => (
             <div key={i} className="rounded-[28px] overflow-hidden" style={{ background: SURFACE }}>
-              <div className="aspect-square animate-pulse" style={{ background: "rgba(255,255,255,0.04)" }} />
+              <div className="aspect-square animate-pulse" style={{ background: SURFACE_MUTED }} />
               <div className="p-4 space-y-2">
                 <div className={`${shimmer} h-4 w-3/4`} style={{ background: SURFACE_HI }} />
                 <div className={`${shimmer} h-3 w-1/2`} style={{ background: SURFACE }} />
