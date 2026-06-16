@@ -15,7 +15,9 @@ interface ProductsSkeletonProps {
 
 const shimmer = "animate-pulse rounded-2xl";
 const block = (extra: string) => `${shimmer} ${extra}`;
-const SURFACE = "rgba(255,255,255,0.05)";
+const SURFACE = "var(--td-surface-soft)";
+const SURFACE_MUTED = "var(--td-surface-muted)";
+const SURFACE_STRONG = "var(--td-surface-strong)";
 
 export function ProductsSkeleton({ viewMode, bgGrad }: ProductsSkeletonProps) {
   return (
@@ -47,11 +49,11 @@ export function ProductsSkeleton({ viewMode, bgGrad }: ProductsSkeletonProps) {
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
           {Array.from({ length: 10 }).map((_, i) => (
             <div key={i} className="rounded-[32px] overflow-hidden" style={{ background: SURFACE }}>
-              <div className="aspect-square animate-pulse" style={{ background: "rgba(255,255,255,0.04)" }} />
+              <div className="aspect-square animate-pulse" style={{ background: SURFACE_MUTED }} />
               <div className="p-4 space-y-2">
-                <div className={block("h-4 w-3/4")} style={{ background: "rgba(255,255,255,0.08)" }} />
-                <div className={block("h-3 w-1/2")} style={{ background: "rgba(255,255,255,0.06)" }} />
-                <div className={block("h-5 w-1/3 mt-3")} style={{ background: "rgba(255,255,255,0.08)" }} />
+                <div className={block("h-4 w-3/4")} style={{ background: SURFACE_STRONG }} />
+                <div className={block("h-3 w-1/2")} style={{ background: SURFACE }} />
+                <div className={block("h-5 w-1/3 mt-3")} style={{ background: SURFACE_STRONG }} />
               </div>
             </div>
           ))}
@@ -60,13 +62,13 @@ export function ProductsSkeleton({ viewMode, bgGrad }: ProductsSkeletonProps) {
         <div className="space-y-2">
           {Array.from({ length: 9 }).map((_, i) => (
             <div key={i} className="flex items-center gap-4 p-4 rounded-2xl" style={{ background: SURFACE }}>
-              <div className={`${shimmer} h-12 w-12 shrink-0`} style={{ background: "rgba(255,255,255,0.08)" }} />
+              <div className={`${shimmer} h-12 w-12 shrink-0`} style={{ background: SURFACE_STRONG }} />
               <div className="flex-1 space-y-2">
-                <div className={block("h-4 w-1/3")} style={{ background: "rgba(255,255,255,0.08)" }} />
-                <div className={block("h-3 w-1/4")} style={{ background: "rgba(255,255,255,0.06)" }} />
+                <div className={block("h-4 w-1/3")} style={{ background: SURFACE_STRONG }} />
+                <div className={block("h-3 w-1/4")} style={{ background: SURFACE }} />
               </div>
-              <div className={block("h-6 w-20")} style={{ background: "rgba(255,255,255,0.08)" }} />
-              <div className={block("h-6 w-16")} style={{ background: "rgba(255,255,255,0.06)" }} />
+              <div className={block("h-6 w-20")} style={{ background: SURFACE_STRONG }} />
+              <div className={block("h-6 w-16")} style={{ background: SURFACE }} />
             </div>
           ))}
         </div>

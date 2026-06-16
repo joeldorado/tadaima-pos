@@ -159,7 +159,7 @@ export function Layout() {
             alt="Tadaima"
             style={{ width: "100%", height: "100%", objectFit: "contain" }}
             onError={e => {
-              // Fallback al texto si no se encuentra la imagen
+              // Fallback al texto si la imagen no carga.
               const el = e.currentTarget;
               el.style.display = "none";
               const fallback = el.nextElementSibling as HTMLElement | null;

@@ -598,6 +598,11 @@ export interface PreSaleCatalog {
   sold_count: number | null
   /** Orders already delivered/liquidated */
   delivered_count: number | null
+  /**
+   * Entregados (liquidados) agrupados por tienda — espejo de reserved_by_store.
+   * Permite mostrar "Liquidados" solo de la tienda del gerente. `{ store_id: cantidad }`.
+   */
+  delivered_by_store?: Record<string, number>
 }
 
 export interface PreSaleCatalogListResponse {
@@ -722,6 +727,8 @@ export interface PreSaleOrder {
   paid_amount: number | null
   /** Computed — requires both relations */
   balance: number | null
+  /** Suma reversada por cancelaciones (ADR-016). Presente si la relación se cargó. */
+  cancelled_amount?: number | null
 }
 
 export interface PreSaleOrderListResponse {

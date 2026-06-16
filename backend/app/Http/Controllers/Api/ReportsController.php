@@ -262,7 +262,13 @@ class ReportsController extends Controller
             ->orderByDesc('opened_at')
             ->get();
 
-        // For each session, fetch movement totals and sales totals
+        // Para cada sesión calculamos:
+        //  - ventas totales (referencia operativa, incluye tarjeta)
+        //  - cobros que SÍ entraron físicamente a caja (no tarjeta)
+        //  - anticipos/liquidaciones de preventa en la ventana del corte
+        // El descuadre se basa solo en dinero físico. Antes `expected_cash`
+        // sumaba `sales.total` completo y por eso una venta con tarjeta
+        // inflaba el "faltante" aunque el cajón estuviera correcto.
         $sessionIds = $sessions->pluck('id');
 
         $movementTotals = DB::table('cash_movements')
@@ -280,16 +286,58 @@ class ReportsController extends Controller
             ->get()
             ->keyBy('register_session_id');
 
-        $data = $sessions->map(function ($s) use ($movementTotals, $saleTotals) {
+        $salePaymentTotals = DB::table('payments')
+            ->join('sales', 'sales.id', '=', 'payments.sale_id')
+            ->leftJoin('payment_methods as pm', 'pm.id', '=', 'payments.payment_method_id')
+            ->whereIn('sales.register_session_id', $sessionIds)
+            ->where('sales.status', Sale::STATUS_COMPLETED)
+            ->selectRaw("
+                sales.register_session_id,
+                COALESCE(SUM(payments.amount), 0) as total_paid,
+                COALESCE(SUM(CASE
+                    WHEN LOWER(COALESCE(pm.name, '')) LIKE '%tarjeta%' THEN 0
+                    ELSE payments.amount
+                END), 0) as cash_paid
+            ")
+            ->groupBy('sales.register_session_id')
+            ->get()
+            ->keyBy('register_session_id');
+
+        $preSaleTotals = DB::table('cash_register_sessions as sessions')
+            ->join('pre_sale_order_payments as psop', 'psop.cashier_id', '=', 'sessions.user_id')
+            ->leftJoin('payment_methods as pm', 'pm.id', '=', 'psop.payment_method_id')
+            ->join('pre_sale_orders as pso', 'pso.id', '=', 'psop.pre_sale_order_id')
+            ->whereIn('sessions.id', $sessionIds)
+            ->whereRaw('psop.created_at >= sessions.opened_at')
+            ->whereRaw('psop.created_at <= COALESCE(sessions.closed_at, CURRENT_TIMESTAMP)')
+            ->selectRaw("
+                sessions.id as register_session_id,
+                COALESCE(SUM(psop.amount), 0) as total_paid,
+                COALESCE(SUM(CASE
+                    WHEN LOWER(COALESCE(pm.name, '')) LIKE '%tarjeta%' THEN 0
+                    ELSE psop.amount
+                END), 0) as cash_paid
+            ")
+            ->groupBy('sessions.id')
+            ->get()
+            ->keyBy('register_session_id');
+
+        $data = $sessions->map(function ($s) use ($movementTotals, $saleTotals, $salePaymentTotals, $preSaleTotals) {
             $movements = $movementTotals->get($s->id, collect());
             $entradas  = (float) ($movements->firstWhere('type', 'entrada')?->total ?? 0);
             $salidas   = (float) ($movements->firstWhere('type', 'salida')?->total ?? 0);
             $ajustes   = (float) ($movements->firstWhere('type', 'ajuste')?->total ?? 0);
             $sales     = $saleTotals->get($s->id);
+            $salePay   = $salePaymentTotals->get($s->id);
+            $preSales  = $preSaleTotals->get($s->id);
             $salesAmt  = (float) ($sales?->amount ?? 0);
             $salesCnt  = (int)   ($sales?->count  ?? 0);
+            $cashSales = (float) ($salePay?->cash_paid ?? 0);
+            $preSaleAmt = (float) ($preSales?->total_paid ?? 0);
+            $cashPreSales = (float) ($preSales?->cash_paid ?? 0);
+            $cashCollected = round($cashSales + $cashPreSales, 2);
 
-            $expected = round($s->opening_cash + $entradas - $salidas + $ajustes + $salesAmt, 2);
+            $expected = round($s->opening_cash + $entradas - $salidas + $ajustes + $cashCollected, 2);
 
             return [
                 'id'              => $s->id,
@@ -305,6 +353,10 @@ class ReportsController extends Controller
                 'total_salidas'   => $salidas,
                 'total_ajustes'   => $ajustes,
                 'total_sales'     => $salesAmt,
+                'total_cash_sales' => round($cashSales, 2),
+                'total_pre_sale_payments' => round($preSaleAmt, 2),
+                'total_cash_pre_sale_payments' => round($cashPreSales, 2),
+                'cash_collected'  => $cashCollected,
                 'sales_count'     => $salesCnt,
                 'expected_cash'   => $expected,
                 'difference'      => $s->closing_cash !== null ? round((float) $s->closing_cash - $expected, 2) : null,
@@ -314,6 +366,8 @@ class ReportsController extends Controller
         $summary = [
             'total_sessions'  => $data->count(),
             'total_sales'     => round($data->sum('total_sales'), 2),
+            'total_cash_collected' => round($data->sum('cash_collected'), 2),
+            'total_pre_sale_payments' => round($data->sum('total_pre_sale_payments'), 2),
             'total_entradas'  => round($data->sum('total_entradas'), 2),
             'total_salidas'   => round($data->sum('total_salidas'), 2),
         ];

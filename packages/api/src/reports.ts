@@ -111,7 +111,16 @@ export interface CashSessionReport {
   total_entradas: number
   total_salidas: number
   total_ajustes: number
+  /** Ventas del turno sin filtrar por método: efectivo, tarjeta, etc. */
   total_sales: number
+  /** Parte de las ventas que sí entró físicamente a caja (no tarjeta). */
+  total_cash_sales: number
+  /** Anticipos/liquidaciones de preventa cobrados en la ventana del corte. */
+  total_pre_sale_payments: number
+  /** Parte de las preventas cobradas que sí entró a caja (no tarjeta). */
+  total_cash_pre_sale_payments: number
+  /** Dinero físico esperado por cobros (ventas + preventas no-tarjeta). */
+  cash_collected: number
   sales_count: number
   expected_cash: number
   /** closing_cash - expected_cash. null si caja aún abierta. */
@@ -123,6 +132,8 @@ export interface CashReport {
   summary: {
     total_sessions: number
     total_sales: number
+    total_cash_collected: number
+    total_pre_sale_payments: number
     total_entradas: number
     total_salidas: number
   }

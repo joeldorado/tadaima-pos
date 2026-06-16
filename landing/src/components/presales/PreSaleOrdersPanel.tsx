@@ -28,6 +28,15 @@ const STATUS_META: Record<PreSaleOrderStatus, { label: string; color: string; bg
 };
 
 const PAGE_SIZE = 15;
+const ORDER_THEME = {
+  textPrimary: "var(--td-text-hi)",
+  textSecondary: "var(--td-text-md)",
+  textMuted: "var(--td-text-lo)",
+  surfaceSoft: "var(--td-surface-soft)",
+  surfaceMuted: "var(--td-surface-muted)",
+  tableHead: "var(--td-table-head-bg)",
+  borderSubtle: "1px solid var(--td-card-border)",
+};
 
 export function PreSaleOrdersPanel() {
   const { user } = useAuth();
@@ -87,13 +96,14 @@ export function PreSaleOrdersPanel() {
       <div className="flex flex-wrap gap-3 items-center">
         {/* Search */}
         <div className="relative">
-          <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/30" />
+          <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2" style={{ color: ORDER_THEME.textMuted }} />
           <input
             type="text"
             placeholder="Buscar folio…"
             value={search}
             onChange={e => { setSearch(e.target.value); setPage(1); }}
-            className="bg-white/[0.05] border border-white/10 rounded-xl pl-9 pr-4 py-2 text-sm font-bold text-white placeholder:text-white/25 outline-none focus:border-white/20 transition-all w-44"
+            className="rounded-xl pl-9 pr-4 py-2 text-sm font-bold outline-none transition-all w-44"
+            style={{ background: ORDER_THEME.surfaceSoft, border: ORDER_THEME.borderSubtle, color: ORDER_THEME.textPrimary }}
           />
         </div>
 
@@ -108,9 +118,9 @@ export function PreSaleOrdersPanel() {
                 onClick={() => { setStatusFilter(s); setPage(1); }}
                 className="px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border"
                 style={{
-                  background: active ? (meta?.bg ?? "rgba(224,34,26,0.2)") : "rgba(255,255,255,0.04)",
-                  color: active ? (meta?.color ?? "#E0221A") : "rgba(255,255,255,0.3)",
-                  borderColor: active ? (meta?.color ?? "#E0221A") + "55" : "rgba(255,255,255,0.08)",
+                  background: active ? (meta?.bg ?? "rgba(224,34,26,0.2)") : ORDER_THEME.surfaceSoft,
+                  color: active ? (meta?.color ?? "#E0221A") : ORDER_THEME.textMuted,
+                  borderColor: active ? (meta?.color ?? "#E0221A") + "55" : "var(--td-card-border)",
                 }}
               >
                 {s === "all" ? "Todos" : meta?.label}
@@ -124,7 +134,8 @@ export function PreSaleOrdersPanel() {
           <select
             value={storeFilter}
             onChange={e => { setStoreFilter(e.target.value === "all" ? "all" : Number(e.target.value)); setPage(1); }}
-            className="bg-white/[0.05] border border-white/10 rounded-xl px-3 py-2 text-sm font-bold text-white outline-none"
+            className="rounded-xl px-3 py-2 text-sm font-bold outline-none"
+            style={{ background: ORDER_THEME.surfaceSoft, border: ORDER_THEME.borderSubtle, color: ORDER_THEME.textPrimary }}
           >
             <option value="all">Todas las tiendas</option>
             {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -145,7 +156,8 @@ export function PreSaleOrdersPanel() {
 
         <button
           onClick={() => void fetchOrders()}
-          className="ml-auto p-2 rounded-xl bg-white/[0.04] border border-white/10 text-white/40 hover:text-white hover:bg-white/10 transition-all"
+          className="ml-auto p-2 rounded-xl transition-all"
+          style={{ background: ORDER_THEME.surfaceSoft, border: ORDER_THEME.borderSubtle, color: ORDER_THEME.textMuted }}
           title="Actualizar"
         >
           <RefreshCw size={14} className={loading || isRefreshing ? "animate-spin" : ""} />
@@ -154,24 +166,24 @@ export function PreSaleOrdersPanel() {
 
       {/* Table */}
       <div
-        className="rounded-2xl border border-white/[0.07] overflow-hidden transition-opacity duration-200"
-        style={{ background: "var(--td-card-bg)", opacity: isRefreshing ? 0.45 : 1, pointerEvents: isRefreshing ? "none" : "auto" }}
+        className="rounded-2xl overflow-hidden transition-opacity duration-200"
+        style={{ background: "var(--td-card-bg)", border: ORDER_THEME.borderSubtle, opacity: isRefreshing ? 0.45 : 1, pointerEvents: isRefreshing ? "none" : "auto" }}
       >
         {loading ? (
           <div className="p-4"><PreSalesSkeleton variant="rows" /></div>
         ) : orders.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 gap-3">
-            <Package size={36} className="text-white/15" />
-            <p className="text-sm font-black text-white/25 uppercase tracking-widest">Sin folios</p>
-            <p className="text-[11px] text-white/20">Los apartados de catálogo aparecerán aquí</p>
+            <Package size={36} style={{ color: ORDER_THEME.textMuted }} />
+            <p className="text-sm font-black uppercase tracking-widest" style={{ color: ORDER_THEME.textSecondary }}>Sin folios</p>
+            <p className="text-[11px]" style={{ color: ORDER_THEME.textMuted }}>Los apartados de catálogo aparecerán aquí</p>
           </div>
         ) : (
           <div className="overflow-auto" style={{ maxHeight: "calc(100vh - 360px)" }}>
           <table className="w-full text-left border-collapse">
             <thead style={{ position: "sticky", top: 0, zIndex: 10 }}>
-              <tr className="border-b border-white/[0.06]" style={{ background: "var(--td-popup-bg)" }}>
+              <tr style={{ borderBottom: ORDER_THEME.borderSubtle, background: ORDER_THEME.tableHead }}>
                 {["Folio", "Cliente", "Productos", "Total", "Anticipo", "Pendiente", "Estado", "Tienda", "Fecha"].map(h => (
-                  <th key={h} className="px-4 py-3 text-[9px] font-black uppercase tracking-widest text-white/30" style={{ background: "var(--td-popup-bg)" }}>{h}</th>
+                  <th key={h} className="px-4 py-3 text-[9px] font-black uppercase tracking-widest" style={{ color: ORDER_THEME.textMuted, background: ORDER_THEME.tableHead }}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -183,24 +195,24 @@ export function PreSaleOrdersPanel() {
                 return (
                   <tr
                     key={order.id}
-                    className="border-b border-white/[0.04] hover:bg-white/[0.03] transition-colors"
-                    style={{ background: idx % 2 === 0 ? "transparent" : "rgba(255,255,255,0.015)" }}
+                    className="transition-colors"
+                    style={{ borderBottom: ORDER_THEME.borderSubtle, background: idx % 2 === 0 ? "transparent" : ORDER_THEME.surfaceMuted }}
                   >
                     {/* Folio */}
                     <td className="px-4 py-3">
-                      <span className="font-black text-white text-sm tracking-wide">{order.code}</span>
+                      <span className="font-black text-sm tracking-wide" style={{ color: ORDER_THEME.textPrimary }}>{order.code}</span>
                     </td>
 
                     {/* Cliente */}
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
-                        <User size={12} className="text-white/30 shrink-0" />
-                        <span className="text-sm font-bold text-white/80 truncate max-w-[130px]">
+                        <User size={12} className="shrink-0" style={{ color: ORDER_THEME.textMuted }} />
+                        <span className="text-sm font-bold truncate max-w-[130px]" style={{ color: ORDER_THEME.textPrimary }}>
                           {order.customer?.name ?? "—"}
                         </span>
                       </div>
                       {order.customer?.phone && (
-                        <span className="text-[10px] text-white/30 ml-5">{order.customer.phone}</span>
+                        <span className="text-[10px] ml-5" style={{ color: ORDER_THEME.textMuted }}>{order.customer.phone}</span>
                       )}
                     </td>
 
@@ -234,14 +246,14 @@ export function PreSaleOrdersPanel() {
                           );
                         })}
                         {(order.items?.length ?? 0) > 3 && (
-                          <span className="text-[10px] text-white/30">+{(order.items?.length ?? 0) - 3} más</span>
+                          <span className="text-[10px]" style={{ color: ORDER_THEME.textMuted }}>+{(order.items?.length ?? 0) - 3} más</span>
                         )}
                       </div>
                     </td>
 
                     {/* Total */}
                     <td className="px-4 py-3">
-                      <span className="text-sm font-black text-white">{fmt(order.total)}</span>
+                      <span className="text-sm font-black" style={{ color: ORDER_THEME.textPrimary }}>{fmt(order.total)}</span>
                     </td>
 
                     {/* Anticipo */}
@@ -269,20 +281,20 @@ export function PreSaleOrdersPanel() {
 
                     {/* Tienda */}
                     <td className="px-4 py-3">
-                      <span className="text-[11px] text-white/40 font-bold">{order.store?.name ?? "—"}</span>
+                      <span className="text-[11px] font-bold" style={{ color: ORDER_THEME.textSecondary }}>{order.store?.name ?? "—"}</span>
                     </td>
 
                     {/* Fecha */}
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1.5">
-                        <Calendar size={11} className="text-white/25 shrink-0" />
-                        <span className="text-[11px] text-white/40">
+                        <Calendar size={11} className="shrink-0" style={{ color: ORDER_THEME.textMuted }} />
+                        <span className="text-[11px]" style={{ color: ORDER_THEME.textSecondary }}>
                           {new Date(order.created_at).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "2-digit" })}
                         </span>
                       </div>
                       {order.pickup_deadline && (
                         <div className="flex items-center gap-1.5 mt-0.5">
-                          <Banknote size={11} className="text-white/25 shrink-0" />
+                          <Banknote size={11} className="shrink-0" style={{ color: ORDER_THEME.textMuted }} />
                           <span className="text-[10px] text-amber-400/70">
                             Hasta {new Date(order.pickup_deadline).toLocaleDateString("es-MX", { day: "2-digit", month: "short" })}
                           </span>
@@ -301,20 +313,22 @@ export function PreSaleOrdersPanel() {
       {/* Pagination */}
       {lastPage > 1 && (
         <div className="flex items-center justify-between">
-          <span className="text-[11px] text-white/30 font-bold">{total} folio{total !== 1 ? "s" : ""}</span>
+          <span className="text-[11px] font-bold" style={{ color: ORDER_THEME.textMuted }}>{total} folio{total !== 1 ? "s" : ""}</span>
           <div className="flex gap-2">
             <button
               disabled={page === 1}
               onClick={() => setPage(p => p - 1)}
-              className="p-2 rounded-xl bg-white/[0.04] border border-white/10 text-white/40 hover:text-white hover:bg-white/10 transition-all disabled:opacity-30"
+              className="p-2 rounded-xl transition-all disabled:opacity-30"
+              style={{ background: ORDER_THEME.surfaceSoft, border: ORDER_THEME.borderSubtle, color: ORDER_THEME.textMuted }}
             >
               <ChevronLeft size={14} />
             </button>
-            <span className="px-4 py-2 text-sm font-black text-white/60">{page} / {lastPage}</span>
+            <span className="px-4 py-2 text-sm font-black" style={{ color: ORDER_THEME.textSecondary }}>{page} / {lastPage}</span>
             <button
               disabled={page === lastPage}
               onClick={() => setPage(p => p + 1)}
-              className="p-2 rounded-xl bg-white/[0.04] border border-white/10 text-white/40 hover:text-white hover:bg-white/10 transition-all disabled:opacity-30"
+              className="p-2 rounded-xl transition-all disabled:opacity-30"
+              style={{ background: ORDER_THEME.surfaceSoft, border: ORDER_THEME.borderSubtle, color: ORDER_THEME.textMuted }}
             >
               <ChevronRight size={14} />
             </button>

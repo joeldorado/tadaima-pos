@@ -207,4 +207,40 @@ class PreSaleCatalogsTest extends TestCase
         $this->assertSame(2, $row['reserved_by_store'][(string) $store->id] ?? null);
         $this->assertArrayNotHasKey(0, $row['reserved_by_store']);
     }
+
+    public function test_delivered_by_store_is_keyed_by_store_id(): void
+    {
+        $catalog = $this->makeCatalog(['status' => PreSaleCatalog::STATUS_PUBLISHED]);
+        $store = Store::first();
+
+        $customer = Customer::create(['name' => 'Cliente Test']);
+        $order = \App\Models\PreSaleOrder::create([
+            'code'        => 'PREV-DELIV1',
+            'customer_id' => $customer->id,
+            'store_id'    => $store->id,
+            'user_id'     => $this->user->id,
+            'status'      => \App\Models\PreSaleOrder::STATUS_DELIVERED,
+            'total'       => 300,
+        ]);
+        \App\Models\PreSaleOrderItem::create([
+            'pre_sale_order_id'   => $order->id,
+            'pre_sale_catalog_id' => $catalog->id,
+            'product_name'        => 'Test Product',
+            'quantity'            => 3,
+            'unit_price'          => 100,
+            'status'              => \App\Models\PreSaleOrderItem::STATUS_DELIVERED,
+        ]);
+
+        $response = $this->actingAs($this->user, 'sanctum')
+            ->getJson('/api/v1/pre-sale-catalogs');
+
+        $response->assertOk();
+        $row = collect($response->json('data.data'))->firstWhere('id', $catalog->id);
+        // Liquidados agrupados por tienda, keyed por store id (no índice posicional).
+        $this->assertIsArray($row['delivered_by_store']);
+        $this->assertSame(3, $row['delivered_by_store'][(string) $store->id] ?? null);
+        $this->assertArrayNotHasKey(0, $row['delivered_by_store']);
+        // Un entregado NO cuenta como apartado (delivered ≠ pending/ready).
+        $this->assertArrayNotHasKey((string) $store->id, $row['reserved_by_store'] ?? []);
+    }
 }

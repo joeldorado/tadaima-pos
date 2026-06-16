@@ -130,6 +130,9 @@ export function CortesModal({ open, onClose, storeId }: CortesModalProps) {
                         <td className="py-2.5 px-3 text-right font-black" style={{ color: "var(--td-text-hi)" }}>
                           {fmt(s.total_sales)}
                           <span className="text-[10px] font-normal ml-1" style={{ color: "var(--td-text-lo)" }}>· {s.sales_count}</span>
+                          <span className="block text-[10px] font-normal" style={{ color: "var(--td-text-lo)" }}>
+                            Caja {fmt(s.cash_collected)}
+                          </span>
                         </td>
                         <td className="py-2.5 px-3 text-right font-bold" style={{
                           color: s.status === "open" ? "var(--td-text-lo)" : (Math.abs(diff) < 0.01 ? "var(--td-text-lo)" : (diff < 0 ? "#DC2626" : "#10b981")),

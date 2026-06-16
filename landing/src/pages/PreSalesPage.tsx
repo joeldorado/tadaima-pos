@@ -12,7 +12,11 @@ const T = {
   bgGrad: "var(--td-page-bg)",
   textPrimary: "var(--td-text-hi)",
   textSecondary: "var(--td-text-md)",
+  textMuted: "var(--td-text-lo)",
   redBright: "#FF4422",
+  surfaceSoft: "var(--td-surface-soft)",
+  surfaceMuted: "var(--td-surface-muted)",
+  borderSubtle: "1px solid var(--td-card-border)",
 };
 
 type AdminTab = "folios" | "difusion" | "catalogos" | "disponibles" | "vencidos";
@@ -73,9 +77,9 @@ export function PreSalesPage() {
           <h1 style={{ margin: 0, fontSize: 22, fontWeight: 900, letterSpacing: "-0.02em", color: T.textPrimary }}>
             Preventas <span style={{ color: T.redBright }}>Tadaima</span>
           </h1>
-          <div style={{ display: "flex", padding: 4, borderRadius: 12, background: "rgba(0,0,0,0.4)", border: "1px solid rgba(255,255,255,0.05)" }}>
-            <span style={{ padding: "3px 10px", borderRadius: 8, fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", background: isAdmin ? "#CC2200" : "transparent", color: isAdmin ? "#fff" : "rgba(255,255,255,0.3)" }}>Admin</span>
-            <span style={{ padding: "3px 10px", borderRadius: 8, fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", background: !isAdmin ? "#CC2200" : "transparent", color: !isAdmin ? "#fff" : "rgba(255,255,255,0.3)" }}>Vendedor</span>
+          <div style={{ display: "flex", padding: 4, borderRadius: 12, background: T.surfaceMuted, border: T.borderSubtle }}>
+            <span style={{ padding: "3px 10px", borderRadius: 8, fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", background: isAdmin ? "#CC2200" : "transparent", color: isAdmin ? "#fff" : T.textMuted }}>Admin</span>
+            <span style={{ padding: "3px 10px", borderRadius: 8, fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", background: !isAdmin ? "#CC2200" : "transparent", color: !isAdmin ? "#fff" : T.textMuted }}>Vendedor</span>
           </div>
         </div>
         <p style={{ margin: 0, fontSize: 13, color: T.textSecondary }}>Gestión de catálogos y folios de preventa</p>
@@ -98,11 +102,11 @@ export function PreSalesPage() {
               border: "1px solid",
               background: adminTab === id
                 ? "linear-gradient(135deg, #CC2200 0%, #FF4422 100%)"
-                : "rgba(255,255,255,0.05)",
+                : T.surfaceSoft,
               borderColor: adminTab === id
                 ? "rgba(255,120,90,0.3)"
-                : "var(--td-panel-border)",
-              color: adminTab === id ? "#fff" : "var(--td-text-lo)",
+                : "var(--td-card-border)",
+              color: adminTab === id ? "#fff" : T.textMuted,
               boxShadow: adminTab === id ? "0 0 20px rgba(204,34,0,0.3)" : "none",
             }}
           >

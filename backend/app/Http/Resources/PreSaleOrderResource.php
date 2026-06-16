@@ -47,6 +47,14 @@ class PreSaleOrderResource extends JsonResource
                 $this->relationLoaded('items') && $this->relationLoaded('payments'),
                 fn () => $this->balance
             ),
+
+            // Suma reversada por cancelaciones del folio (ADR-016). La Lista de
+            // Ventas la usa para mostrar "Cancelación de preventa −$X": en un
+            // full-cancel los payments se borran, así que paid_amount ya no sirve.
+            'cancelled_amount' => $this->when(
+                $this->relationLoaded('cancellations'),
+                fn () => (float) $this->cancellations->sum('amount_refunded')
+            ),
         ];
     }
 }

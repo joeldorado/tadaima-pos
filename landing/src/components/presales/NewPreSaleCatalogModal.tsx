@@ -179,6 +179,13 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
   const [editingStoreId, setEditingStoreId] = useState<number | null>(null);
   const [editingQty, setEditingQty]         = useState("");
 
+  // Stock total asignado (suma de store_limits visibles). Gerente = su tienda;
+  // admin = todas. Se muestra junto a "Límite de unidades" en el tab General
+  // para que el stock real (fuente de verdad de venta) no quede escondido en el
+  // tab Stock y se vea cargado al editar.
+  const totalStock = Object.values(storeLimits).reduce((sum, q) => sum + (Number(q) || 0), 0);
+  const hasStock   = totalStock > 0;
+
   // Price fields
   const [price1, setPrice1] = useState(catalog?.price_1 != null ? String(catalog.price_1) : "");
   const [price2, setPrice2] = useState(catalog?.price_2 != null ? String(catalog.price_2) : "");
@@ -449,6 +456,25 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
                     title={["arrived","closed","cancelled"].includes(catalog?.status ?? "") ? "El límite no se puede modificar después de que el producto llegó" : undefined}
                     style={{ ...inputStyle, opacity: ["arrived","closed","cancelled"].includes(catalog?.status ?? "") ? 0.45 : 1, cursor: ["arrived","closed","cancelled"].includes(catalog?.status ?? "") ? "not-allowed" : "auto" }}
                   />
+                  {/* Stock real (store_limits) junto al límite — es la fuente de
+                      verdad de venta. Click salta al tab Stock para editarlo. */}
+                  <button
+                    type="button"
+                    onClick={() => setTab("stock")}
+                    style={{
+                      marginTop: 6, width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+                      padding: "7px 12px", borderRadius: 12, cursor: "pointer",
+                      border: `1px solid ${hasStock ? "rgba(34,197,94,0.30)" : "rgba(220,38,38,0.30)"}`,
+                      background: hasStock ? "rgba(34,197,94,0.08)" : "rgba(220,38,38,0.06)",
+                      color: hasStock ? "#22C55E" : "#DC2626", fontSize: 11, fontWeight: 800,
+                    }}
+                  >
+                    <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <Package size={12} />
+                      {hasStock ? `Stock: ${totalStock} u.` : "Sin stock asignado"}
+                    </span>
+                    <span style={{ fontSize: 10, opacity: 0.85, fontWeight: 700 }}>{hasStock ? "Editar →" : "Asignar →"}</span>
+                  </button>
                 </div>
               </div>
 

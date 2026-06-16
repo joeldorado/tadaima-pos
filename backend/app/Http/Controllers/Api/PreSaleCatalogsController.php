@@ -27,7 +27,7 @@ class PreSaleCatalogsController extends Controller
             // Nested order.store_id necesario para calcular reservados por tienda
             // sin N+1 al renderizar reserved_by_store en el resource.
             'activeOrderItems.order:id,store_id',
-            'soldOrderItems', 'deliveredOrderItems', 'storeLimits',
+            'soldOrderItems', 'deliveredOrderItems.order:id,store_id', 'storeLimits',
         ])
             ->when($request->filled('status'),      fn ($q) => $q->where('status',      $request->status))
             ->when($request->filled('category_id'), fn ($q) => $q->where('category_id', $request->category_id))
@@ -175,7 +175,7 @@ class PreSaleCatalogsController extends Controller
         $this->syncStoreLimits($catalog, $storeLimits, $this->storeLimitScope($request));
 
         return $this->success(
-            new PreSaleCatalogResource($catalog->load(['category', 'supplier', 'product', 'createdBy', 'orderItems', 'activeOrderItems', 'soldOrderItems', 'deliveredOrderItems', 'storeLimits']))
+            new PreSaleCatalogResource($catalog->load(['category', 'supplier', 'product', 'createdBy', 'orderItems', 'activeOrderItems', 'soldOrderItems', 'deliveredOrderItems.order:id,store_id', 'storeLimits']))
         );
     }
 
@@ -302,7 +302,7 @@ class PreSaleCatalogsController extends Controller
         }
 
         return $this->success(
-            new PreSaleCatalogResource($catalog->load(['category', 'supplier', 'product', 'orderItems', 'activeOrderItems', 'soldOrderItems', 'deliveredOrderItems']))
+            new PreSaleCatalogResource($catalog->load(['category', 'supplier', 'product', 'orderItems', 'activeOrderItems', 'soldOrderItems', 'deliveredOrderItems.order:id,store_id']))
         );
     }
 }

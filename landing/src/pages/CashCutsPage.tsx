@@ -33,6 +33,8 @@ const TP  = "var(--td-text-hi)";
 const TS  = "var(--td-text-md)";
 const TM  = "var(--td-text-lo)";
 const DIV = "1px solid var(--td-divider)";
+const SURFACE_SOFT = "var(--td-surface-soft)";
+const SURFACE_MUTED = "var(--td-surface-muted)";
 
 const fmt = (n: number) =>
   new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", minimumFractionDigits: 2 }).format(n ?? 0);
@@ -52,7 +54,7 @@ function KpiInline({ label, value, color }: { label: string; value: string; colo
 /** Celda de resumen monetario dentro del detalle expandido. */
 function SummaryCell({ label, value, color, tag }: { label: string; value: string; color?: string | undefined; tag?: string | undefined }) {
   return (
-    <div className="px-4 py-3 rounded-xl" style={{ background: "rgba(0,0,0,0.18)", border: "1px solid var(--td-card-border)" }}>
+    <div className="px-4 py-3 rounded-xl" style={{ background: SURFACE_MUTED, border: "1px solid var(--td-card-border)" }}>
       <p className="text-[8px] font-black uppercase tracking-widest mb-1" style={{ color: TM }}>{label}</p>
       <p className="text-sm font-black flex items-center gap-2" style={{ color: color ?? TP }}>
         {value}
@@ -93,7 +95,7 @@ function CorteDetail({ session: s }: { session: CashSessionReport }) {
   const tdStyle: React.CSSProperties = { padding: "8px 12px", fontSize: 11, color: TS, verticalAlign: "top" };
 
   return (
-    <div className="px-6 pb-6 pt-2" style={{ background: "rgba(0,0,0,0.12)" }}>
+    <div className="px-6 pb-6 pt-2" style={{ background: SURFACE_SOFT }}>
 
       {/* ── Resumen del corte ─────────────────────────────────────────────── */}
       <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
@@ -110,11 +112,13 @@ function CorteDetail({ session: s }: { session: CashSessionReport }) {
           Imprimir
         </button>
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 mb-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-9 gap-2 mb-4">
         <SummaryCell label="Abrió con" value={fmt(s.opening_cash)} />
-        <SummaryCell label={`Ventas (${s.sales_count})`} value={`+${fmt(s.total_sales)}`} color="#10b981" />
+        <SummaryCell label={`Ventas totales (${s.sales_count})`} value={fmt(s.total_sales)} />
+        <SummaryCell label="Cobrado en caja" value={`+${fmt(s.cash_collected)}`} color="#10b981" />
+        <SummaryCell label="Preventas cobradas" value={fmt(s.total_pre_sale_payments)} color={s.total_pre_sale_payments > 0 ? "#F59E0B" : undefined} />
         <SummaryCell label="Entradas" value={`+${fmt(s.total_entradas)}`} color={s.total_entradas > 0 ? "#10b981" : undefined} />
-        <SummaryCell label="Salidas" value={`-${fmt(s.total_salidas)}`} color={s.total_salidas > 0 ? "#DC2626" : undefined} />
+        <SummaryCell label="Salidas de caja" value={`-${fmt(s.total_salidas)}`} color={s.total_salidas > 0 ? "#DC2626" : undefined} />
         <SummaryCell label="Ajustes" value={`${s.total_ajustes > 0 ? "+" : ""}${fmt(s.total_ajustes)}`} />
         <SummaryCell label="Esperado en caja" value={fmt(s.expected_cash)} />
         <SummaryCell label="Cerró con" value={isClosed ? fmt(s.closing_cash!) : "—"} />
@@ -136,7 +140,7 @@ function CorteDetail({ session: s }: { session: CashSessionReport }) {
       ) : (
         <div className="space-y-4">
           <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid var(--td-card-border)" }}>
-            <div className="px-4 py-2.5" style={{ background: "rgba(255,255,255,0.03)", borderBottom: DIV }}>
+            <div className="px-4 py-2.5" style={{ background: SURFACE_MUTED, borderBottom: DIV }}>
               <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: TM }}>
                 Ventas del corte · {detail.tickets.length} ticket{detail.tickets.length === 1 ? "" : "s"}
               </p>
@@ -196,7 +200,7 @@ function CorteDetail({ session: s }: { session: CashSessionReport }) {
           {/* Cobros de preventa dentro de la ventana del corte */}
           {detail.pre_sale_payments.length > 0 && (
             <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid var(--td-card-border)" }}>
-              <div className="px-4 py-2.5" style={{ background: "rgba(245,158,11,0.06)", borderBottom: DIV }}>
+              <div className="px-4 py-2.5" style={{ background: "rgba(245,158,11,0.08)", borderBottom: DIV }}>
                 <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: "#F59E0B" }}>
                   Preventa · anticipos y liquidaciones
                 </p>
@@ -219,7 +223,7 @@ function CorteDetail({ session: s }: { session: CashSessionReport }) {
           {/* Movimientos de caja (entradas/salidas/ajustes) */}
           {detail.movements.length > 0 && (
             <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid var(--td-card-border)" }}>
-              <div className="px-4 py-2.5" style={{ background: "rgba(255,255,255,0.03)", borderBottom: DIV }}>
+              <div className="px-4 py-2.5" style={{ background: SURFACE_MUTED, borderBottom: DIV }}>
                 <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: TM }}>
                   Movimientos de caja
                 </p>
@@ -312,7 +316,7 @@ export function CashCutsPage() {
             }}
             disabled={cashQuery.isFetching}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-50"
-            style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: TM }}
+            style={{ background: SURFACE_SOFT, border: "1px solid var(--td-card-border)", color: TM }}
             title="Forzar refresh de los cortes"
           >
             <RefreshCw size={13} className={cashQuery.isFetching ? "animate-spin" : ""} />
@@ -333,7 +337,7 @@ export function CashCutsPage() {
                 className="px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all"
                 style={active
                   ? { background: "linear-gradient(135deg,#CC2200,#FF4422)", color: "#fff" }
-                  : { background: "rgba(255,255,255,0.04)", border: "1px solid var(--td-panel-border)", color: TM }}
+                  : { background: SURFACE_SOFT, border: "1px solid var(--td-panel-border)", color: TM }}
               >
                 {p.label}
               </button>
@@ -379,6 +383,7 @@ export function CashCutsPage() {
               </p>
               <div className="flex gap-4 items-center">
                 <KpiInline label="Ventas total" value={fmt(cashReport.summary.total_sales)} color="#00CC66" />
+                <KpiInline label="Cobrado en caja" value={fmt(cashReport.summary.total_cash_collected)} color="#10b981" />
                 <KpiInline label="Entradas" value={fmt(cashReport.summary.total_entradas)} color="#FFAA00" />
                 <KpiInline label="Salidas" value={fmt(cashReport.summary.total_salidas)} color={RED} />
               </div>
@@ -388,7 +393,7 @@ export function CashCutsPage() {
                 Sin cortes en este período
               </div>
             ) : (
-              <div className="divide-y divide-white/[0.04]">
+              <div>
                 {sessions.map(s => {
                   const diff = s.difference ?? 0;
                   const isClosed = s.status === "closed";
@@ -399,10 +404,10 @@ export function CashCutsPage() {
                   const statusLabel = !isClosed ? "Abierta" : isMatch ? "Cuadra ✓" : isShort ? `Falta ${fmt(Math.abs(diff))}` : `Sobra ${fmt(diff)}`;
                   const expanded = expandedId === s.id;
                   return (
-                    <div key={s.id} style={expanded ? { background: "rgba(255,255,255,0.015)" } : undefined}>
+                    <div key={s.id} style={{ background: expanded ? SURFACE_MUTED : "transparent", borderTop: "1px solid var(--td-divider)" }}>
                       <button
                         onClick={() => setExpandedId(expanded ? null : s.id)}
-                        className="w-full px-6 py-4 flex items-center gap-4 hover:bg-white/[0.02] text-left transition-colors"
+                        className="w-full px-6 py-4 flex items-center gap-4 text-left transition-colors"
                         style={{ background: "transparent", border: "none", cursor: "pointer" }}
                       >
                         <div style={{
@@ -430,6 +435,9 @@ export function CashCutsPage() {
                         <div className="text-right shrink-0">
                           <p style={{ margin: 0, fontSize: 14, fontWeight: 900, color: TP }}>
                             {fmt(s.total_sales)}
+                          </p>
+                          <p style={{ margin: "2px 0 0", fontSize: 9, fontWeight: 800, color: TM }}>
+                            Caja {fmt(s.cash_collected)}
                           </p>
                           <span style={{
                             display: "inline-block", marginTop: 2,

@@ -1,7 +1,7 @@
 import React from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '@tadaima/auth'
-import { Loader2 } from 'lucide-react'
+import { PikachuLoader } from '@/components/ui/PikachuLoader'
 import { canAccessPage, type PageKey } from '@/lib/permisos'
 
 interface ProtectedRouteProps {
@@ -18,17 +18,7 @@ export function ProtectedRoute({ children, requiresPage }: ProtectedRouteProps):
   // Without this guard, the user would be sent to /login on every hard reload
   // even with a valid token (because user is null during the initial me() call).
   if (isLoading) {
-    return (
-      <div
-        className="h-screen flex flex-col items-center justify-center gap-3"
-        style={{ background: 'var(--td-page-bg)' }}
-      >
-        <Loader2 size={24} className="animate-spin" style={{ color: '#E0221A' }} />
-        <p style={{ fontSize: 10, fontWeight: 900, letterSpacing: '0.3em', color: 'var(--td-text-ghost)', textTransform: 'uppercase' }}>
-          Cargando...
-        </p>
-      </div>
-    )
+    return <PikachuLoader />
   }
 
   if (!user) {

@@ -259,6 +259,12 @@ const BORDER = "1px solid var(--td-panel-border)";
 const RED    = "var(--td-red)";
 const CARD   = "var(--td-card-bg)";
 const CARD_B = "1px solid var(--td-card-border)";
+const SOFT   = "var(--td-surface-soft)";
+const MUTED  = "var(--td-surface-muted)";
+const STRONG = "var(--td-surface-strong)";
+const THI    = "var(--td-text-hi)";
+const TMD    = "var(--td-text-md)";
+const TLO    = "var(--td-text-lo)";
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export function SellPage() {
@@ -3370,14 +3376,20 @@ export function SellPage() {
   if (!cashSession) {
     return (
       <div className="h-full flex flex-col items-center justify-center gap-8" style={{ background: BG }}>
-        {/* Icon */}
-        <div style={{
-          width: 96, height: 96, borderRadius: 28,
-          background: "rgba(224,34,26,0.1)", border: "1px solid rgba(224,34,26,0.2)",
-          display: "flex", alignItems: "center", justifyContent: "center",
-        }}>
-          <ShoppingBag size={44} color="rgba(224,34,26,0.7)" />
-        </div>
+        {/* Mascota: Pikachu sobre Pokébola para el estado de caja cerrada.
+            Pixel-art flotando con glow rojo de marca (sin caja, para que el
+            sprite se vea limpio y combine con el estilo). */}
+        <img
+          src="/pikachu-caja.gif"
+          alt="Caja cerrada"
+          width={150}
+          style={{
+            width: 150,
+            height: "auto",
+            imageRendering: "pixelated",
+            filter: "drop-shadow(0 10px 26px rgba(224,34,26,0.35))",
+          }}
+        />
 
         {/* Text */}
         <div style={{ textAlign: "center" }}>
@@ -3459,12 +3471,12 @@ export function SellPage() {
                 </div>
                 {[0, 1].map(i => (
                   <div key={`sk-cash-${i}`} className="animate-pulse" style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <div style={{ width: 32, height: 32, borderRadius: 999, background: "rgba(255,255,255,0.06)", flexShrink: 0 }} />
+                    <div style={{ width: 32, height: 32, borderRadius: 999, background: SOFT, flexShrink: 0 }} />
                     <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
-                      <div style={{ height: 10, width: 110, borderRadius: 999, background: "rgba(255,255,255,0.08)" }} />
-                      <div style={{ height: 8, width: 80, borderRadius: 999, background: "rgba(255,255,255,0.05)" }} />
+                      <div style={{ height: 10, width: 110, borderRadius: 999, background: STRONG }} />
+                      <div style={{ height: 8, width: 80, borderRadius: 999, background: SOFT }} />
                     </div>
-                    <div style={{ width: 50, height: 10, borderRadius: 999, background: "rgba(255,255,255,0.05)" }} />
+                    <div style={{ width: 50, height: 10, borderRadius: 999, background: SOFT }} />
                   </div>
                 ))}
               </div>
@@ -3649,8 +3661,8 @@ export function SellPage() {
               <Loader2 size={28} className="animate-spin text-[#E0221A]" />
             </div>
             <div className="text-center">
-              <p className="text-sm font-black uppercase tracking-widest text-white">Procesando venta</p>
-              <p className="text-[11px] font-bold text-white/40 mt-1">No cierres ni cambies de pantalla</p>
+              <p className="text-sm font-black uppercase tracking-widest" style={{ color: THI }}>Procesando venta</p>
+              <p className="text-[11px] font-bold mt-1" style={{ color: TLO }}>No cierres ni cambies de pantalla</p>
             </div>
           </div>
         </div>
@@ -3658,16 +3670,16 @@ export function SellPage() {
 
       {/* ══════════════════ TOP TABS (CAJAS) ══════════════════════════════════ */}
       <div
-        className="flex items-center shrink-0 border-b border-white/5 overflow-x-auto no-scrollbar"
+        className="flex items-center shrink-0 overflow-x-auto no-scrollbar"
         style={{ height: 48, background: "var(--td-panel-bg)" }}
       >
-        <div className="flex items-center h-full px-6 border-r border-white/5 gap-3 shrink-0">
+        <div className="flex items-center h-full px-6 gap-3 shrink-0" style={{ borderRight: CARD_B }}>
           <ShoppingBag size={18} className="text-[#E0221A]" />
           <div className="flex flex-col leading-tight">
-            <span className="text-[10px] font-black uppercase tracking-[0.18em] text-white">
+            <span className="text-[10px] font-black uppercase tracking-[0.18em]" style={{ color: THI }}>
               Caja · {activeStore?.name ?? "Sin tienda"}
             </span>
-            <span className="text-[9px] font-bold uppercase tracking-[0.15em] text-white/40">
+            <span className="text-[9px] font-bold uppercase tracking-[0.15em]" style={{ color: TLO }}>
               {user?.name?.split(" ")[0] ?? "—"}
             </span>
           </div>
@@ -3677,10 +3689,11 @@ export function SellPage() {
           <div
             key={m.id}
             onClick={() => setActiveMesaId(m.id)}
-            className="group relative flex items-center h-full px-5 cursor-pointer border-r border-white/5 transition-all"
+            className="group relative flex items-center h-full px-5 cursor-pointer transition-all"
             style={{ 
               background: activeMesaId === m.id ? "rgba(224,34,26,0.08)" : "transparent",
-              minWidth: 120
+              minWidth: 120,
+              borderRight: CARD_B,
             }}
           >
             {activeMesaId === m.id && (
@@ -3695,9 +3708,10 @@ export function SellPage() {
             {mesas.length > 1 && (
               <button 
                 onClick={(e) => { e.stopPropagation(); removeMesa(m.id); }}
-                className="opacity-0 group-hover:opacity-100 p-1 hover:bg-white/10 rounded-md transition-all ml-auto"
+                className="opacity-0 group-hover:opacity-100 p-1 rounded-md transition-all ml-auto"
+                style={{ color: TLO, background: SOFT }}
               >
-                <X size={10} className="text-white/40" />
+                <X size={10} />
               </button>
             )}
           </div>
@@ -3705,16 +3719,18 @@ export function SellPage() {
 
         <button 
           onClick={addMesa}
-          className="flex items-center justify-center h-full px-6 hover:bg-[#E0221A]/10 border-r border-white/5 text-[#E0221A] transition-colors"
+          className="flex items-center justify-center h-full px-6 hover:bg-[#E0221A]/10 text-[#E0221A] transition-colors"
+          style={{ borderRight: CARD_B }}
           title="Nueva venta paralela"
         >
           <Plus size={16} strokeWidth={3} />
         </button>
 
-        <div className="ml-auto flex items-center h-full gap-0 border-l border-white/5">
+        <div className="ml-auto flex items-center h-full gap-0" style={{ borderLeft: CARD_B }}>
           <button
             onClick={() => { void openHistorial(); }}
-            className="h-full px-5 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-white/30 hover:text-white transition-colors border-r border-white/5"
+            className="h-full px-5 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-colors"
+            style={{ color: TLO, borderRight: CARD_B }}
             title="Ver historial de ventas de esta sesión"
           >
             <History size={13} />
@@ -3722,7 +3738,8 @@ export function SellPage() {
           </button>
           <button
             onClick={() => setShowCortesModal(true)}
-            className="h-full px-5 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-white/30 hover:text-white transition-colors border-r border-white/5"
+            className="h-full px-5 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-colors"
+            style={{ color: TLO, borderRight: CARD_B }}
             title="Ver cortes de caja (según tu rol)"
           >
             <Clock size={13} />
@@ -3800,7 +3817,7 @@ export function SellPage() {
                 style={{ width: "100%", background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 14, color: "var(--td-input-text)", padding: "12px 16px", fontSize: 22, fontWeight: 900, outline: "none", boxSizing: "border-box" as const }}
               />
               <p style={{ margin: "8px 0 0", fontSize: 10, color: "var(--td-text-ghost)", fontWeight: 600 }}>
-                Este valor queda registrado en el reporte del turno junto a todas las ventas del periodo.
+                Este valor se compara contra el dinero físico esperado en caja. Las ventas con tarjeta sí salen en reportes y tickets, pero no cuentan para el faltante o sobrante del cajón.
               </p>
             </div>
 
@@ -3824,10 +3841,55 @@ export function SellPage() {
 
       <div className="flex-1 flex overflow-hidden">
         {/* ══════════════════ MAIN CART AREA ══════════════════════════════════ */}
-        <div className="flex-1 flex flex-col min-w-0" style={{ background: "var(--td-card-bg)" }}>
+        <div className="flex-1 flex flex-col min-w-0 relative overflow-hidden" style={{ background: "var(--td-card-bg)", isolation: "isolate" }}>
+
+          {/* Fondo decorativo: Charizard VOLANDO detrás del carrito. El contenedor
+              maneja posición (centrado + baja con los items) + blur/opacidad; la
+              imagen vuela: entra desde arriba (-500), baja con overshoot y sube a su
+              posición, luego flota en su sitio. z-index:-1 lo manda atrás, sin eventos. */}
+          <style>{`
+            @keyframes td-charizard-in {
+              0%   { transform: translateY(-500px); }
+              65%  { transform: translateY(20px); }
+              82%  { transform: translateY(-8px); }
+              100% { transform: translateY(0); }
+            }
+            @keyframes td-charizard-hover {
+              0%, 100% { transform: translateY(0); }
+              50%      { transform: translateY(44px); }
+            }
+          `}</style>
+          <div
+            aria-hidden="true"
+            style={{
+              position: "absolute",
+              left: "50%",
+              top: 120,
+              width: 300,
+              transform: `translate(-50%, ${Math.min(activeMesa.items.length * 56, 360)}px)`,
+              transition: "transform 0.55s cubic-bezier(0.16,1,0.3,1), filter 0.5s ease, opacity 0.5s ease",
+              // Sin items: nítido y visible (se ve completo). Con items: blur sutil de fondo.
+              filter: activeMesa.items.length === 0 ? "blur(0px)" : "blur(7px)",
+              opacity: activeMesa.items.length === 0 ? 0.95 : 0.18,
+              pointerEvents: "none",
+              zIndex: -1,
+            }}
+          >
+            <img
+              src="/charizard-bg.gif"
+              alt=""
+              style={{
+                width: 300,
+                display: "block",
+                imageRendering: "pixelated",
+                // Vuela hacia adentro una vez, luego flota infinito (efecto vuelo).
+                animation: "td-charizard-in 1.9s cubic-bezier(0.16,1,0.3,1) both, td-charizard-hover 4.5s ease-in-out 1.9s infinite",
+              }}
+            />
+          </div>
 
           {/* ── Barra de info de caja ─────────────────────────────────────────── */}
-          <div className="shrink-0 flex items-center justify-between px-5 py-2 border-b border-white/[0.05]" style={{ background: "var(--td-panel-bg)" }}>
+          <div className="shrink-0 flex items-center justify-between px-5 py-2" style={{ background: "var(--td-panel-bg)", borderBottom: CARD_B }}>
             <div className="flex items-center gap-5">
               {activeStore && (
                 <div className="flex items-center gap-1.5">
@@ -3882,10 +3944,10 @@ export function SellPage() {
                         <User size={15} />
                       </div>
                       <div className="min-w-0">
-                        <p className="text-[11px] font-black uppercase tracking-[0.18em] text-white">
+                        <p className="text-[11px] font-black uppercase tracking-[0.18em]" style={{ color: THI }}>
                           {activeMesa.isPreventa ? "Paso 1 · Cliente de la preventa" : "Cliente del ticket"}
                         </p>
-                        <p className="text-[11px] text-white/45 font-bold mt-0.5">
+                        <p className="text-[11px] font-bold mt-0.5" style={{ color: TLO }}>
                           {activeMesa.isPreventa
                             ? "Busca, escanea o registra al cliente antes de cobrar el anticipo."
                             : "Opcional para la venta regular, útil para historial y ticket."}
@@ -3894,15 +3956,16 @@ export function SellPage() {
                     </div>
                   </div>
 
-                  <div className={`shrink-0 px-3 py-1.5 rounded-xl border text-[10px] font-black uppercase tracking-widest ${
-                    activeMesa.isPreventa
-                      ? hasAssignedCustomer
-                        ? "border-emerald-400/20 bg-emerald-500/10 text-emerald-300"
-                        : "border-amber-400/25 bg-amber-500/10 text-amber-300"
-                      : hasAssignedCustomer
-                        ? "border-white/15 bg-white/[0.06] text-white"
-                        : "border-white/10 bg-white/[0.04] text-white/35"
-                  }`}>
+                  <div
+                    className={`shrink-0 px-3 py-1.5 rounded-xl border text-[10px] font-black uppercase tracking-widest ${
+                      activeMesa.isPreventa
+                        ? hasAssignedCustomer
+                          ? "border-emerald-400/20 bg-emerald-500/10 text-emerald-300"
+                          : "border-amber-400/25 bg-amber-500/10 text-amber-300"
+                        : ""
+                    }`}
+                    style={!activeMesa.isPreventa ? { border: CARD_B, background: hasAssignedCustomer ? MUTED : SOFT, color: hasAssignedCustomer ? THI : TLO } : undefined}
+                  >
                     {activeMesa.isPreventa
                       ? hasAssignedCustomer ? "Cliente asignado" : "Requerido"
                       : hasAssignedCustomer ? "Cliente seleccionado" : "Sin cliente"}
@@ -3910,17 +3973,19 @@ export function SellPage() {
                 </div>
 
                 {activeMesa.isPreventa && (
-                  <div className="flex bg-black/20 p-1 rounded-2xl border border-white/10 w-fit mb-3">
+                  <div className="flex p-1 rounded-2xl w-fit mb-3" style={{ background: SOFT, border: CARD_B }}>
                     <button 
                       onClick={() => updMesa(activeMesa.id, m => ({ ...m, isNewCustomer: false }))}
-                      className={`flex items-center gap-2 px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${!activeMesa.isNewCustomer ? 'bg-[#E0221A] text-white shadow-lg' : 'text-white/40 hover:text-white'}`}
+                      className={`flex items-center gap-2 px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${!activeMesa.isNewCustomer ? 'bg-[#E0221A] text-white shadow-lg' : ''}`}
+                      style={activeMesa.isNewCustomer ? { color: TLO } : undefined}
                     >
                       <Users size={14} />
                       Buscar existente
                     </button>
                     <button 
                       onClick={() => updMesa(activeMesa.id, m => ({ ...m, isNewCustomer: true, customerId: undefined, customerPhone: m.customerPhone || "" }))}
-                      className={`flex items-center gap-2 px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeMesa.isNewCustomer ? 'bg-amber-500 text-black shadow-lg' : 'text-white/40 hover:text-white'}`}
+                      className={`flex items-center gap-2 px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeMesa.isNewCustomer ? 'bg-amber-500 text-black shadow-lg' : ''}`}
+                      style={!activeMesa.isNewCustomer ? { color: TLO } : undefined}
                     >
                       <UserPlus size={14} />
                       Dar de alta
@@ -3960,7 +4025,8 @@ export function SellPage() {
                           updMesa(activeMesa.id, m => ({ ...m, isNewCustomer: false, customerName: undefined, customerPhone: "", customerEmail: "" }));
                           setCustomerSearch("");
                         }}
-                        className="flex items-center justify-center px-3 rounded-2xl bg-white/[0.04] border border-white/10 text-white/30 hover:text-white hover:bg-white/10 transition-all"
+                        className="flex items-center justify-center px-3 rounded-2xl transition-all"
+                        style={{ background: SOFT, border: CARD_B, color: TLO }}
                         title="Cancelar registro"
                       >
                         <X size={15} />
@@ -4035,7 +4101,7 @@ export function SellPage() {
                 ) : (
                   <div className="flex flex-col gap-2">
                     <div className="relative flex-1" ref={custRef}>
-                      <div className={`absolute left-4 top-1/2 -translate-y-1/2 transition-colors ${requireCustomerFlash ? "text-amber-400" : "text-white/20"}`}>
+                      <div className={`absolute left-4 top-1/2 -translate-y-1/2 transition-colors ${requireCustomerFlash ? "text-amber-400" : ""}`} style={!requireCustomerFlash ? { color: TLO } : undefined}>
                         <Search size={16} />
                       </div>
                       <input
@@ -4045,11 +4111,12 @@ export function SellPage() {
                         value={customerSearch}
                         onChange={e => { setCustomerSearch(e.target.value); setShowCustDrop(true); }}
                         onFocus={() => { setShowCustDrop(true); setRequireCustomerFlash(false); }}
-                        className={`w-full rounded-2xl pl-12 pr-4 py-3 text-sm font-bold text-white outline-none transition-all ${
+                        className={`w-full rounded-2xl pl-12 pr-4 py-3 text-sm font-bold outline-none transition-all ${
                           requireCustomerFlash
                             ? "bg-amber-400/8 border-2 border-amber-400 ring-4 ring-amber-400/20 placeholder:text-amber-400/60 animate-pulse"
-                            : "bg-white/[0.04] border border-white/10 focus:border-white/20 focus:bg-white/[0.06] placeholder:text-white/20 shadow-inner"
+                            : ""
                         }`}
+                        style={!requireCustomerFlash ? { background: SOFT, border: CARD_B, color: THI } : undefined}
                       />
 
                       <AnimatePresence>
@@ -4058,11 +4125,11 @@ export function SellPage() {
                             initial={{ opacity: 0, y: 10 }}
                             animate={{ opacity: 1, y: 0 }}
                             exit={{ opacity: 0, y: 10 }}
-                            className="absolute top-full left-0 right-0 mt-2 z-[100] border border-white/10 rounded-2xl overflow-hidden shadow-2xl max-h-[300px] overflow-y-auto no-scrollbar"
-                            style={{ background: "var(--td-popup-bg)" }}
+                            className="absolute top-full left-0 right-0 mt-2 z-[100] rounded-2xl overflow-hidden shadow-2xl max-h-[300px] overflow-y-auto no-scrollbar"
+                            style={{ background: "var(--td-popup-bg)", border: BORDER }}
                           >
                             {filteredCusts.length === 0 ? (
-                              <div className="p-4 flex flex-col items-center gap-3">
+                          <div className="p-4 flex flex-col items-center gap-3">
                                 {headerSearchingExternal && (
                                   <div className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30">
                                     <Loader2 size={14} className="animate-spin text-amber-400" />
@@ -4072,7 +4139,7 @@ export function SellPage() {
                                   </div>
                                 )}
                                 {!headerSearchingExternal && extSearchResults.length === 0 && (
-                                  <p className="text-xs text-white/30 font-bold uppercase tracking-widest text-center">No se encontró en la base local</p>
+                                  <p className="text-xs font-bold uppercase tracking-widest text-center" style={{ color: TLO }}>No se encontró en la base local</p>
                                 )}
                                 {extSearchResults.length > 0 && (
                                   <div className="w-full space-y-1">
@@ -4088,8 +4155,8 @@ export function SellPage() {
                                           {(ext.name ?? "?").charAt(0).toUpperCase()}
                                         </div>
                                         <div className="flex-1 min-w-0">
-                                          <p className="text-sm font-black text-white truncate">{ext.name}</p>
-                                          <p className="text-[10px] text-white/35">{ext.external_member_id}{ext.phone ? ` · ${ext.phone}` : ""}{ext.email ? ` · ${ext.email}` : ""}</p>
+                                          <p className="text-sm font-black truncate" style={{ color: THI }}>{ext.name}</p>
+                                          <p className="text-[10px]" style={{ color: TLO }}>{ext.external_member_id}{ext.phone ? ` · ${ext.phone}` : ""}{ext.email ? ` · ${ext.email}` : ""}</p>
                                         </div>
                                         <span className="text-[10px] font-black text-red-400 uppercase tracking-wider shrink-0">Agregar</span>
                                       </button>
@@ -4114,12 +4181,13 @@ export function SellPage() {
                                 <button
                                   key={c.id}
                                   onClick={() => setCustomer(c)}
-                                  className="w-full text-left px-5 py-4 border-b border-white/5 hover:bg-white/5 transition-colors group"
+                                  className="w-full text-left px-5 py-4 transition-colors group"
+                                  style={{ borderBottom: "1px solid var(--td-divider)" }}
                                 >
                                   <div className="flex items-start justify-between gap-3">
                                     <div className="min-w-0">
-                                      <p className="text-sm font-black text-white group-hover:text-[#E0221A] transition-colors truncate">{c.name}</p>
-                                      <p className="text-[10px] text-white/30 truncate">
+                                      <p className="text-sm font-black group-hover:text-[#E0221A] transition-colors truncate" style={{ color: THI }}>{c.name}</p>
+                                      <p className="text-[10px] truncate" style={{ color: TLO }}>
                                         {c.phone || "Sin tel."}
                                         {c.email ? ` · ${c.email}` : ""}
                                       </p>
@@ -4138,7 +4206,7 @@ export function SellPage() {
                       </AnimatePresence>
                     </div>
 
-                    <p className="text-[10px] font-bold text-white/35 px-1">
+                    <p className="text-[10px] font-bold px-1" style={{ color: TLO }}>
                       Primero busca en tu base local; si no existe, intentamos encontrarlo en socios Tadaima o lo damos de alta aquí mismo.
                     </p>
 
@@ -4154,16 +4222,16 @@ export function SellPage() {
                 )}
 
                 {hasAssignedCustomer && (
-                  <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                  <div className="mt-3 rounded-2xl px-4 py-3" style={{ border: CARD_B, background: MUTED }}>
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="text-[9px] font-black uppercase tracking-[0.16em] text-white/35">
+                        <p className="text-[9px] font-black uppercase tracking-[0.16em]" style={{ color: TLO }}>
                           Cliente asignado a esta {activeMesa.isPreventa ? "preventa" : "venta"}
                         </p>
-                        <p className="text-sm font-black text-white mt-1 truncate">
+                        <p className="text-sm font-black mt-1 truncate" style={{ color: THI }}>
                           {activeMesa.customerName}
                         </p>
-                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-[10px] text-white/50 font-bold">
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-[10px] font-bold" style={{ color: TMD }}>
                           {activeMesa.customerPhone && <span className="flex items-center gap-1"><Phone size={11} /> {activeMesa.customerPhone}</span>}
                           {activeMesa.customerEmail && <span className="flex items-center gap-1"><Mail size={11} /> {activeMesa.customerEmail}</span>}
                           {activeMesa.customerId && <span className="text-emerald-400/70">Registrado</span>}
@@ -4175,7 +4243,8 @@ export function SellPage() {
                             customerSearchRef.current?.focus();
                             setShowCustDrop(true);
                           }}
-                          className="px-3 py-2 rounded-xl border border-white/10 bg-white/[0.04] text-[10px] font-black uppercase tracking-widest text-white/60 hover:text-white hover:bg-white/[0.07] transition-all"
+                          className="px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
+                          style={{ border: CARD_B, background: SOFT, color: TMD }}
                         >
                           Cambiar
                         </button>
@@ -4198,7 +4267,7 @@ export function SellPage() {
             {/* Buscador de Productos (Manual) */}
             <div className="flex gap-3">
               <div className="relative flex-1">
-                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20">
+                <div className="absolute left-4 top-1/2 -translate-y-1/2" style={{ color: TLO }}>
                   <Plus size={16} />
                 </div>
                 <input
@@ -4235,17 +4304,18 @@ export function SellPage() {
                     void addToCart(exact, "a");
                     setSearch("");
                   }}
-                  className="w-full bg-white/[0.04] border border-white/10 rounded-2xl pl-12 pr-4 py-2.5 text-sm font-bold text-white placeholder:text-white/20 focus:border-white/20 focus:bg-white/[0.06] outline-none transition-all shadow-inner"
+                  className="w-full rounded-2xl pl-12 pr-4 py-2.5 text-sm font-bold outline-none transition-all shadow-inner"
+                  style={{ background: SOFT, border: CARD_B, color: THI }}
                 />
                 
                 {/* Resultados de búsqueda rápidos */}
                 {search.length > 0 && (
-                  <div className="absolute top-full left-0 right-0 mt-2 z-[90] border border-white/10 rounded-2xl overflow-hidden shadow-2xl max-h-[360px] overflow-y-auto no-scrollbar" style={{ background: "var(--td-popup-bg)" }}>
+                  <div className="absolute top-full left-0 mt-2 z-[110] rounded-2xl overflow-hidden shadow-2xl max-h-[360px] overflow-y-auto no-scrollbar" style={{ background: "var(--td-popup-bg)", border: BORDER, minWidth: 620, maxWidth: "90vw" }}>
                     {isFolioSearch ? (
                       filteredFolios.length === 0 ? (
-                        <div className="p-4 text-center text-xs text-white/30 font-bold uppercase tracking-widest">
+                        <div className="p-4 text-center text-xs font-bold uppercase tracking-widest" style={{ color: TLO }}>
                           Sin folios que empiecen con "{search.trim()}"
-                          <p className="text-[10px] mt-1 normal-case tracking-normal text-white/20">Enter para buscar en backend</p>
+                          <p className="text-[10px] mt-1 normal-case tracking-normal" style={{ color: TLO }}>Enter para buscar en backend</p>
                         </div>
                       ) : (
                         filteredFolios.map(o => {
@@ -4265,7 +4335,7 @@ export function SellPage() {
                                   .then(() => setSearch(""))
                                   .catch(() => toast.error("Error al cargar la preventa"));
                               }}
-                              className="w-full px-5 py-4 border-b border-white/5 flex items-center gap-4 text-left hover:bg-white/[0.04] transition-colors"
+                              className="w-full px-5 py-4 flex items-center gap-4 text-left transition-colors"
                               style={{ borderBottom: "1px solid var(--td-panel-border)" }}
                             >
                               <div className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0" style={{
@@ -4297,7 +4367,7 @@ export function SellPage() {
                         })
                       )
                     ) : filteredProds.length === 0 ? (
-                      <div className="p-4 text-center text-xs text-white/30 font-bold uppercase tracking-widest">No se encontró el producto</div>
+                        <div className="p-4 text-center text-xs font-bold uppercase tracking-widest" style={{ color: TLO }}>No se encontró el producto</div>
                     ) : (
                       filteredProds.map(p => (
                         <div
@@ -4312,10 +4382,10 @@ export function SellPage() {
                               setSearch("");
                             }
                           }}
-                          className="w-full px-5 py-4 border-b border-white/5 flex items-center gap-5 group cursor-pointer hover:bg-white/[0.04] transition-colors"
+                          className="w-full px-5 py-4 flex items-center gap-5 group cursor-pointer transition-colors"
                           style={{ borderBottom: "1px solid var(--td-panel-border)" }}
                         >
-                          <ImageWithFallback src={p.image || ""} className="w-16 h-16 rounded-xl object-cover bg-black shrink-0 shadow-lg" />
+                          <ImageWithFallback src={p.image || ""} className="w-16 h-16 rounded-xl object-cover shrink-0 shadow-lg" style={{ background: MUTED }} />
 
                           <div className="flex-1 min-w-0">
                             <p className="text-base font-black text-white truncate" style={{ color: "var(--td-text-hi)" }}>
@@ -4344,12 +4414,12 @@ export function SellPage() {
                             {/* Stock Breakdown */}
                             <div className="flex gap-3 mt-2 flex-wrap">
                               <div className="flex items-center gap-1.5">
-                                <div className={`w-1.5 h-1.5 rounded-full ${!activeMesa.isPreventa ? 'bg-emerald-500' : 'bg-white/10'}`} />
-                                <span className={`text-[11px] font-black uppercase tracking-widest ${!activeMesa.isPreventa ? 'text-white' : 'text-white/30'}`}>Tienda: {p.stock_details?.tienda || 0}</span>
+                                <div className={`w-1.5 h-1.5 rounded-full ${!activeMesa.isPreventa ? 'bg-emerald-500' : ''}`} style={activeMesa.isPreventa ? { background: "var(--td-card-border)" } : undefined} />
+                                <span className="text-[11px] font-black uppercase tracking-widest" style={{ color: !activeMesa.isPreventa ? THI : TLO }}>Tienda: {p.stock_details?.tienda || 0}</span>
                               </div>
                               <div className="flex items-center gap-1.5">
                                 <div className={`w-1.5 h-1.5 rounded-full ${activeMesa.isPreventa ? 'bg-amber-500 animate-pulse' : 'bg-amber-500/20'}`} />
-                                <span className={`text-[11px] font-black uppercase tracking-widest ${activeMesa.isPreventa ? 'text-amber-500' : 'text-white/30'}`}>Preventa: {p.stock_details?.preventa || 0}</span>
+                                <span className="text-[11px] font-black uppercase tracking-widest" style={{ color: activeMesa.isPreventa ? "#f59e0b" : TLO }}>Preventa: {p.stock_details?.preventa || 0}</span>
                               </div>
                               {(p.stock_details?.dañado ?? 0) > 0 && (
                                 <div className="flex items-center gap-1.5">
@@ -4406,7 +4476,8 @@ export function SellPage() {
                   setShowCatalog(true);
                   void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
                 }}
-                className="flex items-center gap-2 px-5 rounded-2xl bg-white/[0.05] border border-white/10 text-white/50 hover:text-white hover:bg-white/[0.08] transition-all font-black uppercase tracking-widest text-[10px]"
+                className="flex items-center gap-2 px-5 rounded-2xl transition-all font-black uppercase tracking-widest text-[10px]"
+                style={{ background: SOFT, border: CARD_B, color: TMD }}
                 title="Ver catálogo completo"
               >
                 <LayoutGrid size={16} />
@@ -4434,8 +4505,9 @@ export function SellPage() {
                 className={`flex items-center gap-3 px-5 rounded-2xl border transition-all font-black uppercase tracking-widest text-[10px] ${
                   activeMesa.customerId
                     ? "bg-emerald-500/[0.08] border-emerald-500/25 text-emerald-300 hover:bg-emerald-500/[0.12]"
-                    : "bg-white/[0.05] border-white/10 text-white/70 hover:bg-white/[0.08]"
+                    : ""
                 }`}
+                style={!activeMesa.customerId ? { background: SOFT, border: CARD_B, color: TMD } : undefined}
                 title={activeMesa.customerId ? `Asignado: ${activeMesa.customerName}` : "Asignar cliente o socio Tadaima"}
               >
                 <User size={16} />
@@ -4462,7 +4534,8 @@ export function SellPage() {
               {activeMesa.items.length > 0 && (
                 <button
                   onClick={clearCart}
-                  className="flex items-center gap-2 px-5 rounded-2xl bg-white/[0.04] border border-white/10 text-white/50 hover:bg-red-500/[0.08] hover:border-red-500/30 hover:text-red-400 transition-all font-black uppercase tracking-widest text-[10px]"
+                  className="flex items-center gap-2 px-5 rounded-2xl transition-all font-black uppercase tracking-widest text-[10px]"
+                  style={{ background: SOFT, border: CARD_B, color: TMD }}
                   title="Vaciar todos los productos y el cliente de esta venta"
                 >
                   <X size={14} />
@@ -4488,12 +4561,12 @@ export function SellPage() {
           <div className="flex-1 overflow-y-auto px-4 pb-4 no-scrollbar">
             {activeMesa.items.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center opacity-20 gap-4">
-                <div className="w-24 h-24 rounded-full border-2 border-dashed border-white flex items-center justify-center">
+                <div className="w-24 h-24 rounded-full border-2 border-dashed flex items-center justify-center" style={{ borderColor: "var(--td-card-border)" }}>
                   <ShoppingBag size={40} />
                 </div>
                 <div className="text-center">
-                  <p className="text-sm font-black uppercase tracking-[0.2em]">Sin productos</p>
-                  <p className="text-[10px] font-bold mt-1 text-white/50">Escanea o busca un producto para iniciar la venta</p>
+                  <p className="text-sm font-black uppercase tracking-[0.2em]" style={{ color: THI }}>Sin productos</p>
+                  <p className="text-[10px] font-bold mt-1" style={{ color: TMD }}>Escanea o busca un producto para iniciar la venta</p>
                 </div>
               </div>
             ) : (
@@ -4520,13 +4593,14 @@ export function SellPage() {
                         ? "bg-emerald-500/[0.04] border-emerald-500/15 opacity-50"
                         : item.isDamaged
                           ? "bg-orange-500/[0.06] border-orange-500/25 hover:bg-orange-500/[0.10]"
-                          : "bg-white/[0.03] border-white/5 hover:bg-white/[0.06]"
+                          : ""
                     }`}
+                    style={!item.preSaleItemDelivered && !item.isDamaged ? { background: SOFT, borderColor: "var(--td-card-border)" } : undefined}
                   >
                     {/* Las preventas nuevas suelen no tener imagen; si no existe, no reservamos ese espacio */}
                     {!shouldHideImageSlot && (
                       <div className="relative shrink-0">
-                        <ImageWithFallback src={item.product.image || ""} className="w-14 h-14 rounded-xl object-cover bg-black" />
+                        <ImageWithFallback src={item.product.image || ""} className="w-14 h-14 rounded-xl object-cover" style={{ background: MUTED }} />
                         {item.isDamaged && (
                           <div className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-orange-500 flex items-center justify-center shadow-lg">
                             <TriangleAlert size={10} className="text-white" strokeWidth={3} />
@@ -4536,9 +4610,9 @@ export function SellPage() {
                     )}
 
                     <div className="flex-1 min-w-0">
-                      <h3 className="text-base font-black text-white truncate leading-tight">{item.product.name}</h3>
+                      <h3 className="text-base font-black truncate leading-tight" style={{ color: THI }}>{item.product.name}</h3>
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
-                        <p className="text-[11px] text-white/40 font-bold uppercase tracking-widest">{item.product.sku}</p>
+                        <p className="text-[11px] font-bold uppercase tracking-widest" style={{ color: TLO }}>{item.product.sku}</p>
                         {item.isFromPreSale && !item.preSaleItemDelivered && (
                           <span className="px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-[7px] font-black text-amber-400 uppercase tracking-widest flex items-center gap-1">
                             <PackageCheck size={8} />
@@ -4580,8 +4654,9 @@ export function SellPage() {
                             className={`text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg border transition-all flex items-center gap-1 ${
                               item.isDamaged
                                 ? "bg-orange-500/20 border-orange-500/50 text-orange-400"
-                                : "border-white/10 text-white/25 hover:border-orange-500/40 hover:text-orange-400/70"
+                                : ""
                             }`}
+                            style={!item.isDamaged ? { borderColor: "var(--td-card-border)", color: TLO } : undefined}
                           >
                             <TriangleAlert size={9} />
                             Dañado
@@ -4596,7 +4671,7 @@ export function SellPage() {
                         const full = dep >= itemTotal && itemTotal > 0;
                         return (
                           <div className="flex items-center gap-2 mt-2.5 flex-wrap">
-                            <span className="text-[9px] font-black text-white/40 uppercase tracking-widest">
+                            <span className="text-[9px] font-black uppercase tracking-widest" style={{ color: TLO }}>
                               Anticipo
                             </span>
                             <span className={`flex items-center gap-1 rounded-xl px-3 py-1 border ${full ? "bg-emerald-500/15 border-emerald-400/30" : "bg-amber-400/15 border-amber-400/35"}`}>
@@ -4604,7 +4679,7 @@ export function SellPage() {
                                 {fmt(dep)}
                               </span>
                             </span>
-                            <span className="text-[9px] font-black text-white/30">
+                            <span className="text-[9px] font-black" style={{ color: TLO }}>
                               de {fmt(itemTotal)}
                             </span>
                             {full && (
@@ -4639,7 +4714,7 @@ export function SellPage() {
                             const saving = base - (item.damagedPrice ?? base);
                             return (
                               <div className="flex items-center gap-2">
-                                <span className="text-[9px] text-white/20 line-through font-bold">{fmt(base)}</span>
+                                <span className="text-[9px] line-through font-bold" style={{ color: TLO }}>{fmt(base)}</span>
                                 {saving > 0 && (
                                   <span className="text-[9px] font-black text-orange-400/70 bg-orange-500/10 px-1.5 py-0.5 rounded">
                                     -{fmt(saving)}
@@ -4685,17 +4760,19 @@ export function SellPage() {
                           <span className="text-lg font-black text-amber-300">{item.quantity}</span>
                         </div>
                       ) : (
-                        <div className="flex h-[54px] items-center gap-3 rounded-2xl border border-white/5 bg-black/40 px-3">
+                        <div className="flex h-[54px] items-center gap-3 rounded-2xl px-3" style={{ border: CARD_B, background: MUTED }}>
                           <button
                             onClick={() => { void changeQty(item.product.id, -1); }}
-                            className="flex h-8 w-8 items-center justify-center rounded-lg text-white/40 transition-colors hover:bg-white/10"
+                            className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors"
+                            style={{ color: TLO, background: SOFT }}
                           >
                             <Minus size={14} />
                           </button>
-                          <span className="w-8 text-center text-base font-black text-white">{item.quantity}</span>
+                          <span className="w-8 text-center text-base font-black" style={{ color: THI }}>{item.quantity}</span>
                           <button
                             onClick={() => { void changeQty(item.product.id, 1); }}
-                            className="flex h-8 w-8 items-center justify-center rounded-lg text-white/40 transition-colors hover:bg-white/10"
+                            className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors"
+                            style={{ color: TLO, background: SOFT }}
                           >
                             <Plus size={14} />
                           </button>
@@ -4707,33 +4784,33 @@ export function SellPage() {
                         const anticipo = item.depositAmount ?? 0;
                         return (
                           <>
-                            <p className="text-[9px] font-black uppercase tracking-widest text-white/25">
+                            <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: TLO }}>
                               Anticipo
                             </p>
                             <p className="text-[28px] leading-none font-black text-amber-300" title="Anticipo a cobrar ahora">
                               {fmt(anticipo)}
                             </p>
-                            <p className="mt-1 text-center text-[13px] font-black text-white/55">
+                            <p className="mt-1 text-center text-[13px] font-black" style={{ color: TMD }}>
                               {item.quantity} × {fmt(unitPrice)}
                             </p>
-                            <p className="text-[10px] font-black text-white/25 mt-0.5">
+                            <p className="text-[10px] font-black mt-0.5" style={{ color: TLO }}>
                               de {fmt(lineTotal)}
                             </p>
                           </>
                         );
                       })() : (
                         <>
-                          <p className="text-[10px] font-black uppercase tracking-[0.16em] text-white/45">
+                          <p className="text-[10px] font-black uppercase tracking-[0.16em]" style={{ color: TMD }}>
                             Subtotal
                           </p>
                           <p className={`text-[30px] leading-none font-black ${item.isDamaged ? "text-orange-400" : item.isFromPreSale ? "text-amber-400/70" : "text-white"}`}>
                             {fmt(lineTotal)}
                           </p>
-                          <p className="mt-1 text-center text-[14px] font-black text-white/65">
+                          <p className="mt-1 text-center text-[14px] font-black" style={{ color: TMD }}>
                             {item.quantity} × {fmt(unitPrice)}
                           </p>
                           {!item.isFromPreSale && item.isDamaged && (
-                            <p className="text-[10px] font-black uppercase tracking-widest text-white/22 mt-0.5">
+                            <p className="text-[10px] font-black uppercase tracking-widest mt-0.5" style={{ color: TLO }}>
                               Precio base {activePriceLabel}
                             </p>
                           )}
@@ -4765,7 +4842,7 @@ export function SellPage() {
                         const original = base * item.quantity;
                         const actual   = (item.damagedPrice ?? base) * item.quantity;
                         return original !== actual ? (
-                          <p className="text-[9px] text-white/20 line-through">{fmt(original)}</p>
+                          <p className="text-[9px] line-through" style={{ color: TLO }}>{fmt(original)}</p>
                         ) : null;
                       })()}
                       {item.isFromPreSale && item.preSaleOrderItemId && activeMesa.loadedPreSaleOrderId && (
@@ -4821,8 +4898,8 @@ export function SellPage() {
             asegura que el botón Cobrar y el cambio queden siempre visibles. */}
         <aside
           ref={tcRef}
-          className="hidden md:flex shrink-0 w-[420px] xl:w-[460px] flex-col border-l border-white/[0.07]"
-          style={{ background: "var(--td-panel-bg)" }}
+          className="hidden md:flex shrink-0 w-[420px] xl:w-[460px] flex-col"
+          style={{ background: "var(--td-panel-bg)", borderLeft: CARD_B }}
           aria-label="Panel de cobro"
         >
           {/* Contenedor scrolleable: contenido alineado al FONDO (justify-end)
@@ -4837,16 +4914,17 @@ export function SellPage() {
 
                 {/* Subtotal + modifiers — only when they differ from total */}
                 {(discountAmt > 0 || (activeMesa.paymentMethod === "Tarjeta" && activeTerminal)) && (
-                  <div className="flex flex-col gap-0.5 pb-1 border-b border-white/[0.06]">
+                  <div className="flex flex-col gap-0.5 pb-1" style={{ borderBottom: CARD_B }}>
                     <div className="flex items-center justify-between gap-3">
-                      <p className="text-[9px] font-black uppercase tracking-widest text-white/30">Subtotal</p>
-                      <p className="text-sm font-black text-white/50">{fmt(subtotal)}</p>
+                      <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: TLO }}>Subtotal</p>
+                      <p className="text-sm font-black" style={{ color: TMD }}>{fmt(subtotal)}</p>
                     </div>
                     {discountAmt > 0 && (
                       <div className="flex items-center justify-between gap-3">
                         <button
                           onClick={() => setShowDiscount(!showDiscount)}
-                          className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest text-white/30 hover:text-white transition-colors"
+                          className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest transition-colors"
+                          style={{ color: TLO }}
                         >
                           <Tag size={9} className="text-[#E0221A]" /> % Desc. <ChevronDown size={9} />
                         </button>
@@ -4857,13 +4935,14 @@ export function SellPage() {
                       <div className="flex items-center justify-between gap-3">
                         <button
                           onClick={() => setShowTerminalModal(true)}
-                          className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest text-white/30 hover:text-white transition-colors"
+                          className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest transition-colors"
+                          style={{ color: TLO }}
                           title="Comisión interna — la tienda absorbe, no se cobra al cliente"
                         >
                           <Smartphone size={9} className="text-emerald-500" />
                           Comisión {activeTerminal.commission_percent}% <ChevronDown size={9} />
                         </button>
-                        <p className="text-[10px] font-bold text-white/30 italic">
+                        <p className="text-[10px] font-bold italic" style={{ color: TLO }}>
                           {fmt(commissionAmt)} interna
                         </p>
                       </div>
@@ -4874,7 +4953,7 @@ export function SellPage() {
                 {/* Total — always, prominent. Centrado horizontal (decisión
                     Joel 2026-05-28). En Dólares muestra USD arriba y MXN debajo. */}
                 <div className="text-center">
-                  <p className="text-xs font-black uppercase tracking-widest text-white/45">
+                  <p className="text-xs font-black uppercase tracking-widest" style={{ color: TMD }}>
                     {activeMesa.loadedPreSaleOrderId ? "Total a Cobrar" : activeMesa.isPreventa ? "Total de la Venta" : "Total a Pagar"}
                     {activeMesa.paymentMethod === "Dólares" && (
                       <span className="ml-2 text-emerald-500/80">· en USD</span>
@@ -4885,12 +4964,12 @@ export function SellPage() {
                       <p className="text-[2.5rem] font-black text-emerald-400 leading-none mt-1 tabular-nums">
                         ${totalUSD.toFixed(2)} <span className="text-base font-black text-emerald-500/70 ml-1">USD</span>
                       </p>
-                      <p className="text-xs font-black text-white/45 mt-1.5 tabular-nums">
+                      <p className="text-xs font-black mt-1.5 tabular-nums" style={{ color: TLO }}>
                         {fmt(currentPayAmount)} MXN · TC {tc.toFixed(2)}
                       </p>
                     </>
                   ) : (
-                    <p className="text-[2.5rem] font-black text-white leading-none mt-1 tabular-nums">{fmt(currentPayAmount)}</p>
+                    <p className="text-[2.5rem] font-black leading-none mt-1 tabular-nums" style={{ color: THI }}>{fmt(currentPayAmount)}</p>
                   )}
                 </div>
 
@@ -4899,7 +4978,7 @@ export function SellPage() {
 
                 {/* New preventa: anticipo + saldo */}
                 {!activeMesa.loadedPreSaleOrderId && activeMesa.isPreventa && activeMesa.items.length > 0 && (
-                  <div className="flex flex-col gap-0.5 pt-1 border-t border-white/[0.06]">
+                  <div className="flex flex-col gap-0.5 pt-1" style={{ borderTop: CARD_B }}>
                     <div className="flex items-center justify-between gap-3">
                       <p className="text-[9px] font-black uppercase tracking-widest text-amber-500/70">
                         Anticipo{activeMesa.items.length > 1 ? ` (${activeMesa.items.length})` : ""}
@@ -4910,7 +4989,7 @@ export function SellPage() {
                       </div>
                     </div>
                     <div className="flex items-center justify-between gap-3">
-                      <p className="text-[9px] font-black uppercase tracking-widest text-white/30">Saldo</p>
+                      <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: TLO }}>Saldo</p>
                       <p className={`text-sm font-black ${(totalBeforeComm - totalDeposit) > 0 ? "text-red-400" : "text-green-400"}`}>
                         {fmt(Math.max(0, totalBeforeComm - totalDeposit))}
                       </p>
@@ -4920,7 +4999,7 @@ export function SellPage() {
 
                 {/* Loaded preventa breakdown */}
                 {activeMesa.loadedPreSaleOrderId && (
-                  <div className="flex flex-col gap-0.5 pt-1 border-t border-white/[0.06]">
+                  <div className="flex flex-col gap-0.5 pt-1" style={{ borderTop: CARD_B }}>
                     <div className="flex items-center justify-between gap-3">
                       <p className="text-[9px] font-black text-amber-400 uppercase tracking-widest flex items-center gap-1">
                         <PackageCheck size={9} /> Anticipo
@@ -4929,8 +5008,8 @@ export function SellPage() {
                     </div>
                     {newItemsSubtotal > 0 && (
                       <div className="flex items-center justify-between gap-3">
-                        <p className="text-[9px] font-black text-white/40 uppercase tracking-widest">+ Items</p>
-                        <p className="text-sm font-black text-white/40">{fmt(newItemsSubtotal)}</p>
+                        <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: TMD }}>+ Items</p>
+                        <p className="text-sm font-black" style={{ color: TMD }}>{fmt(newItemsSubtotal)}</p>
                       </div>
                     )}
                   </div>
@@ -4988,7 +5067,7 @@ export function SellPage() {
                   Separador horizontal sutil para marcar el cambio de sección. */}
               {hasAssignedCustomer && (
                 <>
-                  <div className="h-px w-full bg-white/[0.06]" />
+                  <div className="h-px w-full" style={{ background: "var(--td-divider)" }} />
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2">
                       <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center flex-shrink-0">
@@ -4998,21 +5077,21 @@ export function SellPage() {
                         <p className="text-[11px] font-black uppercase tracking-widest text-emerald-500/90">
                           Cliente
                         </p>
-                        <p className="text-lg font-black text-white truncate leading-tight" title={activeMesa.customerName ?? ""}>
+                        <p className="text-lg font-black truncate leading-tight" style={{ color: THI }} title={activeMesa.customerName ?? ""}>
                           {activeMesa.customerName}
                         </p>
                       </div>
                     </div>
                     <div className="flex flex-col gap-1 mt-1.5 pl-9">
                       {activeMesa.customerPhone && (
-                        <div className="flex items-center gap-1.5 text-[10px] font-bold text-white/50 truncate" title={activeMesa.customerPhone}>
-                          <Phone size={10} className="text-white/30 flex-shrink-0" />
+                        <div className="flex items-center gap-1.5 text-[10px] font-bold truncate" style={{ color: TMD }} title={activeMesa.customerPhone}>
+                          <Phone size={10} style={{ color: TLO }} className="flex-shrink-0" />
                           <span className="truncate">{activeMesa.customerPhone}</span>
                         </div>
                       )}
                       {activeMesa.customerEmail && (
-                        <div className="flex items-center gap-1.5 text-[10px] font-bold text-white/50 truncate" title={activeMesa.customerEmail}>
-                          <Mail size={10} className="text-white/30 flex-shrink-0" />
+                        <div className="flex items-center gap-1.5 text-[10px] font-bold truncate" style={{ color: TMD }} title={activeMesa.customerEmail}>
+                          <Mail size={10} style={{ color: TLO }} className="flex-shrink-0" />
                           <span className="truncate">{activeMesa.customerEmail}</span>
                         </div>
                       )}
@@ -5074,7 +5153,7 @@ export function SellPage() {
                 </>
               )}
 
-              <div className="h-px w-full bg-white/[0.06]" />
+              <div className="h-px w-full" style={{ background: "var(--td-divider)" }} />
 
               {/* ── Sección 3: Cobro (Efectivo/Tarjeta) + botón COBRAR ──
                   Antes era una columna `flex-1 pl-4` lado a lado del total; ahora
@@ -5133,7 +5212,7 @@ export function SellPage() {
                             </div>
                             {/* Mixto: ya hay pesos ingresados en la otra vista. */}
                             {(parseFloat(cashReceived) || 0) > 0 && (
-                              <p className="text-[10px] font-bold text-white/45">+ {fmt(parseFloat(cashReceived) || 0)} en pesos ya ingresados</p>
+                              <p className="text-[10px] font-bold" style={{ color: TLO }}>+ {fmt(parseFloat(cashReceived) || 0)} en pesos ya ingresados</p>
                             )}
                             <div className="relative">
                               <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-xl text-emerald-500/80 pointer-events-none">US$</span>
@@ -5181,7 +5260,7 @@ export function SellPage() {
                         {showPesos && (
                           <div className="flex flex-col gap-2">
                             <div className="flex items-center justify-between gap-2">
-                              <span className="text-[11px] font-black uppercase tracking-widest text-white/40">Pesos recibidos</span>
+                              <span className="text-[11px] font-black uppercase tracking-widest" style={{ color: TLO }}>Pesos recibidos</span>
                               {/* Toggle a dólares — siempre visible (conserva los pesos ingresados). */}
                               <button
                                 type="button"
@@ -5201,7 +5280,7 @@ export function SellPage() {
                               </div>
                             )}
                             <div className="relative">
-                              <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-2xl text-white/30 pointer-events-none">$</span>
+                              <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-2xl pointer-events-none" style={{ color: "var(--td-placeholder)" }}>$</span>
                               <input
                                 ref={cashInputRef}
                                 autoFocus={receivedUsd > 0}
@@ -5214,7 +5293,7 @@ export function SellPage() {
                                   }
                                 }}
                                 placeholder="0.00"
-                                className="w-full text-center rounded-xl py-3 pl-10 pr-4 text-4xl font-black placeholder-white/15 focus:outline-none transition-all tabular-nums"
+                                className="w-full text-center rounded-xl py-3 pl-10 pr-4 text-4xl font-black focus:outline-none transition-all tabular-nums"
                                 style={{ background: "var(--td-input-bg)", border: "2px solid var(--td-input-border)", color: "var(--td-input-text)" }}
                                 onFocus={e => { e.currentTarget.style.borderColor = "rgba(224,34,26,0.55)"; }}
                                 onBlur={e  => { e.currentTarget.style.borderColor = "var(--td-input-border)"; }}
@@ -5323,7 +5402,9 @@ export function SellPage() {
                           <div className="flex w-full h-[52px] rounded-2xl overflow-hidden" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", color: "var(--td-text-hi)" }}>
                             <button
                               onClick={() => setPaymentMenuOpen(o => !o)}
-                              className="flex-1 min-w-0 flex items-center justify-center gap-1.5 hover:bg-white/5 transition-colors"
+                              className="flex-1 min-w-0 flex items-center justify-center gap-1.5 transition-colors"
+                              onMouseEnter={e => { e.currentTarget.style.background = "var(--td-hover-bg)"; }}
+                              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
                             >
                               {renderLabel(active, false)}
                               {/* Menú abre HACIA ARRIBA porque vive al fondo del sidebar.
@@ -5335,8 +5416,10 @@ export function SellPage() {
                             {active === "Efectivo" && isAdmin && (
                               <button
                                 onClick={() => { setTcDraft(tc.toString()); setShowTc(!showTc); }}
-                                className="w-9 border-l flex items-center justify-center hover:bg-white/5"
+                                className="w-9 border-l flex items-center justify-center transition-colors"
                                 style={{ borderColor: "var(--td-card-border)", color: "var(--td-text-md)" }}
+                                onMouseEnter={e => { e.currentTarget.style.background = "var(--td-hover-bg)"; }}
+                                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
                                 title={`Editar tipo de cambio (actual ${tc.toFixed(2)})`}
                               >
                                 <SlidersHorizontal size={13} />
@@ -5349,8 +5432,10 @@ export function SellPage() {
                               // si hay asignada (nombre en tooltip), ⚠ ámbar si falta.
                               <button
                                 onClick={(e) => { e.stopPropagation(); setPaymentMenuOpen(false); setShowTerminalModal(true); }}
-                                className={`px-2.5 border-l flex items-center gap-1 hover:bg-white/5 transition-colors shrink-0 ${activeTerminal ? "" : "animate-pulse"}`}
+                                className={`px-2.5 border-l flex items-center gap-1 transition-colors shrink-0 ${activeTerminal ? "" : "animate-pulse"}`}
                                 style={{ borderColor: "var(--td-card-border)", color: activeTerminal ? "var(--td-text-md)" : "#FFAA00" }}
+                                onMouseEnter={e => { e.currentTarget.style.background = "var(--td-hover-bg)"; }}
+                                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
                                 title={activeTerminal ? `Terminal: ${activeTerminal.name} — clic para cambiar` : "Elegir terminal para cobrar con tarjeta"}
                               >
                                 <Smartphone size={12} />
@@ -5372,8 +5457,8 @@ export function SellPage() {
                                 animate={{ opacity: 1, y: 0 }}
                                 exit={{ opacity: 0, y: 8 }}
                                 transition={{ duration: 0.12 }}
-                                className="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-2xl border border-white/10 overflow-hidden"
-                                style={{ background: "var(--td-popup-bg)", backdropFilter: "blur(20px)" }}
+                                className="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-2xl overflow-hidden"
+                                style={{ background: "var(--td-popup-bg)", backdropFilter: "blur(20px)", border: "1px solid var(--td-popup-border)" }}
                               >
                                 {allOptions.filter(pm => pm !== active).map(pm => {
                                   // Bloquea la opción si ALGÚN item del carrito no acepta ese
@@ -5387,11 +5472,24 @@ export function SellPage() {
                                       key={pm}
                                       onClick={() => { if (!isBlocked) { setPayment(pm); setPaymentMenuOpen(false); } }}
                                       disabled={isBlocked}
-                                      className={`w-full h-[44px] px-3 flex items-center justify-center border-b border-white/5 last:border-b-0 transition-all ${
-                                        isBlocked
-                                          ? 'opacity-30 cursor-not-allowed text-white/30'
-                                          : 'text-white/70 hover:bg-[#E0221A]/[0.12] hover:text-white cursor-pointer'
+                                      className={`w-full h-[44px] px-3 flex items-center justify-center border-b last:border-b-0 transition-all ${
+                                        isBlocked ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'
                                       }`}
+                                      style={{
+                                        borderBottomColor: "var(--td-divider)",
+                                        color: isBlocked ? "var(--td-text-ghost)" : "var(--td-text-md)",
+                                        background: "transparent",
+                                      }}
+                                      onMouseEnter={e => {
+                                        if (!isBlocked) {
+                                          e.currentTarget.style.background = "var(--td-red-dim)";
+                                          e.currentTarget.style.color = "var(--td-text-hi)";
+                                        }
+                                      }}
+                                      onMouseLeave={e => {
+                                        e.currentTarget.style.background = "transparent";
+                                        e.currentTarget.style.color = isBlocked ? "var(--td-text-ghost)" : "var(--td-text-md)";
+                                      }}
                                     >
                                       {isBlocked && <AlertTriangle size={11} className="text-amber-500 mr-1.5" />}
                                       {renderLabel(pm, false)}
@@ -5425,7 +5523,7 @@ export function SellPage() {
                           <div className="relative z-10 space-y-6">
                             <div className="flex items-center justify-between">
                               <div className="space-y-1">
-                                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/30">Exchange Rate</p>
+                                <p className="text-[10px] font-black uppercase tracking-[0.2em]" style={{ color: TLO }}>Exchange Rate</p>
                                 <h4 className="text-xs font-black text-emerald-500 uppercase tracking-widest">USD / MXN</h4>
                               </div>
                             </div>
@@ -5436,9 +5534,10 @@ export function SellPage() {
                                   step="0.01"
                                   value={tcDraft}
                                   onChange={e => setTcDraft(e.target.value)}
-                                  className="w-full bg-black/40 border-2 border-emerald-500/10 rounded-[24px] px-6 py-5 text-4xl font-black text-white outline-none focus:border-emerald-500/40 focus:bg-emerald-500/5 transition-all placeholder:text-white/5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none shadow-inner"
+                                  className="w-full rounded-[24px] px-6 py-5 text-4xl font-black outline-none focus:bg-emerald-500/5 transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none shadow-inner"
                                   placeholder="0.00"
                                   autoFocus
+                                  style={{ background: STRONG, border: "2px solid rgba(16,185,129,0.18)", color: THI }}
                                 />
                                 <div className="absolute right-4 top-1/2 -translate-y-1/2 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-all">
                                   <button onClick={() => setTcDraft(p => (parseFloat(p || "0") + 0.1).toFixed(2))} className="p-1 hover:text-emerald-500"><ChevronUp size={16} /></button>
@@ -5463,7 +5562,7 @@ export function SellPage() {
                               </button>
                             </div>
                             <div className="pt-2 flex justify-center">
-                              <span className="text-[10px] font-black text-white/10 uppercase tracking-[0.4em]">Liquid Transaction</span>
+                              <span className="text-[10px] font-black uppercase tracking-[0.4em]" style={{ color: "var(--td-text-ghost)" }}>Liquid Transaction</span>
                             </div>
                           </div>
                           <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-emerald-500/5 rounded-full blur-[60px]" />
@@ -5521,10 +5620,11 @@ export function SellPage() {
             />
             <Motion.div 
               initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
-              className="relative border border-white/10 rounded-[32px] p-8 w-full max-w-md shadow-2xl overflow-hidden"
+              className="relative rounded-[32px] p-8 w-full max-w-md shadow-2xl overflow-hidden"
               style={{
                 background: "var(--td-popup-bg)",
                 backdropFilter: "blur(20px)",
+                border: "1px solid var(--td-popup-border)",
                 boxShadow: "0 0 100px rgba(0,0,0,0.8), inset 0 0 40px rgba(16,185,129,0.05)"
               }}
             >
@@ -5532,12 +5632,13 @@ export function SellPage() {
               
               <div className="flex items-center justify-between mb-8">
                 <div>
-                  <h3 className="text-xl font-black text-white uppercase tracking-[0.2em]">Terminales</h3>
+                  <h3 className="text-xl font-black uppercase tracking-[0.2em]" style={{ color: THI }}>Terminales</h3>
                   <p className="text-[10px] font-black text-emerald-500/50 uppercase tracking-widest mt-1">Seleccione lectora de pago</p>
                 </div>
                 <button 
                   onClick={() => setShowTerminalModal(false)}
-                  className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-white/40 hover:text-white transition-all"
+                  className="w-10 h-10 rounded-full flex items-center justify-center transition-all"
+                  style={{ background: SOFT, color: TLO }}
                 >
                   <X size={20} />
                 </button>
@@ -5546,10 +5647,10 @@ export function SellPage() {
               <div className="space-y-3 max-h-[400px] overflow-y-auto no-scrollbar pr-2">
                 {terminals.length === 0 ? (
                   <div className="py-12 text-center space-y-4">
-                    <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mx-auto">
-                      <Zap size={24} className="text-white/10" />
+                    <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto" style={{ background: SOFT }}>
+                      <Zap size={24} style={{ color: "var(--td-text-ghost)" }} />
                     </div>
-                    <p className="text-[10px] font-black uppercase tracking-widest text-white/20">No hay terminales configuradas</p>
+                    <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-ghost)" }}>No hay terminales configuradas</p>
                   </div>
                 ) : (
                   terminals.map(t => (
@@ -5557,22 +5658,21 @@ export function SellPage() {
                       key={t.id}
                       onClick={() => selectTerminal(t.id)}
                       className={`w-full group relative flex items-center justify-between p-5 rounded-2xl border transition-all ${
-                        activeMesa.selectedTerminalId === t.id 
-                          ? 'bg-emerald-500/10 border-emerald-500/50 text-white' 
-                          : 'bg-white/5 border-white/5 text-white/40 hover:bg-white/[0.08] hover:border-white/10 hover:text-white'
+                        activeMesa.selectedTerminalId === t.id ? 'bg-emerald-500/10 border-emerald-500/50 text-white' : ''
                       }`}
+                      style={activeMesa.selectedTerminalId === t.id ? undefined : { background: SOFT, border: CARD_B, color: TMD }}
                     >
                       <div className="text-left">
-                        <h4 className="font-black text-sm uppercase tracking-widest group-hover:translate-x-1 transition-transform">{t.name}</h4>
+                        <h4 className="font-black text-sm uppercase tracking-widest group-hover:translate-x-1 transition-transform" style={{ color: activeMesa.selectedTerminalId === t.id ? "#fff" : THI }}>{t.name}</h4>
                         <p className="text-[9px] font-bold opacity-40 uppercase tracking-widest mt-1">{t.description || "Sin descripción"}</p>
                       </div>
                       <div className="text-right">
                         {isAdmin ? (
                           <>
-                            <span className={`text-lg font-black ${activeMesa.selectedTerminalId === t.id ? 'text-emerald-500' : 'text-white/20 group-hover:text-emerald-500/50'} transition-colors`}>
+                            <span className={`text-lg font-black transition-colors ${activeMesa.selectedTerminalId === t.id ? 'text-emerald-500' : ''}`} style={activeMesa.selectedTerminalId === t.id ? undefined : { color: "rgba(16,185,129,0.5)" }}>
                               {t.commission_percent}%
                             </span>
-                            <p className="text-[8px] font-bold opacity-20 uppercase tracking-[0.2em] mt-0.5">Comisión</p>
+                            <p className="text-[8px] font-bold uppercase tracking-[0.2em] mt-0.5" style={{ color: "var(--td-text-ghost)" }}>Comisión</p>
                           </>
                         ) : (
                           activeMesa.selectedTerminalId === t.id && (
@@ -5598,10 +5698,10 @@ export function SellPage() {
               </button>
 
               {isAdmin && (
-                <div className="mt-8 pt-6 border-t border-white/5">
+                <div className="mt-8 pt-6" style={{ borderTop: "1px solid var(--td-divider)" }}>
                   <div className="p-4 rounded-2xl bg-emerald-500/[0.04] border border-emerald-500/10">
                     <p className="text-[10px] font-black uppercase tracking-widest text-emerald-400/70">Política de comisión</p>
-                    <p className="text-[9px] font-bold text-white/40 mt-1 leading-relaxed">
+                    <p className="text-[9px] font-bold mt-1 leading-relaxed" style={{ color: TLO }}>
                       La tienda absorbe la comisión de tarjeta. El cliente solo paga el subtotal de la venta. La comisión se registra internamente para reportes.
                     </p>
                   </div>
@@ -5623,14 +5723,15 @@ export function SellPage() {
             />
             <Motion.div 
               initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
-              className="relative border border-white/10 rounded-[32px] p-8 w-full max-w-sm shadow-2xl overflow-hidden"
+              className="relative rounded-[32px] p-8 w-full max-w-sm shadow-2xl overflow-hidden"
               style={{
                 background: "var(--td-popup-bg)",
                 backdropFilter: "blur(20px)",
+                border: "1px solid var(--td-popup-border)",
                 boxShadow: "0 0 100px rgba(0,0,0,0.8), inset 0 0 40px rgba(16,185,129,0.05)"
               }}
             >
-              <h3 className="text-xl font-black text-white uppercase tracking-[0.2em] mb-8 text-center">Descuento</h3>
+              <h3 className="text-xl font-black uppercase tracking-[0.2em] mb-8 text-center" style={{ color: THI }}>Descuento</h3>
               <div className="grid grid-cols-2 gap-4">
                 {[5, 10, 25, 50].map(pct => (
                   <button 
@@ -5639,8 +5740,9 @@ export function SellPage() {
                     className={`py-4 rounded-2xl border transition-all font-black ${
                       activeMesa.discount === pct 
                         ? 'bg-[#E0221A] text-white border-transparent' 
-                        : 'bg-white/[0.04] text-white/40 border-white/5 hover:bg-white/10 hover:text-white'
-                    }`}
+                        : ''
+                      }`}
+                    style={activeMesa.discount === pct ? undefined : { background: SOFT, border: CARD_B, color: TMD }}
                   >
                     {pct}%
                   </button>
@@ -5648,7 +5750,8 @@ export function SellPage() {
               </div>
               <button
                 onClick={() => { toggleDiscount(0); setShowDiscount(false); }}
-                className="w-full mt-4 py-3 text-[10px] font-black uppercase tracking-widest text-white/20 hover:text-white transition-colors"
+                className="w-full mt-4 py-3 text-[10px] font-black uppercase tracking-widest transition-colors"
+                style={{ color: TLO }}
               >
                 Quitar Descuento
               </button>
@@ -5776,7 +5879,7 @@ export function SellPage() {
                     alt={catalog.product_name}
                     loading="lazy"
                     decoding="async"
-                    style={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 10, border: "1px solid rgba(255,255,255,0.06)", background: "rgba(0,0,0,0.2)" }}
+                    style={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 10, border: "1px solid var(--td-card-border)", background: STRONG }}
                     onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
                   />
                 )}
@@ -6137,7 +6240,7 @@ export function SellPage() {
                     <Bookmark size={18} className="text-amber-500" />
                   </div>
                   <div>
-                    <h3 className="text-lg font-black text-white uppercase tracking-[0.15em]">Apartar Producto</h3>
+                    <h3 className="text-lg font-black uppercase tracking-[0.15em]" style={{ color: THI }}>Apartar Producto</h3>
                     <p className="text-[9px] font-black text-amber-500/50 uppercase tracking-widest mt-0.5">
                       {activeMesa.customerName ?? "cliente"}
                     </p>
@@ -6146,7 +6249,8 @@ export function SellPage() {
                 <button
                   onClick={() => setShowApartarModal(false)}
                   disabled={apartarProcessing}
-                  className="w-9 h-9 rounded-full bg-white/5 flex items-center justify-center text-white/40 hover:text-white transition-all"
+                  className="w-9 h-9 rounded-full flex items-center justify-center transition-all"
+                  style={{ background: SOFT, color: TLO }}
                 >
                   <X size={18} />
                 </button>
@@ -6156,7 +6260,7 @@ export function SellPage() {
                 {/* Product selection */}
                 {activeMesa.items.length > 1 && (
                   <div>
-                    <p className="text-[9px] font-black uppercase tracking-widest text-white/30 mb-2">Producto a apartar</p>
+                    <p className="text-[9px] font-black uppercase tracking-widest mb-2" style={{ color: TLO }}>Producto a apartar</p>
                     <div className="space-y-2 max-h-[180px] overflow-y-auto no-scrollbar">
                       {activeMesa.items.map((item, idx) => (
                         <button
@@ -6165,15 +6269,16 @@ export function SellPage() {
                           className={`w-full flex items-center gap-3 p-3 rounded-2xl border transition-all text-left ${
                             apartarItemIdx === idx
                               ? "bg-amber-500/10 border-amber-500/30"
-                              : "bg-white/[0.03] border-white/5 hover:bg-white/[0.06]"
+                              : ""
                           }`}
+                          style={apartarItemIdx === idx ? undefined : { background: SOFT, border: CARD_B }}
                         >
-                          <div className={`w-2 h-2 rounded-full shrink-0 ${apartarItemIdx === idx ? "bg-amber-500" : "bg-white/20"}`} />
+                          <div className={`w-2 h-2 rounded-full shrink-0 ${apartarItemIdx === idx ? "bg-amber-500" : ""}`} style={apartarItemIdx === idx ? undefined : { background: "var(--td-text-ghost)" }} />
                           <div className="flex-1 min-w-0">
-                            <p className="text-xs font-black text-white truncate">{item.product.name}</p>
-                            <p className="text-[9px] text-white/30 font-bold">{item.product.sku}</p>
+                            <p className="text-xs font-black truncate" style={{ color: THI }}>{item.product.name}</p>
+                            <p className="text-[9px] font-bold" style={{ color: TLO }}>{item.product.sku}</p>
                           </div>
-                          <p className="text-sm font-black text-white shrink-0">{fmt(getItemPrice(item) * item.quantity)}</p>
+                          <p className="text-sm font-black shrink-0" style={{ color: THI }}>{fmt(getItemPrice(item) * item.quantity)}</p>
                         </button>
                       ))}
                     </div>
@@ -6182,25 +6287,25 @@ export function SellPage() {
 
                 {/* Selected product summary */}
                 {activeMesa.items[apartarItemIdx] && (
-                  <div className="flex items-center gap-3 p-3 rounded-2xl bg-white/[0.03] border border-white/5">
+                  <div className="flex items-center gap-3 p-3 rounded-2xl" style={{ background: SOFT, border: CARD_B }}>
                     <ImageWithFallback
                       src={activeMesa.items[apartarItemIdx].product.image ?? ""}
                       className="w-12 h-12 rounded-xl object-cover bg-black shrink-0"
                     />
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-black text-white truncate">{activeMesa.items[apartarItemIdx].product.name}</p>
-                      <p className="text-[9px] font-bold text-white/30 uppercase tracking-widest">{activeMesa.items[apartarItemIdx].product.sku}</p>
+                      <p className="text-sm font-black truncate" style={{ color: THI }}>{activeMesa.items[apartarItemIdx].product.name}</p>
+                      <p className="text-[9px] font-bold uppercase tracking-widest" style={{ color: TLO }}>{activeMesa.items[apartarItemIdx].product.sku}</p>
                     </div>
                     <div className="text-right">
-                      <p className="text-sm font-black text-white">{fmt(getItemPrice(activeMesa.items[apartarItemIdx]) * activeMesa.items[apartarItemIdx].quantity)}</p>
-                      <p className="text-[9px] text-white/30 font-bold">total</p>
+                      <p className="text-sm font-black" style={{ color: THI }}>{fmt(getItemPrice(activeMesa.items[apartarItemIdx]) * activeMesa.items[apartarItemIdx].quantity)}</p>
+                      <p className="text-[9px] font-bold" style={{ color: TLO }}>total</p>
                     </div>
                   </div>
                 )}
 
                 {/* Down payment */}
                 <div>
-                  <p className="text-[9px] font-black uppercase tracking-widest text-white/30 mb-2">Anticipo *</p>
+                  <p className="text-[9px] font-black uppercase tracking-widest mb-2" style={{ color: TLO }}>Anticipo *</p>
                   <div className="flex items-center gap-3 bg-amber-500/5 border border-amber-500/20 rounded-2xl px-4 py-3">
                     <span className="text-amber-500 font-black text-lg">$</span>
                     <input
@@ -6209,9 +6314,10 @@ export function SellPage() {
                       placeholder="0.00"
                       value={apartarDownPayment}
                       onChange={e => setApartarDownPayment(e.target.value)}
-                      className="flex-1 bg-transparent outline-none text-2xl font-black text-white placeholder:text-white/10 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      className="flex-1 bg-transparent outline-none text-2xl font-black [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      style={{ color: THI }}
                     />
-                    <span className="text-[9px] font-black text-white/20 uppercase tracking-widest">MXN</span>
+                    <span className="text-[9px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-ghost)" }}>MXN</span>
                   </div>
                   {activeMesa.items[apartarItemIdx] && parseFloat(apartarDownPayment) > 0 && (
                     <p className="text-[9px] font-bold text-amber-500/60 mt-1.5 text-right">
@@ -6222,7 +6328,7 @@ export function SellPage() {
 
                 {/* Payment method */}
                 <div>
-                  <p className="text-[9px] font-black uppercase tracking-widest text-white/30 mb-2">Forma de pago del anticipo</p>
+                  <p className="text-[9px] font-black uppercase tracking-widest mb-2" style={{ color: TLO }}>Forma de pago del anticipo</p>
                   <div className="grid grid-cols-2 gap-2">
                     {paymentMethods.map(pm => (
                       <button
@@ -6231,8 +6337,9 @@ export function SellPage() {
                         className={`py-2.5 px-4 rounded-2xl border text-[10px] font-black uppercase tracking-widest transition-all ${
                           apartarPayMethodId === String(pm.id)
                             ? "bg-amber-500/15 border-amber-500/40 text-amber-500"
-                            : "bg-white/[0.03] border-white/5 text-white/30 hover:text-white hover:bg-white/[0.06]"
+                            : ""
                         }`}
+                        style={apartarPayMethodId === String(pm.id) ? undefined : { background: SOFT, border: CARD_B, color: TLO }}
                       >
                         {pm.name}
                       </button>
@@ -6242,30 +6349,32 @@ export function SellPage() {
 
                 {/* Expiry date (optional) */}
                 <div>
-                  <p className="text-[9px] font-black uppercase tracking-widest text-white/30 mb-2 flex items-center gap-2">
+                  <p className="text-[9px] font-black uppercase tracking-widest mb-2 flex items-center gap-2" style={{ color: TLO }}>
                     <Calendar size={10} />
-                    Fecha límite de entrega <span className="text-white/20 normal-case font-bold">(opcional)</span>
+                    Fecha límite de entrega <span className="normal-case font-bold" style={{ color: "var(--td-text-ghost)" }}>(opcional)</span>
                   </p>
                   <input
                     type="date"
                     value={apartarExpiresAt}
                     onChange={e => setApartarExpiresAt(e.target.value)}
                     min={getTodayLocal()}
-                    className="w-full bg-white/[0.03] border border-white/10 rounded-2xl px-4 py-2.5 text-sm font-bold text-white outline-none focus:border-amber-500/30 focus:bg-amber-500/5 transition-all [color-scheme:dark]"
+                    className="w-full rounded-2xl px-4 py-2.5 text-sm font-bold outline-none focus:bg-amber-500/5 transition-all"
+                    style={{ background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", color: "var(--td-input-text)", colorScheme: "light" }}
                   />
                 </div>
 
                 {/* Notes (optional) */}
                 <div>
-                  <p className="text-[9px] font-black uppercase tracking-widest text-white/30 mb-2">
-                    Notas <span className="text-white/20 normal-case font-bold">(opcional)</span>
+                  <p className="text-[9px] font-black uppercase tracking-widest mb-2" style={{ color: TLO }}>
+                    Notas <span className="normal-case font-bold" style={{ color: "var(--td-text-ghost)" }}>(opcional)</span>
                   </p>
                   <input
                     type="text"
                     placeholder="Ej: Cliente pagará el viernes..."
                     value={apartarNotes}
                     onChange={e => setApartarNotes(e.target.value)}
-                    className="w-full bg-white/[0.03] border border-white/10 rounded-2xl px-4 py-2.5 text-sm font-bold text-white placeholder:text-white/20 outline-none focus:border-white/20 transition-all"
+                    className="w-full rounded-2xl px-4 py-2.5 text-sm font-bold outline-none transition-all"
+                    style={{ background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", color: "var(--td-input-text)" }}
                   />
                 </div>
 
@@ -6987,7 +7096,7 @@ export function SellPage() {
                       >
                         {label}
                         <span style={{
-                          background: isActive ? 'rgba(0,0,0,0.25)' : 'rgba(255,255,255,0.05)',
+                          background: isActive ? "var(--td-surface-strong)" : "var(--td-surface-soft)",
                           borderRadius: 999,
                           padding: '1px 6px',
                           fontSize: 9,
@@ -7130,12 +7239,12 @@ export function SellPage() {
                           )}
                         </button>
                         {isOpen && (
-                          <div style={{ borderTop: "1px solid var(--td-card-border)", padding: "12px 14px 14px", background: "rgba(0,0,0,0.15)" }}>
+                          <div style={{ borderTop: "1px solid var(--td-card-border)", padding: "12px 14px 14px", background: MUTED }}>
                             <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 10 }}>
                               {(sale.items || []).length === 0
                                 ? <p style={{ fontSize: 10, color: "var(--td-text-ghost)", textAlign: "center", padding: "8px 0" }}>Sin detalle</p>
                                 : (sale.items || []).map((item, idx) => (
-                                  <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", borderBottom: idx < (sale.items || []).length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
+                                  <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", borderBottom: idx < (sale.items || []).length - 1 ? "1px solid var(--td-divider)" : "none" }}>
                                     <span style={{ flex: 1, fontSize: 11, fontWeight: 700, color: "var(--td-text-hi)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.product?.name || `#${item.product_id}`}</span>
                                     {item.product?.sku && <span style={{ fontSize: 8, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.1em", flexShrink: 0 }}>{item.product.sku}</span>}
                                     <span style={{ fontSize: 10, color: "var(--td-text-ghost)", flexShrink: 0 }}>×{item.quantity}</span>
@@ -7270,7 +7379,7 @@ export function SellPage() {
                         )}
                       </button>
                       {isOpen && (
-                        <div style={{ borderTop: `1px solid ${isMixed ? "rgba(139,92,246,0.15)" : "rgba(245,158,11,0.15)"}`, padding: "12px 14px 14px", background: "rgba(0,0,0,0.15)" }}>
+                        <div style={{ borderTop: `1px solid ${isMixed ? "rgba(139,92,246,0.15)" : "rgba(245,158,11,0.15)"}`, padding: "12px 14px 14px", background: MUTED }}>
 
                           {/* Preventa items section. El badge muestra lo COBRADO
                               (anticipo o liquidación) — no el precio total del
@@ -7295,7 +7404,7 @@ export function SellPage() {
                                       ? paidAmt * ((item.subtotal ?? 0) / itemsSubtotal)
                                       : (idx === 0 ? paidAmt : 0);
                                     return (
-                                      <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", borderBottom: idx < orderItems.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
+                                      <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", borderBottom: idx < orderItems.length - 1 ? "1px solid var(--td-divider)" : "none" }}>
                                         <span style={{ flex: 1, fontSize: 11, fontWeight: 700, color: "var(--td-text-hi)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.catalog?.product_name ?? `Artículo #${item.id}`}</span>
                                         <span style={{ fontSize: 8, color: item.status === "delivered" ? "#34d399" : "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.08em", flexShrink: 0 }}>{item.status === "delivered" ? "Entregado" : "Pendiente"}</span>
                                         <span style={{ fontSize: 10, color: "var(--td-text-ghost)", flexShrink: 0 }}>×{item.quantity}</span>
@@ -7315,7 +7424,7 @@ export function SellPage() {
                               <p style={{ margin: "8px 0 6px", fontSize: 8, fontWeight: 900, color: "#E0221A", textTransform: "uppercase", letterSpacing: "0.12em" }}>Productos vendidos</p>
                               <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 10 }}>
                                 {regularItems.map((item, idx) => (
-                                  <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", borderBottom: idx < regularItems.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
+                                  <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", borderBottom: idx < regularItems.length - 1 ? "1px solid var(--td-divider)" : "none" }}>
                                     <span style={{ flex: 1, fontSize: 11, fontWeight: 700, color: "var(--td-text-hi)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.product?.name || `#${item.product_id}`}</span>
                                     <span style={{ fontSize: 10, color: "var(--td-text-ghost)", flexShrink: 0 }}>×{item.quantity}</span>
                                     <span style={{ fontSize: 10, fontWeight: 700, color: "var(--td-text-md)", flexShrink: 0, width: 52, textAlign: "right" }}>{fmt(item.price)}</span>
