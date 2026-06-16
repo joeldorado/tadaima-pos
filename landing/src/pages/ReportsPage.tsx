@@ -137,6 +137,7 @@ export function ReportsPage() {
 
   const [from, setFrom] = useState(firstOfMonth);
   const [to, setTo]     = useState(today);
+  const [activePreset, setActivePreset] = useState<string>("Este mes");
 
   // Store filter — admin can pick, others are locked to their store
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
@@ -1294,9 +1295,9 @@ export function ReportsPage() {
                 { label: "Mes pasado",  from: firstOfLastMonth, to: lastOfLastMonth },
               ];
               return presets.map(p => {
-                const active = from === p.from && to === p.to;
+                const active = activePreset === p.label;
                 return (
-                  <button key={p.label} onClick={() => { setFrom(p.from); setTo(p.to); }}
+                  <button key={p.label} onClick={() => { setFrom(p.from); setTo(p.to); setActivePreset(p.label); }}
                     className="px-3 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all hover:scale-105 active:scale-95"
                     style={active
                       ? { background: "linear-gradient(135deg,#CC2200,#FF4422)", color: "#fff", border: "1px solid rgba(255,120,90,0.3)" }
@@ -1349,6 +1350,7 @@ export function ReportsPage() {
                         if (startStr <= endStr) {
                           setFrom(startStr);
                           setTo(endStr);
+                          setActivePreset(""); // Clear selected preset on manual calendar selection
                         }
                       }}
                       maxValue={parseYmd(today)}
