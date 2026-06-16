@@ -4310,7 +4310,7 @@ export function SellPage() {
                 
                 {/* Resultados de búsqueda rápidos */}
                 {search.length > 0 && (
-                  <div className="absolute top-full left-0 right-0 mt-2 z-[90] rounded-2xl overflow-hidden shadow-2xl max-h-[360px] overflow-y-auto no-scrollbar" style={{ background: "var(--td-popup-bg)", border: BORDER }}>
+                  <div className="absolute top-full left-0 mt-2 z-[110] rounded-2xl overflow-hidden shadow-2xl max-h-[360px] overflow-y-auto no-scrollbar" style={{ background: "var(--td-popup-bg)", border: BORDER, minWidth: 620, maxWidth: "90vw" }}>
                     {isFolioSearch ? (
                       filteredFolios.length === 0 ? (
                         <div className="p-4 text-center text-xs font-bold uppercase tracking-widest" style={{ color: TLO }}>
