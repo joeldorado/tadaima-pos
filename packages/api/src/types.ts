@@ -749,6 +749,14 @@ export interface GetPreSaleOrdersParams {
   code?: string
   from?: string
   to?: string
+  /** Filtra folios con al menos un PAGO (anticipo/liquidación) en el rango —
+   *  por fecha de pago, no de creación. Lo usa el Reporte para contar las
+   *  liquidaciones del día aunque el folio se haya creado antes. */
+  payment_from?: string
+  payment_to?: string
+  /** Solo folios del usuario actual (creados o cobrados por él). Lo usa la Lista
+   *  de Ventas del cajero para ver solo lo suyo. Opt-in (Caja no lo manda). */
+  mine?: boolean
   per_page?: number
   page?: number
 }

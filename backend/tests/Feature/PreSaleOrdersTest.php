@@ -7,6 +7,7 @@ use App\Models\Customer;
 use App\Models\PreSaleCatalog;
 use App\Models\PreSaleOrder;
 use App\Models\PreSaleOrderItem;
+use App\Models\PreSaleOrderPayment;
 use App\Models\Store;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -203,6 +204,76 @@ class PreSaleOrdersTest extends TestCase
         $items = $response->json('data.data');
         $this->assertCount(1, $items);
         $this->assertSame('pending', $items[0]['status']);
+    }
+
+    public function test_payment_date_filter_returns_folio_liquidated_in_range_even_if_created_before(): void
+    {
+        // Fechas en TZ de negocio (Tijuana) para evitar desfase con el filtro.
+        $tz       = \App\Support\DateRange::timezone();
+        $today    = now($tz)->toDateString();
+        $noonToday = \Carbon\Carbon::parse("{$today} 12:00:00", $tz)->utc();
+
+        // Folio creado hace 10 días (fuera del rango de "hoy").
+        $catalog = $this->makePublishedCatalog();
+        $order   = $this->createPendingOrder($catalog);
+        $order->forceFill(['created_at' => $noonToday->copy()->subDays(10)])->save();
+
+        // Anticipo viejo (hace 10 días) + liquidación HOY (mediodía Tijuana).
+        $anticipo = PreSaleOrderPayment::create(['pre_sale_order_id' => $order->id, 'amount' => 50.00]);
+        $anticipo->created_at = $noonToday->copy()->subDays(10);
+        $anticipo->save();
+        $liquidacion = PreSaleOrderPayment::create(['pre_sale_order_id' => $order->id, 'amount' => 100.00]);
+        $liquidacion->created_at = $noonToday->copy();
+        $liquidacion->save();
+
+        // Por fecha de CREACIÓN (hoy) NO sale: el folio se creó hace 10 días.
+        $byCreated = $this->actingAs($this->user)
+            ->getJson("/api/v1/pre-sale-orders?from={$today}&to={$today}");
+        $byCreated->assertStatus(200);
+        $this->assertCount(0, $byCreated->json('data.data'));
+
+        // Por fecha de PAGO (hoy) SÍ sale: tuvo la liquidación hoy.
+        $byPayment = $this->actingAs($this->user)
+            ->getJson("/api/v1/pre-sale-orders?payment_from={$today}&payment_to={$today}");
+        $byPayment->assertStatus(200);
+        $this->assertCount(1, $byPayment->json('data.data'));
+        $this->assertSame($order->id, $byPayment->json('data.data.0.id'));
+    }
+
+    public function test_mine_filter_returns_only_folios_created_or_paid_by_current_user(): void
+    {
+        $catalog = $this->makePublishedCatalog();
+
+        // Folio A: creado por el usuario actual.
+        $folioA = $this->createPendingOrder($catalog);
+
+        // Otro cajero de la misma tienda.
+        $otro = User::create([
+            'name' => 'Otro Cajero', 'email' => 'otro@test.com', 'password' => bcrypt('x'),
+            'company_id' => $this->store->company_id, 'store_id' => $this->store->id,
+        ]);
+
+        // Folio B: creado por el otro (NO debe salir).
+        PreSaleOrder::create([
+            'code' => 'PREV-B', 'store_id' => $this->store->id,
+            'user_id' => $otro->id, 'customer_id' => $this->customer->id,
+            'status' => PreSaleOrder::STATUS_PENDING,
+        ]);
+
+        // Folio C: creado por el otro, pero el usuario actual cobró (SÍ debe salir).
+        $folioC = PreSaleOrder::create([
+            'code' => 'PREV-C', 'store_id' => $this->store->id,
+            'user_id' => $otro->id, 'customer_id' => $this->customer->id,
+            'status' => PreSaleOrder::STATUS_PENDING,
+        ]);
+        PreSaleOrderPayment::create([
+            'pre_sale_order_id' => $folioC->id, 'amount' => 30.00, 'cashier_id' => $this->user->id,
+        ]);
+
+        $res = $this->actingAs($this->user)->getJson('/api/v1/pre-sale-orders?mine=1');
+        $res->assertStatus(200);
+        $ids = collect($res->json('data.data'))->pluck('id')->all();
+        $this->assertEqualsCanonicalizing([$folioA->id, $folioC->id], $ids);
     }
 
     public function test_cashier_can_add_payment_to_order(): void

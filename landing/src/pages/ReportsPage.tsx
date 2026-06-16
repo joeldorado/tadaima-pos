@@ -15,7 +15,9 @@ import { ReportsSkeleton } from "@/components/reports/ReportsSkeleton";
 import { getSales } from "@tadaima/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useStoresQuery } from "@/hooks/queries/useStores";
-import { getTodayLocal, daysAgoLocal, BUSINESS_TZ } from "@/lib/date";
+import { usePreSaleOrdersQuery } from "@/hooks/queries/usePreSales";
+import type { PreSaleOrder } from "@tadaima/api";
+import { getTodayLocal, daysAgoLocal, toLocalYmd, BUSINESS_TZ } from "@/lib/date";
 import { queryKeys } from "@/lib/queryKeys";
 import type { SalesReport, InventoryReport, TopProductsReport, CustomersReport } from "@tadaima/api";
 import type { SaleDetail, Store as StoreType } from "@tadaima/api";
@@ -120,6 +122,81 @@ const SALES_HISTORY_FILTERS: Array<{ id: SalesHistoryFilter; label: string }> = 
   { id: "notPicked", label: "No recogidas" },
 ];
 
+/**
+ * Convierte un folio de preventa en SaleDetail sintéticos —UNO POR CADA PAGO
+ * dentro del rango [from,to]— para que el Reporte (que solo itera /sales) cuente
+ * los anticipos y liquidaciones por su FECHA DE PAGO, no de creación del folio.
+ *
+ * Por qué por pago: una preventa cobra anticipo un día y se liquida otro; cada
+ * cobro debe caer en su día. El endpoint /sales no trae estos movimientos (una
+ * liquidación sola no crea un Sale; liquidar un folio existente tampoco lo liga
+ * al sale de productos — linked_sale_id solo se pone al CREAR folio nuevo).
+ *
+ *  - id = -p.id (id de pago, único global) → no choca con ventas reales.
+ *  - items=[] → salta el bloque de venta regular.
+ *  - pre_sale_orders=[folio con paid_amount = monto de ESTE pago] → la agregación
+ *    reparte solo ese cobro entre los productos del folio.
+ *  - balance: solo el pago MÁS reciente del folio lleva la deuda actual; los demás
+ *    0, para no inflar la deuda pendiente en la auditoría.
+ *  - created_at = fecha del pago → cae en el día correcto del reporte.
+ */
+function preSaleOrderToSyntheticSales(o: PreSaleOrder, from: string, to: string): SaleDetail[] {
+  const allPayments = o.payments ?? [];
+  const inRange = allPayments.filter(p => {
+    const ymd = toLocalYmd(new Date(p.created_at));
+    return ymd >= from && ymd <= to;
+  });
+  if (inRange.length === 0) return [];
+
+  const lastPaymentId = allPayments.reduce((max, p) => (p.id > max ? p.id : max), -Infinity);
+  const items = (o.items ?? []).map(it => ({
+    id: it.id,
+    product_id: it.product_id,
+    quantity: it.quantity,
+    unit_price: it.unit_price,
+    price_level: it.price_level,
+    status: it.status,
+    catalog: it.catalog ? { id: it.catalog.id, product_name: it.catalog.product_name } : null,
+  }));
+
+  return inRange.map(p => ({
+    id: -p.id,
+    store_id: o.store?.id ?? null,
+    user_id: o.user?.id ?? null,
+    customer_id: o.customer?.id ?? null,
+    draft_id: null,
+    subtotal: 0,
+    discount: 0,
+    total: 0,
+    commission_amount: 0,
+    status: o.status,
+    cancellation_status: "none",
+    customer: o.customer ? { id: o.customer.id, name: o.customer.name, tier: null } : null,
+    user: o.user ? { id: o.user.id, name: o.user.name } : null,
+    items: [],
+    payments: [{
+      id: p.id,
+      payment_method_id: p.payment_method?.id ?? 0,
+      terminal_id: null,
+      amount: p.amount,
+      commission_amount: 0,
+      payment_method: p.payment_method,
+      created_at: p.created_at,
+    }],
+    pre_sale_orders: [{
+      id: o.id,
+      code: o.code,
+      status: o.status,
+      total: o.total ?? 0,
+      paid_amount: p.amount,
+      balance: p.id === lastPaymentId ? (o.balance ?? 0) : 0,
+      items,
+    }],
+    sold_at: p.created_at,
+    created_at: p.created_at,
+  }));
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 export function ReportsPage() {
   const { user } = useAuth();
@@ -168,6 +245,15 @@ export function ReportsPage() {
     enabled: activeTab === "ventas",
     staleTime: REPORTS_STALE,
   });
+  // Preventas (anticipos/liquidaciones): el endpoint /sales no trae sus cobros
+  // (una liquidación sola no crea un Sale). Los traemos aparte filtrando por
+  // FECHA DE PAGO (payment_from/to) para contar las liquidaciones del día aunque
+  // el folio se haya creado antes, y los inyectamos como ventas sintéticas por
+  // pago más abajo. Incluye 'expired' para que el filtro "No recogidas" funcione.
+  const preSalePaymentsQuery = usePreSaleOrdersQuery(
+    { payment_from: from, payment_to: to, status: "pending,ready,delivered,expired", per_page: 300, ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}) },
+    { enabled: activeTab === "ventas" },
+  );
   const invParams = { low_stock: lowStockOnly, ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}) };
   const invQuery = useQuery({
     queryKey: queryKeys.reports.inventory(invParams),
@@ -189,7 +275,20 @@ export function ReportsPage() {
     staleTime: REPORTS_STALE,
   });
   const salesReport: SalesReport | null = salesReportQuery.data ?? null;
-  const sales: SaleDetail[] = salesListQuery.data?.data ?? [];
+  const realSales: SaleDetail[] = salesListQuery.data?.data ?? [];
+  // Mezcla ventas reales + un sintético POR CADA PAGO de preventa en el rango.
+  // Los cobros de preventa se cuentan SOLO por la vía sintética (por fecha de
+  // pago); por eso a las ventas reales les vaciamos pre_sale_orders, para no
+  // doblar el conteo (sus productos sí se cuentan vía sale.items). Todo lo que
+  // deriva de `sales` (groupedProducts, paymentBreakdown, KPIs, exports) queda
+  // correcto sin tocar la lógica de agregación.
+  const sales: SaleDetail[] = useMemo(() => {
+    const preSalePayments = (preSalePaymentsQuery.data?.data ?? [])
+      .flatMap(o => preSaleOrderToSyntheticSales(o, from, to));
+    if (preSalePayments.length === 0) return realSales;
+    const realWithoutPreSales = realSales.map(s => ({ ...s, pre_sale_orders: [] }));
+    return [...realWithoutPreSales, ...preSalePayments];
+  }, [realSales, preSalePaymentsQuery.data, from, to]);
   const filteredSales = useMemo(() => {
     const isCardMethod = (name: string) =>
       name.includes("tarjeta") || name.includes("credit") || name.includes("debito") || name.includes("tpv") || name.includes("terminal");

@@ -2059,6 +2059,10 @@ export function SalesPage() {
   if (effectiveStoreId) preSaleOrdersParams.store_id = effectiveStoreId;
   if (filterStartDate) preSaleOrdersParams.from = filterStartDate;
   if (filterEndDate)   preSaleOrdersParams.to   = filterEndDate;
+  // Cajero: solo SUS movimientos de preventa (creados o cobrados por él), igual
+  // que sus ventas. El backend ya fuerza ventas/cortes a su user_id; preventa es
+  // opt-in vía `mine` (Caja NO lo manda, para poder liquidar folios de otros).
+  if (isCashier && user?.id) preSaleOrdersParams.mine = true;
 
   // Polling casi-live (Joel 2026-06-12): SOLO mientras esta pantalla está
   // montada y la tab enfocada — admin/gerente ven ventas/folios hechos en
