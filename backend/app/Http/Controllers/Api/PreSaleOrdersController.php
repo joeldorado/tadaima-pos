@@ -41,6 +41,13 @@ class PreSaleOrdersController extends Controller
         // muestre el método de pago de anticipos/liquidaciones sin caer en N+1.
         $query = PreSaleOrder::with(['store', 'user', 'customer', 'items.catalog', 'payments.paymentMethod', 'cancellations'])
             ->when(!$isAdminUser,                   fn ($q) => $q->where('store_id', $user->store_id))
+            // `mine=1`: solo los folios DEL usuario actual — los que creó (user_id)
+            // o en los que cobró un anticipo/liquidación (payments.cashier_id). Lo
+            // usa la Lista de Ventas del cajero (solo ve lo suyo). Opt-in: el panel
+            // de Caja NO lo manda, así el cajero sí puede liquidar folios de otros.
+            ->when($request->boolean('mine'), fn ($q) => $q->where(fn ($w) => $w
+                ->where('user_id', $user->id)
+                ->orWhereHas('payments', fn ($p) => $p->where('cashier_id', $user->id))))
             ->when($isAdminUser && $request->filled('store_id'), fn ($q) => $q->where('store_id', $request->store_id))
             ->when($request->filled('customer_id'), fn ($q) => $q->where('customer_id', $request->customer_id))
             ->when($request->filled('code'),        fn ($q) => $q->where('code',        $request->code))
@@ -56,6 +63,17 @@ class PreSaleOrdersController extends Controller
             // (= 01:00 UTC del día sig) no matchea con filter 'Hoy' del cajero.
             ->when(\App\Support\DateRange::fromUtc($request->from), fn ($q, $from) => $q->where('created_at', '>=', $from))
             ->when(\App\Support\DateRange::toUtc($request->to),     fn ($q, $to)   => $q->where('created_at', '<=', $to))
+            // Filtro por FECHA DE PAGO (anticipo/liquidación), no de creación: el
+            // Reporte necesita las liquidaciones del día aunque el folio se haya
+            // creado antes. Trae folios con al menos un pago dentro del rango.
+            ->when($request->filled('payment_from') || $request->filled('payment_to'), function ($q) use ($request) {
+                $from = \App\Support\DateRange::fromUtc($request->payment_from);
+                $to   = \App\Support\DateRange::toUtc($request->payment_to);
+                $q->whereHas('payments', function ($p) use ($from, $to) {
+                    if ($from) $p->where('created_at', '>=', $from);
+                    if ($to)   $p->where('created_at', '<=', $to);
+                });
+            })
             ->latest();
 
         $perPage = min((int) ($request->per_page ?? 25), 500);

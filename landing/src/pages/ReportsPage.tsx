@@ -16,10 +16,10 @@ import { ReportsSkeleton } from "@/components/reports/ReportsSkeleton";
 import { getSales } from "@tadaima/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useStoresQuery } from "@/hooks/queries/useStores";
-import { getTodayLocal, daysAgoLocal, BUSINESS_TZ } from "@/lib/date";
+import { getTodayLocal, daysAgoLocal, BUSINESS_TZ, toLocalYmd } from "@/lib/date";
 import { queryKeys } from "@/lib/queryKeys";
 import type { SalesReport, InventoryReport, TopProductsReport, CustomersReport } from "@tadaima/api";
-import type { SaleDetail, Store as StoreType, PreSaleOrder } from "@tadaima/api";
+import type { SaleDetail, Store as StoreType, PreSaleOrder, PreSaleOrderPayment } from "@tadaima/api";
 import {
   Button as AriaButton,
   CalendarCell,
@@ -121,6 +121,23 @@ const SALES_HISTORY_FILTERS: Array<{ id: SalesHistoryFilter; label: string }> = 
   { id: "notPicked", label: "No recogidas" },
 ];
 
+/**
+ * Pagos de un folio de preventa cuya FECHA DE PAGO cae dentro del rango [from, to]
+ * (zona del negocio). Reportamos la preventa por fecha de pago, no de creación: así
+ * la liquidación del día cuenta aunque el folio se haya creado antes (y el anticipo
+ * cuenta su propio día). Espejea el filtro backend payment_from/payment_to.
+ */
+function presalePaymentsInRange(
+  payments: PreSaleOrderPayment[] | null | undefined,
+  from: string,
+  to: string,
+): PreSaleOrderPayment[] {
+  return (payments ?? []).filter((p) => {
+    const ymd = toLocalYmd(new Date(p.created_at));
+    return ymd >= from && ymd <= to;
+  });
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 export function ReportsPage() {
   const { user } = useAuth();
@@ -157,11 +174,17 @@ export function ReportsPage() {
   // sirve del cache (instantáneo) en vez de refetch. El skeleton solo sale
   // cuando de verdad no hay datos para el filtro/tab actual.
   const REPORTS_STALE = 30_000;
+  // Polling live mientras se está EN esta pantalla: cada query solo refetchea
+  // cuando su tab está activo (gate `enabled`) y la pestaña en foco
+  // (refetchIntervalInBackground default false) → al salir de Reportes o pasar
+  // a otra pestaña el poll se detiene solo. 20s = mismo ritmo que Ventas/Caja.
+  const LIVE_POLL_MS = 20_000;
   const salesReportQuery = useQuery({
     queryKey: queryKeys.reports.sales(baseParams),
     queryFn: () => getSalesReport(baseParams),
     enabled: activeTab === "ventas",
     staleTime: REPORTS_STALE,
+    refetchInterval: LIVE_POLL_MS,
   });
   const salesListParams = { ...baseParams, per_page: 100 };
   const salesListQuery = useQuery({
@@ -169,11 +192,15 @@ export function ReportsPage() {
     queryFn: () => getSales(salesListParams),
     enabled: activeTab === "ventas",
     staleTime: REPORTS_STALE,
+    refetchInterval: LIVE_POLL_MS,
   });
 
+  // Preventa POR FECHA DE PAGO (payment_from/to), no de creación: trae los folios
+  // con al menos un cobro (anticipo/liquidación) en el rango, aunque el folio se
+  // haya creado antes. Los montos se acotan a los pagos del rango más abajo.
   const preSaleOrdersParams = {
-    from,
-    to,
+    payment_from: from,
+    payment_to: to,
     status: "pending,ready,delivered,expired,cancelled",
     ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}),
     per_page: 500,
@@ -183,6 +210,7 @@ export function ReportsPage() {
     queryFn: () => getPreSaleOrders(preSaleOrdersParams),
     enabled: activeTab === "ventas",
     staleTime: REPORTS_STALE,
+    refetchInterval: LIVE_POLL_MS,
   });
   const preSaleOrders: PreSaleOrder[] = preSaleOrdersQuery.data?.data ?? [];
 
@@ -225,6 +253,7 @@ export function ReportsPage() {
     queryFn: () => getInventoryReport(invParams),
     enabled: activeTab === "inventario",
     staleTime: REPORTS_STALE,
+    refetchInterval: LIVE_POLL_MS,
   });
   const topParams = { from, to, limit: 25, ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}) };
   const topQuery = useQuery({
@@ -232,12 +261,14 @@ export function ReportsPage() {
     queryFn: () => getTopProductsReport(topParams),
     enabled: activeTab === "productos",
     staleTime: REPORTS_STALE,
+    refetchInterval: LIVE_POLL_MS,
   });
   const custQuery = useQuery({
     queryKey: queryKeys.reports.customers(topParams),
     queryFn: () => getCustomersReport(topParams),
     enabled: activeTab === "clientes",
     staleTime: REPORTS_STALE,
+    refetchInterval: LIVE_POLL_MS,
   });
   const salesReport: SalesReport | null = salesReportQuery.data ?? null;
   const sales: SaleDetail[] = salesListQuery.data?.data ?? [];
@@ -370,14 +401,17 @@ export function ReportsPage() {
 
     // 2. Pre-sale items (Preventas)
     for (const order of filteredPreSaleOrders) {
+      // Solo los pagos cuya fecha cae en el rango (anticipo y/o liquidación del
+      // período). El monto reportado = lo COBRADO en el rango, no el acumulado.
+      const paymentsInRange = presalePaymentsInRange(order.payments, from, to);
+      const paidInRange = paymentsInRange.reduce((sum, p) => sum + (p.amount || 0), 0);
+
       let payMethodName = "Efectivo";
-      if (order.payments && order.payments.length > 0) {
-        let mainPayment = order.payments[0];
-        if (mainPayment) {
-          for (const p of order.payments) {
-            if (p && p.amount > mainPayment.amount) {
-              mainPayment = p;
-            }
+      if (paymentsInRange.length > 0) {
+        let mainPayment = paymentsInRange[0]!;
+        for (const p of paymentsInRange) {
+          if (p && p.amount > mainPayment.amount) {
+            mainPayment = p;
           }
           payMethodName = mainPayment.payment_method?.name ?? "Efectivo";
         }
@@ -432,11 +466,63 @@ export function ReportsPage() {
           pGroup.pre_sale_apartado = (pGroup.pre_sale_apartado ?? 0) + itemApartado;
           pGroup.pre_sale_deuda = (pGroup.pre_sale_deuda ?? 0) + itemDeuda;
         }
+        payMethodName = mainPayment.payment_method?.name ?? "Efectivo";
+      }
+
+      const orderItemsTotal = order.items ? order.items.reduce((sum, it) => sum + (it.unit_price * it.quantity), 0) : 0;
+
+      if (order.items) {
+        for (const item of order.items) {
+          // If product_id is null, generate a unique negative ID based on catalog ID to avoid collisions
+          const prodId = item.product_id ?? (item.catalog ? item.catalog.id * -1 : -999);
+          const prodName = item.catalog?.product_name ?? `Preventa #${item.id}`;
+          const prodSku = "PREVENTA";
+          const qty = item.quantity;
+          const itemTotal = item.unit_price * item.quantity;
+          const unitPrice = item.unit_price;
+
+          // Proportional allocation of paid-in-range and balance based on item's total value vs order items total
+          const ratio = orderItemsTotal > 0 ? (itemTotal / orderItemsTotal) : (1 / order.items.length);
+          const itemApartado = paidInRange * ratio;
+          const itemDeuda = (order.balance || 0) * ratio;
+
+          if (!map.has(prodId)) {
+            map.set(prodId, {
+              id: prodId,
+              name: prodName,
+              sku: prodSku,
+              sales_count: 0,
+              total_quantity: 0,
+              total_revenue: 0,
+              payment_breakdown: {},
+              price_breakdown: {},
+              pre_sale_apartado: 0,
+              pre_sale_deuda: 0,
+            });
+          }
+
+          const pGroup = map.get(prodId)!;
+          pGroup.sales_count += 1;
+          pGroup.total_quantity += qty;
+          pGroup.total_revenue += itemApartado;
+
+          if (!pGroup.payment_breakdown[payMethodName]) {
+            pGroup.payment_breakdown[payMethodName] = { qty: 0, revenue: 0 };
+          }
+          const preBreakdown = pGroup.payment_breakdown[payMethodName]!;
+          preBreakdown.qty += qty;
+          preBreakdown.revenue += itemApartado;
+
+          pGroup.price_breakdown[unitPrice] = (pGroup.price_breakdown[unitPrice] ?? 0) + qty;
+
+          pGroup.pre_sale_apartado = (pGroup.pre_sale_apartado ?? 0) + itemApartado;
+          pGroup.pre_sale_deuda = (pGroup.pre_sale_deuda ?? 0) + itemDeuda;
+        }
       }
     }
 
     return Array.from(map.values()).sort((a, b) => b.total_quantity - a.total_quantity);
-  }, [filteredSales, filteredPreSaleOrders]);
+  }, [filteredSales, filteredPreSaleOrders, from, to]);
   const invReport: InventoryReport | null = invQuery.data ?? null;
   const topReport: TopProductsReport | null = topQuery.data ?? null;
   const custReport: CustomersReport | null = custQuery.data ?? null;
@@ -538,9 +624,12 @@ export function ReportsPage() {
           continue;
         }
 
-        if (order.payments && order.payments.length > 0) {
+        // Solo los cobros cuya fecha cae en el rango (por fecha de pago, no de
+        // creación) — así el KPI suma lo realmente cobrado en el período.
+        const paymentsInRange = presalePaymentsInRange(order.payments, from, to);
+        if (paymentsInRange.length > 0) {
           let orderContributed = false;
-          for (const p of order.payments) {
+          for (const p of paymentsInRange) {
             if (!p) continue;
             const amount = p.amount || 0;
             if (amount > 0) {
@@ -570,7 +659,7 @@ export function ReportsPage() {
       deposits,
       transactionCount: contributingSales.size,
     };
-  }, [filteredSales, filteredPreSaleOrders, selectedFilters]);
+  }, [filteredSales, filteredPreSaleOrders, selectedFilters, from, to]);
 
 
     const activeTabMeta = (REPORT_TABS.find(tab => tab.id === activeTab) ?? REPORT_TABS[0]) as { id: TabId; label: string; icon: React.ElementType };
