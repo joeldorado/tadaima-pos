@@ -190,61 +190,60 @@ Después del tercer folio:
 
 ---
 
-## FASE E — Verificación de SalesPage y reportes
+## FASE E — Verificación de la pantalla de Reportes (ReportsPage)
 
 ### E1 · Dataset de prueba para reporte
 
-Antes de abrir SalesPage, generar los siguientes datos vía API:
-- 2 folios `pending` (AirPods + iPhone)
-- 1 folio `ready` (Samsung)
-- 1 folio `delivered` (con pago completo)
-- Anticipos totales del día: suma de todos los pagos creados
+Antes de abrir la pantalla de Reportes, generar los siguientes datos de ventas y preventas vía API o Caja:
+- Al menos 3 ventas de productos regulares (efectivo, tarjeta, transferencia).
+- Al menos 2 preventas (folios con anticipo/apartado parcial y deuda restante).
+- Al menos 2 ventas de productos de tipo Manga Nacional (con `product_type: 'manga'`).
 
-### E2 · Navegar a SalesPage
-
-| | |
-|--|--|
-| **Acción** | Login admin → `/sales` |
-| **Esperado** | Página carga. Filtros por fecha (default: hoy), por tienda. |
-
-### E3 · Verificar KPIs del día
-
-Validar que los siguientes indicadores estén presentes y correctos:
-
-| KPI | Valor esperado |
-|-----|---------------|
-| Anticipos cobrados hoy | Suma de todos los pagos de folios creados en el día |
-| Preventas pendientes | Conteo de folios `pending` + `ready` activos |
-| Preventas entregadas | Conteo de folios `delivered` del día |
-| Saldo por cobrar | Suma de `balance` de folios activos (no entregados ni cancelados) |
-
-### E4 · Filtro por tienda
+### E2 · Navegar a Reportes
 
 | | |
 |--|--|
-| **Acción** | Seleccionar filtro "Macroplaza" |
-| **Esperado** | Solo aparecen registros de Macroplaza. KPIs se recalculan para esa tienda. |
+| **Acción** | Login admin/gerente → `/reports` o pestaña de Reportes. |
+| **Esperado** | La página carga. Se muestran las sub-pestañas: Ventas, Inventario, Top Productos, Top Clientes. Se activa polling dinámico cada 20s. |
 
-### E5 · Filtro por rango de fechas
+### E3 · Verificar KPIs y Filtros Multiselección
 
-| | |
-|--|--|
-| **Acción** | Cambiar filtro a rango "Ayer" |
-| **Esperado** | Si no hay datos de ayer → tabla vacía. KPIs en cero. Sin errores. |
+Validar los siguientes aspectos en la sección de Ventas por Producto:
+1.  **Filtros Multiselección**: Los botones toggles (`Todo`, `Efectivo`, `Dólar`, `Tarjeta`, `Transferencia`, `Cancelados`) se muestran centrados sobre la tabla. Al presionar uno, se añade al conjunto de filtros de manera aditiva; al presionar "Todo", se limpian los filtros aplicados.
+2.  **KPIs Dinámicos**: Los 5 indicadores o resumen en la parte inferior se actualizan dinámicamente en base a los filtros activos y el rango de fechas seleccionado:
+    *   **Venta Bruta Total** (Gross revenue).
+    *   **Manga Nacional** (Ventas de tomos).
+    *   **Comisión TPV** (Suma de comisiones absorbidas en tarjetas).
+    *   **IVA s/Comisión (16%)** (IVA sobre las comisiones cobradas).
+    *   **Neto Real** (Ingreso total real descontando comisión e IVA).
 
-### E6 · Detalle de folio desde SalesPage
-
-| | |
-|--|--|
-| **Acción** | Click en fila de folio `ready` en la tabla |
-| **Esperado** | Panel lateral o modal muestra detalles: cliente, catálogo, pagos, saldo. CTA "Marcar entregado" visible para quien tiene permisos. |
-
-### E7 · Consistencia UI vs. API
+### E4 · Separación de Tomos (Manga Nacional)
 
 | | |
 |--|--|
-| **Acción** | Comparar KPI "Anticipos del día" de la UI con `GET /api/v1/reports/sales?date=hoy` |
-| **Esperado** | Cero discrepancia. Si hay caché, el refresh manual actualiza datos. |
+| **Acción** | Observar la ordenación de las filas en la tabla principal de Ventas por Producto. |
+| **Esperado** | Todos los productos normales/generales se muestran primero. Los artículos con `product_type === 'manga'` se desplazan al fondo de la tabla de forma automática, separados por un divisor gris de fondo completo con el texto "📚 Manga Nacional" y su respectivo subtotal de ventas y unidades. |
+
+### E5 · Desglose por Producto (Filas Expandibles)
+
+| | |
+|--|--|
+| **Acción** | Hacer clic en uno o más productos regulares y mangas para expandir el detalle. |
+| **Esperado** | Se expande la fila mostrando: <br>1. Detalle por método de pago (con cálculo preciso de Comisión TPV, IVA de comisión al 16% y Neto Real coloreados para pagos de tarjeta). <br>2. Agrupación por precio unitario vendido con símbolos de $. <br>3. Desglose de preventas indicando de forma explícita el Apartado (Abonos) y la Deuda restante de cada folio. Permite múltiples filas expandidas a la vez. |
+
+### E6 · Vista Ampliada (Modal Full-Screen)
+
+| | |
+|--|--|
+| **Acción** | Presionar el botón "Ampliar" en la parte superior derecha de la tarjeta de la tabla. |
+| **Esperado** | Se abre una ventana modal de pantalla completa con efecto backdrop blur. Muestra el mismo nivel de detalle, paginación, filtros y soporte de filas expandidas simultáneamente. Cierra correctamente con `Escape` o el botón `[X]`. |
+
+### E7 · Exportación a Excel y PDF
+
+| | |
+|--|--|
+| **Acción** | Presionar el botón "Exportar a Excel" y "Exportar a PDF". |
+| **Esperado** | Se descargan los reportes correspondientes con formato uniforme vertical:<br>1. **Excel**: Logo insertado, cabeceras estructuradas, separación clara de Manga Nacional con divisor gris, filas de totales por sección con estilo contable, y fórmulas exactas de IVA sobre comisión (16%) y Comisión TPV.<br>2. **PDF**: Documento horizontal limpio con encabezado color rojo marca, columnas explícitas para Comisión TPV e IVA s/Comisión (16%), alineación correcta de cantidades y divisores grises legibles sin caracteres extraños ni emojis corruptos. |
 
 ---
 
@@ -260,9 +259,13 @@ Validar que los siguientes indicadores estén presentes y correctos:
 - [ ] Cajero solo ve folios de su sucursal
 - [ ] Admin ve todo
 - [ ] Precio en folio es inmutable (congelado al crear)
-- [ ] SalesPage muestra KPIs correctos por tienda y por fecha
-- [ ] Filtros de SalesPage funcionan individualmente y combinados
-- [ ] Click en fila de folio muestra detalle completo
+- [ ] La pantalla de Reportes hace polling cada 20s y se enfoca en el tab activo
+- [ ] Los toggles multiselección filtran con precisión de item en ventas, efectivo, dólares, tarjetas y preventas
+- [ ] Las tarjetas de KPIs y el resumen inferior se recalculan al vuelo según los filtros
+- [ ] La tabla de ventas separa limpiamente Manga Nacional al fondo con divisor gris y resumen dedicado
+- [ ] La fila expandible detalla métodos de pago, Comisión TPV, IVA (16%), Neto Real, precios unitarios y abonos/deudas de preventa
+- [ ] El modal full-screen replica fielmente la tabla principal con scroll independiente y cierre con Escape
+- [ ] Los botones de Exportación generan hojas de ExcelJS y PDFs con jsPDF con idéntica estructura vertical, cálculos de comisiones, IVA (16%) y Neto Real, evitando emojis incompatibles en el PDF
 
 ---
 

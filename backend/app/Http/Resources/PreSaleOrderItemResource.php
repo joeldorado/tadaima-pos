@@ -20,6 +20,7 @@ class PreSaleOrderItemResource extends JsonResource
             'status'              => $this->status,
             'delivered_at'        => $this->delivered_at,
             'created_at'          => $this->created_at,
+            'product_type'        => $this->product?->product_type ?? ($this->catalog?->product?->product_type ?? 'product'),
 
             // cost snapshot (ADR-015) — admin o can_view_cost (gerente de
             // fábrica desde 2026-06-10), igual que SaleItemResource. Permite

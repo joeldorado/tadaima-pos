@@ -207,7 +207,7 @@ export interface SaleItemDetail {
    * como fallback cuando `item.cost` es NULL (ventas pre-migración) — para
    * ventas nuevas SIEMPRE preferir `item.cost`.
    */
-  product: { id: number; name: string; sku: string; cost?: number | null } | null
+  product: { id: number; name: string; sku: string; cost?: number | null; product_type?: 'product' | 'manga' } | null
   created_at: string
 }
 
@@ -243,11 +243,13 @@ export interface SaleDetail {
   cancelled_amount?: number
   /** Snapshot de los items cancelados (qty/precio al momento de cancelar). */
   cancelled_items?: Array<{
+    product_id?: number | null
     name: string
     sku: string | null
     quantity: number
     price: number
     line_total: number
+    product_type?: 'product' | 'manga'
   }>
   customer: { id: number; name: string; tier: string | null } | null
   /** Usuario que registró la venta (cajero/gerente/admin). Eager-loaded por SalesController. */
@@ -682,6 +684,7 @@ export interface PreSaleOrderItem {
   /** Costo snapshot (ADR-015). Solo admin (null para gerente/cajero). Para utilidad real de preventas. */
   cost?: number | null
   catalog: { id: number; product_name: string; image_path: string | null; status: PreSaleCatalogStatus | null; pickup_deadline: string | null } | null
+  product_type?: 'product' | 'manga'
 }
 
 export interface PreSaleOrderPayment {
