@@ -649,7 +649,7 @@ function SaleRow({
                     {ci.name}
                     {ci.sku && <span className="ml-2 text-[8px] uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>{ci.sku}</span>}
                   </p>
-                  <span className="text-[10px] font-black flex-shrink-0" style={{ color: "var(--td-text-md)" }}>×{ci.quantity}</span>
+                  <span className="text-[10px] font-black flex-shrink-0" style={{ color: "var(--td-text-md)" }}>×{ci.qty_cancelled || ci.quantity}</span>
                   <span className="text-[10px] font-bold w-[60px] text-right flex-shrink-0" style={{ color: "var(--td-text-lo)" }}>{fmt(ci.price)}</span>
                   <span className="text-xs font-black w-[80px] text-right flex-shrink-0" style={{ color: "#f87171" }}>−{fmt(ci.line_total)}</span>
                 </div>

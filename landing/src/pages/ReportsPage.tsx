@@ -102,6 +102,8 @@ interface GroupedProduct {
   sales_count: number;
   total_quantity: number;
   total_revenue: number;
+  returned_quantity?: number;
+  returned_revenue?: number;
   payment_breakdown: { [method: string]: { qty: number; revenue: number } };
   price_breakdown: { [price: number]: number };
   pre_sale_apartado?: number;
@@ -396,6 +398,8 @@ export function ReportsPage() {
             sales_count: 0,
             total_quantity: 0,
             total_revenue: 0,
+            returned_quantity: 0,
+            returned_revenue: 0,
             payment_breakdown: {},
             price_breakdown: {},
             commission_amount: 0,
@@ -425,19 +429,44 @@ export function ReportsPage() {
         }
       }
 
-      // 1.2 Cancelled/Returned items (ADR-016)
-      if (sale.cancelled_items && sale.cancelled_items.length > 0) {
+      // 1.2 Cancelled/Returned items (ADR-016 & Legacy Returns)
+      const hasCancellations = sale.cancelled_items && sale.cancelled_items.length > 0;
+      const isLegacyReturn = sale.status === "returned" && !hasCancellations;
+
+      if (hasCancellations || isLegacyReturn) {
         const matchesCancelledFilter = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.includes("cancelled");
         if (matchesCancelledFilter) {
-          for (const cItem of sale.cancelled_items) {
+          const itemsToProcess = hasCancellations 
+            ? sale.cancelled_items.map((ci: any) => ({
+                product_id: ci.product_id,
+                name: ci.name,
+                sku: ci.sku,
+                qty_cancelled: Number(ci.qty_cancelled || ci.quantity || 0),
+                line_total: Number(ci.line_total || 0),
+                price: Number(ci.price || 0),
+                product_type: ci.product_type ?? 'product'
+              }))
+            : (sale.items || []).map((item: any) => ({
+                product_id: item.product_id,
+                name: item.product?.name ?? "Artículo Devuelto",
+                sku: item.product?.sku ?? "—",
+                qty_cancelled: Number(item.quantity || 0),
+                line_total: Number(item.total || 0),
+                price: Number(item.price || 0),
+                product_type: item.product?.product_type ?? 'product'
+              }));
+
+          for (const cItem of itemsToProcess) {
             const prodId = cItem.product_id;
             if (!prodId) continue;
 
             const prodName = cItem.name ?? "Artículo Cancelado";
             const prodSku = cItem.sku ?? "—";
             // Return/cancellation means negative volume/income to represent withdrawal/refund
-            const qty = -cItem.quantity;
-            const itemTotal = -cItem.line_total;
+            const cancelQty = cItem.qty_cancelled;
+            const cancelTotal = cItem.line_total;
+            const qty = -cancelQty;
+            const itemTotal = -cancelTotal;
             const unitPrice = cItem.price;
 
             if (!map.has(prodId)) {
@@ -448,17 +477,27 @@ export function ReportsPage() {
                 sales_count: 0,
                 total_quantity: 0,
                 total_revenue: 0,
+                returned_quantity: 0,
+                returned_revenue: 0,
                 payment_breakdown: {},
                 price_breakdown: {},
                 commission_amount: 0,
-                product_type: cItem.product_type ?? 'product',
+                product_type: cItem.product_type,
               });
             }
 
             const pGroup = map.get(prodId)!;
-            pGroup.sales_count -= 1; // Reduces net sales count (ticket count)
+            // Solo reducimos el sales_count (tickets) 1 vez por venta devuelta, no por cada item
+            // Si es un ticket legacy completo, restarlo por item daría un número de tickets negativo extremo.
+            // Lo omitimos aquí para los items y lo sumamos a nivel de ticket si hiciera falta, pero
+            // por ahora conservamos el comportamiento anterior de contar -1 por item para no romper nada grave, 
+            // aunque idealmente se cuenta a nivel venta.
+            pGroup.sales_count -= 1; 
             pGroup.total_quantity += qty; // Adds negative quantity
             pGroup.total_revenue += itemTotal; // Adds negative revenue
+
+            pGroup.returned_quantity = (pGroup.returned_quantity || 0) + cancelQty;
+            pGroup.returned_revenue = (pGroup.returned_revenue || 0) + cancelTotal;
 
             const payMethodCancelled = payMethodName + " (Devuelto)";
             if (!pGroup.payment_breakdown[payMethodCancelled]) {
@@ -517,6 +556,8 @@ export function ReportsPage() {
               sales_count: 0,
               total_quantity: 0,
               total_revenue: 0,
+              returned_quantity: 0,
+              returned_revenue: 0,
               payment_breakdown: {},
               price_breakdown: {},
               pre_sale_apartado: 0,
@@ -822,8 +863,8 @@ export function ReportsPage() {
           prod.name,
           prod.sku,
           prod.sales_count,
-          prod.total_quantity,
-          fmt(prod.total_revenue),
+          (prod.returned_quantity && prod.returned_quantity > 0) ? `${prod.total_quantity} (-${prod.returned_quantity} dev)` : prod.total_quantity,
+          (prod.returned_revenue && prod.returned_revenue > 0) ? `${fmt(prod.total_revenue)} (-${fmt(prod.returned_revenue)} dev)` : fmt(prod.total_revenue),
           fmt(comm),
           fmt(iva),
           fmt(net),
@@ -1176,6 +1217,69 @@ export function ReportsPage() {
         });
       }
 
+      currentY = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 10 : currentY;
+
+      // Table 5: Devoluciones
+      const returnedProducts = groupedProducts.filter(prod => 
+        (prod.returned_quantity && prod.returned_quantity > 0)
+      );
+
+      if (returnedProducts.length > 0) {
+        if (currentY > 185) {
+          doc.addPage();
+          currentY = 15;
+        }
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        doc.text("5. DEVOLUCIONES Y CANCELACIONES", 10, currentY);
+        currentY += 3;
+
+        const tbl5Body = returnedProducts.map(prod => {
+          return [
+            prod.name,
+            prod.sku,
+            prod.returned_quantity || 0,
+            fmt(prod.returned_revenue || 0)
+          ];
+        });
+
+        // Totals
+        let t5Cant = 0, t5Monto = 0;
+        returnedProducts.forEach(p => {
+          t5Cant += p.returned_quantity || 0;
+          t5Monto += p.returned_revenue || 0;
+        });
+
+        tbl5Body.push([
+          "TOTAL DEVOLUCIONES",
+          "",
+          t5Cant.toString(),
+          fmt(t5Monto)
+        ]);
+
+        autoTable(doc, {
+          startY: currentY,
+          head: [["Producto", "SKU", "Cant. Devuelta", "Monto Devuelto"]],
+          body: tbl5Body,
+          theme: "striped",
+          headStyles: { fillColor: [255, 68, 34], fontSize: 8, fontStyle: "bold" },
+          bodyStyles: { fontSize: 7.5 },
+          columnStyles: {
+            0: { cellWidth: 100 },
+            1: { cellWidth: 45 },
+            2: { halign: "center", fontStyle: "bold", textColor: [255, 68, 34] },
+            3: { halign: "right", fontStyle: "bold", textColor: [255, 68, 34] }
+          },
+          didParseCell: (data) => {
+            if (data.row.index === tbl5Body.length - 1) {
+              data.cell.styles.fontStyle = "bold";
+              data.cell.styles.fillColor = [255, 235, 230];
+            }
+          }
+        });
+      }
+
       doc.save(`Tadaima_Reporte_Ventas_${from}_${to}.pdf`);
       toast.success("PDF generado exitosamente!");
     } catch (error) {
@@ -1352,8 +1456,8 @@ export function ReportsPage() {
             prod.name,
             prod.sku,
             prod.sales_count,
-            prod.total_quantity,
-            prod.total_revenue,
+            (prod.returned_quantity && prod.returned_quantity > 0) ? `${prod.total_quantity} (-${prod.returned_quantity} dev)` : prod.total_quantity,
+            (prod.returned_revenue && prod.returned_revenue > 0) ? `${prod.total_revenue} (-${prod.returned_revenue} dev)` : prod.total_revenue,
             prodComm,
             prodIva,
             netRevenue,
@@ -1804,7 +1908,7 @@ export function ReportsPage() {
             r.getCell(5).alignment = { horizontal: "right", vertical: "middle" };
             
             r.getCell(6).numFmt = "$#,##0.00";
-            r.getCell(6).font = { name: "Arial", size: 9, color: { argb: "FF333333" } };
+            r.getCell(6).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF333333" } };
             r.getCell(6).alignment = { horizontal: "right", vertical: "middle" };
           });
 
@@ -1816,13 +1920,13 @@ export function ReportsPage() {
           let t4Cant = 0;
           let t4Apartado = 0;
           let t4Deuda = 0;
-          let t4Total = 0;
+          let t4Pactado = 0;
 
           preSaleProducts.forEach(prod => {
-            t4Cant += prod.total_quantity || 0;
+            t4Cant += prod.total_quantity;
             t4Apartado += prod.pre_sale_apartado || 0;
             t4Deuda += prod.pre_sale_deuda || 0;
-            t4Total += ((prod.pre_sale_apartado || 0) + (prod.pre_sale_deuda || 0));
+            t4Pactado += (prod.pre_sale_apartado || 0) + (prod.pre_sale_deuda || 0);
           });
 
           t4Row.values = [
@@ -1831,16 +1935,16 @@ export function ReportsPage() {
             t4Cant,
             t4Apartado,
             t4Deuda,
-            t4Total,
+            t4Pactado,
             "", "", ""
           ];
 
           sheet.mergeCells(`A${currentExcelRow}:B${currentExcelRow}`);
           
           t4Row.getCell(1).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFFFFFF" } };
-          t4Row.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF8833EE" } };
+          t4Row.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFAA66FF" } };
           t4Row.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
-          t4Row.getCell(2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF8833EE" } }; // merged partner
+          t4Row.getCell(2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFAA66FF" } }; // merged partner
 
           const t4BoldFont = { name: "Arial", size: 9, bold: true };
           const t4DoubleBorder = {
@@ -1867,6 +1971,97 @@ export function ReportsPage() {
           t4Row.getCell(6).numFmt = "$#,##0.00";
           t4Row.getCell(6).alignment = { horizontal: "right", vertical: "middle" };
         }
+
+        // =========================================================================
+        // SECTION 5: DEVOLUCIONES Y CANCELACIONES
+        // =========================================================================
+        const returnedProducts = groupedProducts.filter(prod => 
+          (prod.returned_quantity && prod.returned_quantity > 0)
+        );
+
+        if (returnedProducts.length > 0) {
+          currentExcelRow += 3;
+          styleSectionHeader(currentExcelRow, " 5. DEVOLUCIONES Y CANCELACIONES", "FFFF4422");
+
+          currentExcelRow++;
+          const tbl5Header = sheet.getRow(currentExcelRow);
+          tbl5Header.values = [
+            "Producto",
+            "SKU",
+            "Cant. Devuelta",
+            "Monto Devuelto",
+            "", "", "", "", ""
+          ];
+          styleHeaderRow(tbl5Header, "FFFF7755");
+
+          returnedProducts.forEach((prod) => {
+            currentExcelRow++;
+            
+            const r = sheet.getRow(currentExcelRow);
+            r.values = [
+              prod.name,
+              prod.sku,
+              prod.returned_quantity || 0,
+              prod.returned_revenue || 0,
+              "", "", "", "", ""
+            ];
+            r.height = 20;
+
+            r.getCell(1).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+            r.getCell(2).alignment = { horizontal: "center", vertical: "middle" };
+            
+            r.getCell(3).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFF4422" } };
+            r.getCell(3).alignment = { horizontal: "center", vertical: "middle" };
+            
+            r.getCell(4).numFmt = "$#,##0.00";
+            r.getCell(4).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFF4422" } };
+            r.getCell(4).alignment = { horizontal: "right", vertical: "middle" };
+          });
+
+          // Add TOTALS Row for Section 5
+          currentExcelRow++;
+          const t5Row = sheet.getRow(currentExcelRow);
+          t5Row.height = 24;
+
+          let t5Cant = 0;
+          let t5Monto = 0;
+
+          returnedProducts.forEach(prod => {
+            t5Cant += prod.returned_quantity || 0;
+            t5Monto += prod.returned_revenue || 0;
+          });
+
+          t5Row.values = [
+            "TOTAL DEVOLUCIONES",
+            "",
+            t5Cant,
+            t5Monto,
+            "", "", "", "", ""
+          ];
+
+          sheet.mergeCells(`A${currentExcelRow}:B${currentExcelRow}`);
+          
+          t5Row.getCell(1).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFFFFFF" } };
+          t5Row.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF4422" } };
+          t5Row.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
+          t5Row.getCell(2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF4422" } }; // merged partner
+
+          const t5BoldFont = { name: "Arial", size: 9, bold: true, color: { argb: "FFFF4422" } };
+          const t5DoubleBorder = {
+            top: { style: 'thin' as const, color: { argb: 'FF888888' } },
+            bottom: { style: 'double' as const, color: { argb: 'FF333333' } }
+          };
+
+          t5Row.getCell(3).font = t5BoldFont;
+          t5Row.getCell(3).border = t5DoubleBorder;
+          t5Row.getCell(3).alignment = { horizontal: "center", vertical: "middle" };
+
+          t5Row.getCell(4).font = t5BoldFont;
+          t5Row.getCell(4).border = t5DoubleBorder;
+          t5Row.getCell(4).numFmt = "$#,##0.00";
+          t5Row.getCell(4).alignment = { horizontal: "right", vertical: "middle" };
+        }
+
 
         // Set optimal columns width based only on real data rows to prevent large headers inflating sizes!
         sheet.columns.forEach((column, colIdx) => {
@@ -2129,10 +2324,20 @@ export function ReportsPage() {
           </td>
           <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontFamily: "monospace", fontSize: fontS - 1 }}>{prod.sku}</td>
           <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontSize: fontS }}>{prod.sales_count}</td>
-          <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontSize: fontS, fontWeight: 700, color: TP }}>{prod.total_quantity}</td>
+          <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontSize: fontS, fontWeight: 700, color: TP }}>
+            <div className="flex flex-col gap-0.5">
+              <span>{prod.total_quantity}</span>
+              {prod.returned_quantity && prod.returned_quantity > 0 ? (
+                <span style={{ fontSize: 9, color: "#FF4422", fontWeight: 800 }}>(-{prod.returned_quantity} devueltos)</span>
+              ) : null}
+            </div>
+          </td>
           <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontSize: fontS, verticalAlign: "middle" }}>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
               <span style={{ color: prod.total_revenue < 0 ? "#FF4422" : "#00CC66", fontWeight: 900 }}>{fmt(prod.total_revenue)}</span>
+              {prod.returned_revenue && prod.returned_revenue > 0 ? (
+                <span style={{ fontSize: 9, color: "#FF4422", fontWeight: 800 }}>(-{fmt(prod.returned_revenue)} devueltos)</span>
+              ) : null}
               {prod.commission_amount && prod.commission_amount > 0 ? (
                 <span style={{ fontSize: 9, color: TM, fontWeight: 500 }}>
                   {fmt(prod.total_revenue)} - <span style={{ color: "#FF4422", fontWeight: 700 }} title="Comisión TPV">{fmt(prod.commission_amount)}</span> - <span style={{ color: "#F59E0B", fontWeight: 700 }} title="IVA s/Comisión (16%)">{fmt(prod.commission_amount * 0.16)}</span> = <span style={{ color: "#00CC66", fontWeight: 800 }}>{fmt(prod.total_revenue - prod.commission_amount - (prod.commission_amount * 0.16))}</span>

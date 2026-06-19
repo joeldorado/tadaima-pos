@@ -7264,7 +7264,7 @@ export function SellPage() {
                                 {(sale.cancelled_items ?? []).map((ci, ciIdx) => (
                                   <div key={ciIdx} style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0", borderTop: "1px solid rgba(239,68,68,0.12)" }}>
                                     <span style={{ flex: 1, fontSize: 10, fontWeight: 700, color: "var(--td-text-md)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ci.name}</span>
-                                    <span style={{ fontSize: 9, color: "var(--td-text-ghost)", flexShrink: 0 }}>×{ci.quantity}</span>
+                                    <span style={{ fontSize: 9, color: "var(--td-text-ghost)", flexShrink: 0 }}>×{ci.qty_cancelled || ci.quantity}</span>
                                     <span style={{ fontSize: 9, fontWeight: 700, color: "var(--td-text-ghost)", flexShrink: 0, width: 52, textAlign: "right" }}>{fmt(ci.price)}</span>
                                     <span style={{ fontSize: 10, fontWeight: 900, color: "#f87171", flexShrink: 0, width: 66, textAlign: "right" }}>−{fmt(ci.line_total)}</span>
                                   </div>
