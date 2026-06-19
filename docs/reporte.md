@@ -41,7 +41,13 @@ Los artículos vendidos y preventas cobradas en el rango se unifican en un mapa 
 
 > **Regla de Ordenación**: Todos los productos generales se muestran al inicio de la tabla (ordenados de mayor a menor cantidad vendida). En la parte inferior, tras una **línea de separación gris**, se muestran todos los tomos de **Manga Nacional**, garantizando una visualización sumamente ordenada.
 
-### C. Desglose Detallado por Fila (Detalle Expandible)
+### C. Devoluciones y Cancelaciones (ADR-016 y Legacy)
+El sistema unifica y gestiona las devoluciones provenientes de dos flujos distintos para garantizar visibilidad total:
+1. **Cancelaciones Parciales/Totales (Modernas - ADR-016)**: Utiliza un "snapshot" exacto (`qty_cancelled` y `line_total`) de los artículos devueltos, permitiendo reportar exactamente qué productos y montos regresaron a tienda.
+2. **Devoluciones Clásicas (Legacy)**: Ventas marcadas en su totalidad como `returned` sin snapshot moderno. El sistema procesa recursivamente todos sus artículos originales como devoluciones para asegurar que ninguna métrica escape del balance.
+*Nota*: Las devoluciones restan la cantidad en la tabla y se muestran destacadas visualmente en color rojo, restando la métrica neta (bruto) para cuadrar con corte de caja.
+
+### D. Desglose Detallado por Fila (Detalle Expandible)
 Al hacer clic en cualquier fila de la tabla, se expande una sección de auditoría que detalla:
 1.  **Desglose por Método de Pago**: Muestra cuánto se cobró por cada método (efectivo, dólares, tarjeta).
     *   *Cobros con Tarjeta*: Aplica una regla de **absorción de comisión de terminal** y calcula el **16% de IVA sobre la comisión de terminal** (TPV), mostrando en color verde el **Neto Real de Ingreso para la Tienda** después de deducir comisiones e impuestos:
@@ -82,8 +88,9 @@ La pantalla cuenta con dos potentes motores de exportación que se adaptan diná
 *   **Sección 2 (Cobros con Tarjeta)**: Detalle exclusivo de TPV con cálculo del 16% de IVA sobre comisiones.
 *   **Sección 3 (Efectivo)**: Detalle del dinero ingresado en efectivo (con distinción de dólares si aplica).
 *   **Sección 4 (Preventas)**: Balance de control de preventas (Abonos vs Deudas).
+*   **Sección 5 (Devoluciones y Cancelaciones)**: Listado independiente y sumario exclusivo de todos los productos cancelados o devueltos en el periodo, destacando las cantidades y los montos regresados al cliente (con valores negativos correspondientes).
 
 ### B. Reporte de PDF (.pdf) con `jsPDF`
 *   Genera un documento tamaño A4 horizontal de alta calidad con cabeceras de color rojo Tadaima (`rgb(204, 34, 0)`).
 *   **Tabla 1**: Muestra el desglose de productos con columnas explícitas de **Comisión TPV**, **IVA s/Comisión (16%)** y **Neto Real**. Los tomos de **Manga Nacional** están segregados en la parte inferior tras un divisor gris de fondo.
-*   **Tablas 2, 3 y 4**: Espejos detallados para tarjetas, efectivo y preventas respectivamente, asegurando que todos los reportes impresos sean 100% consistentes con los datos en pantalla y la hoja de cálculo de Excel.
+*   **Tablas 2, 3, 4 y 5**: Espejos detallados para tarjetas, efectivo, preventas y devoluciones respectivamente, asegurando que todos los reportes impresos sean 100% consistentes con los datos en pantalla y la hoja de cálculo de Excel.
