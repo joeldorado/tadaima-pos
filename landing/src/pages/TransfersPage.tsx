@@ -112,7 +112,11 @@ export function TransfersPage() {
   const isManagerUser = isManagerRole(user?.roles ?? []);
   const currentUserId = user?.id ?? null;
   const canRequestTransfers = isAdminUser || isManagerUser;
-  const canApproveTransfers = isAdminUser;
+  const canCompleteTransfer = (transfer?: Transfer) => {
+    if (!transfer) return false;
+    if (isAdminUser) return true;
+    return isManagerUser && user?.store_id && transfer.from_warehouse?.store_id === user.store_id;
+  };
   const canCancelTransfer = (transfer: Transfer) => {
     if (isAdminUser) return true;
     return isManagerUser && currentUserId !== null && transfer.user_id === currentUserId;
@@ -401,8 +405,10 @@ export function TransfersPage() {
     if (!fromWhId || !toWhId)       { toast.error("Selecciona origen y destino"); return; }
     if (fromWhId === toWhId)        { toast.error("Origen y destino no pueden ser iguales"); return; }
     if (items.length === 0)         { toast.error("Agrega al menos un producto"); return; }
-    if (transferMode === "complete" && !canApproveTransfers) {
-      toast.error("Solo Admin puede completar transferencias");
+    const originWarehouseStoreId = warehouses.find(w => String(w.id) === fromWhId)?.store_id;
+    const canCompleteNewTransfer = isAdminUser || (isManagerUser && user?.store_id && user.store_id === originWarehouseStoreId);
+    if (transferMode === "complete" && !canCompleteNewTransfer) {
+      toast.error("Solo admin o el gerente origen pueden completar transferencias");
       return;
     }
     const itemWithoutStock = items.find(item => {
@@ -453,8 +459,9 @@ export function TransfersPage() {
   };
 
   const handleComplete = async (id: number) => {
-    if (!canApproveTransfers) {
-      toast.error("Solo Admin puede completar transferencias");
+    const trf = transfers.find(t => t.id === id);
+    if (!canCompleteTransfer(trf)) {
+      toast.error("Solo admin o el gerente de la tienda origen pueden completar transferencias");
       return;
     }
     setActionLoading(prev => ({ ...prev, [id]: true }));
@@ -661,9 +668,23 @@ export function TransfersPage() {
                         <span className="text-[9px] font-black text-red-500 uppercase tracking-widest">Origen</span>
                         <span className="text-sm font-bold text-white">{trf.from_warehouse?.name ?? "—"}</span>
                       </div>
-                      <div className="flex flex-col items-center">
-                        <ArrowRight size={14} className="text-white/20" />
-                        <span className="text-[9px] font-black text-white/20">{trf.items?.length ?? "—"} SKU</span>
+                      <div className="flex flex-col items-center max-w-[120px] text-center">
+                        <ArrowRight size={14} className="text-white/20 mb-1" />
+                        {trf.items && trf.items.length > 0 ? (
+                          <>
+                            {trf.items[0].product?.image_url && (
+                              <img src={trf.items[0].product.image_url} alt="" className="w-6 h-6 object-cover rounded mb-0.5" />
+                            )}
+                            <span className="text-[10px] font-bold text-white truncate w-full">
+                              {trf.items[0].product?.name || "Producto"}
+                            </span>
+                            <span className="text-[8px] font-black text-white/40 uppercase tracking-widest mt-0.5">
+                              {trf.items.length > 1 ? `+${trf.items.length - 1} más (${trf.items.length} SKUs)` : '1 SKU'}
+                            </span>
+                          </>
+                        ) : (
+                          <span className="text-[9px] font-black text-white/20">Sin items</span>
+                        )}
                       </div>
                       <div className="flex flex-col text-right">
                         <span className="text-[9px] font-black text-green-500 uppercase tracking-widest">Destino</span>
@@ -674,7 +695,7 @@ export function TransfersPage() {
                     {/* Actions */}
                     <div className="w-full lg:w-52 shrink-0 flex flex-col items-start lg:items-end gap-3">
                       <p className="text-[10px] font-bold text-white/40">{trf.created_at.split("T")[0]}</p>
-                      {trf.status === "pending" && canApproveTransfers && (
+                      {trf.status === "pending" && canCompleteTransfer(trf) && (
                         <div className="flex gap-2">
                           <button
                             onClick={() => void handleComplete(trf.id)}
@@ -697,7 +718,7 @@ export function TransfersPage() {
                         </div>
                       )}
 
-                      {trf.status === "pending" && !canApproveTransfers && canCancelTransfer(trf) && (
+                      {trf.status === "pending" && !canCompleteTransfer(trf) && canCancelTransfer(trf) && (
                         <div className="flex gap-2">
                           <button
                             onClick={() => void handleCancel(trf.id)}

@@ -278,7 +278,7 @@ al dar de alta una tienda (y existe la migración de backfill
 |---|---|---|
 | GET | `/transfers` · POST `/transfers` | Listar / solicitar |
 | GET | `/transfers/{transfer}` · GET `/transfers/{transfer}/items` | Detalle / items |
-| PUT | `/transfers/{transfer}/complete` | Completar (solo admin en UI) |
+| PUT | `/transfers/{transfer}/complete` | Completar (admin o gerente de tienda origen) |
 | PUT | `/transfers/{transfer}/cancel` | Cancelar |
 
 ### Clientes (`CustomerController`)

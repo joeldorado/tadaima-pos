@@ -125,6 +125,8 @@
 **Archivos:** `TransferController`, `TransferService`, `Transfer`, `TransferItem`, `TransferResource`, `TransferItemResource`, `StoreTransferRequest`
 
 **Flujo:** Crear (pending) → Completar (mueve inventario) | Cancelar (sin tocar inventario)
+*Nota UI: Admin puede completar cualquier traslado. Gerentes solo pueden completarlo si el origen es su tienda.*
+*El detalle carga la imagen del producto (eager loading de `items.product.images`) para mostrar en frontend.*
 
 | Método | Endpoint | Descripción |
 |---|---|---|

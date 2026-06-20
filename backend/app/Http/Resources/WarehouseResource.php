@@ -13,7 +13,7 @@ class WarehouseResource extends JsonResource
             'id'          => $this->id,
             'company_id'  => $this->company_id,
             'store_id'    => $this->store_id,
-            'name'        => $this->name,
+            'name'        => $this->store ? $this->store->name : $this->name,
             'type'        => $this->type,
             'description' => $this->description,
             'active'      => $this->active,

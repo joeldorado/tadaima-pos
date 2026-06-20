@@ -70,7 +70,7 @@ class TransferController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $query = Transfer::with(['fromWarehouse', 'toWarehouse', 'user', 'items.product'])
+        $query = Transfer::with(['fromWarehouse', 'toWarehouse', 'user', 'items.product.images'])
             ->when($request->filled('from_warehouse_id'), fn ($q) => $q->where('from_warehouse_id', $request->from_warehouse_id))
             ->when($request->filled('to_warehouse_id'),   fn ($q) => $q->where('to_warehouse_id',   $request->to_warehouse_id))
             ->when($request->filled('status'),             fn ($q) => $q->where('status',             $request->status))
@@ -149,7 +149,7 @@ class TransferController extends Controller
      */
     public function show(Transfer $transfer): JsonResponse
     {
-        $transfer->load(['items.product', 'fromWarehouse', 'toWarehouse', 'user']);
+        $transfer->load(['items.product.images', 'fromWarehouse', 'toWarehouse', 'user']);
 
         if (! $this->canAccessTransfer($transfer, request()->user())) {
             return $this->error('No tienes acceso a este traslado.', 403);
@@ -168,7 +168,7 @@ class TransferController extends Controller
             return $this->error('No tienes acceso a este traslado.', 403);
         }
 
-        $transfer->load('items.product');
+        $transfer->load('items.product.images');
 
         return $this->success(\App\Http\Resources\TransferItemResource::collection($transfer->items));
     }
@@ -180,10 +180,16 @@ class TransferController extends Controller
      */
     public function complete(Transfer $transfer): JsonResponse
     {
-        // Flujo 2026-06-11: SOLO admin ejecuta el movimiento de inventario
-        // (el gerente solicita; la UI ya lo bloquea — esto es el enforcement real).
-        if (! $this->isAdminUser(request()->user())) {
-            return $this->error('Solo admin puede completar traslados.', 403);
+        $user = request()->user();
+
+        if (! $this->isAdminUser($user)) {
+            $isManager = $this->isManagerUser($user);
+            $transfer->loadMissing('fromWarehouse');
+            $isOriginStore = $user?->store_id && ((int) ($transfer->fromWarehouse?->store_id ?? 0) === (int) $user->store_id);
+
+            if (! $isManager || ! $isOriginStore) {
+                return $this->error('Solo admin o el gerente de la tienda origen pueden completar traslados.', 403);
+            }
         }
 
         try {

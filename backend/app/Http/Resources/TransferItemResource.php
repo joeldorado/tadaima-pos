@@ -18,9 +18,12 @@ class TransferItemResource extends JsonResource
             'product' => $this->when(
                 $this->relationLoaded('product') && $this->product,
                 fn () => [
-                    'id'   => $this->product->id,
-                    'name' => $this->product->name,
-                    'sku'  => $this->product->sku,
+                    'id'        => $this->product->id,
+                    'name'      => $this->product->name,
+                    'sku'       => $this->product->sku,
+                    'image_url' => $this->relationLoaded('product') && $this->product->relationLoaded('images') 
+                                     ? $this->product->images->first()?->url 
+                                     : null,
                 ],
             ),
 

@@ -7,7 +7,7 @@ export interface TransferItem {
   transfer_id: number
   product_id: number
   quantity: number
-  product: { id: number; name: string; sku: string } | null
+  product: { id: number; name: string; sku: string; image_url?: string | null } | null
   created_at: string
 }
 
@@ -18,8 +18,8 @@ export interface Transfer {
   user_id: number
   status: 'pending' | 'completed' | 'cancelled'
   notes: string | null
-  from_warehouse: { id: number; name: string } | null
-  to_warehouse: { id: number; name: string } | null
+  from_warehouse: { id: number; name: string; store_id?: number } | null
+  to_warehouse: { id: number; name: string; store_id?: number } | null
   user: { id: number; name: string } | null
   items: TransferItem[] | null
   created_at: string

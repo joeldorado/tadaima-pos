@@ -1953,3 +1953,10 @@ Encontrado: el `TabPermisos` (`Inicio → Permisos` PRICE_PERMISSIONS) existe y 
 > Las narrativas detalladas de las sesiones de **2026-05-12 y anteriores** (hasta 2026-04-22) se removieron de este log el 2026-06-03 para mantenerlo ligero (>20 días). Están **completas en el git history** del repo (`git log -p MASTERLOG.md`).
 >
 > Lo que sigue vigente está capturado en: **§7 ADRs** (010–016), **§2 Arquitectura del sistema**, **§3 Evolución del módulo de preventas**, y el **Backlog → Completado recientemente**. Hitos de ese periodo: migración a Cloud SQL MySQL + GCS (05-01), deploy inicial a Cloud Run (04-30/05-02), Loyalty Supabase (05-05), extinción del esquema legacy de preventas (05-15), React Query global + IndexedDB (05-15).
+
+
+### Sesión 2026-06-19 — Módulo de Traslados (Actualizaciones de flujo y UI)
+- **Frontend ()**: Se reemplazó la validación estática de aprobación. Ahora el gerente de la **tienda origen** puede autocompletar traslados originados en su tienda. El admin mantiene poder global.
+- **Frontend/Backend**: Se mejoró el componente visual de las transferencias.  ahora carga imágenes de productos con eager loading (`items.product.images`) y el  envía `image_url`. El Frontend muestra ahora la imagen del producto y su nombre real en lugar del texto crudo '1 SKU', mejorando drásticamente la UX.
+- **Frontend**: Se modificó  para retornar el nombre de la sucursal (si está asociada) en los selectores de origen/destino al crear una transferencia.
+
