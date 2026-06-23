@@ -24,6 +24,7 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { returnSale, getCashReport, storageUrl } from "@tadaima/api";
+import { buildPaymentSummary } from "@/lib/paymentSummary";
 import { getTodayLocal, toLocalYmd, daysAgoLocal, BUSINESS_TZ } from "@/lib/date";
 import type { CashSessionReport } from "@tadaima/api";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
@@ -140,7 +141,18 @@ const fmtDateTime = (dateStr: string) =>
 function printTicket(sale: SaleDetail) {
   const win = window.open("", "_blank", "width=340,height=600");
   if (!win) return;
-  const payName = getPaymentMethodName(sale);
+  const pay = buildPaymentSummary(sale);
+  // Bloque de pago del ticket: método(s) + efectivo/dólares/cambio (TC de la venta).
+  const paymentBlock = `
+  <div class="divider"></div>
+  <table style="font-size:10px">
+    <tr><td>Método de pago</td><td style="text-align:right;font-weight:900">${pay.methodLabel}</td></tr>
+    ${pay.isMixed ? pay.lines.map(l => `<tr><td style="font-size:9px;color:#555">· ${l.name}</td><td style="text-align:right;font-size:9px;color:#555">${fmt(l.amount)}</td></tr>`).join("") : ""}
+    ${pay.cashReceived != null ? `<tr><td>Recibido</td><td style="text-align:right">${fmt(pay.cashReceived)}</td></tr>` : ""}
+    ${pay.hasUsd && pay.pesosCash != null ? `<tr><td style="font-size:9px;color:#555">· Pesos</td><td style="text-align:right;font-size:9px;color:#555">${fmt(pay.pesosCash)}</td></tr>` : ""}
+    ${pay.hasUsd ? `<tr><td style="font-size:9px;color:#555">· Dólares</td><td style="text-align:right;font-size:9px;color:#555">$${pay.usd.toFixed(2)} USD${pay.exchangeRate ? ` (≈ ${fmt(pay.usdAsMxn)} a $${pay.exchangeRate.toFixed(2)})` : ""}</td></tr>` : ""}
+    ${pay.change != null && pay.change > 0 ? `<tr><td style="font-weight:900">Cambio</td><td style="text-align:right;font-weight:900">${fmt(pay.change)}</td></tr>` : ""}
+  </table>`;
   const items = (sale.items || [])
     .map(i => {
       const name = i.product?.name || String(i.product_id);
@@ -172,7 +184,6 @@ function printTicket(sale: SaleDetail) {
     <div>Ticket #${sale.id}</div>
     <div>${fmtDateTime(sale.sold_at || sale.created_at)}</div>
     ${sale.customer?.name ? `<div>Cliente: ${sale.customer.name}</div>` : ""}
-    <div>Pago: ${payName}</div>
   </div>
   <div class="divider"></div>
   <table>
@@ -219,6 +230,7 @@ function printTicket(sale: SaleDetail) {
   <div style="font-weight:900;font-size:13px;border-top:1px solid #000;padding-top:6px;margin-top:4px;display:flex;justify-content:space-between"><span>TOTAL COBRADO</span><span>${fmt(sale.total + (sale.pre_sale_orders ?? []).reduce((s, o) => s + (o.paid_amount ?? 0), 0))}</span></div>
   ` : ""}
 
+  ${paymentBlock}
   <div class="divider"></div>
   <div class="footer">¡Gracias por tu compra!</div>
   </body></html>`);
@@ -769,6 +781,35 @@ function SaleRow({
                   <span>Total cobrado</span>
                   <span style={{ color: "#10b981" }}>{fmt(totalCobrado)}</span>
                 </div>
+              </div>
+            );
+          })()}
+
+          {/* Cómo se pagó — método(s) + efectivo/dólares/cambio (mismo desglose
+              que el ticket). Hace visible en el Historial el detalle del pago. */}
+          {(() => {
+            const pay = buildPaymentSummary(sale);
+            return (
+              <div className="mt-3 p-3 rounded-xl" style={{ background: "var(--td-surface-muted)", border: "1px solid var(--td-panel-border)" }}>
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>Cómo se pagó</span>
+                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full border" style={paymentTone(pay.methodLabel)}>{pay.methodLabel}</span>
+                </div>
+                {pay.isMixed && pay.lines.map((l, li) => (
+                  <div key={li} className="flex justify-between text-[10px] mt-1.5" style={{ color: "var(--td-text-lo)" }}><span>· {l.name}</span><span className="font-bold">{fmt(l.amount)}</span></div>
+                ))}
+                {pay.cashReceived != null && (
+                  <div className="flex justify-between text-[10px] mt-1.5" style={{ color: "var(--td-text-md)" }}><span>Recibido</span><span className="font-bold">{fmt(pay.cashReceived)}</span></div>
+                )}
+                {pay.hasUsd && pay.pesosCash != null && (
+                  <div className="flex justify-between text-[10px]" style={{ color: "var(--td-text-lo)" }}><span>· Pesos</span><span>{fmt(pay.pesosCash)}</span></div>
+                )}
+                {pay.hasUsd && (
+                  <div className="flex justify-between text-[10px]" style={{ color: "#d97706" }}><span>· Dólares</span><span className="font-bold">${pay.usd.toFixed(2)} USD{pay.exchangeRate ? ` (≈ ${fmt(pay.usdAsMxn)} a $${pay.exchangeRate.toFixed(2)})` : ""}</span></div>
+                )}
+                {pay.change != null && pay.change > 0 && (
+                  <div className="flex justify-between text-[10px] mt-1.5 font-black" style={{ color: "var(--td-text-hi)" }}><span>Cambio</span><span>{fmt(pay.change)}</span></div>
+                )}
               </div>
             );
           })()}

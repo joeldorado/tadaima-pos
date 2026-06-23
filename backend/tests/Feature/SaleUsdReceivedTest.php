@@ -123,4 +123,60 @@ class SaleUsdReceivedTest extends TestCase
         // 0 USD = no entraron dólares → null (no contamina reportes con $0).
         $this->assertNull(Sale::latest('id')->first()->cash_received_usd);
     }
+
+    public function test_sale_persists_cash_received_and_change(): void
+    {
+        $product = $this->makeProduct();
+
+        $this->actingAs($this->user)
+            ->postJson('/api/v1/sales', $this->payload($product, [
+                'cash_received' => 250,
+                'change_amount' => 50,
+            ]))
+            ->assertStatus(201)
+            ->assertJsonPath('data.cash_received', 250)
+            ->assertJsonPath('data.change_amount', 50);
+
+        $sale = Sale::latest('id')->first();
+        $this->assertSame(250.0, (float) $sale->cash_received);
+        $this->assertSame(50.0, (float) $sale->change_amount);
+    }
+
+    public function test_cash_received_with_usd_and_exact_change(): void
+    {
+        $product = $this->makeProduct();
+
+        // 100 MXN físicos + 100 USD a 1.0 = 200 entregados, total 200 → cambio 0.
+        $this->actingAs($this->user)
+            ->postJson('/api/v1/sales', $this->payload($product, [
+                'cash_received_usd' => 100,
+                'exchange_rate' => 1.0,
+                'cash_received' => 200,
+                'change_amount' => 0,
+            ]))
+            ->assertStatus(201)
+            ->assertJsonPath('data.cash_received_usd', 100)
+            ->assertJsonPath('data.cash_received', 200)
+            // Cambio exacto se persiste como 0 (no null) cuando hubo efectivo.
+            ->assertJsonPath('data.change_amount', 0);
+
+        $sale = Sale::latest('id')->first();
+        $this->assertSame(0.0, (float) $sale->change_amount);
+    }
+
+    public function test_card_payment_leaves_cash_columns_null(): void
+    {
+        $product = $this->makeProduct();
+
+        // Pago sin desglose de efectivo (tarjeta/transferencia) → null.
+        $this->actingAs($this->user)
+            ->postJson('/api/v1/sales', $this->payload($product))
+            ->assertStatus(201)
+            ->assertJsonPath('data.cash_received', null)
+            ->assertJsonPath('data.change_amount', null);
+
+        $sale = Sale::latest('id')->first();
+        $this->assertNull($sale->cash_received);
+        $this->assertNull($sale->change_amount);
+    }
 }

@@ -30,6 +30,12 @@ class CheckoutRequest extends FormRequest
             'cash_received_usd' => ['nullable', 'numeric', 'min:0'],
             'exchange_rate'     => ['nullable', 'numeric', 'min:0'],
 
+            // Desglose del efectivo: total entregado en MXN (incluye USD ya
+            // convertido a TC) + cambio devuelto. Informativo, para el ticket y
+            // el detalle del Historial. NULL en pagos con tarjeta/transferencia.
+            'cash_received'     => ['nullable', 'numeric', 'min:0'],
+            'change_amount'     => ['nullable', 'numeric', 'min:0'],
+
             'payments'                      => ['required', 'array', 'min:1'],
             'payments.*.payment_method_id'  => ['required', 'integer', 'exists:payment_methods,id'],
             'payments.*.amount'             => ['required', 'numeric', 'min:0.01'],

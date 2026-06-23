@@ -51,8 +51,10 @@ class CheckoutService
         int $userId,
         ?float $cashReceivedUsd = null,
         ?float $exchangeRate = null,
+        ?float $cashReceived = null,
+        ?float $change = null,
     ): Sale {
-        return DB::transaction(function () use ($storeId, $registerSessionId, $customerId, $items, $paymentsData, $discount, $userId, $cashReceivedUsd, $exchangeRate) {
+        return DB::transaction(function () use ($storeId, $registerSessionId, $customerId, $items, $paymentsData, $discount, $userId, $cashReceivedUsd, $exchangeRate, $cashReceived, $change) {
             // Guard de precios (2026-05-30): el carrito vive client-side (ADR-014)
             // y el backend confiaba 100% en el `price` enviado. Validamos que el
             // precio de cada item NO dañado coincida con un nivel del catálogo
@@ -98,6 +100,8 @@ class CheckoutService
                 userId:          $userId,
                 cashReceivedUsd: $cashReceivedUsd,
                 exchangeRate:    $exchangeRate,
+                cashReceived:    $cashReceived,
+                change:          $change,
             );
         });
     }
@@ -109,8 +113,10 @@ class CheckoutService
         int $userId,
         ?float $cashReceivedUsd = null,
         ?float $exchangeRate = null,
+        ?float $cashReceived = null,
+        ?float $change = null,
     ): Sale {
-        return DB::transaction(function () use ($draftId, $paymentsData, $discount, $userId, $cashReceivedUsd, $exchangeRate) {
+        return DB::transaction(function () use ($draftId, $paymentsData, $discount, $userId, $cashReceivedUsd, $exchangeRate, $cashReceived, $change) {
 
             // ── 1. Lock draft y validar estado ────────────────────────────────
             $draft = SalesDraft::lockForUpdate()->findOrFail($draftId);
@@ -169,6 +175,10 @@ class CheckoutService
                 // está en payments/total). Solo se guarda si entraron dólares.
                 'cash_received_usd'   => ($cashReceivedUsd !== null && $cashReceivedUsd > 0) ? round($cashReceivedUsd, 2) : null,
                 'exchange_rate'       => ($cashReceivedUsd !== null && $cashReceivedUsd > 0) ? $exchangeRate : null,
+                // Efectivo entregado (MXN, incluye USD convertido) + cambio. Solo
+                // para pagos en efectivo — tarjeta/transferencia llegan como null.
+                'cash_received'       => ($cashReceived !== null && $cashReceived > 0) ? round($cashReceived, 2) : null,
+                'change_amount'       => ($cashReceived !== null && $cashReceived > 0) ? round(max(0, $change ?? 0), 2) : null,
                 'status'              => Sale::STATUS_COMPLETED,
             ]);
 

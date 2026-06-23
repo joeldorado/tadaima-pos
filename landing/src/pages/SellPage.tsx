@@ -44,6 +44,7 @@ import { getTodayLocal } from "@/lib/date";
 import { isValidEmail, isValidPhone } from "@/lib/validation";
 import { PRICE_LEVEL_LABELS, PRICE_LEVEL_COLORS, PRICE_LEVEL_RGB } from "@/lib/priceLevels";
 import type { CashSession, CashRegisterInfo, PaymentMethod as ApiPaymentMethod, PreSaleCatalog, PreSaleOrder, PreSaleOrderItem, SaleDetail, Terminal, ExternalCardLookup } from "@tadaima/api";
+import { buildPaymentSummary } from "@/lib/paymentSummary";
 import type { HistorialEntry } from "@/hooks/queries/useHistorial";
 import { useCartDraftStore } from "@/stores/cartDraftStore";
 import { useActiveStore } from "@/contexts/StoreContext";
@@ -589,6 +590,8 @@ export function SellPage() {
     cashierName?: string;
     amountReceived?: number;     // efectivo total ingresado en MXN (incluye USD * tc)
     amountReceivedUsd?: number;  // dólares físicos recibidos (informativo; ya van sumados en amountReceived)
+    exchangeRate?: number;       // TC usado al cobrar (snapshot); para reimpresión usa este, no el de hoy
+    paymentBreakdown?: Array<{ name: string; amount: number }>; // métodos cuando el cobro fue mixto/dividido
     change?: number;             // cambio devuelto en MXN
     // preventa section (mixed ticket)
     preSaleCode?: string;
@@ -2556,15 +2559,23 @@ export function SellPage() {
 
     // Efectivo siempre se mide en MXN. Si entró USD físico, lo desglosamos
     // para trazabilidad (Joel quiere que quede registro aunque contablemente
-    // todo cuente como MXN).
+    // todo cuente como MXN). Para reimpresión usamos el TC de la venta
+    // (sale.exchangeRate), no el de hoy — así el equivalente en pesos es fiel.
+    const rate    = sale.exchangeRate ?? tc;
     const usdNum  = sale.amountReceivedUsd ?? 0;
-    const usdMxn  = usdNum * tc;
+    const usdMxn  = usdNum * rate;
     const mxnPart = (sale.amountReceived ?? 0) - usdMxn;
+    // Desglose por método cuando el cobro fue mixto/dividido (varios métodos).
+    const breakdown = sale.paymentBreakdown ?? [];
+    const breakdownRows = breakdown.length > 1
+      ? breakdown.map(b => `<tr><td style="font-size:9px;color:#555">· ${b.name}</td><td style="text-align:right;font-size:9px;color:#555">${fmt(b.amount)}</td></tr>`).join("")
+      : "";
     const paymentRows = `
       <tr><td>Método de pago</td><td style="text-align:right;font-weight:900">${sale.paymentMethod}</td></tr>
+      ${breakdownRows}
       ${sale.amountReceived != null ? `<tr><td>Recibido</td><td style="text-align:right">${fmt(sale.amountReceived)}</td></tr>` : ""}
       ${usdNum > 0 ? `<tr><td style="font-size:9px;color:#555">· Pesos</td><td style="text-align:right;font-size:9px;color:#555">${fmt(Math.max(0, mxnPart))}</td></tr>
-      <tr><td style="font-size:9px;color:#555">· Dólares</td><td style="text-align:right;font-size:9px;color:#555">$${usdNum.toFixed(2)} USD <span style="color:#888">(≈ ${fmt(usdMxn)})</span></td></tr>` : ""}
+      <tr><td style="font-size:9px;color:#555">· Dólares</td><td style="text-align:right;font-size:9px;color:#555">$${usdNum.toFixed(2)} USD <span style="color:#888">(≈ ${fmt(usdMxn)} a $${rate.toFixed(2)})</span></td></tr>` : ""}
       ${sale.change != null && sale.change > 0 ? `<tr><td style="font-weight:900">Cambio</td><td style="text-align:right;font-weight:900">${fmt(sale.change)}</td></tr>` : ""}
     `;
 
@@ -2827,6 +2838,12 @@ export function SellPage() {
             .filter(i => !Number.isNaN(i.product_id));
 
           if (directItems.length > 0) {
+            // Efectivo del ticket (liquidación + regular + anticipo nuevo) en MXN
+            // incluyendo USD convertido + cambio, para el detalle/ticket.
+            const ticketReceivedUsd = parseFloat(cashReceivedUsd) || 0;
+            const ticketReceived    = (parseFloat(cashReceived) || 0) + ticketReceivedUsd * tc;
+            const ticketTotalForCash = liquidationAmount + regularSubtotal + newPreventaDeposit;
+            const ticketChange = ticketReceived > ticketTotalForCash ? ticketReceived - ticketTotalForCash : 0;
             const saleResult = await createSale({
               items: directItems,
               store_id: activeStore?.id ?? 0,
@@ -2840,6 +2857,7 @@ export function SellPage() {
               }],
               // Dólares físicos recibidos + TC usado (para Historial/Corte/Reporte).
               ...((parseFloat(cashReceivedUsd) || 0) > 0 ? { cash_received_usd: parseFloat(cashReceivedUsd), exchange_rate: tc } : {}),
+              ...(ticketReceived > 0 ? { cash_received: ticketReceived, change_amount: ticketChange } : {}),
             });
             regularSaleId = saleResult?.id;
             // Escritura optimista: la respuesta del POST ya ES la fila que la
@@ -3065,6 +3083,13 @@ export function SellPage() {
             .filter(i => !Number.isNaN(i.product_id));
 
           if (directItems.length > 0 && regularSubtotal > 0) {
+            // Efectivo del ticket (incluye USD convertido a TC) + cambio, para el
+            // detalle/ticket. Se adjunta a la venta regular (única fila Sale del
+            // ticket; el anticipo de preventa vive en pre_sale_orders).
+            const ticketReceivedUsd = parseFloat(cashReceivedUsd) || 0;
+            const ticketReceived    = (parseFloat(cashReceived) || 0) + ticketReceivedUsd * tc;
+            const ticketTotalForCash = catalogDeposit + regularSubtotal;
+            const ticketChange = ticketReceived > ticketTotalForCash ? ticketReceived - ticketTotalForCash : 0;
             const saleResult = await createSale({
               items: directItems,
               store_id: activeStore?.id ?? 0,
@@ -3078,6 +3103,7 @@ export function SellPage() {
               }],
               // Dólares físicos recibidos + TC usado (para Historial/Corte/Reporte).
               ...((parseFloat(cashReceivedUsd) || 0) > 0 ? { cash_received_usd: parseFloat(cashReceivedUsd), exchange_rate: tc } : {}),
+              ...(ticketReceived > 0 ? { cash_received: ticketReceived, change_amount: ticketChange } : {}),
             });
             regularSaleId = saleResult?.id;
             // Escritura optimista — venta visible en Ventas y stock descontado
@@ -3266,6 +3292,9 @@ export function SellPage() {
         }],
         // Dólares físicos recibidos + TC usado (para Historial/Corte/Reporte).
         ...((parseFloat(cashReceivedUsd) || 0) > 0 ? { cash_received_usd: parseFloat(cashReceivedUsd), exchange_rate: tc } : {}),
+        // Efectivo entregado (MXN, incluye USD) + cambio — para el ticket y el
+        // detalle del Historial (antes solo vivían en memoria y se perdían).
+        ...(receivedSnapshot > 0 ? { cash_received: receivedSnapshot, change_amount: changeSnapshot } : {}),
       });
 
       // Escritura optimista — la venta aparece en la lista de Ventas y el
@@ -7384,7 +7413,28 @@ export function SellPage() {
                               )}
                             </span>
                           )}
-                          <div onClick={e => { e.stopPropagation(); doPrintTicket({ id: sale.id, total: sale.total, paymentMethod: method, ...(sale.customer?.name ? { customerName: sale.customer.name } : {}), items: (sale.items || []).map(i => ({ name: i.product?.name || String(i.product_id), quantity: i.quantity, price: i.price })), soldAt: dateStr }); }}
+                          <div onClick={e => {
+                            e.stopPropagation();
+                            // Reconstrucción FIEL del ticket desde la venta guardada:
+                            // método(s), efectivo/dólares/cambio y TC de la venta — antes
+                            // se perdían (solo se pasaba el método y se usaba el TC de hoy).
+                            const sum = buildPaymentSummary(sale);
+                            doPrintTicket({
+                              id: sale.id,
+                              total: sale.total,
+                              paymentMethod: sum.methodLabel,
+                              ...(sum.isMixed ? { paymentBreakdown: sum.lines } : {}),
+                              ...(sale.customer?.name ? { customerName: sale.customer.name } : {}),
+                              items: (sale.items || []).map(i => ({ name: i.product?.name || String(i.product_id), quantity: i.quantity, price: i.price })),
+                              soldAt: dateStr,
+                              ...(activeStore?.name ? { storeName: activeStore.name } : {}),
+                              ...(sale.user?.name ? { cashierName: sale.user.name } : {}),
+                              ...(sum.cashReceived != null ? { amountReceived: sum.cashReceived } : {}),
+                              ...(sum.usd > 0 ? { amountReceivedUsd: sum.usd } : {}),
+                              ...(sum.exchangeRate != null ? { exchangeRate: sum.exchangeRate } : {}),
+                              ...(sum.change != null && sum.change > 0 ? { change: sum.change } : {}),
+                            });
+                          }}
                             role="button" title="Reimprimir ticket"
                             style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 9, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--td-text-lo)" }}
                             onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = "rgba(224,34,26,0.1)"; (e.currentTarget as HTMLDivElement).style.borderColor = "rgba(224,34,26,0.3)"; (e.currentTarget as HTMLDivElement).style.color = "#E0221A"; }}
@@ -7437,11 +7487,37 @@ export function SellPage() {
                                 </p>
                               </div>
                             )}
+                            {/* Cómo se pagó — método(s) + efectivo/dólares/cambio.
+                                Antes el desglose de pago solo salía si había varios
+                                métodos; el efectivo y los dólares no se veían nunca. */}
+                            {(() => {
+                              const pay = buildPaymentSummary(sale);
+                              return (
+                                <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 10, background: "var(--td-input-bg)", border: "1px solid var(--td-card-border)" }}>
+                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                    <span style={{ fontSize: 8, fontWeight: 900, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.12em" }}>Cómo se pagó</span>
+                                    <span style={{ fontSize: 10, fontWeight: 900, color: "var(--td-text-hi)" }}>{pay.methodLabel}</span>
+                                  </div>
+                                  {pay.isMixed && pay.lines.map((l, li) => (
+                                    <div key={li} style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--td-text-ghost)", marginTop: 3 }}><span>· {l.name}</span><span>{fmt(l.amount)}</span></div>
+                                  ))}
+                                  {pay.cashReceived != null && (
+                                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--td-text-md)", marginTop: 3 }}><span>Recibido</span><span>{fmt(pay.cashReceived)}</span></div>
+                                  )}
+                                  {pay.hasUsd && pay.pesosCash != null && (
+                                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--td-text-ghost)" }}><span>· Pesos</span><span>{fmt(pay.pesosCash)}</span></div>
+                                  )}
+                                  {pay.hasUsd && (
+                                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "#f59e0b" }}><span>· Dólares</span><span>${pay.usd.toFixed(2)} USD{pay.exchangeRate ? ` (≈ ${fmt(pay.usdAsMxn)} a $${pay.exchangeRate.toFixed(2)})` : ""}</span></div>
+                                  )}
+                                  {pay.change != null && pay.change > 0 && (
+                                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, fontWeight: 900, color: "var(--td-text-hi)", marginTop: 3 }}><span>Cambio</span><span>{fmt(pay.change)}</span></div>
+                                  )}
+                                </div>
+                              );
+                            })()}
                             <div style={{ display: "flex", justifyContent: "flex-end", gap: 16, paddingTop: 8, borderTop: "1px solid var(--td-card-border)" }}>
                               {typeof discount === "number" && discount > 0 && <div style={{ textAlign: "right" }}><p style={{ margin: 0, fontSize: 8, fontWeight: 900, color: "var(--td-text-ghost)", textTransform: "uppercase" }}>Descuento</p><p style={{ margin: "2px 0 0", fontSize: 12, fontWeight: 900, color: "#f59e0b" }}>-{fmt(discount)}</p></div>}
-                              {(sale.payments || []).length > 1 && (sale.payments || []).map((pay, pi) => (
-                                <div key={pi} style={{ textAlign: "right" }}><p style={{ margin: 0, fontSize: 8, fontWeight: 900, color: "var(--td-text-ghost)", textTransform: "uppercase" }}>{pay.payment_method?.name ?? "Pago"}</p><p style={{ margin: "2px 0 0", fontSize: 12, fontWeight: 900, color: "var(--td-text-hi)" }}>{fmt(pay.amount)}</p></div>
-                              ))}
                               <div style={{ textAlign: "right" }}><p style={{ margin: 0, fontSize: 8, fontWeight: 900, color: "var(--td-text-ghost)", textTransform: "uppercase" }}>Total</p><p style={{ margin: "2px 0 0", fontSize: 15, fontWeight: 900, color: "#E0221A" }}>{fmt(sale.total)}</p></div>
                             </div>
                           </div>

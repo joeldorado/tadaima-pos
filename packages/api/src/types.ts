@@ -239,6 +239,10 @@ export interface SaleDetail {
   cash_received_usd?: number | null
   /** Tipo de cambio USD→MXN usado al cobrar (snapshot). */
   exchange_rate?: number | null
+  /** Efectivo total entregado por el cliente en MXN (incluye USD ya convertido a TC). Null si no fue en efectivo. */
+  cash_received?: number | null
+  /** Cambio devuelto en MXN (snapshot). Null si no hubo efectivo. */
+  change_amount?: number | null
   status: string
   /** ADR-016 — 'none' | 'partial' | 'full'. Indica si la venta tuvo cancelaciones. */
   cancellation_status?: 'none' | 'partial' | 'full'
@@ -379,6 +383,10 @@ export interface CreateSaleInput {
   cash_received_usd?: number
   /** Tipo de cambio USD→MXN usado al cobrar (snapshot). */
   exchange_rate?: number
+  /** Efectivo total entregado en MXN (incluye USD ya convertido a TC). Informativo para ticket/Historial. */
+  cash_received?: number
+  /** Cambio devuelto en MXN. Informativo para ticket/Historial. */
+  change_amount?: number
 }
 
 export interface Sale {
