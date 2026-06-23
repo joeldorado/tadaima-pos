@@ -17,6 +17,7 @@ import { useWarehousesQuery } from "@/hooks/queries/useWarehouses";
 import { queryKeys } from "@/lib/queryKeys";
 import { useAuth } from "@tadaima/auth";
 import { isAdmin as isAdminRole, isManager as isManagerRole } from "@/lib/permisos";
+import { warehouseTypeLabel } from "@/lib/warehouse";
 
 // ─── Paleta Tadaima ───────────────────────────────────────────────────────────
 const T = {
@@ -186,24 +187,20 @@ export function TransfersPage() {
     }, 300);
   };
 
+  // Cada bodega/exhibición con stock del producto es un origen distinto (modelo
+  // de 2 stocks por tienda). Etiqueta "Tienda · Bodega/Exhibición" para poder
+  // distinguir bodegas dentro de la misma tienda y entre tiendas.
   const availableOriginWarehouses = useMemo(() => {
-    const storesMap = new Map();
-    selectedProductInventory
-      .filter(row => row.quantity > 0 && row.warehouse?.store?.id)
-      .forEach(row => {
-        const storeId = row.warehouse!.store!.id;
-        if (!storesMap.has(storeId)) {
-          storesMap.set(storeId, {
-            id: row.warehouse_id, // Usamos este ID para la petición
-            store_id: storeId,
-            name: row.warehouse!.store!.name,
-            quantity: row.quantity,
-          });
-        } else {
-          storesMap.get(storeId).quantity += row.quantity;
-        }
-      });
-    return Array.from(storesMap.values());
+    return selectedProductInventory
+      .filter(row => row.quantity > 0 && row.warehouse)
+      .map(row => ({
+        id: row.warehouse_id,
+        store_id: row.warehouse?.store?.id ?? null,
+        name: row.warehouse?.store?.name
+          ? `${row.warehouse.store.name} · ${warehouseTypeLabel(row.warehouse.type)}`
+          : (row.warehouse?.name ?? "Bodega"),
+        quantity: row.quantity,
+      }));
   }, [selectedProductInventory]);
 
   const selectedProductFromAvailable = useMemo(
@@ -518,30 +515,21 @@ export function TransfersPage() {
     });
   }, [transfers, searchQuery, filterStatus]);
 
+  // Destino = cualquier bodega/exhibición distinta del origen exacto. Mantiene
+  // el modelo a nivel-bodega para elegir Bodega vs Exhibición específica como
+  // destino (alineado con el backend, que transfiere por warehouse_id).
   const destinationWarehouses = useMemo(() => {
-    const storesMap = new Map();
-    const originStoreId = availableOriginWarehouses.find(w => String(w.id) === fromWhId)?.store_id;
-
-    warehouses
-      .filter(w => w.store?.id)
-      .forEach(w => {
-        const storeId = w.store!.id;
-        if (storeId === originStoreId) return;
-
-        if (!storesMap.has(storeId)) {
-          const qty = selectedProductInventory
-            .filter(row => row.warehouse?.store?.id === storeId)
-            .reduce((sum, row) => sum + row.quantity, 0);
-
-          storesMap.set(storeId, {
-            id: w.id, // Usamos este ID para el destino
-            name: w.store!.name,
-            quantity: qty,
-          });
-        }
-      });
-    return Array.from(storesMap.values());
-  }, [warehouses, fromWhId, selectedProductInventory, availableOriginWarehouses]);
+    return warehouses
+      .filter(w => String(w.id) !== fromWhId)
+      .map(w => ({
+        id: w.id,
+        store_id: w.store?.id ?? null,
+        name: w.store?.name
+          ? `${w.store.name} · ${warehouseTypeLabel(w.type)}`
+          : w.name,
+        quantity: selectedProductInventory.find(row => row.warehouse_id === w.id)?.quantity ?? 0,
+      }));
+  }, [warehouses, fromWhId, selectedProductInventory]);
 
   useEffect(() => {
     if (fromWhId && toWhId === fromWhId) {
