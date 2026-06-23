@@ -780,7 +780,7 @@ function SaleRow({
               </button>
 
               {/* Devolver */}
-              {sale.status === "completed" && (
+              {sale.status === "completed" && !paymentName.toLowerCase().includes("tarjeta") && !paymentName.toLowerCase().includes("transfer") && (
                 confirmReturn ? (
                   <div className="flex items-center gap-2">
                     <span className="text-[9px] font-black text-amber-400 uppercase tracking-widest flex items-center gap-1.5">
