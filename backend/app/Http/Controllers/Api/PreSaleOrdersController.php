@@ -42,12 +42,14 @@ class PreSaleOrdersController extends Controller
         $query = PreSaleOrder::with(['store', 'user', 'customer', 'items.catalog.product', 'items.product', 'payments.paymentMethod', 'cancellations'])
             ->when(!$isAdminUser,                   fn ($q) => $q->where('store_id', $user->store_id))
             // `mine=1`: solo los folios DEL usuario actual — los que creó (user_id)
-            // o en los que cobró un anticipo/liquidación (payments.cashier_id). Lo
-            // usa la Lista de Ventas del cajero (solo ve lo suyo). Opt-in: el panel
-            // de Caja NO lo manda, así el cajero sí puede liquidar folios de otros.
+            // o en los que cobró un anticipo/liquidación (payments.cashier_id).
             ->when($request->boolean('mine'), fn ($q) => $q->where(fn ($w) => $w
                 ->where('user_id', $user->id)
                 ->orWhereHas('payments', fn ($p) => $p->where('cashier_id', $user->id))))
+            // Filtro explícito por usuario para reportes
+            ->when($request->filled('user_id'), fn ($q) => $q->where(fn ($w) => $w
+                ->where('user_id', $request->user_id)
+                ->orWhereHas('payments', fn ($p) => $p->where('cashier_id', $request->user_id))))
             ->when($isAdminUser && $request->filled('store_id'), fn ($q) => $q->where('store_id', $request->store_id))
             ->when($request->filled('customer_id'), fn ($q) => $q->where('customer_id', $request->customer_id))
             ->when($request->filled('code'),        fn ($q) => $q->where('code',        $request->code))

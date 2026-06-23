@@ -19,6 +19,7 @@ import { ReportsSkeleton } from "@/components/reports/ReportsSkeleton";
 import { getSales } from "@tadaima/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useStoresQuery } from "@/hooks/queries/useStores";
+import { useUsersQuery } from "@/hooks/queries/useUsers";
 import { getTodayLocal, daysAgoLocal, BUSINESS_TZ, toLocalYmd } from "@/lib/date";
 import { queryKeys } from "@/lib/queryKeys";
 import type { SalesReport, InventoryReport, TopProductsReport, CustomersReport } from "@tadaima/api";
@@ -170,6 +171,8 @@ export function ReportsPage() {
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
   const effectiveStoreId = isAdmin ? selectedStoreId : (user?.store_id ?? null);
 
+  const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
+
   const [lowStockOnly, setLowStockOnly] = useState(false);
   const [expandedIds,  setExpandedIds]  = useState<number[]>([]);
   const [selectedFilters, setSelectedFilters] = useState<SalesHistoryFilter[]>(["all"]);
@@ -192,7 +195,15 @@ export function ReportsPage() {
   const storesQuery = useStoresQuery({ active: true, enabled: isAdmin });
   const stores: StoreType[] = storesQuery.data ?? [];
 
-  const baseParams = { from, to, ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}) };
+  const usersQuery = useUsersQuery({ store_id: effectiveStoreId ?? undefined, per_page: 500 } as any);
+  const users = usersQuery.data ?? [];
+
+  const baseParams = { 
+    from, 
+    to, 
+    ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}),
+    ...(selectedUserId ? { user_id: selectedUserId } : {})
+  };
 
   // staleTime 30s: navegar entre tabs / volver a Reportes dentro de ese rango
   // sirve del cache (instantáneo) en vez de refetch. El skeleton solo sale
@@ -227,6 +238,7 @@ export function ReportsPage() {
     payment_to: to,
     status: "pending,ready,delivered,expired,cancelled",
     ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}),
+    ...(selectedUserId ? { user_id: selectedUserId } : {}),
     per_page: 500,
   };
   const preSaleOrdersQuery = useQuery({
@@ -2738,17 +2750,36 @@ export function ReportsPage() {
             {/* Store select — admin only */}
             {isAdmin && stores.length > 0 && (
               <>
-                <div className="w-px h-5 mx-1" style={{ background: "var(--td-divider)" }} />
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl" style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)" }}>
-                  <Store size={13} style={{ color: TM }} />
+                <div className="w-px h-5 mx-1 flex-shrink-0" style={{ background: "var(--td-divider)" }} />
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl flex-shrink shrink-0" style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)" }}>
+                  <Store size={13} style={{ color: TM, flexShrink: 0 }} />
                   <select
                     value={selectedStoreId ?? ""}
                     onChange={e => setSelectedStoreId(e.target.value ? Number(e.target.value) : null)}
-                    className="text-sm font-bold outline-none bg-transparent"
-                    style={{ color: TP, minWidth: 140, border: "none" }}
+                    className="text-sm font-bold outline-none bg-transparent overflow-hidden text-ellipsis whitespace-nowrap"
+                    style={{ color: TP, maxWidth: 160, border: "none" }}
                   >
                     <option value="">Todas las tiendas</option>
                     {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+              </>
+            )}
+
+            {/* User select */}
+            {["ventas"].includes(activeTab) && users.length > 0 && (
+              <>
+                <div className="w-px h-5 mx-1 flex-shrink-0" style={{ background: "var(--td-divider)" }} />
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl flex-shrink shrink-0" style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)" }}>
+                  <Users size={13} style={{ color: TM, flexShrink: 0 }} />
+                  <select
+                    value={selectedUserId ?? ""}
+                    onChange={e => setSelectedUserId(e.target.value ? Number(e.target.value) : null)}
+                    className="text-sm font-bold outline-none bg-transparent overflow-hidden text-ellipsis whitespace-nowrap"
+                    style={{ color: TP, maxWidth: 160, border: "none" }}
+                  >
+                    <option value="">Todos los usuarios</option>
+                    {users.map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}
                   </select>
                 </div>
               </>
