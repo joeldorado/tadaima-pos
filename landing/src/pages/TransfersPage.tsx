@@ -187,13 +187,23 @@ export function TransfersPage() {
   };
 
   const availableOriginWarehouses = useMemo(() => {
-    return selectedProductInventory
-      .filter(row => row.quantity > 0 && row.warehouse !== null)
-      .map(row => ({
-        id: row.warehouse_id,
-        name: row.warehouse?.name ?? "Bodega",
-        quantity: row.quantity,
-      }));
+    const storesMap = new Map();
+    selectedProductInventory
+      .filter(row => row.quantity > 0 && row.warehouse?.store?.id)
+      .forEach(row => {
+        const storeId = row.warehouse!.store!.id;
+        if (!storesMap.has(storeId)) {
+          storesMap.set(storeId, {
+            id: row.warehouse_id, // Usamos este ID para la petición
+            store_id: storeId,
+            name: row.warehouse!.store!.name,
+            quantity: row.quantity,
+          });
+        } else {
+          storesMap.get(storeId).quantity += row.quantity;
+        }
+      });
+    return Array.from(storesMap.values());
   }, [selectedProductInventory]);
 
   const selectedProductFromAvailable = useMemo(
@@ -509,13 +519,29 @@ export function TransfersPage() {
   }, [transfers, searchQuery, filterStatus]);
 
   const destinationWarehouses = useMemo(() => {
-    return warehouses
-      .filter(w => String(w.id) !== fromWhId)
-      .map(warehouse => ({
-        ...warehouse,
-        quantity: selectedProductInventory.find(row => row.warehouse_id === warehouse.id)?.quantity ?? 0,
-      }));
-  }, [warehouses, fromWhId, selectedProductInventory]);
+    const storesMap = new Map();
+    const originStoreId = availableOriginWarehouses.find(w => String(w.id) === fromWhId)?.store_id;
+
+    warehouses
+      .filter(w => w.store?.id)
+      .forEach(w => {
+        const storeId = w.store!.id;
+        if (storeId === originStoreId) return;
+
+        if (!storesMap.has(storeId)) {
+          const qty = selectedProductInventory
+            .filter(row => row.warehouse?.store?.id === storeId)
+            .reduce((sum, row) => sum + row.quantity, 0);
+
+          storesMap.set(storeId, {
+            id: w.id, // Usamos este ID para el destino
+            name: w.store!.name,
+            quantity: qty,
+          });
+        }
+      });
+    return Array.from(storesMap.values());
+  }, [warehouses, fromWhId, selectedProductInventory, availableOriginWarehouses]);
 
   useEffect(() => {
     if (fromWhId && toWhId === fromWhId) {
