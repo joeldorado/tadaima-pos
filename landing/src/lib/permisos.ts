@@ -69,11 +69,11 @@ const PAGE_ACCESS: Record<Role, PageKey[]> = {
   admin:   ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers", "reports", "settings", "admin"],
   // Gerente: NO ve "Tiendas" — gestiona solo la suya, el switcher del header
   // basta para alternar entre las que tiene asignadas. La página /stores es
-  // CRUD de tiendas (solo admin). Reportes también queda solo para admin.
+  // CRUD de tiendas (solo admin). Reportes ahora habilitado para gerente (restringido en backend).
   // SÍ ve "Buscar en Tiendas" (existencias por sucursal, sin datos financieros).
   // "Cajas" (cortes de caja) visible a los 3 roles — el backend acota:
   // cajero → solo sus cortes, gerente → su tienda, admin → todo.
-  gerente: ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers"],
+  gerente: ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers", "reports"],
   // Cajero: NO ve Tiendas (lo confunde — su tienda es fija). En su lugar
   // ve Preventas con un panel adicional de catálogos disponibles + vencidos
   // de su sucursal. SÍ ve "Buscar en Tiendas" para localizar stock.

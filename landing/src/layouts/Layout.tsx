@@ -46,9 +46,9 @@ const NAV_BY_ROLE: Record<string, PageKey[]> = {
   admin:   ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers", "reports"],
   // Gerente: sin Tiendas. Solo gestiona la suya; el switcher del header basta
   // para alternar entre tiendas asignadas. La página /stores es CRUD admin.
-  // Reportes oculto — solo admin ve ganancia bruta y agregados cross-tienda.
+  // Reportes habilitado para gerente (verificará permisos/scope en backend)
   // "Cajas" (cortes de caja) visible a los 3 roles — backend acota por rol.
-  gerente: ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers"],
+  gerente: ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers", "reports"],
   // Cajero: sin Tiendas, con Preventas para ver catálogos disponibles +
   // difusión + vencidos de su sucursal. "Buscar en Tiendas" para localizar stock.
   cajero:  ["inicio", "products", "stock_search", "sales", "cash_cuts", "presales"],
