@@ -15,7 +15,7 @@ class StoreWarehouseRequest extends FormRequest
             'company_id'  => ['nullable', 'integer', 'exists:companies,id'],
             'store_id'    => ['nullable', 'integer', 'exists:stores,id'],
             'name'        => ['required', 'string', 'max:150'],
-            'type'        => ['nullable', 'in:central,store'],
+            'type'        => ['nullable', 'in:central,store,bodega'],
             'description' => ['nullable', 'string', 'max:500'],
             'active'      => ['nullable', 'boolean'],
         ];

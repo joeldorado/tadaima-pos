@@ -5,10 +5,11 @@ import { useTheme } from "@/contexts/ThemeContext";
 import {
   ShoppingCart, Package, LogOut, Home, Store,
   Users, Receipt, UserCircle2, ClipboardList, ArrowLeftRight, BarChart2,
-  Settings, Sun, Moon, PackageSearch, Wallet,
+  Settings, Sun, Moon, PackageSearch, Wallet, KeyRound,
 } from "lucide-react";
 import { NotificationBadge } from "@/components/notifications/NotificationBadge";
 import { UserAvatar } from "@/components/UserAvatar";
+import { ChangePasswordModal } from "@/components/ChangePasswordModal";
 // ADR-014: ExpiringDraftsModal desactivado — el carrito vive client-side, no
 // hay drafts en vivo que expirar. Componente preservado en repo por si se
 // vuelve al modelo server-authoritative.
@@ -55,6 +56,47 @@ const NAV_BY_ROLE: Record<string, PageKey[]> = {
   unknown: ["inicio"],
 };
 
+// Item de navegación secundario (todos menos Caja, que es el CTA primario).
+// Tratamiento neutro: transparente en reposo, realce sutil cuando activo.
+function NavItemLink({
+  to, end, label, Icon,
+}: { to: string; end?: boolean; label: string; Icon: typeof Home }) {
+  return (
+    <NavLink to={to} end={end} className="flex flex-col items-center gap-1">
+      {({ isActive }) => (
+        <>
+          <div
+            className="w-10 h-10 rounded-xl flex items-center justify-center transition-all"
+            style={
+              isActive
+                ? {
+                    background: "var(--td-nav-active-bg)",
+                    border: "1px solid var(--td-nav-active-border)",
+                    boxShadow: "var(--td-nav-active-shadow)",
+                  }
+                : { background: "transparent", border: "1px solid transparent" }
+            }
+          >
+            <Icon
+              size={18}
+              strokeWidth={isActive ? 2.3 : 1.8}
+              style={{ color: isActive ? "var(--td-icon-active)" : "var(--td-icon-inactive)" }}
+            />
+          </div>
+          <span style={{
+            fontSize: "9px",
+            fontWeight: isActive ? 700 : 600,
+            color: isActive ? "var(--td-nav-active-label)" : "var(--td-text-lo)",
+            transition: "color 0.18s",
+          }}>
+            {label}
+          </span>
+        </>
+      )}
+    </NavLink>
+  );
+}
+
 export function Layout() {
   const navigate  = useNavigate();
   const location  = useLocation();
@@ -100,6 +142,7 @@ export function Layout() {
   }, [user, queryClient]);
 
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showChangePassword, setShowChangePassword] = useState(false);
 
   // Heartbeat — el backend (middleware TouchLastSeen) actualiza last_seen_at
   // en CUALQUIER request. Con el cajero activamente vendiendo (queries, polls)
@@ -220,42 +263,16 @@ export function Layout() {
           className="flex flex-col items-center gap-1 flex-1 overflow-y-auto w-full pb-2"
           style={{ scrollbarWidth: "none" }}
         >
-          {navItems.map(({ to, label, icon: Icon, exact }) => (
-            <NavLink key={to} to={to} end={exact} className="flex flex-col items-center gap-1">
-              {({ isActive }) => (
-                <>
-                  <div
-                    className="w-10 h-10 rounded-xl flex items-center justify-center transition-all"
-                    style={
-                      isActive
-                        ? {
-                            background: "var(--td-nav-active-bg)",
-                            border: "1px solid var(--td-nav-active-border)",
-                            boxShadow: "var(--td-nav-active-shadow)",
-                          }
-                        : { background: "transparent", border: "1px solid transparent" }
-                    }
-                  >
-                    <Icon
-                      size={18}
-                      strokeWidth={isActive ? 2.3 : 1.8}
-                      style={{ color: isActive ? "var(--td-icon-active)" : "var(--td-icon-inactive)" }}
-                    />
-                  </div>
-                  <span style={{
-                    fontSize: "9px",
-                    fontWeight: isActive ? 700 : 600,
-                    color: isActive ? "var(--td-nav-active-label)" : "var(--td-text-lo)",
-                    transition: "color 0.18s",
-                  }}>
-                    {label}
-                  </span>
-                </>
-              )}
-            </NavLink>
+          {/* Caja — CTA primario del POS. Va en 2ª posición (justo bajo Inicio)
+              y con la marca roja Tadaima SIEMPRE encendida para que sea lo más
+              visible del nav (es la acción central del cajero). El resto de
+              items son navegación secundaria con tratamiento neutro.
+              Inicio se renderiza primero; Caja segundo; luego el resto. */}
+          {navItems.slice(0, 1).map(({ to, label, icon: Icon, exact }) => (
+            <NavItemLink key={to} to={to} end={exact} label={label} Icon={Icon} />
           ))}
 
-          {/* Caja */}
+          {/* Caja (primario) */}
           <NavLink to="/caja" className="flex flex-col items-center gap-1">
             {({ isActive }) => (
               <>
@@ -263,18 +280,39 @@ export function Layout() {
                   className="w-10 h-10 rounded-xl flex items-center justify-center transition-all"
                   style={
                     isActive
-                      ? { background: "var(--td-nav-active-bg)", border: "1px solid var(--td-nav-active-border)", boxShadow: "var(--td-nav-active-shadow)" }
-                      : { background: "transparent", border: "1px solid transparent" }
+                      ? {
+                          background: "var(--td-red)",
+                          border: "1px solid var(--td-red)",
+                          boxShadow: "0 0 0 1px rgba(224,34,26,0.35), 0 6px 16px rgba(224,34,26,0.45)",
+                        }
+                      : {
+                          background: "rgba(224,34,26,0.12)",
+                          border: "1px solid rgba(224,34,26,0.45)",
+                          boxShadow: "0 0 14px rgba(224,34,26,0.18)",
+                        }
                   }
                 >
-                  <ShoppingCart size={18} strokeWidth={isActive ? 2.3 : 1.8} style={{ color: isActive ? "var(--td-icon-active)" : "var(--td-icon-inactive)" }} />
+                  <ShoppingCart
+                    size={19}
+                    strokeWidth={isActive ? 2.5 : 2.1}
+                    style={{ color: isActive ? "#fff" : "var(--td-red)" }}
+                  />
                 </div>
-                <span style={{ fontSize: "9px", fontWeight: isActive ? 700 : 600, color: isActive ? "var(--td-nav-active-label)" : "var(--td-text-lo)", transition: "color 0.18s" }}>
+                <span style={{
+                  fontSize: "9px",
+                  fontWeight: 800,
+                  color: "var(--td-red)",
+                  transition: "color 0.18s",
+                }}>
                   Caja
                 </span>
               </>
             )}
           </NavLink>
+
+          {navItems.slice(1).map(({ to, label, icon: Icon, exact }) => (
+            <NavItemLink key={to} to={to} end={exact} label={label} Icon={Icon} />
+          ))}
         </nav>
 
         {/* Notifications */}
@@ -339,6 +377,20 @@ export function Layout() {
                 </button>
               )}
 
+              {/* Cambiar contraseña — disponible para TODOS los roles
+                  (cajero/gerente/admin). Es la única superficie de cuenta que
+                  todos alcanzan; el backend re-valida la contraseña actual. */}
+              <button
+                onClick={() => { setShowUserMenu(false); setShowChangePassword(true); }}
+                className="w-full text-left px-4 py-2.5 text-xs font-semibold flex items-center gap-2 transition-colors"
+                style={{ color: "var(--td-text-md)", background: "transparent", borderTop: "1px solid var(--td-divider)" }}
+                onMouseEnter={e => (e.currentTarget.style.background = "var(--td-hover-bg)")}
+                onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+              >
+                <KeyRound size={12} style={{ color: "var(--td-text-lo)" }} />
+                Cambiar contraseña
+              </button>
+
               {/* Theme toggle */}
               <button
                 onClick={toggleTheme}
@@ -390,6 +442,10 @@ export function Layout() {
       </main>
 
       {/* ADR-014: <ExpiringDraftsModal /> desactivado — carrito client-side. */}
+
+      {showChangePassword && (
+        <ChangePasswordModal onClose={() => setShowChangePassword(false)} />
+      )}
     </div>
   );
 }

@@ -305,8 +305,9 @@ class SaleCancellationService
     }
 
     /**
-     * Restaura stock al inventario. Busca bodega de la tienda original; si no
-     * hay, crea una entrada en la primera bodega activa de la tienda.
+     * Restaura stock al inventario. El stock regresa a Exhibición
+     * (`type='store'`, de donde se vendió); si por algún motivo no existe, cae
+     * a la primera bodega activa de la tienda (defensa).
      */
     private function restoreInventory(int $productId, ?int $storeId, float $quantity, int $userId, string $notes): void
     {
@@ -315,6 +316,8 @@ class SaleCancellationService
         $warehouse = Warehouse::query()
             ->where('store_id', $storeId)
             ->where('active', true)
+            // Preferir Exhibición (type='store') — el stock vuelve al front.
+            ->orderByRaw("CASE WHEN type = 'store' THEN 0 ELSE 1 END")
             ->orderBy('id')
             ->first();
         if (! $warehouse) {

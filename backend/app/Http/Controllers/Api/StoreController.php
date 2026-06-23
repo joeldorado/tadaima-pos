@@ -48,15 +48,24 @@ class StoreController extends Controller
         $store = DB::transaction(function () use ($data) {
             $store = Store::create($data);
 
-            // Toda tienda necesita su almacén `type='store'` para poder recibir
-            // inventario. El seeder ya lo hace por cada tienda; al crear desde la
-            // UI hay que replicarlo o la tienda nunca aparece en el selector de
-            // alta de producto (lista warehouses, no stores). Bug QA 2026-06-03.
+            // Toda tienda nace con DOS almacenes (tienda + bodega = 1 par fijo):
+            //  - Exhibición (`type='store'`): el front, vendible en Caja. Las
+            //    entradas de mercancía caen aquí.
+            //  - Bodega (`type='bodega'`): backstock atrás, NO vendible en Caja.
+            // El backend es la ÚNICA fuente que crea bodegas al alta — el front
+            // ya NO debe crear warehouse aparte (causaba duplicados, bug QA).
             Warehouse::create([
                 'company_id' => $store->company_id,
                 'store_id'   => $store->id,
                 'name'       => $store->name,
                 'type'       => 'store',
+                'active'     => true,
+            ]);
+            Warehouse::create([
+                'company_id' => $store->company_id,
+                'store_id'   => $store->id,
+                'name'       => 'Bodega — ' . $store->name,
+                'type'       => 'bodega',
                 'active'     => true,
             ]);
 

@@ -71,7 +71,7 @@ interface Props {
   onDeleted: () => void
   canViewCost?: boolean
   isAdmin?: boolean
-  locations?: { warehouseId: number; name: string; store: string; type: 'central' | 'store' }[]
+  locations?: { warehouseId: number; name: string; store: string; type: 'central' | 'store' | 'bodega' }[]
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────

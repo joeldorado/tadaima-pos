@@ -21,7 +21,7 @@ import { useViewportMaxHeight } from "@/hooks/useViewportMaxHeight";
 import { PaymentRestrictionBadge, getPayRestriction } from "@/components/ui/PaymentRestrictionBadge";
 const tadaimaLogo = null // TODO: replace with real logo asset
 import { toast } from "sonner";
-import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, closeSession, forceCloseSession, getActiveSession, createLayaway, getCustomers, createCustomer, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getPreSaleOrders, getSales, getProductsLight, storageUrl, getCashReport, sendPreSaleAssignAlert } from "@tadaima/api";
+import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, closeSession, forceCloseSession, getActiveSession, createLayaway, getCustomers, createCustomer, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getPreSaleOrders, getSales, getProductsLight, storageUrl, getCashReport, sendPreSaleAssignAlert, getCatalogCustomerUsage } from "@tadaima/api";
 import type { OpenSessionConflict } from "@tadaima/api";
 import type { CashSessionReport } from "@tadaima/api";
 import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
@@ -443,11 +443,10 @@ export function SellPage() {
           price_d: priceAt(p, 4) > 0 ? priceAt(p, 4) : undefined,
           price_e: priceAt(p, 5) > 0 ? priceAt(p, 5) : undefined,
           stock: typeof p.stock_total === "number" ? p.stock_total : undefined,
-          // El endpoint /products?light=1 solo devuelve stock_total (escalar). Sin
-          // este mapeo, el render del catálogo en SellPage muestra siempre
-          // "TIENDA: 0 · PREVENTA: 0" porque lee `stock_details.tienda`.
+          // stock_total = Exhibición (vendible en Caja); stock_bodega = backstock
+          // atrás (no vendible, solo para avisar "N en bodega" al cajero).
           stock_details: typeof p.stock_total === "number"
-            ? { tienda: p.stock_total, bodega: 0, preventa: 0, dañado: 0 }
+            ? { tienda: p.stock_total, bodega: p.stock_bodega ?? 0, preventa: 0, dañado: 0 }
             : undefined,
           active: p.active,
           // QA crítico 2026-06-08: sin estos flags, itemAcceptsMethod/payBlocked
@@ -553,7 +552,7 @@ export function SellPage() {
         price_e: priceAt(p, 5) > 0 ? priceAt(p, 5) : undefined,
         stock: typeof p.stock_total === "number" ? p.stock_total : undefined,
         stock_details: typeof p.stock_total === "number"
-          ? { tienda: p.stock_total, bodega: 0, preventa: 0, dañado: 0 }
+          ? { tienda: p.stock_total, bodega: p.stock_bodega ?? 0, preventa: 0, dañado: 0 }
           : undefined,
         active: p.active,
         allow_cash: p.allow_cash ?? true,
@@ -715,6 +714,22 @@ export function SellPage() {
   const custRef            = useRef<HTMLDivElement>(null);
   const paymentMenuRef     = useRef<HTMLDivElement>(null);
   const [paymentMenuOpen, setPaymentMenuOpen] = useState(false);
+  // Opción del dropdown de método de pago sobre la que está el mouse — al hover
+  // la fila crece (alto + ícono/texto) para leerla mejor; vuelve a su tamaño al
+  // salir (pedido UX Joel).
+  const [hoveredPayPm, setHoveredPayPm] = useState<PaymentMethod | null>(null);
+  // Catálogos bloqueados por LÍMITE POR CLIENTE para el cliente asignado actual:
+  // catalogId → { used, limit }. Se llena cuando el cajero intenta agregar y el
+  // cliente ya alcanzó su tope de por vida → la card se deshabilita y muestra el
+  // motivo bajo el nombre (más visible que un toast que desaparece). Se limpia
+  // solo al cambiar de cliente (useEffect sobre customerId, más abajo).
+  const [presaleLimitBlocks, setPresaleLimitBlocks] = useState<Record<number, { used: number; limit: number }>>({});
+  // Aviso persistente de límite por cliente, visible en el carrito (bajo el
+  // nombre del cliente). A diferencia del toast, NO desaparece: cubre el flujo
+  // "agrego preventa → asigno cliente que ya pasó el tope" (donde la asignación
+  // se rechaza y antes solo quedaba el toast). Se limpia en cada nuevo intento
+  // y al cambiar de cliente.
+  const [customerLimitWarning, setCustomerLimitWarning] = useState<string | null>(null);
   // Toggle del input de dólares dentro de Efectivo. Por default oculto — se
   // muestra cuando el cajero hace click en "+ Dólares" o cuando ya hay valor.
   // showUsdInput se deriva de la mesa activa — cada caja inicia en PESOS por
@@ -794,13 +809,20 @@ export function SellPage() {
     const fn = (e: MouseEvent) => {
       if (tcRef.current   && !tcRef.current.contains(e.target as Node))   setShowTc(false);
       if (custRef.current && !custRef.current.contains(e.target as Node)) setShowCustDrop(false);
-      if (paymentMenuRef.current && !paymentMenuRef.current.contains(e.target as Node)) setPaymentMenuOpen(false);
+      if (paymentMenuRef.current && !paymentMenuRef.current.contains(e.target as Node)) { setPaymentMenuOpen(false); setHoveredPayPm(null); }
     };
     document.addEventListener("mousedown", fn);
     return () => document.removeEventListener("mousedown", fn);
   }, []);
 
   const activeMesa = useMemo(() => mesas.find(m => m.id === activeMesaId) ?? mesas[0], [mesas, activeMesaId]);
+
+  // Al cambiar de cliente (asignar otro, quitar, o saltar de mesa) se limpian
+  // los bloqueos de límite por cliente — son específicos del cliente anterior.
+  useEffect(() => {
+    setPresaleLimitBlocks({});
+    setCustomerLimitWarning(null);
+  }, [activeMesa.customerId]);
 
   // cashReceived es por caja: cada mesa guarda lo que el cliente entregó.
   // Antes era un useState global → al saltar entre Caja 1/2/3 se perdía lo
@@ -1055,10 +1077,50 @@ export function SellPage() {
   }, [assignCustomerPopup?.search, assignCustomerPopup?.mode, filterLocalCustomers]);
 
   /** Asigna el candidato al mesa actual. Si es externo, primero lo crea en BD. */
+  /**
+   * Pre-check del límite de preventa POR CLIENTE: por cada catálogo de preventa
+   * en el carrito, consulta cuánto ya tiene ese cliente (identidad amplia en el
+   * backend: id/teléfono/socio Tadaima) y devuelve un mensaje si la venta lo
+   * pasaría del tope. Devuelve null si todo OK. El backend igual valida al cobrar.
+   */
+  const checkPreventaCustomerLimit = async (customerId: number): Promise<string | null> => {
+    const catalogItems = (activeMesa?.items ?? []).filter(i => i.sellingCatalogId != null);
+    if (catalogItems.length === 0) return null;
+    const byCatalog = new Map<number, { qty: number; name: string }>();
+    for (const it of catalogItems) {
+      const cid = it.sellingCatalogId!;
+      const e = byCatalog.get(cid) ?? { qty: 0, name: it.product.name };
+      e.qty += it.quantity;
+      byCatalog.set(cid, e);
+    }
+    for (const [catalogId, { qty, name }] of byCatalog) {
+      try {
+        const usage = await getCatalogCustomerUsage(catalogId, customerId);
+        if (usage.limit != null && usage.used + qty > usage.limit) {
+          const left = Math.max(0, usage.limit - usage.used);
+          return left > 0
+            ? `Este cliente ya tiene ${usage.used} de "${name}" (límite ${usage.limit} por cliente). Solo puede llevar ${left} más.`
+            : `Este cliente ya tiene ${usage.used}/${usage.limit} de "${name}" — no se le puede vender más.`;
+        }
+      } catch {
+        // Si la consulta falla no bloqueamos en UI — el backend valida al cobrar.
+      }
+    }
+    return null;
+  };
+
   const confirmAssignCustomer = async (candidate: { type: 'local'; customer: Customer } | { type: 'external'; ext: ExternalCardLookup }) => {
     setAssignCustomerPopup(p => p ? { ...p, assigning: true } : null);
+    setCustomerLimitWarning(null);
     try {
       if (candidate.type === 'local') {
+        const limitErr = await checkPreventaCustomerLimit(Number(candidate.customer.id));
+        if (limitErr) {
+          setCustomerLimitWarning(limitErr);
+          toast.error(limitErr, { duration: 7000 });
+          setAssignCustomerPopup(p => p ? { ...p, assigning: false } : null);
+          return;
+        }
         setCustomer(candidate.customer);
         toast.success(`Cliente asignado: ${candidate.customer.name}`);
       } else {
@@ -1070,6 +1132,13 @@ export function SellPage() {
           external_member_id: ext.external_member_id,
           loyalty_tier:       ext.nivel ?? undefined,
         });
+        const limitErr = await checkPreventaCustomerLimit(newCust.id);
+        if (limitErr) {
+          setCustomerLimitWarning(limitErr);
+          toast.error(limitErr, { duration: 7000 });
+          setAssignCustomerPopup(p => p ? { ...p, assigning: false } : null);
+          return;
+        }
         const cust: Customer = {
           id: String(newCust.id), name: newCust.name,
           phone: newCust.phone ?? undefined, email: newCust.email ?? ext.email ?? undefined,
@@ -1114,6 +1183,12 @@ export function SellPage() {
         phone: phoneTrim || undefined,
         email: emailTrim || undefined,
       });
+      const limitErr = await checkPreventaCustomerLimit(newCust.id);
+      if (limitErr) {
+        toast.error(limitErr, { duration: 7000 });
+        setAssignCustomerPopup(prev => prev ? { ...prev, createForm: { ...prev.createForm, saving: false } } : null);
+        return;
+      }
       const cust: Customer = {
         id: String(newCust.id), name: newCust.name,
         phone: newCust.phone ?? undefined, email: newCust.email ?? undefined,
@@ -1659,6 +1734,10 @@ export function SellPage() {
       cashReceived: "",
       cashReceivedUsd: "",
       usdPrimaryMode: false,
+      // Tras cada cobro el método vuelve SIEMPRE a Efectivo (pedido Joel):
+      // si la venta anterior fue con Tarjeta, la siguiente no debe arrancar en
+      // Tarjeta por inercia.
+      paymentMethod: "Efectivo",
     }));
     // Defensa contra fuga de cliente entre ventas consecutivas (bug reportado
     // Joel 2026-05-27 en prod): reseteamos también todo el estado del popup
@@ -1926,7 +2005,7 @@ export function SellPage() {
           price_e: Number(exact.prices?.price_5 ?? 0) > 0 ? Number(exact.prices.price_5) : undefined,
           stock: typeof exact.stock_total === "number" ? exact.stock_total : undefined,
           stock_details: typeof exact.stock_total === "number"
-            ? { tienda: exact.stock_total, bodega: 0, preventa: 0, dañado: 0 }
+            ? { tienda: exact.stock_total, bodega: exact.stock_bodega ?? 0, preventa: 0, dañado: 0 }
             : undefined,
           active: exact.active,
         } as Product;
@@ -2049,7 +2128,34 @@ export function SellPage() {
   };
 
   // Adds a catalog item to the cart for reservation. Creates the PreSaleOrder at checkout.
-  const addCatalogToCart = (catalog: PreSaleCatalog, priceLevel: PriceLevel = "a") => {
+  const addCatalogToCart = async (catalog: PreSaleCatalog, priceLevel: PriceLevel = "a") => {
+    // Pre-check del LÍMITE POR CLIENTE en vivo, AL AGREGAR (no solo al asignar
+    // cliente o al cobrar): si la mesa ya tiene cliente y éste ya alcanzó su
+    // tope de por vida en este catálogo (folios previos pending+ready+delivered),
+    // avisa de inmediato y NO agrega. El backend igual valida al cobrar.
+    if (activeMesa.customerId) {
+      const cartQty = activeMesa.items
+        .filter(i => i.sellingCatalogId === catalog.id)
+        .reduce((s, i) => s + i.quantity, 0);
+      try {
+        const usage = await getCatalogCustomerUsage(catalog.id, Number(activeMesa.customerId));
+        if (usage.limit != null && usage.used + cartQty + 1 > usage.limit) {
+          const left = Math.max(0, usage.limit - usage.used - cartQty);
+          // Marca la card como bloqueada para este cliente → se deshabilita y
+          // muestra el motivo bajo el nombre (persistente, no solo el toast).
+          setPresaleLimitBlocks(prev => ({ ...prev, [catalog.id]: { used: usage.used, limit: usage.limit! } }));
+          const msg = left > 0
+            ? `Este cliente ya tiene ${usage.used} de "${catalog.product_name}" (límite ${usage.limit} por cliente). Solo puede llevar ${left} más.`
+            : `Este cliente ya tiene ${usage.used}/${usage.limit} de "${catalog.product_name}" — no se le puede vender más.`;
+          setCustomerLimitWarning(msg);
+          toast.error(msg, { duration: 7000 });
+          return;
+        }
+      } catch {
+        // Si la consulta falla no bloqueamos en UI — el backend valida al cobrar.
+      }
+    }
+
     const anticipo = catalog.advance_payment ?? 0;
     const catalogImg = catalog.image_url ?? (catalog.image_path ? storageUrl(catalog.image_path) : "");
 
@@ -2579,7 +2685,7 @@ export function SellPage() {
    * Para otros errores, muestra toast.error genérico.
    */
   const handleCheckoutError = (msg: string) => {
-    const stockMatch = msg.match(/Stock insuficiente para '([^']+)'\. Disponible: ([\d.]+), solicitado/);
+    const stockMatch = msg.match(/Stock insuficiente(?: en Exhibición)? para '([^']+)'\. Disponible: ([\d.]+), solicitado/);
     if (stockMatch) {
       const productName = stockMatch[1];
       const availableNum = Math.floor(parseFloat(stockMatch[2]));
@@ -2732,6 +2838,8 @@ export function SellPage() {
                 ...(activeMesa.paymentMethod === "Tarjeta" && activeMesa.selectedTerminalId
                   ? { terminal_id: activeMesa.selectedTerminalId } : {}),
               }],
+              // Dólares físicos recibidos + TC usado (para Historial/Corte/Reporte).
+              ...((parseFloat(cashReceivedUsd) || 0) > 0 ? { cash_received_usd: parseFloat(cashReceivedUsd), exchange_rate: tc } : {}),
             });
             regularSaleId = saleResult?.id;
             // Escritura optimista: la respuesta del POST ya ES la fila que la
@@ -2968,6 +3076,8 @@ export function SellPage() {
                 ...(activeMesa.paymentMethod === "Tarjeta" && activeMesa.selectedTerminalId
                   ? { terminal_id: activeMesa.selectedTerminalId } : {}),
               }],
+              // Dólares físicos recibidos + TC usado (para Historial/Corte/Reporte).
+              ...((parseFloat(cashReceivedUsd) || 0) > 0 ? { cash_received_usd: parseFloat(cashReceivedUsd), exchange_rate: tc } : {}),
             });
             regularSaleId = saleResult?.id;
             // Escritura optimista — venta visible en Ventas y stock descontado
@@ -3154,6 +3264,8 @@ export function SellPage() {
           ...(activeMesa.paymentMethod === "Tarjeta" && activeMesa.selectedTerminalId
             ? { terminal_id: activeMesa.selectedTerminalId } : {}),
         }],
+        // Dólares físicos recibidos + TC usado (para Historial/Corte/Reporte).
+        ...((parseFloat(cashReceivedUsd) || 0) > 0 ? { cash_received_usd: parseFloat(cashReceivedUsd), exchange_rate: tc } : {}),
       });
 
       // Escritura optimista — la venta aparece en la lista de Ventas y el
@@ -4415,8 +4527,18 @@ export function SellPage() {
                             <div className="flex gap-3 mt-2 flex-wrap">
                               <div className="flex items-center gap-1.5">
                                 <div className={`w-1.5 h-1.5 rounded-full ${!activeMesa.isPreventa ? 'bg-emerald-500' : ''}`} style={activeMesa.isPreventa ? { background: "var(--td-card-border)" } : undefined} />
-                                <span className="text-[11px] font-black uppercase tracking-widest" style={{ color: !activeMesa.isPreventa ? THI : TLO }}>Tienda: {p.stock_details?.tienda || 0}</span>
+                                <span className="text-[11px] font-black uppercase tracking-widest" style={{ color: !activeMesa.isPreventa ? THI : TLO }}>Exhibición: {p.stock_details?.tienda || 0}</span>
                               </div>
+                              {/* Bodega: backstock atrás (no vendible). Si no hay en Exhibición
+                                  pero sí en Bodega, se resalta para avisar que hay que surtir. */}
+                              {(p.stock_details?.bodega ?? 0) > 0 && (
+                                <div className="flex items-center gap-1.5">
+                                  <div className="w-1.5 h-1.5 rounded-full" style={{ background: (p.stock_details?.tienda || 0) <= 0 ? "#f59e0b" : "rgba(245,158,11,0.3)" }} />
+                                  <span className="text-[11px] font-black uppercase tracking-widest" style={{ color: (p.stock_details?.tienda || 0) <= 0 ? "#f59e0b" : TLO }}>
+                                    {(p.stock_details?.tienda || 0) <= 0 ? `${p.stock_details?.bodega} en bodega · surtir` : `Bodega: ${p.stock_details?.bodega}`}
+                                  </span>
+                                </div>
+                              )}
                               <div className="flex items-center gap-1.5">
                                 <div className={`w-1.5 h-1.5 rounded-full ${activeMesa.isPreventa ? 'bg-amber-500 animate-pulse' : 'bg-amber-500/20'}`} />
                                 <span className="text-[11px] font-black uppercase tracking-widest" style={{ color: activeMesa.isPreventa ? "#f59e0b" : TLO }}>Preventa: {p.stock_details?.preventa || 0}</span>
@@ -5063,6 +5185,34 @@ export function SellPage() {
               {/* fin Sección 1: Resumen monetario */}
               </div>
 
+              {/* Aviso persistente de LÍMITE POR CLIENTE — visible aunque la
+                  asignación se haya rechazado (no solo el toast). Se limpia al
+                  cambiar de cliente o en el próximo intento. */}
+              {customerLimitWarning && (
+                <div
+                  style={{
+                    display: "flex", alignItems: "flex-start", gap: 8,
+                    padding: "10px 12px", borderRadius: 12,
+                    background: "rgba(220,38,38,0.12)",
+                    border: "1px solid rgba(220,38,38,0.40)",
+                  }}
+                >
+                  <AlertTriangle size={15} style={{ color: "#DC2626", flexShrink: 0, marginTop: 1 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ margin: 0, fontSize: 11.5, fontWeight: 800, color: "#DC2626", lineHeight: 1.35 }}>
+                      {customerLimitWarning}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setCustomerLimitWarning(null)}
+                    style={{ background: "none", border: "none", cursor: "pointer", color: "#DC2626", padding: 2, flexShrink: 0 }}
+                    aria-label="Cerrar aviso"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              )}
+
               {/* ── Sección 2: Cliente asignado (solo visible cuando hay cliente) ──
                   Separador horizontal sutil para marcar el cambio de sección. */}
               {hasAssignedCustomer && (
@@ -5385,15 +5535,16 @@ export function SellPage() {
                       const allOptions: PaymentMethod[] = ["Efectivo", "Tarjeta", "Transferencia"];
                       // Icono por método (Joel 2026-06-12): se distingue de un
                       // vistazo si el cobro es con tarjeta o efectivo.
-                      const methodIcon = (pm: PaymentMethod, cls: string) => {
-                        if (pm === "Tarjeta") return <CreditCard size={13} className={cls} />;
-                        if (pm === "Transferencia") return <ArrowLeftRight size={13} className={cls} />;
-                        if (pm === "Dólares") return <DollarSign size={13} className={cls} />;
-                        return <Banknote size={13} className={cls} />;
+                      const methodIcon = (pm: PaymentMethod, cls: string, big = false) => {
+                        const sz = big ? 17 : 13;
+                        if (pm === "Tarjeta") return <CreditCard size={sz} className={cls} />;
+                        if (pm === "Transferencia") return <ArrowLeftRight size={sz} className={cls} />;
+                        if (pm === "Dólares") return <DollarSign size={sz} className={cls} />;
+                        return <Banknote size={sz} className={cls} />;
                       };
-                      const renderLabel = (pm: PaymentMethod, isActive: boolean) => (
-                        <div className="flex items-center justify-center gap-1.5 text-[11px] font-black uppercase tracking-widest leading-none shrink-0">
-                          {methodIcon(pm, isActive ? 'text-white' : 'text-[#E0221A]')}
+                      const renderLabel = (pm: PaymentMethod, isActive: boolean, big = false) => (
+                        <div className={`flex items-center justify-center gap-1.5 font-black uppercase tracking-widest leading-none shrink-0 transition-all duration-150 ${big ? 'text-[13px] gap-2' : 'text-[11px]'}`}>
+                          {methodIcon(pm, isActive ? 'text-white' : 'text-[#E0221A]', big)}
                           {pm}
                         </div>
                       );
@@ -5467,32 +5618,27 @@ export function SellPage() {
                                   // backend. Antes referenciaba `hasCashOnly`, variable que
                                   // nunca existió → ReferenceError al abrir el menú (QA 06-12).
                                   const isBlocked = activeMesa.items.some(i => !itemAcceptsMethod(i, pm));
+                                  const isHovered = hoveredPayPm === pm && !isBlocked;
                                   return (
                                     <button
                                       key={pm}
-                                      onClick={() => { if (!isBlocked) { setPayment(pm); setPaymentMenuOpen(false); } }}
+                                      onClick={() => { if (!isBlocked) { setPayment(pm); setPaymentMenuOpen(false); setHoveredPayPm(null); } }}
                                       disabled={isBlocked}
-                                      className={`w-full h-[44px] px-3 flex items-center justify-center border-b last:border-b-0 transition-all ${
+                                      className={`w-full px-3 flex items-center justify-center border-b last:border-b-0 transition-all duration-150 ${
                                         isBlocked ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'
                                       }`}
                                       style={{
+                                        // Crece al hover (60px) para leer bien; vuelve a 44px al salir.
+                                        height: isHovered ? 60 : 44,
                                         borderBottomColor: "var(--td-divider)",
-                                        color: isBlocked ? "var(--td-text-ghost)" : "var(--td-text-md)",
-                                        background: "transparent",
+                                        color: isBlocked ? "var(--td-text-ghost)" : isHovered ? "var(--td-text-hi)" : "var(--td-text-md)",
+                                        background: isHovered ? "var(--td-red-dim)" : "transparent",
                                       }}
-                                      onMouseEnter={e => {
-                                        if (!isBlocked) {
-                                          e.currentTarget.style.background = "var(--td-red-dim)";
-                                          e.currentTarget.style.color = "var(--td-text-hi)";
-                                        }
-                                      }}
-                                      onMouseLeave={e => {
-                                        e.currentTarget.style.background = "transparent";
-                                        e.currentTarget.style.color = isBlocked ? "var(--td-text-ghost)" : "var(--td-text-md)";
-                                      }}
+                                      onMouseEnter={() => { if (!isBlocked) setHoveredPayPm(pm); }}
+                                      onMouseLeave={() => setHoveredPayPm(null)}
                                     >
                                       {isBlocked && <AlertTriangle size={11} className="text-amber-500 mr-1.5" />}
-                                      {renderLabel(pm, false)}
+                                      {renderLabel(pm, false, isHovered)}
                                     </button>
                                   );
                                 })}
@@ -5801,7 +5947,11 @@ export function SellPage() {
             // tienda → "Sin asignar" (no es lo mismo que agotado: nunca tuvo cupo).
             const isSinAsignar = storeLimitRow === undefined;
             const isAgotado = !isSinAsignar && remaining <= 0;
-            const isBlocked = isSinAsignar || isAgotado;
+            // Bloqueo por LÍMITE POR CLIENTE: el cliente asignado ya alcanzó su
+            // tope de por vida en este catálogo (se llenó al intentar agregar).
+            const limitBlock = presaleLimitBlocks[catalog.id];
+            const isLimitBlocked = limitBlock !== undefined;
+            const isBlocked = isSinAsignar || isAgotado || isLimitBlocked;
             const availabilityChip =
               remaining <= 0
                 ? { color: "#FFFFFF", background: "#DC2626", border: "1px solid rgba(220,38,38,0.5)" }
@@ -5815,8 +5965,8 @@ export function SellPage() {
                 // Sin asignar NO usa disabled: el badge "Avisar" interno necesita
                 // recibir clicks (un <button disabled> bloquea los hijos). El
                 // onClick del card ya está guardado con isBlocked.
-                disabled={isAgotado}
-                title={isSinAsignar ? "Esta tienda no tiene cupo asignado para esta preventa. Presiona Avisar para pedir a tu gerente que la habilite." : undefined}
+                disabled={isAgotado || isLimitBlocked}
+                title={isLimitBlocked ? `Este cliente ya tiene ${limitBlock.used}/${limitBlock.limit} — no se le puede vender más.` : isSinAsignar ? "Esta tienda no tiene cupo asignado para esta preventa. Presiona Avisar para pedir a tu gerente que la habilite." : undefined}
                 style={{
                   textAlign: "left", borderRadius: 14,
                   background: isAgotado ? "rgba(224,34,26,0.03)" : "var(--td-card-bg)",
@@ -5886,6 +6036,19 @@ export function SellPage() {
                 <p style={{ margin: 0, fontSize: 14, fontWeight: 800, lineHeight: 1.3, color: "var(--td-text-hi)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
                   {catalog.product_name}
                 </p>
+                {isLimitBlocked && (
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 5,
+                    fontSize: 10.5, fontWeight: 800, lineHeight: 1.25,
+                    color: "#DC2626",
+                    background: "rgba(220,38,38,0.10)",
+                    border: "1px solid rgba(220,38,38,0.30)",
+                    borderRadius: 8, padding: "5px 8px",
+                  }}>
+                    <AlertTriangle size={12} style={{ flexShrink: 0 }} />
+                    <span>Límite por cliente: ya tiene {limitBlock.used}/{limitBlock.limit} — no se le puede vender más.</span>
+                  </div>
+                )}
                 <div
                   style={{
                     display: "flex",

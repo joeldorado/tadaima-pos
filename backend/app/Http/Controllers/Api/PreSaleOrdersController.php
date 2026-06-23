@@ -39,7 +39,7 @@ class PreSaleOrdersController extends Controller
         $isAdminUser = $user->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
         // payments.paymentMethod se carga para que la lista de Ventas (frontend)
         // muestre el método de pago de anticipos/liquidaciones sin caer en N+1.
-        $query = PreSaleOrder::with(['store', 'user', 'customer', 'items.catalog', 'payments.paymentMethod', 'cancellations'])
+        $query = PreSaleOrder::with(['store', 'user', 'customer', 'items.catalog.product', 'items.product', 'payments.paymentMethod', 'cancellations'])
             ->when(!$isAdminUser,                   fn ($q) => $q->where('store_id', $user->store_id))
             // `mine=1`: solo los folios DEL usuario actual — los que creó (user_id)
             // o en los que cobró un anticipo/liquidación (payments.cashier_id). Lo

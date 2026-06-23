@@ -146,12 +146,27 @@ class UserController extends Controller
      */
     public function update(UpdateUserRequest $request, User $user): JsonResponse
     {
-        $data = $request->only([
-            'name', 'email', 'phone', 'address',
-            'company_id', 'store_id', 'active', 'can_view_cost',
-        ]);
+        // RBAC: solo un admin edita a OTROS usuarios. Un no-admin solo puede
+        // tocar su propia cuenta (y sin auto-asignarse tienda/costo/estado).
+        // Antes este endpoint no tenía guard → cualquier token podía cambiar
+        // la contraseña de cualquier usuario (toma de cuenta).
+        $authUser = $request->user();
+        $isAdmin  = $authUser->isAdminRole();
+        $isSelf   = (int) $authUser->id === (int) $user->id;
 
-        if ($request->filled('password')) {
+        if (! $isAdmin && ! $isSelf) {
+            return $this->error('No autorizado para modificar este usuario.', 403);
+        }
+
+        $fields = $isAdmin
+            ? ['name', 'email', 'phone', 'address', 'company_id', 'store_id', 'active', 'can_view_cost']
+            : ['name', 'email', 'phone', 'address'];
+
+        $data = $request->only($fields);
+
+        // El password por esta vía es reset admin-only. El cambio self-service
+        // va por POST /auth/password (verifica la contraseña actual).
+        if ($isAdmin && $request->filled('password')) {
             $data['password'] = $request->password; // cast 'hashed' lo encripta
         }
 

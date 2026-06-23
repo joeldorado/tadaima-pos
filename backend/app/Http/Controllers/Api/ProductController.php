@@ -53,11 +53,20 @@ class ProductController extends Controller
             $query->ofType($type);
         }
 
-        // Scope the stock sum to the selected store's warehouses when filtering
+        // Stock scopeado a la tienda seleccionada, DESGLOSADO por tipo de almacén:
+        //   stock_exhibicion = `type='store'` (vendible en Caja)
+        //   stock_bodega     = `type='bodega'` (backstock, no vendible)
+        // La Caja (light) vende solo de Exhibición; Productos muestra ambos y la
+        // suma. Sin store_id (vista global admin) se suma todo el inventario.
         if ($storeId) {
-            $query->withSum(['inventory' => fn ($q) =>
+            $query->withSum(['inventory as stock_exhibicion' => fn ($q) =>
                 $q->whereHas('warehouse', fn ($wq) =>
-                    $wq->where('store_id', $storeId)
+                    $wq->where('store_id', $storeId)->where('type', 'store')
+                )
+            ], 'quantity');
+            $query->withSum(['inventory as stock_bodega' => fn ($q) =>
+                $q->whereHas('warehouse', fn ($wq) =>
+                    $wq->where('store_id', $storeId)->where('type', 'bodega')
                 )
             ], 'quantity');
         } else {

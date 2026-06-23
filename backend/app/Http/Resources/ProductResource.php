@@ -21,8 +21,14 @@ class ProductResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
-        // stock_total viene de withSum('inventory', 'quantity')
-        $stockTotal = (float) ($this->inventory_sum_quantity ?? 0);
+        // Con store_id el controller desglosa Exhibición/Bodega; el total es la
+        // suma de los dos. Sin store_id (vista global) viene de withSum directo.
+        $storeScoped = $this->stock_exhibicion !== null || $this->stock_bodega !== null;
+        $stockExhibicion = $this->stock_exhibicion !== null ? (float) $this->stock_exhibicion : null;
+        $stockBodega     = $this->stock_bodega !== null ? (float) $this->stock_bodega : null;
+        $stockTotal = $storeScoped
+            ? (float) ($stockExhibicion ?? 0) + (float) ($stockBodega ?? 0)
+            : (float) ($this->inventory_sum_quantity ?? 0);
 
         $user = $request->user();
         // Costo visible para: admin/master (siempre) O cualquier usuario con el
@@ -84,6 +90,10 @@ class ProductResource extends JsonResource
                 : true,
 
             'stock_total' => $stockTotal,
+            // Desglose por tipo de almacén (solo presente al filtrar por store_id):
+            // Exhibición = vendible en Caja · Bodega = backstock atrás.
+            'stock_exhibicion' => $this->when($storeScoped, fn () => (float) ($stockExhibicion ?? 0)),
+            'stock_bodega'     => $this->when($storeScoped, fn () => (float) ($stockBodega ?? 0)),
 
             // Discriminador para que el frontend sepa si es producto o manga.
             // Default 'product' por compatibilidad (rows pre-migración).

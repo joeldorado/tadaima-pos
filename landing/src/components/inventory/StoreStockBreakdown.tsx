@@ -15,6 +15,10 @@ interface StoreRow {
   storeName: string
   phone: string | null
   quantity: number
+  /** Vendible en Caja (warehouse type='store'). */
+  exhibicion: number
+  /** Backstock atrás (warehouse type='bodega'). */
+  bodega: number
 }
 
 const STOCK_THEME = {
@@ -58,15 +62,20 @@ export function StoreStockBreakdown({
       const store = wh?.store ?? null
       const key = store ? `s${store.id}` : `w${wh?.id ?? 'x'}`
       const name = store?.name ?? wh?.name ?? 'Sin ubicación'
+      const isBodega = wh?.type === 'bodega'
       const existing = byStore.get(key)
       if (existing) {
         existing.quantity += it.quantity
+        if (isBodega) existing.bodega += it.quantity
+        else existing.exhibicion += it.quantity
       } else {
         byStore.set(key, {
           storeId: store?.id ?? null,
           storeName: name,
           phone: store?.phone ?? null,
           quantity: it.quantity,
+          exhibicion: isBodega ? 0 : it.quantity,
+          bodega: isBodega ? it.quantity : 0,
         })
       }
     }
@@ -133,6 +142,15 @@ export function StoreStockBreakdown({
                 <p className="text-[11px] mt-0.5" style={{ color: 'var(--td-text-lo)' }}>
                   {qty <= 0 ? 'Agotado' : qty <= 10 ? 'Por agotarse' : 'Disponible'}
                 </p>
+                {/* Desglose Exhibición (vendible) · Bodega (atrás) */}
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-[10px] font-black px-1.5 py-0.5 rounded" style={{ background: 'rgba(16,185,129,0.12)', color: '#059669' }}>
+                    Exhib {row.exhibicion}
+                  </span>
+                  <span className="text-[10px] font-black px-1.5 py-0.5 rounded" style={{ background: 'rgba(245,158,11,0.12)', color: '#D97706' }}>
+                    Bodega {row.bodega}
+                  </span>
+                </div>
               </div>
               <div className="shrink-0 text-right min-w-[56px]">
                 <p className="text-2xl font-black leading-none tabular-nums" style={{ color: qtyColor }}>{qty}</p>

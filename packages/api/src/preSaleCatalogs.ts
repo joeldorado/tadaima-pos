@@ -77,6 +77,32 @@ export async function updatePreSaleCatalogStatus(
   return response.data
 }
 
+export interface CatalogCustomerUsage {
+  catalog_id: number
+  customer_id: number
+  /** Límite por cliente del catálogo (null = sin límite). */
+  limit: number | null
+  /** Unidades que el cliente ya tiene de este catálogo (de por vida). */
+  used: number
+  /** Disponibles para ese cliente (null = sin límite). */
+  remaining: number | null
+}
+
+/**
+ * Cuánto ha usado un cliente de un catálogo (para el límite por cliente).
+ * GET /pre-sale-catalogs/{id}/customer-usage?customer_id=X
+ */
+export async function getCatalogCustomerUsage(
+  catalogId: number,
+  customerId: number
+): Promise<CatalogCustomerUsage> {
+  const response = await apiClient.get<CatalogCustomerUsage>(
+    `/pre-sale-catalogs/${catalogId}/customer-usage`,
+    { params: { customer_id: customerId } }
+  )
+  return response.data
+}
+
 /**
  * Sube una imagen para el catálogo de preventa. Reemplaza la imagen previa
  * si existía (backend hace cleanup en GCS).

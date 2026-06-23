@@ -39,6 +39,7 @@ import { useRolesQuery } from "@/hooks/queries/useRoles";
 import { useCategoriesQuery } from "@/hooks/queries/useCategories";
 import { queryKeys } from "@/lib/queryKeys";
 import { isValidEmail, isValidPhone } from "@/lib/validation";
+import { warehouseTypeLabel, warehouseTypeBadgeColor } from "@/lib/warehouse";
 
 // ─── Design tokens (coherente con resto del sistema) ─────────────────────────
 const BG   = "var(--td-page-bg)";
@@ -348,7 +349,7 @@ function TabSucursales() {
 interface WarehouseFormData {
   id?: number;
   name: string;
-  type: 'central' | 'store';
+  type: 'central' | 'store' | 'bodega';
   description: string;
   active: boolean;
   store_id?: number;
@@ -431,8 +432,8 @@ function TabBodegas() {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" as const }}>
                   <p style={{ color: TP, fontWeight: 900, fontSize: 14, margin: 0 }}>{w.name}</p>
-                  <Badge color={w.active ? (w.type === "central" ? "purple" : "blue") : "red"}>
-                    {w.active ? w.type : "Inactiva"}
+                  <Badge color={w.active ? warehouseTypeBadgeColor(w.type) : "red"}>
+                    {w.active ? warehouseTypeLabel(w.type) : "Inactiva"}
                   </Badge>
                   {w.store && <Badge color="green">{w.store.name}</Badge>}
                 </div>
@@ -466,9 +467,10 @@ function TabBodegas() {
             </Field>
             <Field label="Tipo">
               <select value={modal.data.type}
-                onChange={e => setModal(m => ({ ...m, data: { ...m.data, type: e.target.value as 'central' | 'store' } }))}
+                onChange={e => setModal(m => ({ ...m, data: { ...m.data, type: e.target.value as 'central' | 'store' | 'bodega' } }))}
                 style={{ ...INPUT, appearance: "none" as const }}>
-                <option value="store">Tienda</option>
+                <option value="store">Exhibición (front, vendible en Caja)</option>
+                <option value="bodega">Bodega (backstock, no vendible)</option>
                 <option value="central">Central</option>
               </select>
             </Field>

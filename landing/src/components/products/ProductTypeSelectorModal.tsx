@@ -79,7 +79,7 @@ export function ProductTypeSelectorModal({ onSelectNormal, onSelectManga, onClos
           />
           <TypeCard
             icon={<BookOpen size={32} />}
-            title="Libro / Manga"
+            title="Manga Nacional"
             description="Alta de tomos individuales o en lote con ISBN y número de volumen"
             accent="#CC2200"
             onClick={onSelectManga}

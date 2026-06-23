@@ -30,3 +30,17 @@ export async function me(): Promise<User> {
 export async function logout(): Promise<void> {
   await apiClient.post('/auth/logout')
 }
+
+/**
+ * Cambia la contraseña del usuario autenticado (self-service).
+ * POST /auth/password — requiere la contraseña actual.
+ */
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  await apiClient.post('/auth/password', {
+    current_password: currentPassword,
+    password: newPassword,
+  })
+}

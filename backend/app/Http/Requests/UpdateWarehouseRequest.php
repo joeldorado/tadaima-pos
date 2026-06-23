@@ -13,7 +13,7 @@ class UpdateWarehouseRequest extends FormRequest
         return [
             'store_id'    => ['sometimes', 'nullable', 'integer', 'exists:stores,id'],
             'name'        => ['sometimes', 'string', 'max:150'],
-            'type'        => ['sometimes', 'in:central,store'],
+            'type'        => ['sometimes', 'in:central,store,bodega'],
             'description' => ['sometimes', 'nullable', 'string', 'max:500'],
             'active'      => ['sometimes', 'boolean'],
         ];

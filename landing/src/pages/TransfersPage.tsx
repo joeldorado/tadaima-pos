@@ -501,10 +501,14 @@ export function TransfersPage() {
     });
   }, [transfers, searchQuery, filterStatus]);
 
-  const destinationWarehouses = useMemo(
-    () => warehouses.filter(w => String(w.id) !== fromWhId),
-    [warehouses, fromWhId],
-  );
+  const destinationWarehouses = useMemo(() => {
+    return warehouses
+      .filter(w => String(w.id) !== fromWhId)
+      .map(warehouse => ({
+        ...warehouse,
+        quantity: selectedProductInventory.find(row => row.warehouse_id === warehouse.id)?.quantity ?? 0,
+      }));
+  }, [warehouses, fromWhId, selectedProductInventory]);
 
   useEffect(() => {
     if (fromWhId && toWhId === fromWhId) {
@@ -735,16 +739,7 @@ export function TransfersPage() {
             ))}
           </div>
 
-          {/* Warehouse list */}
-          <div className="space-y-3">
-            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/20">Bodegas</p>
-            {warehouses.map(w => (
-              <div key={w.id} className="flex items-center justify-between px-4 py-3 rounded-2xl bg-white/[0.03] border border-white/5">
-                <span className="text-xs font-bold text-white/60">{w.name}</span>
-                <span className="text-[9px] font-black uppercase text-white/20">{w.type}</span>
-              </div>
-            ))}
-          </div>
+
         </div>
       </div>
       </>
@@ -771,12 +766,20 @@ export function TransfersPage() {
           <motion.div
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="relative w-full max-w-5xl rounded-[26px] sm:rounded-[40px] lg:rounded-[48px] flex flex-col shadow-2xl max-h-[95vh] sm:max-h-[90vh] overflow-hidden"
+            className="relative w-[95vw] max-w-6xl rounded-[26px] sm:rounded-[40px] lg:rounded-[48px] flex flex-col shadow-2xl max-h-[95vh] sm:max-h-[90vh] overflow-hidden"
             style={T.glass}
           >
             {/* Header */}
-            <div className="px-4 sm:px-6 lg:px-8 py-4 sm:py-5 flex flex-col gap-4 sm:gap-6 shrink-0" style={{ borderBottom: `1px solid ${T.fieldBorder}` }}>
-              <div className="min-w-0 flex-1">
+            <div className="relative px-4 sm:px-6 lg:px-8 py-4 sm:py-5 flex flex-col gap-3 shrink-0" style={{ borderBottom: `1px solid ${T.fieldBorder}` }}>
+              {/* Botón cerrar — esquina superior derecha */}
+              <button
+                onClick={() => { setIsModalOpen(false); resetModal(); }}
+                className="absolute top-4 right-4 w-9 h-9 rounded-xl flex items-center justify-center transition-colors z-10"
+                style={{ background: T.routeChip, color: T.softText, border: `1px solid ${T.fieldBorder}` }}
+              >
+                <X size={18} />
+              </button>
+              <div className="min-w-0 flex-1 pr-12">
                 <h2 className="text-2xl font-black uppercase tracking-tighter" style={{ color: T.panelText }}>Nueva Transferencia</h2>
                 <div className="mt-2 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
                   <div className="flex items-center gap-3 overflow-x-auto pb-1">
@@ -848,17 +851,10 @@ export function TransfersPage() {
                   </div>
                 </div>
               </div>
-              <button
-                onClick={() => { setIsModalOpen(false); resetModal(); }}
-                className="w-10 h-10 rounded-xl flex items-center justify-center transition-colors self-end"
-                style={{ background: T.routeChip, color: T.softText, border: `1px solid ${T.fieldBorder}` }}
-              >
-                <X size={20} />
-              </button>
             </div>
 
             {/* Body */}
-            <div className="p-4 sm:p-6 lg:p-8 flex flex-col gap-5 overflow-y-auto custom-scrollbar">
+            <div className="p-4 sm:p-6 lg:p-8 xl:p-10 flex flex-col gap-6 overflow-y-auto custom-scrollbar">
 
               {currentStep === 1 && (
                 <div className="space-y-6">
@@ -866,7 +862,7 @@ export function TransfersPage() {
                     <p className="text-[10px] font-black uppercase tracking-[0.28em]" style={{ color: T.softText }}>Paso 1</p>
                     <h3 className="mt-1 text-xl font-black" style={{ color: T.panelText }}>Datos</h3>
 
-                    <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-[1.35fr_1fr_1fr_0.5fr_auto_auto] gap-3 items-end">
+                    <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 2xl:grid-cols-[minmax(260px,1.45fr)_minmax(190px,1fr)_minmax(190px,1fr)_110px_96px_128px] xl:grid-cols-[minmax(220px,1.35fr)_minmax(170px,1fr)_minmax(170px,1fr)_96px_88px_116px] gap-3 xl:gap-4 items-end">
                       <div className="space-y-2 relative">
                         <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: T.softText }}>Buscar artículo</label>
                         <input
@@ -910,7 +906,7 @@ export function TransfersPage() {
                           value={fromWhId}
                           onChange={e => setFromWhId(e.target.value)}
                           disabled={!selectedProduct}
-                          className="w-full p-4 rounded-2xl outline-none"
+                          className="w-full p-4 pr-10 rounded-2xl outline-none text-sm font-semibold"
                           style={{ background: T.fieldBg, border: `1px solid ${T.fieldBorder}`, color: T.panelText, opacity: selectedProduct ? 1 : 0.6 }}
                         >
                           <option value="" className="bg-[var(--card)]">Seleccionar…</option>
@@ -928,12 +924,12 @@ export function TransfersPage() {
                           value={toWhId}
                           onChange={e => setToWhId(e.target.value)}
                           disabled={!selectedProduct || !fromWhId}
-                          className="w-full p-4 rounded-2xl outline-none"
+                          className="w-full p-4 pr-10 rounded-2xl outline-none text-sm font-semibold"
                           style={{ background: T.fieldBg, border: `1px solid ${T.fieldBorder}`, color: T.panelText, opacity: selectedProduct && fromWhId ? 1 : 0.6 }}
                         >
                           <option value="" className="bg-[var(--card)]">Seleccionar…</option>
                           {destinationWarehouses.map(w => (
-                            <option key={w.id} value={w.id} className="bg-[var(--card)]">{w.name}</option>
+                            <option key={w.id} value={w.id} className="bg-[var(--card)]">{w.name} · {w.quantity}</option>
                           ))}
                         </select>
                       </div>
@@ -946,7 +942,7 @@ export function TransfersPage() {
                           max={Math.max(1, selectedProductFromAvailable)}
                           value={draftQtyInput}
                           onChange={e => setDraftQtyInput(e.target.value)}
-                          className="w-full p-4 rounded-2xl outline-none font-black"
+                          className="w-full p-4 rounded-2xl outline-none font-black text-center text-lg"
                           style={{ background: T.fieldBg, border: `1px solid ${T.fieldBorder}`, color: T.panelText }}
                         />
                       </div>
@@ -990,13 +986,13 @@ export function TransfersPage() {
                     <p className="text-[10px] font-black uppercase tracking-[0.28em]" style={{ color: T.softText }}>Artículos</p>
                     <h3 className="mt-1 text-lg font-black" style={{ color: T.panelText }}>Artículos</h3>
 
-                    <div className="mt-4 hidden lg:grid grid-cols-[minmax(0,1.3fr)_150px_150px_120px_110px_56px] gap-3 px-2 text-[10px] font-black uppercase tracking-[0.18em]" style={{ color: T.softText }}>
-                      <span>Artículo</span>
-                      <span>Origen</span>
-                      <span>Destino</span>
-                      <span>Actual / Max</span>
-                      <span>Cantidad</span>
-                      <span></span>
+                    <div className="mt-4 hidden lg:grid grid-cols-[minmax(180px,1.25fr)_minmax(150px,1fr)_minmax(150px,1fr)_minmax(160px,1fr)_140px_48px] xl:grid-cols-[minmax(220px,1.35fr)_minmax(180px,1fr)_minmax(180px,1fr)_minmax(180px,1fr)_150px_48px] gap-4 px-4 text-[10px] font-black uppercase tracking-[0.18em]" style={{ color: T.softText }}>
+                      <span className="text-left">Artículo</span>
+                      <span className="text-center">Origen</span>
+                      <span className="text-center">Destino</span>
+                      <span className="text-center">Quedarían en</span>
+                      <span className="text-center">Cantidad</span>
+                      <span className="text-center"></span>
                     </div>
 
                     <div className="mt-3 space-y-3 max-h-[420px] overflow-y-auto custom-scrollbar">
@@ -1009,26 +1005,42 @@ export function TransfersPage() {
                       {items.map(item => (
                         <div
                           key={item.product_id}
-                          className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.3fr)_150px_150px_120px_110px_56px] gap-3 items-center rounded-2xl p-4"
+                          className="grid grid-cols-1 lg:grid-cols-[minmax(180px,1.25fr)_minmax(150px,1fr)_minmax(150px,1fr)_minmax(160px,1fr)_140px_48px] xl:grid-cols-[minmax(220px,1.35fr)_minmax(180px,1fr)_minmax(180px,1fr)_minmax(180px,1fr)_150px_48px] gap-3 xl:gap-4 items-center rounded-2xl p-4 xl:px-5"
                           style={{ background: T.fieldBg, border: `1px solid ${T.fieldBorder}` }}
                         >
                           <div className="min-w-0">
                             <p className="text-xs font-bold truncate" style={{ color: T.panelText }}>{item.name}</p>
                             <p className="text-[9px] font-black uppercase" style={{ color: T.softText }}>{item.sku}</p>
                           </div>
-                          <div className="text-xs font-bold truncate" style={{ color: T.panelText }}>
+                          <div className="text-xs font-bold truncate lg:text-center" style={{ color: T.panelText }}>
                             <span className="mr-1 lg:hidden text-[10px] uppercase" style={{ color: T.softText }}>Origen:</span>
                             {warehouses.find(w => String(w.id) === fromWhId)?.name ?? "—"}
                           </div>
-                          <div className="text-xs font-bold truncate" style={{ color: T.panelText }}>
+                          <div className="text-xs font-bold truncate lg:text-center" style={{ color: T.panelText }}>
                             <span className="mr-1 lg:hidden text-[10px] uppercase" style={{ color: T.softText }}>Destino:</span>
                             {warehouses.find(w => String(w.id) === toWhId)?.name ?? "—"}
                           </div>
-                          <div className="text-[10px] font-black uppercase" style={{ color: T.softText }}>
-                            <span className="mr-1 lg:hidden">Actual/Max:</span>
-                            {item.quantity} / {itemStock[item.product_id]?.fromAvailable ?? "—"}
+                          {/* Proyección tras el traslado: origen pierde, destino gana */}
+                          <div className="lg:text-center space-y-1">
+                            <span className="lg:hidden text-[10px] font-black uppercase" style={{ color: T.softText }}>Quedarían en: </span>
+                            {(() => {
+                              const fromNow = itemStock[item.product_id]?.fromAvailable ?? null;
+                              const toNow   = itemStock[item.product_id]?.toAvailable   ?? null;
+                              const fromAfter = fromNow !== null ? fromNow - item.quantity : null;
+                              const toAfter   = toNow   !== null ? toNow   + item.quantity : null;
+                              return (
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="text-[11px] font-black" style={{ color: fromAfter !== null && fromAfter < 0 ? "#FF4422" : T.panelText }}>
+                                    {warehouses.find(w => String(w.id) === fromWhId)?.name?.split("—")[1]?.trim() ?? "Origen"}: {fromAfter !== null ? fromAfter : "—"}
+                                  </span>
+                                  <span className="text-[11px] font-black" style={{ color: "#00CC66" }}>
+                                    {warehouses.find(w => String(w.id) === toWhId)?.name?.split("—")[1]?.trim() ?? "Destino"}: {toAfter !== null ? toAfter : "—"}
+                                  </span>
+                                </div>
+                              );
+                            })()}
                           </div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 lg:justify-center">
                             <button
                               type="button"
                               onClick={() => setItemQtyToMax(item.product_id)}
@@ -1050,7 +1062,7 @@ export function TransfersPage() {
                           <button
                             type="button"
                             onClick={() => removeItem(item.product_id)}
-                            className="transition-colors"
+                            className="transition-colors lg:justify-self-center"
                             style={{ color: T.softText }}
                           >
                             <Trash2 size={14} />

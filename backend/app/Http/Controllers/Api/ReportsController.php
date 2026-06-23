@@ -281,7 +281,7 @@ class ReportsController extends Controller
         $saleTotals = DB::table('sales')
             ->whereIn('register_session_id', $sessionIds)
             ->where('status', Sale::STATUS_COMPLETED)
-            ->selectRaw('register_session_id, COUNT(*) as count, COALESCE(SUM(total), 0) as amount')
+            ->selectRaw('register_session_id, COUNT(*) as count, COALESCE(SUM(total), 0) as amount, COALESCE(SUM(cash_received_usd), 0) as usd_received')
             ->groupBy('register_session_id')
             ->get()
             ->keyBy('register_session_id');
@@ -354,6 +354,7 @@ class ReportsController extends Controller
                 'total_ajustes'   => $ajustes,
                 'total_sales'     => $salesAmt,
                 'total_cash_sales' => round($cashSales, 2),
+                'total_usd_received' => round((float) ($sales?->usd_received ?? 0), 2),
                 'total_pre_sale_payments' => round($preSaleAmt, 2),
                 'total_cash_pre_sale_payments' => round($cashPreSales, 2),
                 'cash_collected'  => $cashCollected,
@@ -367,6 +368,7 @@ class ReportsController extends Controller
             'total_sessions'  => $data->count(),
             'total_sales'     => round($data->sum('total_sales'), 2),
             'total_cash_collected' => round($data->sum('cash_collected'), 2),
+            'total_usd_received' => round($data->sum('total_usd_received'), 2),
             'total_pre_sale_payments' => round($data->sum('total_pre_sale_payments'), 2),
             'total_entradas'  => round($data->sum('total_entradas'), 2),
             'total_salidas'   => round($data->sum('total_salidas'), 2),

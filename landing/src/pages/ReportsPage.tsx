@@ -5,6 +5,7 @@ import {
   ShoppingBag, Star, Calendar, Store,
   ChevronDown, ChevronRight, Clock, RefreshCw, ChevronLeft,
   FileSpreadsheet,
+  Maximize2, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@tadaima/auth";
@@ -12,6 +13,8 @@ import {
   getSalesReport, getInventoryReport, getTopProductsReport, getCustomersReport,
   getPreSaleOrders,
 } from "@tadaima/api";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import { ReportsSkeleton } from "@/components/reports/ReportsSkeleton";
 import { getSales } from "@tadaima/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -58,7 +61,10 @@ const fmt = (n: number) =>
 // equivocado cerca de medianoche.
 const fmtDate = (iso: string) => {
   if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
-    const [y, m, d] = iso.split("-").map(Number);
+    const parts = iso.split("-").map(Number);
+    const y = parts[0] ?? 2000;
+    const m = parts[1] ?? 1;
+    const d = parts[2] ?? 1;
     const safeUtcNoon = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
     return safeUtcNoon.toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric", timeZone: BUSINESS_TZ });
   }
@@ -83,7 +89,7 @@ const getMondayThisWeek = (today: string): string => {
   const day = d.getUTCDay();
   const diff = d.getUTCDate() - day + (day === 0 ? -6 : 1); // Ajusta para lunes
   d.setUTCDate(diff);
-  return d.toISOString().split('T')[0];
+  return d.toISOString().split('T')[0] ?? "";
 };
 
 type TabId = "ventas" | "inventario" | "productos" | "clientes";
@@ -96,11 +102,14 @@ interface GroupedProduct {
   sales_count: number;
   total_quantity: number;
   total_revenue: number;
+  returned_quantity?: number;
+  returned_revenue?: number;
   payment_breakdown: { [method: string]: { qty: number; revenue: number } };
   price_breakdown: { [price: number]: number };
   pre_sale_apartado?: number;
   pre_sale_deuda?: number;
   commission_amount?: number;
+  product_type?: 'product' | 'manga';
 }
 
 const REPORT_TABS: { id: TabId; label: string; icon: React.ElementType }[] = [
@@ -164,6 +173,21 @@ export function ReportsPage() {
   const [lowStockOnly, setLowStockOnly] = useState(false);
   const [expandedIds,  setExpandedIds]  = useState<number[]>([]);
   const [selectedFilters, setSelectedFilters] = useState<SalesHistoryFilter[]>(["all"]);
+  const [isTableMaximized, setIsTableMaximized] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setIsTableMaximized(false);
+      }
+    };
+    if (isTableMaximized) {
+      window.addEventListener("keydown", handleKeyDown);
+    }
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isTableMaximized]);
 
   const storesQuery = useStoresQuery({ active: true, enabled: isAdmin });
   const stores: StoreType[] = storesQuery.data ?? [];
@@ -288,7 +312,8 @@ export function ReportsPage() {
         .filter(Boolean);
       const hasPreSales = (sale.pre_sale_orders?.length ?? 0) > 0;
       const hasCancelled = (sale.cancellation_status && sale.cancellation_status !== "none")
-        || (sale.status ?? "").toLowerCase().includes("cancel");
+        || (sale.status ?? "").toLowerCase().includes("cancel")
+        || (sale.status ?? "").toLowerCase().includes("return");
       const hasNotPicked = (sale.pre_sale_orders ?? []).some((o) => {
         const status = (o.status ?? "").toLowerCase();
         return status.includes("expired") || status.includes("vencid") || status.includes("no recog");
@@ -339,10 +364,13 @@ export function ReportsPage() {
         .map((p) => (p.payment_method?.name ?? "").toLowerCase())
         .filter(Boolean);
       const hasCancelled = (sale.cancellation_status && sale.cancellation_status !== "none")
-        || (sale.status ?? "").toLowerCase().includes("cancel");
+        || (sale.status ?? "").toLowerCase().includes("cancel")
+        || (sale.status ?? "").toLowerCase().includes("return");
 
       // 1. Regular items
+      const isFullCancel = sale.status === "returned" || sale.cancellation_status === "full";
       for (const item of sale.items) {
+        if (isFullCancel) continue;
         // Filter regular items using OR matching: must match at least one selected filter criteria
         const matchesRegularFilter = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.some(filter => {
           if (filter === "cash") return methods.some(m => isCashMethod(m) || isDollarMethod(m));
@@ -370,9 +398,12 @@ export function ReportsPage() {
             sales_count: 0,
             total_quantity: 0,
             total_revenue: 0,
+            returned_quantity: 0,
+            returned_revenue: 0,
             payment_breakdown: {},
             price_breakdown: {},
             commission_amount: 0,
+            product_type: item.product?.product_type ?? 'product',
           });
         }
 
@@ -397,6 +428,89 @@ export function ReportsPage() {
           pGroup.commission_amount = (pGroup.commission_amount ?? 0) + comm;
         }
       }
+
+      // 1.2 Cancelled/Returned items (ADR-016 & Legacy Returns)
+      const hasCancellations = sale.cancelled_items && sale.cancelled_items.length > 0;
+      const isLegacyReturn = sale.status === "returned" && !hasCancellations;
+
+      if (hasCancellations || isLegacyReturn) {
+        const matchesCancelledFilter = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.includes("cancelled");
+        if (matchesCancelledFilter) {
+          const itemsToProcess = hasCancellations 
+            ? sale.cancelled_items.map((ci: any) => ({
+                product_id: ci.product_id,
+                name: ci.name,
+                sku: ci.sku,
+                qty_cancelled: Number(ci.qty_cancelled || ci.quantity || 0),
+                line_total: Number(ci.line_total || 0),
+                price: Number(ci.price || 0),
+                product_type: ci.product_type ?? 'product'
+              }))
+            : (sale.items || []).map((item: any) => ({
+                product_id: item.product_id,
+                name: item.product?.name ?? "Artículo Devuelto",
+                sku: item.product?.sku ?? "—",
+                qty_cancelled: Number(item.quantity || 0),
+                line_total: Number(item.total || 0),
+                price: Number(item.price || 0),
+                product_type: item.product?.product_type ?? 'product'
+              }));
+
+          for (const cItem of itemsToProcess) {
+            const prodId = cItem.product_id;
+            if (!prodId) continue;
+
+            const prodName = cItem.name ?? "Artículo Cancelado";
+            const prodSku = cItem.sku ?? "—";
+            // Return/cancellation means negative volume/income to represent withdrawal/refund
+            const cancelQty = cItem.qty_cancelled;
+            const cancelTotal = cItem.line_total;
+            const qty = -cancelQty;
+            const itemTotal = -cancelTotal;
+            const unitPrice = cItem.price;
+
+            if (!map.has(prodId)) {
+              map.set(prodId, {
+                id: prodId,
+                name: prodName,
+                sku: prodSku,
+                sales_count: 0,
+                total_quantity: 0,
+                total_revenue: 0,
+                returned_quantity: 0,
+                returned_revenue: 0,
+                payment_breakdown: {},
+                price_breakdown: {},
+                commission_amount: 0,
+                product_type: cItem.product_type,
+              });
+            }
+
+            const pGroup = map.get(prodId)!;
+            // Solo reducimos el sales_count (tickets) 1 vez por venta devuelta, no por cada item
+            // Si es un ticket legacy completo, restarlo por item daría un número de tickets negativo extremo.
+            // Lo omitimos aquí para los items y lo sumamos a nivel de ticket si hiciera falta, pero
+            // por ahora conservamos el comportamiento anterior de contar -1 por item para no romper nada grave, 
+            // aunque idealmente se cuenta a nivel venta.
+            pGroup.sales_count -= 1; 
+            pGroup.total_quantity += qty; // Adds negative quantity
+            pGroup.total_revenue += itemTotal; // Adds negative revenue
+
+            pGroup.returned_quantity = (pGroup.returned_quantity || 0) + cancelQty;
+            pGroup.returned_revenue = (pGroup.returned_revenue || 0) + cancelTotal;
+
+            const payMethodCancelled = payMethodName + " (Devuelto)";
+            if (!pGroup.payment_breakdown[payMethodCancelled]) {
+              pGroup.payment_breakdown[payMethodCancelled] = { qty: 0, revenue: 0 };
+            }
+            const pBreakdown = pGroup.payment_breakdown[payMethodCancelled]!;
+            pBreakdown.qty += qty;
+            pBreakdown.revenue += itemTotal;
+
+            pGroup.price_breakdown[unitPrice] = (pGroup.price_breakdown[unitPrice] ?? 0) + qty;
+          }
+        }
+      }
     }
 
     // 2. Pre-sale items (Preventas)
@@ -407,8 +521,8 @@ export function ReportsPage() {
       const paidInRange = paymentsInRange.reduce((sum, p) => sum + (p.amount || 0), 0);
 
       let payMethodName = "Efectivo";
-      if (paymentsInRange.length > 0) {
-        let mainPayment = paymentsInRange[0]!;
+      let mainPayment = paymentsInRange[0] || null;
+      if (paymentsInRange.length > 0 && mainPayment) {
         for (const p of paymentsInRange) {
           if (p && p.amount > mainPayment.amount) {
             mainPayment = p;
@@ -442,10 +556,13 @@ export function ReportsPage() {
               sales_count: 0,
               total_quantity: 0,
               total_revenue: 0,
+              returned_quantity: 0,
+              returned_revenue: 0,
               payment_breakdown: {},
               price_breakdown: {},
               pre_sale_apartado: 0,
               pre_sale_deuda: 0,
+              product_type: item.product_type ?? 'product',
             });
           }
 
@@ -469,8 +586,43 @@ export function ReportsPage() {
       }
     }
 
-    return Array.from(map.values()).sort((a, b) => b.total_quantity - a.total_quantity);
+    return Array.from(map.values()).sort((a, b) => {
+      const aIsManga = a.product_type === "manga";
+      const bIsManga = b.product_type === "manga";
+      if (aIsManga && !bIsManga) return 1;  // Mangas go to the bottom
+      if (!aIsManga && bIsManga) return -1; // Non-mangas stay at the top
+      return b.total_quantity - a.total_quantity; // Sort same-type products by volume
+    });
   }, [filteredSales, filteredPreSaleOrders, from, to]);
+
+  const uiTotals = useMemo(() => {
+    let bruto = 0;
+    let comision = 0;
+    let iva = 0;
+    let neto = 0;
+    groupedProducts.forEach(prod => {
+      bruto += prod.total_revenue || 0;
+      const comm = prod.commission_amount || 0;
+      comision += comm;
+      iva += comm * 0.16;
+      neto += (prod.total_revenue - comm - (comm * 0.16));
+    });
+    return { bruto, comision, iva, neto };
+  }, [groupedProducts]);
+
+  const regularProducts = useMemo(() => groupedProducts.filter(p => p.product_type !== 'manga'), [groupedProducts]);
+  const tomoProducts = useMemo(() => groupedProducts.filter(p => p.product_type === 'manga'), [groupedProducts]);
+
+  // Tomo nacional vs importado statistics summary (any tomo is a manga)
+  const tomoSummary = useMemo(() => {
+    let totalQty = 0;
+    let totalRevenue = 0;
+    tomoProducts.forEach(p => {
+      totalQty += p.total_quantity || 0;
+      totalRevenue += p.total_revenue || 0;
+    });
+    return { qty: totalQty, revenue: totalRevenue };
+  }, [tomoProducts]);
   const invReport: InventoryReport | null = invQuery.data ?? null;
   const topReport: TopProductsReport | null = topQuery.data ?? null;
   const custReport: CustomersReport | null = custQuery.data ?? null;
@@ -510,6 +662,7 @@ export function ReportsPage() {
     let card = 0;
     let cash = 0;
     let deposits = 0;
+    let usd = 0; // dólares físicos recibidos (informativo; el MXN ya está en cash)
     const contributingSales = new Set<number>();
 
     const isCard = (name: string) =>
@@ -517,14 +670,18 @@ export function ReportsPage() {
     const isTransfer = (name: string) =>
       name.includes("transfer") || name.includes("deposit") || name.includes("spei");
 
+    // Dynamic show controls based on active filters
+    const showActive = selectedFilters.includes("all") || selectedFilters.length === 0 || !selectedFilters.includes("cancelled") || selectedFilters.length > 1;
+    const showCancelled = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.includes("cancelled");
+
     for (const sale of filteredSales) {
+      const isFullCancel = sale.status === "returned" || sale.cancellation_status === "full";
       let contributed = false;
 
-      // 1. Process standard checkout payments
-      const showRegularItems = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.some(f => ["cash", "dollar", "card", "transfer", "cancelled"].includes(f));
-      if (showRegularItems && sale.items && sale.items.length > 0) {
+      // 1. Process standard checkout payments (positive active sales)
+      if (showActive && !isFullCancel && sale.items && sale.items.length > 0) {
         const methods = (sale.payments ?? []).map(p => (p.payment_method?.name ?? "").toLowerCase()).filter(Boolean);
-        const hasCancelled = (sale.cancellation_status && sale.cancellation_status !== "none") || (sale.status ?? "").toLowerCase().includes("cancel");
+        const hasCancelled = (sale.cancellation_status && sale.cancellation_status !== "none") || (sale.status ?? "").toLowerCase().includes("cancel") || (sale.status ?? "").toLowerCase().includes("return");
 
         const matchesRegularFilter = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.some(filter => {
           if (filter === "cash") return methods.some(m => m.includes("efectivo") || m.includes("cash") || m.includes("dolar") || m.includes("dólar") || m.includes("usd"));
@@ -553,6 +710,35 @@ export function ReportsPage() {
               }
             }
           }
+          usd += sale.cash_received_usd || 0;
+        }
+      }
+
+      // 2. Process cancelled/negative parts (returns)
+      if (showCancelled && (isFullCancel || (sale.cancellation_status && sale.cancellation_status !== "none")) && sale.cancelled_amount && sale.cancelled_amount > 0) {
+        contributed = true;
+        const cancelledAmount = sale.cancelled_amount;
+        const originalTotal = sale.total + cancelledAmount;
+        
+        if (originalTotal > 0 && sale.payments && sale.payments.length > 0) {
+          for (const p of sale.payments) {
+            if (!p) continue;
+            const name = (p.payment_method?.name ?? "").toLowerCase();
+            const ratio = (p.amount || 0) / originalTotal;
+            const pCancelledAmount = cancelledAmount * ratio;
+
+            total -= pCancelledAmount;
+            if (isCard(name)) {
+              card -= pCancelledAmount;
+            } else if (isTransfer(name)) {
+              deposits -= pCancelledAmount;
+            } else {
+              cash -= pCancelledAmount;
+            }
+          }
+        } else {
+          total -= cancelledAmount;
+          cash -= cancelledAmount;
         }
       }
 
@@ -561,7 +747,7 @@ export function ReportsPage() {
       }
     }
 
-    // 2. Process pre-sale payments (anticipos) from filteredPreSaleOrders that are not linked to already processed sales
+    // 3. Process pre-sale payments (anticipos) from filteredPreSaleOrders that are not linked to already processed sales
     const processedLinkedSaleIds = new Set(filteredSales.map(s => s.id));
     const showPreSales = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.some(f => ["preSales", "notPicked", "cash", "dollar", "card", "transfer", "cancelled"].includes(f));
     
@@ -572,8 +758,6 @@ export function ReportsPage() {
           continue;
         }
 
-        // Solo los cobros cuya fecha cae en el rango (por fecha de pago, no de
-        // creación) — así el KPI suma lo realmente cobrado en el período.
         const paymentsInRange = presalePaymentsInRange(order.payments, from, to);
         if (paymentsInRange.length > 0) {
           let orderContributed = false;
@@ -605,6 +789,7 @@ export function ReportsPage() {
       card,
       cash,
       deposits,
+      usd,
       transactionCount: contributingSales.size,
     };
   }, [filteredSales, filteredPreSaleOrders, selectedFilters, from, to]);
@@ -612,6 +797,499 @@ export function ReportsPage() {
 
     const activeTabMeta = (REPORT_TABS.find(tab => tab.id === activeTab) ?? REPORT_TABS[0]) as { id: TabId; label: string; icon: React.ElementType };
   const hiddenTabs = REPORT_TABS.filter(tab => tab.id !== activeTab);
+
+  const handleExportPDF = () => {
+    try {
+      toast.info("Generando archivo PDF...");
+      const doc = new jsPDF({
+        orientation: "landscape",
+        unit: "mm",
+        format: "a4"
+      });
+
+      // Title & Header Info
+      doc.setFillColor(204, 34, 0); // Tadaima Red
+      doc.rect(10, 10, 277, 18, "F");
+
+      doc.setTextColor(255, 255, 255);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(14);
+      doc.text("TADAIMA - REPORTE DE AUDITORÍA Y VENTAS", 15, 21);
+
+      // Metadata
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "normal");
+      doc.text(`Periodo: ${fmtDate(from)} al ${fmtDate(to)}`, 15, 25);
+      
+      const storeName = stores.find(s => s.id === effectiveStoreId)?.name ?? "Todas las tiendas";
+      doc.text(`Tienda: ${storeName}   |   Generado: ${fmtDate(today)} ${new Date().toLocaleTimeString()}`, 170, 25);
+
+      let currentY = 33;
+
+      // Card Totals
+      doc.setDrawColor(220, 220, 220);
+      doc.setFillColor(248, 248, 248);
+      doc.roundedRect(10, currentY, 277, 16, 2, 2, "FD");
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.setTextColor(100, 100, 100);
+      doc.text("INGRESOS COBRADOS EN CAJA (CONCEPTO VS MONTO NETO REAL DEL PERIODO)", 14, currentY + 5);
+
+      doc.setFontSize(9);
+      doc.setTextColor(50, 50, 50);
+      doc.text(`Total Bruto: ${fmt(paymentBreakdown.total)}`, 14, currentY + 11);
+      doc.text(`Efectivo: ${fmt(paymentBreakdown.cash)}`, 80, currentY + 11);
+      doc.text(`Tarjetas: ${fmt(paymentBreakdown.card)}`, 140, currentY + 11);
+      doc.text(`Depósitos: ${fmt(paymentBreakdown.deposits)}`, 210, currentY + 11);
+
+      currentY += 21;
+
+      // Table 1: Detalle general
+      doc.setTextColor(50, 50, 50);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.text("1. DETALLE GENERAL DE VENTAS POR PRODUCTO", 10, currentY);
+      currentY += 3;
+
+      const tbl1Body: any[] = [];
+      
+      const buildPdfRow = (prod: any) => {
+        const pricesStr = Object.entries(prod.price_breakdown)
+          .map(([price, qty]) => `${qty} ud. a ${fmt(parseFloat(price))}`)
+          .join(", ");
+        const comm = prod.commission_amount || 0;
+        const iva = comm * 0.16;
+        const net = prod.total_revenue - comm - iva;
+
+        return [
+          prod.name,
+          prod.sku,
+          prod.sales_count,
+          (prod.returned_quantity && prod.returned_quantity > 0) ? `${prod.total_quantity} (-${prod.returned_quantity} dev)` : prod.total_quantity,
+          (prod.returned_revenue && prod.returned_revenue > 0) ? `${fmt(prod.total_revenue)} (-${fmt(prod.returned_revenue)} dev)` : fmt(prod.total_revenue),
+          fmt(comm),
+          fmt(iva),
+          fmt(net),
+          pricesStr
+        ];
+      };
+
+      // Add regular products
+      regularProducts.forEach(prod => {
+        tbl1Body.push(buildPdfRow(prod));
+      });
+
+      // Add divider row if both are present
+      let tomoPdfDividerIndex = -1;
+      if (regularProducts.length > 0 && tomoProducts.length > 0) {
+        tomoPdfDividerIndex = tbl1Body.length;
+        tbl1Body.push([
+          "MANGA NACIONAL",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]);
+      }
+
+      // Add tomo products
+      tomoProducts.forEach(prod => {
+        tbl1Body.push(buildPdfRow(prod));
+      });
+
+      // Calculate totals
+      let t1Tickets = 0, t1Cant = 0, t1Bruto = 0, t1Com = 0, t1Net = 0;
+      groupedProducts.forEach(p => {
+        t1Tickets += p.sales_count || 0;
+        t1Cant += p.total_quantity || 0;
+        t1Bruto += p.total_revenue || 0;
+        const c = p.commission_amount || 0;
+        t1Com += c;
+        t1Net += (p.total_revenue - c - (c * 0.16));
+      });
+
+      const t1IvaTotal = t1Com * 0.16;
+      tbl1Body.push([
+        "TOTAL GENERAL",
+        "",
+        t1Tickets.toString(),
+        t1Cant.toString(),
+        fmt(t1Bruto),
+        fmt(t1Com),
+        fmt(t1IvaTotal),
+        fmt(t1Net),
+        ""
+      ]);
+
+      autoTable(doc, {
+        startY: currentY,
+        head: [["Producto", "SKU", "Tickets", "Cant.", "Bruto", "Comisión TPV", "IVA s/Comisión (16%)", "Neto Real", "Precios Unitarios"]],
+        body: tbl1Body,
+        theme: "striped",
+        headStyles: { fillColor: [80, 80, 80], fontSize: 8, fontStyle: "bold" },
+        bodyStyles: { fontSize: 7.5 },
+        columnStyles: {
+          0: { cellWidth: 50 },
+          1: { cellWidth: 28 },
+          2: { halign: "center" },
+          3: { halign: "center" },
+          4: { halign: "right" },
+          5: { halign: "right" },
+          6: { halign: "right" },
+          7: { halign: "right", fontStyle: "bold" },
+          8: { cellWidth: 60 }
+        },
+        didParseCell: (data) => {
+          if (tomoPdfDividerIndex !== -1 && data.row.index === tomoPdfDividerIndex) {
+            data.cell.styles.fontStyle = "bold";
+            data.cell.styles.fillColor = [220, 220, 220];
+            data.cell.styles.textColor = [50, 50, 50];
+          } else if (data.row.index === tbl1Body.length - 1) {
+            data.cell.styles.fontStyle = "bold";
+            data.cell.styles.fillColor = [240, 240, 240];
+            if ([4, 5, 6, 7].includes(data.column.index)) {
+              data.cell.styles.textColor = data.column.index === 7 ? [0, 150, 70] : [50, 50, 50];
+            }
+          }
+        }
+      });
+
+      currentY = (doc as any).lastAutoTable.finalY + 10;
+
+      // Check if page overflow
+      if (currentY > 185) {
+        doc.addPage();
+        currentY = 15;
+      }
+
+      // Table 2: Tarjetas
+      const cardProducts = groupedProducts.filter(prod => 
+        Object.keys(prod.payment_breakdown).some(m => m.toLowerCase().includes("tarjeta") || m.toLowerCase().includes("credit") || m.toLowerCase().includes("debito") || m.toLowerCase().includes("tpv") || m.toLowerCase().includes("terminal"))
+      );
+
+      if (cardProducts.length > 0) {
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        doc.text("2. DESGLOSE DE COBROS CON TARJETA Y COMISIONES (16% IVA)", 10, currentY);
+        currentY += 3;
+
+        const tbl2Body = cardProducts.map(prod => {
+          let cardQty = 0;
+          let cardRevenue = 0;
+          Object.entries(prod.payment_breakdown).forEach(([method, data]) => {
+            if (method.toLowerCase().includes("tarjeta") || method.toLowerCase().includes("credit") || method.toLowerCase().includes("debito") || method.toLowerCase().includes("tpv") || method.toLowerCase().includes("terminal")) {
+              cardQty += data.qty;
+              cardRevenue += data.revenue;
+            }
+          });
+          const comm = prod.commission_amount || 0;
+          const iva = comm * 0.16;
+          return [
+            prod.name,
+            prod.sku,
+            cardQty,
+            fmt(cardRevenue),
+            fmt(comm),
+            fmt(iva),
+            fmt(cardRevenue - comm - iva)
+          ];
+        });
+
+        // Totals
+        let t2Cant = 0, t2Bruto = 0, t2Com = 0, t2Iva = 0, t2Net = 0;
+        cardProducts.forEach(prod => {
+          let cardQty = 0;
+          let cardRevenue = 0;
+          Object.entries(prod.payment_breakdown).forEach(([method, data]) => {
+            if (method.toLowerCase().includes("tarjeta") || method.toLowerCase().includes("credit") || method.toLowerCase().includes("debito") || method.toLowerCase().includes("tpv") || method.toLowerCase().includes("terminal")) {
+              cardQty += data.qty;
+              cardRevenue += data.revenue;
+            }
+          });
+          const c = prod.commission_amount || 0;
+          const i = c * 0.16;
+          t2Cant += cardQty;
+          t2Bruto += cardRevenue;
+          t2Com += c;
+          t2Iva += i;
+          t2Net += (cardRevenue - c - i);
+        });
+
+        tbl2Body.push([
+          "TOTAL TARJETAS",
+          "",
+          t2Cant.toString(),
+          fmt(t2Bruto),
+          fmt(t2Com),
+          fmt(t2Iva),
+          fmt(t2Net)
+        ]);
+
+        autoTable(doc, {
+          startY: currentY,
+          head: [["Producto", "SKU", "Cant. Tarjeta", "Bruto Tarjeta", "Comisión TPV", "IVA s/Comisión (16%)", "Neto Tarjeta"]],
+          body: tbl2Body,
+          theme: "striped",
+          headStyles: { fillColor: [34, 102, 187], fontSize: 8, fontStyle: "bold" },
+          bodyStyles: { fontSize: 7.5 },
+          columnStyles: {
+            0: { cellWidth: 70 },
+            1: { cellWidth: 35 },
+            2: { halign: "center" },
+            3: { halign: "right" },
+            4: { halign: "right" },
+            5: { halign: "right" },
+            6: { halign: "right", fontStyle: "bold" }
+          },
+          didParseCell: (data) => {
+            if (data.row.index === tbl2Body.length - 1) {
+              data.cell.styles.fontStyle = "bold";
+              data.cell.styles.fillColor = [230, 240, 255];
+              if (data.column.index === 6) {
+                data.cell.styles.textColor = [0, 150, 70];
+              }
+            }
+          }
+        });
+
+        currentY = (doc as any).lastAutoTable.finalY + 10;
+      }
+
+      // Check page overflow for Section 3
+      if (currentY > 185) {
+        doc.addPage();
+        currentY = 15;
+      }
+
+      // Table 3: Efectivo
+      const cashProducts = groupedProducts.filter(prod => 
+        Object.keys(prod.payment_breakdown).some(m => m.toLowerCase().includes("efectivo") || m.toLowerCase().includes("cash") || m.toLowerCase().includes("dolar") || m.toLowerCase().includes("dólar") || m.toLowerCase().includes("usd") || m.toLowerCase().includes("otro") || m.toLowerCase().includes("unmapped"))
+      );
+
+      if (cashProducts.length > 0) {
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        doc.text("3. DESGLOSE DE VENTAS EN EFECTIVO (PESOS / DÓLARES / OTROS)", 10, currentY);
+        currentY += 3;
+
+        const tbl3Body = cashProducts.map(prod => {
+          let cashQty = 0;
+          let cashRevenue = 0;
+          Object.entries(prod.payment_breakdown).forEach(([method, data]) => {
+            if (method.toLowerCase().includes("efectivo") || method.toLowerCase().includes("cash") || method.toLowerCase().includes("dolar") || method.toLowerCase().includes("dólar") || method.toLowerCase().includes("usd") || method.toLowerCase().includes("otro") || method.toLowerCase().includes("unmapped")) {
+              cashQty += data.qty;
+              cashRevenue += data.revenue;
+            }
+          });
+          return [
+            prod.name,
+            prod.sku,
+            cashQty,
+            fmt(cashRevenue)
+          ];
+        });
+
+        // Totals
+        let t3Cant = 0, t3Bruto = 0;
+        cashProducts.forEach(prod => {
+          let cashQty = 0;
+          let cashRevenue = 0;
+          Object.entries(prod.payment_breakdown).forEach(([method, data]) => {
+            if (method.toLowerCase().includes("efectivo") || method.toLowerCase().includes("cash") || method.toLowerCase().includes("dolar") || method.toLowerCase().includes("dólar") || method.toLowerCase().includes("usd") || method.toLowerCase().includes("otro") || method.toLowerCase().includes("unmapped")) {
+              cashQty += data.qty;
+              cashRevenue += data.revenue;
+            }
+          });
+          t3Cant += cashQty;
+          t3Bruto += cashRevenue;
+        });
+
+        tbl3Body.push([
+          "TOTAL EFECTIVO",
+          "",
+          t3Cant.toString(),
+          fmt(t3Bruto)
+        ]);
+
+        autoTable(doc, {
+          startY: currentY,
+          head: [["Producto", "SKU", "Cant. Efectivo", "Monto Efectivo"]],
+          body: tbl3Body,
+          theme: "striped",
+          headStyles: { fillColor: [0, 150, 70], fontSize: 8, fontStyle: "bold" },
+          bodyStyles: { fontSize: 7.5 },
+          columnStyles: {
+            0: { cellWidth: 100 },
+            1: { cellWidth: 45 },
+            2: { halign: "center" },
+            3: { halign: "right", fontStyle: "bold" }
+          },
+          didParseCell: (data) => {
+            if (data.row.index === tbl3Body.length - 1) {
+              data.cell.styles.fontStyle = "bold";
+              data.cell.styles.fillColor = [230, 250, 235];
+              if (data.column.index === 3) {
+                data.cell.styles.textColor = [0, 150, 70];
+              }
+            }
+          }
+        });
+
+        currentY = (doc as any).lastAutoTable.finalY + 10;
+      }
+
+      // Check page overflow for Section 4
+      if (currentY > 185) {
+        doc.addPage();
+        currentY = 15;
+      }
+
+      // Table 4: Preventas
+      const preSaleProducts = groupedProducts.filter(prod => 
+        (prod.pre_sale_apartado && prod.pre_sale_apartado > 0) || (prod.pre_sale_deuda && prod.pre_sale_deuda > 0)
+      );
+
+      if (preSaleProducts.length > 0) {
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        doc.text("4. CONTROL Y AUDITORÍA DE PREVENTAS (ABONADO VS DEUDA PENDIENTE)", 10, currentY);
+        currentY += 3;
+
+        const tbl4Body = preSaleProducts.map(prod => {
+          const pactado = (prod.pre_sale_apartado || 0) + (prod.pre_sale_deuda || 0);
+          return [
+            prod.name,
+            prod.sku,
+            prod.total_quantity,
+            fmt(prod.pre_sale_apartado || 0),
+            fmt(prod.pre_sale_deuda || 0),
+            fmt(pactado)
+          ];
+        });
+
+        // Totals
+        let t4Cant = 0, t4Ap = 0, t4Deu = 0, t4Tot = 0;
+        preSaleProducts.forEach(p => {
+          t4Cant += p.total_quantity || 0;
+          t4Ap += p.pre_sale_apartado || 0;
+          t4Deu += p.pre_sale_deuda || 0;
+          t4Tot += ((p.pre_sale_apartado || 0) + (p.pre_sale_deuda || 0));
+        });
+
+        tbl4Body.push([
+          "TOTAL PREVENTAS",
+          "",
+          t4Cant.toString(),
+          fmt(t4Ap),
+          fmt(t4Deu),
+          fmt(t4Tot)
+        ]);
+
+        autoTable(doc, {
+          startY: currentY,
+          head: [["Producto", "SKU", "Cant. Preventa", "Abonado (Apartado)", "Pendiente (Deuda)", "Pactado (Total)"]],
+          body: tbl4Body,
+          theme: "striped",
+          headStyles: { fillColor: [136, 51, 238], fontSize: 8, fontStyle: "bold" },
+          bodyStyles: { fontSize: 7.5 },
+          columnStyles: {
+            0: { cellWidth: 80 },
+            1: { cellWidth: 35 },
+            2: { halign: "center" },
+            3: { halign: "right", fontStyle: "bold" },
+            4: { halign: "right", fontStyle: "bold" },
+            5: { halign: "right" }
+          },
+          didParseCell: (data) => {
+            if (data.row.index === tbl4Body.length - 1) {
+              data.cell.styles.fontStyle = "bold";
+              data.cell.styles.fillColor = [245, 235, 255];
+              if (data.column.index === 3) {
+                data.cell.styles.textColor = [0, 150, 70];
+              }
+              if (data.column.index === 4) {
+                data.cell.styles.textColor = [200, 30, 0];
+              }
+            }
+          }
+        });
+      }
+
+      currentY = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 10 : currentY;
+
+      // Table 5: Devoluciones
+      const returnedProducts = groupedProducts.filter(prod => 
+        (prod.returned_quantity && prod.returned_quantity > 0)
+      );
+
+      if (returnedProducts.length > 0) {
+        if (currentY > 185) {
+          doc.addPage();
+          currentY = 15;
+        }
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        doc.text("5. DEVOLUCIONES Y CANCELACIONES", 10, currentY);
+        currentY += 3;
+
+        const tbl5Body = returnedProducts.map(prod => {
+          return [
+            prod.name,
+            prod.sku,
+            prod.returned_quantity || 0,
+            fmt(prod.returned_revenue || 0)
+          ];
+        });
+
+        // Totals
+        let t5Cant = 0, t5Monto = 0;
+        returnedProducts.forEach(p => {
+          t5Cant += p.returned_quantity || 0;
+          t5Monto += p.returned_revenue || 0;
+        });
+
+        tbl5Body.push([
+          "TOTAL DEVOLUCIONES",
+          "",
+          t5Cant.toString(),
+          fmt(t5Monto)
+        ]);
+
+        autoTable(doc, {
+          startY: currentY,
+          head: [["Producto", "SKU", "Cant. Devuelta", "Monto Devuelto"]],
+          body: tbl5Body,
+          theme: "striped",
+          headStyles: { fillColor: [255, 68, 34], fontSize: 8, fontStyle: "bold" },
+          bodyStyles: { fontSize: 7.5 },
+          columnStyles: {
+            0: { cellWidth: 100 },
+            1: { cellWidth: 45 },
+            2: { halign: "center", fontStyle: "bold", textColor: [255, 68, 34] },
+            3: { halign: "right", fontStyle: "bold", textColor: [255, 68, 34] }
+          },
+          didParseCell: (data) => {
+            if (data.row.index === tbl5Body.length - 1) {
+              data.cell.styles.fontStyle = "bold";
+              data.cell.styles.fillColor = [255, 235, 230];
+            }
+          }
+        });
+      }
+
+      doc.save(`Tadaima_Reporte_Ventas_${from}_${to}.pdf`);
+      toast.success("PDF generado exitosamente!");
+    } catch (error) {
+      console.error("Error generating PDF:", error);
+      toast.error("Hubo un error al generar el PDF");
+    }
+  };
 
   const handleExportExcel = async () => {
     try {
@@ -755,32 +1433,36 @@ export function ReportsPage() {
           "Tickets",
           "Cant.",
           "Bruto",
-          "Comisión",
+          "Comisión TPV",
+          "IVA s/Comisión (16%)",
           "Neto Real",
           "Precios Unitarios",
           "Desglose de Pagos"
         ];
         styleHeaderRow(tbl1Header, "FF555555");
 
-        groupedProducts.forEach((prod) => {
+        const writeExcelRow = (prod: any) => {
           currentExcelRow++;
           const pricesStr = Object.entries(prod.price_breakdown)
             .map(([price, qty]) => qty + " ud. a " + fmt(parseFloat(price)))
             .join("\n");
           const paymentsStr = Object.entries(prod.payment_breakdown)
-            .map(([method, data]) => data.qty + " ud. con " + method + " (" + fmt(data.revenue) + ")")
+            .map(([method, data]) => (data as any).qty + " ud. con " + method + " (" + fmt((data as any).revenue) + ")")
             .join("\n");
 
-          const netRevenue = prod.total_revenue - (prod.commission_amount || 0);
+          const prodComm = prod.commission_amount || 0;
+          const prodIva = prodComm * 0.16;
+          const netRevenue = prod.total_revenue - prodComm - prodIva;
 
           const r = sheet.getRow(currentExcelRow);
           r.values = [
             prod.name,
             prod.sku,
             prod.sales_count,
-            prod.total_quantity,
-            prod.total_revenue,
-            prod.commission_amount || 0,
+            (prod.returned_quantity && prod.returned_quantity > 0) ? `${prod.total_quantity} (-${prod.returned_quantity} dev)` : prod.total_quantity,
+            (prod.returned_revenue && prod.returned_revenue > 0) ? `${prod.total_revenue} (-${prod.returned_revenue} dev)` : prod.total_revenue,
+            prodComm,
+            prodIva,
             netRevenue,
             pricesStr,
             paymentsStr
@@ -791,7 +1473,7 @@ export function ReportsPage() {
             Object.keys(prod.payment_breakdown).length,
             1
           );
-          r.height = 14 * lineCount + 10; // Dynamically adjusts to let rows breathe!
+          r.height = 14 * lineCount + 10;
 
           r.getCell(1).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
           r.getCell(2).alignment = { horizontal: "center", vertical: "middle" };
@@ -807,12 +1489,108 @@ export function ReportsPage() {
           r.getCell(6).alignment = { horizontal: "right", vertical: "middle" };
           
           r.getCell(7).numFmt = "$#,##0.00";
-          r.getCell(7).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
+          r.getCell(7).font = { name: "Arial", size: 9, color: { argb: "FFF59E0B" } };
           r.getCell(7).alignment = { horizontal: "right", vertical: "middle" };
 
-          r.getCell(8).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+          r.getCell(8).numFmt = "$#,##0.00";
+          r.getCell(8).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
+          r.getCell(8).alignment = { horizontal: "right", vertical: "middle" };
+
           r.getCell(9).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+          r.getCell(10).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+        };
+
+        // Write regular products
+        regularProducts.forEach(writeExcelRow);
+
+        // Add TOMO divider row if both are present
+        if (regularProducts.length > 0 && tomoProducts.length > 0) {
+          currentExcelRow++;
+          sheet.mergeCells(`A${currentExcelRow}:J${currentExcelRow}`);
+          const dividerCell = sheet.getCell(`A${currentExcelRow}`);
+          dividerCell.value = "📚 MANGA NACIONAL";
+          dividerCell.font = { name: "Arial", size: 9, bold: true, color: { argb: "FF333333" } };
+          dividerCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEFEFEF" } };
+          dividerCell.alignment = { horizontal: "left", vertical: "middle" };
+          sheet.getRow(currentExcelRow).height = 20;
+        }
+
+        // Write tomo products
+        tomoProducts.forEach(writeExcelRow);
+
+        // Add TOTALS Row for Section 1
+        currentExcelRow++;
+        const t1Row = sheet.getRow(currentExcelRow);
+        t1Row.height = 24;
+        
+        let t1Tickets = 0;
+        let t1Cant = 0;
+        let t1Bruto = 0;
+        let t1Comision = 0;
+        let t1Neto = 0;
+
+        groupedProducts.forEach(prod => {
+          t1Tickets += prod.sales_count || 0;
+          t1Cant += prod.total_quantity || 0;
+          t1Bruto += prod.total_revenue || 0;
+          const comm = prod.commission_amount || 0;
+          t1Comision += comm;
+          t1Neto += (prod.total_revenue - comm - (comm * 0.16));
         });
+
+        t1Row.values = [
+          "TOTAL GENERAL",
+          "",
+          t1Tickets,
+          t1Cant,
+          t1Bruto,
+          t1Comision,
+          t1Comision * 0.16,
+          t1Neto,
+          "",
+          ""
+        ];
+        
+        sheet.mergeCells(`A${currentExcelRow}:B${currentExcelRow}`);
+        
+        t1Row.getCell(1).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFFFFFF" } };
+        t1Row.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF333333" } };
+        t1Row.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
+        t1Row.getCell(2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF333333" } }; // merged partner
+        
+        // Add double borders/bold formatting to numbers
+        const t1BoldFont = { name: "Arial", size: 9, bold: true };
+        const t1DoubleBorder = {
+          top: { style: 'thin' as const, color: { argb: 'FF888888' } },
+          bottom: { style: 'double' as const, color: { argb: 'FF333333' } }
+        };
+
+        [3, 4].forEach(col => {
+          const cell = t1Row.getCell(col);
+          cell.font = t1BoldFont;
+          cell.border = t1DoubleBorder;
+          cell.alignment = { horizontal: "center", vertical: "middle" };
+        });
+
+        t1Row.getCell(5).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF333333" } };
+        t1Row.getCell(5).border = t1DoubleBorder;
+        t1Row.getCell(5).numFmt = "$#,##0.00";
+        t1Row.getCell(5).alignment = { horizontal: "right", vertical: "middle" };
+
+        t1Row.getCell(6).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFF2200" } };
+        t1Row.getCell(6).border = t1DoubleBorder;
+        t1Row.getCell(6).numFmt = "$#,##0.00";
+        t1Row.getCell(6).alignment = { horizontal: "right", vertical: "middle" };
+
+        t1Row.getCell(7).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFF59E0B" } };
+        t1Row.getCell(7).border = t1DoubleBorder;
+        t1Row.getCell(7).numFmt = "$#,##0.00";
+        t1Row.getCell(7).alignment = { horizontal: "right", vertical: "middle" };
+
+        t1Row.getCell(8).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
+        t1Row.getCell(8).border = t1DoubleBorder;
+        t1Row.getCell(8).numFmt = "$#,##0.00";
+        t1Row.getCell(8).alignment = { horizontal: "right", vertical: "middle" };
 
         // =========================================================================
         // SECTION 2: DETALLE DE VENTAS CON TARJETA BANCARIA Y COMISIONES
@@ -833,8 +1611,9 @@ export function ReportsPage() {
             "Cant. Tarjeta",
             "Bruto Tarjeta",
             "Comisión TPV",
+            "IVA s/Comisión (16%)",
             "Neto Tarjeta",
-            "", "", ""
+            "", ""
           ];
           styleHeaderRow(tbl2Header, "FF4488DD");
 
@@ -852,15 +1631,20 @@ export function ReportsPage() {
               }
             });
 
+            const prodComm = prod.commission_amount || 0;
+            const prodIva = prodComm * 0.16;
+            const netCard = cardRevenue - prodComm - prodIva;
+
             const r = sheet.getRow(currentExcelRow);
             r.values = [
               prod.name,
               prod.sku,
               cardQty,
               cardRevenue,
-              prod.commission_amount || 0,
-              cardRevenue - (prod.commission_amount || 0),
-              "", "", ""
+              prodComm,
+              prodIva,
+              netCard,
+              "", ""
             ];
             r.height = 20;
 
@@ -870,14 +1654,99 @@ export function ReportsPage() {
             
             r.getCell(4).numFmt = "$#,##0.00";
             r.getCell(4).alignment = { horizontal: "right", vertical: "middle" };
+            
             r.getCell(5).numFmt = "$#,##0.00";
             r.getCell(5).font = { name: "Arial", size: 9, color: { argb: "FFFF2200" } };
             r.getCell(5).alignment = { horizontal: "right", vertical: "middle" };
             
             r.getCell(6).numFmt = "$#,##0.00";
-            r.getCell(6).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
+            r.getCell(6).font = { name: "Arial", size: 9, color: { argb: "FFF59E0B" } };
             r.getCell(6).alignment = { horizontal: "right", vertical: "middle" };
+            
+            r.getCell(7).numFmt = "$#,##0.00";
+            r.getCell(7).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
+            r.getCell(7).alignment = { horizontal: "right", vertical: "middle" };
           });
+
+          // Add TOTALS Row for Section 2
+          currentExcelRow++;
+          const t2Row = sheet.getRow(currentExcelRow);
+          t2Row.height = 24;
+
+          let t2Cant = 0;
+          let t2Bruto = 0;
+          let t2Comision = 0;
+          let t2Iva = 0;
+          let t2Neto = 0;
+
+          cardProducts.forEach(prod => {
+            let cardQty = 0;
+            let cardRevenue = 0;
+            Object.entries(prod.payment_breakdown).forEach(([method, data]) => {
+              const isCardMethodName = method.toLowerCase().includes("tarjeta") || method.toLowerCase().includes("credit") || method.toLowerCase().includes("debito") || method.toLowerCase().includes("tpv") || method.toLowerCase().includes("terminal");
+              if (isCardMethodName) {
+                cardQty += data.qty;
+                cardRevenue += data.revenue;
+              }
+            });
+            const comm = prod.commission_amount || 0;
+            const iva = comm * 0.16;
+
+            t2Cant += cardQty;
+            t2Bruto += cardRevenue;
+            t2Comision += comm;
+            t2Iva += iva;
+            t2Neto += (cardRevenue - comm - iva);
+          });
+
+          t2Row.values = [
+            "TOTAL TARJETAS",
+            "",
+            t2Cant,
+            t2Bruto,
+            t2Comision,
+            t2Iva,
+            t2Neto,
+            "",
+            ""
+          ];
+
+          sheet.mergeCells(`A${currentExcelRow}:B${currentExcelRow}`);
+          
+          t2Row.getCell(1).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFFFFFF" } };
+          t2Row.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF2266BB" } };
+          t2Row.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
+          t2Row.getCell(2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF2266BB" } }; // merged partner
+
+          const t2BoldFont = { name: "Arial", size: 9, bold: true };
+          const t2DoubleBorder = {
+            top: { style: 'thin' as const, color: { argb: 'FF888888' } },
+            bottom: { style: 'double' as const, color: { argb: 'FF333333' } }
+          };
+
+          t2Row.getCell(3).font = t2BoldFont;
+          t2Row.getCell(3).border = t2DoubleBorder;
+          t2Row.getCell(3).alignment = { horizontal: "center", vertical: "middle" };
+
+          t2Row.getCell(4).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF333333" } };
+          t2Row.getCell(4).border = t2DoubleBorder;
+          t2Row.getCell(4).numFmt = "$#,##0.00";
+          t2Row.getCell(4).alignment = { horizontal: "right", vertical: "middle" };
+
+          t2Row.getCell(5).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFF2200" } };
+          t2Row.getCell(5).border = t2DoubleBorder;
+          t2Row.getCell(5).numFmt = "$#,##0.00";
+          t2Row.getCell(5).alignment = { horizontal: "right", vertical: "middle" };
+
+          t2Row.getCell(6).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFF59E0B" } };
+          t2Row.getCell(6).border = t2DoubleBorder;
+          t2Row.getCell(6).numFmt = "$#,##0.00";
+          t2Row.getCell(6).alignment = { horizontal: "right", vertical: "middle" };
+
+          t2Row.getCell(7).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
+          t2Row.getCell(7).border = t2DoubleBorder;
+          t2Row.getCell(7).numFmt = "$#,##0.00";
+          t2Row.getCell(7).alignment = { horizontal: "right", vertical: "middle" };
         }
 
         // =========================================================================
@@ -934,6 +1803,58 @@ export function ReportsPage() {
             r.getCell(4).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
             r.getCell(4).alignment = { horizontal: "right", vertical: "middle" };
           });
+
+          // Add TOTALS Row for Section 3
+          currentExcelRow++;
+          const t3Row = sheet.getRow(currentExcelRow);
+          t3Row.height = 24;
+
+          let t3Cant = 0;
+          let t3Bruto = 0;
+
+          cashProducts.forEach(prod => {
+            let cashQty = 0;
+            let cashRevenue = 0;
+            Object.entries(prod.payment_breakdown).forEach(([method, data]) => {
+              const isCashMethodName = method.toLowerCase().includes("efectivo") || method.toLowerCase().includes("cash") || method.toLowerCase().includes("dolar") || method.toLowerCase().includes("dólar") || method.toLowerCase().includes("usd") || method.toLowerCase().includes("otro") || method.toLowerCase().includes("unmapped");
+              if (isCashMethodName) {
+                cashQty += data.qty;
+                cashRevenue += data.revenue;
+              }
+            });
+            t3Cant += cashQty;
+            t3Bruto += cashRevenue;
+          });
+
+          t3Row.values = [
+            "TOTAL EFECTIVO",
+            "",
+            t3Cant,
+            t3Bruto,
+            "", "", "", "", ""
+          ];
+
+          sheet.mergeCells(`A${currentExcelRow}:B${currentExcelRow}`);
+          
+          t3Row.getCell(1).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFFFFFF" } };
+          t3Row.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF009944" } };
+          t3Row.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
+          t3Row.getCell(2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF009944" } }; // merged partner
+
+          const t3BoldFont = { name: "Arial", size: 9, bold: true };
+          const t3DoubleBorder = {
+            top: { style: 'thin' as const, color: { argb: 'FF888888' } },
+            bottom: { style: 'double' as const, color: { argb: 'FF333333' } }
+          };
+
+          t3Row.getCell(3).font = t3BoldFont;
+          t3Row.getCell(3).border = t3DoubleBorder;
+          t3Row.getCell(3).alignment = { horizontal: "center", vertical: "middle" };
+
+          t3Row.getCell(4).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
+          t3Row.getCell(4).border = t3DoubleBorder;
+          t3Row.getCell(4).numFmt = "$#,##0.00";
+          t3Row.getCell(4).alignment = { horizontal: "right", vertical: "middle" };
         }
 
         // =========================================================================
@@ -990,10 +1911,160 @@ export function ReportsPage() {
             r.getCell(5).alignment = { horizontal: "right", vertical: "middle" };
             
             r.getCell(6).numFmt = "$#,##0.00";
-            r.getCell(6).font = { name: "Arial", size: 9, color: { argb: "FF333333" } };
+            r.getCell(6).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF333333" } };
             r.getCell(6).alignment = { horizontal: "right", vertical: "middle" };
           });
+
+          // Add TOTALS Row for Section 4
+          currentExcelRow++;
+          const t4Row = sheet.getRow(currentExcelRow);
+          t4Row.height = 24;
+
+          let t4Cant = 0;
+          let t4Apartado = 0;
+          let t4Deuda = 0;
+          let t4Pactado = 0;
+
+          preSaleProducts.forEach(prod => {
+            t4Cant += prod.total_quantity;
+            t4Apartado += prod.pre_sale_apartado || 0;
+            t4Deuda += prod.pre_sale_deuda || 0;
+            t4Pactado += (prod.pre_sale_apartado || 0) + (prod.pre_sale_deuda || 0);
+          });
+
+          t4Row.values = [
+            "TOTAL PREVENTAS",
+            "",
+            t4Cant,
+            t4Apartado,
+            t4Deuda,
+            t4Pactado,
+            "", "", ""
+          ];
+
+          sheet.mergeCells(`A${currentExcelRow}:B${currentExcelRow}`);
+          
+          t4Row.getCell(1).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFFFFFF" } };
+          t4Row.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFAA66FF" } };
+          t4Row.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
+          t4Row.getCell(2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFAA66FF" } }; // merged partner
+
+          const t4BoldFont = { name: "Arial", size: 9, bold: true };
+          const t4DoubleBorder = {
+            top: { style: 'thin' as const, color: { argb: 'FF888888' } },
+            bottom: { style: 'double' as const, color: { argb: 'FF333333' } }
+          };
+
+          t4Row.getCell(3).font = t4BoldFont;
+          t4Row.getCell(3).border = t4DoubleBorder;
+          t4Row.getCell(3).alignment = { horizontal: "center", vertical: "middle" };
+
+          t4Row.getCell(4).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
+          t4Row.getCell(4).border = t4DoubleBorder;
+          t4Row.getCell(4).numFmt = "$#,##0.00";
+          t4Row.getCell(4).alignment = { horizontal: "right", vertical: "middle" };
+
+          t4Row.getCell(5).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFF2200" } };
+          t4Row.getCell(5).border = t4DoubleBorder;
+          t4Row.getCell(5).numFmt = "$#,##0.00";
+          t4Row.getCell(5).alignment = { horizontal: "right", vertical: "middle" };
+
+          t4Row.getCell(6).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF333333" } };
+          t4Row.getCell(6).border = t4DoubleBorder;
+          t4Row.getCell(6).numFmt = "$#,##0.00";
+          t4Row.getCell(6).alignment = { horizontal: "right", vertical: "middle" };
         }
+
+        // =========================================================================
+        // SECTION 5: DEVOLUCIONES Y CANCELACIONES
+        // =========================================================================
+        const returnedProducts = groupedProducts.filter(prod => 
+          (prod.returned_quantity && prod.returned_quantity > 0)
+        );
+
+        if (returnedProducts.length > 0) {
+          currentExcelRow += 3;
+          styleSectionHeader(currentExcelRow, " 5. DEVOLUCIONES Y CANCELACIONES", "FFFF4422");
+
+          currentExcelRow++;
+          const tbl5Header = sheet.getRow(currentExcelRow);
+          tbl5Header.values = [
+            "Producto",
+            "SKU",
+            "Cant. Devuelta",
+            "Monto Devuelto",
+            "", "", "", "", ""
+          ];
+          styleHeaderRow(tbl5Header, "FFFF7755");
+
+          returnedProducts.forEach((prod) => {
+            currentExcelRow++;
+            
+            const r = sheet.getRow(currentExcelRow);
+            r.values = [
+              prod.name,
+              prod.sku,
+              prod.returned_quantity || 0,
+              prod.returned_revenue || 0,
+              "", "", "", "", ""
+            ];
+            r.height = 20;
+
+            r.getCell(1).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+            r.getCell(2).alignment = { horizontal: "center", vertical: "middle" };
+            
+            r.getCell(3).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFF4422" } };
+            r.getCell(3).alignment = { horizontal: "center", vertical: "middle" };
+            
+            r.getCell(4).numFmt = "$#,##0.00";
+            r.getCell(4).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFF4422" } };
+            r.getCell(4).alignment = { horizontal: "right", vertical: "middle" };
+          });
+
+          // Add TOTALS Row for Section 5
+          currentExcelRow++;
+          const t5Row = sheet.getRow(currentExcelRow);
+          t5Row.height = 24;
+
+          let t5Cant = 0;
+          let t5Monto = 0;
+
+          returnedProducts.forEach(prod => {
+            t5Cant += prod.returned_quantity || 0;
+            t5Monto += prod.returned_revenue || 0;
+          });
+
+          t5Row.values = [
+            "TOTAL DEVOLUCIONES",
+            "",
+            t5Cant,
+            t5Monto,
+            "", "", "", "", ""
+          ];
+
+          sheet.mergeCells(`A${currentExcelRow}:B${currentExcelRow}`);
+          
+          t5Row.getCell(1).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFFFFFF" } };
+          t5Row.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF4422" } };
+          t5Row.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
+          t5Row.getCell(2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF4422" } }; // merged partner
+
+          const t5BoldFont = { name: "Arial", size: 9, bold: true, color: { argb: "FFFF4422" } };
+          const t5DoubleBorder = {
+            top: { style: 'thin' as const, color: { argb: 'FF888888' } },
+            bottom: { style: 'double' as const, color: { argb: 'FF333333' } }
+          };
+
+          t5Row.getCell(3).font = t5BoldFont;
+          t5Row.getCell(3).border = t5DoubleBorder;
+          t5Row.getCell(3).alignment = { horizontal: "center", vertical: "middle" };
+
+          t5Row.getCell(4).font = t5BoldFont;
+          t5Row.getCell(4).border = t5DoubleBorder;
+          t5Row.getCell(4).numFmt = "$#,##0.00";
+          t5Row.getCell(4).alignment = { horizontal: "right", vertical: "middle" };
+        }
+
 
         // Set optimal columns width based only on real data rows to prevent large headers inflating sizes!
         sheet.columns.forEach((column, colIdx) => {
@@ -1010,8 +2081,8 @@ export function ReportsPage() {
                 // Skip section headers or long text banners in the middle
                 if (str.startsWith(" 1. ") || str.startsWith(" 2. ") || str.startsWith(" 3. ") || str.startsWith(" 4. ")) return;
                 
-                // For Column 8 (Precios) and 9 (Desglose de Pagos), we'll wrap text, so don't let their full length expand the columns!
-                if (colNumber === 8 || colNumber === 9) {
+                // For Column 9 (Precios) and 10 (Desglose de Pagos), we'll wrap text, so don't let their full length expand the columns!
+                if (colNumber === 9 || colNumber === 10) {
                   return;
                 }
                 
@@ -1034,14 +2105,15 @@ export function ReportsPage() {
         sheet.getColumn(4).width = 13.5; // Cant. & Bruto Tarjeta / Monto Efectivo / Abonado (Apartado) (no cutoffs!)
         sheet.getColumn(5).width = 13.5; // Bruto & Comisión TPV / Pendiente (Deuda) (perfect space!)
         sheet.getColumn(6).width = 13.5; // Comisión & Neto Tarjeta / Pactado (Total) (fully readable!)
-        sheet.getColumn(7).width = 14;   // Neto Real (spacious!)
+        sheet.getColumn(7).width = 14;   // IVA s/Comisión (spacious!)
+        sheet.getColumn(8).width = 14;   // Neto Real (spacious!)
         
         // Enforce wrap text and moderate horizontal width on long description columns
-        sheet.getColumn(8).width = 19; // Precios Unitarios (nice list column width)
-        sheet.getColumn(8).alignment = { wrapText: true, vertical: "middle" };
-        
-        sheet.getColumn(9).width = 24; // Desglose de Pagos (nice list column width)
+        sheet.getColumn(9).width = 19; // Precios Unitarios (nice list column width)
         sheet.getColumn(9).alignment = { wrapText: true, vertical: "middle" };
+        
+        sheet.getColumn(10).width = 24; // Desglose de Pagos (nice list column width)
+        sheet.getColumn(10).alignment = { wrapText: true, vertical: "middle" };
       } else if (activeTab === "inventario") {
         const sheet = workbook.addWorksheet("Inventario");
         sheet.mergeCells("A1:E1");
@@ -1234,6 +2306,140 @@ export function ReportsPage() {
   const thStyle: React.CSSProperties = { padding: "10px 16px", fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: TM, textAlign: "left" };
   const tdStyle: React.CSSProperties = { padding: "10px 16px", fontSize: 12, color: TS, borderBottom: DIV };
 
+  // Reusable row renderer for products and mangas to ensure unified design and clean separation!
+  const renderProductRow = (prod: GroupedProduct, padX = 16, padY = 12, fontS = 12) => {
+    const isExpanded = expandedIds.includes(prod.id);
+    return (
+      <Fragment key={prod.id}>
+        <tr style={{ borderBottom: isExpanded ? "none" : DIV, cursor: "pointer" }}
+          onClick={() => {
+            setExpandedIds(prev =>
+              prev.includes(prod.id)
+                ? prev.filter(x => x !== prod.id)
+                : [...prev, prod.id]
+            );
+          }}>
+          <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontSize: fontS, fontWeight: 900, color: TP }}>
+            <div className="flex items-center gap-1.5">
+              {isExpanded ? <ChevronDown size={fontS + 1} style={{ color: TM }} /> : <ChevronRight size={fontS + 1} style={{ color: TM }} />}
+              {prod.name}
+            </div>
+          </td>
+          <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontFamily: "monospace", fontSize: fontS - 1 }}>{prod.sku}</td>
+          <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontSize: fontS }}>{prod.sales_count}</td>
+          <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontSize: fontS, fontWeight: 700, color: TP }}>
+            <div className="flex flex-col gap-0.5">
+              <span>{prod.total_quantity}</span>
+              {prod.returned_quantity && prod.returned_quantity > 0 ? (
+                <span style={{ fontSize: 9, color: "#FF4422", fontWeight: 800 }}>(-{prod.returned_quantity} devueltos)</span>
+              ) : null}
+            </div>
+          </td>
+          <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontSize: fontS, verticalAlign: "middle" }}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
+              <span style={{ color: prod.total_revenue < 0 ? "#FF4422" : "#00CC66", fontWeight: 900 }}>{fmt(prod.total_revenue)}</span>
+              {prod.returned_revenue && prod.returned_revenue > 0 ? (
+                <span style={{ fontSize: 9, color: "#FF4422", fontWeight: 800 }}>(-{fmt(prod.returned_revenue)} devueltos)</span>
+              ) : null}
+              {prod.commission_amount && prod.commission_amount > 0 ? (
+                <span style={{ fontSize: 9, color: TM, fontWeight: 500 }}>
+                  {fmt(prod.total_revenue)} - <span style={{ color: "#FF4422", fontWeight: 700 }} title="Comisión TPV">{fmt(prod.commission_amount)}</span> - <span style={{ color: "#F59E0B", fontWeight: 700 }} title="IVA s/Comisión (16%)">{fmt(prod.commission_amount * 0.16)}</span> = <span style={{ color: "#00CC66", fontWeight: 800 }}>{fmt(prod.total_revenue - prod.commission_amount - (prod.commission_amount * 0.16))}</span>
+                </span>
+              ) : null}
+            </div>
+          </td>
+        </tr>
+        {isExpanded && (
+          <tr key={`${prod.id}-detail`}>
+            <td colSpan={5} style={{ padding: `0 ${padX}px ${padY}px`, borderBottom: DIV, background: "rgba(255,255,255,0.02)" }}>
+              <div className={`grid grid-cols-1 ${((prod.pre_sale_apartado && prod.pre_sale_apartado > 0) || (prod.pre_sale_deuda && prod.pre_sale_deuda > 0)) ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-6 pt-3 pb-2`}>
+                {/* Métodos de Pago */}
+                <div>
+                  <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: TM, marginBottom: 8 }}>
+                    Desglose por método de pago
+                  </p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {Object.entries(prod.payment_breakdown).map(([method, data]) => {
+                      const isCard = method.toLowerCase().includes("tarjeta") || method.toLowerCase().includes("credit") || method.toLowerCase().includes("debito") || method.toLowerCase().includes("tpv") || method.toLowerCase().includes("terminal");
+                      return (
+                        <div key={method} className="flex flex-col gap-1 py-1.5 px-3" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", borderRadius: 9 }}>
+                          <div className="flex items-center justify-between text-xs">
+                            <span style={{ color: TS, fontWeight: 700 }}>{method}</span>
+                            <div className="flex items-center gap-2">
+                              <span style={{ color: data.revenue < 0 ? "#FF4422" : "#00CC66", fontWeight: 900 }}>{fmt(data.revenue)}</span>
+                              <span style={{ color: TP, fontWeight: 700, fontSize: 11 }}>({data.qty} {data.qty === 1 ? "unidad" : "unidades"})</span>
+                            </div>
+                          </div>
+                          {isCard && prod.commission_amount && prod.commission_amount > 0 && (
+                            <div className="flex flex-col gap-1 mt-0.5 pt-0.5 border-t border-dashed" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+                              <div className="flex items-center justify-between text-[10px]">
+                                <span style={{ color: TM }}>Comisión de terminal absorbida:</span>
+                                <span style={{ color: "#FF4422", fontWeight: 700 }}>-{fmt(prod.commission_amount)}</span>
+                              </div>
+                              <div className="flex items-center justify-between text-[10px]">
+                                <span style={{ color: TM }}>IVA sobre comisión (16%):</span>
+                                <span style={{ color: "#F59E0B", fontWeight: 700 }}>-{fmt(prod.commission_amount * 0.16)}</span>
+                              </div>
+                              <div className="flex items-center justify-between text-[10px] pt-0.5 border-t border-dotted" style={{ borderColor: "rgba(255,255,255,0.04)" }}>
+                                <span style={{ color: TM, fontWeight: 700 }}>Neto real para la tienda:</span>
+                                <span style={{ color: "#00CC66", fontWeight: 800 }}>{fmt(data.revenue - prod.commission_amount - (prod.commission_amount * 0.16))}</span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Desglose por Precios de Venta */}
+                <div>
+                  <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: TM, marginBottom: 8 }}>
+                    Desglose por precios de venta
+                  </p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {Object.entries(prod.price_breakdown).map(([priceStr, qty]) => {
+                      const priceVal = parseFloat(priceStr);
+                      return (
+                        <div key={priceStr} className="flex items-center justify-between text-xs py-1.5 px-3" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", borderRadius: 9 }}>
+                          <span style={{ color: TS }}>Precio unitario: <span className="font-black" style={{ color: TP }}>{fmt(priceVal)}</span></span>
+                          <span style={{ color: "#00CC66", fontWeight: 900 }}>{qty} {qty === 1 ? "unidad" : "unidades"}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Control de Preventa: Apartado y Deuda */}
+                {((prod.pre_sale_apartado && prod.pre_sale_apartado > 0) || (prod.pre_sale_deuda && prod.pre_sale_deuda > 0)) && (
+                  <div>
+                    <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: TM, marginBottom: 8 }}>
+                      Información de Preventa
+                    </p>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {(prod.pre_sale_apartado && prod.pre_sale_apartado > 0) && (
+                        <div className="flex items-center justify-between text-xs py-1.5 px-3" style={{ background: "rgba(0, 204, 102, 0.08)", border: "1px solid rgba(0, 204, 102, 0.15)", borderRadius: 9 }}>
+                          <span style={{ color: TS, fontWeight: 700 }}>Total Abonado (Apartado)</span>
+                          <span style={{ color: "#00CC66", fontWeight: 900 }}>{fmt(prod.pre_sale_apartado)}</span>
+                        </div>
+                      )}
+                      {(prod.pre_sale_deuda && prod.pre_sale_deuda > 0) && (
+                        <div className="flex items-center justify-between text-xs py-1.5 px-3" style={{ background: "rgba(255, 68, 34, 0.08)", border: "1px solid rgba(255, 68, 34, 0.15)", borderRadius: 9 }}>
+                          <span style={{ color: TS, fontWeight: 700 }}>Total Deuda (Pendiente)</span>
+                          <span style={{ color: "#FF4422", fontWeight: 900 }}>{fmt(prod.pre_sale_deuda)}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </td>
+          </tr>
+        )}
+      </Fragment>
+    );
+  };
+
   return (
     <div className="min-h-screen" style={{ background: BG, color: TP }}>
       <div className="max-w-screen-xl mx-auto p-8 space-y-8">
@@ -1330,6 +2536,18 @@ export function ReportsPage() {
               Excel
             </button>
 
+            {/* PDF button */}
+            <button
+              onClick={handleExportPDF}
+              disabled={isFetchingActive}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-50"
+              style={{ background: "rgba(224,34,26,0.1)", border: "1px solid rgba(224,34,26,0.2)", color: "var(--td-red)" }}
+              title="Exportar reporte actual a PDF"
+            >
+              <FileSpreadsheet size={13} />
+              PDF
+            </button>
+
 
           </div>
         </div>
@@ -1396,7 +2614,6 @@ export function ReportsPage() {
               <Popover
                 placement="bottom start"
                 offset={8}
-                shouldCloseOnBlur={true}
                 className="rounded-2xl p-0 outline-none"
                 style={{
                   background: "var(--td-popup-bg)",
@@ -1561,7 +2778,7 @@ export function ReportsPage() {
                   {[
                     { label: "Total cobrado", val: fmt(paymentBreakdown.total), color: "#00CC66", icon: DollarSign, sub: `${paymentBreakdown.transactionCount} ${paymentBreakdown.transactionCount === 1 ? 'transacción' : 'transacciones'}` },
                     { label: "Pago con tarjeta", val: fmt(paymentBreakdown.card), color: "#4499FF", icon: Store, sub: paymentBreakdown.card > 0 ? "TPV / débito / crédito" : "sin movimientos" },
-                    { label: "Pago en efectivo", val: fmt(paymentBreakdown.cash), color: "#33CC88", icon: ShoppingBag, sub: paymentBreakdown.cash > 0 ? "incluye cobro en USD" : "sin movimientos" },
+                    { label: "Pago en efectivo", val: fmt(paymentBreakdown.cash), color: "#33CC88", icon: ShoppingBag, sub: paymentBreakdown.usd > 0 ? `incluye ${paymentBreakdown.usd} USD recibidos` : (paymentBreakdown.cash > 0 ? "cobro en MXN" : "sin movimientos") },
                     { label: "Depósitos", val: fmt(paymentBreakdown.deposits), color: "#BB77FF", icon: Clock, sub: paymentBreakdown.deposits > 0 ? "transferencias / SPEI" : "sin depósitos" },
                   ].map((kpi, i) => (
                     <div key={i} className="min-h-[124px] flex flex-col" style={{ ...GLASS, borderRadius: 20, padding: "12px 20px" }}>
@@ -1571,7 +2788,7 @@ export function ReportsPage() {
                       </div>
 
                       <div className="flex-1 flex items-center justify-center">
-                        <p className="text-5xl font-black italic leading-none text-center" style={{ color: kpi.color }}>{kpi.val}</p>
+                        <p className="text-5xl font-black italic leading-none text-center" style={{ color: kpi.val.startsWith("-") ? "#FF4422" : kpi.color }}>{kpi.val}</p>
                       </div>
 
                       <p className="text-[9px] text-center" style={{ color: TM }}>{kpi.sub}</p>
@@ -1620,140 +2837,244 @@ export function ReportsPage() {
 
                 {/* Ventas por Producto — expandable details */}
                 <div style={{ ...GLASS, borderRadius: 24, overflow: "hidden" }}>
-                  <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: DIV }}>
-                    <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: TM }}>
-                      Ventas por Producto
-                    </p>
-                    <span className="text-[9px] font-black px-2 py-0.5 rounded-full" style={{ background: "rgba(68,153,255,0.12)", color: "#4499FF" }}>
-                      {groupedProducts.length} productos
-                    </span>
+                  <div className="px-6 py-4 flex items-center justify-between gap-4" style={{ borderBottom: DIV }}>
+                    <div className="flex items-center gap-3">
+                      <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: TM }}>
+                        Ventas por Producto
+                      </p>
+                      <span className="text-[9px] font-black px-2 py-0.5 rounded-full" style={{ background: "rgba(68,153,255,0.12)", color: "#4499FF" }}>
+                        {groupedProducts.length} productos
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setIsTableMaximized(true)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all hover:scale-105 active:scale-95 text-white/60 hover:text-white"
+                      style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}
+                      title="Expandir tabla a pantalla completa"
+                    >
+                      <Maximize2 size={11} />
+                      Ampliar
+                    </button>
                   </div>
                   <div className="overflow-y-auto" style={{ maxHeight: 420 }}>
                     <table className="w-full">
                       <thead><tr style={{ borderBottom: DIV }}>
                         {["Producto", "SKU", "Nº Ventas (Tickets)", "Cant. Vendida", "Ingresos Totales"].map(h => <th key={h} style={thStyle}>{h}</th>)}
-                      </tr></thead>
-                      <tbody>
-                        {groupedProducts.map(prod => {
-                          const isExpanded = expandedIds.includes(prod.id);
-                          return (
-                            <Fragment key={prod.id}>
-                              <tr style={{ borderBottom: isExpanded ? "none" : DIV, cursor: "pointer" }}
-                                onClick={() => {
-                                  setExpandedIds(prev =>
-                                    prev.includes(prod.id)
-                                      ? prev.filter(x => x !== prod.id)
-                                      : [...prev, prod.id]
-                                  );
-                                }}>
-                                <td style={{ ...tdStyle, fontWeight: 900, color: TP }}>
-                                  <div className="flex items-center gap-1.5">
-                                    {isExpanded ? <ChevronDown size={12} style={{ color: TM }} /> : <ChevronRight size={12} style={{ color: TM }} />}
-                                    {prod.name}
-                                  </div>
-                                </td>
-                                <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: 11 }}>{prod.sku}</td>
-                                <td style={tdStyle}>{prod.sales_count}</td>
-                                <td style={{ ...tdStyle, fontWeight: 700, color: TP }}>{prod.total_quantity}</td>
-                                <td style={{ ...tdStyle, verticalAlign: "middle" }}>
-                                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
-                                    <span style={{ color: "#00CC66", fontWeight: 900 }}>{fmt(prod.total_revenue)}</span>
-                                    {prod.commission_amount && prod.commission_amount > 0 ? (
-                                      <span style={{ fontSize: 9, color: TM, fontWeight: 500 }}>
-                                        {fmt(prod.total_revenue)} - <span style={{ color: "#FF4422", fontWeight: 700 }}>{fmt(prod.commission_amount)}</span> = <span style={{ color: "#00CC66", fontWeight: 800 }}>{fmt(prod.total_revenue - prod.commission_amount)}</span>
-                                      </span>
-                                    ) : null}
-                                  </div>
-                                </td>
-                              </tr>
-                              {isExpanded && (
-                                <tr key={`${prod.id}-detail`}>
-                                  <td colSpan={5} style={{ padding: "0 16px 12px", borderBottom: DIV, background: "rgba(255,255,255,0.02)" }}>
-                                    <div className={`grid grid-cols-1 ${((prod.pre_sale_apartado && prod.pre_sale_apartado > 0) || (prod.pre_sale_deuda && prod.pre_sale_deuda > 0)) ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-6 pt-3 pb-2`}>
-                                      {/* Métodos de Pago */}
-                                      <div>
-                                        <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: TM, marginBottom: 8 }}>
-                                          Desglose por método de pago
-                                        </p>
-                                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                                          {Object.entries(prod.payment_breakdown).map(([method, data]) => {
-                                            const isCard = method.toLowerCase().includes("tarjeta") || method.toLowerCase().includes("credit") || method.toLowerCase().includes("debito") || method.toLowerCase().includes("tpv") || method.toLowerCase().includes("terminal");
-                                            return (
-                                              <div key={method} className="flex flex-col gap-1 py-1.5 px-3" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", borderRadius: 9 }}>
-                                                <div className="flex items-center justify-between text-xs">
-                                                  <span style={{ color: TS, fontWeight: 700 }}>{method}</span>
-                                                  <div className="flex items-center gap-2">
-                                                    <span style={{ color: "#00CC66", fontWeight: 900 }}>{fmt(data.revenue)}</span>
-                                                    <span style={{ color: TP, fontWeight: 700, fontSize: 11 }}>({data.qty} {data.qty === 1 ? "unidad" : "unidades"})</span>
-                                                  </div>
-                                                </div>
-                                                {isCard && prod.commission_amount && prod.commission_amount > 0 && (
-                                                  <div className="flex items-center justify-between text-[10px] mt-0.5 pt-0.5 border-t border-dashed" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
-                                                    <span style={{ color: TM }}>Comisión de terminal absorbida:</span>
-                                                    <span style={{ color: "#FF4422", fontWeight: 700 }}>{fmt(prod.commission_amount)}</span>
-                                                  </div>
-                                                )}
-                                              </div>
-                                            );
-                                          })}
-                                        </div>
-                                      </div>
+                      </tr></thead>                      <tbody>
+                        {/* 1) Render regular products */}
+                        {regularProducts.map(prod => renderProductRow(prod, 16, 10, 12))}
 
-                                      {/* Desglose por Precios de Venta */}
-                                      <div>
-                                        <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: TM, marginBottom: 8 }}>
-                                          Desglose por precios de venta
-                                        </p>
-                                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                                          {Object.entries(prod.price_breakdown).map(([priceStr, qty]) => {
-                                            const priceVal = parseFloat(priceStr);
-                                            return (
-                                              <div key={priceStr} className="flex items-center justify-between text-xs py-1.5 px-3" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", borderRadius: 9 }}>
-                                                <span style={{ color: TS }}>Precio unitario: <span className="font-black" style={{ color: TP }}>{fmt(priceVal)}</span></span>
-                                                <span style={{ color: "#00CC66", fontWeight: 900 }}>{qty} {qty === 1 ? "unidad" : "unidades"}</span>
-                                              </div>
-                                            );
-                                          })}
-                                        </div>
-                                      </div>
+                        {/* 2) Separator row for Tomos (mangas) */}
+                        {regularProducts.length > 0 && tomoProducts.length > 0 && (
+                          <tr style={{ background: "rgba(255,255,255,0.03)" }}>
+                            <td colSpan={5} style={{ 
+                              padding: "6px 16px", 
+                              fontSize: 9, 
+                              fontWeight: 900, 
+                              letterSpacing: "0.15em", 
+                              color: TM, 
+                              background: "rgba(255,255,255,0.05)",
+                              borderTop: "1px solid rgba(255,255,255,0.1)",
+                              borderBottom: "1px solid rgba(255,255,255,0.1)",
+                              textTransform: "uppercase"
+                            }}>
+                              <div className="flex items-center justify-between">
+                                <span>📚 Manga Nacional</span>
+                                <span style={{ color: "#4499FF" }}>
+                                  Resumen Manga Nacional: {tomoSummary.qty} uds. vendidos ({fmt(tomoSummary.revenue)})
+                                </span>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
 
-                                      {/* Control de Preventa: Apartado y Deuda */}
-                                      {((prod.pre_sale_apartado && prod.pre_sale_apartado > 0) || (prod.pre_sale_deuda && prod.pre_sale_deuda > 0)) && (
-                                        <div>
-                                          <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: TM, marginBottom: 8 }}>
-                                            Información de Preventa
-                                          </p>
-                                          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                                            {(prod.pre_sale_apartado && prod.pre_sale_apartado > 0) && (
-                                              <div className="flex items-center justify-between text-xs py-1.5 px-3" style={{ background: "rgba(0, 204, 102, 0.08)", border: "1px solid rgba(0, 204, 102, 0.15)", borderRadius: 9 }}>
-                                                <span style={{ color: TS, fontWeight: 700 }}>Total Abonado (Apartado)</span>
-                                                <span style={{ color: "#00CC66", fontWeight: 900 }}>{fmt(prod.pre_sale_apartado)}</span>
-                                              </div>
-                                            )}
-                                            {(prod.pre_sale_deuda && prod.pre_sale_deuda > 0) && (
-                                              <div className="flex items-center justify-between text-xs py-1.5 px-3" style={{ background: "rgba(255, 68, 34, 0.08)", border: "1px solid rgba(255, 68, 34, 0.15)", borderRadius: 9 }}>
-                                                <span style={{ color: TS, fontWeight: 700 }}>Total Deuda (Pendiente)</span>
-                                                <span style={{ color: "#FF4422", fontWeight: 900 }}>{fmt(prod.pre_sale_deuda)}</span>
-                                              </div>
-                                            )}
-                                          </div>
-                                        </div>
-                                      )}
-                                    </div>
-                                  </td>
-                                </tr>
-                              )}
-                            </Fragment>
-                          );
-                        })}
+                        {/* 3) Render tomo products */}
+                        {tomoProducts.map(prod => renderProductRow(prod, 16, 10, 12))}
+
+                        {/* Empty state fallback */}
                         {groupedProducts.length === 0 && (
                           <tr><td colSpan={5} style={{ ...tdStyle, textAlign: "center", padding: 32 }}>Sin ventas en el período</td></tr>
+                        )}
+
+                        {/* Totals row */}
+                        {groupedProducts.length > 0 && (
+                          <tr style={{ background: "rgba(255,255,255,0.03)", borderTop: "2px solid rgba(255,255,255,0.1)" }}>
+                            <td style={{ ...tdStyle, fontWeight: 900, color: TP }}>TOTAL GENERAL</td>
+                            <td style={tdStyle}></td>
+                            <td style={{ ...tdStyle, fontWeight: 700 }}>{groupedProducts.reduce((acc, p) => acc + (p.sales_count || 0), 0)}</td>
+                            <td style={{ ...tdStyle, fontWeight: 700, color: TP }}>{groupedProducts.reduce((acc, p) => acc + (p.total_quantity || 0), 0)}</td>
+                            <td style={tdStyle}>
+                              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
+                                <span style={{ color: uiTotals.bruto < 0 ? "#FF4422" : "#00CC66", fontWeight: 900 }}>{fmt(uiTotals.bruto)}</span>
+                                {uiTotals.comision > 0 ? (
+                                  <span style={{ fontSize: 9, color: TM, fontWeight: 500 }}>
+                                    {fmt(uiTotals.bruto)} - <span style={{ color: "#FF4422", fontWeight: 700 }} title="Comisión TPV Total">{fmt(uiTotals.comision)}</span> - <span style={{ color: "#F59E0B", fontWeight: 700 }} title="IVA s/Comisión Total">{fmt(uiTotals.iva)}</span> = <span style={{ color: "#00CC66", fontWeight: 800 }}>{fmt(uiTotals.neto)}</span>
+                                  </span>
+                                ) : null}
+                              </div>
+                            </td>
+                          </tr>
                         )}
                       </tbody>
                     </table>
                   </div>
                 </div>
 
+                {/* Section summary card below the table */}
+                {groupedProducts.length > 0 && (
+                  <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mt-1">
+                    <div className="p-4 rounded-2xl" style={{ ...GLASS, border: "1px solid rgba(255,255,255,0.05)" }}>
+                      <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: TM }}>Venta Bruta Total</p>
+                      <p className="text-xl font-black mt-1" style={{ color: uiTotals.bruto < 0 ? "#FF4422" : TP }}>{fmt(uiTotals.bruto)}</p>
+                    </div>
+                    <div className="p-4 rounded-2xl" style={{ ...GLASS, border: "1px solid rgba(255,255,255,0.05)" }}>
+                      <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: TM }}>Manga Nacional</p>
+                      <p className="text-xl font-black mt-1" style={{ color: "#38bdf8" }}>{fmt(tomoSummary.revenue)} <span className="text-xs font-bold" style={{ color: "rgba(56,189,248,0.8)" }}>({tomoSummary.qty} uds)</span></p>
+                    </div>
+                    <div className="p-4 rounded-2xl" style={{ ...GLASS, border: "1px solid rgba(255,255,255,0.05)" }}>
+                      <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: TM }}>Comisión TPV Total</p>
+                      <p className="text-xl font-black mt-1" style={{ color: "#FF4422" }}>{fmt(uiTotals.comision)}</p>
+                    </div>
+                    <div className="p-4 rounded-2xl" style={{ ...GLASS, border: "1px solid rgba(255,255,255,0.05)" }}>
+                      <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: TM }}>IVA s/Comisión (16%)</p>
+                      <p className="text-xl font-black mt-1" style={{ color: "#F59E0B" }}>{fmt(uiTotals.iva)}</p>
+                    </div>
+                    <div className="p-4 rounded-2xl" style={{ ...GLASS, border: "1px solid rgba(255,255,255,0.05)", background: uiTotals.neto < 0 ? "linear-gradient(135deg, rgba(255,68,34,0.1), rgba(200,30,10,0.1))" : "linear-gradient(135deg, rgba(0,204,102,0.1), rgba(0,153,70,0.1))" }}>
+                      <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "#00CC66" }}>Neto Real para la Tienda</p>
+                      <p className="text-xl font-black mt-1" style={{ color: uiTotals.neto < 0 ? "#FF4422" : "#00CC66" }}>{fmt(uiTotals.neto)}</p>
+                    </div>                  </div>
+                )}
+
+              </div>
+            )}
+
+            {/* Vista Ampliada / Pantalla Completa Modal para Ventas por Producto */}
+            {activeTab === "ventas" && isTableMaximized && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md transition-all duration-300">
+                <div 
+                  className="w-full max-w-7xl h-[90vh] bg-neutral-900 border border-neutral-800 rounded-3xl p-6 flex flex-col gap-5 shadow-[0_32px_96px_rgba(0,0,0,0.85)]"
+                  style={{ background: "#0c0c0c", border: "1px solid rgba(255,255,255,0.08)" }}
+                >
+                  {/* Modal Header */}
+                  <div className="flex items-center justify-between border-b pb-4" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center gap-3">
+                        <h2 className="text-lg font-black tracking-tight text-white uppercase tracking-wider">
+                          Ventas por Producto · <span className="text-red-500">Vista Ampliada</span>
+                        </h2>
+                        <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full" style={{ background: "rgba(68,153,255,0.12)", color: "#4499FF" }}>
+                          {groupedProducts.length} productos
+                        </span>
+                      </div>
+                      <p className="text-[10px] font-black uppercase tracking-[0.15em]" style={{ color: TM }}>
+                        Periodo: {fmtDate(from)} al {fmtDate(to)}
+                      </p>
+                    </div>
+
+                    <button
+                      onClick={() => setIsTableMaximized(false)}
+                      className="flex items-center justify-center w-9 h-9 rounded-xl transition-all hover:scale-105 active:scale-95 text-white/50 hover:text-white"
+                      style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
+                      title="Cerrar vista ampliada"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+
+                  {/* Scrollable Table Area */}
+                  <div className="flex-1 overflow-y-auto min-h-0 pr-1">
+                    <table className="w-full">
+                      <thead>
+                        <tr style={{ borderBottom: DIV }}>
+                          {["Producto", "SKU", "Nº Ventas (Tickets)", "Cant. Vendida", "Ingresos Totales"].map(h => (
+                            <th key={h} style={{ ...thStyle, fontSize: 10, padding: "12px 18px" }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>                      <tbody>
+                        {/* 1) Render regular products */}
+                        {regularProducts.map(prod => renderProductRow(prod, 18, 14, 13))}
+
+                        {/* 2) Separator row for Tomos (mangas) */}
+                        {regularProducts.length > 0 && tomoProducts.length > 0 && (
+                          <tr style={{ background: "rgba(255,255,255,0.03)" }}>
+                            <td colSpan={5} style={{ 
+                              padding: "10px 18px", 
+                              fontSize: 10, 
+                              fontWeight: 900, 
+                              letterSpacing: "0.15em", 
+                              color: TM, 
+                              background: "rgba(255,255,255,0.05)",
+                              borderTop: "1px solid rgba(255,255,255,0.1)",
+                              borderBottom: "1px solid rgba(255,255,255,0.1)",
+                              textTransform: "uppercase"
+                            }}>
+                              <div className="flex items-center justify-between">
+                                <span>📚 Manga Nacional</span>
+                                <span style={{ color: "#4499FF" }}>
+                                  Resumen Manga Nacional: {tomoSummary.qty} uds. vendidos ({fmt(tomoSummary.revenue)})
+                                </span>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+
+                        {/* 3) Render tomo products */}
+                        {tomoProducts.map(prod => renderProductRow(prod, 18, 14, 13))}
+
+                        {/* Empty state fallback */}
+                        {groupedProducts.length === 0 && (
+                          <tr><td colSpan={5} style={{ ...tdStyle, textAlign: "center", padding: 32 }}>Sin ventas en el período</td></tr>
+                        )}
+
+                        {/* Totals row */}
+                        {groupedProducts.length > 0 && (
+                          <tr style={{ background: "rgba(255,255,255,0.03)", borderTop: "2px solid rgba(255,255,255,0.1)" }}>
+                            <td style={{ ...tdStyle, fontWeight: 900, color: TP }}>TOTAL GENERAL</td>
+                            <td style={tdStyle}></td>
+                            <td style={{ ...tdStyle, fontWeight: 700 }}>{groupedProducts.reduce((acc, p) => acc + (p.sales_count || 0), 0)}</td>
+                            <td style={{ ...tdStyle, fontWeight: 700, color: TP }}>{groupedProducts.reduce((acc, p) => acc + (p.total_quantity || 0), 0)}</td>
+                            <td style={tdStyle}>
+                              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
+                                <span style={{ color: uiTotals.bruto < 0 ? "#FF4422" : "#00CC66", fontWeight: 900 }}>{fmt(uiTotals.bruto)}</span>
+                                {uiTotals.comision > 0 ? (
+                                  <span style={{ fontSize: 9, color: TM, fontWeight: 500 }}>
+                                    {fmt(uiTotals.bruto)} - <span style={{ color: "#FF4422", fontWeight: 700 }} title="Comisión TPV Total">{fmt(uiTotals.comision)}</span> - <span style={{ color: "#F59E0B", fontWeight: 700 }} title="IVA s/Comisión Total">{fmt(uiTotals.iva)}</span> = <span style={{ color: "#00CC66", fontWeight: 800 }}>{fmt(uiTotals.neto)}</span>
+                                  </span>
+                                ) : null}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Summary Cards Row inside Modal */}
+                  {groupedProducts.length > 0 && (
+                    <div className="grid grid-cols-1 md:grid-cols-5 gap-4 pt-4 border-t" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+                      <div className="p-3.5 rounded-2xl" style={{ ...GLASS, border: "1px solid rgba(255,255,255,0.05)" }}>
+                        <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: TM }}>Venta Bruta Total</p>
+                        <p className="text-lg font-black mt-0.5" style={{ color: TP }}>{fmt(uiTotals.bruto)}</p>
+                      </div>
+                      <div className="p-3.5 rounded-2xl" style={{ ...GLASS, border: "1px solid rgba(255,255,255,0.05)" }}>
+                        <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: TM }}>Manga Nacional</p>
+                        <p className="text-lg font-black mt-0.5" style={{ color: "#38bdf8" }}>{fmt(tomoSummary.revenue)} <span className="text-xs font-bold" style={{ color: "rgba(56,189,248,0.8)" }}>({tomoSummary.qty} uds)</span></p>
+                      </div>
+                      <div className="p-3.5 rounded-2xl" style={{ ...GLASS, border: "1px solid rgba(255,255,255,0.05)" }}>
+                        <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: TM }}>Comisión TPV Total</p>
+                        <p className="text-lg font-black mt-0.5" style={{ color: "#FF4422" }}>{fmt(uiTotals.comision)}</p>
+                      </div>
+                      <div className="p-3.5 rounded-2xl" style={{ ...GLASS, border: "1px solid rgba(255,255,255,0.05)" }}>
+                        <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: TM }}>IVA s/Comisión (16%)</p>
+                        <p className="text-lg font-black mt-0.5" style={{ color: "#F59E0B" }}>{fmt(uiTotals.iva)}</p>
+                      </div>
+                      <div className="p-3.5 rounded-2xl" style={{ ...GLASS, border: "1px solid rgba(255,255,255,0.05)", background: uiTotals.neto < 0 ? "linear-gradient(135deg, rgba(255,68,34,0.1), rgba(200,30,10,0.1))" : "linear-gradient(135deg, rgba(0,204,102,0.1), rgba(0,153,70,0.1))" }}>
+                        <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "#00CC66" }}>Neto Real para la Tienda</p>
+                        <p className="text-lg font-black mt-0.5" style={{ color: "#00CC66" }}>{fmt(uiTotals.neto)}</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 

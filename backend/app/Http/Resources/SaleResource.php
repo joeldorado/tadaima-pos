@@ -22,6 +22,8 @@ class SaleResource extends JsonResource
             'discount'          => $this->discount,
             'total'             => $this->total,
             'commission_amount'   => $this->commission_amount,
+            'cash_received_usd'   => $this->cash_received_usd,
+            'exchange_rate'       => $this->exchange_rate,
             'status'              => $this->status,
             // ADR-016 — cancelación parcial: status sigue 'completed' pero la
             // venta tuvo items cancelados. Frontend debe mostrar badge "Parcial".
@@ -38,15 +40,20 @@ class SaleResource extends JsonResource
             ),
             'cancelled_items' => $this->when(
                 $this->relationLoaded('cancellations'),
-                fn () => $this->cancellations
-                    ->flatMap(fn ($c) => collect($c->items_snapshot ?? [])->map(fn ($i) => [
-                        'name'       => $i['name'] ?? '',
-                        'sku'        => $i['sku'] ?? null,
-                        'quantity'   => (float) ($i['qty_cancelled'] ?? 0),
-                        'price'      => (float) ($i['price'] ?? 0),
-                        'line_total' => (float) ($i['line_total'] ?? 0),
-                    ]))
-                    ->values(),
+                function () {
+                    $itemSnapshots = collect($this->cancellations)->flatMap(fn ($c) => $c->items_snapshot ?? [])->all();
+                    $productIds = collect($itemSnapshots)->pluck('product_id')->filter()->unique()->all();
+                    $productTypes = \App\Models\Product::whereIn('id', $productIds)->pluck('product_type', 'id')->all();
+                    return collect($itemSnapshots)->map(fn ($i) => [
+                        'product_id'   => $i['product_id'] ?? null,
+                        'name'         => $i['name'] ?? '',
+                        'sku'          => $i['sku'] ?? null,
+                        'quantity'     => (float) ($i['qty_cancelled'] ?? 0),
+                        'price'        => (float) ($i['price'] ?? 0),
+                        'line_total'   => (float) ($i['line_total'] ?? 0),
+                        'product_type' => isset($i['product_id']) ? ($productTypes[$i['product_id']] ?? 'product') : 'product',
+                    ])->values()->all();
+                }
             ),
 
             'customer' => $this->when(

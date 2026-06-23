@@ -23,7 +23,7 @@ class PreSaleCatalog extends Model
         'product_name', 'image_path',
         'cost', 'margin_percent',
         'price_1', 'price_2', 'price_3', 'price_4', 'price_5',
-        'advance_payment', 'preorder_limit',
+        'advance_payment', 'preorder_limit', 'limit_per_customer',
         'arrival_date', 'pickup_deadline',
         'status',
     ];
@@ -36,8 +36,9 @@ class PreSaleCatalog extends Model
         'price_3'         => 'float',
         'price_4'         => 'float',
         'price_5'         => 'float',
-        'advance_payment' => 'float',
-        'preorder_limit'  => 'integer',
+        'advance_payment'    => 'float',
+        'preorder_limit'     => 'integer',
+        'limit_per_customer' => 'integer',
         'arrival_date'    => 'date:Y-m-d',
         'pickup_deadline' => 'date:Y-m-d',
     ];
@@ -112,6 +113,37 @@ class PreSaleCatalog extends Model
                 ->where('store_id', $storeId)
             )
             ->sum('quantity');
+    }
+
+    /**
+     * Unidades de este catálogo que ya tiene un cliente (DE POR VIDA):
+     * cuenta folios pending + ready + delivered (todo menos cancelled/expired).
+     * Recibe los IDs de cliente ya resueltos por identidad amplia
+     * (mismo cliente / teléfono / socio Tadaima) — ver Customer::sameIdentityIds().
+     *
+     * @param array<int,int> $customerIds
+     */
+    public function reservedCountForCustomerIds(array $customerIds): int
+    {
+        if (empty($customerIds)) {
+            return 0;
+        }
+        return (int) $this->orderItems()
+            ->whereHas('order', fn ($q) => $q
+                ->whereIn('status', [
+                    PreSaleOrder::STATUS_PENDING,
+                    PreSaleOrder::STATUS_READY,
+                    PreSaleOrder::STATUS_DELIVERED,
+                ])
+                ->whereIn('customer_id', $customerIds)
+            )
+            ->sum('quantity');
+    }
+
+    /** Conveniencia: resuelve la identidad del cliente y cuenta sus unidades. */
+    public function reservedCountForCustomer(Customer $customer): int
+    {
+        return $this->reservedCountForCustomerIds($customer->sameIdentityIds());
     }
 
     /** Items belonging to active (pending or ready) orders only. */

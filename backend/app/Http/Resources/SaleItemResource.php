@@ -32,6 +32,7 @@ class SaleItemResource extends JsonResource
                         'id'   => $this->product->id,
                         'name' => $this->product->name,
                         'sku'  => $this->product->sku,
+                        'product_type' => $this->product->product_type,
                     ],
                     // Legacy fallback: `product.cost` actual del producto.
                     // El frontend prefiere `sale_items.cost` (snapshot histórico);

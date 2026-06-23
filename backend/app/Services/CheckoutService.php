@@ -49,8 +49,10 @@ class CheckoutService
         array $paymentsData,
         float $discount,
         int $userId,
+        ?float $cashReceivedUsd = null,
+        ?float $exchangeRate = null,
     ): Sale {
-        return DB::transaction(function () use ($storeId, $registerSessionId, $customerId, $items, $paymentsData, $discount, $userId) {
+        return DB::transaction(function () use ($storeId, $registerSessionId, $customerId, $items, $paymentsData, $discount, $userId, $cashReceivedUsd, $exchangeRate) {
             // Guard de precios (2026-05-30): el carrito vive client-side (ADR-014)
             // y el backend confiaba 100% en el `price` enviado. Validamos que el
             // precio de cada item NO dañado coincida con un nivel del catálogo
@@ -90,10 +92,12 @@ class CheckoutService
             // Delegamos al checkout clásico — toda la lógica de stock, locks,
             // payments, descuento de inventario, ya está probada.
             return $this->checkout(
-                draftId:      $draft->id,
-                paymentsData: $paymentsData,
-                discount:     $discount,
-                userId:       $userId,
+                draftId:         $draft->id,
+                paymentsData:    $paymentsData,
+                discount:        $discount,
+                userId:          $userId,
+                cashReceivedUsd: $cashReceivedUsd,
+                exchangeRate:    $exchangeRate,
             );
         });
     }
@@ -102,9 +106,11 @@ class CheckoutService
         int $draftId,
         array $paymentsData,
         float $discount,
-        int $userId
+        int $userId,
+        ?float $cashReceivedUsd = null,
+        ?float $exchangeRate = null,
     ): Sale {
-        return DB::transaction(function () use ($draftId, $paymentsData, $discount, $userId) {
+        return DB::transaction(function () use ($draftId, $paymentsData, $discount, $userId, $cashReceivedUsd, $exchangeRate) {
 
             // ── 1. Lock draft y validar estado ────────────────────────────────
             $draft = SalesDraft::lockForUpdate()->findOrFail($draftId);
@@ -159,6 +165,10 @@ class CheckoutService
                 'discount'            => $discountAmount,
                 'total'               => $total,
                 'commission_amount'   => $totalCommission,
+                // Dólares físicos recibidos + TC usado (informativo; el MXN ya
+                // está en payments/total). Solo se guarda si entraron dólares.
+                'cash_received_usd'   => ($cashReceivedUsd !== null && $cashReceivedUsd > 0) ? round($cashReceivedUsd, 2) : null,
+                'exchange_rate'       => ($cashReceivedUsd !== null && $cashReceivedUsd > 0) ? $exchangeRate : null,
                 'status'              => Sale::STATUS_COMPLETED,
             ]);
 
@@ -311,9 +321,9 @@ class CheckoutService
      * Verifica stock para todos los ítems y retorna el mapa product_id → Inventory.
      * Usa lockForUpdate() para prevenir race conditions entre cajeros.
      *
-     * Estrategia de selección de bodega:
-     *   1. Bodega de la tienda (warehouses.store_id = store_id) con stock suficiente
-     *   2. Fallback: cualquier bodega con stock suficiente
+     * Caja vende SOLO de Exhibición (`warehouses.type='store'`): el front de la
+     * tienda. La Bodega (`type='bodega'`) es backstock no vendible — para vender
+     * de ahí hay que mover el stock a Exhibición primero.
      *
      * @return array<int, Inventory>
      * @throws \DomainException si falta stock para algún producto
@@ -333,6 +343,7 @@ class CheckoutService
         // lugar de un EXISTS por cada lookup de inventario.
         $warehouseIds = \App\Models\Warehouse::query()
             ->where('store_id', $storeId)
+            ->where('type', 'store') // Solo Exhibición — la Bodega no se vende en Caja
             ->where('active', true)
             ->pluck('id')
             ->all();
@@ -360,13 +371,24 @@ class CheckoutService
 
             if ($stockInStore < $item->quantity) {
                 $name = $item->product?->name ?? "producto ID:{$item->product_id}";
+
+                // Pista de bodega: si hay backstock atrás, avisar para que lo
+                // muevan a Exhibición en vez de pensar que no hay nada.
+                $bodegaQty = (float) Inventory::query()
+                    ->where('product_id', $item->product_id)
+                    ->whereHas('warehouse', fn ($wq) => $wq
+                        ->where('store_id', $storeId)
+                        ->where('type', 'bodega')
+                        ->where('active', true))
+                    ->sum('quantity');
+
                 // Formato compatible con el regex del frontend (SellPage.handleCheckoutError),
                 // que auto-ajusta la qty del carrito al disponible real cuando la venta falla.
-                $suffix = $stockInStore <= 0
-                    ? " Otro cajero acaba de vender las últimas unidades."
-                    : '';
+                $suffix = $bodegaQty > 0
+                    ? " Hay {$bodegaQty} en bodega — muévelo a Exhibición para venderlo."
+                    : ($stockInStore <= 0 ? " Otro cajero acaba de vender las últimas unidades." : '');
                 throw new \DomainException(
-                    "Stock insuficiente para '{$name}'. Disponible: {$stockInStore}, solicitado: {$item->quantity}.{$suffix}"
+                    "Stock insuficiente en Exhibición para '{$name}'. Disponible: {$stockInStore}, solicitado: {$item->quantity}.{$suffix}"
                 );
             }
 

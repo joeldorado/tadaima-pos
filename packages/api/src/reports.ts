@@ -115,6 +115,8 @@ export interface CashSessionReport {
   total_sales: number
   /** Parte de las ventas que sí entró físicamente a caja (no tarjeta). */
   total_cash_sales: number
+  /** Dólares físicos recibidos en el turno (informativo; el MXN ya va en las ventas). */
+  total_usd_received: number
   /** Anticipos/liquidaciones de preventa cobrados en la ventana del corte. */
   total_pre_sale_payments: number
   /** Parte de las preventas cobradas que sí entró a caja (no tarjeta). */
@@ -134,6 +136,7 @@ export interface CashReport {
     total_sales: number
     total_cash_collected: number
     total_pre_sale_payments: number
+    total_usd_received: number
     total_entradas: number
     total_salidas: number
   }

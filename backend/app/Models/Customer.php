@@ -55,4 +55,36 @@ class Customer extends Model
     {
         return (float) ($this->credit_sum_amount ?? 0);
     }
+
+    /**
+     * IDs de clientes que representan a la MISMA persona, para conteos que no
+     * deben burlarse con registros duplicados (ej. límite de preventa por
+     * cliente). Coincide por: mismo id, O mismo socio Tadaima
+     * (`external_member_id`), O mismo teléfono normalizado a 10 dígitos.
+     *
+     * @return array<int,int>
+     */
+    public function sameIdentityIds(): array
+    {
+        $ids = collect([$this->id]);
+
+        if ($this->external_member_id) {
+            $ids = $ids->merge(
+                static::query()->where('external_member_id', $this->external_member_id)->pluck('id')
+            );
+        }
+
+        $digits = preg_replace('/\D/', '', (string) $this->phone);
+        if (strlen($digits) >= 10) {
+            $last10 = substr($digits, -10);
+            // El teléfono puede estar guardado con formatos distintos → comparamos
+            // por dígitos en PHP (la tabla de clientes es chica, ≤ cientos).
+            $matches = static::query()->whereNotNull('phone')->pluck('phone', 'id')
+                ->filter(fn ($p) => substr(preg_replace('/\D/', '', (string) $p), -10) === $last10)
+                ->keys();
+            $ids = $ids->merge($matches);
+        }
+
+        return $ids->map(fn ($id) => (int) $id)->unique()->values()->all();
+    }
 }

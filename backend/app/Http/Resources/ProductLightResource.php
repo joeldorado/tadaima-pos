@@ -29,7 +29,13 @@ class ProductLightResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
-        $stockTotal = (float) ($this->inventory_sum_quantity ?? 0);
+        // Caja vende SOLO de Exhibición. Con store_id el controller expone
+        // `stock_exhibicion`/`stock_bodega`; el stock vendible es Exhibición y
+        // `stock_bodega` alimenta el badge "N en bodega".
+        $stockTotal = $this->stock_exhibicion !== null
+            ? (float) $this->stock_exhibicion
+            : (float) ($this->inventory_sum_quantity ?? 0);
+        $stockBodega = (float) ($this->stock_bodega ?? 0);
 
         $firstImage = $this->relationLoaded('images')
             ? $this->images->first()
@@ -62,7 +68,9 @@ class ProductLightResource extends JsonResource
                 ? ($this->paymentMethod?->allow_card ?? true)
                 : true,
 
-            'stock_total' => $stockTotal,
+            'stock_total'  => $stockTotal,
+            // Backstock atrás (no vendible) — para el badge "N en bodega" en Caja.
+            'stock_bodega' => $stockBodega,
 
             // Discriminador para que el frontend filtre/etiquete mangas si lo
             // necesita. Default 'product' por compatibilidad con rows que aún
