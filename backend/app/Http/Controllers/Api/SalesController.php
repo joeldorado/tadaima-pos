@@ -141,13 +141,17 @@ class SalesController extends Controller
                     paymentsData:      $request->input('payments'),
                     discount:          (float) ($request->input('discount', 0)),
                     userId:            $request->user()->id,
+                    cashReceivedUsd:   $request->input('cash_received_usd') !== null ? (float) $request->input('cash_received_usd') : null,
+                    exchangeRate:      $request->input('exchange_rate') !== null ? (float) $request->input('exchange_rate') : null,
                 );
             } else {
                 $sale = $this->checkoutService->checkout(
-                    draftId:      $request->integer('draft_id'),
-                    paymentsData: $request->input('payments'),
-                    discount:     (float) ($request->input('discount', 0)),
-                    userId:       $request->user()->id,
+                    draftId:         $request->integer('draft_id'),
+                    paymentsData:    $request->input('payments'),
+                    discount:        (float) ($request->input('discount', 0)),
+                    userId:          $request->user()->id,
+                    cashReceivedUsd: $request->input('cash_received_usd') !== null ? (float) $request->input('cash_received_usd') : null,
+                    exchangeRate:    $request->input('exchange_rate') !== null ? (float) $request->input('exchange_rate') : null,
                 );
             }
         } catch (\DomainException $e) {

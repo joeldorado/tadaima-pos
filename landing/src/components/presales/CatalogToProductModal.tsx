@@ -104,7 +104,7 @@ export function CatalogToProductModal({ catalog, onClose, onSuccess }: Props) {
   );
   const [saving, setSaving]             = useState(false);
   const [categories, setCategories]     = useState<ProductCategory[]>([]);
-  const [locations, setLocations]       = useState<{ warehouseId: number; name: string; store: string; type: "central" | "store" }[]>([]);
+  const [locations, setLocations]       = useState<{ warehouseId: number; name: string; store: string; type: "central" | "store" | "bodega" }[]>([]);
   const [addWarehouseId, setAddWarehouseId] = useState<number | "">("");
   const [addQty, setAddQty]             = useState<number | "">("");
 

@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@tadaima/auth";
 import { useActiveStore } from "@/contexts/StoreContext";
-import { getStores, createStore, updateStore, createWarehouse } from "@tadaima/api";
+import { getStores, createStore, updateStore } from "@tadaima/api";
 import type { Store as ApiStore } from "@tadaima/api";
 import { toast } from "sonner";
 import {
@@ -70,6 +70,9 @@ function StoreModal({ store, companyId, onSave, onClose }: StoreModalProps) {
           active: form.active,
         });
       } else {
+        // El backend (StoreController::store) crea automáticamente los DOS
+        // almacenes de la tienda (Exhibición `store` + Bodega `bodega`). NO
+        // creamos warehouse aquí — hacerlo duplicaba la Exhibición (bug QA).
         saved = await createStore({
           company_id: companyId ?? 0,
           name: form.name,
@@ -77,14 +80,6 @@ function StoreModal({ store, companyId, onSave, onClose }: StoreModalProps) {
           phone: form.phone || undefined,
           email: form.email || undefined,
           active: form.active,
-        });
-        // Auto-create a warehouse linked to the new store
-        await createWarehouse({
-          company_id: companyId ?? 0,
-          store_id: saved.id,
-          name: saved.name,
-          type: "store",
-          active: true,
         });
       }
       toast.success(isEdit ? "Tienda actualizada" : "Tienda creada");

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\ChangePasswordRequest;
 use App\Http\Requests\LoginRequest;
 use App\Http\Resources\UserResource;
 use Illuminate\Http\JsonResponse;
@@ -54,5 +55,17 @@ class AuthController extends Controller
         $user = $request->user()->load('store');
 
         return $this->success(new UserResource($user));
+    }
+
+    /**
+     * POST /auth/password
+     * Cambio de contraseña self-service. Requiere la contraseña actual.
+     */
+    public function changePassword(ChangePasswordRequest $request): JsonResponse
+    {
+        $user = $request->user();
+        $user->update(['password' => $request->password]); // cast 'hashed' lo encripta
+
+        return $this->success(null, 'Contraseña actualizada.');
     }
 }

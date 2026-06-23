@@ -72,6 +72,7 @@ function buildPrintHtml(s: CashSessionReport, detail: CashSessionDetail | null =
       <div class="divider"></div>
       <div class="row"><span>Efectivo inicial</span><span>${fmt(s.opening_cash)}</span></div>
       <div class="row"><span>Ventas totales (${s.sales_count})</span><span>${fmt(s.total_sales)}</span></div>
+      ${(s.total_usd_received ?? 0) > 0 ? `<div class="row"><span>Dólares recibidos</span><span>${s.total_usd_received} USD</span></div>` : ""}
       ${s.total_pre_sale_payments > 0 ? `<div class="row"><span>Preventas cobradas</span><span>${fmt(s.total_pre_sale_payments)}</span></div>` : ""}
       <div class="row"><span>Cobrado en caja</span><span>+${fmt(s.cash_collected)}</span></div>
       ${s.total_entradas > 0 ? `<div class="row"><span>Entradas</span><span>+${fmt(s.total_entradas)}</span></div>` : ""}
@@ -162,6 +163,9 @@ export function CashCloseSummaryModal({ session: s, open, onClose }: CashCloseSu
         <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 16 }}>
           <Row label="Efectivo inicial" value={fmt(s.opening_cash)} />
           <Row label={`Ventas totales (${s.sales_count})`} value={fmt(s.total_sales)} />
+          {(s.total_usd_received ?? 0) > 0 && (
+            <Row label="Dólares recibidos" value={`${s.total_usd_received} USD`} valueColor="#10b981" />
+          )}
           {s.total_pre_sale_payments > 0 && (
             <Row label="Preventas cobradas" value={fmt(s.total_pre_sale_payments)} valueColor="#F59E0B" />
           )}

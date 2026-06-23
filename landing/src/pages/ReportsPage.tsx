@@ -674,6 +674,7 @@ export function ReportsPage() {
     let card = 0;
     let cash = 0;
     let deposits = 0;
+    let usd = 0; // dólares físicos recibidos (informativo; el MXN ya está en cash)
     const contributingSales = new Set<number>();
 
     const isCard = (name: string) =>
@@ -721,6 +722,35 @@ export function ReportsPage() {
               }
             }
           }
+          usd += sale.cash_received_usd || 0;
+        }
+      }
+
+      // 2. Process cancelled/negative parts (returns)
+      if (showCancelled && (isFullCancel || (sale.cancellation_status && sale.cancellation_status !== "none")) && sale.cancelled_amount && sale.cancelled_amount > 0) {
+        contributed = true;
+        const cancelledAmount = sale.cancelled_amount;
+        const originalTotal = sale.total + cancelledAmount;
+        
+        if (originalTotal > 0 && sale.payments && sale.payments.length > 0) {
+          for (const p of sale.payments) {
+            if (!p) continue;
+            const name = (p.payment_method?.name ?? "").toLowerCase();
+            const ratio = (p.amount || 0) / originalTotal;
+            const pCancelledAmount = cancelledAmount * ratio;
+
+            total -= pCancelledAmount;
+            if (isCard(name)) {
+              card -= pCancelledAmount;
+            } else if (isTransfer(name)) {
+              deposits -= pCancelledAmount;
+            } else {
+              cash -= pCancelledAmount;
+            }
+          }
+        } else {
+          total -= cancelledAmount;
+          cash -= cancelledAmount;
         }
       }
 
@@ -799,6 +829,7 @@ export function ReportsPage() {
       card,
       cash,
       deposits,
+      usd,
       transactionCount: contributingSales.size,
     };
   }, [filteredSales, filteredPreSaleOrders, selectedFilters, from, to]);
@@ -2806,7 +2837,7 @@ export function ReportsPage() {
                   {[
                     { label: "Total cobrado", val: fmt(paymentBreakdown.total), color: "#00CC66", icon: DollarSign, sub: `${paymentBreakdown.transactionCount} ${paymentBreakdown.transactionCount === 1 ? 'transacción' : 'transacciones'}` },
                     { label: "Pago con tarjeta", val: fmt(paymentBreakdown.card), color: "#4499FF", icon: Store, sub: paymentBreakdown.card > 0 ? "TPV / débito / crédito" : "sin movimientos" },
-                    { label: "Pago en efectivo", val: fmt(paymentBreakdown.cash), color: "#33CC88", icon: ShoppingBag, sub: paymentBreakdown.cash > 0 ? "incluye cobro en USD" : "sin movimientos" },
+                    { label: "Pago en efectivo", val: fmt(paymentBreakdown.cash), color: "#33CC88", icon: ShoppingBag, sub: paymentBreakdown.usd > 0 ? `incluye ${paymentBreakdown.usd} USD recibidos` : (paymentBreakdown.cash > 0 ? "cobro en MXN" : "sin movimientos") },
                     { label: "Depósitos", val: fmt(paymentBreakdown.deposits), color: "#BB77FF", icon: Clock, sub: paymentBreakdown.deposits > 0 ? "transferencias / SPEI" : "sin depósitos" },
                   ].map((kpi, i) => (
                     <div key={i} className="min-h-[124px] flex flex-col" style={{ ...GLASS, borderRadius: 20, padding: "12px 20px" }}>

@@ -434,7 +434,7 @@ export function PreSaleCatalogsPanel({ restrictedStoreId = null }: { restrictedS
       id: "stock",
       header: () => (
         <>
-          <div style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase" as const, letterSpacing: "0.12em", color: TM }}>Stock</div>
+          <div style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase" as const, letterSpacing: "0.12em", color: TM }}>Unidades</div>
           <div style={{ fontSize: 7, fontWeight: 700, color: TM, opacity: 0.6, marginTop: 1, letterSpacing: "0.06em" }}>disponible · tope</div>
         </>
       ),

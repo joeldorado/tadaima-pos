@@ -4,7 +4,7 @@ import type { Warehouse } from './types'
 export interface GetWarehousesParams {
   company_id?: number
   store_id?: number
-  type?: 'central' | 'store'
+  type?: 'central' | 'store' | 'bodega'
   active?: boolean
 }
 
@@ -13,7 +13,7 @@ export interface CreateWarehouseInput {
   company_id?: number
   store_id?: number | null
   name: string
-  type?: 'central' | 'store'
+  type?: 'central' | 'store' | 'bodega'
   description?: string
   active?: boolean
 }
@@ -25,7 +25,7 @@ export async function getWarehouses(params?: GetWarehousesParams): Promise<Wareh
 
 export interface UpdateWarehouseInput {
   name?: string
-  type?: 'central' | 'store'
+  type?: 'central' | 'store' | 'bodega'
   description?: string
   active?: boolean
 }

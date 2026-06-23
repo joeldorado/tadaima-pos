@@ -37,7 +37,10 @@ export interface ProductLight {
   image: string | null
   allow_cash: boolean
   allow_card: boolean
+  /** Stock vendible en Caja = Exhibición (con ?store_id). */
   stock_total: number
+  /** Stock en Bodega (backstock atrás, no vendible) — para el badge "N en bodega". */
+  stock_bodega?: number
   product_type?: 'product' | 'manga'
   /** Número de tomo (solo mangas) — distingue tomos de la misma serie en Caja. */
   volume_number?: number | null

@@ -27,6 +27,7 @@ import { useStoresQuery } from "@/hooks/queries/useStores";
 import { useWarehousesQuery } from "@/hooks/queries/useWarehouses";
 import { queryKeys } from "@/lib/queryKeys";
 import { generateBarcode } from "@/lib/barcode";
+import { warehouseTypeLabel } from "@/lib/warehouse";
 import { PRICE_FORM_LABELS, PRICE_LEVEL_LABELS, PRICE_LEVEL_COLORS, PRICE_LEVEL_RGB } from "@/lib/priceLevels";
 
 function formatApiError(err: unknown, fallback: string): { title: string; detail: string } {
@@ -575,7 +576,7 @@ function ProductModal({
   onAddCategoria: (c: string) => void;
   proveedores: string[];
   onAddProveedor: (p: string) => void;
-  locations: {warehouseId: number, name: string, store: string, type: 'central' | 'store'}[];
+  locations: {warehouseId: number, name: string, store: string, type: 'central' | 'store' | 'bodega'}[];
 }) {
   const [formData, setFormData] = useState<Partial<Producto>>(() => {
     if (product) {
@@ -826,6 +827,7 @@ function ProductModal({
                           onChange={e => setFormData({...formData, categoria: e.target.value})}
                           className="flex-1 px-4 py-3 rounded-2xl outline-none appearance-none" style={T.input}
                         >
+                          <option value="">Elige categoría</option>
                           {categorias.filter(c => c !== "Todo").map(c => <option key={c} value={c}>{c}</option>)}
                         </select>
                         <button 
@@ -857,6 +859,7 @@ function ProductModal({
                       onChange={e => setFormData({...formData, proveedor: e.target.value})}
                       className="flex-1 px-4 py-3 rounded-2xl outline-none appearance-none" style={T.input}
                     >
+                      <option value="">Elige proveedor</option>
                       {proveedores.map(p => <option key={p} value={p}>{p}</option>)}
                     </select>
                     <button 
@@ -1113,8 +1116,11 @@ function ProductModal({
                         <div className="flex items-center gap-1.5 mt-0.5">
                           {meta?.type && (
                             <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-widest"
-                              style={{ background: meta.type === 'central' ? "rgba(100,160,255,0.12)" : "rgba(100,220,130,0.12)", color: meta.type === 'central' ? "#88AAFF" : "#55CC88" }}>
-                              {meta.type === 'central' ? 'Central' : 'Tienda'}
+                              style={{
+                                background: meta.type === 'bodega' ? "rgba(245,158,11,0.12)" : meta.type === 'central' ? "rgba(100,160,255,0.12)" : "rgba(100,220,130,0.12)",
+                                color: meta.type === 'bodega' ? "#D97706" : meta.type === 'central' ? "#88AAFF" : "#55CC88",
+                              }}>
+                              {warehouseTypeLabel(meta.type)}
                             </span>
                           )}
                           {meta?.store && (
@@ -1336,6 +1342,18 @@ export function ProductsPage() {
   const stockMap = useMemo(() => {
     const map = new Map<number, number>();
     for (const p of productsQuery.data?.data ?? []) map.set(p.id, p.stock_total);
+    return map;
+  }, [productsQuery.data]);
+  // Desglose Exhibición/Bodega — solo viene cuando la query está scopeada a una
+  // tienda (selectedStoreId != null). Exhibición = vendible en Caja; Bodega = atrás.
+  const exhibicionMap = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const p of productsQuery.data?.data ?? []) if (p.stock_exhibicion != null) map.set(p.id, p.stock_exhibicion);
+    return map;
+  }, [productsQuery.data]);
+  const bodegaMap = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const p of productsQuery.data?.data ?? []) if (p.stock_bodega != null) map.set(p.id, p.stock_bodega);
     return map;
   }, [productsQuery.data]);
   const mangas = mangasQuery.data ?? [];
@@ -1607,11 +1625,37 @@ export function ProductsPage() {
       header: 'Precio',
       cell: info => <span className="text-sm font-black" style={{ color: '#00CC66' }}>{fmt(info.getValue())}</span>,
     }),
+    // Desglose Exhibición/Bodega — solo cuando hay una tienda en scope (gerente/
+    // cajero, o admin con tienda filtrada). Exhibición = vendible en Caja.
+    ...(selectedStoreId !== null ? [
+      columnHelper.display({
+        id: 'exhibicion',
+        header: 'Exhibición',
+        cell: info => {
+          const val = exhibicionMap.get(info.row.original.id) ?? 0;
+          return (
+            <span className="text-sm font-black" style={{ color: val <= 0 ? T.redBright : '#00CC66' }}
+              title="Vendible en Caja (front de la tienda)">{val}</span>
+          );
+        },
+      }),
+      columnHelper.display({
+        id: 'bodega',
+        header: 'Bodega',
+        cell: info => {
+          const val = bodegaMap.get(info.row.original.id) ?? 0;
+          return (
+            <span className="text-sm font-black" style={{ color: val > 0 ? '#F59E0B' : T.textMuted }}
+              title="Backstock atrás (no vendible — muévelo a Exhibición)">{val}</span>
+          );
+        },
+      }),
+    ] : []),
     columnHelper.accessor(
       row => getTotalStock(row.id),
       {
         id: 'stock',
-        header: 'Stock Total',
+        header: selectedStoreId !== null ? 'Stock (suma)' : 'Stock Total',
         cell: info => {
           const val    = info.getValue() as number;
           const unico  = info.row.original.esUnico;
@@ -1769,7 +1813,7 @@ export function ProductsPage() {
         );
       },
     }),
-  ], [handleEdit, getTotalStock, canEdit, isAdmin, selectedStoreId, canNotify, handleNotify, openProductDetails, alertingKey, notifiedKeys]);
+  ], [handleEdit, getTotalStock, canEdit, isAdmin, selectedStoreId, exhibicionMap, bodegaMap, canNotify, handleNotify, openProductDetails, alertingKey, notifiedKeys]);
 
 
   // Memoize filtered so the array reference is stable between renders that don't change
@@ -2160,7 +2204,7 @@ export function ProductsPage() {
       <div className="flex items-center gap-2 mb-5">
         {([
           { id: 'productos' as const, label: 'Productos', icon: Package },
-          { id: 'tomos' as const,    label: 'Tomos / Manga', icon: BookOpen },
+          { id: 'tomos' as const,    label: 'Tomos / Manga Nacional', icon: BookOpen },
         ]).map(s => (
           <button
             key={s.id}

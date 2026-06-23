@@ -44,6 +44,7 @@ Route::prefix('auth')->group(function () {
     Route::post('login',  [AuthController::class, 'login']);
     Route::post('logout', [AuthController::class, 'logout'])->middleware('auth:sanctum');
     Route::get('me',      [AuthController::class, 'me'])->middleware('auth:sanctum');
+    Route::post('password', [AuthController::class, 'changePassword'])->middleware('auth:sanctum');
 });
 
 // ── Catálogo público (sin auth) ───────────────────────────────────────────────
@@ -145,11 +146,12 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/',   [PreSaleCatalogsController::class, 'store']);
 
         Route::prefix('{id}')->group(function () {
-            Route::get('/',         [PreSaleCatalogsController::class, 'show']);
-            Route::patch('/',       [PreSaleCatalogsController::class, 'update']);
-            Route::patch('status',  [PreSaleCatalogsController::class, 'updateStatus']);
-            Route::post('image',    [PreSaleCatalogsController::class, 'uploadImage']);
-            Route::delete('image',  [PreSaleCatalogsController::class, 'removeImage']);
+            Route::get('/',              [PreSaleCatalogsController::class, 'show']);
+            Route::get('customer-usage', [PreSaleCatalogsController::class, 'customerUsage']);
+            Route::patch('/',            [PreSaleCatalogsController::class, 'update']);
+            Route::patch('status',       [PreSaleCatalogsController::class, 'updateStatus']);
+            Route::post('image',         [PreSaleCatalogsController::class, 'uploadImage']);
+            Route::delete('image',       [PreSaleCatalogsController::class, 'removeImage']);
         });
     });
 
@@ -213,6 +215,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/',                         [InventoryController::class, 'index']);
         Route::get('movements',                 [InventoryController::class, 'movements']);
         Route::post('movements',                [InventoryController::class, 'storeMovement']);
+        Route::post('move',                     [InventoryController::class, 'move']);
         Route::put('{productId}/{warehouseId}', [InventoryController::class, 'update']);
     });
 

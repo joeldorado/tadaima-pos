@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\MoveInventoryRequest;
 use App\Http\Requests\StoreInventoryMovementRequest;
 use App\Http\Requests\UpdateInventoryRequest;
 use App\Http\Resources\InventoryMovementResource;
@@ -174,6 +175,87 @@ class InventoryController extends Controller
             'Movimiento registrado',
             201
         );
+    }
+
+    /**
+     * POST /inventory/move
+     *
+     * Mueve stock de un producto entre dos almacenes de LA MISMA tienda
+     * (Exhibición ↔ Bodega). Registra dos InventoryMovement tipo 'transferencia'
+     * (negativo en origen, positivo en destino). No mueve entre tiendas distintas
+     * — eso es Traslados (`/transfers`).
+     *
+     * Body: { product_id, from_warehouse_id, to_warehouse_id, quantity, notes? }
+     */
+    public function move(MoveInventoryRequest $request): JsonResponse
+    {
+        $from = Warehouse::find($request->from_warehouse_id);
+        $to   = Warehouse::find($request->to_warehouse_id);
+        if (! $from || ! $to) {
+            return $this->error('Almacén no encontrado.', 404);
+        }
+
+        // Solo entre almacenes de la MISMA tienda (Exhibición ↔ Bodega).
+        if ($from->store_id === null || $from->store_id !== $to->store_id) {
+            return $this->error('Solo se puede mover stock entre almacenes de la misma tienda. Para mover entre tiendas usa Traslados.', 422);
+        }
+
+        // Guard cross-tienda: gerente/cajero solo mueven dentro de su tienda.
+        if ($resp = $this->storeScopeError($request, $from->store_id)) {
+            return $resp;
+        }
+
+        $qty = (float) $request->quantity;
+
+        try {
+            $result = DB::transaction(function () use ($request, $from, $to, $qty) {
+                // Lock del origen para evitar sobre-giro concurrente.
+                $source = Inventory::lockForUpdate()->firstOrCreate(
+                    ['product_id' => $request->product_id, 'warehouse_id' => $from->id],
+                    ['quantity' => 0],
+                );
+
+                if ((float) $source->quantity < $qty) {
+                    throw new \DomainException(
+                        "Stock insuficiente en {$from->name}. Disponible: {$source->quantity}, a mover: {$qty}."
+                    );
+                }
+
+                $dest = Inventory::lockForUpdate()->firstOrCreate(
+                    ['product_id' => $request->product_id, 'warehouse_id' => $to->id],
+                    ['quantity' => 0],
+                );
+
+                $source->decrement('quantity', $qty);
+                $dest->increment('quantity', $qty);
+
+                $ref = "MOV-{$from->id}->{$to->id}";
+                InventoryMovement::create([
+                    'product_id'   => $request->product_id,
+                    'warehouse_id' => $from->id,
+                    'type'         => 'transferencia',
+                    'quantity'     => -$qty,
+                    'reference'    => $ref,
+                    'notes'        => $request->notes ?? "Mover a {$to->name}",
+                    'user_id'      => $request->user()->id,
+                ]);
+                InventoryMovement::create([
+                    'product_id'   => $request->product_id,
+                    'warehouse_id' => $to->id,
+                    'type'         => 'transferencia',
+                    'quantity'     => $qty,
+                    'reference'    => $ref,
+                    'notes'        => $request->notes ?? "Desde {$from->name}",
+                    'user_id'      => $request->user()->id,
+                ]);
+
+                return $dest->fresh()->load(['product', 'warehouse.store']);
+            });
+        } catch (\DomainException $e) {
+            return $this->error($e->getMessage(), 422);
+        }
+
+        return $this->success(new InventoryResource($result), 'Stock movido.');
     }
 
     /**

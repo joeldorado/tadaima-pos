@@ -19,3 +19,22 @@ export async function updateInventory(
   const response = await apiClient.put<InventoryItem>(`/inventory/${productId}/${warehouseId}`, input)
   return response.data
 }
+
+export interface MoveInventoryInput {
+  product_id: number
+  /** Almacén origen (ej. Bodega). */
+  from_warehouse_id: number
+  /** Almacén destino (ej. Exhibición). Debe ser de la MISMA tienda. */
+  to_warehouse_id: number
+  quantity: number
+  notes?: string
+}
+
+/**
+ * Mueve stock de un producto entre dos almacenes de la misma tienda
+ * (Exhibición ↔ Bodega). Para mover entre tiendas distintas usar Traslados.
+ */
+export async function moveInventory(input: MoveInventoryInput): Promise<InventoryItem> {
+  const response = await apiClient.post<InventoryItem>('/inventory/move', input)
+  return response.data
+}

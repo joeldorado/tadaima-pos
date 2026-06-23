@@ -75,8 +75,9 @@ class PreSaleCatalogsController extends Controller
             'price_3'         => $data['price_3'] ?? null,
             'price_4'         => $data['price_4'] ?? null,
             'price_5'         => $data['price_5'] ?? null,
-            'advance_payment' => $data['advance_payment'] ?? 0,
-            'preorder_limit'  => $data['preorder_limit'] ?? null,
+            'advance_payment'    => $data['advance_payment'] ?? 0,
+            'preorder_limit'     => $data['preorder_limit'] ?? null,
+            'limit_per_customer' => $data['limit_per_customer'] ?? null,
             'arrival_date'    => $data['arrival_date'] ?? null,
             'pickup_deadline' => $data['pickup_deadline'] ?? null,
             'status'          => $data['status'] ?? PreSaleCatalog::STATUS_DRAFT,
@@ -151,6 +152,35 @@ class PreSaleCatalogsController extends Controller
     }
 
     /**
+     * GET /pre-sale-catalogs/{id}/customer-usage?customer_id=X
+     *
+     * Cuántas unidades de este catálogo ya tiene el cliente (identidad amplia)
+     * y cuál es el límite por cliente. Lo usa Caja para avisar/bloquear al
+     * asignar el cliente, ANTES de cobrar. La misma regla se enforce en
+     * PreSaleOrderService::createOrder.
+     */
+    public function customerUsage(\Illuminate\Http\Request $request, int $id): JsonResponse
+    {
+        $catalog    = PreSaleCatalog::findOrFail($id);
+        $customerId = (int) $request->query('customer_id');
+        $customer   = \App\Models\Customer::find($customerId);
+        if (!$customer) {
+            return $this->error('Cliente no encontrado.', 404);
+        }
+
+        $limit = $catalog->limit_per_customer; // null = sin límite
+        $used  = $catalog->reservedCountForCustomer($customer);
+
+        return $this->success([
+            'catalog_id'  => $catalog->id,
+            'customer_id' => $customerId,
+            'limit'       => $limit,
+            'used'        => $used,
+            'remaining'   => $limit === null ? null : max(0, $limit - $used),
+        ]);
+    }
+
+    /**
      * PATCH /pre-sale-catalogs/{id}
      *
      * Admin o gerente edita campos del catálogo.
@@ -167,7 +197,7 @@ class PreSaleCatalogsController extends Controller
         $data = $request->validated();
         // Once merchandise has arrived (or later), the preorder limit is frozen
         if (in_array($catalog->status, [PreSaleCatalog::STATUS_ARRIVED, PreSaleCatalog::STATUS_CLOSED, PreSaleCatalog::STATUS_CANCELLED])) {
-            unset($data['preorder_limit'], $data['store_limits']);
+            unset($data['preorder_limit'], $data['limit_per_customer'], $data['store_limits']);
         }
         $storeLimits = $data['store_limits'] ?? null;
         unset($data['store_limits']);

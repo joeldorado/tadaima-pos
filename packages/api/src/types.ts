@@ -47,6 +47,10 @@ export interface Product {
   allow_card: boolean
   /** Sum of all warehouse quantities (precomputed by backend via withSum) */
   stock_total: number
+  /** Stock en Exhibición (front, vendible en Caja). Solo con ?store_id. */
+  stock_exhibicion?: number
+  /** Stock en Bodega (backstock atrás, no vendible). Solo con ?store_id. */
+  stock_bodega?: number
   images: Array<{ id: number; image_path: string; url: string; sort_order: number }>
   /** Discriminador producto normal vs tomo de librería (default 'product'). */
   product_type?: 'product' | 'manga'
@@ -108,7 +112,7 @@ export interface Warehouse {
   company_id: number
   store_id: number | null
   name: string
-  type: 'central' | 'store'
+  type: 'central' | 'store' | 'bodega'
   description: string | null
   active: boolean
   store: { id: number; name: string } | null
@@ -124,7 +128,7 @@ export interface InventoryItem {
   warehouse: {
     id: number
     name: string
-    type: 'central' | 'store'
+    type: 'central' | 'store' | 'bodega'
     store: { id: number; name: string; phone: string | null } | null
   } | null
 }
@@ -231,6 +235,10 @@ export interface SaleDetail {
   discount: number
   total: number
   commission_amount: number
+  /** Dólares físicos recibidos en esta venta (null si no entraron USD). */
+  cash_received_usd?: number | null
+  /** Tipo de cambio USD→MXN usado al cobrar (snapshot). */
+  exchange_rate?: number | null
   status: string
   /** ADR-016 — 'none' | 'partial' | 'full'. Indica si la venta tuvo cancelaciones. */
   cancellation_status?: 'none' | 'partial' | 'full'
@@ -247,6 +255,8 @@ export interface SaleDetail {
     name: string
     sku: string | null
     quantity: number
+    /** Alias de quantity que lee el Reporte de Ruben (fallback a quantity). */
+    qty_cancelled?: number
     price: number
     line_total: number
     product_type?: 'product' | 'manga'
@@ -365,6 +375,10 @@ export interface CreateSaleInput {
   store_id?: number
   register_session_id?: number
   customer_id?: number | null
+  /** Dólares físicos recibidos en esta venta (informativo; el MXN ya va en payments). */
+  cash_received_usd?: number
+  /** Tipo de cambio USD→MXN usado al cobrar (snapshot). */
+  exchange_rate?: number
 }
 
 export interface Sale {
@@ -580,6 +594,8 @@ export interface PreSaleCatalog {
   price_5: number | null
   advance_payment: number
   preorder_limit: number | null
+  /** Límite de unidades POR CLIENTE en este catálogo (null = sin límite). */
+  limit_per_customer: number | null
   arrival_date: string | null
   pickup_deadline: string | null
   created_at: string
@@ -631,6 +647,7 @@ export interface CreatePreSaleCatalogInput {
   price_5?: number
   advance_payment?: number
   preorder_limit?: number
+  limit_per_customer?: number | null
   arrival_date?: string
   pickup_deadline?: string
   status?: 'draft' | 'published'
@@ -650,6 +667,7 @@ export interface UpdatePreSaleCatalogInput {
   price_5?: number | null
   advance_payment?: number | null
   preorder_limit?: number | null
+  limit_per_customer?: number | null
   arrival_date?: string | null
   pickup_deadline?: string | null
 }
@@ -822,7 +840,7 @@ export interface MangaInventoryItem {
   warehouse: {
     id: number
     name: string
-    type: 'central' | 'store'
+    type: 'central' | 'store' | 'bodega'
     store: { id: number; name: string; phone: string | null } | null
   } | null
 }

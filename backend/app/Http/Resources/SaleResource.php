@@ -22,6 +22,8 @@ class SaleResource extends JsonResource
             'discount'          => $this->discount,
             'total'             => $this->total,
             'commission_amount'   => $this->commission_amount,
+            'cash_received_usd'   => $this->cash_received_usd,
+            'exchange_rate'       => $this->exchange_rate,
             'status'              => $this->status,
             // ADR-016 — cancelación parcial: status sigue 'completed' pero la
             // venta tuvo items cancelados. Frontend debe mostrar badge "Parcial".

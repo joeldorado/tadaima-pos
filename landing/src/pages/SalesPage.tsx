@@ -576,6 +576,12 @@ function SaleRow({
               <p className="text-sm font-black" style={{ color: "var(--td-text-hi)" }}>
                 {fmt(sale.total + (sale.pre_sale_orders ?? []).reduce((s, o) => s + (o.paid_amount ?? 0), 0))}
               </p>
+              {(sale.cash_received_usd ?? 0) > 0 && (
+                <p className="text-[8px] font-black uppercase tracking-widest" style={{ color: "#10B981" }}
+                   title={`Recibió ${sale.cash_received_usd} USD${sale.exchange_rate ? ` a $${sale.exchange_rate}` : ""}`}>
+                  {sale.cash_received_usd} USD
+                </p>
+              )}
               {sale.cancellation_status === "partial" && cancelled > 0 ? (
                 <p className="text-[8px] font-bold uppercase tracking-widest" style={{ color: "#f87171" }}>
                   −{fmt(cancelled)} canc.

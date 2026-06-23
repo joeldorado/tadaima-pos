@@ -24,6 +24,12 @@ class CheckoutRequest extends FormRequest
             'draft_id'   => [$hasItems ? 'nullable' : 'required', 'integer', 'exists:sales_drafts,id'],
             'discount'   => ['nullable', 'numeric', 'min:0'],
 
+            // Dólares físicos recibidos en esta venta + TC usado (informativo,
+            // para Historial/Corte/Reporte). El MXN equivalente ya viene en los
+            // montos de payments; esto NO altera el total.
+            'cash_received_usd' => ['nullable', 'numeric', 'min:0'],
+            'exchange_rate'     => ['nullable', 'numeric', 'min:0'],
+
             'payments'                      => ['required', 'array', 'min:1'],
             'payments.*.payment_method_id'  => ['required', 'integer', 'exists:payment_methods,id'],
             'payments.*.amount'             => ['required', 'numeric', 'min:0.01'],

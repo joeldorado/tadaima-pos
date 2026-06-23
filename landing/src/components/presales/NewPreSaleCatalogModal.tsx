@@ -27,7 +27,7 @@ const TM  = "var(--td-text-lo)";
 const RED = "var(--td-red)";
 
 // Días de gracia sugeridos entre la llegada del producto y el límite de retiro.
-const PICKUP_DAYS_AFTER_ARRIVAL = 10;
+const PICKUP_DAYS_AFTER_ARRIVAL = 7;
 
 /** Suma días a una fecha "YYYY-MM-DD" sin pasar por UTC (evita el corrimiento
  *  de un día en zonas negativas como México al usar toISOString). */
@@ -127,6 +127,7 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
     catalog ? (catalog.advance_payment != null ? String(catalog.advance_payment) : "") : "100"
   );
   const [limit, setLimit]             = useState(catalog?.preorder_limit != null ? String(catalog.preorder_limit) : "");
+  const [limitPerCustomer, setLimitPerCustomer] = useState(catalog?.limit_per_customer != null ? String(catalog.limit_per_customer) : "");
   const [arrivalDate, setArrivalDate] = useState(catalog?.arrival_date ?? "");
   const [pickupDate, setPickupDate]   = useState(catalog?.pickup_deadline ?? "");
   // Último valor de retiro que ESTE form puso automáticamente. Si el usuario
@@ -136,7 +137,7 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
   const handleArrivalDateChange = (value: string) => {
     setArrivalDate(value);
     if (!value) return;
-    // Precarga "Fecha límite de retiro" = llegada + 10 días, como base editable.
+    // Precarga "Fecha límite de retiro" = llegada + 7 días, como base editable.
     if (pickupDate === "" || pickupDate === autoPickupRef.current) {
       const suggested = addDaysToYmd(value, PICKUP_DAYS_AFTER_ARRIVAL);
       autoPickupRef.current = suggested;
@@ -275,6 +276,7 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
         price_5:         price5 ? Number(price5) : null,
         advance_payment: advance ? Number(advance) : null,
         preorder_limit:  limit ? Number(limit) : null,
+        limit_per_customer: limitPerCustomer ? Number(limitPerCustomer) : null,
         arrival_date:    arrivalDate || null,
         pickup_deadline: pickupDate || null,
         // Enviar siempre (puede ser [] para borrar todos los límites existentes).
@@ -363,7 +365,7 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
                 color: tab === t ? "#fff" : TM,
               }}
             >
-              {t === "general" ? "General" : t === "precios" ? "Precios" : "Stock"}
+              {t === "general" ? "General" : t === "precios" ? "Precios" : "Unidades"}
             </button>
           ))}
         </div>
@@ -471,11 +473,26 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
                   >
                     <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
                       <Package size={12} />
-                      {hasStock ? `Stock: ${totalStock} u.` : "Sin stock asignado"}
+                      {hasStock ? `Unidades por tienda: ${totalStock} u.` : "Sin unidades asignadas"}
                     </span>
                     <span style={{ fontSize: 10, opacity: 0.85, fontWeight: 700 }}>{hasStock ? "Editar →" : "Asignar →"}</span>
                   </button>
                 </div>
+              </div>
+
+              <div>
+                <Label>Límite por cliente{["arrived","closed","cancelled"].includes(catalog?.status ?? "") ? " 🔒" : ""}</Label>
+                <input
+                  type="number" min="1" value={limitPerCustomer}
+                  onChange={e => setLimitPerCustomer(e.target.value)}
+                  placeholder="Sin límite"
+                  disabled={["arrived","closed","cancelled"].includes(catalog?.status ?? "")}
+                  title={["arrived","closed","cancelled"].includes(catalog?.status ?? "") ? "El límite no se puede modificar después de que el producto llegó" : undefined}
+                  style={{ ...inputStyle, opacity: ["arrived","closed","cancelled"].includes(catalog?.status ?? "") ? 0.45 : 1, cursor: ["arrived","closed","cancelled"].includes(catalog?.status ?? "") ? "not-allowed" : "auto" }}
+                />
+                <p style={{ fontSize: 10, color: "var(--td-text-lo)", margin: "5px 2px 0", lineHeight: 1.4 }}>
+                  Máximo de unidades que <strong>un mismo cliente</strong> puede comprar de esta preventa (de por vida). Vacío = sin límite. Distinto del "Límite de unidades" (tope global) y de las "Unidades por tienda".
+                </p>
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -643,7 +660,7 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 <div style={{ padding: "10px 14px", borderRadius: 14, background: "rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.18)" }}>
                   <p style={{ fontSize: 10, fontWeight: 700, color: "#F59E0B", margin: 0, lineHeight: 1.5 }}>
-                    Agrega el stock de preventa por tienda. Tiendas sin entrada <strong>no podrán vender</strong> este catálogo. Si no asignas ninguna tienda, el catálogo <strong>no se vende en ningún lado</strong>.
+                    Define las <strong>unidades por tienda</strong> (el cupo que cada tienda puede vender en esta preventa — no es stock real). Tiendas sin entrada <strong>no podrán vender</strong> este catálogo. Si no asignas ninguna tienda, el catálogo <strong>no se vende en ningún lado</strong>.
                   </p>
                 </div>
 
@@ -665,7 +682,7 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
                     </div>
                   </div>
                   <div style={{ width: 100 }}>
-                    <Label>Stock</Label>
+                    <Label>Unidades</Label>
                     <input
                       type="number" min="0"
                       value={pendingQty}
@@ -772,7 +789,7 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
                 {assignedEntries.length > 0 && (
                   <div style={{ padding: "10px 14px", borderRadius: 14, background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.18)" }}>
                     <p style={{ fontSize: 10, fontWeight: 700, color: "#10b981", margin: 0 }}>
-                      Stock total entre tiendas: <strong>{totalUnits}</strong> unidades en <strong>{assignedEntries.length}</strong> tienda{assignedEntries.length === 1 ? "" : "s"}
+                      Unidades totales entre tiendas: <strong>{totalUnits}</strong> en <strong>{assignedEntries.length}</strong> tienda{assignedEntries.length === 1 ? "" : "s"}
                     </p>
                   </div>
                 )}

@@ -40,6 +40,12 @@ class PreSaleOrderService
                 ->findMany($catalogIds)
                 ->keyBy('id');
 
+            // Cliente para el límite POR CLIENTE — identidad amplia (mismo
+            // cliente / teléfono / socio Tadaima) para que registros duplicados
+            // de la misma persona cuenten juntos.
+            $customer    = \App\Models\Customer::find($data['customer_id']);
+            $customerIds = $customer ? $customer->sameIdentityIds() : [(int) ($data['customer_id'] ?? 0)];
+
             foreach ($items as $line) {
                 $catalogId = (int) $line['catalog_id'];
                 $catalog   = $catalogs->get($catalogId);
@@ -67,6 +73,22 @@ class PreSaleOrderService
                     throw new \DomainException(
                         "'{$catalog->product_name}' solo tiene {$available} unidades disponibles (límite: {$limit})."
                     );
+                }
+
+                // Límite POR CLIENTE (de por vida en este catálogo: cuenta
+                // pending+ready+delivered, no cancelados). null = sin límite.
+                $perCustomerLimit = $catalog->limit_per_customer;
+                if ($perCustomerLimit !== null) {
+                    $customerReserved = $catalog->reservedCountForCustomerIds($customerIds);
+                    if ($customerReserved + $qty > $perCustomerLimit) {
+                        $left = max(0, $perCustomerLimit - $customerReserved);
+                        throw new \DomainException(
+                            "'{$catalog->product_name}' tiene un límite de {$perCustomerLimit} por cliente. "
+                            . ($left > 0
+                                ? "Este cliente ya tiene {$customerReserved}, solo puede llevar {$left} más."
+                                : "Este cliente ya tiene {$customerReserved} — no se le puede vender más.")
+                        );
+                    }
                 }
             }
 

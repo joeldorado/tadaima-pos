@@ -131,7 +131,7 @@ const PRICE_KEYS   = ['price1', 'price2', 'price3', 'price4', 'price5'] as const
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 interface Location {
-  warehouseId: number; name: string; store: string; type: 'central' | 'store'
+  warehouseId: number; name: string; store: string; type: 'central' | 'store' | 'bodega'
 }
 
 interface Props {
@@ -342,8 +342,8 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
               <BookOpen size={16} />
             </div>
             <div>
-              <h2 className="text-xl font-black" style={{ color: T.textPrimary }}>Alta de Tomos</h2>
-              <p className="text-xs" style={{ color: T.textSecondary }}>Librería · Manga · Lote</p>
+              <h2 className="text-xl font-black" style={{ color: T.textPrimary }}>Alta de Manga Nacional</h2>
+              <p className="text-xs" style={{ color: T.textSecondary }}>Librería · Manga Nacional · Lote</p>
             </div>
           </div>
           <button onClick={onClose} className="p-2 rounded-xl transition-colors" style={SECONDARY_BUTTON}>
