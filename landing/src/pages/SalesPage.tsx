@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import {
   TrendingUp, DollarSign, ShoppingBag, BarChart3, Loader2,
   CreditCard, CalendarDays, ChevronDown, X, ChevronRight, ChevronLeft,
-  Package, Receipt, ImageOff, RotateCcw, AlertTriangle,
+  Package, Receipt, ImageOff, XCircle,
   Store, Printer, User as UserIcon, FileText, Download, Bookmark, FileSpreadsheet,
   Maximize2, Minimize2, Ban,
 } from "lucide-react";
@@ -23,8 +23,10 @@ import { parseDate } from "@internationalized/date";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
-import { returnSale, getCashReport, storageUrl } from "@tadaima/api";
+import { getCashReport, storageUrl } from "@tadaima/api";
 import { buildPaymentSummary } from "@/lib/paymentSummary";
+import { CancelTicketModal } from "@/components/cancel/CancelTicketModal";
+import { useActiveSessionQuery } from "@/hooks/queries/useCashSession";
 import { getTodayLocal, toLocalYmd, daysAgoLocal, BUSINESS_TZ } from "@/lib/date";
 import type { CashSessionReport } from "@tadaima/api";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
@@ -465,16 +467,14 @@ function SalesDateRangePicker({
 
 // ─── SaleRow expandible ───────────────────────────────────────────────────────
 function SaleRow({
-  sale, productMap, rank, onReturn,
+  sale, productMap, rank, onCancel,
 }: {
   sale: SaleDetail;
   productMap: Record<string, ProductInfo>;
   rank: number;
-  onReturn: (id: number) => Promise<void>;
+  onCancel: (sale: SaleDetail) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [confirmReturn, setConfirmReturn] = useState(false);
-  const [returning, setReturning] = useState(false);
   const itemCount = sale.items?.reduce((s, i) => s + i.quantity, 0) ?? 0;
   const paymentName = getPaymentMethodName(sale);
 
@@ -826,47 +826,22 @@ function SaleRow({
                 Ticket
               </button>
 
-              {/* Devolver */}
+              {/* Cancelar — mismo flujo que Caja (ADR-016): pide motivo, soporta
+                  parcial/total, reversa el efectivo del corte y deja registro.
+                  Solo efectivo (tarjeta/transferencia no reversan caja). */}
               {sale.status === "completed" && !paymentName.toLowerCase().includes("tarjeta") && !paymentName.toLowerCase().includes("transfer") && (
-                confirmReturn ? (
-                  <div className="flex items-center gap-2">
-                    <span className="text-[9px] font-black text-amber-400 uppercase tracking-widest flex items-center gap-1.5">
-                      <AlertTriangle size={11} /> ¿Confirmar?
-                    </span>
-                    <button
-                      onClick={async () => {
-                        setReturning(true);
-                        try { await onReturn(sale.id); }
-                        finally { setReturning(false); setConfirmReturn(false); }
-                      }}
-                      disabled={returning}
-                      className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest bg-amber-500/20 border border-amber-500/30 text-amber-400 hover:bg-amber-500/30 transition-colors disabled:opacity-50"
-                    >
-                      {returning ? <Loader2 size={10} className="animate-spin" /> : <RotateCcw size={10} />}
-                      Devolver
-                    </button>
-                    <button
-                      onClick={() => setConfirmReturn(false)}
-                      className="text-[8px] font-bold uppercase tracking-widest px-2 py-1 hover:opacity-70"
-                      style={{ color: "var(--td-text-lo)" }}
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => setConfirmReturn(true)}
-                    className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest transition-all hover:border-amber-500/30"
-                    style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)", color: "var(--td-text-lo)" }}
-                  >
-                    <RotateCcw size={10} />
-                    Devolver
-                  </button>
-                )
+                <button
+                  onClick={() => onCancel(sale)}
+                  className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest transition-all hover:border-red-500/40"
+                  style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)", color: "var(--td-text-lo)" }}
+                >
+                  <XCircle size={10} />
+                  Cancelar
+                </button>
               )}
               {sale.status === "returned" && (
-                <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest bg-amber-500/10 border border-amber-500/20 text-amber-500">
-                  <RotateCcw size={10} /> Devuelta
+                <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest bg-red-500/10 border border-red-500/20 text-red-400">
+                  <XCircle size={10} /> Cancelada
                 </span>
               )}
             </div>
@@ -2193,18 +2168,12 @@ export function SalesPage() {
     productsQuery.isError, productsQuery.error, productsQuery.data,
   ]);
 
-  const handleReturn = async (saleId: number) => {
-    try {
-      await returnSale(saleId);
-      // La devolución regresa el stock (InventoryMovement 'devolucion') —
-      // invalidación central: catálogo de Caja, Existencias, historial,
-      // lista de ventas y dashboards (bug QA 2026-06-11).
-      invalidateAfterSale(queryClient);
-      toast.success("Devolución registrada. Inventario restaurado.");
-    } catch {
-      toast.error("Error al procesar la devolución");
-    }
-  };
+  // Cancelación de venta desde Ventas: usa el MISMO flujo que Caja (ADR-016) vía
+  // CancelTicketModal — motivo, parcial/total, reversa de caja y registro. La
+  // salida de caja se asienta en el corte ABIERTO del usuario actual (si tiene).
+  const [cancelTarget, setCancelTarget] = useState<{ kind: 'sale'; sale: SaleDetail } | null>(null);
+  const activeSessionQuery = useActiveSessionQuery();
+  const cashSession = activeSessionQuery.data ?? null;
 
   // ── Filtrado (method only, dates now server-side) ─────────────────────────
   const filteredSales = useMemo(() => {
@@ -3056,7 +3025,7 @@ export function SalesPage() {
                     ) : (
                       displayedRows.map((row, idx) => (
                         row.kind === "sale" ? (
-                          <SaleRow key={row.key} sale={row.sale} productMap={productMap} rank={idx + 1} onReturn={handleReturn} />
+                          <SaleRow key={row.key} sale={row.sale} productMap={productMap} rank={idx + 1} onCancel={(s) => setCancelTarget({ kind: 'sale', sale: s })} />
                         ) : (
                           <PreSaleMovementRow key={row.key} order={row.order} movement={row.movement} rank={idx + 1} />
                         )
@@ -3254,6 +3223,23 @@ export function SalesPage() {
           )}
         </div>
       </div>
+
+      {cancelTarget && (
+        <CancelTicketModal
+          kind="sale"
+          sale={cancelTarget.sale}
+          cashSessionId={cashSession?.id}
+          onClose={() => setCancelTarget(null)}
+          onSuccess={() => {
+            setCancelTarget(null);
+            // Cancelar reversa caja + regresa stock — invalidación central
+            // (historial, ventas, productos, inventario, dashboards) + el tab
+            // admin de cancelaciones.
+            void queryClient.invalidateQueries({ queryKey: ['saleCancellations'] });
+            invalidateAfterSale(queryClient, { presale: true });
+          }}
+        />
+      )}
 
     </div>
   );
