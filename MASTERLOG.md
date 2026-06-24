@@ -698,7 +698,9 @@ docker compose up --build -d
 - Los tomos están unificados como `products` (`product_type='manga'`, CTI) y su inventario vive en la tabla compartida `inventory`; el facade `/manga-inventory` (que usa el modal) mapea a `inventory` con `manga_id = product_id`. Por eso `/inventory/move` funciona idéntico para tomos pasando su `product_id`.
 - **Cambio** (`landing/src/components/products/QuickStockModal.tsx`): `canShowMove = !!moveExhibicion && !!moveBodega` (se quita `!isManga`) + invalidar `queryKeys.mangas.all` tras mover cuando `isManga`.
 - **TDD backend** (`backend/tests/Feature/BodegaExhibicionTest.php`, +2 tests): `test_move_endpoint_moves_stock_for_manga_product` y `test_manga_inventory_facade_reflects_move` (el facade refleja el move → el preview "old → new" del modal no miente). **Suite: 160 verdes** (537 assertions). `vite build` ✅.
-- **Deploy:** commit + `gcloud run deploy tadaima --source . --region us-central1` (sin flags de env → preserva los 22 secrets). Sin migraciones nuevas (migrate no-op contra la BD ya limpia).
+- **Deploy:** commit `27fab90` + `gcloud run deploy tadaima --source . --region us-central1` → **rev `tadaima-00092-mj8`** (sin flags de env → **22/22 secrets preservados**; migrate no-op). Verificado: health 200, login admin Pier 200, bundle nuevo `index-Dd2eiMv4.js`. Push a `origin/develop` (repo en sync con prod). **Para ver "Mover stock" en tomos: hard refresh / incógnito nuevo** (PWA).
+
+**Arranque EN VIVO (mismo día, ~18:43):** el cliente/Joel ya empezó a configurar sobre la BD limpia — tienda **"Tadaima CENTRO"** (auto-creó Bodega + Exhibición ✅, prueba en vivo de la QA) + usuarios reales (Jesica, Iveth, Froy, Carlos). **El sistema ya está VIVO** → de aquí en adelante NO ensuciar/limpiar prod sin backup + aviso (ver [[project-prod-test-phase]]).
 
 ### Sesión 2026-06-12 — local_date en cortes, backup main, merge transfers de Ruben + RBAC backend, DEPLOY rev 00072
 
