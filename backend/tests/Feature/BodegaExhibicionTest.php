@@ -74,6 +74,26 @@ class BodegaExhibicionTest extends TestCase
         return $product;
     }
 
+    /**
+     * Tomo (manga) post-unificación: es una fila de `products` con
+     * product_type='manga' + detalle en product_manga_details. Su inventario
+     * vive en la MISMA tabla `inventory` que los productos regulares, así que
+     * /inventory/move funciona idéntico pasando su product_id.
+     */
+    private function makeManga(): Product
+    {
+        $manga = Product::create([
+            'company_id'   => $this->company->id,
+            'name'         => 'Tomo ' . uniqid(), 'sku' => 'MNG-' . uniqid(), 'active' => true,
+            'product_type' => Product::TYPE_MANGA,
+        ]);
+        $manga->mangaDetails()->create([
+            'volume_number' => 1, 'editorial' => 'Editorial Test', 'genre' => 'shonen',
+        ]);
+        $manga->price()->create(['price_1' => 150]);
+        return $manga;
+    }
+
     public function test_store_creation_creates_exhibicion_and_bodega_warehouses(): void
     {
         $this->actingAs($this->admin)
@@ -141,6 +161,55 @@ class BodegaExhibicionTest extends TestCase
 
         $this->assertSame(6.0, (float) Inventory::where('product_id', $product->id)->where('warehouse_id', $this->bodega->id)->value('quantity'));
         $this->assertSame(4.0, (float) Inventory::where('product_id', $product->id)->where('warehouse_id', $this->exhibicion->id)->value('quantity'));
+    }
+
+    public function test_move_endpoint_moves_stock_for_manga_product(): void
+    {
+        // Un tomo debe poder mover stock Bodega↔Exhibición igual que un producto,
+        // porque su inventario está unificado en la tabla `inventory`. Este test
+        // respalda habilitar la pestaña "Mover stock" para tomos en el front.
+        $manga = $this->makeManga();
+        Inventory::create(['product_id' => $manga->id, 'warehouse_id' => $this->bodega->id, 'quantity' => 8]);
+
+        $this->actingAs($this->cajero)
+            ->postJson('/api/v1/inventory/move', [
+                'product_id' => $manga->id,
+                'from_warehouse_id' => $this->bodega->id,
+                'to_warehouse_id' => $this->exhibicion->id,
+                'quantity' => 3,
+            ])
+            ->assertOk();
+
+        $this->assertSame(5.0, (float) Inventory::where('product_id', $manga->id)->where('warehouse_id', $this->bodega->id)->value('quantity'));
+        $this->assertSame(3.0, (float) Inventory::where('product_id', $manga->id)->where('warehouse_id', $this->exhibicion->id)->value('quantity'));
+    }
+
+    public function test_manga_inventory_facade_reflects_move(): void
+    {
+        // El QuickStockModal de tomos lee el snapshot vía GET /manga-inventory.
+        // Tras un move, ese facade (que ahora mapea a `inventory`) debe reflejar
+        // los nuevos números — si no, el preview "old → new" mentiría.
+        $manga = $this->makeManga();
+        Inventory::create(['product_id' => $manga->id, 'warehouse_id' => $this->exhibicion->id, 'quantity' => 10]);
+        Inventory::create(['product_id' => $manga->id, 'warehouse_id' => $this->bodega->id, 'quantity' => 4]);
+
+        $this->actingAs($this->admin)
+            ->postJson('/api/v1/inventory/move', [
+                'product_id' => $manga->id,
+                'from_warehouse_id' => $this->exhibicion->id,
+                'to_warehouse_id' => $this->bodega->id,
+                'quantity' => 5,
+            ])
+            ->assertOk();
+
+        $rows = $this->actingAs($this->admin)
+            ->getJson("/api/v1/manga-inventory?manga_id={$manga->id}")
+            ->assertOk()
+            ->json('data');
+
+        $byWh = collect($rows)->keyBy('warehouse_id');
+        $this->assertSame(5.0, (float) $byWh[$this->exhibicion->id]['quantity'], 'Exhibición 10 - 5 = 5');
+        $this->assertSame(9.0, (float) $byWh[$this->bodega->id]['quantity'], 'Bodega 4 + 5 = 9');
     }
 
     public function test_move_rejects_insufficient_stock(): void

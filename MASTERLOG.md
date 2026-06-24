@@ -1,6 +1,7 @@
 # MASTERLOG — Tadaima POS
 
 > Registro maestro del proyecto: arquitectura, evolución, decisiones clave y estado actual.
+> Actualizado: 2026-06-24 (**LIMPIEZA DE BD PARA HANDOFF AL CLIENTE + QA PREVIA.** Joel pidió dejar prod listo para que el cliente arranque de cero con un admin. **(0) QA previa (sin tocar datos):** suite backend completa **158 tests / 530 assertions verdes**; verificado por código + datos que el flujo "admin crea tienda/terminal/usuarios desde cero" NO truena: `StoreController::store` auto-crea las 2 bodegas (Exhibición `store` + Bodega `bodega`); el checkout valida métodos de pago contra el catálogo **GLOBAL** (`PaymentMethod::whereIn`), no `store_payment_methods` (probado: prod tenía 0 store_payment_methods + 99 ventas OK); el front carga métodos vía `GET /payment-methods` global; `CashRegisterService::open` **auto-crea la caja por usuario** (`firstOrCreate store_id+owner_user_id`, ADR-017) → no requiere caja pre-sembrada. **(1) Backup full** de prod vía `mysqldump --single-transaction` → `backups/tadaima_prod_PRE-CLEAN_2026-06-24_104056.sql` (220K, 60 tablas + datos, marcador de cierre OK). **(2) Limpieza:** `TRUNCATE` de las 60 tablas excepto `migrations` (`SET FOREIGN_KEY_CHECKS=0`), preservando el esquema deployado (NO `migrate:fresh`, cero riesgo de drift). **(3) Reseed** con `PierFreshSeeder`: 1 empresa (Tadaima), 3 roles (admin/gerente/cajero, guard `api`), 4 métodos de pago, **1 admin `Pier` <pier@tadaima.mx / Tadaima2026>** (store_id null, can_view_cost true) — SIN tiendas/terminales/productos/ventas. **(4) Verificación:** estado prístino confirmado (companies=1, roles=3, payment_methods=4, users=1, model_has_roles=1, migrations=98; todo lo transaccional=0); **login real contra prod** `POST tadaima.poslite.com.mx/api/v1/auth/login` → **HTTP 200, success:true, roles:['admin'], token emitido** (502 inicial = cold start de Cloud Run). Tokens/sesiones de prueba limpiados → 0. **Sin cambios de código, sin deploy** (solo data en prod). El cliente entra como Pier y crea tienda → terminales → usuarios desde la UI.)
 > Actualizado: 2026-06-22 (**SESIÓN GIT/MERGE + DEPLOY rev `tadaima-00089-7wm` — UNIFICACIÓN DE RAMAS Y CIERRE DEL TRABAJO DE PROD SIN COMMITEAR.** Diagnóstico inicial: el hermano (Ruben) "hacía pull y no veía los cambios" → la causa era que TODO el trabajo de prod rev `00083`→`00088` (Bodega/Exhibición, USD en caja, límite de preventa por cliente, cambio de contraseña, default proveedor/categoría) estaba **desplegado en prod pero SIN commitear** (solo working tree + imagen de Cloud Run), y además Joel (`dev/qa-handoff`) y Ruben (`develop`) estaban divergidos. **(1) Commit del working tree de prod** → `7677ef6` en `dev/qa-handoff` (67 archivos, escaneo de secretos limpio), pusheado. **(2) Merge `dev/qa-handoff` → `develop`** (`edca333`, backup en rama `backup/pre-merge-qa-into-develop-2026-06-22`): merge de 3 vías (base `bb62445`); ÚNICO conflicto `TransfersPage.tsx`; verificado que el resto auto-mergeó conservando AMBOS lados (el selector de usuario en Reportes de Ruben + el USD de Joel conviven, nada se perdió en silencio). `develop` ya contenía 26 commits nuevos de Ruben (reportes para gerentes, selector de usuario, transferencias/traslados para gerentes, reportes de ventas canceladas) que NO estaban en prod. **(3) Fix `TransfersPage.tsx`** (`3b2b7aa`): la versión de Ruben agrupaba traslados POR TIENDA (asumía 1 bodega/tienda) → incompatible con el modelo de 2 stocks y desalineada con su propio backend (que transfiere por `warehouse_id`); reescritos `availableOriginWarehouses`/`destinationWarehouses` a **nivel-bodega** (elige Bodega/Exhibición específica, etiquetas "Tienda · Bodega/Exhibición" vía `warehouseTypeLabel`) **CONSERVANDO el RBAC de gerentes de Ruben** (`canCompleteTransfer`, gerente origen completa/cancela) y el preview de items. El movimiento intra-tienda Bodega↔Exhibición sigue por `POST /inventory/move` (QuickStockModal), NO por Traslados. **(4) `develop` = RAMA OFICIAL** (decisión Joel); ambos trabajan ahí (Ruben: `git pull origin develop`). `dev/qa-handoff` queda como snapshot histórico; `main` sigue atrasada. **(5) Verificación prod-ready:** `vite build` OK; **155 tests backend** (515 assertions) incl. migraciones de ambos en DB fresca + `TransferRbacTest`; ~450 errores `tsc` PRE-EXISTENTES (exactOptionalPropertyTypes) en TODAS las ramas que NO bloquean prod (el Dockerfile usa `npx vite build`, salta tsc) — el fix NO introdujo errores nuevos (verificado por diff contra baseline). **(6) DEPLOY a prod `tadaima-00089-7wm`** vía `gcloud run deploy tadaima --source . --region us-central1` (Cloud Build, **sin Docker local** — pedido de Joel): respaldo previo de la config de Cloud Run (`--format=export`); deploy SIN flags de env para **PRESERVAR** las env/secrets → verificado **22/22 intactas** (APP_KEY, DB_PASSWORD, Supabase key, DB socket Cloud SQL, GCS, Sanctum); migraciones no-op (cero nuevas vs prod, diff vacío); health `/`=200 en 0.32s. **Este deploy subió a prod por PRIMERA VEZ los 26 commits de Ruben** → pendiente QA de esos módulos. **NOTA caché PWA:** QA en incógnito NUEVO o hard refresh.)
 >
 > Actualizado previo: 2026-06-20 (**SESIÓN QA EN VIVO — 6 DEPLOYS rev `00083`→`00088` (frontend+backend). Backend 155/155, `vite build` OK en cada paso. ⚠️ TODO desplegado vía `gcloud run deploy --source .` desde el working tree — el código NO está commiteado/pusheado (sigue solo local + en prod); backup del working tree en `backups/working-tree-pre-ruben-2026-06-19.tar.gz`. Joel prueba y avisa.** **(00083) Push del lote 06-17 (Bodega/Exhibición + límite preventa por cliente) — corrieron solas las 3 migraciones (enum `bodega`, backfill bodegas, `limit_per_customer`) + esta sesión:** (1) **Caja = CTA primario del nav** — movida del último lugar a la **2ª posición** (bajo Inicio) con la marca roja Tadaima SIEMPRE encendida; resto de items neutros (refactor `NavItemLink` en `Layout.tsx`). (2) **Cambiar contraseña self-service** en el menú del avatar (los 3 roles): `POST /auth/password` con verificación de contraseña ACTUAL (`Hash::check`, min 8, distinta) + `ChangePasswordModal` (toggle ver/ocultar, validación inline). **🔴 Fix de seguridad CRÍTICO de paso:** `UpdateUserRequest::authorize()` devolvía `true` sin guard → cualquier token podía cambiarle la contraseña a CUALQUIER usuario; ahora `UserController::update` solo deja a admin editar a otros y a un no-admin tocar su propia cuenta (sin auto-asignarse tienda/costo/estado). `ChangePasswordTest` (5). (3) **Tipo "Manga Nacional"** (antes "Libro / Manga", "Alta de Tomos", "Manga · Lote", tab "Tomos / Manga"); las UNIDADES siguen siendo "Tomos". (4) **Preventa: límite de retiro sugerido 10→7 días** (`PICKUP_DAYS_AFTER_ARRIVAL`). (5) **Caja: método de pago vuelve SIEMPRE a Efectivo tras cobrar** (reset en `clearCart`) + **dropdown de método crece al hover** (alto 44→60, ícono/texto, vuelve al salir). (6) **Merge selectivo de `origin/develop` (Ruben) — módulos Reportes/Traslados/Existencias:** `ReportsPage`, `TransfersPage`, `StockSearchPage` + backend ADITIVO (`product_type`/`product_id` en `SaleResource`/`SaleItemResource`/`PreSaleOrderItemResource` + eager-load en `PreSaleOrdersController`, backward-compatible, NO rompe Ventas/Caja → no hizo falta separar endpoints); `types.ts` mergeado a mano (sin perder bodega/preventa). Excluido: SellPage/SalesPage de Ruben (no-op + pisaría la sesión), package.json/lock (`motion` ya existía), `patch_reports_negative.js` (basura), LoginPage (logo). El ReportsPage de Ruben CONSERVÓ el polling 20s + preventa por fecha de pago de Joel. **(00084-00086) LÍMITE PREVENTA POR CLIENTE — diagnóstico y UX:** QA de Joel "me deja vender 2 veces" → investigado contra prod (API admin, solo lectura): **el feature SIEMPRE funcionó** (`reservedCountForCustomerIds` cuenta bien entre folios; test `test_per_customer_limit_blocks_when_exceeded` lo prueba con 2 POST separados) — **la causa real era que NINGÚN catálogo tenía `limit_per_customer` configurado (todos null = sin límite)**. Joel siempre probó en "Preventa Admin" (#1, null). Se pusieron #1 y #6 en límite 2 vía API para QA. Mejoras UX deployadas: (00084) chequeo en vivo del límite **al AGREGAR** la preventa al carrito (`addCatalogToCart` async, antes solo al asignar cliente/cobrar); (00085) **card deshabilitada + label rojo** en el modal de preventas (flujo cliente-primero); (00086) **banner rojo persistente en el carrito** — cubre el flujo real "clic catálogo → asignar cliente que ya pasó el tope" donde `confirmAssignCustomer` rechazaba la asignación con solo un toast (`customerLimitWarning`, visible aunque no se asigne, con X). **(00087) Alta de producto: placeholder "Elige categoría" / "Elige proveedor"** (antes el select sin opción vacía mostraba la 1ª aunque el valor fuera ""). **(00088) GUARDAR DÓLARES RECIBIDOS EN CAJA (pedido Joel — antes NO se guardaba, solo el MXN equivalente):** columnas nuevas `sales.cash_received_usd` + `sales.exchange_rate` (snapshot, ADR-015), migración corre sola; `CheckoutRequest`/`SalesController`/`CheckoutService` (threading a checkoutDirect→checkout) + `SaleResource`; 0 USD → null. Agregación en el Corte (`/reports/cash` suma `total_usd_received` por sesión + summary). **3 vistas:** (a) Historial/Ventas → chip verde "N USD" por ticket; (b) Corte → fila "Dólares recibidos" en pantalla + impreso; (c) Reporte del Día → tarjeta "Pago en efectivo" muestra "incluye N USD recibidos". `SaleUsdReceivedTest` (3). **NOTA caché PWA:** entre deploys el bundle viejo persiste; QA en incógnito NUEVO o Cmd+Shift+R.)
@@ -404,27 +405,30 @@ Cajero
 
 ## 4. Estado actual del seed (ambiente limpio)
 
-Ejecutar: `php artisan migrate:fresh --seed`
+Hay **dos** seeders, para dos propósitos distintos:
 
-### Datos sembrados
+### PROD — `PierFreshSeeder` (estado real de producción)
+
+Estado actual de prod tras la **limpieza para handoff al cliente (2026-06-24)**.
+Comando: `php artisan db:seed --class=PierFreshSeeder --force` (sobre BD truncada).
 
 | Entidad | Valor |
 |---------|-------|
-| Empresa | Tadaima |
-| Tienda 1 | Cel Centro Paseo Rodríguez |
-| Tienda 2 | Macroplaza |
-| Admin | admin@tadaima.mx / password |
-| Gerente Centro | gerente.centro@tadaima.mx / password |
-| Cajero Centro | cajero.centro@tadaima.mx / password |
-| Gerente Macroplaza | gerente.macroplaza@tadaima.mx / password |
-| Cajero Macroplaza | cajero.macroplaza@tadaima.mx / password |
-| Cajas | 1 por tienda |
-| Métodos de pago | Efectivo, Tarjeta Débito, Tarjeta Crédito, Transferencia (en ambas) |
-| Catálogo 1 | iPhone 16 Pro Max 256GB — Negro Titanio ($28,999 · anticipo $5,800 · límite 5) |
-| Catálogo 2 | Samsung Galaxy S25 Ultra 512GB — Titanio Gris ($24,999 · anticipo $5,000 · límite 3) |
-| Catálogo 3 | AirPods Pro 2da Generación — USB-C ($6,499 · anticipo $1,300 · límite 10) |
+| Empresa | Tadaima (id 1) |
+| Roles | admin, gerente, cajero (guard `api`) |
+| Métodos de pago | Efectivo, Tarjeta Débito, Tarjeta Crédito, Transferencia |
+| **Admin** | **Pier — `pier@tadaima.mx` / `Tadaima2026`** (store_id null, can_view_cost true) |
 
-**No hay**: productos de inventario, almacenes, clientes, ventas, preventas antiguas.
+**No hay** (lo crea el cliente desde la UI): tiendas, terminales, bodegas, usuarios
+extra, productos, inventario, clientes, cajas, ventas, preventas, traslados.
+El admin entra → crea tienda (auto-genera Exhibición + Bodega) → terminales → usuarios.
+
+### DEV — `DatabaseSeeder` (demo local, NO usar en prod)
+
+Comando: `php artisan migrate:fresh --seed`. Siembra 2 tiendas (Centro/Macroplaza),
+admin + 2 gerentes (`*@tadaima.mx` / `devaccess`), 1 caja + 1 terminal (3.5%) por
+tienda, métodos de pago por tienda y warehouses Exhibición/Bodega. Solo para
+desarrollo local con datos de ejemplo. **No** incluye productos ni ventas.
 
 ---
 
@@ -641,6 +645,60 @@ docker compose up --build -d
 ## 11. Historial de sesiones de desarrollo
 
 > Sesiones anteriores a 2026-05-14 (>20 días) archivadas en git history para mantener el log ligero. Decisiones load-bearing preservadas en ADRs (§7) y secciones de arquitectura.
+
+### Sesión 2026-06-24 — QA previa + LIMPIEZA DE BD para handoff al cliente (admin Pier, prod a cero)
+
+**Contexto:** Joel pidió dejar la BD de prod lista para entregar al cliente: limpiar todos los datos de QA y dejar solo un usuario admin, para que el cliente cree tienda → terminales → usuarios desde cero. Antes de limpiar, una última QA "a ver si no truena algo" con BD vacía. Proxy Cloud SQL ya abierto por Joel.
+
+**1. QA previa (sin tocar datos) — todo verde:**
+
+| Verificación | Resultado |
+|---|---|
+| Suite backend completa (`php artisan test`) | **158 tests / 530 assertions, 0 fallos** |
+| Alta de tienda con BD vacía | `StoreController::store` auto-crea **2 warehouses** (Exhibición `store` + Bodega `bodega`) en una transacción ✅ |
+| Checkout sin `store_payment_methods` | Valida contra catálogo **GLOBAL** (`PaymentMethod::whereIn`), NO por tienda. Prueba: prod tenía `store_payment_methods=0` + **99 ventas exitosas** ✅ |
+| Front métodos de pago | `usePaymentMethodsQuery` → `GET /payment-methods` (global) — independiente de tienda ✅ |
+| Abrir caja con BD vacía | `CashRegisterService::open` hace `CashRegister::firstOrCreate(store_id+owner_user_id)` → **auto-crea la caja por usuario** (ADR-017), no requiere caja pre-sembrada. Solo necesita `store_id` ✅ |
+| Estado vacío (sin tiendas) | Guards defensivos en `StoreContext`/`SellPage`/`StoresPage` ✅ |
+
+**Conclusión QA:** limpiar la data NO rompe nada. El flujo admin→tienda→terminal→usuario→cajero-vende es sólido con BD a cero.
+
+**2. Limpieza ejecutada (data en prod, sin código ni deploy):**
+
+| Paso | Detalle |
+|---|---|
+| Backup | `mysqldump --single-transaction --no-tablespaces --set-gtid-purged=OFF` → `backups/tadaima_prod_PRE-CLEAN_2026-06-24_104056.sql` (220K, 60 tablas + datos, exit 0, marcador de cierre OK). |
+| Truncate | Generado desde `information_schema`: `TRUNCATE` de **las 60 tablas excepto `migrations`**, con `SET FOREIGN_KEY_CHECKS=0/1`. Se **preserva el esquema deployado** (NO `migrate:fresh` → cero riesgo de re-correr 98 migraciones contra prod). |
+| Reseed | `php artisan db:seed --class=PierFreshSeeder --force` (`.env` apunta a prod vía proxy). Crea: 1 empresa, 3 roles, 4 métodos de pago, **1 admin Pier** `<pier@tadaima.mx / Tadaima2026>`. |
+
+**Datos que se borraron** (eran de QA, fase de pruebas): 5 tiendas, 16 usuarios, 99 ventas + 122 items + 99 pagos, 29 productos, 46 inventario + 227 movimientos, 45 folios de preventa + 7 catálogos, 13 cajas + 34 sesiones, 6 clientes, 3 traslados, 80 logs, 64 tokens, etc. Todo respaldado en el dump.
+
+**3. Verificación post-limpieza:**
+- Estado prístino: `companies=1, roles=3, payment_methods=4, users=1, model_has_roles=1, migrations=98`; **todo lo transaccional = 0** (stores/terminals/warehouses/products/sales/payments/customers/inventory/cash_registers/sessions/pre_sale_orders/transfers/tokens/system_logs/system_settings).
+- **Login real contra prod:** `POST https://tadaima.poslite.com.mx/api/v1/auth/login` con Pier → **HTTP 200, `success:true`, `roles:['admin']`, token emitido**. (El 502 inicial fue cold start de Cloud Run; resolvió al reintentar.)
+- Tokens/sesiones de las pruebas de login limpiados → 0 sesiones activas (cliente entra fresco).
+
+**Notas:**
+- `system_settings` quedó vacío (antes solo tenía `price_permissions` stale del admin viejo). `points_multiplier` no estaba y prod ya funcionaba: `PointsService` usa default `0.001`. Estado limpio = correcto.
+- **Sin cambios de código, sin commit, sin deploy.** Solo se modificó data de prod. El esquema/imagen de Cloud Run siguen en rev `00089`.
+- **Pendiente (decisión de Joel):** si quiere credenciales de admin distintas a Pier para el cliente, cambiarlas desde la UI (o reseed con env `PIER_EMAIL`/`PIER_PASSWORD`).
+
+#### Parte 2 — "Mover stock" en tomos + verificación de feature "perdida" en el merge
+
+**Contexto:** Joel reportó (con screenshot del `QuickStockModal`) que en prod "se perdió" su cambio de mover stock Exhibición↔Bodega en productos tras el merge brutal del 2026-06-22, que cuando es admin se ocupa elegir tienda, y que eso debería estar también en alta de tomos.
+
+**Diagnóstico — la feature NO se perdió (era caché PWA):**
+- `git log` de `QuickStockModal.tsx`: último cambio en `7677ef6` (features prod 00083-00088). El merge NO lo tocó (único conflicto fue `TransfersPage.tsx`).
+- **Verificación del bundle LIVE de prod** (`grep` a `index-Bmd-Hbyr.js`): contiene "Mover stock entre almacenes" ✅, "Bodega → Exhibición" ✅, `/inventory/move` ✅. **La feature está deployada.** Lo que Joel veía era el service worker sirviendo bundle viejo → solución: incógnito nuevo / hard refresh (ver [[feedback-pwa-cache-qa]]).
+- **Selector de tienda para admin:** ya existe en `QuickStockModal` (dropdown cuando el admin ve >1 tienda; chip si es una sola; el modal entero se scopea a `headerStoreId`). También deployado.
+- El bundle live además ya trae el trabajo del 2026-06-23 (detalle USD en ticket, Devolver→cancelación) → **prod = develop HEAD `d02530f`**, todo lo commiteado está en prod.
+
+**Gap real implementado — habilitar "Mover stock" para TOMOS:**
+- La pestaña estaba oculta para tomos por el gate `canShowMove = !isManga && ...` en `QuickStockModal.tsx`.
+- Los tomos están unificados como `products` (`product_type='manga'`, CTI) y su inventario vive en la tabla compartida `inventory`; el facade `/manga-inventory` (que usa el modal) mapea a `inventory` con `manga_id = product_id`. Por eso `/inventory/move` funciona idéntico para tomos pasando su `product_id`.
+- **Cambio** (`landing/src/components/products/QuickStockModal.tsx`): `canShowMove = !!moveExhibicion && !!moveBodega` (se quita `!isManga`) + invalidar `queryKeys.mangas.all` tras mover cuando `isManga`.
+- **TDD backend** (`backend/tests/Feature/BodegaExhibicionTest.php`, +2 tests): `test_move_endpoint_moves_stock_for_manga_product` y `test_manga_inventory_facade_reflects_move` (el facade refleja el move → el preview "old → new" del modal no miente). **Suite: 160 verdes** (537 assertions). `vite build` ✅.
+- **Deploy:** commit + `gcloud run deploy tadaima --source . --region us-central1` (sin flags de env → preserva los 22 secrets). Sin migraciones nuevas (migrate no-op contra la BD ya limpia).
 
 ### Sesión 2026-06-12 — local_date en cortes, backup main, merge transfers de Ruben + RBAC backend, DEPLOY rev 00072
 

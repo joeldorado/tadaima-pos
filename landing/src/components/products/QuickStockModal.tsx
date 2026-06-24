@@ -136,10 +136,12 @@ export function QuickStockModal({ productId, productName, kind = "product", onCl
     return wh ? warehouseTypeLabel(wh.type) : `Almacén ${whId}`;
   };
 
-  // Mover: Exhibición ↔ Bodega de la tienda activa.
+  // Mover: Exhibición ↔ Bodega de la tienda activa. Aplica a productos Y tomos:
+  // el inventario de tomos está unificado en la tabla `inventory`, así que
+  // /inventory/move funciona idéntico pasando el product_id del tomo (= manga id).
   const moveExhibicion = scopedWarehouses.find(w => w.type === "store");
   const moveBodega     = scopedWarehouses.find(w => w.type === "bodega");
-  const canShowMove    = !isManga && !!moveExhibicion && !!moveBodega;
+  const canShowMove    = !!moveExhibicion && !!moveBodega;
   const moveFromWh = moveDir === "to_bodega" ? moveExhibicion : moveBodega;
   const moveToWh   = moveDir === "to_bodega" ? moveBodega : moveExhibicion;
   // Disponibles (snapshot del backend) para el preview "old → new".
@@ -168,6 +170,8 @@ export function QuickStockModal({ productId, productName, kind = "product", onCl
       toast.success(`Movido: ${qty} de ${warehouseTypeLabel(fromType)} → ${warehouseTypeLabel(toType)}`);
       void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
       void queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all });
+      // Tomos: refrescar también la lista de mangas para que el badge de stock se actualice.
+      if (isManga) void queryClient.invalidateQueries({ queryKey: queryKeys.mangas.all });
     } catch (err: unknown) {
       // Rollback: regresamos los números si truena (casi nunca pasa).
       setInitial(prevInitial);
