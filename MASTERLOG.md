@@ -723,6 +723,23 @@ docker compose up --build -d
 - **`dev/qa-handoff`** = rama de QA de Ruben (FF a `main`, también `3481979`). Ruben: `git fetch && git checkout dev/qa-handoff && git pull`. Su trabajo entra a `main` por merge/PR (no más push directo al branch de Joel).
 - **`develop`** queda histórica en `3820a96` (1 commit detrás de main); ya nadie la comparte.
 
+#### Parte 4 — 2 feedbacks cliente (gerente sin costos por default + admin ve passwords) + DEPLOY rev 00094
+
+**Feedback 1 — gerente NO ve costos hasta que el admin lo permita.** Confirmado: `UserController::store()` (y `assignRole()`) **auto-encendían `can_view_cost=true`** al crear/asignar gerente con tienda (decisión vieja 2026-06-10). **Quitados ambos bloques** → el gerente arranca en el default `false`; el admin lo activa en TabPermisos (`PUT /users/{id}`). `GerenteAutoCostTest` invertido (gerente creado/asignado → false; admin puede activarlo). **Prod data:** reseteados los gerentes que ya lo tenían (Carlos id5, Joel-GR id7) `1→0` vía `UPDATE … WHERE rol IN ('gerente','manager') AND can_view_cost=1`; los 3 gerentes ahora en 0.
+
+**Feedback 2 — admin puede VER passwords en users settings.** Los passwords son bcrypt (write-only) → imposible verlos sin copia. Decisión Joel: **copia reversible**.
+| Pieza | Detalle |
+|---|---|
+| Migración | `2026_06_24_000001_add_password_enc_to_users.php` → columna `password_enc` text nullable. |
+| Modelo `User` | cast `'password_enc' => 'encrypted'` (AES con APP_KEY) + en `$hidden` (no se auto-serializa) + en `$fillable`. |
+| `UserController` | en `store()`/`update()`(reset admin) guarda `password_enc` desde el MISMO plaintext que `password`. `AuthController::changePassword` también la mantiene al día (fix del review). |
+| `UserResource` | campo `password_plain` **solo si el viewer es admin** (`isAdminRole()`); descifrado por el cast; null si no hay copia. Los no-admin NUNCA reciben el campo. |
+| Frontend | `AdminPage` (modal editar usuario): fila read-only "Contraseña actual (solo admin)" con toggle 👁; si null → "resetea para verla". |
+
+Solo se capturan passwords creados/reseteados **después** del cambio (los previos solo tienen hash). El **login sigue usando el bcrypt** de `password`. **Tradeoff aceptado por Joel:** `password_enc` es reversible con la APP_KEY (mitigado: `$hidden` + gate admin en el resource).
+
+**Verificación:** suite **169 verde** (GerenteAutoCostTest invertido + `PasswordVisibleAdminTest` +3). `vite build` OK. **Security-review: 0 críticos / 0 high** (leak paths limpios — `password_plain` nunca llega a no-admin, verificado; fixeados 1 MEDIUM = `changePassword` mantiene la copia, 1 LOW = comentario stale en `SaleItemResource`). **DEPLOY** commit `8a019ae` en `main` → **rev `tadaima-00094-wcc`** (Cloud Build, sin Docker, 22/22 secrets, migración `password_enc` aplicada). `dev/qa-handoff` sincronizada para Ruben.
+
 ### Sesión 2026-06-12 — local_date en cortes, backup main, merge transfers de Ruben + RBAC backend, DEPLOY rev 00072
 
 **Contexto:** Joel hizo corte a las 11:36pm Tijuana con `testc1macro` y la BD guardó `closed_at` del día 12 (UTC). Pidió que la UI mande la fecha local. Después: backup a main, traer el cambio de transferencias de Ruben (`origin/develop`) y deploy de todo.
