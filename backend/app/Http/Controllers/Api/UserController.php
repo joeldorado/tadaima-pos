@@ -104,14 +104,16 @@ class UserController extends Controller
             $data['company_id'] ??= $request->user()?->company_id
                 ?? ($request->filled('store_id') ? Store::find($request->store_id)?->company_id : null);
 
-            // Gerente con tienda asignada ve costos de fábrica (decisión
-            // 2026-06-10): se enciende can_view_cost al crearlo; el admin puede
-            // apagarlo después desde Permisos de Precios sin tocar el rol.
-            if (! $request->filled('can_view_cost') && ! empty($data['store_id']) && $request->filled('role_id')) {
-                $roleName = DB::table('roles')->where('id', $request->role_id)->value('name');
-                if (in_array($roleName, ['gerente', 'manager'], true)) {
-                    $data['can_view_cost'] = true;
-                }
+            // can_view_cost NO se auto-enciende para gerentes (feedback cliente
+            // 2026-06-24): nadie ve costos hasta que el admin lo active
+            // explícitamente desde Permisos de Precios. Queda en el default de
+            // la columna (false) salvo que se mande explícito en el request.
+
+            // Copia encriptada del password para que el admin pueda consultarlo
+            // en users settings (el cast 'encrypted' del modelo lo cifra con la
+            // APP_KEY). El login sigue usando el bcrypt de `password`.
+            if ($request->filled('password')) {
+                $data['password_enc'] = $request->password;
             }
 
             $user = User::create($data);
@@ -167,7 +169,8 @@ class UserController extends Controller
         // El password por esta vía es reset admin-only. El cambio self-service
         // va por POST /auth/password (verifica la contraseña actual).
         if ($isAdmin && $request->filled('password')) {
-            $data['password'] = $request->password; // cast 'hashed' lo encripta
+            $data['password']     = $request->password; // cast 'hashed' lo encripta
+            $data['password_enc'] = $request->password; // copia reversible (cast 'encrypted') para que el admin la vea
         }
 
         $user->update($data);
@@ -217,13 +220,8 @@ class UserController extends Controller
             ]);
         });
 
-        // Misma regla que en el alta: al volverse gerente (con tienda asignada)
-        // se le enciende la visibilidad de costos; el admin puede apagarla
-        // después desde Permisos de Precios.
-        $roleName = DB::table('roles')->where('id', $request->role_id)->value('name');
-        if (in_array($roleName, ['gerente', 'manager'], true) && $user->store_id !== null && ! $user->can_view_cost) {
-            $user->update(['can_view_cost' => true]);
-        }
+        // can_view_cost NO se auto-enciende al volverse gerente (feedback
+        // cliente 2026-06-24): el admin lo activa explícitamente en Permisos.
 
         return $this->success(['roles' => $user->fresh()->roles], 'Rol asignado.');
     }

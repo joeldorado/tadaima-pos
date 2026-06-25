@@ -10,10 +10,9 @@ use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 /**
- * Decisión 2026-06-10: al crear un gerente CON tienda asignada, can_view_cost
- * se enciende automáticamente (el admin puede apagarlo después desde Permisos
- * de Precios). Aplica en el alta (POST /users con role_id) y al cambiar el rol
- * (POST /users/{id}/roles).
+ * Feedback cliente 2026-06-24 (revierte la decisión 2026-06-10): crear o
+ * asignar un gerente NO auto-enciende can_view_cost. Nadie ve costos hasta que
+ * el admin lo active explícitamente desde Permisos de Precios (PUT /users/{id}).
  */
 class GerenteAutoCostTest extends TestCase
 {
@@ -45,7 +44,7 @@ class GerenteAutoCostTest extends TestCase
         $this->cajeroRoleId  = $this->makeRole('cajero');
     }
 
-    public function test_creating_gerente_with_store_enables_can_view_cost(): void
+    public function test_creating_gerente_with_store_does_not_auto_enable_can_view_cost(): void
     {
         $resp = $this->actingAs($this->admin)
             ->postJson('/api/v1/users', [
@@ -56,7 +55,7 @@ class GerenteAutoCostTest extends TestCase
             ->assertCreated();
 
         $created = User::find($resp->json('data.id'));
-        $this->assertTrue((bool) $created->can_view_cost);
+        $this->assertFalse((bool) $created->can_view_cost, 'El gerente NO debe ver costos hasta que el admin lo active');
     }
 
     public function test_creating_gerente_without_store_does_not_enable_cost(): void
@@ -85,7 +84,7 @@ class GerenteAutoCostTest extends TestCase
         $this->assertFalse((bool) User::find($resp->json('data.id'))->can_view_cost);
     }
 
-    public function test_assigning_gerente_role_to_user_with_store_enables_cost(): void
+    public function test_assigning_gerente_role_does_not_auto_enable_cost(): void
     {
         $user = User::create([
             'name' => 'Cajero Promovido', 'email' => 'promovido@test.com',
@@ -101,31 +100,32 @@ class GerenteAutoCostTest extends TestCase
             ->postJson("/api/v1/users/{$user->id}/roles", ['role_id' => $this->gerenteRoleId])
             ->assertOk();
 
-        $this->assertTrue((bool) $user->fresh()->can_view_cost);
+        $this->assertFalse((bool) $user->fresh()->can_view_cost, 'Cambiar a gerente NO debe encender costos');
     }
 
-    public function test_admin_can_still_revoke_cost_after_auto_grant(): void
+    public function test_admin_can_grant_cost_via_permisos(): void
     {
         $resp = $this->actingAs($this->admin)
             ->postJson('/api/v1/users', [
-                'name' => 'Gerente Revocable', 'email' => 'revocable@test.com',
+                'name' => 'Gerente Sin Costo', 'email' => 'sincosto@test.com',
                 'password' => 'Password123', 'active' => true,
                 'store_id' => $this->store->id, 'role_id' => $this->gerenteRoleId,
             ])
             ->assertCreated();
 
         $id = $resp->json('data.id');
+        $this->assertFalse((bool) User::find($id)->can_view_cost, 'Arranca sin ver costos');
 
-        // El flujo de "Permisos de Precios" apaga el flag vía PUT /users/{id}
+        // El flujo de "Permisos de Precios" ENCIENDE el flag vía PUT /users/{id}.
         $this->actingAs($this->admin)
             ->putJson("/api/v1/users/{$id}", [
-                'name' => 'Gerente Revocable', 'email' => 'revocable@test.com',
+                'name' => 'Gerente Sin Costo', 'email' => 'sincosto@test.com',
                 'active' => true, 'store_id' => $this->store->id,
-                'can_view_cost' => false,
+                'can_view_cost' => true,
             ])
             ->assertOk();
 
-        $this->assertFalse((bool) User::find($id)->can_view_cost);
+        $this->assertTrue((bool) User::find($id)->can_view_cost, 'El admin puede activar costos manualmente');
     }
 
     private function makeRole(string $name): int

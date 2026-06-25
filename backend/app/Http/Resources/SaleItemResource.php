@@ -9,7 +9,8 @@ class SaleItemResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
-        // admin O can_view_cost (gerentes lo traen de fábrica desde 2026-06-10)
+        // admin O can_view_cost (el admin activa la visibilidad por usuario en
+        // Permisos; los gerentes ya NO la traen por default desde 2026-06-24).
         $isAdmin = $request->user()?->canViewCost() ?? false;
 
         return [

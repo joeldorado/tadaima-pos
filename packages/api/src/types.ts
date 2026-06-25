@@ -7,6 +7,12 @@ export interface User {
   phone: string | null
   active: boolean
   can_view_cost: boolean
+  /**
+   * Password en claro — SOLO presente cuando el que consulta es admin (copia
+   * reversible). undefined para no-admin; null si el usuario no tiene copia
+   * (creado antes del cambio → hay que resetear su contraseña para capturarla).
+   */
+  password_plain?: string | null
   company_id: number | null
   store_id: number | null
   /** Loaded when store relation is eager-loaded (login / me) */

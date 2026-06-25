@@ -513,6 +513,9 @@ interface UserFormData {
   active: boolean;
   store_id?: number;
   role_id?: number;
+  // Password actual en claro (copia reversible). Solo lo manda el backend al
+  // admin. undefined = no-admin / no disponible; null = sin copia (resetear).
+  password_plain?: string | null;
 }
 
 function TabUsuarios() {
@@ -530,6 +533,7 @@ function TabUsuarios() {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<ApiUser | null>(null);
   const [showPassword, setShowPassword] = useState(false);
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   // Avatar picker abre encima del modal de Editar Usuario cuando el admin
   // hace click en la foto. Solo aplica a usuarios existentes (necesita user_id real).
   const [avatarPicker, setAvatarPicker] = useState<{ userId: number; userName: string; currentUrl: string | null } | null>(null);
@@ -554,9 +558,9 @@ function TabUsuarios() {
   const openCreate = () => setModal({ open: true, data: { name: "", email: "", password: "", phone: "", active: true, store_id: undefined, role_id: undefined } });
   const openEdit = (u: ApiUser) => {
     const currentRole = roles.find(r => u.roles.includes(r.name));
-    setModal({ open: true, data: { id: u.id, name: u.name, email: u.email, password: "", phone: u.phone ?? "", active: u.active, store_id: u.store_id ?? undefined, role_id: currentRole?.id } });
+    setModal({ open: true, data: { id: u.id, name: u.name, email: u.email, password: "", phone: u.phone ?? "", active: u.active, store_id: u.store_id ?? undefined, role_id: currentRole?.id, password_plain: u.password_plain } });
   };
-  const closeModal = () => { setModal(null); setShowPassword(false); };
+  const closeModal = () => { setModal(null); setShowPassword(false); setShowCurrentPassword(false); };
 
   const save = async () => {
     if (!modal) return;
@@ -811,6 +815,30 @@ function TabUsuarios() {
                 <input type="tel" style={INPUT} value={modal.data.phone} onChange={e => setField("phone", e.target.value)} placeholder="55 1234 5678" />
               </Field>
             </div>
+            {/* Contraseña actual en claro — solo la ve el admin (copia reversible
+                del backend). null = no capturada (resetear para verla). */}
+            {modal.data.id && modal.data.password_plain !== undefined && (
+              <Field label="Contraseña actual (visible solo para el admin)">
+                <div style={{ position: "relative" }}>
+                  <input
+                    type={modal.data.password_plain == null ? "text" : (showCurrentPassword ? "text" : "password")}
+                    style={{ ...INPUT, paddingRight: 44, ...(modal.data.password_plain == null ? { fontSize: 11, color: TM } : {}) }}
+                    value={modal.data.password_plain ?? "No capturada — resetea la contraseña para verla"}
+                    readOnly
+                  />
+                  {modal.data.password_plain != null && (
+                    <button
+                      type="button"
+                      onClick={() => setShowCurrentPassword(s => !s)}
+                      title={showCurrentPassword ? "Ocultar" : "Mostrar"}
+                      style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "transparent", border: "none", cursor: "pointer", padding: 6, borderRadius: 8, color: TM, display: "flex", alignItems: "center" }}
+                    >
+                      {showCurrentPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  )}
+                </div>
+              </Field>
+            )}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <Field label="Tienda asignada">
                 <select

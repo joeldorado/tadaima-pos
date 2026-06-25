@@ -64,7 +64,10 @@ class AuthController extends Controller
     public function changePassword(ChangePasswordRequest $request): JsonResponse
     {
         $user = $request->user();
-        $user->update(['password' => $request->password]); // cast 'hashed' lo encripta
+        $user->update([
+            'password'     => $request->password,  // cast 'hashed' lo encripta (login)
+            'password_enc' => $request->password,  // copia reversible al día para el admin
+        ]);
 
         return $this->success(null, 'Contraseña actualizada.');
     }

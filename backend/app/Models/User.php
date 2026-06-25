@@ -15,18 +15,21 @@ class User extends Authenticatable
     use HasFactory, Notifiable, HasApiTokens;
 
     protected $fillable = [
-        'name', 'email', 'password',
+        'name', 'email', 'password', 'password_enc',
         'company_id', 'store_id', 'phone', 'address', 'active', 'can_view_cost',
         'avatar_url', 'last_seen_at',
     ];
 
-    protected $hidden = ['password', 'remember_token'];
+    // password_enc en $hidden: nunca se auto-serializa. Solo se expone descifrado
+    // vía UserResource gateado a admin (feedback 2026-06-24).
+    protected $hidden = ['password', 'password_enc', 'remember_token'];
 
     protected function casts(): array
     {
         return [
             'email_verified_at' => 'datetime',
             'password'          => 'hashed',
+            'password_enc'      => 'encrypted',
             'active'            => 'boolean',
             'can_view_cost'     => 'boolean',
             'last_seen_at'      => 'datetime',

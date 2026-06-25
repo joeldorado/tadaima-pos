@@ -16,6 +16,15 @@ class UserResource extends JsonResource
             'phone'         => $this->phone,
             'active'        => $this->active,
             'can_view_cost' => $this->can_view_cost,
+
+            // Password en claro SOLO para admin (copia reversible `password_enc`,
+            // descifrada por el cast del modelo). El campo NO existe para no-admin.
+            // null si el usuario no tiene copia (creado antes del cambio → resetear).
+            'password_plain' => $this->when(
+                $request->user()?->isAdminRole() ?? false,
+                fn () => $this->password_enc,
+            ),
+
             'company_id'    => $this->company_id,
             'store_id'      => $this->store_id,
 
