@@ -95,6 +95,10 @@ class ProductResource extends JsonResource
             'stock_exhibicion' => $this->when($storeScoped, fn () => (float) ($stockExhibicion ?? 0)),
             'stock_bodega'     => $this->when($storeScoped, fn () => (float) ($stockBodega ?? 0)),
 
+            // Solo al listar por tienda (?store_id). false = sin inventario en
+            // esta tienda ("No asignado" → la sucursal le agrega stock).
+            'is_assigned' => $this->when(isset($this->is_assigned), fn () => (bool) $this->is_assigned),
+
             // Discriminador para que el frontend sepa si es producto o manga.
             // Default 'product' por compatibilidad (rows pre-migración).
             'product_type' => $this->product_type ?? 'product',

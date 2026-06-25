@@ -59,6 +59,9 @@ class MangaCompatResource extends JsonResource
             'price_4'               => $price?->price_4,
             'price_5'               => $price?->price_5,
             'stock'                 => (float) ($product->inventory_sum_quantity ?? 0),
+            // Solo al listar por tienda (?store_id). false = sin inventario en
+            // esta tienda ("No asignado" → la sucursal le agrega stock).
+            'is_assigned'           => $this->when(isset($product->is_assigned), fn () => (bool) $product->is_assigned),
             'image_url'             => $firstImg?->url ?: null,
             'created_at'            => $product->created_at?->toISOString(),
             'updated_at'            => $product->updated_at?->toISOString(),

@@ -81,12 +81,25 @@ class ProductController extends Controller
             $query->active();
         }
 
+        // Visibilidad por tienda. Por defecto solo se listan productos CON
+        // inventario en la tienda (flujo histórico). Con ?include_unassigned=1
+        // también se listan los "no asignados" (sin renglón de inventario en
+        // esa tienda) para que cada sucursal pueda agregarles stock ella misma.
+        // `is_assigned` (withExists) distingue "asignado con 0" de "no asignado"
+        // — ambos calculan stock 0, así que sin esta bandera serían iguales.
         if ($storeId) {
-            $query->whereHas('inventory', fn ($q) =>
+            if (! $request->boolean('include_unassigned')) {
+                $query->whereHas('inventory', fn ($q) =>
+                    $q->whereHas('warehouse', fn ($wq) =>
+                        $wq->where('store_id', $storeId)
+                    )
+                );
+            }
+            $query->withExists(['inventory as is_assigned' => fn ($q) =>
                 $q->whereHas('warehouse', fn ($wq) =>
                     $wq->where('store_id', $storeId)
                 )
-            );
+            ]);
         }
 
         // Order by top sellers (last 30 days) when ?sort=top. The withCount

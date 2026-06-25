@@ -51,6 +51,11 @@ export interface Product {
   stock_exhibicion?: number
   /** Stock en Bodega (backstock atrás, no vendible). Solo con ?store_id. */
   stock_bodega?: number
+  /**
+   * Solo con ?store_id. false = sin inventario en esta tienda ("No asignado").
+   * undefined en la vista global.
+   */
+  is_assigned?: boolean
   images: Array<{ id: number; image_path: string; url: string; sort_order: number }>
   /** Discriminador producto normal vs tomo de librería (default 'product'). */
   product_type?: 'product' | 'manga'
@@ -835,6 +840,11 @@ export interface Manga {
   price_4: number | null
   price_5: number | null
   stock: number
+  /**
+   * Solo con ?store_id. false = sin inventario en esta tienda ("No asignado").
+   * undefined en la vista global.
+   */
+  is_assigned?: boolean
   image_url: string | null
   created_at: string
   updated_at: string

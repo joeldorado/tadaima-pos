@@ -22,7 +22,9 @@ export function useProductsQuery(
   storeId?: number | null,
   options?: { refetchIntervalMs?: number | false }
 ) {
-  const params = storeId ? { store_id: storeId } : undefined
+  // include_unassigned: trae también productos sin inventario en la tienda
+  // ("No asignado") para que la sucursal les agregue stock ella misma.
+  const params = storeId ? { store_id: storeId, include_unassigned: true } : undefined
   return useQuery({
     queryKey: queryKeys.products.list(params),
     queryFn: () => getProducts(params),
@@ -54,7 +56,7 @@ export function useProductsLightQuery(
   storeId?: number | null,
   options?: { refetchIntervalMs?: number | false }
 ) {
-  const params: GetProductsParams = { active: true, sort: 'top', ...(storeId ? { store_id: storeId } : {}) }
+  const params: GetProductsParams = { active: true, sort: 'top', ...(storeId ? { store_id: storeId, include_unassigned: true } : {}) }
   return useQuery({
     queryKey: [...queryKeys.products.all, 'light', 'top', params],
     queryFn: () => getProductsLight({ ...params, per_page: TOP_PAGE_SIZE, page: 1 } as Parameters<typeof getProductsLight>[0]),
@@ -88,7 +90,7 @@ export function useProductsSearchQuery(search: string, storeId?: number | null, 
       search: trimmed,
       per_page: 20,
       active: true,
-      ...(storeId ? { store_id: storeId } : {}),
+      ...(storeId ? { store_id: storeId, include_unassigned: true } : {}),
     } as Parameters<typeof getProductsLight>[0]),
     enabled: isLong && (options?.enabled ?? true),
     staleTime: 60_000,
@@ -104,7 +106,7 @@ export function useProductsSearchQuery(search: string, storeId?: number | null, 
  * final.
  */
 export function useProductsInfiniteQuery(storeId?: number | null, options?: { enabled?: boolean }) {
-  const params: GetProductsParams = { active: true, ...(storeId ? { store_id: storeId } : {}) }
+  const params: GetProductsParams = { active: true, ...(storeId ? { store_id: storeId, include_unassigned: true } : {}) }
   return useInfiniteQuery<PaginatedResponse<ProductLight>, Error>({
     queryKey: [...queryKeys.products.all, 'light', 'infinite', params],
     queryFn: ({ pageParam = 1 }) =>
@@ -145,7 +147,7 @@ export function useBackgroundProductsPrefetch(enabled: boolean, storeId?: number
             queryKey: [...queryKeys.products.all, 'light', 'bg', page, storeId ?? null],
             queryFn: () => getProductsLight({
               active: true, sort: 'top', per_page: TOP_PAGE_SIZE, page,
-              ...(storeId ? { store_id: storeId } : {}),
+              ...(storeId ? { store_id: storeId, include_unassigned: true } : {}),
             } as Parameters<typeof getProductsLight>[0]),
             staleTime: ONE_DAY_MS,
             gcTime: ONE_DAY_MS,

@@ -174,6 +174,9 @@ interface Producto {
   ventasTotales: number;
   esUnico?: boolean; // No se puede resurtir, no aparece en bajo stock
   visible_en_catalogo?: boolean;
+  // false = sin inventario en la tienda activa ("No asignado" → agregar stock).
+  // Solo viene con store_id; default true para la vista global admin.
+  isAssigned?: boolean;
 }
 
 const fmt = (n: number) =>
@@ -207,6 +210,7 @@ function apiProductToProducto(p: Product): Producto {
     ventasTotales: 0,
     allowCash: p.allow_cash ?? true,
     allowCard: p.allow_card ?? true,
+    isAssigned: p.is_assigned ?? true,
   }
 }
 
@@ -1657,6 +1661,17 @@ export function ProductsPage() {
         id: 'stock',
         header: selectedStoreId !== null ? 'Stock (suma)' : 'Stock Total',
         cell: info => {
+          // No asignado a esta tienda (sin inventario) → badge ámbar en vez de "0".
+          // La sucursal le agrega stock con el botón "Agregar stock".
+          if (selectedStoreId !== null && info.row.original.isAssigned === false) {
+            return (
+              <span className="text-[9px] font-black px-2 py-0.5 rounded-full whitespace-nowrap"
+                style={{ color: '#F59E0B', background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)' }}
+                title="Este producto no tiene inventario en esta tienda — agrégale stock">
+                No asignado
+              </span>
+            );
+          }
           const val    = info.getValue() as number;
           const unico  = info.row.original.esUnico;
           const low    = val <= 10;
@@ -1717,6 +1732,7 @@ export function ProductsPage() {
     columnHelper.accessor(
       row => {
         if (row.desactivado) return 'inactivo';
+        if (selectedStoreId !== null && row.isAssigned === false) return 'no_asignado';
         const stock = getTotalStock(row.id);
         if (stock <= 0) return 'sin_stock';
         if (stock <= 10 && !row.esUnico) return 'bajo_stock';
@@ -1731,6 +1747,7 @@ export function ProductsPage() {
           const cfg = {
             activo:     { label: 'Activo',       color: '#00CC66',   bg: 'rgba(0,180,90,0.15)'   },
             inactivo:   { label: 'Inactivo',      color: T.textMuted, bg: PRODUCT_THEME.surfaceSoft },
+            no_asignado:{ label: 'No asignado',   color: '#F59E0B',   bg: 'rgba(245,158,11,0.12)' },
             sin_stock:  { label: 'Sin Stock',     color: T.redBright, bg: 'rgba(204,34,0,0.15)'   },
             bajo_stock: { label: 'Bajo Stock',    color: T.redBright, bg: 'rgba(204,34,0,0.12)'   },
             unico_bajo: { label: 'Único — agotándose', color: '#FFAA00', bg: 'rgba(255,170,0,0.1)' },
@@ -1771,11 +1788,13 @@ export function ProductsPage() {
               <button
                 onClick={e => { e.stopPropagation(); setStockModalProduct({ id: p.id, name: p.nombre }); }}
                 className="px-3 py-1.5 rounded-xl text-[10px] font-black transition-all hover:bg-emerald-500/10 hover:text-emerald-300 flex items-center gap-1.5"
-                style={SECONDARY_BUTTON}
-                title="Editar stock por tienda"
+                style={p.isAssigned === false
+                  ? { color: '#F59E0B', border: '1px solid rgba(245,158,11,0.35)', background: 'rgba(245,158,11,0.10)' }
+                  : SECONDARY_BUTTON}
+                title={p.isAssigned === false ? "Agregar stock a esta tienda" : "Editar stock por tienda"}
               >
                 <Warehouse size={11} />
-                Stock
+                {p.isAssigned === false ? "Agregar stock" : "Stock"}
               </button>
               <button
                 onClick={e => { e.stopPropagation(); handleEdit(p); }}
@@ -1922,6 +1941,16 @@ export function ProductsPage() {
     mangaColumnHelper.accessor('stock', {
       header: 'Stock',
       cell: info => {
+        // No asignado a esta tienda (sin inventario) → badge ámbar.
+        if (info.row.original.is_assigned === false) {
+          return (
+            <span className="text-[9px] font-black px-2 py-0.5 rounded-full whitespace-nowrap"
+              style={{ color: '#F59E0B', background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)' }}
+              title="Sin inventario en esta tienda — agrégale stock">
+              No asignado
+            </span>
+          );
+        }
         const val = info.getValue();
         const empty = val <= 0;
         const low   = val > 0 && val <= 5;
@@ -1971,11 +2000,13 @@ export function ProductsPage() {
               <button
                 onClick={e => { e.stopPropagation(); setStockModalProduct({ id: m.id, name: `${m.name}${m.volume_number != null ? ` Vol. ${m.volume_number}` : ""}`, kind: "manga" }); }}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black transition-all hover:bg-emerald-500/10 hover:text-emerald-300"
-                style={SECONDARY_BUTTON}
-                title="Editar stock por tienda"
+                style={m.is_assigned === false
+                  ? { color: '#F59E0B', border: '1px solid rgba(245,158,11,0.35)', background: 'rgba(245,158,11,0.10)' }
+                  : SECONDARY_BUTTON}
+                title={m.is_assigned === false ? "Agregar stock a esta tienda" : "Editar stock por tienda"}
               >
                 <Warehouse size={11} />
-                Stock
+                {m.is_assigned === false ? "Agregar stock" : "Stock"}
               </button>
               <button
                 onClick={e => { e.stopPropagation(); setEditingManga(m); }}
@@ -2340,12 +2371,14 @@ export function ProductsPage() {
                 {canEdit && !showLowStock && (
                   <button
                     onClick={e => { e.stopPropagation(); setStockModalProduct({ id: p.id, name: p.nombre }); }}
-                    className="absolute bottom-2 left-2 z-20 flex items-center gap-1 px-2.5 py-1 rounded-xl text-[10px] font-black uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-all"
-                    style={{ background: "rgba(16,185,129,0.85)", color: "#fff", border: "1px solid rgba(16,185,129,0.4)" }}
-                    title="Editar stock por tienda"
+                    className={`absolute bottom-2 left-2 z-20 flex items-center gap-1 px-2.5 py-1 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${p.isAssigned === false ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                    style={p.isAssigned === false
+                      ? { background: "rgba(245,158,11,0.9)", color: "#fff", border: "1px solid rgba(245,158,11,0.5)" }
+                      : { background: "rgba(16,185,129,0.85)", color: "#fff", border: "1px solid rgba(16,185,129,0.4)" }}
+                    title={p.isAssigned === false ? "Agregar stock a esta tienda" : "Editar stock por tienda"}
                   >
                     <Warehouse size={11} />
-                    Stock
+                    {p.isAssigned === false ? "Agregar stock" : "Stock"}
                   </button>
                 )}
                 {p.imagen ? (
@@ -2363,13 +2396,17 @@ export function ProductsPage() {
                         {p.soloEfectivo && <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#D97706] text-white">Solo Efectivo</span>}
                       </div>
                       <div className="absolute top-2 right-2 flex flex-col items-end gap-1 z-10">
-                        {disponible > 0 && (
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-black text-white ${lowStock ? 'bg-red-600/90' : unicoLow ? 'bg-[#D97706]' : 'bg-black/65 backdrop-blur-md'}`}>
-                            {disponible} disp.
-                          </span>
-                        )}
-                        {unicoLow && <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#D97706]/80 text-white">único</span>}
-                        {disponible <= 0 && !p.esUnico && <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-red-600/90 text-white">Sin Stock</span>}
+                        {p.isAssigned === false ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black text-white" style={{ background: 'rgba(245,158,11,0.9)' }}>No asignado</span>
+                        ) : (<>
+                          {disponible > 0 && (
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-black text-white ${lowStock ? 'bg-red-600/90' : unicoLow ? 'bg-[#D97706]' : 'bg-black/65 backdrop-blur-md'}`}>
+                              {disponible} disp.
+                            </span>
+                          )}
+                          {unicoLow && <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#D97706]/80 text-white">único</span>}
+                          {disponible <= 0 && !p.esUnico && <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-red-600/90 text-white">Sin Stock</span>}
+                        </>)}
                       </div>
                     </div>
                     <div className="p-4 pt-3 flex flex-col gap-3">
@@ -2418,8 +2455,8 @@ export function ProductsPage() {
                         <h3 className="font-black text-base leading-snug line-clamp-3" style={{ color: T.textPrimary }}>{p.nombre}</h3>
                       </div>
                       <div className="flex flex-col items-end gap-0.5 shrink-0">
-                        <div className="px-2.5 py-1 rounded-full text-[10px] font-black" style={{ background: disponible <= 0 ? T.redBright : lowStock ? T.redBright : unicoLow ? "#D97706" : "rgba(30,120,60,0.8)", color: "#fff" }}>
-                          {disponible <= 0 ? "Sin stock" : `${disponible} disp.`}
+                        <div className="px-2.5 py-1 rounded-full text-[10px] font-black" style={{ background: p.isAssigned === false ? "rgba(245,158,11,0.9)" : disponible <= 0 ? T.redBright : lowStock ? T.redBright : unicoLow ? "#D97706" : "rgba(30,120,60,0.8)", color: "#fff" }}>
+                          {p.isAssigned === false ? "No asignado" : disponible <= 0 ? "Sin stock" : `${disponible} disp.`}
                         </div>
                         {unicoLow && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ color: '#FFAA00', background: 'rgba(255,170,0,0.12)', border: '1px solid rgba(255,170,0,0.25)' }}>único</span>}
                       </div>

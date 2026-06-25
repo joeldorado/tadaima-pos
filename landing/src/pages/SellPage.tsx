@@ -14,6 +14,7 @@ import {
 import { ImageWithFallback } from "@/components/figma/ImageWithFallback";
 import { UserAvatar } from "@/components/UserAvatar";
 import { ProductCatalogModal } from "@/components/ProductCatalogModal";
+import { QuickStockModal } from "@/components/products/QuickStockModal";
 import { PreSaleDifusionPanel } from "@/components/presales/PreSaleDifusionPanel";
 import { CameraScannerModal } from "@/components/CameraScannerModal";
 import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
@@ -85,6 +86,9 @@ interface Product {
   active?: boolean;
   product_type?: string;
   volume_number?: number | null;
+  // false = sin inventario en la tienda activa ("No asignado" → el cajero le
+  // agrega stock; no se puede cobrar hasta que tenga stock). Default true.
+  is_assigned?: boolean;
 }
 
 interface Customer {
@@ -307,6 +311,9 @@ export function SellPage() {
   // polling (Joel 2026-06-12): el cajero solo pollea catálogo/preventas
   // mientras la ventana correspondiente está ABIERTA — al cerrarla se apaga.
   const [showCatalog, setShowCatalog] = useState(false);
+  // Producto "no asignado" en Caja → el cajero le agrega stock con QuickStockModal
+  // (scopeado a su tienda). Al guardar, invalida products → pasa a vendible.
+  const [stockModalProduct, setStockModalProduct] = useState<{ id: number; name: string; kind?: "product" | "manga" } | null>(null);
   const [showPreSalesModal, setShowPreSalesModal] = useState(false);
   const LIVE_POLL_MS = 20_000;
   // IMPORTANTE: pasar activeStore.id para que el endpoint retorne stock POR TIENDA.
@@ -457,6 +464,7 @@ export function SellPage() {
           payment_restriction: p.allow_card === false && p.allow_cash !== false ? "cash_only" : undefined,
           product_type: p.product_type ?? "product",
           volume_number: p.volume_number ?? null,
+          is_assigned: p.is_assigned ?? true,
         } as Product;
       });
   }, [productsQuery.data]);
@@ -561,6 +569,7 @@ export function SellPage() {
         payment_restriction: p.allow_card === false && p.allow_cash !== false ? "cash_only" : undefined,
         product_type: p.product_type ?? "product",
         volume_number: p.volume_number ?? null,
+        is_assigned: p.is_assigned ?? true,
       }) as Product);
     return extra.length > 0 ? [...topProducts, ...extra] : topProducts;
   }, [topProducts, productsSearchQuery.data]);
@@ -1269,6 +1278,13 @@ export function SellPage() {
     return Math.max(0, total - reservedInOtherMesas(product.id, currentMesaId));
   }, [reservedInOtherMesas]);
 
+  // Abre el modal "Agregar stock" para un producto/tomo no asignado a esta tienda.
+  const openStockFor = (p: Product) => setStockModalProduct({
+    id: Number(p.id),
+    name: p.name + (p.volume_number != null ? ` Vol. ${p.volume_number}` : ""),
+    kind: p.product_type === "manga" ? "manga" : "product",
+  });
+
   const removeMesa = (id: string) => {
     if (mesas.length <= 1) return;
     setMesas(prev => {
@@ -1970,6 +1986,8 @@ export function SellPage() {
       p.sku.toLowerCase() === lc
       || (p.barcode ?? '').toLowerCase() === lc);
     if (local) {
+      // No asignado a esta tienda → no se vende; abre "Agregar stock".
+      if (local.is_assigned === false) { openStockFor(local); return; }
       // addScanToCart maneja internamente el "ya está" → no duplicar ni sumar
       // y emite el toast apropiado (info o success).
       addScanToCart(local, "a");
@@ -1985,7 +2003,7 @@ export function SellPage() {
           search: code,
           per_page: 5,
           active: true,
-          ...(activeStore?.id ? { store_id: activeStore.id } : {}),
+          ...(activeStore?.id ? { store_id: activeStore.id, include_unassigned: true } : {}),
         } as Parameters<typeof getProductsLight>[0]),
         staleTime: 60_000,
       });
@@ -2011,7 +2029,10 @@ export function SellPage() {
             ? { tienda: exact.stock_total, bodega: exact.stock_bodega ?? 0, preventa: 0, dañado: 0 }
             : undefined,
           active: exact.active,
+          is_assigned: exact.is_assigned ?? true,
         } as Product;
+        // No asignado → abre "Agregar stock" en vez de intentar vender.
+        if (adapted.is_assigned === false) { openStockFor(adapted); return; }
         // Scanner usa addScanToCart (nunca suma). Si ya está en venta, toast info.
         addScanToCart(adapted, "a");
         return;
@@ -4442,6 +4463,7 @@ export function SellPage() {
                     e.preventDefault();
                     const exact = filteredProds.find(p => p.sku === search.trim()) ?? (filteredProds.length === 1 ? filteredProds[0] : null);
                     if (!exact) return;
+                    if (exact.is_assigned === false) { openStockFor(exact); setSearch(""); return; }
                     void addToCart(exact, "a");
                     setSearch("");
                   }}
@@ -4515,10 +4537,14 @@ export function SellPage() {
                           key={p.id}
                           role="button"
                           tabIndex={0}
-                          onClick={() => { void addToCart(p, "a"); setSearch(""); }}
+                          onClick={() => {
+                            if (p.is_assigned === false) { openStockFor(p); return; }
+                            void addToCart(p, "a"); setSearch("");
+                          }}
                           onKeyDown={e => {
                             if (e.key === "Enter" || e.key === " ") {
                               e.preventDefault();
+                              if (p.is_assigned === false) { openStockFor(p); return; }
                               void addToCart(p, "a");
                               setSearch("");
                             }
@@ -4589,7 +4615,19 @@ export function SellPage() {
                               carrito en ese nivel; stopPropagation evita
                               doble-fire del onClick del row. */}
                           <div className="flex flex-col gap-1.5 items-stretch shrink-0 min-w-[150px]">
-                            {getPriceLevels(p).map(lvl => {
+                            {p.is_assigned === false ? (
+                              <button
+                                onClick={e => { e.stopPropagation(); openStockFor(p); }}
+                                className="flex items-center justify-center gap-2 px-3 py-3 rounded-xl border transition-colors"
+                                style={{ background: "rgba(245,158,11,0.10)", borderColor: "rgba(245,158,11,0.35)", color: "#f59e0b" }}
+                                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(245,158,11,0.18)"; }}
+                                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(245,158,11,0.10)"; }}
+                                title="Sin stock en esta tienda — agrégalo para poder venderlo"
+                              >
+                                <Plus size={14} />
+                                <span className="text-[11px] font-black uppercase tracking-widest">No asignado · Agregar stock</span>
+                              </button>
+                            ) : getPriceLevels(p).map(lvl => {
                               // Color de identidad por nivel (Normal=verde,
                               // Socio=ámbar, Mayorista=azul) — Joel 2026-06-11.
                               const rgb = PRICE_LEVEL_RGB[lvl.level];
@@ -6599,6 +6637,21 @@ export function SellPage() {
         }}
       />
 
+      {/* ── Agregar stock a producto "No asignado" (self-service por tienda) ── */}
+      {stockModalProduct && (
+        <QuickStockModal
+          productId={stockModalProduct.id}
+          productName={stockModalProduct.name}
+          kind={stockModalProduct.kind ?? "product"}
+          onClose={() => {
+            setStockModalProduct(null);
+            // Trae stock fresco → el producto pasa de "No asignado" a vendible.
+            void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+            void queryClient.invalidateQueries({ queryKey: queryKeys.mangas.all });
+          }}
+        />
+      )}
+
       {/* ── Catálogo de Productos ──────────────────────────────────────────── */}
       {showCatalog && (
         <ProductCatalogModal
@@ -6614,6 +6667,11 @@ export function SellPage() {
             toast.success("Actualizando catálogo…");
           }}
           isRefreshing={productsQuery.isFetching}
+          onAddStock={(p) => setStockModalProduct({
+            id: Number(p.id),
+            name: p.name + (p.volume_number != null ? ` Vol. ${p.volume_number}` : ""),
+            kind: p.product_type === "manga" ? "manga" : "product",
+          })}
         />
       )}
 

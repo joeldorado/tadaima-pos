@@ -8,6 +8,11 @@ export interface GetMangasParams {
   search?: string
   active?: boolean
   per_page?: number
+  /**
+   * Con store_id: incluye tomos "no asignados" (sin inventario en la tienda)
+   * con stock 0 + is_assigned=false, para que la sucursal les agregue stock.
+   */
+  include_unassigned?: boolean
 }
 
 export async function getMangas(params?: GetMangasParams): Promise<Manga[]> {

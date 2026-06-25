@@ -22,7 +22,9 @@ export function useMangasQuery(
   storeId?: number | null,
   options?: { enabled?: boolean; refetchIntervalMs?: number | false }
 ) {
-  const params = storeId ? { store_id: storeId } : undefined
+  // include_unassigned: trae también tomos sin inventario en la tienda
+  // ("No asignado") para que la sucursal les agregue stock.
+  const params = storeId ? { store_id: storeId, include_unassigned: true } : undefined
   return useQuery({
     queryKey: queryKeys.mangas.list(params),
     queryFn: () => getMangas(params),

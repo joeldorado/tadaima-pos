@@ -53,16 +53,27 @@ class MangaController extends Controller
             }))
             ->orderBy('name');
 
+        // Visibilidad por tienda — mismo patrón que ProductController::index.
+        // Default: solo tomos CON inventario en la tienda. Con
+        // ?include_unassigned=1 también los "no asignados" (stock 0) para que la
+        // sucursal les agregue stock. `is_assigned` distingue 0 de no-asignado.
         if ($storeId) {
-            $query->whereHas('inventory', fn ($q) =>
+            if (! $request->boolean('include_unassigned')) {
+                $query->whereHas('inventory', fn ($q) =>
+                    $q->whereHas('warehouse', fn ($wq) =>
+                        $wq->where('store_id', $storeId)
+                    )
+                );
+            }
+            $query->withSum(['inventory' => fn ($q) =>
                 $q->whereHas('warehouse', fn ($wq) =>
                     $wq->where('store_id', $storeId)
                 )
-            )->withSum(['inventory' => fn ($q) =>
+            ], 'quantity')->withExists(['inventory as is_assigned' => fn ($q) =>
                 $q->whereHas('warehouse', fn ($wq) =>
                     $wq->where('store_id', $storeId)
                 )
-            ], 'quantity');
+            ]);
         } else {
             $query->withSum('inventory', 'quantity');
         }

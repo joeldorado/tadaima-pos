@@ -72,6 +72,11 @@ class ProductLightResource extends JsonResource
             // Backstock atrás (no vendible) — para el badge "N en bodega" en Caja.
             'stock_bodega' => $stockBodega,
 
+            // Solo presente cuando se lista por tienda (?store_id). false = el
+            // producto no tiene inventario en esta tienda ("No asignado" → la
+            // sucursal puede agregarle stock). Omitido en la vista global.
+            'is_assigned' => $this->when(isset($this->is_assigned), fn () => (bool) $this->is_assigned),
+
             // Discriminador para que el frontend filtre/etiquete mangas si lo
             // necesita. Default 'product' por compatibilidad con rows que aún
             // no tienen la columna en envs viejos.

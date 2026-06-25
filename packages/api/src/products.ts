@@ -13,6 +13,12 @@ export interface GetProductsParams {
    * Útil para pre-cargar el cache con los productos que el cajero más usa.
    */
   sort?: 'top'
+  /**
+   * Con store_id: incluye también productos "no asignados" (sin inventario en
+   * la tienda) con stock 0 + is_assigned=false, para que la sucursal les
+   * agregue stock. Sin esta bandera el listado solo trae los asignados.
+   */
+  include_unassigned?: boolean
 }
 
 /**
@@ -41,6 +47,11 @@ export interface ProductLight {
   stock_total: number
   /** Stock en Bodega (backstock atrás, no vendible) — para el badge "N en bodega". */
   stock_bodega?: number
+  /**
+   * Solo con ?store_id. false = el producto no tiene inventario en esta tienda
+   * ("No asignado"). undefined en la vista global (sin store_id).
+   */
+  is_assigned?: boolean
   product_type?: 'product' | 'manga'
   /** Número de tomo (solo mangas) — distingue tomos de la misma serie en Caja. */
   volume_number?: number | null

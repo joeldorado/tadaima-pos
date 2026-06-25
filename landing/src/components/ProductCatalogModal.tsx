@@ -21,6 +21,8 @@ interface CatalogProduct {
   payment_restriction?: string;
   product_type?: string;
   volume_number?: number | null;
+  /** false = sin inventario en esta tienda ("No asignado"). Default tratado como true. */
+  is_assigned?: boolean;
 }
 
 type Level = "a" | "b" | "c" | "d" | "e";
@@ -46,6 +48,8 @@ interface Props {
   onRefresh?: () => void;
   /** True cuando hay un refetch en vuelo — anima el icono y deshabilita el botón. */
   isRefreshing?: boolean;
+  /** Producto "No asignado" → el cajero le agrega stock (abre QuickStockModal). */
+  onAddStock?: (product: CatalogProduct) => void;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -250,7 +254,7 @@ function VolumePill({ volume }: { volume: number }) {
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
-export function ProductCatalogModal({ products, onSelect, onClose, title = "Catálogo de Productos", preventaMode = false, availableStock, reservedByMesa, onRefresh, isRefreshing }: Props) {
+export function ProductCatalogModal({ products, onSelect, onClose, title = "Catálogo de Productos", preventaMode = false, availableStock, reservedByMesa, onRefresh, isRefreshing, onAddStock }: Props) {
   const [query, setQuery]       = useState("");
   const [kind, setKind]         = useState<CatalogKind>("productos");
   const [category, setCategory] = useState("Todos");
@@ -324,9 +328,15 @@ export function ProductCatalogModal({ products, onSelect, onClose, title = "Cat�
   const kindLabelPlural = kind === "tomos" ? "tomos" : "productos";
 
   const handleSelect = useCallback((p: CatalogProduct, level: Level = "a") => {
+    // No asignado a esta tienda → nunca se vende; abre "Agregar stock" si hay
+    // callback. Bloquea onSelect siempre (defensivo, aunque falte onAddStock).
+    if (p.is_assigned === false) {
+      if (onAddStock) { onAddStock(p); onClose(); }
+      return;
+    }
     onSelect(p, level);
     onClose();
-  }, [onSelect, onClose]);
+  }, [onSelect, onClose, onAddStock]);
 
   const getQty = (id: string) => quantities[id] ?? 1;
   const getLevel = (id: string) => selectedLevels[id] ?? "a";
@@ -338,11 +348,15 @@ export function ProductCatalogModal({ products, onSelect, onClose, title = "Cat�
     setSelectedLevels(prev => ({ ...prev, [id]: level }));
 
   const handleAgregar = useCallback((p: CatalogProduct) => {
+    if (p.is_assigned === false) {
+      if (onAddStock) { onAddStock(p); onClose(); }
+      return;
+    }
     const level = getLevel(p.id);
     const qty   = getQty(p.id);
     onSelect(p, level, qty);
     onClose();
-  }, [onSelect, onClose, quantities, selectedLevels]);
+  }, [onSelect, onClose, onAddStock, quantities, selectedLevels]);
 
   return (
     <div style={{
@@ -499,7 +513,10 @@ export function ProductCatalogModal({ products, onSelect, onClose, title = "Cat�
               const totalStock = p.stock_details?.tienda ?? p.stock;
               // Stock efectivo para esta caja = stock − reservado en otras cajas.
               const stock    = availableStock?.[p.id] ?? totalStock;
-              const badge    = stockBadge(stock);
+              // No asignado a esta tienda → badge ámbar en vez de "Agotado".
+              const badge    = p.is_assigned === false
+                ? { label: "No asignado", color: "#FFFFFF", bg: "#F59E0B" }
+                : stockBadge(stock);
               const isCashOnly = p.payment_restriction === "cash_only";
               const hasStock = stock === undefined || stock > 0;
               const otherCajaReservations = reservedByMesa?.[p.id] ?? [];
