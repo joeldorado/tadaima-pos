@@ -1618,8 +1618,14 @@ export function SellPage() {
 
   const changeDeposit = (val: number) => updMesa(activeMesa.id, m => ({ ...m, depositAmount: val }));
 
-  const changeLevel = (pid: string, level: PriceLevel) =>
+  const changeLevel = (pid: string, level: PriceLevel) => {
+    // Socio inactivo: no se puede forzar precio socio (b) a mano.
+    if (level === "b" && activeMesa?.customerIsSocio && !activeMesa?.customerSocioEligible) {
+      toast.info("Socio inactivo — no aplica precio socio.");
+      return;
+    }
     updMesa(activeMesa.id, m => ({ ...m, items: m.items.map(i => i.product.id === pid ? { ...i, priceLevel: level } : i) }));
+  };
 
   const toggleDamaged = (pid: string) =>
     updMesa(activeMesa.id, m => ({
@@ -5116,11 +5122,15 @@ export function SellPage() {
                                 background: `rgba(${activePriceRgb},0.12)`,
                               }}
                             >
-                              {priceLevels.map(lvl => (
-                                <option key={lvl.level} value={lvl.level}>
-                                  {lvl.label} {fmt(lvl.price)}
-                                </option>
-                              ))}
+                              {priceLevels.map(lvl => {
+                                // Socio inactivo → la opción "Socio" (b) queda inseleccionable.
+                                const socioBlocked = lvl.level === "b" && !!activeMesa?.customerIsSocio && !activeMesa?.customerSocioEligible;
+                                return (
+                                  <option key={lvl.level} value={lvl.level} disabled={socioBlocked}>
+                                    {lvl.label} {fmt(lvl.price)}{socioBlocked ? " · inactivo" : ""}
+                                  </option>
+                                );
+                              })}
                             </select>
                             <ChevronDown size={13} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" style={{ color: activePriceColor }} />
                           </div>
@@ -5620,8 +5630,9 @@ export function SellPage() {
                         {usdPrimary && (
                           <div className="flex flex-col gap-2 rounded-2xl p-3" style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.28)' }}>
                             <div className="flex items-center justify-between gap-2">
-                              <span className="text-[11px] font-black uppercase tracking-widest text-emerald-400">
-                                Dólares recibidos · TC {tc.toFixed(2)}
+                              <span className="flex items-center gap-2 text-[11px] font-black uppercase tracking-widest text-emerald-400">
+                                Dólares recibidos
+                                <span className="px-2 py-0.5 rounded-lg text-[10px] tabular-nums" style={{ background: 'rgba(16,185,129,0.16)', color: '#34d399', border: '1px solid rgba(16,185,129,0.30)' }} title="Tipo de cambio USD/MXN">TC ${tc.toFixed(2)}</span>
                               </span>
                               {/* Toggle a pesos — siempre visible (conserva el USD ingresado). */}
                               <button
@@ -5680,7 +5691,10 @@ export function SellPage() {
                         {showPesos && (
                           <div className="flex flex-col gap-2">
                             <div className="flex items-center justify-between gap-2">
-                              <span className="text-[11px] font-black uppercase tracking-widest" style={{ color: TLO }}>Pesos recibidos</span>
+                              <span className="flex items-center gap-2 text-[11px] font-black uppercase tracking-widest" style={{ color: TLO }}>
+                                Pesos recibidos
+                                <span className="px-2 py-0.5 rounded-lg text-[10px] tabular-nums" style={{ background: 'rgba(16,185,129,0.16)', color: '#34d399', border: '1px solid rgba(16,185,129,0.30)' }} title="Tipo de cambio USD/MXN">TC ${tc.toFixed(2)}</span>
+                              </span>
                               {/* Toggle a dólares — siempre visible (conserva los pesos ingresados). */}
                               <button
                                 type="button"
