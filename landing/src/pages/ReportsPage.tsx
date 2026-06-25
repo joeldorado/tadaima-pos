@@ -174,6 +174,10 @@ export function ReportsPage() {
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
 
   const [lowStockOnly, setLowStockOnly] = useState(false);
+  // Expansión por id de producto en el PADRE (no dentro de la fila): a propósito,
+  // así las filas abiertas NO colapsan cuando los 6 polls live (20s) refrescan la
+  // data. Si en el futuro se nota reflujo de la tabla al refrescar, anclar el
+  // scroll del contenedor como en SalesPage (Ventas).
   const [expandedIds,  setExpandedIds]  = useState<number[]>([]);
   const [selectedFilters, setSelectedFilters] = useState<SalesHistoryFilter[]>(["all"]);
   const [isTableMaximized, setIsTableMaximized] = useState(false);

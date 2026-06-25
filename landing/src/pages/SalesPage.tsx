@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef, useLayoutEffect } from "react";
 import {
   TrendingUp, DollarSign, ShoppingBag, BarChart3, Loader2,
   CreditCard, CalendarDays, ChevronDown, X, ChevronRight, ChevronLeft,
@@ -467,14 +467,17 @@ function SalesDateRangePicker({
 
 // ─── SaleRow expandible ───────────────────────────────────────────────────────
 function SaleRow({
-  sale, productMap, rank, onCancel,
+  sale, productMap, rank, onCancel, expanded, onToggle,
 }: {
   sale: SaleDetail;
   productMap: Record<string, ProductInfo>;
   rank: number;
   onCancel: (sale: SaleDetail) => void;
+  // Expansión controlada por el padre (Set de keys estables): así el ticket
+  // abierto sobrevive a cualquier re-render/reorden del polling live.
+  expanded: boolean;
+  onToggle: () => void;
 }) {
-  const [open, setOpen] = useState(false);
   const itemCount = sale.items?.reduce((s, i) => s + i.quantity, 0) ?? 0;
   const paymentName = getPaymentMethodName(sale);
 
@@ -484,7 +487,7 @@ function SaleRow({
     <div className="rounded-2xl overflow-hidden transition-all group" style={{ border: "1px solid var(--td-panel-border)" }}>
       {/* ── Fila principal ── */}
       <button
-        onClick={() => setOpen(v => !v)}
+        onClick={onToggle}
         className="w-full flex lg:grid items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-[var(--td-hover-bg)]"
         style={{ gridTemplateColumns: SALES_LIST_GRID_TEMPLATE }}
       >
@@ -492,7 +495,7 @@ function SaleRow({
 
         <ChevronRight
           size={12}
-          className={`transition-transform flex-shrink-0 group-hover:opacity-60 ${open ? "rotate-90 !text-red-400" : ""}`}
+          className={`transition-transform flex-shrink-0 group-hover:opacity-60 ${expanded ? "rotate-90 !text-red-400" : ""}`}
           style={{ color: "var(--td-text-lo)" }}
         />
 
@@ -609,7 +612,7 @@ function SaleRow({
       </button>
 
       {/* ── Detalle expandido ── */}
-      {open && (
+      {expanded && (
         <div className="px-5 py-4 space-y-2" style={{ borderTop: "1px solid var(--td-panel-border)", background: T.surfaceStrong }}>
           {(sale.items || []).length === 0 && (
             <p className="text-[10px] text-center py-3" style={{ color: "var(--td-text-lo)" }}>Sin detalle de artículos</p>
@@ -887,13 +890,15 @@ function getPreSaleMethodName(order: PreSaleOrder): string {
 
 // ─── PreSaleMovementRow expandible ────────────────────────────────────────────
 function PreSaleMovementRow({
-  order, movement, rank,
+  order, movement, rank, expanded, onToggle,
 }: {
   order: PreSaleOrder;
   movement: "anticipo" | "liquidacion" | "cancelacion";
   rank: number;
+  // Expansión controlada por el padre (igual que SaleRow) → sobrevive al polling.
+  expanded: boolean;
+  onToggle: () => void;
 }) {
-  const [open, setOpen] = useState(false);
   const items = order.items ?? [];
   const itemCount = items.reduce((s, it) => s + (it.quantity ?? 0), 0);
   const paymentName = getPreSaleMethodName(order);
@@ -912,7 +917,7 @@ function PreSaleMovementRow({
   return (
     <div className="rounded-2xl overflow-hidden transition-all group" style={{ border: `1px solid ${accent}33` }}>
       <button
-        onClick={() => setOpen(v => !v)}
+        onClick={onToggle}
         className="w-full flex lg:grid items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-[var(--td-hover-bg)]"
         style={{ background: accentSurface, gridTemplateColumns: SALES_LIST_GRID_TEMPLATE }}
       >
@@ -920,7 +925,7 @@ function PreSaleMovementRow({
 
         <ChevronRight
           size={12}
-          className={`transition-transform flex-shrink-0 group-hover:opacity-60 ${open ? "rotate-90" : ""}`}
+          className={`transition-transform flex-shrink-0 group-hover:opacity-60 ${expanded ? "rotate-90" : ""}`}
           style={{ color: accent }}
         />
 
@@ -983,7 +988,7 @@ function PreSaleMovementRow({
         </div>
       </button>
 
-      {open && (
+      {expanded && (
         <div className="px-5 py-4 space-y-2" style={{ borderTop: `1px solid ${accent}33`, background: "var(--td-surface-strong)" }}>
           {items.length === 0 && (
             <p className="text-[10px] text-center py-3" style={{ color: "var(--td-text-lo)" }}>Sin detalle de artículos</p>
@@ -2094,6 +2099,30 @@ export function SalesPage() {
   const livePoll = { refetchIntervalMs: isCashier ? (false as const) : LIVE_POLL_MS };
   const salesQuery = useSalesQuery(salesParams as Parameters<typeof useSalesQuery>[0], livePoll);
   const preSaleOrdersQuery = usePreSaleOrdersQuery(preSaleOrdersParams as Parameters<typeof usePreSaleOrdersQuery>[0], livePoll);
+
+  // Expansión de tickets controlada por el PADRE (Set de keys estables
+  // `sale-${id}` / `pre-${id}`). Antes vivía dentro de cada fila; al subirla
+  // aquí el ticket abierto NO se pierde aunque el polling de 20s reescriba/
+  // reordene la data. Combinado con el anclaje de scroll (más abajo) el usuario
+  // sigue leyendo sin que la lista le brinque.
+  const [expandedRowKeys, setExpandedRowKeys] = useState<Set<string>>(() => new Set());
+  const toggleRow = useCallback((key: string) => {
+    setExpandedRowKeys(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }, []);
+
+  // Anclaje de scroll para que el refresco live NO mueva al usuario de lugar.
+  // Como la lista va ordenada desc, las ventas/folios nuevos entran ARRIBA; sin
+  // esto el contenido que el usuario lee se empuja hacia abajo. Guardamos la
+  // altura previa y, si el contenido creció estando scrolleado, compensamos el
+  // scrollTop con el delta (técnica estándar de "mantener scroll al prepender").
+  const listScrollRef = useRef<HTMLDivElement>(null);
+  const prevScrollHeightRef = useRef(0);
+  // Marca de qué "vista" (filtro+búsqueda) corresponde la última medición: si
+  // cambia, el reset de scroll es intencional (no compensamos).
   const productsQuery = useProductsQuery();
 
   // Reporte del Día — sesiones de caja del rango filtrado. Backend RBAC ya
@@ -2655,6 +2684,28 @@ export function SalesPage() {
     });
   }, [sortedSales, preSaleMovementRows, searchSale, productMap]);
 
+  // Anclaje de scroll: corre SINCRÓNICO antes del paint, tras cada cambio de
+  // `displayedRows`. Solo compensa cuando es un refresco de fondo de la MISMA
+  // vista (mismo filtro+búsqueda) y el usuario NO está hasta arriba. En cambios
+  // de filtro/búsqueda dejamos que el scroll resetee (comportamiento esperado).
+  const scrollViewKey = `${filterMethod}|${searchSale.trim()}`;
+  const prevScrollViewKeyRef = useRef(scrollViewKey);
+  useLayoutEffect(() => {
+    const el = listScrollRef.current;
+    if (!el) return;
+    const newHeight = el.scrollHeight;
+    const prevHeight = prevScrollHeightRef.current;
+    const sameView = prevScrollViewKeyRef.current === scrollViewKey;
+    // Si entró contenido arriba (creció) en la misma vista y el usuario está
+    // leyendo más abajo (scrollTop > umbral), corre el viewport el mismo delta
+    // para que la fila que veía quede fija.
+    if (sameView && prevHeight > 0 && newHeight > prevHeight && el.scrollTop > 4) {
+      el.scrollTop += newHeight - prevHeight;
+    }
+    prevScrollHeightRef.current = newHeight;
+    prevScrollViewKeyRef.current = scrollViewKey;
+  }, [displayedRows, scrollViewKey]);
+
   // Stats del header del tab Ventas (incluyen movimientos de preventa).
   const displayedItemsCount = useMemo(
     () => displayedRows.reduce((a, r) =>
@@ -2997,6 +3048,7 @@ export function SalesPage() {
                 </div>
 
                 <div
+                  ref={listScrollRef}
                   className="flex-1 min-h-0 overflow-y-auto px-4 pb-3 pr-3 transition-opacity duration-200"
                   style={{ opacity: isRefreshingList ? 0.45 : 1, pointerEvents: isRefreshingList ? "none" : "auto" }}
                 >
@@ -3025,9 +3077,9 @@ export function SalesPage() {
                     ) : (
                       displayedRows.map((row, idx) => (
                         row.kind === "sale" ? (
-                          <SaleRow key={row.key} sale={row.sale} productMap={productMap} rank={idx + 1} onCancel={(s) => setCancelTarget({ kind: 'sale', sale: s })} />
+                          <SaleRow key={row.key} sale={row.sale} productMap={productMap} rank={idx + 1} onCancel={(s) => setCancelTarget({ kind: 'sale', sale: s })} expanded={expandedRowKeys.has(row.key)} onToggle={() => toggleRow(row.key)} />
                         ) : (
-                          <PreSaleMovementRow key={row.key} order={row.order} movement={row.movement} rank={idx + 1} />
+                          <PreSaleMovementRow key={row.key} order={row.order} movement={row.movement} rank={idx + 1} expanded={expandedRowKeys.has(row.key)} onToggle={() => toggleRow(row.key)} />
                         )
                       ))
                     )}

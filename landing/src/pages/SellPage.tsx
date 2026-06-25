@@ -5427,10 +5427,8 @@ export function SellPage() {
                                 title="Cambiar a pesos"
                               >⇄ A pesos</button>
                             </div>
-                            {/* Mixto: ya hay pesos ingresados en la otra vista. */}
-                            {(parseFloat(cashReceived) || 0) > 0 && (
-                              <p className="text-[10px] font-bold" style={{ color: TLO }}>+ {fmt(parseFloat(cashReceived) || 0)} en pesos ya ingresados</p>
-                            )}
+                            {/* (El desglose pesos+dólares y el faltante viven en el
+                                resumen de cobro de abajo — una sola fuente clara.) */}
                             <div className="relative">
                               <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-xl text-emerald-500/80 pointer-events-none">US$</span>
                               <input
@@ -5487,15 +5485,8 @@ export function SellPage() {
                                 title={`Cambiar a dólares (TC ${tc.toFixed(2)})`}
                               >⇄ A dólares</button>
                             </div>
-                            {/* Mixto: ya hay USD ingresados en la otra vista + cuánto falta. */}
-                            {receivedUsd > 0 && (
-                              <div className="rounded-xl px-4 py-2 flex items-center justify-between" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.35)' }}>
-                                <span className="text-[10px] font-black uppercase tracking-widest text-amber-400">
-                                  US${receivedUsd.toFixed(2)} ≈ {fmt(usdAsMxn)} · faltan
-                                </span>
-                                <span className="text-lg font-black text-amber-400 tabular-nums">{fmt(faltaCubrir)}</span>
-                              </div>
-                            )}
+                            {/* (Los dólares ya ingresados y el faltante se ven en el
+                                resumen de cobro de abajo — evita mostrar "faltan" 2 veces.) */}
                             <div className="relative">
                               <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-2xl pointer-events-none" style={{ color: "var(--td-placeholder)" }}>$</span>
                               <input
@@ -5542,23 +5533,56 @@ export function SellPage() {
                             mismo lugar y mismo grid — ya no hay botón "+ Dólares"
                             aparte ni grids apilados.) */}
 
-                        {/* ── CAMBIO / FALTA — dual currency cuando hubo USD ──── */}
-                        {totalReceived > 0 && (
-                          <div className={`rounded-xl px-4 py-3 flex items-center justify-between border-2 ${cambio >= 0 ? "bg-emerald-500/12 border-emerald-500/35" : "bg-red-500/12 border-red-500/35"}`}>
-                            <span className={`text-xs font-black uppercase tracking-widest ${cambio >= 0 ? "text-emerald-400/90" : "text-red-400/90"}`}>
-                              {cambio >= 0 ? "Cambio" : "Falta"}
-                            </span>
-                            <div className="text-right">
-                              <p className={`text-3xl font-black leading-none tabular-nums ${cambio >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                                {fmt(Math.abs(cambio))}
-                              </p>
-                              {/* Cambio dual: si cobró con USD, ofrece el equivalente
-                                  en dólares (útil si decide regresarle parte en USD). */}
-                              {cambio > 0 && cambioUsd > 0 && (
-                                <p className="text-[11px] font-bold text-emerald-400/70 mt-1 tabular-nums">
-                                  ≈ US${cambioUsd.toFixed(2)}
+                        {/* ── RESUMEN DE COBRO — siempre visible mientras haya algo
+                            que cobrar. El cajero ve de un vistazo cuánto es el
+                            total, cuánto lleva recibido (desglosado pesos/dólares)
+                            y, grande, cuánto FALTA (rojo) o de CAMBIO (verde). Sirve
+                            igual en la vista de pesos que en la de dólares. ──── */}
+                        {currentPayAmount > 0 && (
+                          <div
+                            className={`rounded-xl px-4 py-3 flex flex-col gap-2 border-2 ${cambio >= 0 ? "bg-emerald-500/12 border-emerald-500/35" : "bg-red-500/12 border-red-500/35"}`}
+                          >
+                            {/* Total a cobrar */}
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: TLO }}>Total a cobrar</span>
+                              <span className="text-base font-black tabular-nums" style={{ color: "var(--td-text-hi)" }}>{fmt(currentPayAmount)}</span>
+                            </div>
+
+                            {/* Recibido (con desglose pesos + dólares cuando hubo USD) */}
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: TLO }}>Recibido</span>
+                              <span className="text-base font-black tabular-nums" style={{ color: "var(--td-text-hi)" }}>{fmt(totalReceived)}</span>
+                            </div>
+                            {receivedUsd > 0 && (
+                              <div className="flex flex-col gap-0.5 pl-1 -mt-1">
+                                {receivedMxn > 0 && (
+                                  <div className="flex items-center justify-between text-[10px] font-bold" style={{ color: TLO }}>
+                                    <span>· Pesos</span><span className="tabular-nums">{fmt(receivedMxn)}</span>
+                                  </div>
+                                )}
+                                <div className="flex items-center justify-between text-[10px] font-bold text-amber-400">
+                                  <span>· Dólares US${receivedUsd.toFixed(2)}</span><span className="tabular-nums">≈ {fmt(usdAsMxn)}</span>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* FALTA / CAMBIO — renglón grande, separado por una línea */}
+                            <div className="flex items-center justify-between pt-2 mt-0.5" style={{ borderTop: "1px solid var(--td-card-border)" }}>
+                              <span className={`text-xs font-black uppercase tracking-widest ${cambio >= 0 ? "text-emerald-400/90" : "text-red-400/90"}`}>
+                                {cambio >= 0 ? "Cambio" : "Falta"}
+                              </span>
+                              <div className="text-right">
+                                <p className={`text-3xl font-black leading-none tabular-nums ${cambio >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                                  {fmt(cambio >= 0 ? cambio : faltaCubrir)}
                                 </p>
-                              )}
+                                {/* Cambio dual: si cobró con USD, ofrece el equivalente
+                                    en dólares (útil si decide regresarle parte en USD). */}
+                                {cambio > 0 && cambioUsd > 0 && (
+                                  <p className="text-[11px] font-bold text-emerald-400/70 mt-1 tabular-nums">
+                                    ≈ US${cambioUsd.toFixed(2)}
+                                  </p>
+                                )}
+                              </div>
                             </div>
                           </div>
                         )}
@@ -5795,7 +5819,7 @@ export function SellPage() {
                       const isInsufficient = activeMesa.paymentMethod === "Efectivo"
                         && hasAnyCash && totalReceived < currentPayAmount;
                       const label = isProcessing ? "Procesando..."
-                        : isInsufficient ? "Falta efectivo"
+                        : isInsufficient ? `Faltan ${fmt(currentPayAmount - totalReceived)}`
                         : activeMesa.loadedPreSaleOrderId
                           ? (newItemsSubtotal > 0 ? "Cobrar" : "Liquidar")
                           : activeMesa.isPreventa
