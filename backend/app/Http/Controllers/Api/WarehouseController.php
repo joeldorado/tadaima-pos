@@ -35,6 +35,10 @@ class WarehouseController extends Controller
      */
     public function store(StoreWarehouseRequest $request): JsonResponse
     {
+        if ($resp = $this->adminOnlyError()) {
+            return $resp;
+        }
+
         $data = $request->validated();
         $data['company_id'] ??= $request->user()?->company_id;
 
@@ -53,6 +57,10 @@ class WarehouseController extends Controller
      */
     public function update(UpdateWarehouseRequest $request, Warehouse $warehouse): JsonResponse
     {
+        if ($resp = $this->adminOnlyError()) {
+            return $resp;
+        }
+
         $warehouse->update($request->validated());
         $warehouse->load('store');
 
@@ -65,6 +73,10 @@ class WarehouseController extends Controller
      */
     public function destroy(Warehouse $warehouse): JsonResponse
     {
+        if ($resp = $this->adminOnlyError()) {
+            return $resp;
+        }
+
         $hasStock = $warehouse->inventory()->where('quantity', '>', 0)->exists();
 
         if ($hasStock) {

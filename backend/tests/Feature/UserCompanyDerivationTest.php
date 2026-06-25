@@ -94,6 +94,18 @@ class UserCompanyDerivationTest extends TestCase
 
         $newAdmin = User::find($resp->json('data.id'));
 
+        // Crear tiendas es operación de admin (config admin-only desde el deep
+        // check 2026-06-25). Le damos el rol para probar lo que valida este test:
+        // la DERIVACIÓN de empresa (el bug original era 422 por company NULL).
+        $adminRoleId = DB::table('roles')->where('name', 'admin')->value('id')
+            ?? DB::table('roles')->insertGetId([
+                'name' => 'admin', 'guard_name' => 'api',
+                'created_at' => now(), 'updated_at' => now(),
+            ]);
+        DB::table('model_has_roles')->insert([
+            'role_id' => $adminRoleId, 'model_type' => User::class, 'model_id' => $newAdmin->id,
+        ]);
+
         // El bug original: con company NULL este POST devolvía 422
         $this->actingAs($newAdmin)
             ->postJson('/api/v1/stores', ['name' => 'Tienda Test QA'])

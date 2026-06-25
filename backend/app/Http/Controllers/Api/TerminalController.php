@@ -33,6 +33,10 @@ class TerminalController extends Controller
      */
     public function store(StoreTerminalRequest $request): JsonResponse
     {
+        if ($resp = $this->adminOnlyError()) {
+            return $resp;
+        }
+
         $terminal = Terminal::create($request->validated());
         $terminal->refresh()->load('store');
 
@@ -44,6 +48,10 @@ class TerminalController extends Controller
      */
     public function update(UpdateTerminalRequest $request, Terminal $terminal): JsonResponse
     {
+        if ($resp = $this->adminOnlyError()) {
+            return $resp;
+        }
+
         $terminal->update($request->validated());
         $terminal->load('store');
 
@@ -55,6 +63,10 @@ class TerminalController extends Controller
      */
     public function destroy(Terminal $terminal): JsonResponse
     {
+        if ($resp = $this->adminOnlyError()) {
+            return $resp;
+        }
+
         $terminal->delete();
 
         return $this->success(null, 'Terminal eliminada.');

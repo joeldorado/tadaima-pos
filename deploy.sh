@@ -110,10 +110,10 @@ gcloud run deploy "${SERVICE}" \
     --platform=managed \
     --allow-unauthenticated \
     --port=8080 \
-    --cpu=1 \
-    --memory=512Mi \
+    --cpu=2 \
+    --memory=1Gi \
     --min-instances=0 \
-    --max-instances=2 \
+    --max-instances=10 \
     --concurrency=40 \
     --timeout=300 \
     --execution-environment=gen2 \

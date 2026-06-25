@@ -142,6 +142,12 @@ class CashRegisterController extends Controller
      */
     public function open(OpenCashSessionRequest $request): JsonResponse
     {
+        // Guard cross-tienda: no abrir caja en una tienda que no es la del usuario.
+        $reqStoreId = $request->integer('store_id') ?: null;
+        if ($reqStoreId && ($resp = $this->storeScopeError($request, $reqStoreId))) {
+            return $resp;
+        }
+
         try {
             $session = $this->service->open(
                 $request->integer('register_id') ?: null,
@@ -304,10 +310,24 @@ class CashRegisterController extends Controller
             $sessionId = $active->id;
         }
 
-        $session = CashRegisterSession::with('movements')->find($sessionId);
+        $session = CashRegisterSession::with(['movements', 'register'])->find($sessionId);
 
         if (! $session) {
             return $this->error('Sesión no encontrada.', 404);
+        }
+
+        // Guard cross-tienda/usuario: no-admin solo ve sesiones de SU tienda; el
+        // cajero solo las suyas (antes cualquiera con ?session_id= veía la caja de
+        // otra tienda/usuario, incluidos los montos).
+        $user = $request->user();
+        if ($user && ! $user->isAdminRole()) {
+            $storeId = $session->store_id ?? $session->register?->store_id;
+            if ($resp = $this->storeScopeError($request, $storeId)) {
+                return $resp;
+            }
+            if ($user->hasRole(['cajero']) && (int) $session->user_id !== (int) $user->id) {
+                return $this->error('No tienes permiso para ver esta sesión de caja.', 403);
+            }
         }
 
         $query = CashMovement::where('register_session_id', $sessionId)

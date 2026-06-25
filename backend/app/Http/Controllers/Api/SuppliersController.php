@@ -24,6 +24,8 @@ class SuppliersController extends Controller
     /** POST /suppliers */
     public function store(Request $request): JsonResponse
     {
+        // CREAR queda abierto (alta de producto del cajero puede crear proveedor
+        // al vuelo). Editar/borrar sí es admin/gerente (abajo).
         $data = $request->validate([
             'name'   => ['required', 'string', 'max:255', 'unique:suppliers,name'],
             'active' => ['boolean'],
@@ -37,6 +39,10 @@ class SuppliersController extends Controller
     /** PUT /suppliers/{supplier} */
     public function update(Request $request, Supplier $supplier): JsonResponse
     {
+        if ($resp = $this->adminOrManagerGateError()) {
+            return $resp;
+        }
+
         $data = $request->validate([
             'name'   => ['sometimes', 'string', 'max:255', "unique:suppliers,name,{$supplier->id}"],
             'active' => ['boolean'],
@@ -50,6 +56,10 @@ class SuppliersController extends Controller
     /** DELETE /suppliers/{supplier} */
     public function destroy(Supplier $supplier): JsonResponse
     {
+        if ($resp = $this->adminOrManagerGateError()) {
+            return $resp;
+        }
+
         $supplier->delete();
 
         return $this->success(null, 'Proveedor eliminado.');

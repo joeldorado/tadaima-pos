@@ -27,9 +27,15 @@ class SalesDraftController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
+        $user = $request->user();
+        $isAdmin = $user && $user->isAdminRole();
         $drafts = SalesDraft::query()
             ->with(['items', 'customer'])
-            ->when($request->filled('store_id'), fn ($q) => $q->where('store_id', $request->store_id))
+            // Scope cross-tienda: no-admin solo ve drafts de su tienda.
+            ->when($isAdmin && $request->filled('store_id'), fn ($q) => $q->where('store_id', $request->store_id))
+            ->when(! $isAdmin, function ($q) use ($user) {
+                $user->store_id ? $q->where('store_id', $user->store_id) : $q->whereRaw('1=0');
+            })
             ->when($request->filled('user_id'),  fn ($q) => $q->where('user_id',  $request->user_id))
             ->when(
                 $request->get('status') === 'all',
@@ -51,6 +57,11 @@ class SalesDraftController extends Controller
      */
     public function store(StoreSalesDraftRequest $request): JsonResponse
     {
+        // Guard cross-tienda: solo se inicia venta en la tienda del usuario.
+        if ($resp = $this->storeScopeError($request, $request->input('store_id'))) {
+            return $resp;
+        }
+
         $userId    = $request->user()->id;
         $openCount = SalesDraft::active()
             ->where('user_id', $userId)
@@ -79,8 +90,12 @@ class SalesDraftController extends Controller
     /**
      * GET /sales-drafts/{draft}
      */
-    public function show(SalesDraft $salesDraft): JsonResponse
+    public function show(Request $request, SalesDraft $salesDraft): JsonResponse
     {
+        if ($resp = $this->storeScopeError($request, $salesDraft->store_id)) {
+            return $resp;
+        }
+
         $salesDraft->load(['items.product', 'customer', 'store', 'user']);
 
         return $this->success(new SalesDraftResource($salesDraft));
@@ -208,8 +223,11 @@ class SalesDraftController extends Controller
      *
      * Cancela el draft (soft-cancel: status = cancelled, no borra el registro).
      */
-    public function cancel(SalesDraft $salesDraft): JsonResponse
+    public function cancel(Request $request, SalesDraft $salesDraft): JsonResponse
     {
+        if ($resp = $this->storeScopeError($request, $salesDraft->store_id)) {
+            return $resp;
+        }
         if ($salesDraft->status === SalesDraft::STATUS_COMPLETED) {
             return $this->error('No se puede cancelar una venta ya completada.', 422);
         }

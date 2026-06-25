@@ -506,6 +506,14 @@ class ProductController extends Controller
      */
     public function updateStorePrices(Request $request, Product $product, Store $store): JsonResponse
     {
+        // Solo admin/gerente editan precios, y un gerente SOLO los de su tienda.
+        if ($resp = $this->adminOrManagerGateError()) {
+            return $resp;
+        }
+        if ($resp = $this->storeScopeError($request, $store->id)) {
+            return $resp;
+        }
+
         $data = $request->validate([
             'price_1' => ['nullable', 'numeric', 'min:0'],
             'price_2' => ['nullable', 'numeric', 'min:0'],
@@ -549,8 +557,15 @@ class ProductController extends Controller
      * DELETE /products/{product}/store-prices/{store}
      * Elimina todos los overrides de precio para una tienda.
      */
-    public function removeStorePrices(Product $product, Store $store): JsonResponse
+    public function removeStorePrices(Request $request, Product $product, Store $store): JsonResponse
     {
+        if ($resp = $this->adminOrManagerGateError()) {
+            return $resp;
+        }
+        if ($resp = $this->storeScopeError($request, $store->id)) {
+            return $resp;
+        }
+
         ProductStorePrice::where('product_id', $product->id)
             ->where('store_id', $store->id)
             ->delete();

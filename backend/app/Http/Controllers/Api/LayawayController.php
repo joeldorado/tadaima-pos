@@ -27,8 +27,16 @@ class LayawayController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
+        $user = $request->user();
+        $isAdmin = $user && $user->isAdminRole();
+
         $query = Layaway::with(['product', 'customer', 'payments'])
-            ->when($request->filled('store_id'),    fn ($q) => $q->where('store_id',    $request->store_id))
+            // Scope cross-tienda: no-admin SOLO ve apartados de su tienda (ignora
+            // ?store_id= si intenta otra). Admin filtra por store_id si lo pide.
+            ->when($isAdmin && $request->filled('store_id'), fn ($q) => $q->where('store_id', $request->store_id))
+            ->when(! $isAdmin, function ($q) use ($user) {
+                $user->store_id ? $q->where('store_id', $user->store_id) : $q->whereRaw('1=0');
+            })
             ->when($request->filled('customer_id'), fn ($q) => $q->where('customer_id', $request->customer_id))
             ->when($request->filled('product_id'),  fn ($q) => $q->where('product_id',  $request->product_id))
             ->when($request->filled('code'),        fn ($q) => $q->where('code',        $request->code))
@@ -61,6 +69,11 @@ class LayawayController extends Controller
      */
     public function store(StoreLayawayRequest $request): JsonResponse
     {
+        // Guard cross-tienda: solo se crea apartado en la tienda del usuario.
+        if ($resp = $this->storeScopeError($request, $request->input('store_id'))) {
+            return $resp;
+        }
+
         try {
             $layaway = $this->service->create(
                 $request->only([
@@ -83,10 +96,15 @@ class LayawayController extends Controller
      */
     public function byProduct(Request $request, int $productId): JsonResponse
     {
+        $user = $request->user();
+        $isAdmin = $user && $user->isAdminRole();
         $layaways = Layaway::with(['customer', 'payments'])
             ->where('product_id', $productId)
             ->open()
-            ->when($request->filled('store_id'), fn ($q) => $q->where('store_id', $request->store_id))
+            ->when($isAdmin && $request->filled('store_id'), fn ($q) => $q->where('store_id', $request->store_id))
+            ->when(! $isAdmin, function ($q) use ($user) {
+                $user->store_id ? $q->where('store_id', $user->store_id) : $q->whereRaw('1=0');
+            })
             ->latest()
             ->get();
 
@@ -96,8 +114,12 @@ class LayawayController extends Controller
     /**
      * GET /layaways/{layaway}
      */
-    public function show(Layaway $layaway): JsonResponse
+    public function show(Request $request, Layaway $layaway): JsonResponse
     {
+        if ($resp = $this->storeScopeError($request, $layaway->store_id)) {
+            return $resp;
+        }
+
         $layaway->load(['product', 'customer', 'payments.paymentMethod', 'logs']);
 
         return $this->success(new LayawayResource($layaway));
@@ -109,6 +131,9 @@ class LayawayController extends Controller
      */
     public function update(UpdateLayawayRequest $request, Layaway $layaway): JsonResponse
     {
+        if ($resp = $this->storeScopeError($request, $layaway->store_id)) {
+            return $resp;
+        }
         if (! in_array($layaway->status, Layaway::OPEN_STATUSES)) {
             return $this->error("No se puede editar el apartado (estado: {$layaway->status}).", 422);
         }
@@ -125,6 +150,9 @@ class LayawayController extends Controller
      */
     public function updateStatus(UpdateLayawayStatusRequest $request, Layaway $layaway): JsonResponse
     {
+        if ($resp = $this->storeScopeError($request, $layaway->store_id)) {
+            return $resp;
+        }
         $newStatus = $request->status;
         $userId    = $request->user()->id;
 
@@ -149,6 +177,9 @@ class LayawayController extends Controller
      */
     public function addPayment(StoreLayawayPaymentRequest $request, Layaway $layaway): JsonResponse
     {
+        if ($resp = $this->storeScopeError($request, $layaway->store_id)) {
+            return $resp;
+        }
         try {
             $payment = $this->service->addPayment(
                 $layaway,
@@ -172,8 +203,11 @@ class LayawayController extends Controller
     /**
      * GET /layaways/{layaway}/payments
      */
-    public function payments(Layaway $layaway): JsonResponse
+    public function payments(Request $request, Layaway $layaway): JsonResponse
     {
+        if ($resp = $this->storeScopeError($request, $layaway->store_id)) {
+            return $resp;
+        }
         $layaway->load(['payments.paymentMethod']);
 
         return $this->success([

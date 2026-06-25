@@ -31,6 +31,8 @@ class ProductCategoryController extends Controller
      */
     public function store(StoreProductCategoryRequest $request): JsonResponse
     {
+        // CREAR queda abierto: el cajero da de alta productos y puede crear una
+        // categoría nueva al vuelo. Editar/borrar sí es admin/gerente (abajo).
         $category = ProductCategory::create($request->validated());
         $category->refresh();
 
@@ -42,6 +44,10 @@ class ProductCategoryController extends Controller
      */
     public function update(UpdateProductCategoryRequest $request, ProductCategory $category): JsonResponse
     {
+        if ($resp = $this->adminOrManagerGateError()) {
+            return $resp;
+        }
+
         $category->update($request->validated());
 
         return $this->success(new ProductCategoryResource($category), 'Categoría actualizada.');
@@ -53,6 +59,10 @@ class ProductCategoryController extends Controller
      */
     public function destroy(ProductCategory $category): JsonResponse
     {
+        if ($resp = $this->adminOrManagerGateError()) {
+            return $resp;
+        }
+
         if ($category->products()->exists()) {
             return $this->error('No se puede eliminar la categoría porque tiene productos asociados.', 422);
         }

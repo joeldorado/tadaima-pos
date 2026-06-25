@@ -91,10 +91,10 @@ RUN { \
         echo 'listen.group = nginx'; \
         echo 'listen.mode = 0660'; \
         echo 'pm = dynamic'; \
-        echo 'pm.max_children = 10'; \
-        echo 'pm.start_servers = 2'; \
-        echo 'pm.min_spare_servers = 1'; \
-        echo 'pm.max_spare_servers = 3'; \
+        echo 'pm.max_children = 20'; \
+        echo 'pm.start_servers = 4'; \
+        echo 'pm.min_spare_servers = 2'; \
+        echo 'pm.max_spare_servers = 10'; \
         echo 'clear_env = no'; \
         echo 'catch_workers_output = yes'; \
         echo 'decorate_workers_output = no'; \

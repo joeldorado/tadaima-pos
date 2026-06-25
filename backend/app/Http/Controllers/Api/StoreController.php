@@ -38,6 +38,10 @@ class StoreController extends Controller
      */
     public function store(CreateStoreRequest $request): JsonResponse
     {
+        if ($resp = $this->adminOnlyError()) {
+            return $resp;
+        }
+
         $data = $request->validated();
         $data['company_id'] ??= $request->user()?->company_id;
 
@@ -82,6 +86,10 @@ class StoreController extends Controller
      */
     public function update(UpdateStoreRequest $request, Store $store): JsonResponse
     {
+        if ($resp = $this->adminOnlyError()) {
+            return $resp;
+        }
+
         $store->update($request->validated());
         $store->load(['company', 'manager']);
 
@@ -106,6 +114,10 @@ class StoreController extends Controller
      */
     public function addPaymentMethod(AttachStorePaymentMethodRequest $request, Store $store): JsonResponse
     {
+        if ($resp = $this->adminOnlyError()) {
+            return $resp;
+        }
+
         $data     = $request->validated();
         $methodId = $data['payment_method_id'];
         $active   = $data['active'] ?? true;

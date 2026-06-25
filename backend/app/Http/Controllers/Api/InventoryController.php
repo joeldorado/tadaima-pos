@@ -27,10 +27,20 @@ class InventoryController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
+        $user = $request->user();
+
         $inventory = Inventory::query()
             ->with(['product', 'warehouse.store'])
             ->when($request->filled('product_id'),   fn ($q) => $q->forProduct($request->product_id))
             ->when($request->filled('warehouse_id'), fn ($q) => $q->forWarehouse($request->warehouse_id))
+            // Scope cross-tienda: gerente/cajero solo ven inventario de bodegas de SU
+            // tienda; admin ve todo. Sin store_id (no-admin) → nada (fail-closed).
+            ->when($user && ! $user->isAdminRole(), function ($q) use ($user) {
+                $storeId = $user->store_id;
+                $storeId
+                    ? $q->whereHas('warehouse', fn ($w) => $w->where('store_id', $storeId))
+                    : $q->whereRaw('1=0');
+            })
             ->orderBy('product_id')
             ->get();
 
@@ -271,6 +281,7 @@ class InventoryController extends Controller
      */
     public function movements(Request $request): JsonResponse
     {
+        $user    = $request->user();
         $perPage = (int) $request->get('per_page', 50);
 
         $query = InventoryMovement::query()
@@ -280,6 +291,14 @@ class InventoryController extends Controller
             ->when($request->filled('type'),         fn ($q) => $q->where('type',         $request->type))
             ->when($request->filled('from'),         fn ($q) => $q->whereDate('created_at', '>=', $request->from))
             ->when($request->filled('to'),           fn ($q) => $q->whereDate('created_at', '<=', $request->to))
+            // Scope cross-tienda: el historial de movimientos (con costo) solo de
+            // bodegas de SU tienda para no-admin (ADR-015: el costo es sensible).
+            ->when($user && ! $user->isAdminRole(), function ($q) use ($user) {
+                $storeId = $user->store_id;
+                $storeId
+                    ? $q->whereHas('warehouse', fn ($w) => $w->where('store_id', $storeId))
+                    : $q->whereRaw('1=0');
+            })
             ->latest('created_at');
 
         $results = $perPage > 0 ? $query->paginate($perPage) : $query->get();

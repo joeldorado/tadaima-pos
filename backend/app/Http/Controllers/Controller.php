@@ -41,6 +41,20 @@ abstract class Controller
     }
 
     /**
+     * Gate admin-only: 403 si el usuario NO es administrador. Para configuración
+     * sensible (tiendas/bodegas/terminales) que no es trabajo de gerente/cajero.
+     */
+    protected function adminOnlyError(): ?JsonResponse
+    {
+        $user = request()->user();
+        if ($user && ! $user->isAdminRole()) {
+            return $this->error('Solo un administrador puede modificar esta configuración.', 403);
+        }
+
+        return null;
+    }
+
+    /**
      * Guard de scope de tienda: devuelve la respuesta 403 si el usuario
      * autenticado NO puede operar sobre la tienda dada, o null si puede.
      * Uso: if ($resp = $this->storeScopeError($request, $storeId)) return $resp;

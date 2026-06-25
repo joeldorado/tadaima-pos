@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
@@ -37,32 +38,38 @@ class TadaimaMemberService
 
         [$url, $key] = $this->config();
         if ($url === '' || $key === '') {
-            return $this->stubLookup($code);
+            return $this->fallbackLookup($code);
         }
 
-        $response = Http::withHeaders($this->headers($key))
-            ->get("{$url}/rest/v1/socios", [
+        // Cache 60s: repetir el mismo lookup (abrir/asignar el socio) no martilla
+        // Supabase. El timeout de 4s evita colgar el worker 30s si Supabase va lento.
+        return Cache::remember("socio:lookup:{$code}", 60, function () use ($url, $key, $code) {
+            $response = $this->safeGet("{$url}/rest/v1/socios", $this->headers($key), [
                 'select'   => '*,usuarios(*)',
                 'id_socio' => 'eq.' . $code,
             ]);
 
-        if (! $response->successful()) {
-            Log::warning('Supabase lookup error', [
-                'code'   => $code,
-                'status' => $response->status(),
-                'body'   => $response->body(),
-            ]);
-            throw new RuntimeException('Error al consultar el sistema de socios.');
-        }
+            if ($response === null) {
+                throw new RuntimeException('Error al consultar el sistema de socios.');
+            }
+            if (! $response->successful()) {
+                Log::warning('Supabase lookup error', [
+                    'code'   => $code,
+                    'status' => $response->status(),
+                    'body'   => $response->body(),
+                ]);
+                throw new RuntimeException('Error al consultar el sistema de socios.');
+            }
 
-        $rows = $response->json();
-        if (empty($rows)) {
-            return null;
-        }
+            $rows = $response->json();
+            if (empty($rows)) {
+                return null;
+            }
 
-        $socio = $rows[0];
+            $socio = $rows[0];
 
-        return $this->mapSocio($socio, $this->extractUsuario($socio['usuarios'] ?? []));
+            return $this->mapSocio($socio, $this->extractUsuario($socio['usuarios'] ?? []));
+        });
     }
 
     /**
@@ -79,61 +86,97 @@ class TadaimaMemberService
 
         [$url, $key] = $this->config();
         if ($url === '' || $key === '') {
-            return $this->stubSearch($q);
+            return $this->fallbackSearch($q);
         }
 
-        $headers = $this->headers($key);
-        $results = [];
-        $seenIds = [];
+        // Cache 30s por término — el buscador de Caja repite consultas al teclear.
+        return Cache::remember('socio:search:' . md5(mb_strtolower($q)), 30, function () use ($url, $key, $q) {
+            $headers = $this->headers($key);
+            $results = [];
+            $seenIds = [];
 
-        // 1. Buscar por id_socio (partial match).
-        $sociosRes = Http::withHeaders($headers)->get("{$url}/rest/v1/socios", [
-            'select'   => '*,usuarios(*)',
-            'id_socio' => 'ilike.*' . $q . '*',
-            'limit'    => '10',
-        ]);
+            // 1. Buscar por id_socio (partial match). Si falla/timeout, se omite.
+            $sociosRes = $this->safeGet("{$url}/rest/v1/socios", $headers, [
+                'select'   => '*,usuarios(*)',
+                'id_socio' => 'ilike.*' . $q . '*',
+                'limit'    => '10',
+            ]);
 
-        if ($sociosRes->successful()) {
-            foreach ($sociosRes->json() as $row) {
-                $mapped = $this->mapSocio($row, $this->extractUsuario($row['usuarios'] ?? []));
-                $id     = $mapped['external_member_id'];
-                if ($id && ! in_array($id, $seenIds, true)) {
+            if ($sociosRes && $sociosRes->successful()) {
+                foreach ($sociosRes->json() as $row) {
+                    $mapped = $this->mapSocio($row, $this->extractUsuario($row['usuarios'] ?? []));
+                    $id     = $mapped['external_member_id'];
+                    if ($id && ! in_array($id, $seenIds, true)) {
+                        $seenIds[] = $id;
+                        $results[] = $mapped;
+                    }
+                }
+            }
+
+            // 2. Buscar por nombre / apellidos / correo vía tabla usuarios.
+            $usuariosRes = $this->safeGet("{$url}/rest/v1/usuarios", $headers, [
+                'select' => 'id,nombre,apellidos,email,telefono,socios(*)',
+                'or'     => "(nombre.ilike.*{$q}*,apellidos.ilike.*{$q}*,email.ilike.*{$q}*)",
+                'limit'  => '10',
+            ]);
+
+            if ($usuariosRes && $usuariosRes->successful()) {
+                foreach ($usuariosRes->json() as $usuario) {
+                    $socioRaw  = $usuario['socios'] ?? [];
+                    $socioList = is_array($socioRaw) && array_is_list($socioRaw) ? $socioRaw : [(array) $socioRaw];
+                    if (empty($socioList) || empty($socioList[0])) {
+                        continue;
+                    }
+
+                    $socio = $socioList[0];
+                    $id    = (string) ($socio['id_socio'] ?? '');
+                    if (! $id || in_array($id, $seenIds, true)) {
+                        continue;
+                    }
+
                     $seenIds[] = $id;
-                    $results[] = $mapped;
+                    $results[] = $this->mapSocio($socio, $usuario);
                 }
             }
-        }
 
-        // 2. Buscar por nombre / apellidos / correo vía tabla usuarios.
-        $usuariosRes = Http::withHeaders($headers)->get("{$url}/rest/v1/usuarios", [
-            'select' => 'id,nombre,apellidos,email,telefono,socios(*)',
-            'or'     => "(nombre.ilike.*{$q}*,apellidos.ilike.*{$q}*,email.ilike.*{$q}*)",
-            'limit'  => '10',
-        ]);
-
-        if ($usuariosRes->successful()) {
-            foreach ($usuariosRes->json() as $usuario) {
-                $socioRaw  = $usuario['socios'] ?? [];
-                $socioList = is_array($socioRaw) && array_is_list($socioRaw) ? $socioRaw : [(array) $socioRaw];
-                if (empty($socioList) || empty($socioList[0])) {
-                    continue;
-                }
-
-                $socio = $socioList[0];
-                $id    = (string) ($socio['id_socio'] ?? '');
-                if (! $id || in_array($id, $seenIds, true)) {
-                    continue;
-                }
-
-                $seenIds[] = $id;
-                $results[] = $this->mapSocio($socio, $usuario);
-            }
-        }
-
-        return array_values(array_slice($results, 0, 10));
+            return array_values(array_slice($results, 0, 10));
+        });
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
+
+    /** GET con timeout corto; null si hay timeout/conexión (no cuelga el worker 30s). */
+    private function safeGet(string $url, array $headers, array $query): ?\Illuminate\Http\Client\Response
+    {
+        try {
+            return Http::withHeaders($headers)->timeout(4)->retry(0)->get($url, $query);
+        } catch (\Throwable $e) {
+            Log::warning('Supabase connection error', ['url' => $url, 'msg' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /** Fallback de lookup: stub SOLO en dev; en PRODUCCIÓN nunca sirve datos falsos. */
+    private function fallbackLookup(string $code): ?array
+    {
+        if (app()->isProduction()) {
+            Log::error('Config de socios Tadaima ausente en PRODUCCIÓN — no se sirven socios stub.', ['code' => $code]);
+            return null;
+        }
+
+        return $this->stubLookup($code);
+    }
+
+    /** Fallback de search: stub SOLO en dev; en PRODUCCIÓN vacío (no socios falsos). */
+    private function fallbackSearch(string $q): array
+    {
+        if (app()->isProduction()) {
+            Log::error('Config de socios Tadaima ausente en PRODUCCIÓN — búsqueda de socios deshabilitada.');
+            return [];
+        }
+
+        return $this->stubSearch($q);
+    }
 
     /** @return array{0: string, 1: string} [url, serviceKey] */
     private function config(): array

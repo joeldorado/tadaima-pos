@@ -51,7 +51,9 @@ Route::prefix('auth')->group(function () {
 Route::get('public/catalog/{catalogUrl}', [CatalogController::class, 'publicCatalog']);
 
 // ── Rutas protegidas ──────────────────────────────────────────────────────────
-Route::middleware('auth:sanctum')->group(function () {
+// Rate limit por usuario (120 req/min) — amortigua polling/abuso sin estorbar al
+// cajero (el carrito es client-side, ADR-014; el polling real ronda ~25/min/usuario).
+Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
 
     // ── Users ─────────────────────────────────────────────────────────────────
     Route::get('users/online',                  [UserController::class, 'online']);

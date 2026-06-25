@@ -85,7 +85,9 @@ class CashSessionConcurrencyTest extends TestCase
         ]);
         $this->assertSame(0, CashRegister::where('store_id', $storeSinCaja->id)->count());
 
-        $admin = $this->makeUser('admin@test.com', 'Pier');
+        // Abrir caja en una tienda distinta a la asignada es operación de admin
+        // (un cajero/gerente solo abre en SU tienda — guard de scope).
+        $admin = $this->makeUser('admin@test.com', 'Pier', 'admin');
 
         $this->actingAs($admin)
             ->postJson('/api/v1/cash/open', ['store_id' => $storeSinCaja->id, 'opening_cash' => 1000])
@@ -174,7 +176,7 @@ class CashSessionConcurrencyTest extends TestCase
             ->count();
     }
 
-    private function makeUser(string $email, string $name = ''): User
+    private function makeUser(string $email, string $name = '', string $role = 'cajero'): User
     {
         $user = User::create([
             'name' => $name !== '' ? $name : $email,
@@ -185,9 +187,9 @@ class CashSessionConcurrencyTest extends TestCase
             'active' => true,
         ]);
 
-        $roleId = DB::table('roles')->where('name', 'cajero')->value('id')
+        $roleId = DB::table('roles')->where('name', $role)->value('id')
             ?? DB::table('roles')->insertGetId([
-                'name' => 'cajero',
+                'name' => $role,
                 'guard_name' => 'api',
                 'created_at' => now(),
                 'updated_at' => now(),

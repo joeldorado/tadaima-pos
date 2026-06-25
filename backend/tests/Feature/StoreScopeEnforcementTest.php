@@ -6,6 +6,9 @@ use App\Models\CashRegister;
 use App\Models\CashRegisterSession;
 use App\Models\Company;
 use App\Models\Customer;
+use App\Models\Inventory;
+use App\Models\InventoryMovement;
+use App\Models\Layaway;
 use App\Models\PaymentMethod;
 use App\Models\PreSaleCatalog;
 use App\Models\PreSaleOrder;
@@ -244,6 +247,100 @@ class StoreScopeEnforcementTest extends TestCase
         // Gerente sí puede editar
         $this->actingAs($this->gerenteA)
             ->putJson("/api/v1/products/{$this->product->id}", ['name' => 'Editado por gerente'])
+            ->assertOk();
+    }
+
+    // ── Deep check 2026-06-25: nuevos guards de cruce de tienda ───────────────
+
+    public function test_gerente_only_sees_own_store_inventory(): void
+    {
+        Inventory::create([
+            'product_id' => $this->product->id, 'warehouse_id' => $this->warehouseB->id, 'quantity' => 10,
+        ]);
+
+        $this->actingAs($this->gerenteA)->getJson('/api/v1/inventory')
+            ->assertOk()->assertJsonCount(0, 'data');
+        $this->actingAs($this->admin)->getJson('/api/v1/inventory')
+            ->assertOk()->assertJsonCount(1, 'data');
+    }
+
+    public function test_gerente_only_sees_own_store_inventory_movements(): void
+    {
+        InventoryMovement::create([
+            'product_id' => $this->product->id, 'warehouse_id' => $this->warehouseB->id,
+            'type' => 'entrada', 'quantity' => 5, 'user_id' => $this->admin->id,
+        ]);
+
+        $this->actingAs($this->gerenteA)->getJson('/api/v1/inventory/movements')
+            ->assertOk()->assertJsonCount(0, 'data');
+        $this->actingAs($this->admin)->getJson('/api/v1/inventory/movements')
+            ->assertOk()->assertJsonCount(1, 'data');
+    }
+
+    public function test_gerente_cannot_access_layaway_of_another_store(): void
+    {
+        $customer = Customer::create(['name' => 'Cliente Apartado']);
+        $layaway = Layaway::create([
+            'code' => 'LAY-B-1', 'store_id' => $this->storeB->id, 'user_id' => $this->admin->id,
+            'customer_id' => $customer->id, 'product_id' => $this->product->id,
+            'quantity' => 1, 'price' => 100, 'total' => 100, 'down_payment' => 0,
+            'status' => Layaway::STATUS_ACTIVE,
+        ]);
+
+        $this->actingAs($this->gerenteA)->getJson("/api/v1/layaways/{$layaway->id}")->assertForbidden();
+        $this->actingAs($this->gerenteA)->patchJson("/api/v1/layaways/{$layaway->id}", ['notes' => 'hack'])->assertForbidden();
+        $this->actingAs($this->gerenteA)->getJson('/api/v1/layaways')->assertOk()->assertJsonCount(0, 'data.data');
+
+        $this->actingAs($this->admin)->getJson("/api/v1/layaways/{$layaway->id}")->assertOk();
+    }
+
+    public function test_cross_store_and_cross_cashier_cash_movements_blocked(): void
+    {
+        $cajeroA1 = $this->makeUser('cajero1.a@test.com', 'cajero', $this->storeA->id);
+        $cajeroA2 = $this->makeUser('cajero2.a@test.com', 'cajero', $this->storeA->id);
+        $registerA = CashRegister::create(['store_id' => $this->storeA->id, 'name' => 'Caja A', 'active' => true]);
+        $sessionA1 = CashRegisterSession::create([
+            'register_id' => $registerA->id, 'user_id' => $cajeroA1->id,
+            'opening_cash' => 0, 'status' => 'open', 'opened_at' => now(),
+        ]);
+
+        // Cajero de la MISMA tienda NO ve la sesión de otro cajero.
+        $this->actingAs($cajeroA2)
+            ->getJson("/api/v1/cash/movements?session_id={$sessionA1->id}")->assertForbidden();
+
+        // Gerente de OTRA tienda tampoco (cross-store).
+        $registerB = CashRegister::create(['store_id' => $this->storeB->id, 'name' => 'Caja B', 'active' => true]);
+        $sessionB = CashRegisterSession::create([
+            'register_id' => $registerB->id, 'user_id' => $this->admin->id,
+            'opening_cash' => 0, 'status' => 'open', 'opened_at' => now(),
+        ]);
+        $this->actingAs($this->gerenteA)
+            ->getJson("/api/v1/cash/movements?session_id={$sessionB->id}")->assertForbidden();
+
+        // Admin sí.
+        $this->actingAs($this->admin)
+            ->getJson("/api/v1/cash/movements?session_id={$sessionB->id}")->assertOk();
+    }
+
+    public function test_gerente_cannot_manage_store_config(): void
+    {
+        $this->actingAs($this->gerenteA)
+            ->postJson('/api/v1/warehouses', [
+                'company_id' => $this->company->id, 'store_id' => $this->storeA->id,
+                'name' => 'Bodega Hack', 'type' => 'bodega',
+            ])->assertForbidden();
+
+        $this->actingAs($this->gerenteA)
+            ->postJson('/api/v1/terminals', ['store_id' => $this->storeA->id, 'name' => 'Term Hack'])
+            ->assertForbidden();
+
+        $this->actingAs($this->gerenteA)
+            ->putJson("/api/v1/stores/{$this->storeA->id}", ['name' => 'Renombrada por gerente'])
+            ->assertForbidden();
+
+        // Admin NO está bloqueado por el gate.
+        $this->actingAs($this->admin)
+            ->putJson("/api/v1/stores/{$this->storeA->id}", ['name' => 'Renombrada por admin'])
             ->assertOk();
     }
 

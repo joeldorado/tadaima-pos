@@ -70,10 +70,17 @@ class UserController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
+        $user = $request->user();
+        $isAdmin = $user && $user->isAdminRole();
         $users = User::query()
             ->with('store')
-            ->when($request->filled('store_id'),   fn ($q) => $q->where('store_id',   $request->store_id))
-            ->when($request->filled('company_id'), fn ($q) => $q->where('company_id', $request->company_id))
+            // Scope cross-tienda: no-admin solo ve usuarios de SU tienda (evita
+            // exponer PII de empleados de otras sucursales).
+            ->when($isAdmin && $request->filled('store_id'),   fn ($q) => $q->where('store_id',   $request->store_id))
+            ->when($isAdmin && $request->filled('company_id'), fn ($q) => $q->where('company_id', $request->company_id))
+            ->when(! $isAdmin, function ($q) use ($user) {
+                $user->store_id ? $q->where('store_id', $user->store_id) : $q->whereRaw('1=0');
+            })
             ->when($request->filled('active'),     fn ($q) => $q->where('active',     (bool) $request->active))
             ->when($request->filled('search'), fn ($q) => $q->where(function ($q) use ($request) {
                 $q->where('name',  'like', "%{$request->search}%")
