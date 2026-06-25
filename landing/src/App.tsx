@@ -7,7 +7,7 @@ import { ThemeProvider } from '@/contexts/ThemeContext'
 import { router } from '@/router'
 import { localStorageTokenStorage } from '@/lib/tokenStorage'
 import { queryClient, queryPersister } from '@/lib/queryClient'
-import { Toaster } from 'sonner'
+import { AppToaster } from '@/components/AppToaster'
 
 const ONE_DAY_MS = 24 * 60 * 60_000
 
@@ -44,19 +44,7 @@ function App(): React.JSX.Element {
           <AuthProvider storage={localStorageTokenStorage}>
             <StoreProvider>
               <RouterProvider router={router} />
-              <Toaster
-                position="top-right"
-                toastOptions={{
-                  style: {
-                    background: '#1e293b',
-                    color: '#f1f5f9',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: '14px',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                  },
-                }}
-              />
+              <AppToaster />
             </StoreProvider>
           </AuthProvider>
         </ThemeProvider>

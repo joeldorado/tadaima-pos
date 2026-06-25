@@ -32,6 +32,11 @@ export function useCustomersAllQuery(maxPerPage = 500) {
         email?: string | null
         external_member_id?: string | null
         points?: number
+        // Snapshot del socio Tadaima — necesario para el precio socio en Caja.
+        member_status?: string | null
+        member_level?: string | null
+        member_expires_at?: string | null
+        member_debt?: number | null
       }>
     },
     staleTime: 60 * 60_000,

@@ -26,6 +26,14 @@ class StoreCustomerRequest extends FormRequest
             'loyalty_tier'       => ['nullable', 'string', 'in:Bronce,Plata,Oro,Leyenda'],
             'tier'               => ['nullable', 'string', 'in:Bronce,Plata,Oro,Leyenda'], // alias
             'points'             => ['nullable', 'integer', 'min:0'],
+            // Snapshot del socio Tadaima (viene de Supabase). member_level es el
+            // nivel de membresía (ej. "b"), NO el tier de gamificación — por eso
+            // tiene su propia regla y no choca con el enum de loyalty_tier (causa
+            // del 422 "Los datos enviados no son válidos" al asignar un socio).
+            'member_status'      => ['nullable', 'string', 'in:ACTIVO,INACTIVO'],
+            'member_level'       => ['nullable', 'string', 'max:20'],
+            'member_expires_at'  => ['nullable', 'date'],
+            'member_debt'        => ['nullable', 'numeric'],
         ];
     }
 

@@ -116,6 +116,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('customers/{customer}')->group(function () {
         Route::get('credit',  [CustomerController::class, 'credit']);
         Route::post('credit', [CustomerController::class, 'addCredit']);
+        // Refresca el snapshot de socio Tadaima desde Supabase (solo lectura).
+        Route::post('refresh-member', [CustomerController::class, 'refreshMember']);
     });
 
     // ── Sales Drafts ──────────────────────────────────────────────────────────

@@ -100,4 +100,39 @@ class CustomerSocioUpsertTest extends TestCase
             'phone' => '6641234567',
         ])->assertStatus(422);
     }
+
+    public function test_socio_member_snapshot_persists_on_import(): void
+    {
+        $res = $this->actingAs($this->user, 'sanctum')->postJson('/api/v1/customers', [
+            'name'               => 'Socio Snapshot',
+            'external_member_id' => 'TAD20000001',
+            'member_status'      => 'ACTIVO',
+            'member_level'       => 'b',
+            'member_expires_at'  => '2027-01-01',
+        ]);
+        $res->assertCreated();
+
+        $c = Customer::where('external_member_id', 'TAD20000001')->first();
+        $this->assertSame('ACTIVO', $c->member_status);
+        $this->assertSame('b', $c->member_level);
+        $this->assertNotNull($c->member_synced_at); // el alta marca la sync
+    }
+
+    public function test_membership_level_is_not_a_loyalty_tier(): void
+    {
+        // El nivel de membresía ("b") NO es un loyalty_tier válido. El frontend lo
+        // manda como member_level; si por error llega como loyalty_tier, se rechaza
+        // (este era el origen del 422 "Los datos enviados no son válidos").
+        $this->actingAs($this->user, 'sanctum')->postJson('/api/v1/customers', [
+            'name'         => 'Nivel mal mapeado',
+            'loyalty_tier' => 'b',
+        ])->assertStatus(422);
+
+        // Pero member_level sí acepta "b".
+        $this->actingAs($this->user, 'sanctum')->postJson('/api/v1/customers', [
+            'name'               => 'Nivel bien mapeado',
+            'external_member_id' => 'TAD30000001',
+            'member_level'       => 'b',
+        ])->assertCreated();
+    }
 }

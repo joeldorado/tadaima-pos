@@ -1,0 +1,47 @@
+/* =============================================
+   TADAIMA — Toasts (sonner) · cristal on-brand
+   Base/tema/sombra → AppToaster.tsx (toastOptions.style)
+   Aquí: acento por tipo, botón cerrar ✕ y margen seguro.
+   ============================================= */
+
+/* ── Acento de color por tipo (borde izquierdo + icono) ───────────────────── */
+[data-sonner-toast][data-type="success"] { border-left: 3px solid #10b981 !important; }
+[data-sonner-toast][data-type="error"]   { border-left: 3px solid #ef4444 !important; }
+[data-sonner-toast][data-type="warning"] { border-left: 3px solid #f59e0b !important; }
+[data-sonner-toast][data-type="info"]    { border-left: 3px solid #60a5fa !important; }
+
+[data-sonner-toast][data-type="success"] [data-icon] { color: #10b981; }
+[data-sonner-toast][data-type="error"]   [data-icon] { color: #ef4444; }
+[data-sonner-toast][data-type="warning"] [data-icon] { color: #f59e0b; }
+[data-sonner-toast][data-type="info"]    [data-icon] { color: #60a5fa; }
+
+/* ── Botón cerrar ✕ — visible, theme-aware, esquina superior derecha ──────── */
+[data-sonner-toast] [data-close-button] {
+  background: var(--td-card-bg);
+  border: 1px solid var(--td-popup-border);
+  color: var(--td-text-md);
+  left: auto;
+  right: 0;
+  top: 0;
+  transform: translate(35%, -35%);
+  opacity: 1;
+  transition: color .15s ease, background .15s ease, transform .15s ease;
+}
+[data-sonner-toast] [data-close-button]:hover {
+  color: var(--td-text-hi);
+  background: var(--td-hover-bg);
+  transform: translate(35%, -35%) scale(1.08);
+}
+
+/* ── Texto legible en ambos temas ─────────────────────────────────────────── */
+[data-sonner-toast] [data-title]       { font-weight: 700; }
+[data-sonner-toast] [data-description] { color: var(--td-text-md); }
+
+/* ── Margen seguro: en pantallas chicas no se corta a la derecha ──────────── */
+@media (max-width: 640px) {
+  [data-sonner-toaster][data-x-position="right"] {
+    right: 8px !important;
+    left: 8px !important;
+    width: auto !important;
+  }
+}

@@ -179,6 +179,16 @@ export interface Customer {
   tier: string
   points: number
   credit_balance: number
+  /**
+   * Snapshot del socio Tadaima (Supabase, solo lectura). `member_level` es el
+   * nivel de membresía (ej. "b"), distinto del `tier` de gamificación. Opcionales
+   * porque las filas viejas cacheadas en IndexedDB pueden no traerlos.
+   */
+  member_status?: string | null
+  member_level?: string | null
+  member_expires_at?: string | null
+  member_debt?: number | null
+  member_synced_at?: string | null
   created_at: string
   updated_at: string
 }
@@ -191,6 +201,12 @@ export interface CreateCustomerInput {
   notes?: string
   external_member_id?: string
   loyalty_tier?: string
+  // Snapshot del socio Tadaima al importarlo de Supabase. Opcionales simples
+  // (sin `| null`) para encajar con el idiom `ext.x ?? undefined`.
+  member_status?: string
+  member_level?: string
+  member_expires_at?: string
+  member_debt?: number
 }
 
 export interface UpdateCustomerInput {
@@ -539,6 +555,8 @@ export interface ExternalCardLookup {
   estatus?: string | null
   vigencia?: string | null
   nivel?: string | null
+  /** Adeudo del socio (reservado — Supabase aún no lo expone). */
+  debt?: number | null
 }
 
 // ─── Notifications ────────────────────────────────────────────────────────────

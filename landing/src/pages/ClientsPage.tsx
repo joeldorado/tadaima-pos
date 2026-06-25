@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import {
   Search, Mail, Phone, MapPin, History,
   User, UserPlus, Star, Zap, Award,
-  ChevronRight, X, Users, Loader2, Save, Edit2
+  ChevronRight, X, Users, Loader2, Save, Edit2, RefreshCw, BadgeCheck
 } from "lucide-react";
 import { motion } from "motion/react";
 import { toast } from "sonner";
@@ -10,6 +10,7 @@ import {
   createCustomer,
   updateCustomer,
   searchExternalCustomers,
+  refreshMember,
   type Customer,
   type ExternalCardLookup,
 } from "@tadaima/api";
@@ -66,6 +67,50 @@ function resolveTier(customer: Customer): string {
   return "Bronce";
 }
 
+/** Color del estatus de socio Tadaima (activo/inactivo/sin sincronizar). */
+function socioStatusColor(status?: string | null): string {
+  if (!status) return "#9CA3AF";                                   // sin sincronizar
+  return status.toUpperCase() === "ACTIVO" ? "#00CC66" : "#FF4422"; // activo / inactivo
+}
+
+/** True si la vigencia ya pasó (solo informativo en la ficha). */
+function isExpired(date?: string | null): boolean {
+  if (!date) return false;
+  const d = new Date(date);
+  return !isNaN(d.getTime()) && d < new Date(new Date().toDateString());
+}
+
+/** "Hace 5 min" para member_synced_at. */
+function formatSync(iso?: string | null): string {
+  if (!iso) return "Nunca";
+  const then = new Date(iso).getTime();
+  if (isNaN(then)) return "Nunca";
+  const mins = Math.floor((Date.now() - then) / 60000);
+  if (mins < 1)  return "Hace un momento";
+  if (mins < 60) return `Hace ${mins} min`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24)  return `Hace ${hrs} h`;
+  return `Hace ${Math.floor(hrs / 24)} d`;
+}
+
+/** Badge de socio Tadaima con color por estatus. Concepto APARTE del tier de puntos. */
+function SocioBadge({ status, size = "sm" }: { status?: string | null | undefined; size?: "sm" | "md" }) {
+  const color = socioStatusColor(status);
+  const label = !status
+    ? "Socio Tadaima"
+    : status.toUpperCase() === "ACTIVO" ? "Socio · Activo" : "Socio · Inactivo";
+  const pad = size === "md" ? "px-3 py-1 text-[10px]" : "px-2 py-0.5 text-[8px]";
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full font-black uppercase tracking-widest ${pad}`}
+      style={{ background: `${color}1a`, color, border: `1px solid ${color}55` }}
+    >
+      <BadgeCheck size={size === "md" ? 12 : 9} />
+      {label}
+    </span>
+  );
+}
+
 type EditingCustomer = {
   id?: number;
   name: string;
@@ -85,6 +130,8 @@ export function ClientsPage() {
   const [form, setForm]               = useState<EditingCustomer>(EMPTY_FORM);
   const [extResults, setExtResults]   = useState<ExternalCardLookup[]>([]);
   const [addingExt, setAddingExt]     = useState<string | null>(null);
+  const [filterMode, setFilterMode]   = useState<"all" | "socios" | "locales">("all");
+  const [refreshingMember, setRefreshingMember] = useState(false);
 
   const queryClient = useQueryClient();
   const customersQuery = useCustomersQuery();
@@ -104,6 +151,37 @@ export function ClientsPage() {
     () => queryClient.invalidateQueries({ queryKey: queryKeys.customers.all }),
     [queryClient]
   );
+
+  // Refresca el estatus del socio desde Supabase al abrir su ficha (Supabase y
+  // la BD local están desconectados; así no se queda con un estatus viejo).
+  useEffect(() => {
+    if (selectedId == null) return;
+    const c = customers.find(x => x.id === selectedId);
+    if (!c?.external_member_id) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        await refreshMember(selectedId);
+        if (!cancelled) void invalidateCustomers();
+      } catch { /* deja el snapshot en cache si Supabase no responde */ }
+    })();
+    return () => { cancelled = true; };
+    // Un refresh por apertura de ficha. customers se lee al disparar, no en deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
+
+  const handleRefreshMember = useCallback(async (id: number) => {
+    setRefreshingMember(true);
+    try {
+      await refreshMember(id);
+      void invalidateCustomers();
+      toast.success("Estatus de socio actualizado");
+    } catch {
+      toast.error("No se pudo actualizar el estatus (Supabase)");
+    } finally {
+      setRefreshingMember(false);
+    }
+  }, [invalidateCustomers]);
 
   // Validación inline (Joel 2026-06-12): label rojo bajo el campo en cuanto
   // el dato es inválido — mismo regex compartido que Sucursales/Usuarios.
@@ -177,13 +255,19 @@ export function ClientsPage() {
 
   // ── Filtrado local ─────────────────────────────────────────────────────────
   const filtered = useMemo(() =>
-    customers.filter(c =>
-      c.name.toLowerCase().includes(search.toLowerCase()) ||
-      (c.email?.toLowerCase().includes(search.toLowerCase())) ||
-      (c.phone?.includes(search)) ||
-      (c.external_member_id?.toLowerCase().includes(search.toLowerCase()))
-    ),
-    [customers, search]
+    customers.filter(c => {
+      const q = search.toLowerCase();
+      const matchesSearch =
+        c.name.toLowerCase().includes(q) ||
+        (c.email?.toLowerCase().includes(q)) ||
+        (c.phone?.includes(search)) ||
+        (c.external_member_id?.toLowerCase().includes(q));
+      if (!matchesSearch) return false;
+      if (filterMode === "socios")  return !!c.external_member_id;
+      if (filterMode === "locales") return !c.external_member_id;
+      return true;
+    }),
+    [customers, search, filterMode]
   );
 
   // Supabase fallback cuando no hay resultados en POS
@@ -205,7 +289,11 @@ export function ClientsPage() {
         phone:              ext.phone ?? undefined,
         email:              ext.email || undefined,
         external_member_id: ext.external_member_id,
-        loyalty_tier:       ext.nivel ?? undefined,
+        // OJO: ext.nivel ("b") es el nivel de membresía, NO el tier de puntos.
+        // Mandarlo como loyalty_tier reventaba el enum del backend (422).
+        member_status:      ext.estatus  ?? undefined,
+        member_level:       ext.nivel    ?? undefined,
+        member_expires_at:  ext.vigencia ?? undefined,
       });
       void invalidateCustomers();
       setSelectedId(newCust.id);
@@ -273,6 +361,7 @@ export function ClientsPage() {
             <div className="flex gap-4 overflow-x-auto pb-2">
               {[
                 { label: "Total",  val: customers.length, icon: Users, color: T.redBright },
+                { label: "Socios", val: customers.filter(c => c.external_member_id).length, icon: BadgeCheck, color: "#00CC66" },
                 { label: "VIP",    val: customers.filter(c => resolveTier(c) === "Leyenda").length, icon: Star, color: "#FFD700" },
                 { label: "Nuevos", val: customers.filter(c => new Date(c.created_at) > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)).length, icon: Zap, color: "#00CC66" },
               ].map((s, i) => (
@@ -282,6 +371,29 @@ export function ClientsPage() {
                   <span className="text-xs font-black text-white">{s.val}</span>
                 </div>
               ))}
+            </div>
+
+            {/* Filtro: socios Tadaima vs clientes locales (para que el cajero distinga) */}
+            <div className="flex gap-2">
+              {([
+                { key: "all",     label: "Todos" },
+                { key: "socios",  label: "Socios Tadaima" },
+                { key: "locales", label: "Clientes locales" },
+              ] as const).map(chip => {
+                const active = filterMode === chip.key;
+                return (
+                  <button
+                    key={chip.key}
+                    onClick={() => setFilterMode(chip.key)}
+                    className="px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest transition-all"
+                    style={active
+                      ? { background: "linear-gradient(135deg,#CC2200,#FF4422)", color: "#fff", border: "1px solid rgba(255,120,90,0.3)" }
+                      : { background: "var(--td-input-bg)", color: "var(--td-text-md)", border: "1px solid var(--td-input-border)" }}
+                  >
+                    {chip.label}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -313,6 +425,7 @@ export function ClientsPage() {
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-black text-white truncate uppercase tracking-tight">{ext.name}</p>
                           <p className="text-[10px] font-black text-white/20 uppercase tracking-widest">{ext.external_member_id}{ext.email ? ` · ${ext.email}` : ""}</p>
+                          {ext.estatus && <div className="mt-1.5"><SocioBadge status={ext.estatus} /></div>}
                         </div>
                         <button
                           type="button"
@@ -349,6 +462,9 @@ export function ClientsPage() {
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-black text-white truncate uppercase tracking-tight">{c.name}</p>
                     <p className="text-[10px] font-black text-white/20 uppercase tracking-widest">{c.email ?? "Sin correo"}</p>
+                    {c.external_member_id && (
+                      <div className="mt-1.5"><SocioBadge status={c.member_status} /></div>
+                    )}
                   </div>
                   <div className="text-right shrink-0">
                     <p className="text-sm font-black text-white italic">{c.points} pts</p>
@@ -411,6 +527,54 @@ export function ClientsPage() {
                     Faltan {Math.max(2000 - selected.points, 0)} pts para el siguiente nivel
                   </p>
                 </div>
+
+                {/* Socio Tadaima — estatus en vivo (concepto APARTE de los puntos) */}
+                {selected.external_member_id && (
+                  <div
+                    className="p-6 rounded-[32px] border space-y-4"
+                    style={{
+                      borderColor: `${socioStatusColor(selected.member_status)}40`,
+                      background: `${socioStatusColor(selected.member_status)}0d`,
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <SocioBadge status={selected.member_status} size="md" />
+                      <button
+                        onClick={() => void handleRefreshMember(selected.id)}
+                        disabled={refreshingMember}
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest border border-white/10 text-white/50 hover:text-white hover:bg-white/5 transition-all disabled:opacity-40 shrink-0"
+                      >
+                        <RefreshCw size={12} className={refreshingMember ? "animate-spin" : ""} />
+                        {refreshingMember ? "..." : "Actualizar"}
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <p className="text-[9px] font-black uppercase tracking-widest text-white/20 mb-1">ID Socio</p>
+                        <p className="text-xs font-bold text-white truncate">{selected.external_member_id}</p>
+                      </div>
+                      <div>
+                        <p className="text-[9px] font-black uppercase tracking-widest text-white/20 mb-1">Nivel membresía</p>
+                        <p className="text-xs font-bold text-white uppercase">{selected.member_level ?? "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-[9px] font-black uppercase tracking-widest text-white/20 mb-1">Vigencia</p>
+                        <p className="text-xs font-bold truncate" style={{ color: isExpired(selected.member_expires_at) ? "#FF4422" : "#fff" }}>
+                          {selected.member_expires_at ?? "Sin dato"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[9px] font-black uppercase tracking-widest text-white/20 mb-1">Últ. sincronización</p>
+                        <p className="text-xs font-bold text-white/70 truncate">{formatSync(selected.member_synced_at)}</p>
+                      </div>
+                    </div>
+                    {(selected.member_status ?? "").toUpperCase() !== "ACTIVO" && (
+                      <p className="text-[10px] font-bold" style={{ color: "#FF4422" }}>
+                        Socio inactivo — en Caja se cobra precio normal (sin descuento de socio).
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 {/* Info */}
                 <div className="grid grid-cols-1 gap-4">

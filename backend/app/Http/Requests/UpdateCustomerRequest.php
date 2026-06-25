@@ -29,6 +29,11 @@ class UpdateCustomerRequest extends FormRequest
             'loyalty_tier' => ['nullable', 'string', 'in:Bronce,Plata,Oro,Leyenda'],
             'tier'         => ['nullable', 'string', 'in:Bronce,Plata,Oro,Leyenda'],
             'points'       => ['nullable', 'integer', 'min:0'],
+            // Snapshot del socio Tadaima (ver StoreCustomerRequest).
+            'member_status'     => ['nullable', 'string', 'in:ACTIVO,INACTIVO'],
+            'member_level'      => ['nullable', 'string', 'max:20'],
+            'member_expires_at' => ['nullable', 'date'],
+            'member_debt'       => ['nullable', 'numeric'],
         ];
     }
 

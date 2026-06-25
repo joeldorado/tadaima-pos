@@ -62,6 +62,18 @@ export async function deleteCustomer(id: number): Promise<void> {
 }
 
 /**
+ * Refresca el snapshot de socio Tadaima (estatus/nivel/vigencia) desde Supabase.
+ * POST /customers/{id}/refresh-member
+ *
+ * Se llama al abrir/asignar un socio para mantener el estatus al día. Devuelve el
+ * cliente actualizado. Lanza si el cliente no es socio (422) o Supabase falla.
+ */
+export async function refreshMember(id: number): Promise<Customer> {
+  const response = await apiClient.post<Customer>(`/customers/${id}/refresh-member`)
+  return response.data
+}
+
+/**
  * Agrega saldo a favor (crédito) a un cliente.
  * POST /customers/{id}/credit
  */

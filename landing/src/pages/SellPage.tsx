@@ -22,7 +22,7 @@ import { useViewportMaxHeight } from "@/hooks/useViewportMaxHeight";
 import { PaymentRestrictionBadge, getPayRestriction } from "@/components/ui/PaymentRestrictionBadge";
 const tadaimaLogo = null // TODO: replace with real logo asset
 import { toast } from "sonner";
-import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, closeSession, forceCloseSession, getActiveSession, createLayaway, getCustomers, createCustomer, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getPreSaleOrders, getSales, getProductsLight, storageUrl, getCashReport, sendPreSaleAssignAlert, getCatalogCustomerUsage } from "@tadaima/api";
+import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, closeSession, forceCloseSession, getActiveSession, createLayaway, getCustomers, createCustomer, refreshMember, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getPreSaleOrders, getSales, getProductsLight, storageUrl, getCashReport, sendPreSaleAssignAlert, getCatalogCustomerUsage } from "@tadaima/api";
 import type { OpenSessionConflict } from "@tadaima/api";
 import type { CashSessionReport } from "@tadaima/api";
 import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
@@ -98,6 +98,11 @@ interface Customer {
   email?: string;
   points?: number;
   external_member_id?: string;
+  // Snapshot de socio Tadaima — define el estatus y el precio socio en Caja.
+  member_status?: string | null;
+  member_level?: string | null;
+  member_expires_at?: string | null;
+  member_debt?: number | null;
 }
 
 interface CartItem {
@@ -123,8 +128,10 @@ interface Mesa {
   customerName?: string;
   customerPhone?: string;
   customerEmail?: string;
-  /** true = el cliente asignado es socio Tadaima (external_member_id) → precio socio. */
+  /** true = el cliente asignado es socio Tadaima (external_member_id) → etiqueta. */
   customerIsSocio?: boolean;
+  /** true = socio Tadaima ACTIVO/elegible → aplica precio socio (b). Joel 2026-06-25. */
+  customerSocioEligible?: boolean;
   isNewCustomer?: boolean;
   discount: number;
   paymentMethod: PaymentMethod;
@@ -159,6 +166,58 @@ const fmtUSD = (n: number) =>
   new Intl.NumberFormat("en-US", {
     style: "currency", currency: "USD", minimumFractionDigits: 2,
   }).format(n || 0);
+
+// ─── Elegibilidad de socio Tadaima para precio socio ────────────────────────────
+// Joel 2026-06-25: el descuento de socio SOLO se quita si el socio está INACTIVO.
+// La vigencia y el adeudo quedan disponibles pero apagados — para activarlos a
+// futuro basta poner el flag en true (único punto a tocar).
+const SOCIO_ELIGIBILITY = { checkExpiry: false, checkDebt: false };
+
+function isSocioEligible(c: {
+  member_status?: string | null | undefined;
+  member_expires_at?: string | null | undefined;
+  member_debt?: number | null | undefined;
+}): boolean {
+  if ((c.member_status ?? "").toUpperCase() !== "ACTIVO") return false;
+  if (SOCIO_ELIGIBILITY.checkExpiry && c.member_expires_at) {
+    const d = new Date(c.member_expires_at);
+    if (!isNaN(d.getTime()) && d < new Date(new Date().toDateString())) return false;
+  }
+  if (SOCIO_ELIGIBILITY.checkDebt && (c.member_debt ?? 0) > 0) return false;
+  return true;
+}
+
+/** Elegibilidad a partir de un socio fresco de Supabase (ExternalCardLookup). */
+function isExtEligible(e: ExternalCardLookup): boolean {
+  return isSocioEligible({
+    member_status: e.estatus,
+    member_expires_at: e.vigencia,
+    member_debt: e.debt,
+  });
+}
+
+/** Color + texto del estatus de socio para los badges de Caja. */
+function socioStatusMeta(status?: string | null): { color: string; label: string } {
+  if (!status) return { color: "#9CA3AF", label: "Socio Tadaima" };
+  return status.toUpperCase() === "ACTIVO"
+    ? { color: "#10b981", label: "Socio · Activo" }
+    : { color: "#EF4444", label: "Socio · Inactivo" };
+}
+
+/** Pill de estatus de socio (para que el cajero distinga socio/normal y activo/inactivo). */
+function SocioPill({ status }: { status?: string | null | undefined }) {
+  const { color, label } = socioStatusMeta(status);
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 4, marginTop: 4,
+      padding: "2px 8px", borderRadius: 999, fontSize: 9, fontWeight: 900,
+      textTransform: "uppercase", letterSpacing: "0.08em",
+      background: `${color}22`, color, border: `1px solid ${color}66`,
+    }}>
+      {label}
+    </span>
+  );
+}
 
 function getItemPrice(item: CartItem): number {
   const { product: p, priceLevel } = item;
@@ -357,6 +416,10 @@ export function SellPage() {
       email: c.email ?? undefined,
       points: c.points,
       external_member_id: c.external_member_id ?? undefined,
+      member_status: c.member_status ?? undefined,
+      member_level: c.member_level ?? undefined,
+      member_expires_at: c.member_expires_at ?? undefined,
+      member_debt: c.member_debt ?? undefined,
     })),
   [allLocalCustomers]);
 
@@ -987,7 +1050,10 @@ export function SellPage() {
         phone:              ext.phone ?? undefined,
         email:              ext.email || undefined,
         external_member_id: ext.external_member_id,
-        loyalty_tier:       ext.nivel ?? undefined,
+        // ext.nivel ("b") es nivel de membresía, NO el tier de puntos (causa del 422).
+        member_status:      ext.estatus  ?? undefined,
+        member_level:       ext.nivel    ?? undefined,
+        member_expires_at:  ext.vigencia ?? undefined,
       });
       toast.success(`Cliente agregado: ${newCust.name}`);
       // Refresca la lista local mostrándolo arriba.
@@ -995,6 +1061,8 @@ export function SellPage() {
         id: String(newCust.id), name: newCust.name,
         phone: newCust.phone ?? undefined, email: newCust.email ?? ext.email ?? undefined,
         points: newCust.points, external_member_id: ext.external_member_id,
+        member_status: ext.estatus ?? undefined, member_level: ext.nivel ?? undefined,
+        member_expires_at: ext.vigencia ?? undefined,
       }, ...prev]);
       setClientsExternal(prev => prev.filter(e => e.external_member_id !== ext.external_member_id));
       void queryClient.invalidateQueries({ queryKey: queryKeys.customers.all });
@@ -1028,6 +1096,10 @@ export function SellPage() {
           id: String(localMatch.id), name: localMatch.name,
           phone: localMatch.phone ?? undefined, email: localMatch.email ?? undefined,
           points: localMatch.points, external_member_id: code,
+          member_status: localMatch.member_status ?? undefined,
+          member_level: localMatch.member_level ?? undefined,
+          member_expires_at: localMatch.member_expires_at ?? undefined,
+          member_debt: localMatch.member_debt ?? undefined,
         };
         setAssignCustomerPopup(p => p ? { ...p, candidate: { type: 'local', customer: cust }, searching: false } : null);
         return;
@@ -1135,8 +1207,25 @@ export function SellPage() {
           setAssignCustomerPopup(p => p ? { ...p, assigning: false } : null);
           return;
         }
-        setCustomer(candidate.customer);
-        toast.success(`Cliente asignado: ${candidate.customer.name}`);
+        // Socio Tadaima: refresca su estatus desde Supabase para decidir el precio
+        // con datos al día (el spinner "asignando" cubre la latencia). Si Supabase
+        // no responde, se usa el snapshot en cache — nunca bloquea la asignación.
+        let cust = candidate.customer;
+        if (cust.external_member_id) {
+          try {
+            const fresh = await refreshMember(Number(cust.id));
+            cust = {
+              ...cust,
+              member_status:     fresh.member_status ?? null,
+              member_level:      fresh.member_level ?? null,
+              member_expires_at: fresh.member_expires_at ?? null,
+              member_debt:       fresh.member_debt ?? null,
+            };
+            void queryClient.invalidateQueries({ queryKey: queryKeys.customers.all });
+          } catch { /* usa el snapshot en cache */ }
+        }
+        setCustomer(cust);
+        toast.success(`Cliente asignado: ${cust.name}`);
       } else {
         const ext = candidate.ext;
         const newCust = await createCustomer({
@@ -1144,7 +1233,9 @@ export function SellPage() {
           phone:              ext.phone ?? undefined,
           email:              ext.email || undefined,
           external_member_id: ext.external_member_id,
-          loyalty_tier:       ext.nivel ?? undefined,
+          member_status:      ext.estatus  ?? undefined,
+          member_level:       ext.nivel    ?? undefined,
+          member_expires_at:  ext.vigencia ?? undefined,
         });
         const limitErr = await checkPreventaCustomerLimit(newCust.id);
         if (limitErr) {
@@ -1153,10 +1244,16 @@ export function SellPage() {
           setAssignCustomerPopup(p => p ? { ...p, assigning: false } : null);
           return;
         }
+        // ext viene fresco de Supabase (búsqueda/scan recién hechos) → su estatus
+        // ya es el actual; no hace falta refresh extra.
         const cust: Customer = {
           id: String(newCust.id), name: newCust.name,
           phone: newCust.phone ?? undefined, email: newCust.email ?? ext.email ?? undefined,
           points: newCust.points, external_member_id: ext.external_member_id,
+          member_status:     ext.estatus  ?? undefined,
+          member_level:      ext.nivel    ?? undefined,
+          member_expires_at: ext.vigencia ?? undefined,
+          member_debt:       ext.debt     ?? undefined,
         };
         setCustomer(cust);
         toast.success(`Socio Tadaima agregado y asignado: ${newCust.name}`);
@@ -1232,7 +1329,9 @@ export function SellPage() {
         phone:              ext.phone ?? undefined,
         email:              ext.email || undefined,
         external_member_id: ext.external_member_id,
-        loyalty_tier:       ext.nivel ?? undefined,
+        member_status:      ext.estatus  ?? undefined,
+        member_level:       ext.nivel    ?? undefined,
+        member_expires_at:  ext.vigencia ?? undefined,
       });
       const custObj: Customer = {
         id: String(newCust.id),
@@ -1241,6 +1340,10 @@ export function SellPage() {
         email: newCust.email ?? ext.email ?? undefined,
         points: newCust.points,
         external_member_id: ext.external_member_id,
+        member_status:     ext.estatus  ?? undefined,
+        member_level:      ext.nivel    ?? undefined,
+        member_expires_at: ext.vigencia ?? undefined,
+        member_debt:       ext.debt     ?? undefined,
       };
       setCustomers([custObj]);
       setExtSearchResults([]);
@@ -1321,7 +1424,7 @@ export function SellPage() {
   const addScanToCart = (product: Product, priceLevel: PriceLevel = "a"): void => {
     const mesaId = activeMesa.id;
     // Socio Tadaima sin tarjeta → el item entra con precio socio (b).
-    if (priceLevel === "a" && activeMesa?.customerIsSocio && !activeMesa?.isPreventa && activeMesa?.paymentMethod !== "Tarjeta" && (product.price_b ?? 0) > 0) {
+    if (priceLevel === "a" && activeMesa?.customerSocioEligible && !activeMesa?.isPreventa && activeMesa?.paymentMethod !== "Tarjeta" && (product.price_b ?? 0) > 0) {
       priceLevel = "b";
     }
     const exists = activeMesa.items.some(i => i.product.id === product.id);
@@ -1374,7 +1477,7 @@ export function SellPage() {
     // Socio Tadaima sin tarjeta → el item entra con precio socio (b), salvo que
     // el cajero haya forzado nivel mayorista (c/d/e) o el producto no tenga
     // precio socio configurado (price_b).
-    if (priceLevel === "a" && activeMesa?.customerIsSocio && !activeMesa?.isPreventa && activeMesa?.paymentMethod !== "Tarjeta" && (product.price_b ?? 0) > 0) {
+    if (priceLevel === "a" && activeMesa?.customerSocioEligible && !activeMesa?.isPreventa && activeMesa?.paymentMethod !== "Tarjeta" && (product.price_b ?? 0) > 0) {
       priceLevel = "b";
     }
     const preItem = activeMesa.items.find(i => i.product.id === product.id);
@@ -1589,13 +1692,13 @@ export function SellPage() {
         ...m,
         paymentMethod: pm,
         selectedTerminalId: undefined,
-        items: repriceForSocio(m.items, (m.customerIsSocio && !m.isPreventa) ? "b" : "a"),
+        items: repriceForSocio(m.items, (m.customerSocioEligible && !m.isPreventa) ? "b" : "a"),
       }));
     }
   };
 
   const selectTerminal = (terminalId: number) => {
-    const wasSocio = !!activeMesa?.customerIsSocio;
+    const wasSocio = !!activeMesa?.customerSocioEligible;
     updMesa(activeMesa.id, m => ({
       ...m,
       paymentMethod: "Tarjeta",
@@ -1646,6 +1749,7 @@ export function SellPage() {
 
   const setCustomer = (c: Customer) => {
     const isSocio = !!c.external_member_id;
+    const eligible = isSocio && isSocioEligible(c);
     updMesa(activeMesa.id, m => ({
       ...m,
       customerId: c.id,
@@ -1653,12 +1757,17 @@ export function SellPage() {
       customerPhone: c.phone ?? "",
       customerEmail: c.email ?? "",
       customerIsSocio: isSocio,
+      customerSocioEligible: eligible,
       isNewCustomer: false,
-      // Socio Tadaima asignado → precio socio (salvo tarjeta o preventa).
-      items: repriceForSocio(m.items, (isSocio && m.paymentMethod !== "Tarjeta" && !m.isPreventa) ? "b" : "a"),
+      // Socio Tadaima ACTIVO → precio socio (salvo tarjeta o preventa). Socio
+      // inactivo se cobra precio normal (Joel 2026-06-25).
+      items: repriceForSocio(m.items, (eligible && m.paymentMethod !== "Tarjeta" && !m.isPreventa) ? "b" : "a"),
     }));
     setCustomerSearch(c.name);
     setShowCustDrop(false);
+    if (isSocio && !eligible) {
+      toast.info("Socio inactivo — se cobra precio normal (sin descuento de socio).", { duration: 4500 });
+    }
   };
 
   /**
@@ -1681,7 +1790,7 @@ export function SellPage() {
       customerName: undefined,
       customerPhone: "",
       customerEmail: "",
-      customerIsSocio: false,
+      customerIsSocio: false, customerSocioEligible: false,
       isNewCustomer: false,
       // Sin cliente → precio normal.
       items: repriceForSocio(m.items, "a"),
@@ -1797,7 +1906,7 @@ export function SellPage() {
     const mesaId = activeMesa.id;
     updMesa(mesaId, m => ({
       ...m, items: [], customerId: undefined, customerName: undefined,
-      customerPhone: "", customerEmail: "", customerIsSocio: false, isNewCustomer: false, discount: 0, depositAmount: 0,
+      customerPhone: "", customerEmail: "", customerIsSocio: false, customerSocioEligible: false, isNewCustomer: false, discount: 0, depositAmount: 0,
       selectedTerminalId: undefined, absorbCommission: true,
       isPreventa: false, loadedPreSaleOrderId: undefined, loadedPreSaleOrderCode: undefined,
       cashReceived: "",
@@ -1821,7 +1930,7 @@ export function SellPage() {
   const handleCreateCustomer = () => {
     if (!customerSearch.trim()) return;
     const name = customerSearch.trim();
-    updMesa(activeMesa.id, m => ({ ...m, customerId: undefined, customerName: name, customerPhone: "", customerIsSocio: false, isNewCustomer: true, items: repriceForSocio(m.items, "a") }));
+    updMesa(activeMesa.id, m => ({ ...m, customerId: undefined, customerName: name, customerPhone: "", customerIsSocio: false, customerSocioEligible: false, isNewCustomer: true, items: repriceForSocio(m.items, "a") }));
     setCustomerSearch(name);
     setShowCustDrop(false);
     toast.success(`Cliente "${name}" preparado para registro automático`, {
@@ -2580,9 +2689,6 @@ export function SellPage() {
   };
 
   const doPrintTicket = (sale: CompletedSaleData) => {
-    const win = window.open("", "_blank", "width=340,height=600");
-    if (!win) return;
-
     const regularTotal = sale.items.reduce((s, i) => s + i.price * i.quantity, 0);
     // Formato clásico de ticket (Joel 2026-06-12): nombre en su línea y abajo
     // "cant × precio unitario" + importe. Antes salía "×2 $800" (importe de la
@@ -2650,13 +2756,16 @@ export function SellPage() {
       ${sale.change != null && sale.change > 0 ? `<tr><td style="font-weight:900">Cambio</td><td style="text-align:right;font-weight:900">${fmt(sale.change)}</td></tr>` : ""}
     `;
 
-    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Ticket</title>
-    <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Courier New',monospace;font-size:11px;width:280px;padding:12px 8px}
-    h2{font-size:16px;text-align:center;font-weight:900;margin-bottom:2px}.sub{font-size:9px;text-align:center;color:#555;margin-bottom:2px}
-    .divider{border-top:1px dashed #000;margin:8px 0}table{width:100%;border-collapse:collapse}
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Ticket</title>
+    <style>*{margin:0;padding:0;box-sizing:border-box}
+    @page{size:58mm auto;margin:0}
+    html,body{width:58mm}
+    body{font-family:'Courier New',monospace;font-size:11px;padding:2mm 1.5mm;overflow-wrap:anywhere;word-break:break-word}
+    h2{font-size:15px;text-align:center;font-weight:900;margin-bottom:2px}.sub{font-size:9px;text-align:center;color:#555;margin-bottom:2px}
+    .divider{border-top:1px dashed #000;margin:6px 0}table{width:100%;border-collapse:collapse;table-layout:fixed}
+    td{word-break:break-word}
     .total-row td{font-weight:900;font-size:13px;border-top:1px solid #000;padding-top:6px}
-    .footer{text-align:center;font-size:9px;color:#555;margin-top:10px}
-    @media print{@page{margin:0;size:58mm auto;orientation:portrait}body{width:58mm}}</style></head><body>
+    .footer{text-align:center;font-size:9px;color:#555;margin-top:8px}</style></head><body>
     <h2>TADAIMA</h2>
     <div class="sub">Manga & Hobby Store</div>
     ${sale.storeName ? `<div class="sub" style="font-weight:900;color:#000">${sale.storeName}</div>` : ""}
@@ -2673,9 +2782,25 @@ export function SellPage() {
     ${preSaleSection}${regularSection}${grandTotal}
     <div class="divider"></div>
     <table style="font-size:10px">${paymentRows}</table>
-    <div class="divider"></div><div class="footer">¡Gracias por tu compra!</div></body></html>`);
-    win.document.close();
-    setTimeout(() => { win.print(); }, 300);
+    <div class="divider"></div><div class="footer">¡Gracias por tu compra!</div></body></html>`;
+
+    // Impresión por iframe oculto: sin popup (no lo bloquea el navegador ni deja
+    // ventana abierta) y compatible con impresión silenciosa (Chrome --kiosk-printing)
+    // para que el ticket salga automático. El @page 58mm auto lo mantiene vertical.
+    const iframe = document.createElement("iframe");
+    iframe.setAttribute("aria-hidden", "true");
+    iframe.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
+    document.body.appendChild(iframe);
+    const idoc = iframe.contentWindow?.document;
+    if (!idoc) { iframe.remove(); return; }
+    idoc.open();
+    idoc.write(html);
+    idoc.close();
+    // Espera a que el iframe pinte el contenido, dispara el print y lo retira.
+    setTimeout(() => {
+      try { iframe.contentWindow?.focus(); iframe.contentWindow?.print(); } catch { /* noop */ }
+      setTimeout(() => iframe.remove(), 1500);
+    }, 250);
   };
 
   const triggerPrintFlow = (sale: CompletedSaleData) => {
@@ -4195,7 +4320,7 @@ export function SellPage() {
                       Buscar existente
                     </button>
                     <button 
-                      onClick={() => updMesa(activeMesa.id, m => ({ ...m, isNewCustomer: true, customerId: undefined, customerPhone: m.customerPhone || "", customerIsSocio: false, items: repriceForSocio(m.items, "a") }))}
+                      onClick={() => updMesa(activeMesa.id, m => ({ ...m, isNewCustomer: true, customerId: undefined, customerPhone: m.customerPhone || "", customerIsSocio: false, customerSocioEligible: false, items: repriceForSocio(m.items, "a") }))}
                       className={`flex items-center gap-2 px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeMesa.isNewCustomer ? 'bg-amber-500 text-black shadow-lg' : ''}`}
                       style={!activeMesa.isNewCustomer ? { color: TLO } : undefined}
                     >
@@ -4369,6 +4494,7 @@ export function SellPage() {
                                         <div className="flex-1 min-w-0">
                                           <p className="text-sm font-black truncate" style={{ color: THI }}>{ext.name}</p>
                                           <p className="text-[10px]" style={{ color: TLO }}>{ext.external_member_id}{ext.phone ? ` · ${ext.phone}` : ""}{ext.email ? ` · ${ext.email}` : ""}</p>
+                                          {ext.estatus && <SocioPill status={ext.estatus} />}
                                         </div>
                                         <span className="text-[10px] font-black text-red-400 uppercase tracking-wider shrink-0">Agregar</span>
                                       </button>
@@ -4378,7 +4504,7 @@ export function SellPage() {
                                 {activeMesa.isPreventa && (
                                   <button 
                                     onClick={() => {
-                                      updMesa(activeMesa.id, m => ({ ...m, isNewCustomer: true, customerName: customerSearch, customerPhone: "", customerIsSocio: false }));
+                                      updMesa(activeMesa.id, m => ({ ...m, isNewCustomer: true, customerName: customerSearch, customerPhone: "", customerIsSocio: false, customerSocioEligible: false }));
                                       setShowCustDrop(false);
                                     }}
                                     className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-500 font-black text-[10px] uppercase tracking-widest hover:bg-amber-500/20 transition-all"
@@ -4404,11 +4530,18 @@ export function SellPage() {
                                         {c.email ? ` · ${c.email}` : ""}
                                       </p>
                                     </div>
-                                    {c.external_member_id && (
-                                      <span className="text-[9px] font-black text-red-400/70 uppercase tracking-widest shrink-0">
-                                        Socio
-                                      </span>
-                                    )}
+                                    {c.external_member_id && (() => {
+                                      const m = socioStatusMeta(c.member_status);
+                                      const txt = c.member_status
+                                        ? (c.member_status.toUpperCase() === "ACTIVO" ? "Socio · Activo" : "Socio · Inactivo")
+                                        : "Socio";
+                                      return (
+                                        <span className="text-[9px] font-black uppercase tracking-widest shrink-0 px-2 py-0.5 rounded-full"
+                                          style={{ color: m.color, background: `${m.color}1f`, border: `1px solid ${m.color}55` }}>
+                                          {txt}
+                                        </span>
+                                      );
+                                    })()}
                                   </div>
                                 </button>
                               ))
@@ -5347,16 +5480,28 @@ export function SellPage() {
                         <p className="text-lg font-black truncate leading-tight" style={{ color: THI }} title={activeMesa.customerName ?? ""}>
                           {activeMesa.customerName}
                         </p>
-                        {activeMesa?.customerIsSocio && !activeMesa?.isPreventa && (
-                          <span
-                            className="inline-flex items-center w-fit mt-1 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest"
-                            style={activeMesa?.paymentMethod === "Tarjeta"
+                        {activeMesa?.customerIsSocio && !activeMesa?.isPreventa && (() => {
+                          // 3 estados: socio inactivo (rojo, precio normal), tarjeta
+                          // (gris, la tienda absorbe comisión), socio activo (ámbar).
+                          const eligible = !!activeMesa?.customerSocioEligible;
+                          const isTarjeta = activeMesa?.paymentMethod === "Tarjeta";
+                          const style = !eligible
+                            ? { background: "rgba(239,68,68,0.14)", border: "1px solid rgba(239,68,68,0.4)", color: "#F87171" }
+                            : isTarjeta
                               ? { background: "rgba(148,163,184,0.12)", border: "1px solid rgba(148,163,184,0.3)", color: "#94A3B8" }
-                              : { background: "rgba(245,158,11,0.14)", border: "1px solid rgba(245,158,11,0.4)", color: "#F59E0B" }}
-                          >
-                            {activeMesa?.paymentMethod === "Tarjeta" ? "Precio normal · tarjeta" : "Precio socio aplicado"}
-                          </span>
-                        )}
+                              : { background: "rgba(245,158,11,0.14)", border: "1px solid rgba(245,158,11,0.4)", color: "#F59E0B" };
+                          const label = !eligible
+                            ? "Socio inactivo · precio normal"
+                            : isTarjeta ? "Precio normal · tarjeta" : "Precio socio aplicado";
+                          return (
+                            <span
+                              className="inline-flex items-center w-fit mt-1 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest"
+                              style={style}
+                            >
+                              {label}
+                            </span>
+                          );
+                        })()}
                       </div>
                     </div>
                     <div className="flex flex-col gap-1 mt-1.5 pl-9">
@@ -6924,6 +7069,9 @@ export function SellPage() {
                             <>
                               {p.candidate.customer.phone && <div>📞 {p.candidate.customer.phone}</div>}
                               {p.candidate.customer.email && <div>✉️ {p.candidate.customer.email}</div>}
+                              {p.candidate.customer.external_member_id && (
+                                <div style={{ marginTop: 6 }}><SocioPill status={p.candidate.customer.member_status} /></div>
+                              )}
                               <div style={{ marginTop: 6, color: "#10b981", fontWeight: 700 }}>Ya registrado en tu base</div>
                             </>
                           ) : (
@@ -6931,6 +7079,10 @@ export function SellPage() {
                               {p.candidate.ext.phone && <div>📞 {p.candidate.ext.phone}</div>}
                               {p.candidate.ext.email && <div>✉️ {p.candidate.ext.email}</div>}
                               {p.candidate.ext.nivel && <div>🏅 Nivel: {p.candidate.ext.nivel}</div>}
+                              <div style={{ marginTop: 6 }}><SocioPill status={p.candidate.ext.estatus} /></div>
+                              {!isExtEligible(p.candidate.ext) && (
+                                <div style={{ marginTop: 4, color: "#F87171", fontWeight: 700 }}>Socio inactivo — se cobrará precio normal</div>
+                              )}
                               <div style={{ marginTop: 6, color: "#F59E0B", fontWeight: 700 }}>Se agregará a tu base al asignar</div>
                             </>
                           )}
@@ -6973,6 +7125,7 @@ export function SellPage() {
                       >
                         <p style={{ margin: 0, fontSize: 13, fontWeight: 900 }}>{c.name}</p>
                         <p style={{ margin: 0, fontSize: 11, color: "var(--td-text-ghost)" }}>{[c.phone, c.email].filter(Boolean).join(" · ") || "—"}</p>
+                        {c.external_member_id && <SocioPill status={c.member_status} />}
                       </button>
                     ))}
                     {p.searchResults.externos.length > 0 && (
@@ -6989,6 +7142,7 @@ export function SellPage() {
                       >
                         <p style={{ margin: 0, fontSize: 13, fontWeight: 900 }}>{ext.name ?? ext.external_member_id}</p>
                         <p style={{ margin: 0, fontSize: 11, color: "var(--td-text-ghost)" }}>{[ext.phone, ext.email].filter(Boolean).join(" · ") || ext.external_member_id}</p>
+                        <SocioPill status={ext.estatus} />
                       </button>
                     ))}
                   </>
@@ -7191,8 +7345,8 @@ export function SellPage() {
                         <p style={{ margin: 0, fontSize: 13, fontWeight: 900 }}>{c.name}</p>
                         <p style={{ margin: 0, fontSize: 11, color: "var(--td-text-ghost)" }}>
                           {[c.phone, c.email].filter(Boolean).join(" · ") || "—"}
-                          {c.external_member_id ? " · Socio Tadaima" : ""}
                         </p>
+                        {c.external_member_id && <SocioPill status={c.member_status} />}
                       </div>
                       <ChevronDown size={14} style={{ color: "var(--td-text-ghost)", transform: isExpanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
                     </button>
@@ -7263,6 +7417,7 @@ export function SellPage() {
                           <p style={{ margin: 0, fontSize: 11, color: "var(--td-text-ghost)" }}>
                             {[ext.phone, ext.email].filter(Boolean).join(" · ") || ext.external_member_id}
                           </p>
+                          {ext.estatus && <SocioPill status={ext.estatus} />}
                         </div>
                         <button
                           onClick={() => { void addExternalToDb(ext); }}

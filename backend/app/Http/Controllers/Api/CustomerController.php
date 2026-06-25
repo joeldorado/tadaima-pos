@@ -9,8 +9,10 @@ use App\Http\Requests\UpdateCustomerRequest;
 use App\Http\Resources\CustomerCreditResource;
 use App\Http\Resources\CustomerResource;
 use App\Models\Customer;
+use App\Services\TadaimaMemberService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use RuntimeException;
 
 class CustomerController extends Controller
 {
@@ -53,6 +55,7 @@ class CustomerController extends Controller
         $data = $request->only([
             'name', 'phone', 'email', 'address',
             'notes', 'external_member_id', 'loyalty_tier', 'points',
+            'member_status', 'member_level', 'member_expires_at', 'member_debt',
         ]);
 
         // Socio Tadaima (external_member_id): se importa de Supabase a la base
@@ -60,6 +63,8 @@ class CustomerController extends Controller
         // en vez de reventar contra el unique — así el cajero puede re-asignarlo
         // a una venta sin el error "No se pudo asignar al cliente" (idempotente).
         if (! empty($data['external_member_id'])) {
+            // El snapshot llega fresco de Supabase en el alta → marca la sync.
+            $data['member_synced_at'] = now();
             $customer = Customer::updateOrCreate(
                 ['external_member_id' => $data['external_member_id']],
                 $data,
@@ -86,6 +91,7 @@ class CustomerController extends Controller
             $request->only([
                 'name', 'phone', 'email', 'address',
                 'notes', 'external_member_id', 'loyalty_tier', 'points',
+                'member_status', 'member_level', 'member_expires_at', 'member_debt',
             ])
         );
 
@@ -102,6 +108,48 @@ class CustomerController extends Controller
         $customer->delete();
 
         return $this->success(null, 'Cliente eliminado');
+    }
+
+    /**
+     * POST /customers/{customer}/refresh-member
+     *
+     * Refresca el snapshot del socio Tadaima desde Supabase (solo lectura). Se
+     * llama al abrir/asignar un socio para que estatus/nivel/vigencia estén al
+     * día (Supabase y la BD local están desconectados). Reglas:
+     *  - Si el cliente no es socio (sin external_member_id) → 422.
+     *  - Si Supabase no responde → 502.
+     *  - Si el socio ya no existe en Supabase (404) → NO borra el snapshot local
+     *    (se queda "stale", mejor que perderlo).
+     *  - Solo actualiza los campos member_* + member_synced_at; NO pisa
+     *    name/phone/email que se hayan editado localmente.
+     */
+    public function refreshMember(Customer $customer, TadaimaMemberService $members): JsonResponse
+    {
+        if (empty($customer->external_member_id)) {
+            return $this->error('El cliente no es socio Tadaima.', 422);
+        }
+
+        try {
+            $snap = $members->lookup($customer->external_member_id);
+        } catch (RuntimeException) {
+            return $this->error('Error al consultar el sistema de socios.', 502);
+        }
+
+        if ($snap === null) {
+            return $this->error('Membresía no encontrada en socios Tadaima.', 404);
+        }
+
+        $customer->update([
+            'member_status'     => $snap['estatus']  ?? null,
+            'member_level'      => $snap['nivel']    ?? null,
+            'member_expires_at' => $snap['vigencia'] ?? null,
+            'member_debt'       => $snap['debt']     ?? null,
+            'member_synced_at'  => now(),
+        ]);
+
+        $customer->loadSum('credit', 'amount');
+
+        return $this->success(new CustomerResource($customer), 'Estatus de socio actualizado');
     }
 
     // ─── Credit / Saldo a favor ────────────────────────────────────────────────

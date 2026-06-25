@@ -17,9 +17,22 @@ class Customer extends Model
         'notes',
         'loyalty_tier',
         'points',
+        // Snapshot del socio Tadaima (Supabase, solo lectura). Ver migración
+        // 2026_06_25_000001. member_level = nivel_membresia (ej. "b"), distinto
+        // del tier de gamificación local (loyalty_tier).
+        'member_status',
+        'member_level',
+        'member_expires_at',
+        'member_debt',
+        'member_synced_at',
     ];
 
-    protected $casts = ['points' => 'integer'];
+    protected $casts = [
+        'points'            => 'integer',
+        'member_expires_at' => 'date',
+        'member_debt'       => 'decimal:2',
+        'member_synced_at'  => 'datetime',
+    ];
 
     // ─── Relations ────────────────────────────────────────────────────────────
 

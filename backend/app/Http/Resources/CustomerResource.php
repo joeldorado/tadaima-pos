@@ -31,6 +31,14 @@ class CustomerResource extends JsonResource
             'tier'           => $this->loyalty_tier ?? 'Bronce', // alias frontend
             'points'         => $this->points,
 
+            // Socio Tadaima — snapshot de Supabase (solo lectura). member_level
+            // es el nivel de membresía (ej. "b"), distinto del tier de arriba.
+            'member_status'     => $this->member_status,
+            'member_level'      => $this->member_level,
+            'member_expires_at' => $this->member_expires_at?->toDateString(),
+            'member_debt'       => $this->member_debt !== null ? (float) $this->member_debt : null,
+            'member_synced_at'  => $this->member_synced_at?->toISOString(),
+
             // Saldo a favor (calculado con withSum)
             'credit_balance' => (float) ($this->credit_sum_amount ?? 0),
 
