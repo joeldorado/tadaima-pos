@@ -55,6 +55,16 @@ class ProductResource extends JsonResource
                 ],
             ),
 
+            'supplier_id' => $this->supplier_id,
+
+            'supplier' => $this->when(
+                $this->relationLoaded('supplier') && $this->supplier,
+                fn () => [
+                    'id'   => $this->supplier->id,
+                    'name' => $this->supplier->name,
+                ],
+            ),
+
             'prices' => $this->when(
                 $this->relationLoaded('price'),
                 fn () => [

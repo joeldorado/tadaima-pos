@@ -123,6 +123,8 @@ interface Mesa {
   customerName?: string;
   customerPhone?: string;
   customerEmail?: string;
+  /** true = el cliente asignado es socio Tadaima (external_member_id) → precio socio. */
+  customerIsSocio?: boolean;
   isNewCustomer?: boolean;
   discount: number;
   paymentMethod: PaymentMethod;
@@ -1161,8 +1163,13 @@ export function SellPage() {
         void queryClient.invalidateQueries({ queryKey: queryKeys.customers.all });
       }
       setAssignCustomerPopup(null);
-    } catch {
-      toast.error("No se pudo asignar al cliente.");
+    } catch (err: unknown) {
+      // Mostrar el motivo real del backend en vez de un genérico: ayuda a
+      // diagnosticar (el upsert por socio ya evita el 422 de reimportación).
+      const msg = err && typeof err === "object" && "message" in err
+        ? String((err as { message: unknown }).message)
+        : "No se pudo asignar al cliente.";
+      toast.error(msg);
       setAssignCustomerPopup(p => p ? { ...p, assigning: false } : null);
     }
   };
@@ -1313,6 +1320,10 @@ export function SellPage() {
    */
   const addScanToCart = (product: Product, priceLevel: PriceLevel = "a"): void => {
     const mesaId = activeMesa.id;
+    // Socio Tadaima sin tarjeta → el item entra con precio socio (b).
+    if (priceLevel === "a" && activeMesa?.customerIsSocio && !activeMesa?.isPreventa && activeMesa?.paymentMethod !== "Tarjeta" && (product.price_b ?? 0) > 0) {
+      priceLevel = "b";
+    }
     const exists = activeMesa.items.some(i => i.product.id === product.id);
     if (exists) {
       toast.info(`${product.name} ya está en la venta · usa + para sumar`);
@@ -1360,6 +1371,12 @@ export function SellPage() {
 
   const addToCart = (product: Product, priceLevel: PriceLevel = "a", quantity: number = 1) => {
     const mesaId = activeMesa.id;
+    // Socio Tadaima sin tarjeta → el item entra con precio socio (b), salvo que
+    // el cajero haya forzado nivel mayorista (c/d/e) o el producto no tenga
+    // precio socio configurado (price_b).
+    if (priceLevel === "a" && activeMesa?.customerIsSocio && !activeMesa?.isPreventa && activeMesa?.paymentMethod !== "Tarjeta" && (product.price_b ?? 0) > 0) {
+      priceLevel = "b";
+    }
     const preItem = activeMesa.items.find(i => i.product.id === product.id);
     const newQty = (preItem?.quantity ?? 0) + quantity;
 
@@ -1540,6 +1557,17 @@ export function SellPage() {
     || activeMesa.items.some(i => i.sellingCatalogId != null || i.isFromPreSale)
   ));
 
+  // Reaplica el nivel socio/normal a los items en el carril automático (a↔b).
+  // Respeta overrides manuales mayoristas (c/d/e) y deja en "a" los productos
+  // sin precio socio (price_b). Socio Tadaima + NO tarjeta = precio socio (b);
+  // con tarjeta la tienda absorbe la comisión, así que se cobra precio normal.
+  const repriceForSocio = (items: CartItem[], level: PriceLevel): CartItem[] =>
+    items.map(i => {
+      if (i.priceLevel !== "a" && i.priceLevel !== "b") return i;
+      const target: PriceLevel = (level === "b" && (i.product.price_b ?? 0) > 0) ? "b" : "a";
+      return i.priceLevel === target ? i : { ...i, priceLevel: target };
+    });
+
   const setPayment = (pm: PaymentMethod) => {
     if (pm === "Tarjeta" && hasPreventaInCart) {
       toast.error(
@@ -1557,13 +1585,28 @@ export function SellPage() {
     if (pm === "Tarjeta") {
       setShowTerminalModal(true);
     } else {
-      updMesa(activeMesa.id, m => ({ ...m, paymentMethod: pm, selectedTerminalId: undefined }));
+      updMesa(activeMesa.id, m => ({
+        ...m,
+        paymentMethod: pm,
+        selectedTerminalId: undefined,
+        items: repriceForSocio(m.items, (m.customerIsSocio && !m.isPreventa) ? "b" : "a"),
+      }));
     }
   };
 
   const selectTerminal = (terminalId: number) => {
-    updMesa(activeMesa.id, m => ({ ...m, paymentMethod: "Tarjeta", selectedTerminalId: terminalId }));
+    const wasSocio = !!activeMesa?.customerIsSocio;
+    updMesa(activeMesa.id, m => ({
+      ...m,
+      paymentMethod: "Tarjeta",
+      selectedTerminalId: terminalId,
+      // Tarjeta bancaria → precio normal (la tienda absorbe la comisión).
+      items: repriceForSocio(m.items, "a"),
+    }));
     setShowTerminalModal(false);
+    if (wasSocio) {
+      toast.info("Con tarjeta se cobra precio normal (la tienda absorbe la comisión).", { duration: 4000 });
+    }
   };
 
   const togglePreventa = () => {
@@ -1602,13 +1645,17 @@ export function SellPage() {
     updMesa(activeMesa.id, m => ({ ...m, discount: m.discount === d ? 0 : d }));
 
   const setCustomer = (c: Customer) => {
+    const isSocio = !!c.external_member_id;
     updMesa(activeMesa.id, m => ({
       ...m,
       customerId: c.id,
       customerName: c.name,
       customerPhone: c.phone ?? "",
       customerEmail: c.email ?? "",
+      customerIsSocio: isSocio,
       isNewCustomer: false,
+      // Socio Tadaima asignado → precio socio (salvo tarjeta o preventa).
+      items: repriceForSocio(m.items, (isSocio && m.paymentMethod !== "Tarjeta" && !m.isPreventa) ? "b" : "a"),
     }));
     setCustomerSearch(c.name);
     setShowCustDrop(false);
@@ -1634,7 +1681,10 @@ export function SellPage() {
       customerName: undefined,
       customerPhone: "",
       customerEmail: "",
+      customerIsSocio: false,
       isNewCustomer: false,
+      // Sin cliente → precio normal.
+      items: repriceForSocio(m.items, "a"),
     }));
     setCustomerSearch("");
     toast.info("Cliente quitado de la venta");
@@ -1747,7 +1797,7 @@ export function SellPage() {
     const mesaId = activeMesa.id;
     updMesa(mesaId, m => ({
       ...m, items: [], customerId: undefined, customerName: undefined,
-      customerPhone: "", customerEmail: "", isNewCustomer: false, discount: 0, depositAmount: 0,
+      customerPhone: "", customerEmail: "", customerIsSocio: false, isNewCustomer: false, discount: 0, depositAmount: 0,
       selectedTerminalId: undefined, absorbCommission: true,
       isPreventa: false, loadedPreSaleOrderId: undefined, loadedPreSaleOrderCode: undefined,
       cashReceived: "",
@@ -1771,7 +1821,7 @@ export function SellPage() {
   const handleCreateCustomer = () => {
     if (!customerSearch.trim()) return;
     const name = customerSearch.trim();
-    updMesa(activeMesa.id, m => ({ ...m, customerId: undefined, customerName: name, customerPhone: "", isNewCustomer: true }));
+    updMesa(activeMesa.id, m => ({ ...m, customerId: undefined, customerName: name, customerPhone: "", customerIsSocio: false, isNewCustomer: true, items: repriceForSocio(m.items, "a") }));
     setCustomerSearch(name);
     setShowCustDrop(false);
     toast.success(`Cliente "${name}" preparado para registro automático`, {
@@ -2606,7 +2656,7 @@ export function SellPage() {
     .divider{border-top:1px dashed #000;margin:8px 0}table{width:100%;border-collapse:collapse}
     .total-row td{font-weight:900;font-size:13px;border-top:1px solid #000;padding-top:6px}
     .footer{text-align:center;font-size:9px;color:#555;margin-top:10px}
-    @media print{@page{margin:0;size:58mm auto}body{width:58mm}}</style></head><body>
+    @media print{@page{margin:0;size:58mm auto;orientation:portrait}body{width:58mm}}</style></head><body>
     <h2>TADAIMA</h2>
     <div class="sub">Manga & Hobby Store</div>
     ${sale.storeName ? `<div class="sub" style="font-weight:900;color:#000">${sale.storeName}</div>` : ""}
@@ -4145,7 +4195,7 @@ export function SellPage() {
                       Buscar existente
                     </button>
                     <button 
-                      onClick={() => updMesa(activeMesa.id, m => ({ ...m, isNewCustomer: true, customerId: undefined, customerPhone: m.customerPhone || "" }))}
+                      onClick={() => updMesa(activeMesa.id, m => ({ ...m, isNewCustomer: true, customerId: undefined, customerPhone: m.customerPhone || "", customerIsSocio: false, items: repriceForSocio(m.items, "a") }))}
                       className={`flex items-center gap-2 px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeMesa.isNewCustomer ? 'bg-amber-500 text-black shadow-lg' : ''}`}
                       style={!activeMesa.isNewCustomer ? { color: TLO } : undefined}
                     >
@@ -4328,7 +4378,7 @@ export function SellPage() {
                                 {activeMesa.isPreventa && (
                                   <button 
                                     onClick={() => {
-                                      updMesa(activeMesa.id, m => ({ ...m, isNewCustomer: true, customerName: customerSearch, customerPhone: "" }));
+                                      updMesa(activeMesa.id, m => ({ ...m, isNewCustomer: true, customerName: customerSearch, customerPhone: "", customerIsSocio: false }));
                                       setShowCustDrop(false);
                                     }}
                                     className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-500 font-black text-[10px] uppercase tracking-widest hover:bg-amber-500/20 transition-all"
@@ -5297,6 +5347,16 @@ export function SellPage() {
                         <p className="text-lg font-black truncate leading-tight" style={{ color: THI }} title={activeMesa.customerName ?? ""}>
                           {activeMesa.customerName}
                         </p>
+                        {activeMesa?.customerIsSocio && !activeMesa?.isPreventa && (
+                          <span
+                            className="inline-flex items-center w-fit mt-1 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest"
+                            style={activeMesa?.paymentMethod === "Tarjeta"
+                              ? { background: "rgba(148,163,184,0.12)", border: "1px solid rgba(148,163,184,0.3)", color: "#94A3B8" }
+                              : { background: "rgba(245,158,11,0.14)", border: "1px solid rgba(245,158,11,0.4)", color: "#F59E0B" }}
+                          >
+                            {activeMesa?.paymentMethod === "Tarjeta" ? "Precio normal · tarjeta" : "Precio socio aplicado"}
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div className="flex flex-col gap-1 mt-1.5 pl-9">

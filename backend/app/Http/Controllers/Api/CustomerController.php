@@ -50,16 +50,31 @@ class CustomerController extends Controller
      */
     public function store(StoreCustomerRequest $request): JsonResponse
     {
-        $customer = Customer::create(
-            $request->only([
-                'name', 'phone', 'email', 'address',
-                'notes', 'external_member_id', 'loyalty_tier', 'points',
-            ])
-        );
+        $data = $request->only([
+            'name', 'phone', 'email', 'address',
+            'notes', 'external_member_id', 'loyalty_tier', 'points',
+        ]);
+
+        // Socio Tadaima (external_member_id): se importa de Supabase a la base
+        // local. Si ese socio ya fue importado antes, reusar/actualizar su ficha
+        // en vez de reventar contra el unique — así el cajero puede re-asignarlo
+        // a una venta sin el error "No se pudo asignar al cliente" (idempotente).
+        if (! empty($data['external_member_id'])) {
+            $customer = Customer::updateOrCreate(
+                ['external_member_id' => $data['external_member_id']],
+                $data,
+            );
+        } else {
+            $customer = Customer::create($data);
+        }
 
         $customer->loadSum('credit', 'amount');
 
-        return $this->success(new CustomerResource($customer), 'Cliente registrado', 201);
+        return $this->success(
+            new CustomerResource($customer),
+            $customer->wasRecentlyCreated ? 'Cliente registrado' : 'Socio reutilizado',
+            $customer->wasRecentlyCreated ? 201 : 200,
+        );
     }
 
     /**

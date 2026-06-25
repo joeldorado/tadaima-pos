@@ -61,7 +61,7 @@ function buildPrintHtml(s: CashSessionReport, detail: CashSessionDetail | null =
       .row { display: flex; justify-content: space-between; padding: 2px 0 }
       .divider { border-top: 1px dashed #000; margin: 6px 0 }
       .total { font-weight: 900; font-size: 13px; border-top: 1px solid #000; padding-top: 4px; margin-top: 4px }
-      @media print { @page { margin: 0; size: 58mm auto } body { width: 58mm } }
+      @media print { @page { margin: 0; size: 58mm auto; orientation: portrait } body { width: 58mm } }
     </style></head><body>
       <h2>CORTE DE CAJA</h2>
       <div class="sub">${s.store?.name ?? ""} · ${s.register.name}</div>

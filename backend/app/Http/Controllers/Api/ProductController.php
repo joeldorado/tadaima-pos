@@ -42,7 +42,7 @@ class ProductController extends Controller
         // distinguir tomos de la misma serie en el catálogo (QA 2026-06-11).
         $relations = $light
             ? ['price', 'images', 'paymentMethod', 'mangaDetails']
-            : ['category', 'price', 'images', 'paymentMethod'];
+            : ['category', 'supplier', 'price', 'images', 'paymentMethod'];
         if ($needsMangaDetails && ! $light) {
             $relations[] = 'mangaDetails';
         }
@@ -134,7 +134,7 @@ class ProductController extends Controller
      */
     public function show(Product $product): JsonResponse
     {
-        $product->load(['category', 'price', 'images', 'paymentMethod'])
+        $product->load(['category', 'supplier', 'price', 'images', 'paymentMethod'])
                 ->loadSum('inventory', 'quantity');
 
         return $this->success(new ProductResource($product));
@@ -154,7 +154,7 @@ class ProductController extends Controller
     {
         $product = DB::transaction(function () use ($request) {
             $payload = $request->only([
-                'name', 'sku', 'barcode', 'description', 'category_id', 'cost', 'active',
+                'name', 'sku', 'barcode', 'description', 'category_id', 'supplier_id', 'cost', 'active',
             ]);
             // product_type opcional — admin de mangas lo manda como 'manga'.
             // Default 'product' viene del modelo.
@@ -170,7 +170,7 @@ class ProductController extends Controller
             return $product;
         });
 
-        $product->load(['category', 'price', 'images', 'paymentMethod', 'mangaDetails'])
+        $product->load(['category', 'supplier', 'price', 'images', 'paymentMethod', 'mangaDetails'])
                 ->loadSum('inventory', 'quantity');
 
         SystemLog::write(
@@ -201,11 +201,11 @@ class ProductController extends Controller
         }
 
         // Snapshot ANTES de mutar — para construir el diff en el log.
-        $before = $product->only(['name', 'sku', 'barcode', 'description', 'category_id', 'cost', 'active', 'product_type']);
+        $before = $product->only(['name', 'sku', 'barcode', 'description', 'category_id', 'supplier_id', 'cost', 'active', 'product_type']);
 
         DB::transaction(function () use ($request, $product) {
             $payload = $request->only([
-                'name', 'sku', 'barcode', 'description', 'category_id', 'cost', 'active',
+                'name', 'sku', 'barcode', 'description', 'category_id', 'supplier_id', 'cost', 'active',
             ]);
             if ($request->filled('product_type')) {
                 $payload['product_type'] = $request->get('product_type');
@@ -223,7 +223,7 @@ class ProductController extends Controller
             $this->syncMangaDetails($product, $request);
         });
 
-        $product->load(['category', 'price', 'images', 'paymentMethod', 'mangaDetails'])
+        $product->load(['category', 'supplier', 'price', 'images', 'paymentMethod', 'mangaDetails'])
                 ->loadSum('inventory', 'quantity');
 
         // Diff: solo campos que cambiaron, con {old, new}. No registra precios

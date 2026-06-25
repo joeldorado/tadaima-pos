@@ -1237,7 +1237,7 @@ function TabInventario() {
               style={{ ...INPUT, width: "auto", padding: "7px 12px", fontSize: 11 }}
             >
               <option value="all">Todas las bodegas</option>
-              {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+              {warehouses.map(w => <option key={w.id} value={w.id}>{w.store?.name ?? w.name}</option>)}
             </select>
             <Btn onClick={() => void load()}>↺</Btn>
           </div>

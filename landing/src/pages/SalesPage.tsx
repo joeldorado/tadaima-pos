@@ -177,7 +177,7 @@ function printTicket(sale: SaleDetail) {
     table{width:100%;border-collapse:collapse}
     .total-row td{font-weight:900;font-size:13px;border-top:1px solid #000;padding-top:6px}
     .footer{text-align:center;font-size:9px;color:#555;margin-top:10px}
-    @media print{@page{margin:0;size:58mm auto}body{width:58mm}}
+    @media print{@page{margin:0;size:58mm auto;orientation:portrait}body{width:58mm}}
   </style></head><body>
   <h2>TADAIMA</h2>
   <div class="sub">Manga & Hobby Store</div>

@@ -41,6 +41,9 @@ export interface Product {
   active: boolean
   category_id: number | null
   category: { id: number; name: string } | null
+  /** Proveedor del producto. null = sin proveedor asignado. */
+  supplier_id: number | null
+  supplier: { id: number; name: string } | null
   /** Prices nested object — always present (nulls when not set) */
   prices: {
     price_1: number | null
@@ -77,6 +80,7 @@ export interface CreateProductInput {
   allow_cash?: boolean
   allow_card?: boolean
   category_id?: number | null
+  supplier_id?: number | null
   prices?: {
     price_1?: number
     price_2?: number
@@ -96,6 +100,7 @@ export interface UpdateProductInput {
   allow_cash?: boolean
   allow_card?: boolean
   category_id?: number | null
+  supplier_id?: number | null
   prices?: {
     price_1?: number
     price_2?: number

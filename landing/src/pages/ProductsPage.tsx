@@ -194,7 +194,7 @@ function apiProductToProducto(p: Product): Producto {
     sku: p.sku,
     barcode: p.barcode ?? undefined,
     categoria: p.category?.name ?? (p.category_id !== null ? String(p.category_id) : ''),
-    proveedor: '',
+    proveedor: p.supplier?.name ?? '',
     tipo: 'normal',
     desactivado: !p.active,
     costo: p.cost,
@@ -614,6 +614,15 @@ function ProductModal({
 
   const [activeTab, setActiveTab] = useState<"general" | "precios" | "inventario">("general");
   const [imageFile, setImageFile] = useState<File | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  // Aplica un archivo de imagen al formulario. Compartido por el <input file>
+  // (click) y el drop (drag & drop) para no duplicar la lógica.
+  const applyImageFile = (file: File | undefined | null): void => {
+    if (!file || !file.type.startsWith('image/')) return;
+    setImageFile(file);
+    const url = URL.createObjectURL(file);
+    setFormData(prev => ({ ...prev, imagen: url }));
+  };
   // Local state for the "add warehouse" inline form in the Inventario tab
   const [addWarehouseId, setAddWarehouseId] = useState<number | ''>('');
   const [addQty, setAddQty] = useState<number | ''>('');
@@ -759,7 +768,13 @@ function ProductModal({
           {activeTab === "general" && (
             <div className="space-y-6">
               <div className="flex flex-col sm:flex-row gap-6">
-                <div className="w-36 h-36 rounded-[28px] overflow-hidden shrink-0 border-2 border-dashed flex flex-col items-center justify-center relative group transition-all hover:border-red-500/40 shadow-inner" style={{ background: PRODUCT_THEME.surfaceMuted, borderColor: "var(--td-card-border)", aspectRatio: "1/1" }}>
+                <div
+                  className="w-36 h-36 rounded-[28px] overflow-hidden shrink-0 border-2 border-dashed flex flex-col items-center justify-center relative group transition-all hover:border-red-500/40 shadow-inner"
+                  style={{ background: PRODUCT_THEME.surfaceMuted, borderColor: isDragging ? T.redBright : "var(--td-card-border)", aspectRatio: "1/1", transform: isDragging ? "scale(1.03)" : undefined }}
+                  onDragOver={(e) => { e.preventDefault(); if (!isDragging) setIsDragging(true); }}
+                  onDragLeave={(e) => { e.preventDefault(); setIsDragging(false); }}
+                  onDrop={(e) => { e.preventDefault(); setIsDragging(false); applyImageFile(e.dataTransfer.files?.[0]); }}
+                >
                   {formData.imagen ? (
                     <>
                       <img src={formData.imagen} alt="Preview" className="absolute inset-0 w-full h-full object-cover" />
@@ -781,14 +796,7 @@ function ProductModal({
                     accept="image/*"
                     className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
                     style={{ fontSize: 0 }}
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        setImageFile(file);
-                        const url = URL.createObjectURL(file);
-                        setFormData(prev => ({ ...prev, imagen: url }));
-                      }
-                    }}
+                    onChange={(e) => applyImageFile(e.target.files?.[0])}
                   />
                 </div>
 
@@ -1308,10 +1316,14 @@ export function ProductsPage() {
   const categoriasData = categoriesQuery.data ?? [];
   const categorias = ["Todo", ...categoriasData.map(c => c.name)];
   const categoriaIdByName = useMemo(
-    () => new Map(categoriasData.map(c => [c.name, c.id])),
+    () => new Map(categoriasData.map(c => [c.name, c.id] as [string, number])),
     [categoriasData]
   );
   const proveedores = (suppliersQuery.data ?? []).map(s => s.name);
+  const proveedorIdByName = useMemo(
+    () => new Map((suppliersQuery.data ?? []).map(s => [s.name, s.id] as [string, number])),
+    [suppliersQuery.data]
+  );
 
   const handleAddCategoria = useCallback(async (name: string): Promise<void> => {
     try {
@@ -1391,15 +1403,57 @@ export function ProductsPage() {
     [queryClient]
   );
 
-  const handleSaveProduct = (p: Producto, imageFile?: File): void => {
+  /**
+   * Resuelve el id de categoría desde el nombre seleccionado. Si el nombre no
+   * existe aún en el catálogo (recién creado con "+" y el refetch no llegó), lo
+   * crea on-the-fly y usa el id devuelto — así no se pierde por una carrera de
+   * timing al guardar el producto.
+   */
+  const resolveCategoryId = async (nombre: string): Promise<number | null> => {
+    const name = (nombre ?? '').trim();
+    if (!name || name === 'Todo') return null;
+    const existing = categoriaIdByName.get(name);
+    if (existing !== undefined) return existing;
+    try {
+      const created = await createCategory({ name });
+      void queryClient.invalidateQueries({ queryKey: ['categories'] });
+      return created.id;
+    } catch {
+      return null;
+    }
+  };
+
+  /** Igual que resolveCategoryId pero para proveedores. */
+  const resolveSupplierId = async (nombre: string): Promise<number | null> => {
+    const name = (nombre ?? '').trim();
+    if (!name) return null;
+    const existing = proveedorIdByName.get(name);
+    if (existing !== undefined) return existing;
+    try {
+      const created = await createSupplier({ name });
+      void queryClient.invalidateQueries({ queryKey: ['suppliers'] });
+      return created.id;
+    } catch {
+      return null;
+    }
+  };
+
+  const handleSaveProduct = async (p: Producto, imageFile?: File): Promise<void> => {
     const isNew = !products.some(item => item.id === p.id);
 
     setIsModalOpen(false);
     setEditingProduct(undefined);
 
+    // Resuelve (o crea on-the-fly) los ids de categoría y proveedor desde el
+    // nombre — robusto contra la carrera de timing del "+" recién tecleado.
+    const [categoryId, supplierId] = await Promise.all([
+      resolveCategoryId(p.categoria),
+      resolveSupplierId(p.proveedor),
+    ]);
+
     if (isNew) {
-      // Toast persistente mientras se crea: el modal se cierra al instante y
-      // sin esto la tabla se ve vacía/stale sin señal de que algo está pasando.
+      // Toast persistente mientras se crea: el modal se cierra al instante y sin
+      // esto la tabla se ve vacía/stale sin señal de que algo está pasando.
       const creatingToastId = toast.loading(`Creando "${p.nombre}"…`);
       createProduct({
         name: p.nombre,
@@ -1408,7 +1462,8 @@ export function ProductsPage() {
         active: !p.desactivado,
         allow_cash: p.allowCash,
         allow_card: p.allowCard,
-        category_id: categoriaIdByName.get(p.categoria) ?? null,
+        category_id: categoryId,
+        supplier_id: supplierId,
         prices: {
           price_1: p.precioA,
           ...(p.precioB !== undefined && p.precioB > 0 ? { price_2: p.precioB } : {}),
@@ -1454,7 +1509,8 @@ export function ProductsPage() {
         active: !p.desactivado,
         allow_cash: p.allowCash,
         allow_card: p.allowCard,
-        category_id: categoriaIdByName.get(p.categoria) ?? null,
+        category_id: categoryId,
+        supplier_id: supplierId,
         prices: {
           price_1: p.precioA,
           ...(p.precioB !== undefined && p.precioB > 0 ? { price_2: p.precioB } : {}),

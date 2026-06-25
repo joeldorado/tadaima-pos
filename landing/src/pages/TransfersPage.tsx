@@ -1049,11 +1049,11 @@ export function TransfersPage() {
                           </div>
                           <div className="text-xs font-bold truncate lg:text-center" style={{ color: T.panelText }}>
                             <span className="mr-1 lg:hidden text-[10px] uppercase" style={{ color: T.softText }}>Origen:</span>
-                            {warehouses.find(w => String(w.id) === fromWhId)?.name ?? "—"}
+                            {(() => { const wh = warehouses.find(w => String(w.id) === fromWhId); return wh?.store?.name ?? wh?.name ?? "—"; })()}
                           </div>
                           <div className="text-xs font-bold truncate lg:text-center" style={{ color: T.panelText }}>
                             <span className="mr-1 lg:hidden text-[10px] uppercase" style={{ color: T.softText }}>Destino:</span>
-                            {warehouses.find(w => String(w.id) === toWhId)?.name ?? "—"}
+                            {(() => { const wh = warehouses.find(w => String(w.id) === toWhId); return wh?.store?.name ?? wh?.name ?? "—"; })()}
                           </div>
                           {/* Proyección tras el traslado: origen pierde, destino gana */}
                           <div className="lg:text-center space-y-1">
@@ -1066,10 +1066,10 @@ export function TransfersPage() {
                               return (
                                 <div className="flex flex-col gap-0.5">
                                   <span className="text-[11px] font-black" style={{ color: fromAfter !== null && fromAfter < 0 ? "#FF4422" : T.panelText }}>
-                                    {warehouses.find(w => String(w.id) === fromWhId)?.name?.split("—")[1]?.trim() ?? "Origen"}: {fromAfter !== null ? fromAfter : "—"}
+                                    {(() => { const wh = warehouses.find(w => String(w.id) === fromWhId); return wh ? warehouseTypeLabel(wh.type) : "Origen"; })()}: {fromAfter !== null ? fromAfter : "—"}
                                   </span>
                                   <span className="text-[11px] font-black" style={{ color: "#00CC66" }}>
-                                    {warehouses.find(w => String(w.id) === toWhId)?.name?.split("—")[1]?.trim() ?? "Destino"}: {toAfter !== null ? toAfter : "—"}
+                                    {(() => { const wh = warehouses.find(w => String(w.id) === toWhId); return wh ? warehouseTypeLabel(wh.type) : "Destino"; })()}: {toAfter !== null ? toAfter : "—"}
                                   </span>
                                 </div>
                               );
@@ -1189,14 +1189,14 @@ export function TransfersPage() {
                         <div className="min-w-0 flex-1">
                           <p className="text-[9px] font-black uppercase tracking-[0.24em]" style={{ color: T.softText }}>Origen</p>
                           <p className="truncate text-sm font-black" style={{ color: T.panelText }}>
-                            {warehouses.find(w => String(w.id) === fromWhId)?.name ?? "Sin origen"}
+                            {(() => { const wh = warehouses.find(w => String(w.id) === fromWhId); return wh?.store?.name ?? wh?.name ?? "Sin origen"; })()}
                           </p>
                         </div>
                         <ArrowRight size={16} style={{ color: T.redBright }} />
                         <div className="min-w-0 flex-1 text-right">
                           <p className="text-[9px] font-black uppercase tracking-[0.24em]" style={{ color: T.softText }}>Destino</p>
                           <p className="truncate text-sm font-black" style={{ color: T.panelText }}>
-                            {warehouses.find(w => String(w.id) === toWhId)?.name ?? "Sin destino"}
+                            {(() => { const wh = warehouses.find(w => String(w.id) === toWhId); return wh?.store?.name ?? wh?.name ?? "Sin destino"; })()}
                           </p>
                         </div>
                       </div>
