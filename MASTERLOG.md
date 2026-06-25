@@ -702,6 +702,27 @@ docker compose up --build -d
 
 **Arranque EN VIVO (mismo día, ~18:43):** el cliente/Joel ya empezó a configurar sobre la BD limpia — tienda **"Tadaima CENTRO"** (auto-creó Bodega + Exhibición ✅, prueba en vivo de la QA) + usuarios reales (Jesica, Iveth, Froy, Carlos). **El sistema ya está VIVO** → de aquí en adelante NO ensuciar/limpiar prod sin backup + aviso (ver [[project-prod-test-phase]]).
 
+#### Parte 3 — Feature "Productos no asignados en todas las tiendas" + DEPLOY rev 00093 + cambio de estrategia de ramas
+
+**Feature (request de Joel):** mejorar el alta de productos entre tiendas. Pier da de alta un producto/tomo **sin asignar sucursales** → aparece en **TODAS las tiendas como "No asignado"** → cada sucursal (gerente o cajero) le agrega su propio stock (self-service). Como el catálogo de preventas.
+
+| Capa | Cambio |
+|---|---|
+| Backend | `ProductController::index` + `MangaController::index`: bandera opt-in `?include_unassigned=1` (gatea el `whereHas('inventory')`) + `withExists` → booleano `is_assigned`. **Default sin cambios.** Resources (`ProductLightResource`/`ProductResource`/`MangaCompatResource`) exponen `is_assigned` aditivo. |
+| Caja (`SellPage`) | Inline: los no asignados muestran pill **"No asignado · Agregar stock"**; click/Enter/**escáner** abren `QuickStockModal` (scopeado a la tienda del cajero) en vez de cobrar. **No se puede vender un no-asignado** (stock 0 → guard de `addToCart` lo bloquea). Cubre catálogo, búsqueda y `ProductCatalogModal`. |
+| Gestión (`ProductsPage`) | Badge "No asignado" + botón "Agregar stock" en tabla, tarjetas y pestaña Tomos. |
+| Hooks/API | `include_unassigned` en `useProducts`/`useMangas` + tipos en `packages/api`. |
+| Reuso | `QuickStockModal` ya existente (cajero ya podía agregar stock de su tienda — `storeScopeError` role-agnóstico). |
+
+**Verificación:** `UnassignedProductsTest` +6 (productos+tomos, cajero agrega stock, cross-store 403) → **suite 166 verde**. `vite build` OK. **Code-review: 0 críticos** (fixeado un HIGH: escáner/Enter sobre no-asignado abría error confuso → ahora abre "Agregar stock"; + 2 defensivos).
+
+**DEPLOY:** commit `3481979` en **`main`** + `gcloud run deploy tadaima --source . --region us-central1` (Cloud Build, **sin Docker Desktop**) → **rev `tadaima-00093-ldl`**. Verificado: health 200, login Pier 200, **22/22 secrets**, bundle nuevo `index-DS-R9Kt5.js` con "No asignado" presente. Migrate no-op (sin migraciones nuevas).
+
+**CAMBIO DE ESTRATEGIA DE RAMAS (decisión Joel):** compartir un solo branch (`develop`) hizo que Joel y Ruben **perdieran cambios** por divergencia. Nueva separación:
+- **`main`** = producción / rama de Joel (de aquí se deploya). Quedó FF a develop (todo prod 00089–00092) + la feature → `3481979`.
+- **`dev/qa-handoff`** = rama de QA de Ruben (FF a `main`, también `3481979`). Ruben: `git fetch && git checkout dev/qa-handoff && git pull`. Su trabajo entra a `main` por merge/PR (no más push directo al branch de Joel).
+- **`develop`** queda histórica en `3820a96` (1 commit detrás de main); ya nadie la comparte.
+
 ### Sesión 2026-06-12 — local_date en cortes, backup main, merge transfers de Ruben + RBAC backend, DEPLOY rev 00072
 
 **Contexto:** Joel hizo corte a las 11:36pm Tijuana con `testc1macro` y la BD guardó `closed_at` del día 12 (UTC). Pidió que la UI mande la fecha local. Después: backup a main, traer el cambio de transferencias de Ruben (`origin/develop`) y deploy de todo.
