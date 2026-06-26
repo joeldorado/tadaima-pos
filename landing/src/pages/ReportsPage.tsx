@@ -107,6 +107,8 @@ interface GroupedProduct {
   returned_revenue?: number;
   payment_breakdown: { [method: string]: { qty: number; revenue: number } };
   price_breakdown: { [price: number]: number };
+  total_cost: number;
+  total_profit: number;
   pre_sale_apartado?: number;
   pre_sale_deuda?: number;
   commission_amount?: number;
@@ -152,6 +154,7 @@ function presalePaymentsInRange(
 export function ReportsPage() {
   const { user } = useAuth();
   const isAdmin   = user?.roles?.some(r => ["admin","super_admin","owner","dueño"].includes(r.toLowerCase())) ?? false;
+  const canViewCost = isAdmin || !!(user as any)?.can_view_cost;
 
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<TabId>("ventas");
@@ -414,6 +417,8 @@ export function ReportsPage() {
             sales_count: 0,
             total_quantity: 0,
             total_revenue: 0,
+            total_cost: 0,
+            total_profit: 0,
             returned_quantity: 0,
             returned_revenue: 0,
             payment_breakdown: {},
@@ -423,10 +428,15 @@ export function ReportsPage() {
           });
         }
 
+        const unitCost = item.cost ?? item.product?.cost ?? 0;
+        const itemCostTotal = unitCost * qty;
+
         const pGroup = map.get(prodId)!;
         pGroup.sales_count += 1;
         pGroup.total_quantity += qty;
         pGroup.total_revenue += itemTotal;
+        pGroup.total_cost += itemCostTotal;
+        pGroup.total_profit += (itemTotal - itemCostTotal);
 
         if (!pGroup.payment_breakdown[payMethodName]) {
           pGroup.payment_breakdown[payMethodName] = { qty: 0, revenue: 0 };
@@ -460,6 +470,7 @@ export function ReportsPage() {
                 qty_cancelled: Number(ci.qty_cancelled || ci.quantity || 0),
                 line_total: Number(ci.line_total || 0),
                 price: Number(ci.price || 0),
+                cost: Number(ci.cost ?? 0),
                 product_type: ci.product_type ?? 'product'
               }))
             : (sale.items || []).map((item: any) => ({
@@ -469,6 +480,7 @@ export function ReportsPage() {
                 qty_cancelled: Number(item.quantity || 0),
                 line_total: Number(item.total || 0),
                 price: Number(item.price || 0),
+                cost: Number(item.cost ?? item.product?.cost ?? 0),
                 product_type: item.product?.product_type ?? 'product'
               }));
 
@@ -493,6 +505,8 @@ export function ReportsPage() {
                 sales_count: 0,
                 total_quantity: 0,
                 total_revenue: 0,
+                total_cost: 0,
+                total_profit: 0,
                 returned_quantity: 0,
                 returned_revenue: 0,
                 payment_breakdown: {},
@@ -501,6 +515,9 @@ export function ReportsPage() {
                 product_type: cItem.product_type,
               });
             }
+
+            const unitCost = cItem.cost || 0;
+            const itemCostTotal = unitCost * qty; // qty is negative
 
             const pGroup = map.get(prodId)!;
             // Solo reducimos el sales_count (tickets) 1 vez por venta devuelta, no por cada item
@@ -511,6 +528,8 @@ export function ReportsPage() {
             pGroup.sales_count -= 1; 
             pGroup.total_quantity += qty; // Adds negative quantity
             pGroup.total_revenue += itemTotal; // Adds negative revenue
+            pGroup.total_cost += itemCostTotal;
+            pGroup.total_profit += (itemTotal - itemCostTotal);
 
             pGroup.returned_quantity = (pGroup.returned_quantity || 0) + cancelQty;
             pGroup.returned_revenue = (pGroup.returned_revenue || 0) + cancelTotal;
@@ -572,6 +591,8 @@ export function ReportsPage() {
               sales_count: 0,
               total_quantity: 0,
               total_revenue: 0,
+              total_cost: 0,
+              total_profit: 0,
               returned_quantity: 0,
               returned_revenue: 0,
               payment_breakdown: {},
@@ -582,10 +603,22 @@ export function ReportsPage() {
             });
           }
 
+          // Costo de preventa (Opción B: solo descontamos el costo el día de la entrega/liquidación)
+          let itemCostTotal = 0;
+          if (item.status === 'delivered' && item.delivered_at) {
+            const deliveredYmd = toLocalYmd(new Date(item.delivered_at));
+            if (deliveredYmd >= from && deliveredYmd <= to) {
+              const unitCost = item.cost ?? item.catalog?.cost ?? 0;
+              itemCostTotal = unitCost * qty;
+            }
+          }
+
           const pGroup = map.get(prodId)!;
           pGroup.sales_count += 1;
           pGroup.total_quantity += qty;
           pGroup.total_revenue += itemApartado;
+          pGroup.total_cost += itemCostTotal;
+          pGroup.total_profit += (itemApartado - itemCostTotal);
 
           if (!pGroup.payment_breakdown[payMethodName]) {
             pGroup.payment_breakdown[payMethodName] = { qty: 0, revenue: 0 };
@@ -616,14 +649,17 @@ export function ReportsPage() {
     let comision = 0;
     let iva = 0;
     let neto = 0;
+    let profit = 0;
     groupedProducts.forEach(prod => {
       bruto += prod.total_revenue || 0;
       const comm = prod.commission_amount || 0;
       comision += comm;
       iva += comm * 0.16;
       neto += (prod.total_revenue - comm - (comm * 0.16));
+      profit += prod.total_profit || 0;
     });
-    return { bruto, comision, iva, neto };
+    profit = profit - comision - iva;
+    return { bruto, comision, iva, neto, profit };
   }, [groupedProducts]);
 
   const regularProducts = useMemo(() => groupedProducts.filter(p => p.product_type !== 'manga'), [groupedProducts]);
@@ -866,7 +902,9 @@ export function ReportsPage() {
       doc.text(`Periodo: ${fmtDate(from)} al ${fmtDate(to)}`, 15, 25);
       
       const storeName = stores.find(s => s.id === effectiveStoreId)?.name ?? "Todas las tiendas";
-      doc.text(`Tienda: ${storeName}   |   Generado: ${fmtDate(today)} ${new Date().toLocaleTimeString()}`, 170, 25);
+      const selectedUserName = selectedUserId ? (users.find(u => u.id === selectedUserId)?.name ?? "Todos los usuarios") : "Todos los usuarios";
+      doc.text(`Tienda: ${storeName}   |   Usuario: ${selectedUserName}`, 130, 25);
+      doc.text(`Generado: ${fmtDate(today)} ${new Date().toLocaleTimeString()}`, 230, 25);
 
       let currentY = 33;
 
@@ -905,6 +943,7 @@ export function ReportsPage() {
         const comm = prod.commission_amount || 0;
         const iva = comm * 0.16;
         const net = prod.total_revenue - comm - iva;
+        const profit = (prod.total_profit || 0) - comm - iva;
 
         return [
           prod.name,
@@ -915,6 +954,7 @@ export function ReportsPage() {
           fmt(comm),
           fmt(iva),
           fmt(net),
+          ...(canViewCost ? [fmt(profit)] : []),
           pricesStr
         ];
       };
@@ -947,7 +987,7 @@ export function ReportsPage() {
       });
 
       // Calculate totals
-      let t1Tickets = 0, t1Cant = 0, t1Bruto = 0, t1Com = 0, t1Net = 0;
+      let t1Tickets = 0, t1Cant = 0, t1Bruto = 0, t1Com = 0, t1Net = 0, t1Profit = 0;
       groupedProducts.forEach(p => {
         t1Tickets += p.sales_count || 0;
         t1Cant += p.total_quantity || 0;
@@ -955,9 +995,11 @@ export function ReportsPage() {
         const c = p.commission_amount || 0;
         t1Com += c;
         t1Net += (p.total_revenue - c - (c * 0.16));
+        t1Profit += (p.total_profit || 0);
       });
 
       const t1IvaTotal = t1Com * 0.16;
+      t1Profit = t1Profit - t1Com - t1IvaTotal;
       tbl1Body.push([
         "TOTAL GENERAL",
         "",
@@ -967,12 +1009,17 @@ export function ReportsPage() {
         fmt(t1Com),
         fmt(t1IvaTotal),
         fmt(t1Net),
+        ...(canViewCost ? [fmt(t1Profit)] : []),
         ""
       ]);
 
+      const pdfHeaders = canViewCost 
+        ? ["Producto", "SKU", "Tickets", "Cant.", "Bruto", "Comisión TPV", "IVA s/Comisión (16%)", "Neto Real", "Utilidad Neta", "Precios Unitarios"]
+        : ["Producto", "SKU", "Tickets", "Cant.", "Bruto", "Comisión TPV", "IVA s/Comisión (16%)", "Neto Real", "Precios Unitarios"];
+
       autoTable(doc, {
         startY: currentY,
-        head: [["Producto", "SKU", "Tickets", "Cant.", "Bruto", "Comisión TPV", "IVA s/Comisión (16%)", "Neto Real", "Precios Unitarios"]],
+        head: [pdfHeaders],
         body: tbl1Body,
         theme: "striped",
         headStyles: { fillColor: [80, 80, 80], fontSize: 8, fontStyle: "bold" },
@@ -986,7 +1033,12 @@ export function ReportsPage() {
           5: { halign: "right" },
           6: { halign: "right" },
           7: { halign: "right", fontStyle: "bold" },
-          8: { cellWidth: 60 }
+          ...(canViewCost ? {
+            8: { halign: "right", fontStyle: "bold", textColor: [0, 150, 70] },
+            9: { cellWidth: 60 }
+          } : {
+            8: { cellWidth: 60 }
+          })
         },
         didParseCell: (data) => {
           if (tomoPdfDividerIndex !== -1 && data.row.index === tomoPdfDividerIndex) {
@@ -1394,7 +1446,8 @@ export function ReportsPage() {
         sheet.mergeCells("D3:H3");
         const storeCell = sheet.getCell("D3");
         const selectedStoreName = effectiveStoreId ? (stores.find((s) => s.id === effectiveStoreId)?.name ?? "Tienda #" + effectiveStoreId) : "Todas las tiendas";
-        storeCell.value = "Sucursal: " + selectedStoreName;
+        const selectedUserName = selectedUserId ? (users.find(u => u.id === selectedUserId)?.name ?? "Todos los usuarios") : "Todos los usuarios";
+        storeCell.value = "Sucursal: " + selectedStoreName + "   |   Usuario: " + selectedUserName;
         storeCell.font = { name: "Arial", size: 9, italic: true };
         storeCell.alignment = { vertical: "middle", horizontal: "center" };
 
@@ -1480,6 +1533,7 @@ export function ReportsPage() {
           "Comisión TPV",
           "IVA s/Comisión (16%)",
           "Neto Real",
+          ...(canViewCost ? ["Utilidad Neta"] : []),
           "Precios Unitarios",
           "Desglose de Pagos"
         ];
@@ -1497,6 +1551,7 @@ export function ReportsPage() {
           const prodComm = prod.commission_amount || 0;
           const prodIva = prodComm * 0.16;
           const netRevenue = prod.total_revenue - prodComm - prodIva;
+          const netProfit = (prod.total_profit || 0) - prodComm - prodIva;
 
           const r = sheet.getRow(currentExcelRow);
           r.values = [
@@ -1508,6 +1563,7 @@ export function ReportsPage() {
             prodComm,
             prodIva,
             netRevenue,
+            ...(canViewCost ? [netProfit] : []),
             pricesStr,
             paymentsStr
           ];
@@ -1540,8 +1596,17 @@ export function ReportsPage() {
           r.getCell(8).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
           r.getCell(8).alignment = { horizontal: "right", vertical: "middle" };
 
-          r.getCell(9).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
-          r.getCell(10).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+          if (canViewCost) {
+            r.getCell(9).numFmt = "$#,##0.00";
+            r.getCell(9).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
+            r.getCell(9).alignment = { horizontal: "right", vertical: "middle" };
+
+            r.getCell(10).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+            r.getCell(11).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+          } else {
+            r.getCell(9).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+            r.getCell(10).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+          }
         };
 
         // Write regular products
@@ -1550,7 +1615,8 @@ export function ReportsPage() {
         // Add TOMO divider row if both are present
         if (regularProducts.length > 0 && tomoProducts.length > 0) {
           currentExcelRow++;
-          sheet.mergeCells(`A${currentExcelRow}:J${currentExcelRow}`);
+          const spanChar = canViewCost ? 'K' : 'J';
+          sheet.mergeCells(`A${currentExcelRow}:${spanChar}${currentExcelRow}`);
           const dividerCell = sheet.getCell(`A${currentExcelRow}`);
           dividerCell.value = "📚 MANGA NACIONAL";
           dividerCell.font = { name: "Arial", size: 9, bold: true, color: { argb: "FF333333" } };
@@ -1572,6 +1638,7 @@ export function ReportsPage() {
         let t1Bruto = 0;
         let t1Comision = 0;
         let t1Neto = 0;
+        let t1Profit = 0;
 
         groupedProducts.forEach(prod => {
           t1Tickets += prod.sales_count || 0;
@@ -1580,7 +1647,10 @@ export function ReportsPage() {
           const comm = prod.commission_amount || 0;
           t1Comision += comm;
           t1Neto += (prod.total_revenue - comm - (comm * 0.16));
+          t1Profit += (prod.total_profit || 0);
         });
+
+        t1Profit = t1Profit - t1Comision - (t1Comision * 0.16);
 
         t1Row.values = [
           "TOTAL GENERAL",
@@ -1591,6 +1661,7 @@ export function ReportsPage() {
           t1Comision,
           t1Comision * 0.16,
           t1Neto,
+          ...(canViewCost ? [t1Profit] : []),
           "",
           ""
         ];
@@ -1635,6 +1706,13 @@ export function ReportsPage() {
         t1Row.getCell(8).border = t1DoubleBorder;
         t1Row.getCell(8).numFmt = "$#,##0.00";
         t1Row.getCell(8).alignment = { horizontal: "right", vertical: "middle" };
+
+        if (canViewCost) {
+          t1Row.getCell(9).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
+          t1Row.getCell(9).border = t1DoubleBorder;
+          t1Row.getCell(9).numFmt = "$#,##0.00";
+          t1Row.getCell(9).alignment = { horizontal: "right", vertical: "middle" };
+        }
 
         // =========================================================================
         // SECTION 2: DETALLE DE VENTAS CON TARJETA BANCARIA Y COMISIONES
@@ -2392,10 +2470,17 @@ export function ReportsPage() {
               ) : null}
             </div>
           </td>
+          {canViewCost && (
+            <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontSize: fontS, verticalAlign: "middle" }}>
+              <span style={{ color: (prod.total_profit - (prod.commission_amount || 0) - ((prod.commission_amount || 0) * 0.16)) < 0 ? "#FF4422" : "#00CC66", fontWeight: 900 }}>
+                {fmt(prod.total_profit - (prod.commission_amount || 0) - ((prod.commission_amount || 0) * 0.16))}
+              </span>
+            </td>
+          )}
         </tr>
         {isExpanded && (
           <tr key={`${prod.id}-detail`}>
-            <td colSpan={5} style={{ padding: `0 ${padX}px ${padY}px`, borderBottom: DIV, background: "rgba(255,255,255,0.02)" }}>
+            <td colSpan={6} style={{ padding: `0 ${padX}px ${padY}px`, borderBottom: DIV, background: "rgba(255,255,255,0.02)" }}>
               <div className={`grid grid-cols-1 ${((prod.pre_sale_apartado && prod.pre_sale_apartado > 0) || (prod.pre_sale_deuda && prod.pre_sale_deuda > 0)) ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-6 pt-3 pb-2`}>
                 {/* Métodos de Pago */}
                 <div>
@@ -2922,7 +3007,7 @@ export function ReportsPage() {
                   <div className="overflow-y-auto" style={{ maxHeight: 420 }}>
                     <table className="w-full">
                       <thead><tr style={{ borderBottom: DIV }}>
-                        {["Producto", "SKU", "Nº Ventas (Tickets)", "Cant. Vendida", "Ingresos Totales"].map(h => <th key={h} style={thStyle}>{h}</th>)}
+                        {(canViewCost ? ["Producto", "SKU", "Nº Ventas (Tickets)", "Cant. Vendida", "Ingresos Totales", "Utilidad Neta"] : ["Producto", "SKU", "Nº Ventas (Tickets)", "Cant. Vendida", "Ingresos Totales"]).map(h => <th key={h} style={thStyle}>{h}</th>)}
                       </tr></thead>                      <tbody>
                         {/* 1) Render regular products */}
                         {regularProducts.map(prod => renderProductRow(prod, 16, 10, 12))}
@@ -2930,7 +3015,7 @@ export function ReportsPage() {
                         {/* 2) Separator row for Tomos (mangas) */}
                         {regularProducts.length > 0 && tomoProducts.length > 0 && (
                           <tr style={{ background: "rgba(255,255,255,0.03)" }}>
-                            <td colSpan={5} style={{ 
+                            <td colSpan={6} style={{ 
                               padding: "6px 16px", 
                               fontSize: 9, 
                               fontWeight: 900, 
@@ -2956,7 +3041,7 @@ export function ReportsPage() {
 
                         {/* Empty state fallback */}
                         {groupedProducts.length === 0 && (
-                          <tr><td colSpan={5} style={{ ...tdStyle, textAlign: "center", padding: 32 }}>Sin ventas en el período</td></tr>
+                          <tr><td colSpan={6} style={{ ...tdStyle, textAlign: "center", padding: 32 }}>Sin ventas en el período</td></tr>
                         )}
 
                         {/* Totals row */}
@@ -2976,6 +3061,9 @@ export function ReportsPage() {
                                 ) : null}
                               </div>
                             </td>
+                            <td style={{ ...tdStyle, fontWeight: 900, color: uiTotals.profit < 0 ? "#FF4422" : "#00CC66" }}>
+                              {fmt(uiTotals.profit)}
+                            </td>
                           </tr>
                         )}
                       </tbody>
@@ -2985,7 +3073,7 @@ export function ReportsPage() {
 
                 {/* Section summary card below the table */}
                 {groupedProducts.length > 0 && (
-                  <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mt-1">
+                  <div className="grid grid-cols-1 md:grid-cols-6 gap-4 mt-1">
                     <div className="p-4 rounded-2xl" style={{ ...GLASS, border: "1px solid rgba(255,255,255,0.05)" }}>
                       <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: TM }}>Venta Bruta Total</p>
                       <p className="text-xl font-black mt-1" style={{ color: uiTotals.bruto < 0 ? "#FF4422" : TP }}>{fmt(uiTotals.bruto)}</p>
@@ -3005,7 +3093,12 @@ export function ReportsPage() {
                     <div className="p-4 rounded-2xl" style={{ ...GLASS, border: "1px solid rgba(255,255,255,0.05)", background: uiTotals.neto < 0 ? "linear-gradient(135deg, rgba(255,68,34,0.1), rgba(200,30,10,0.1))" : "linear-gradient(135deg, rgba(0,204,102,0.1), rgba(0,153,70,0.1))" }}>
                       <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "#00CC66" }}>Neto Real para la Tienda</p>
                       <p className="text-xl font-black mt-1" style={{ color: uiTotals.neto < 0 ? "#FF4422" : "#00CC66" }}>{fmt(uiTotals.neto)}</p>
-                    </div>                  </div>
+                    </div>
+                    <div className="p-4 rounded-2xl" style={{ ...GLASS, border: "1px solid rgba(0,204,102,0.2)", background: "rgba(0,204,102,0.05)" }}>
+                      <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "#00CC66" }}>Utilidad Neta</p>
+                      <p className="text-xl font-black mt-1" style={{ color: uiTotals.profit < 0 ? "#FF4422" : "#00CC66" }}>{fmt(uiTotals.profit)}</p>
+                    </div>
+                  </div>
                 )}
 
               </div>
@@ -3049,7 +3142,7 @@ export function ReportsPage() {
                     <table className="w-full">
                       <thead>
                         <tr style={{ borderBottom: DIV }}>
-                          {["Producto", "SKU", "Nº Ventas (Tickets)", "Cant. Vendida", "Ingresos Totales"].map(h => (
+                          {(canViewCost ? ["Producto", "SKU", "Nº Ventas (Tickets)", "Cant. Vendida", "Ingresos Totales", "Utilidad Neta"] : ["Producto", "SKU", "Nº Ventas (Tickets)", "Cant. Vendida", "Ingresos Totales"]).map(h => (
                             <th key={h} style={{ ...thStyle, fontSize: 10, padding: "12px 18px" }}>{h}</th>
                           ))}
                         </tr>
@@ -3060,7 +3153,7 @@ export function ReportsPage() {
                         {/* 2) Separator row for Tomos (mangas) */}
                         {regularProducts.length > 0 && tomoProducts.length > 0 && (
                           <tr style={{ background: "rgba(255,255,255,0.03)" }}>
-                            <td colSpan={5} style={{ 
+                            <td colSpan={6} style={{ 
                               padding: "10px 18px", 
                               fontSize: 10, 
                               fontWeight: 900, 
@@ -3086,7 +3179,7 @@ export function ReportsPage() {
 
                         {/* Empty state fallback */}
                         {groupedProducts.length === 0 && (
-                          <tr><td colSpan={5} style={{ ...tdStyle, textAlign: "center", padding: 32 }}>Sin ventas en el período</td></tr>
+                          <tr><td colSpan={6} style={{ ...tdStyle, textAlign: "center", padding: 32 }}>Sin ventas en el período</td></tr>
                         )}
 
                         {/* Totals row */}
@@ -3106,6 +3199,9 @@ export function ReportsPage() {
                                 ) : null}
                               </div>
                             </td>
+                            {canViewCost && <td style={{ ...tdStyle, fontWeight: 900, color: uiTotals.profit < 0 ? "#FF4422" : "#00CC66" }}>
+                              {fmt(uiTotals.profit)}
+                            </td>}
                           </tr>
                         )}
                       </tbody>
@@ -3114,7 +3210,7 @@ export function ReportsPage() {
 
                   {/* Summary Cards Row inside Modal */}
                   {groupedProducts.length > 0 && (
-                    <div className="grid grid-cols-1 md:grid-cols-5 gap-4 pt-4 border-t" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+                    <div className="grid grid-cols-1 md:grid-cols-6 gap-4 pt-4 border-t" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
                       <div className="p-3.5 rounded-2xl" style={{ ...GLASS, border: "1px solid rgba(255,255,255,0.05)" }}>
                         <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: TM }}>Venta Bruta Total</p>
                         <p className="text-lg font-black mt-0.5" style={{ color: TP }}>{fmt(uiTotals.bruto)}</p>
@@ -3135,6 +3231,12 @@ export function ReportsPage() {
                         <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "#00CC66" }}>Neto Real para la Tienda</p>
                         <p className="text-lg font-black mt-0.5" style={{ color: "#00CC66" }}>{fmt(uiTotals.neto)}</p>
                       </div>
+                      {canViewCost && (
+                        <div className="p-3.5 rounded-2xl" style={{ ...GLASS, border: "1px solid rgba(0,204,102,0.2)", background: "rgba(0,204,102,0.05)" }}>
+                          <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "#00CC66" }}>Utilidad Neta</p>
+                          <p className="text-lg font-black mt-0.5" style={{ color: uiTotals.profit < 0 ? "#FF4422" : "#00CC66" }}>{fmt(uiTotals.profit)}</p>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
