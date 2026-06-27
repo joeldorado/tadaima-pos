@@ -1085,6 +1085,9 @@ export function ReportsPage() {
           });
           const comm = prod.commission_amount || 0;
           const iva = comm * 0.16;
+          const ratio = prod.total_revenue > 0 ? (cardRevenue / prod.total_revenue) : 0;
+          const baseProfit = (prod.total_profit || 0) * ratio;
+          const cardProfit = baseProfit - comm - iva;
           return [
             prod.name,
             prod.sku,
@@ -1092,12 +1095,13 @@ export function ReportsPage() {
             fmt(cardRevenue),
             fmt(comm),
             fmt(iva),
-            fmt(cardRevenue - comm - iva)
+            fmt(cardRevenue - comm - iva),
+            ...(canViewCost ? [fmt(cardProfit)] : [])
           ];
         });
 
         // Totals
-        let t2Cant = 0, t2Bruto = 0, t2Com = 0, t2Iva = 0, t2Net = 0;
+        let t2Cant = 0, t2Bruto = 0, t2Com = 0, t2Iva = 0, t2Net = 0, t2Profit = 0;
         cardProducts.forEach(prod => {
           let cardQty = 0;
           let cardRevenue = 0;
@@ -1114,6 +1118,9 @@ export function ReportsPage() {
           t2Com += c;
           t2Iva += i;
           t2Net += (cardRevenue - c - i);
+          const ratio = prod.total_revenue > 0 ? (cardRevenue / prod.total_revenue) : 0;
+          const baseProfit = (prod.total_profit || 0) * ratio;
+          t2Profit += (baseProfit - c - i);
         });
 
         tbl2Body.push([
@@ -1123,12 +1130,16 @@ export function ReportsPage() {
           fmt(t2Bruto),
           fmt(t2Com),
           fmt(t2Iva),
-          fmt(t2Net)
+          fmt(t2Net),
+          ...(canViewCost ? [fmt(t2Profit)] : [])
         ]);
 
+        const t2Headers = canViewCost
+          ? ["Producto", "SKU", "Cant. Tarjeta", "Bruto Tarjeta", "Comisión TPV", "IVA s/Comisión (16%)", "Neto Tarjeta", "Utilidad Tarjeta"]
+          : ["Producto", "SKU", "Cant. Tarjeta", "Bruto Tarjeta", "Comisión TPV", "IVA s/Comisión (16%)", "Neto Tarjeta"];
         autoTable(doc, {
           startY: currentY,
-          head: [["Producto", "SKU", "Cant. Tarjeta", "Bruto Tarjeta", "Comisión TPV", "IVA s/Comisión (16%)", "Neto Tarjeta"]],
+          head: [t2Headers],
           body: tbl2Body,
           theme: "striped",
           headStyles: { fillColor: [34, 102, 187], fontSize: 8, fontStyle: "bold" },
@@ -1140,13 +1151,14 @@ export function ReportsPage() {
             3: { halign: "right" },
             4: { halign: "right" },
             5: { halign: "right" },
-            6: { halign: "right", fontStyle: "bold" }
+            6: { halign: "right", fontStyle: "bold" },
+            ...(canViewCost ? { 7: { halign: "right", fontStyle: "bold", textColor: [0, 150, 70] } } : {})
           },
           didParseCell: (data) => {
             if (data.row.index === tbl2Body.length - 1) {
               data.cell.styles.fontStyle = "bold";
               data.cell.styles.fillColor = [230, 240, 255];
-              if (data.column.index === 6) {
+              if (data.column.index === 6 || (canViewCost && data.column.index === 7)) {
                 data.cell.styles.textColor = [0, 150, 70];
               }
             }
@@ -1182,16 +1194,19 @@ export function ReportsPage() {
               cashRevenue += data.revenue;
             }
           });
+          const ratio = prod.total_revenue > 0 ? (cashRevenue / prod.total_revenue) : 0;
+          const cashProfit = (prod.total_profit || 0) * ratio;
           return [
             prod.name,
             prod.sku,
             cashQty,
-            fmt(cashRevenue)
+            fmt(cashRevenue),
+            ...(canViewCost ? [fmt(cashProfit)] : [])
           ];
         });
 
         // Totals
-        let t3Cant = 0, t3Bruto = 0;
+        let t3Cant = 0, t3Bruto = 0, t3Profit = 0;
         cashProducts.forEach(prod => {
           let cashQty = 0;
           let cashRevenue = 0;
@@ -1203,27 +1218,34 @@ export function ReportsPage() {
           });
           t3Cant += cashQty;
           t3Bruto += cashRevenue;
+          const ratio = prod.total_revenue > 0 ? (cashRevenue / prod.total_revenue) : 0;
+          t3Profit += (prod.total_profit || 0) * ratio;
         });
 
         tbl3Body.push([
           "TOTAL EFECTIVO",
           "",
           t3Cant.toString(),
-          fmt(t3Bruto)
+          fmt(t3Bruto),
+          ...(canViewCost ? [fmt(t3Profit)] : [])
         ]);
 
+        const t3Headers = canViewCost
+          ? ["Producto", "SKU", "Cant. Efectivo", "Monto Efectivo", "Utilidad Efectivo"]
+          : ["Producto", "SKU", "Cant. Efectivo", "Monto Efectivo"];
         autoTable(doc, {
           startY: currentY,
-          head: [["Producto", "SKU", "Cant. Efectivo", "Monto Efectivo"]],
+          head: [t3Headers],
           body: tbl3Body,
           theme: "striped",
-          headStyles: { fillColor: [0, 150, 70], fontSize: 8, fontStyle: "bold" },
+          headStyles: { fillColor: [0, 153, 68], fontSize: 8, fontStyle: "bold" },
           bodyStyles: { fontSize: 7.5 },
           columnStyles: {
             0: { cellWidth: 100 },
             1: { cellWidth: 45 },
             2: { halign: "center" },
-            3: { halign: "right", fontStyle: "bold" }
+            3: { halign: "right", fontStyle: "bold" },
+            ...(canViewCost ? { 4: { halign: "right", fontStyle: "bold", textColor: [0, 150, 70] } } : {})
           },
           didParseCell: (data) => {
             if (data.row.index === tbl3Body.length - 1) {
@@ -1735,6 +1757,7 @@ export function ReportsPage() {
             "Comisión TPV",
             "IVA s/Comisión (16%)",
             "Neto Tarjeta",
+            ...(canViewCost ? ["Utilidad Tarjeta"] : []),
             "", ""
           ];
           styleHeaderRow(tbl2Header, "FF4488DD");
@@ -1756,6 +1779,9 @@ export function ReportsPage() {
             const prodComm = prod.commission_amount || 0;
             const prodIva = prodComm * 0.16;
             const netCard = cardRevenue - prodComm - prodIva;
+            const ratio = prod.total_revenue > 0 ? (cardRevenue / prod.total_revenue) : 0;
+            const baseProfit = (prod.total_profit || 0) * ratio;
+            const cardProfit = baseProfit - prodComm - prodIva;
 
             const r = sheet.getRow(currentExcelRow);
             r.values = [
@@ -1766,6 +1792,7 @@ export function ReportsPage() {
               prodComm,
               prodIva,
               netCard,
+              ...(canViewCost ? [cardProfit] : []),
               "", ""
             ];
             r.height = 20;
@@ -1788,6 +1815,12 @@ export function ReportsPage() {
             r.getCell(7).numFmt = "$#,##0.00";
             r.getCell(7).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
             r.getCell(7).alignment = { horizontal: "right", vertical: "middle" };
+
+            if (canViewCost) {
+              r.getCell(8).numFmt = "$#,##0.00";
+              r.getCell(8).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
+              r.getCell(8).alignment = { horizontal: "right", vertical: "middle" };
+            }
           });
 
           // Add TOTALS Row for Section 2
@@ -1800,6 +1833,7 @@ export function ReportsPage() {
           let t2Comision = 0;
           let t2Iva = 0;
           let t2Neto = 0;
+          let t2Profit = 0;
 
           cardProducts.forEach(prod => {
             let cardQty = 0;
@@ -1819,6 +1853,9 @@ export function ReportsPage() {
             t2Comision += comm;
             t2Iva += iva;
             t2Neto += (cardRevenue - comm - iva);
+            const ratio = prod.total_revenue > 0 ? (cardRevenue / prod.total_revenue) : 0;
+            const baseProfit = (prod.total_profit || 0) * ratio;
+            t2Profit += (baseProfit - comm - iva);
           });
 
           t2Row.values = [
@@ -1829,6 +1866,7 @@ export function ReportsPage() {
             t2Comision,
             t2Iva,
             t2Neto,
+            ...(canViewCost ? [t2Profit] : []),
             "",
             ""
           ];
@@ -1869,6 +1907,13 @@ export function ReportsPage() {
           t2Row.getCell(7).border = t2DoubleBorder;
           t2Row.getCell(7).numFmt = "$#,##0.00";
           t2Row.getCell(7).alignment = { horizontal: "right", vertical: "middle" };
+
+          if (canViewCost) {
+            t2Row.getCell(8).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
+            t2Row.getCell(8).border = t2DoubleBorder;
+            t2Row.getCell(8).numFmt = "$#,##0.00";
+            t2Row.getCell(8).alignment = { horizontal: "right", vertical: "middle" };
+          }
         }
 
         // =========================================================================
@@ -1889,6 +1934,7 @@ export function ReportsPage() {
             "SKU",
             "Cant. Efectivo",
             "Monto Efectivo",
+            ...(canViewCost ? ["Utilidad Efectivo"] : []),
             "", "", "", "", ""
           ];
           styleHeaderRow(tbl3Header, "FF33BB66");
@@ -1907,12 +1953,16 @@ export function ReportsPage() {
               }
             });
 
+            const ratio = prod.total_revenue > 0 ? (cashRevenue / prod.total_revenue) : 0;
+            const cashProfit = (prod.total_profit || 0) * ratio;
+
             const r = sheet.getRow(currentExcelRow);
             r.values = [
               prod.name,
               prod.sku,
               cashQty,
               cashRevenue,
+              ...(canViewCost ? [cashProfit] : []),
               "", "", "", "", ""
             ];
             r.height = 20;
@@ -1924,6 +1974,12 @@ export function ReportsPage() {
             r.getCell(4).numFmt = "$#,##0.00";
             r.getCell(4).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
             r.getCell(4).alignment = { horizontal: "right", vertical: "middle" };
+
+            if (canViewCost) {
+              r.getCell(5).numFmt = "$#,##0.00";
+              r.getCell(5).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
+              r.getCell(5).alignment = { horizontal: "right", vertical: "middle" };
+            }
           });
 
           // Add TOTALS Row for Section 3
@@ -1933,6 +1989,7 @@ export function ReportsPage() {
 
           let t3Cant = 0;
           let t3Bruto = 0;
+          let t3Profit = 0;
 
           cashProducts.forEach(prod => {
             let cashQty = 0;
@@ -1946,6 +2003,8 @@ export function ReportsPage() {
             });
             t3Cant += cashQty;
             t3Bruto += cashRevenue;
+            const ratio = prod.total_revenue > 0 ? (cashRevenue / prod.total_revenue) : 0;
+            t3Profit += (prod.total_profit || 0) * ratio;
           });
 
           t3Row.values = [
@@ -1953,6 +2012,7 @@ export function ReportsPage() {
             "",
             t3Cant,
             t3Bruto,
+            ...(canViewCost ? [t3Profit] : []),
             "", "", "", "", ""
           ];
 
@@ -1977,6 +2037,13 @@ export function ReportsPage() {
           t3Row.getCell(4).border = t3DoubleBorder;
           t3Row.getCell(4).numFmt = "$#,##0.00";
           t3Row.getCell(4).alignment = { horizontal: "right", vertical: "middle" };
+
+          if (canViewCost) {
+            t3Row.getCell(5).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
+            t3Row.getCell(5).border = t3DoubleBorder;
+            t3Row.getCell(5).numFmt = "$#,##0.00";
+            t3Row.getCell(5).alignment = { horizontal: "right", vertical: "middle" };
+          }
         }
 
         // =========================================================================
