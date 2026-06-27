@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo } from "react";
 import {
   Search, Shield, Check, Loader2, Save,
   ChevronRight, Package, AlertTriangle,
-  ToggleLeft, ToggleRight, DollarSign,
+  ToggleLeft, ToggleRight, DollarSign, Globe,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -124,9 +124,14 @@ export function TabPermisos() {
   const [savedPerm, setSavedPerm]         = useState<PricePerm>(DEFAULT_PERM);
   const [canViewCost, setCanViewCost]     = useState(false);
   const [savedCanViewCost, setSavedCanViewCost] = useState(false);
+  const [canEditCatalog, setCanEditCatalog]     = useState(false);
+  const [savedCanEditCatalog, setSavedCanEditCatalog] = useState(false);
   const [productSearch, setProductSearch] = useState("");
 
-  const isDirty = !permEqual(perm, savedPerm) || canViewCost !== savedCanViewCost;
+  const isDirty =
+    !permEqual(perm, savedPerm) ||
+    canViewCost !== savedCanViewCost ||
+    canEditCatalog !== savedCanEditCatalog;
 
   // ── Load data ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -152,6 +157,8 @@ export function TabPermisos() {
     setSavedPerm(structuredClone(existing));
     setCanViewCost(!!selectedUser.can_view_cost);
     setSavedCanViewCost(!!selectedUser.can_view_cost);
+    setCanEditCatalog(!!selectedUser.can_edit_catalog);
+    setSavedCanEditCatalog(!!selectedUser.can_edit_catalog);
     setProductSearch("");
   }, [selectedUser?.id]);
 
@@ -196,6 +203,17 @@ export function TabPermisos() {
         );
       }
 
+      if (canEditCatalog !== savedCanEditCatalog) {
+        tasks.push(
+          updateUser(selectedUser.id, { can_edit_catalog: canEditCatalog }).then(() => {
+            setUsers(prev => prev.map(u =>
+              u.id === selectedUser.id ? { ...u, can_edit_catalog: canEditCatalog } : u
+            ));
+            setSelectedUser(prev => prev ? { ...prev, can_edit_catalog: canEditCatalog } : prev);
+          })
+        );
+      }
+
       if (!permEqual(perm, savedPerm)) {
         const next: PermMap = { ...permMap, [String(selectedUser.id)]: perm };
         tasks.push(
@@ -206,6 +224,7 @@ export function TabPermisos() {
       await Promise.all(tasks);
       setSavedPerm(structuredClone(perm));
       setSavedCanViewCost(canViewCost);
+      setSavedCanEditCatalog(canEditCatalog);
       toast.success("Permisos guardados");
     } catch {
       toast.error("Error al guardar permisos");
@@ -370,6 +389,31 @@ export function TabPermisos() {
               <div style={{ marginTop: 8, padding: "6px 10px", borderRadius: 8, background: canViewCost ? "rgba(0,200,100,0.07)" : "rgba(255,255,255,0.03)", border: `1px solid ${canViewCost ? "rgba(0,200,100,0.18)" : "var(--td-divider)"}` }}>
                 <span style={{ fontSize: 10, fontWeight: 800, color: canViewCost ? "#00CC66" : TM }}>
                   {canViewCost ? "ACTIVO — puede ver costos" : "INACTIVO — no ve costos"}
+                </span>
+              </div>
+            </SectionBox>
+
+            {/* 1b. Editar catálogo online */}
+            <SectionBox icon={Globe} title="Editar Catálogo Online">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div>
+                  <p style={{ fontSize: 12, fontWeight: 700, color: TS, margin: 0 }}>
+                    Permitir editar la tienda online
+                  </p>
+                  <p style={{ fontSize: 10, color: TM, margin: "3px 0 0" }}>
+                    El usuario podrá publicar productos y configurar el catálogo de su tienda
+                  </p>
+                </div>
+                <button
+                  onClick={() => setCanEditCatalog(v => !v)}
+                  style={{ background: "none", border: "none", cursor: "pointer", color: canEditCatalog ? "#00CC66" : TM, flexShrink: 0 }}
+                >
+                  {canEditCatalog ? <ToggleRight size={32} /> : <ToggleLeft size={32} />}
+                </button>
+              </div>
+              <div style={{ marginTop: 8, padding: "6px 10px", borderRadius: 8, background: canEditCatalog ? "rgba(0,200,100,0.07)" : "rgba(255,255,255,0.03)", border: `1px solid ${canEditCatalog ? "rgba(0,200,100,0.18)" : "var(--td-divider)"}` }}>
+                <span style={{ fontSize: 10, fontWeight: 800, color: canEditCatalog ? "#00CC66" : TM }}>
+                  {canEditCatalog ? "ACTIVO — puede editar catálogo" : "INACTIVO — no edita catálogo"}
                 </span>
               </div>
             </SectionBox>

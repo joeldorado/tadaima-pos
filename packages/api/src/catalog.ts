@@ -39,6 +39,13 @@ export interface PublicCatalogResponse {
   catalog: {
     show_price: boolean
     show_stock: boolean
+    show_search: boolean
+    show_categories: boolean
+    show_description: boolean
+    cart_enabled: boolean
+    hide_out_of_stock: boolean
+    /** Número al que se envían los pedidos del carrito (fallback al teléfono de la tienda). null si ninguno. */
+    whatsapp_number: string | null
   }
   data: CatalogProductItem[]
   pagination: {
@@ -99,5 +106,55 @@ export async function getPublicCatalog(
   params?: PublicCatalogParams
 ): Promise<PublicCatalogResponse> {
   const response = await apiClient.get<PublicCatalogResponse>(`/public/catalog/${catalogUrl}`, { params })
+  return response.data
+}
+
+// ─── Catálogo global v2 (de cadena, por inventario) ────────────────────────────
+
+/** Existencias de un producto en una sucursal + su WhatsApp de pedidos. */
+export interface CatalogStoreStock {
+  store_id: number
+  store_name: string
+  qty: number
+  whatsapp: string | null
+}
+
+export interface GlobalCatalogItem {
+  id: number
+  name: string
+  /** 'manga' (librería) | 'product' (general) — usado para las secciones del catálogo. */
+  product_type: string
+  description: string | null
+  category: { id: number; name: string } | null
+  images: Array<{ id: number; path: string | null; sort_order: number }>
+  price?: number
+  /** Desglose de stock vendible por sucursal (solo las que tienen existencia). */
+  stores: CatalogStoreStock[]
+  total: number
+}
+
+export interface GlobalCatalogResponse {
+  catalog: {
+    show_price: boolean
+    show_stock: boolean
+    show_search: boolean
+    show_categories: boolean
+    show_description: boolean
+    cart_enabled: boolean
+    hide_out_of_stock: boolean
+  }
+  data: GlobalCatalogItem[]
+  pagination: {
+    total: number
+    per_page: number
+    current_page: number
+    last_page: number
+  }
+}
+
+export async function getGlobalCatalog(
+  params?: PublicCatalogParams
+): Promise<GlobalCatalogResponse> {
+  const response = await apiClient.get<GlobalCatalogResponse>('/public/catalog', { params })
   return response.data
 }

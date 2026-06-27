@@ -48,6 +48,7 @@ Route::prefix('auth')->group(function () {
 });
 
 // ── Catálogo público (sin auth) ───────────────────────────────────────────────
+Route::get('public/catalog', [CatalogController::class, 'publicCatalogGlobal']);
 Route::get('public/catalog/{catalogUrl}', [CatalogController::class, 'publicCatalog']);
 
 // ── Rutas protegidas ──────────────────────────────────────────────────────────

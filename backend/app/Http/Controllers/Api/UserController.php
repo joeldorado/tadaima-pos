@@ -101,7 +101,7 @@ class UserController extends Controller
         $user = DB::transaction(function () use ($request) {
             $data = $request->only([
                 'name', 'email', 'password', 'phone', 'address',
-                'company_id', 'store_id', 'active', 'can_view_cost',
+                'company_id', 'store_id', 'active', 'can_view_cost', 'can_edit_catalog',
             ]);
 
             // La UI no manda company_id → derivarlo del admin que crea, o de la
@@ -168,7 +168,7 @@ class UserController extends Controller
         }
 
         $fields = $isAdmin
-            ? ['name', 'email', 'phone', 'address', 'company_id', 'store_id', 'active', 'can_view_cost']
+            ? ['name', 'email', 'phone', 'address', 'company_id', 'store_id', 'active', 'can_view_cost', 'can_edit_catalog']
             : ['name', 'email', 'phone', 'address'];
 
         $data = $request->only($fields);

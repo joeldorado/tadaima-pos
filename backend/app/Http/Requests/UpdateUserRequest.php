@@ -20,8 +20,9 @@ class UpdateUserRequest extends FormRequest
             'address'       => ['nullable', 'string', 'max:500'],
             'company_id'    => ['nullable', 'integer', 'exists:companies,id'],
             'store_id'      => ['nullable', 'integer', 'exists:stores,id'],
-            'active'        => ['nullable', 'boolean'],
-            'can_view_cost' => ['nullable', 'boolean'],
+            'active'           => ['nullable', 'boolean'],
+            'can_view_cost'    => ['nullable', 'boolean'],
+            'can_edit_catalog' => ['nullable', 'boolean'],
         ];
     }
 }

@@ -1,115 +1,83 @@
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
-import { Loader2, MessageCircle, Package, Search } from "lucide-react";
-import { getPublicCatalog, storageUrl } from "@tadaima/api";
-import type { CatalogProductItem } from "@tadaima/api";
+import { ChevronLeft, Loader2, Search, ShoppingBag } from "lucide-react";
+import { getGlobalCatalog } from "@tadaima/api";
+import type { GlobalCatalogItem, GlobalCatalogResponse } from "@tadaima/api";
+import { useCart } from "@/hooks/useCart";
+import { ProductCard } from "@/components/catalog/ProductCard";
+import { CategoryRow } from "@/components/catalog/CategoryRow";
+import { CartDrawer } from "@/components/catalog/CartDrawer";
 
-type PublicCatalogData = {
-  store: { id: number; name: string };
-  catalog: { show_price: boolean; show_stock: boolean };
-  data: CatalogProductItem[];
-};
+const CART_KEY = "global";
+const DISPLAY = "'Space Grotesk', system-ui, sans-serif";
+const BODY = "'Inter', system-ui, -apple-system, sans-serif";
 
-type OnlineCatalogEvent =
-  | { name: "catalog_view"; catalogUrl: string; storeId: number; storeName: string; totalItems: number }
-  | { name: "product_click"; catalogUrl: string; productId: number; productName: string }
-  | { name: "whatsapp_click"; catalogUrl: string; productId: number; productName: string }
-  | { name: "search_used"; catalogUrl: string; query: string }
-  | { name: "filter_used"; catalogUrl: string; categoryId: string };
+type TypeFilter = "all" | "product" | "manga";
 
-const fmt = (n: number) =>
-  new Intl.NumberFormat("es-MX", {
-    style: "currency",
-    currency: "MXN",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(n || 0);
+interface Section {
+  key: string;
+  name: string;
+  items: GlobalCatalogItem[];
+}
 
 export function OnlineCatalogPage() {
-  const { catalogUrl } = useParams();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState<string>("all");
-  const [payload, setPayload] = useState<PublicCatalogData | null>(null);
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  const [payload, setPayload] = useState<GlobalCatalogResponse | null>(null);
+  const [cartOpen, setCartOpen] = useState(false);
 
-  const trackEvent = (event: OnlineCatalogEvent) => {
-    const payloadWithTs = { ...event, ts: new Date().toISOString() };
-
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("tadaima:catalog-event", { detail: payloadWithTs }));
-      try {
-        const key = "tadaima_catalog_events";
-        const current = JSON.parse(sessionStorage.getItem(key) ?? "[]") as Array<Record<string, unknown>>;
-        current.push(payloadWithTs);
-        sessionStorage.setItem(key, JSON.stringify(current.slice(-200)));
-      } catch {
-        // non-blocking
-      }
-      if (import.meta.env.DEV) {
-        // Useful while MVP has no analytics provider connected.
-        console.info("[catalog-event]", payloadWithTs);
-      }
-    }
-  };
+  const cart = useCart(CART_KEY);
 
   useEffect(() => {
-    if (!catalogUrl) return;
-
     setLoading(true);
     setError(null);
-    getPublicCatalog(catalogUrl)
+    getGlobalCatalog({ per_page: 100 })
       .then(setPayload)
-      .catch(() => setError("No pudimos cargar este catalogo. Verifica el enlace."))
+      .catch(() => setError("No pudimos cargar el catálogo. Intenta más tarde."))
       .finally(() => setLoading(false));
-  }, [catalogUrl]);
+  }, []);
 
-  useEffect(() => {
-    if (!payload || !catalogUrl) return;
-    trackEvent({
-      name: "catalog_view",
-      catalogUrl,
-      storeId: payload.store.id,
-      storeName: payload.store.name,
-      totalItems: payload.data.length,
+  const data = payload?.data ?? [];
+
+  const hasManga = useMemo(() => data.some((p) => p.product_type === "manga"), [data]);
+  const hasProduct = useMemo(() => data.some((p) => p.product_type !== "manga"), [data]);
+
+  const byType = useMemo(
+    () => data.filter((p) => typeFilter === "all" || (typeFilter === "manga" ? p.product_type === "manga" : p.product_type !== "manga")),
+    [data, typeFilter]
+  );
+
+  const sections = useMemo<Section[]>(() => {
+    const map = new Map<string, Section>();
+    byType.forEach((p) => {
+      const key = p.category ? `c${p.category.id}` : "otros";
+      const name = p.category?.name ?? "Otros";
+      const g = map.get(key);
+      if (g) g.items.push(p);
+      else map.set(key, { key, name, items: [p] });
     });
-  }, [payload, catalogUrl]);
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, "es"));
+  }, [byType]);
 
-  const filtered = useMemo(() => {
-    if (!payload) return [];
+  const searchResults = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return payload.data.filter((p) => {
-      const categoryOk =
-        selectedCategory === "all" ||
-        String(p.category?.id ?? "") === selectedCategory;
-      if (!categoryOk) return false;
-      if (!q) return true;
+    if (!q) return [];
+    return byType.filter((p) => {
       const name = p.name?.toLowerCase() ?? "";
       const desc = p.description?.toLowerCase() ?? "";
       const cat = p.category?.name?.toLowerCase() ?? "";
       return name.includes(q) || desc.includes(q) || cat.includes(q);
     });
-  }, [payload, search, selectedCategory]);
-
-  const categories = useMemo(() => {
-    if (!payload) return [];
-    const map = new Map<number, string>();
-    payload.data.forEach((item) => {
-      if (item.category?.id && item.category?.name) {
-        map.set(item.category.id, item.category.name);
-      }
-    });
-    return Array.from(map.entries())
-      .map(([id, name]) => ({ id, name }))
-      .sort((a, b) => a.name.localeCompare(b.name, "es"));
-  }, [payload]);
+  }, [byType, search]);
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: "#0f0f11", color: "white" }}>
-        <div className="flex items-center gap-3 text-sm font-bold uppercase tracking-[0.2em] text-white/70">
+      <div className="min-h-dvh flex items-center justify-center" style={{ background: "var(--td-page-bg)", color: "white", fontFamily: BODY }}>
+        <div className="flex items-center gap-3 text-sm font-bold uppercase tracking-[0.2em]" style={{ color: "var(--td-text-md)" }}>
           <Loader2 size={18} className="animate-spin" />
-          Cargando catalogo
+          Cargando catálogo
         </div>
       </div>
     );
@@ -117,139 +85,172 @@ export function OnlineCatalogPage() {
 
   if (error || !payload) {
     return (
-      <div className="min-h-screen flex items-center justify-center px-4" style={{ background: "#0f0f11", color: "white" }}>
-        <div className="max-w-md w-full rounded-3xl border border-white/10 bg-white/[0.03] p-6 text-center">
-          <p className="text-sm font-black uppercase tracking-[0.2em] text-white/70">Catalogo no disponible</p>
-          <p className="text-sm text-white/50 mt-3">{error ?? "No se encontro informacion para este enlace."}</p>
+      <div className="min-h-dvh flex items-center justify-center px-4" style={{ background: "var(--td-page-bg)", color: "white", fontFamily: BODY }}>
+        <div className="max-w-md w-full rounded-3xl p-6 text-center" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)" }}>
+          <p className="text-sm font-black uppercase tracking-[0.2em]" style={{ color: "var(--td-text-md)" }}>Catálogo no disponible</p>
+          <p className="text-sm mt-3" style={{ color: "var(--td-text-lo)" }}>{error ?? "Intenta de nuevo en un momento."}</p>
         </div>
       </div>
     );
   }
 
+  const catalog = payload.catalog;
+  const cartEnabled = catalog.cart_enabled;
+  const showSearch = catalog.show_search;
+
+  const handleAdd = (item: GlobalCatalogItem) => {
+    cart.add({
+      productId: item.id,
+      name: item.name,
+      price: item.price,
+      image: item.images?.[0]?.path ?? undefined,
+      stores: item.stores,
+    });
+    setCartOpen(true);
+  };
+
+  const cardProps = {
+    showPrice: catalog.show_price,
+    showStock: catalog.show_stock,
+    showDescription: catalog.show_description,
+    cartEnabled,
+    onAdd: handleAdd,
+  };
+
+  const tabs: { key: TypeFilter; label: string }[] = [
+    { key: "all", label: "Todo" },
+    ...(hasProduct ? [{ key: "product" as const, label: "Productos" }] : []),
+    ...(hasManga ? [{ key: "manga" as const, label: "Mangas" }] : []),
+  ];
+
+  const searching = search.trim().length > 0;
+  const gridItems = searching
+    ? searchResults
+    : activeCategory
+      ? byType.filter((p) => (p.category?.name ?? "Otros") === activeCategory)
+      : [];
+  const showGrid = searching || activeCategory !== null;
+
   return (
-    <div className="min-h-screen" style={{ background: "#0f0f11", color: "white" }}>
+    <div className="min-h-dvh pb-28" style={{ background: "var(--td-page-bg)", color: "white", fontFamily: BODY }}>
       <div className="max-w-5xl mx-auto px-4 py-6">
-        <header className="rounded-3xl border border-white/10 bg-white/[0.03] p-5">
-          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-red-300/80">Tienda Online</p>
-          <h1 className="text-2xl font-black mt-1">{payload.store.name}</h1>
-          <p className="text-xs text-white/45 mt-1">Productos disponibles por tienda</p>
+        {/* Header con logo */}
+        <header className="flex items-center gap-3">
+          <div
+            className="shrink-0"
+            style={{ background: "#fff", borderRadius: 14, padding: "7px 11px", border: "1px solid rgba(204,34,0,0.15)", boxShadow: "0 0 20px rgba(204,34,0,0.35)" }}
+          >
+            <img src="/tadaima-logo.jpeg" alt="Tadaima" style={{ height: 32, display: "block", borderRadius: 4 }} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-[10px] font-black uppercase tracking-[0.25em]" style={{ color: "#FF8A80" }}>Tienda en Línea</p>
+            <h1 className="text-xl font-black leading-tight" style={{ fontFamily: DISPLAY, color: "var(--td-text-hi)" }}>Catálogo</h1>
+          </div>
         </header>
 
-        <div className="grid grid-cols-1 md:grid-cols-[1fr_220px] gap-2 mt-4">
-          <div className="relative">
-            <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30" />
+        {/* Buscador */}
+        {showSearch && (
+          <div className="relative mt-5">
+            <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2" style={{ color: "var(--td-text-ghost)" }} />
             <input
               value={search}
-              onChange={(e) => {
-                const next = e.target.value;
-                setSearch(next);
-                if (catalogUrl && next.trim().length >= 2) {
-                  trackEvent({ name: "search_used", catalogUrl, query: next.trim() });
-                }
-              }}
-              placeholder="Buscar producto..."
-              className="w-full rounded-2xl border border-white/10 bg-white/[0.03] pl-11 pr-4 py-3 text-sm font-bold text-white placeholder:text-white/30 outline-none focus:border-white/20"
+              onChange={(e) => { setSearch(e.target.value); setActiveCategory(null); }}
+              placeholder="Buscar producto, manga, categoría..."
+              className="w-full rounded-2xl pl-11 pr-4 py-3.5 text-sm font-bold outline-none transition-colors"
+              style={{ background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", color: "var(--td-input-text)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)" }}
             />
           </div>
-          <select
-            value={selectedCategory}
-            onChange={(e) => {
-              const next = e.target.value;
-              setSelectedCategory(next);
-              if (catalogUrl) {
-                trackEvent({ name: "filter_used", catalogUrl, categoryId: next });
-              }
-            }}
-            className="w-full rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm font-bold text-white outline-none focus:border-white/20"
-          >
-            <option value="all">Todas las categorías</option>
-            {categories.map((cat) => (
-              <option key={cat.id} value={String(cat.id)}>
-                {cat.name}
-              </option>
-            ))}
-          </select>
-        </div>
+        )}
 
-        {filtered.length === 0 ? (
-          <div className="mt-5 rounded-3xl border border-white/10 bg-white/[0.03] p-8 text-center">
-            <p className="text-sm font-black uppercase tracking-[0.2em] text-white/60">Sin resultados</p>
-            <p className="text-xs text-white/40 mt-2">No hay productos para tu busqueda.</p>
-          </div>
-        ) : (
-          <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {filtered.map((item) => {
-              const img = item.images?.[0]?.path ? storageUrl(item.images[0].path) : "";
-              const stock = item.stock ?? 0;
-              const agotado = payload.catalog.show_stock && stock <= 0;
-              const waText = encodeURIComponent(
-                `Hola, me interesa este producto de ${payload.store.name}:\n` +
-                  `• ${item.name}\n` +
-                  `${payload.catalog.show_price && typeof item.price === "number" ? `• Precio: ${fmt(item.price)}\n` : ""}` +
-                  `${payload.catalog.show_stock ? `• Estado: ${agotado ? "Agotado" : "Disponible"}\n` : ""}` +
-                  `${catalogUrl ? `• Catálogo: /catalogo/${catalogUrl}` : ""}`
-              );
+        {/* Tabs por tipo */}
+        {!searching && tabs.length > 1 && (
+          <div className="flex items-center gap-2 mt-4">
+            {tabs.map((t) => {
+              const active = typeFilter === t.key;
               return (
-                <article
-                  key={item.id}
-                  onClick={() => {
-                    if (!catalogUrl) return;
-                    trackEvent({
-                      name: "product_click",
-                      catalogUrl,
-                      productId: item.id,
-                      productName: item.name,
-                    });
-                  }}
-                  className="rounded-3xl border border-white/10 bg-white/[0.03] p-3 cursor-pointer"
+                <button
+                  key={t.key}
+                  onClick={() => { setTypeFilter(t.key); setActiveCategory(null); }}
+                  className="px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-widest cursor-pointer transition-all"
+                  style={active
+                    ? { background: "var(--td-red-g)", border: "1px solid var(--td-red-brd)", color: "#fff", boxShadow: "0 0 18px rgba(224,34,26,0.3)" }
+                    : { background: "var(--td-surface-muted)", border: "1px solid var(--td-divider)", color: "var(--td-text-md)" }}
                 >
-                  <div className="aspect-square rounded-2xl bg-black/50 border border-white/10 overflow-hidden flex items-center justify-center">
-                    {img ? (
-                      <img src={img} alt={item.name} className="w-full h-full object-cover" loading="lazy" />
-                    ) : (
-                      <Package size={24} className="text-white/30" />
-                    )}
-                  </div>
-                  <p className="text-sm font-black mt-3 leading-tight">{item.name}</p>
-                  {item.category?.name && <p className="text-[10px] text-white/40 mt-1 uppercase tracking-widest">{item.category.name}</p>}
-                  <div className="mt-3 flex items-center justify-between">
-                    <div>
-                      {payload.catalog.show_price && typeof item.price === "number" ? (
-                        <p className="text-base font-black text-amber-300">{fmt(item.price)}</p>
-                      ) : (
-                        <p className="text-xs font-bold text-white/35">Precio por mensaje</p>
-                      )}
-                    </div>
-                    {payload.catalog.show_stock && (
-                      <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg border ${agotado ? "text-red-300 border-red-400/30 bg-red-500/10" : "text-emerald-300 border-emerald-400/30 bg-emerald-500/10"}`}>
-                        {agotado ? "Agotado" : "Disponible"}
-                      </span>
-                    )}
-                  </div>
-                  <a
-                    href={`https://wa.me/?text=${waText}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={() => {
-                      if (!catalogUrl) return;
-                      trackEvent({
-                        name: "whatsapp_click",
-                        catalogUrl,
-                        productId: item.id,
-                        productName: item.name,
-                      });
-                    }}
-                    className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-400/25 bg-emerald-500/10 px-3 py-2 text-[11px] font-black uppercase tracking-widest text-emerald-300 hover:bg-emerald-500/15 transition-colors"
-                  >
-                    <MessageCircle size={14} />
-                    Pedir por WhatsApp
-                  </a>
-                </article>
+                  {t.label}
+                </button>
               );
             })}
           </div>
         )}
+
+        {/* Contenido */}
+        {byType.length === 0 ? (
+          <div className="mt-8 rounded-3xl p-8 text-center" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)" }}>
+            <ShoppingBag size={28} className="mx-auto mb-3" style={{ color: "var(--td-text-ghost)" }} />
+            <p className="text-sm font-black uppercase tracking-[0.2em]" style={{ color: "var(--td-text-md)" }}>Sin productos</p>
+          </div>
+        ) : showGrid ? (
+          <div className="mt-5">
+            <button
+              onClick={() => { setActiveCategory(null); setSearch(""); }}
+              className="inline-flex items-center gap-1 text-[11px] font-black uppercase tracking-widest mb-4 cursor-pointer"
+              style={{ color: "var(--td-text-md)" }}
+            >
+              <ChevronLeft size={14} /> Volver
+            </button>
+            <h2 className="text-sm font-black uppercase tracking-widest mb-3" style={{ fontFamily: DISPLAY, color: "var(--td-text-hi)" }}>
+              {searching ? `Resultados (${gridItems.length})` : activeCategory}
+            </h2>
+            {gridItems.length === 0 ? (
+              <p className="text-xs mt-2" style={{ color: "var(--td-text-lo)" }}>No hay productos para tu búsqueda.</p>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                {gridItems.map((item) => (
+                  <ProductCard key={item.id} item={item} {...cardProps} />
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          sections.map((section) => (
+            <CategoryRow
+              key={section.key}
+              title={section.name}
+              items={section.items}
+              {...cardProps}
+              onSeeAll={() => setActiveCategory(section.name)}
+            />
+          ))
+        )}
       </div>
+
+      {/* Carrito flotante + drawer */}
+      {cartEnabled && cart.count > 0 && (
+        <button
+          onClick={() => setCartOpen(true)}
+          className="fixed bottom-5 right-5 z-40 inline-flex items-center gap-2 rounded-2xl px-5 py-3.5 text-xs font-black uppercase tracking-widest cursor-pointer transition-colors"
+          style={{ background: "var(--td-red-g)", border: "1px solid var(--td-red-brd)", color: "#fff", boxShadow: "0 8px 28px rgba(224,34,26,0.4)", fontFamily: DISPLAY }}
+        >
+          <ShoppingBag size={16} />
+          Ver pedido
+          <span className="ml-1 inline-flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full text-[10px] font-black" style={{ background: "#fff", color: "var(--td-red)" }}>
+            {cart.count}
+          </span>
+        </button>
+      )}
+
+      {cartEnabled && (
+        <CartDrawer
+          open={cartOpen}
+          onClose={() => setCartOpen(false)}
+          items={cart.items}
+          showPrice={catalog.show_price}
+          onSetQty={cart.setQty}
+          onSetStore={cart.setStore}
+          onRemove={cart.remove}
+          onClear={cart.clear}
+        />
+      )}
     </div>
   );
 }

@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   Settings, Globe, Terminal, Save,
-  Eye, EyeOff, Database, RefreshCw,
-  Loader2, CheckCircle2, AlertCircle,
-  ExternalLink, Info, Clock, Search,
+  Database, RefreshCw,
+  Loader2,
+  Info, Clock, Search,
   Shield, ChevronLeft, ChevronRight, User,
   Building2, Hash, Mail, Phone, MapPin,
 } from "lucide-react";
@@ -11,14 +11,15 @@ import { motion as Motion, AnimatePresence } from "motion/react";
 import { toast } from "sonner";
 import {
   batchUpdateSystemSettings,
-  getSystemLogs, getCatalogSettings, updateCatalogSettings,
+  getSystemLogs,
   getCompanies, updateCompany,
 } from "@tadaima/api";
-import type { SystemSettingsMap, SystemLog, CatalogSettings, Company } from "@tadaima/api";
+import type { SystemSettingsMap, SystemLog, Company } from "@tadaima/api";
 import { useActiveStore } from "@/contexts/StoreContext";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSystemSettingsQuery } from "@/hooks/queries/useSystemSettings";
 import { queryKeys } from "@/lib/queryKeys";
+import { CatalogTab } from "@/components/settings/CatalogTab";
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const BG = "var(--td-page-bg)";
@@ -105,12 +106,6 @@ export function SettingsPage() {
     if (settingsQuery.error) toast.error("Error al cargar configuración");
   }, [settingsQuery.error]);
 
-  // ── Catalog Settings ──────────────────────────────────────────────────────
-  const [catalog, setCatalog]       = useState<CatalogSettings | null>(null);
-  const [catalogDraft, setCatDraft] = useState<Partial<CatalogSettings>>({});
-  const [catalogLoading, setCL]     = useState(false);
-  const [catalogSaving, setCS]      = useState(false);
-
   // ── System Logs ───────────────────────────────────────────────────────────
   const [logs, setLogs]             = useState<SystemLog[]>([]);
   const [logsLoading, setLL]        = useState(false);
@@ -118,16 +113,6 @@ export function SettingsPage() {
   const [logsTotalPages, setLTP]    = useState(1);
   const [logsTotal, setLogsTotal]   = useState(0);
   const [logSearch, setLogSearch]   = useState("");
-
-  // ── Load catalog settings when tab becomes active ─────────────────────────
-  useEffect(() => {
-    if (activeTab !== "catalog" || !activeStore) return;
-    setCL(true);
-    getCatalogSettings(activeStore.id)
-      .then(cs => { setCatalog(cs); setCatDraft(cs); })
-      .catch(() => toast.error("Error al cargar catálogo"))
-      .finally(() => setCL(false));
-  }, [activeTab, activeStore]);
 
   // ── Load logs ─────────────────────────────────────────────────────────────
   const fetchLogs = useCallback((page: number, search: string) => {
@@ -162,26 +147,6 @@ export function SettingsPage() {
       toast.error("Error al guardar configuración");
     } finally {
       setSS(false);
-    }
-  };
-
-  // ── Save catalog settings ─────────────────────────────────────────────────
-  const saveCatalog = async () => {
-    if (!activeStore || !catalog) return;
-    setCS(true);
-    try {
-      const updated = await updateCatalogSettings(activeStore.id, {
-        catalog_url: catalogDraft.catalog_url ?? null,
-        show_price:  catalogDraft.show_price  ?? catalog.show_price,
-        show_stock:  catalogDraft.show_stock  ?? catalog.show_stock,
-      });
-      setCatalog(updated);
-      setCatDraft(updated);
-      toast.success("Catálogo actualizado");
-    } catch {
-      toast.error("Error al guardar catálogo");
-    } finally {
-      setCS(false);
     }
   };
 
@@ -441,101 +406,8 @@ export function SettingsPage() {
               <Motion.div
                 key="catalog"
                 initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}
-                className="space-y-6"
               >
-                <div className="p-8 rounded-[32px]" style={GLASS}>
-                  <div className="flex items-center gap-4 mb-8">
-                    <div className="w-11 h-11 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-[#E0221A]">
-                      <Globe size={20} />
-                    </div>
-                    <div>
-                      <h2 className="text-base font-black text-white uppercase tracking-[0.1em]">Catálogo Online</h2>
-                      <p className="text-[9px] font-black uppercase text-white/20 tracking-widest mt-0.5">
-                        {activeStore ? activeStore.name : "Selecciona una tienda"}
-                      </p>
-                    </div>
-                  </div>
-
-                  {!activeStore ? (
-                    <div className="py-16 text-center opacity-30">
-                      <Globe size={32} className="mx-auto mb-4" />
-                      <p className="text-xs font-black uppercase tracking-widest">Sin tienda activa</p>
-                    </div>
-                  ) : catalogLoading ? (
-                    <div className="flex items-center justify-center py-16">
-                      <Loader2 size={24} className="animate-spin text-white/20" />
-                    </div>
-                  ) : (
-                    <div className="space-y-6">
-                      {/* URL del catálogo */}
-                      <div className="space-y-2">
-                        <label className="text-[9px] font-black text-white/30 uppercase tracking-widest ml-1">
-                          Slug del Catálogo Público
-                        </label>
-                        <div className="relative">
-                          <input
-                            type="text"
-                            value={catalogDraft.catalog_url ?? ""}
-                            onChange={e => setCatDraft(d => ({ ...d, catalog_url: e.target.value }))}
-                            placeholder="tadaima-mx"
-                            className="w-full px-5 py-3.5 pr-12 rounded-2xl outline-none border border-white/5 bg-white/[0.03] font-bold text-sm text-white placeholder:text-white/15 focus:border-[#E0221A]/30 transition-all"
-                          />
-                          <ExternalLink size={14} className="absolute right-5 top-1/2 -translate-y-1/2 text-white/20" />
-                        </div>
-                        {catalog?.public_url && (
-                          <p className="text-[9px] font-bold text-white/20 ml-1">
-                            URL pública: <span className="text-emerald-500/60">{catalog.public_url}</span>
-                          </p>
-                        )}
-                      </div>
-
-                      {/* Toggles */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {([
-                          { key: "show_price" as const, label: "Mostrar Precios", desc: "Precios visibles en la web pública", icon: Eye, iconOff: EyeOff },
-                          { key: "show_stock" as const, label: "Mostrar Stock",   desc: "Indica si hay unidades disponibles", icon: CheckCircle2, iconOff: AlertCircle },
-                        ]).map(({ key, label, desc, icon: IconOn, iconOff: IconOff }) => {
-                          const active = catalogDraft[key] ?? false;
-                          return (
-                            <div key={key} className="flex items-center justify-between p-5 rounded-2xl bg-white/[0.02] border border-white/5">
-                              <div>
-                                <p className="text-xs font-black text-white">{label}</p>
-                                <p className="text-[9px] font-bold text-white/30 mt-0.5">{desc}</p>
-                              </div>
-                              <button
-                                onClick={() => setCatDraft(d => ({ ...d, [key]: !d[key] }))}
-                                className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${
-                                  active ? "bg-[#E0221A] text-white" : "bg-white/5 text-white/20"
-                                }`}
-                              >
-                                {active ? <IconOn size={17} /> : <IconOff size={17} />}
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-
-                      {catalog?.updated_at && (
-                        <p className="text-[9px] text-white/20 font-bold">
-                          Última actualización: {new Date(catalog.updated_at).toLocaleString("es-MX")}
-                        </p>
-                      )}
-
-                      <button
-                        onClick={saveCatalog}
-                        disabled={catalogSaving}
-                        className="flex items-center gap-3 px-8 py-3.5 rounded-2xl font-black uppercase tracking-widest text-[10px] text-white transition-all disabled:opacity-50"
-                        style={{
-                          background: "linear-gradient(135deg, #BB1100 0%, #E0221A 100%)",
-                          boxShadow: "0 0 24px rgba(224,34,26,0.25)",
-                        }}
-                      >
-                        {catalogSaving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
-                        Guardar Catálogo
-                      </button>
-                    </div>
-                  )}
-                </div>
+                <CatalogTab />
               </Motion.div>
             )}
 
