@@ -1,11 +1,12 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@tadaima/auth";
-import { canAccessAdmin } from "@tadaima/permissions";
+import { canAccessAdmin, isAdmin } from "@tadaima/permissions";
 import { TabPermisos } from "@/components/admin/TabPermisos";
 import { TabCancelaciones } from "@/components/admin/TabCancelaciones";
 import { UserAvatar } from "@/components/UserAvatar";
 import { AvatarPicker } from "@/components/AvatarPicker";
+import { useActiveStore } from "@/contexts/StoreContext";
 import {
   Store, Warehouse, Users, Shield, Tag,
   Package, CreditCard, Smartphone, Plus, Edit2, Save,
@@ -518,9 +519,11 @@ interface UserFormData {
   password_plain?: string | null;
 }
 
-function TabUsuarios() {
+export function TabUsuarios() {
   const { user: currentUser } = useAuth();
+  const { activeStore } = useActiveStore();
   const queryClient = useQueryClient();
+  const isUserAdmin = isAdmin(currentUser?.roles ?? []);
   const usersQuery = useUsersQuery();
   const storesQuery = useStoresQuery();
   const rolesQuery = useRolesQuery();
@@ -538,16 +541,30 @@ function TabUsuarios() {
   // hace click en la foto. Solo aplica a usuarios existentes (necesita user_id real).
   const [avatarPicker, setAvatarPicker] = useState<{ userId: number; userName: string; currentUrl: string | null } | null>(null);
   const [search, setSearch] = useState("");
-
   const q = search.trim().toLowerCase();
-  const filteredUsers = q
-    ? users.filter(u =>
+
+  const filteredUsers = useMemo(() => {
+    let list = users;
+    // Un gerente solo ve a los usuarios de su propia tienda
+    if (!isUserAdmin && activeStore) {
+      list = list.filter(u => u.store_id === activeStore.id);
+    }
+    // Ocultar al admin maestro para los gerentes
+    if (!isUserAdmin) {
+      list = list.filter(u => !u.roles.includes("admin"));
+    }
+
+    if (q) {
+      list = list.filter(u =>
         u.name.toLowerCase().includes(q) ||
         u.email.toLowerCase().includes(q) ||
         (u.phone ?? "").toLowerCase().includes(q) ||
         u.roles.some(r => r.toLowerCase().includes(q)) ||
-        (u.store?.name ?? "").toLowerCase().includes(q))
-    : users;
+        (u.store?.name ?? "").toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [users, isUserAdmin, activeStore, q]);
 
   useEffect(() => {
     if (usersQuery.error || storesQuery.error || rolesQuery.error) toast.error("Error al cargar usuarios");
@@ -555,7 +572,11 @@ function TabUsuarios() {
 
   const invalidateUsers = () => queryClient.invalidateQueries({ queryKey: queryKeys.users.all });
 
-  const openCreate = () => setModal({ open: true, data: { name: "", email: "", password: "", phone: "", active: true, store_id: undefined, role_id: undefined } });
+  const openCreate = () => {
+    // Si es gerente, pre-asignar su tienda
+    const defaultStoreId = !isUserAdmin && activeStore ? activeStore.id : undefined;
+    setModal({ open: true, data: { name: "", email: "", password: "", phone: "", active: true, store_id: defaultStoreId, role_id: undefined } });
+  };
   const openEdit = (u: ApiUser) => {
     const currentRole = roles.find(r => u.roles.includes(r.name));
     setModal({ open: true, data: { id: u.id, name: u.name, email: u.email, password: "", phone: u.phone ?? "", active: u.active, store_id: u.store_id ?? undefined, role_id: currentRole?.id, password_plain: u.password_plain } });
@@ -845,9 +866,12 @@ function TabUsuarios() {
                   value={modal.data.store_id ?? ""}
                   onChange={e => setField("store_id", e.target.value ? Number(e.target.value) : undefined)}
                   style={{ ...INPUT, appearance: "none" as const }}
+                  disabled={!isUserAdmin}
                 >
                   <option value="">Sin tienda</option>
-                  {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  {stores
+                    .filter(s => isUserAdmin || s.id === activeStore?.id)
+                    .map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
               </Field>
               <Field label="Rol">
@@ -857,7 +881,9 @@ function TabUsuarios() {
                   style={{ ...INPUT, appearance: "none" as const }}
                 >
                   <option value="">Sin rol</option>
-                  {roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                  {roles
+                    .filter(r => isUserAdmin || r.name !== "admin")
+                    .map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
                 </select>
               </Field>
             </div>

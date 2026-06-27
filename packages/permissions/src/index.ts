@@ -1,6 +1,6 @@
 export const PERMISSIONS_VERSION = '0.1.0'
 
-const ADMIN_ROLES  = ['admin', 'super_admin', 'owner', 'dueño']
+const ADMIN_ROLES = ['admin', 'super_admin', 'owner', 'dueño']
 const MANAGER_ROLES = ['manager', 'gerente', ...ADMIN_ROLES]
 const CASHIER_ROLES = ['cashier', 'cajero', ...MANAGER_ROLES]
 

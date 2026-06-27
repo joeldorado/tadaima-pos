@@ -22,6 +22,8 @@ import { BackgroundBeams } from "@/components/aceternity/BackgroundBeams";
 import { HoverCard } from "@/components/aceternity/HoverCard";
 import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
 import { useQueryClient } from "@tanstack/react-query";
+
+import { TabUsuarios } from "@/pages/AdminPage";
 import { getCashReport, type CashSessionReport } from "@tadaima/api";
 import { useOnlineUsersQuery } from "@/hooks/queries/useUsers";
 
@@ -308,6 +310,7 @@ export function DashboardPage() {
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
   // Mis Cortes — cajero ve histórico de sus propias sesiones cerradas
   const [showMyCutsModal, setShowMyCutsModal] = useState(false);
+  const [showUsuariosModal, setShowUsuariosModal] = useState(false);
   const [selectedCut, setSelectedCut] = useState<CashSessionReport | null>(null);
 
   const role = primaryRole(user?.roles);
@@ -639,15 +642,34 @@ export function DashboardPage() {
       {!isCashier(user?.roles) && <BackgroundBeams />}
 
       {/* Header */}
-      <div className="mb-8 relative z-10">
-        <div className="flex items-center gap-2 mb-1">
-          <LayoutDashboard size={16} style={{ color: TEXT_LO }} />
-          <span className="text-xs font-medium" style={{ color: TEXT_LO }}>Dashboard</span>
+      <div className="mb-8 relative z-10 flex items-start justify-between">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <LayoutDashboard size={16} style={{ color: TEXT_LO }} />
+            <span className="text-xs font-medium" style={{ color: TEXT_LO }}>Dashboard</span>
+          </div>
+          <h1 className="text-3xl font-bold" style={{ color: TEXT_HI }}>Hola, {firstName}</h1>
+          <p className="text-sm mt-1" style={{ color: TEXT_MD }}>
+            {!hasStores ? "Configura el sistema para empezar a operar" : "¿Qué quieres hacer hoy?"}
+          </p>
         </div>
-        <h1 className="text-3xl font-bold" style={{ color: TEXT_HI }}>Hola, {firstName}</h1>
-        <p className="text-sm mt-1" style={{ color: TEXT_MD }}>
-          {!hasStores ? "Configura el sistema para empezar a operar" : "¿Qué quieres hacer hoy?"}
-        </p>
+        
+        {/* Botón Gestionar Usuarios para Gerentes en el top right del header */}
+        {user?.can_view_cost && (
+          <button
+            onClick={() => setShowUsuariosModal(true)}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold transition-all hover:scale-[1.02] active:scale-95"
+            style={{
+              background: "var(--td-panel-bg)",
+              border: "1px solid var(--td-panel-border)",
+              color: "var(--td-text-hi)", fontSize: 11,
+              textTransform: "uppercase", letterSpacing: "0.12em",
+            }}
+          >
+            <Users size={14} />
+            Gestionar Usuarios
+          </button>
+        )}
       </div>
 
       {/* No-store alert */}
@@ -845,6 +867,32 @@ export function DashboardPage() {
                     </span>
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* Modal de Usuarios */}
+          {showUsuariosModal && (
+            <div style={{ position: "fixed", inset: 0, zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+              <div onClick={() => setShowUsuariosModal(false)}
+                style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.85)", backdropFilter: "blur(12px)" }} />
+              <div style={{
+                position: "relative",
+                background: "var(--td-popup-bg)", border: "1px solid var(--td-popup-border)",
+                borderRadius: 24, padding: 32, width: "100%", maxWidth: 1000,
+                height: "85vh", display: "flex", flexDirection: "column",
+                boxShadow: "0 24px 60px rgba(0,0,0,0.4)"
+              }}>
+                <div className="flex items-center justify-between" style={{ marginBottom: 20 }}>
+                  <h3 style={{ margin: 0, fontSize: 18, fontWeight: 900, color: "var(--td-text-hi)" }}>Gestión de Usuarios</h3>
+                  <button onClick={() => setShowUsuariosModal(false)}
+                    style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)", borderRadius: 12, cursor: "pointer", color: "var(--td-text-ghost)", padding: 8 }}>
+                    <X size={18} />
+                  </button>
+                </div>
+                <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+                  <TabUsuarios />
+                </div>
               </div>
             </div>
           )}
