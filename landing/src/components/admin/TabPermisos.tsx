@@ -14,10 +14,10 @@ import type { User as ApiUser, Product } from "@tadaima/api";
 import { isEligibleForPermManagement } from "@/lib/permisos";
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
-const RED  = "var(--td-red)";
-const TP   = "var(--td-text-hi)";
-const TS   = "var(--td-text-md)";
-const TM   = "var(--td-text-lo)";
+const RED = "var(--td-red)";
+const TP = "var(--td-text-hi)";
+const TS = "var(--td-text-md)";
+const TM = "var(--td-text-lo)";
 const GLASS: React.CSSProperties = {
   background: "var(--td-panel-bg)",
   backdropFilter: "blur(28px) saturate(160%)",
@@ -112,17 +112,17 @@ function SectionBox({ icon: Icon, title, children }: {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 export function TabPermisos() {
-  const [users, setUsers]         = useState<ApiUser[]>([]);
-  const [products, setProducts]   = useState<Product[]>([]);
-  const [permMap, setPermMap]     = useState<PermMap>({});
-  const [loading, setLoading]     = useState(true);
-  const [saving, setSaving]       = useState(false);
+  const [users, setUsers] = useState<ApiUser[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [permMap, setPermMap] = useState<PermMap>({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
-  const [userSearch, setUserSearch]       = useState("");
-  const [selectedUser, setSelectedUser]   = useState<ApiUser | null>(null);
-  const [perm, setPerm]                   = useState<PricePerm>(DEFAULT_PERM);
-  const [savedPerm, setSavedPerm]         = useState<PricePerm>(DEFAULT_PERM);
-  const [canViewCost, setCanViewCost]     = useState(false);
+  const [userSearch, setUserSearch] = useState("");
+  const [selectedUser, setSelectedUser] = useState<ApiUser | null>(null);
+  const [perm, setPerm] = useState<PricePerm>(DEFAULT_PERM);
+  const [savedPerm, setSavedPerm] = useState<PricePerm>(DEFAULT_PERM);
+  const [canViewCost, setCanViewCost] = useState(false);
   const [savedCanViewCost, setSavedCanViewCost] = useState(false);
   const [canEditCatalog, setCanEditCatalog]     = useState(false);
   const [savedCanEditCatalog, setSavedCanEditCatalog] = useState(false);
@@ -289,7 +289,7 @@ export function TabPermisos() {
             )}
             {filteredUsers.map(u => {
               const isSelected = selectedUser?.id === u.id;
-              const hasCustom  = hasCustomPerm(u);
+              const hasCustom = hasCustomPerm(u);
               return (
                 <button
                   key={u.id}

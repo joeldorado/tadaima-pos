@@ -162,8 +162,9 @@ class UserController extends Controller
         $authUser = $request->user();
         $isAdmin  = $authUser->isAdminRole();
         $isSelf   = (int) $authUser->id === (int) $user->id;
+        $isManager = $authUser->can_view_cost && (int) $authUser->store_id === (int) $user->store_id && ! $user->isAdminRole();
 
-        if (! $isAdmin && ! $isSelf) {
+        if (! $isAdmin && ! $isSelf && ! $isManager) {
             return $this->error('No autorizado para modificar este usuario.', 403);
         }
 
@@ -191,8 +192,17 @@ class UserController extends Controller
      */
     public function destroy(User $user): JsonResponse
     {
-        // Proteger: no desactivar al propio usuario
-        if ($user->id === request()->user()->id) {
+        $authUser = request()->user();
+        $isAdmin  = $authUser?->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
+        $isSelf   = (int) $authUser?->id === (int) $user->id;
+        $isManager = $authUser?->can_view_cost && (int) $authUser?->store_id === (int) $user->store_id && ! $user->isAdminRole();
+
+        if (! $isAdmin && ! $isManager) {
+            return $this->error('No autorizado para desactivar este usuario.', 403);
+        }
+
+        // Proteger: no desactivar al propio usuario (incluso si es admin)
+        if ($isSelf) {
             return $this->error('No puedes desactivar tu propio usuario.', 422);
         }
 
@@ -261,7 +271,10 @@ class UserController extends Controller
     {
         $authUser = $request->user();
         $isAdmin  = $authUser?->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
-        if (! $isAdmin && (int) $authUser?->id !== (int) $user->id) {
+        $isSelf   = (int) $authUser?->id === (int) $user->id;
+        $isManager = $authUser?->can_view_cost && (int) $authUser?->store_id === (int) $user->store_id && ! $user->isAdminRole();
+
+        if (! $isAdmin && ! $isSelf && ! $isManager) {
             return $this->error('Sin permisos para cambiar el avatar de otro usuario.', 403);
         }
 
@@ -303,7 +316,10 @@ class UserController extends Controller
     {
         $authUser = $request->user();
         $isAdmin  = $authUser?->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
-        if (! $isAdmin && (int) $authUser?->id !== (int) $user->id) {
+        $isSelf   = (int) $authUser?->id === (int) $user->id;
+        $isManager = $authUser?->can_view_cost && (int) $authUser?->store_id === (int) $user->store_id && ! $user->isAdminRole();
+
+        if (! $isAdmin && ! $isSelf && ! $isManager) {
             return $this->error('Sin permisos para cambiar el avatar de otro usuario.', 403);
         }
 
@@ -349,7 +365,10 @@ class UserController extends Controller
     {
         $authUser = $request->user();
         $isAdmin  = $authUser?->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
-        if (! $isAdmin && (int) $authUser?->id !== (int) $user->id) {
+        $isSelf   = (int) $authUser?->id === (int) $user->id;
+        $isManager = $authUser?->can_view_cost && (int) $authUser?->store_id === (int) $user->store_id && ! $user->isAdminRole();
+
+        if (! $isAdmin && ! $isSelf && ! $isManager) {
             return $this->error('Sin permisos para cambiar el avatar de otro usuario.', 403);
         }
 
