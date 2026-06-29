@@ -20,7 +20,6 @@ import { CameraScannerModal } from "@/components/CameraScannerModal";
 import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
 import { useViewportMaxHeight } from "@/hooks/useViewportMaxHeight";
 import { PaymentRestrictionBadge, getPayRestriction } from "@/components/ui/PaymentRestrictionBadge";
-const tadaimaLogo = null // TODO: replace with real logo asset
 import { toast } from "sonner";
 import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, closeSession, forceCloseSession, getActiveSession, createLayaway, getCustomers, createCustomer, refreshMember, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getPreSaleOrders, getSales, getProductsLight, storageUrl, getCashReport, sendPreSaleAssignAlert, getCatalogCustomerUsage } from "@tadaima/api";
 import type { OpenSessionConflict } from "@tadaima/api";
@@ -55,6 +54,30 @@ import { CancelTicketModal } from "@/components/cancel/CancelTicketModal";
 import { motion as Motion, AnimatePresence } from "motion/react";
 
 // API_BASE removed — using @tadaima/api (Laravel backend)
+
+// Logo de Tadaima para el ticket, como data URI. Se incrusta inline en la ventana
+// de impresión: el CSP (img-src 'self' data:) lo permite y, al ir embebido, no
+// depende de la red ni del origen opaco about:blank de la ventana → imprime
+// confiable. Se carga una sola vez y se cachea a nivel módulo. Reusa el patrón de
+// ReportsPage (fetch → blob → readAsDataURL).
+let ticketLogoDataUrl: string | null = null;
+async function loadTicketLogo(): Promise<string | null> {
+  if (ticketLogoDataUrl) return ticketLogoDataUrl;
+  try {
+    const res = await fetch("/tadaima-logo.jpeg");
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    ticketLogoDataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error("logo read error"));
+      reader.readAsDataURL(blob);
+    });
+    return ticketLogoDataUrl;
+  } catch {
+    return null;
+  }
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type PriceLevel = "a" | "b" | "c" | "d" | "e";
@@ -592,6 +615,10 @@ export function SellPage() {
   const [showTc, setShowTc]   = useState(false);
   const [showTerminalModal, setShowTerminalModal] = useState(false);
   const [tcDraft, setTcDraft] = useState("15.50");
+
+  // Logo del ticket (data URI) — se precarga al montar para tenerlo listo al imprimir.
+  const [ticketLogo, setTicketLogo] = useState<string | null>(ticketLogoDataUrl);
+  useEffect(() => { void loadTicketLogo().then(setTicketLogo); }, []);
 
   const [search, setSearch]         = useState("");
   // Debounce the search so we don't fire a backend request on every keystroke.
@@ -2771,12 +2798,13 @@ export function SellPage() {
     td{word-break:break-word}
     .total-row td{font-weight:900;font-size:13px;border-top:1px solid #000;padding-top:6px}
     .footer{text-align:center;font-size:9px;color:#555;margin-top:8px}
+    .logo{display:block;margin:1mm auto 0;width:44mm;max-width:88%;filter:grayscale(1) contrast(1.18)}
     .no-print{position:fixed;top:0;left:0;right:0;display:flex;gap:8px;justify-content:center;padding:8px;background:#111;z-index:9}
     .no-print button{font-family:system-ui,sans-serif;font-size:13px;font-weight:700;padding:8px 16px;border:0;border-radius:8px;cursor:pointer}
     .no-print .print-btn{background:#10b981;color:#fff}.no-print .close-btn{background:#374151;color:#fff}
     @media print{@page{size:58mm auto;margin:0}html{background:#fff}body{width:58mm;margin:0;padding:2mm 1.5mm}.no-print{display:none!important}}</style></head><body>
-    <div class="no-print"><button class="print-btn" onclick="window.print()">🖨️ Imprimir</button><button class="close-btn" onclick="window.close()">Cerrar</button></div>
-    <h2>TADAIMA</h2>
+    <div class="no-print"><button class="print-btn" type="button">🖨️ Imprimir</button><button class="close-btn" type="button">Cerrar</button></div>
+    ${ticketLogo ? `<img class="logo" src="${ticketLogo}" alt="TADAIMA">` : `<h2>TADAIMA</h2>`}
     <div class="sub">Manga & Hobby Store</div>
     ${sale.storeName ? `<div class="sub" style="font-weight:900;color:#000">${sale.storeName}</div>` : ""}
     <div class="divider"></div>
@@ -2800,12 +2828,27 @@ export function SellPage() {
     // vertical. Nombre fijo "tadaima_ticket": cada ticket reemplaza al anterior (no
     // se acumulan ventanas). Trae barra Imprimir/Cerrar para ver el detalle o
     // reimprimir. Bajo Chrome --kiosk-printing el print queda silencioso igual.
-    const w = window.open("", "tadaima_ticket", "width=360,height=640");
+    const w = window.open("", "tadaima_ticket", "width=360,height=600");
     if (w) {
       w.document.open();
       w.document.write(html);
       w.document.close();
-      setTimeout(() => { try { w.focus(); w.print(); } catch { /* noop */ } }, 300);
+      // El CSP (script-src 'self') bloquea scripts/onclick inline en la ventana,
+      // así que el print y los botones se disparan/cablean desde AQUÍ (el padre).
+      // Esperamos a que el logo pinte antes de imprimir (con fallback por si la
+      // imagen no resuelve), para que el ticket salga con el logo.
+      let fired = false;
+      const fire = () => { if (fired) return; fired = true; try { w.focus(); w.print(); } catch { /* noop */ } };
+      const logoImg = w.document.querySelector("img.logo") as HTMLImageElement | null;
+      if (logoImg && !logoImg.complete) {
+        logoImg.addEventListener("load", fire, { once: true });
+        logoImg.addEventListener("error", fire, { once: true });
+        setTimeout(fire, 1200);
+      } else {
+        setTimeout(fire, 250);
+      }
+      w.document.querySelector(".print-btn")?.addEventListener("click", () => { try { w.print(); } catch { /* noop */ } });
+      w.document.querySelector(".close-btn")?.addEventListener("click", () => { try { w.close(); } catch { /* noop */ } });
       return;
     }
     // Fallback si el navegador bloquea el popup: método iframe anterior (degradado,
