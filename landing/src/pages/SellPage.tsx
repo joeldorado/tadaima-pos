@@ -2764,14 +2764,18 @@ export function SellPage() {
 
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Ticket</title>
     <style>*{margin:0;padding:0;box-sizing:border-box}
-    @page{size:58mm auto;margin:0}
-    html,body{width:58mm}
-    body{font-family:'Courier New',monospace;font-size:11px;padding:2mm 1.5mm;overflow-wrap:anywhere;word-break:break-word}
+    html{background:#e5e7eb}
+    body{font-family:'Courier New',monospace;font-size:11px;width:58mm;margin:0 auto;background:#fff;padding:56px 1.5mm 2mm;overflow-wrap:anywhere;word-break:break-word}
     h2{font-size:15px;text-align:center;font-weight:900;margin-bottom:2px}.sub{font-size:9px;text-align:center;color:#555;margin-bottom:2px}
     .divider{border-top:1px dashed #000;margin:6px 0}table{width:100%;border-collapse:collapse;table-layout:fixed}
     td{word-break:break-word}
     .total-row td{font-weight:900;font-size:13px;border-top:1px solid #000;padding-top:6px}
-    .footer{text-align:center;font-size:9px;color:#555;margin-top:8px}</style></head><body>
+    .footer{text-align:center;font-size:9px;color:#555;margin-top:8px}
+    .no-print{position:fixed;top:0;left:0;right:0;display:flex;gap:8px;justify-content:center;padding:8px;background:#111;z-index:9}
+    .no-print button{font-family:system-ui,sans-serif;font-size:13px;font-weight:700;padding:8px 16px;border:0;border-radius:8px;cursor:pointer}
+    .no-print .print-btn{background:#10b981;color:#fff}.no-print .close-btn{background:#374151;color:#fff}
+    @media print{@page{size:58mm auto;margin:0}html{background:#fff}body{width:58mm;margin:0;padding:2mm 1.5mm}.no-print{display:none!important}}</style></head><body>
+    <div class="no-print"><button class="print-btn" onclick="window.print()">🖨️ Imprimir</button><button class="close-btn" onclick="window.close()">Cerrar</button></div>
     <h2>TADAIMA</h2>
     <div class="sub">Manga & Hobby Store</div>
     ${sale.storeName ? `<div class="sub" style="font-weight:900;color:#000">${sale.storeName}</div>` : ""}
@@ -2790,9 +2794,22 @@ export function SellPage() {
     <table style="font-size:10px">${paymentRows}</table>
     <div class="divider"></div><div class="footer">¡Gracias por tu compra!</div></body></html>`;
 
-    // Impresión por iframe oculto: sin popup (no lo bloquea el navegador ni deja
-    // ventana abierta) y compatible con impresión silenciosa (Chrome --kiosk-printing)
-    // para que el ticket salga automático. El @page 58mm auto lo mantiene vertical.
+    // Ventana real de ticket — mismo método que el corte de caja, que ya imprime
+    // bien. El iframe oculto 0×0 anterior hacía que Chrome ignorara el @page 58mm y
+    // girara el ticket 90°; una ventana con viewport sí respeta el tamaño → sale
+    // vertical. Nombre fijo "tadaima_ticket": cada ticket reemplaza al anterior (no
+    // se acumulan ventanas). Trae barra Imprimir/Cerrar para ver el detalle o
+    // reimprimir. Bajo Chrome --kiosk-printing el print queda silencioso igual.
+    const w = window.open("", "tadaima_ticket", "width=360,height=640");
+    if (w) {
+      w.document.open();
+      w.document.write(html);
+      w.document.close();
+      setTimeout(() => { try { w.focus(); w.print(); } catch { /* noop */ } }, 300);
+      return;
+    }
+    // Fallback si el navegador bloquea el popup: método iframe anterior (degradado,
+    // puede salir girado) para no perder la impresión automática.
     const iframe = document.createElement("iframe");
     iframe.setAttribute("aria-hidden", "true");
     iframe.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
@@ -2802,7 +2819,6 @@ export function SellPage() {
     idoc.open();
     idoc.write(html);
     idoc.close();
-    // Espera a que el iframe pinte el contenido, dispara el print y lo retira.
     setTimeout(() => {
       try { iframe.contentWindow?.focus(); iframe.contentWindow?.print(); } catch { /* noop */ }
       setTimeout(() => iframe.remove(), 1500);
@@ -5620,8 +5636,11 @@ export function SellPage() {
                     // ¿Falta cubrir el total? (para el aviso "completa con…").
                     const faltaCubrir   = Math.max(0, currentPayAmount - totalReceived);
 
-                    // Cambio en dual currency cuando se cobró con USD.
-                    const cambioUsd = cambio > 0 && receivedUsd > 0 ? cambio / tc : 0;
+                    // Equivalentes en USD del cambio y del faltante. El número
+                    // grande de abajo sigue la moneda activa del toggle (usdPrimary):
+                    // en dólares lo muestra en USD, en pesos en MXN, con el otro chiquito.
+                    const cambioUsd = tc > 0 && cambio > 0      ? cambio / tc      : 0;
+                    const faltaUsd  = tc > 0 && faltaCubrir > 0 ? faltaCubrir / tc : 0;
 
                     return (
                       <div className="flex flex-col gap-2 flex-1 min-w-0">
@@ -5791,15 +5810,29 @@ export function SellPage() {
                                 {cambio >= 0 ? "Cambio" : "Falta"}
                               </span>
                               <div className="text-right">
-                                <p className={`text-3xl font-black leading-none tabular-nums ${cambio >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                                  {fmt(cambio >= 0 ? cambio : faltaCubrir)}
-                                </p>
-                                {/* Cambio dual: si cobró con USD, ofrece el equivalente
-                                    en dólares (útil si decide regresarle parte en USD). */}
-                                {cambio > 0 && cambioUsd > 0 && (
-                                  <p className="text-[11px] font-bold text-emerald-400/70 mt-1 tabular-nums">
-                                    ≈ US${cambioUsd.toFixed(2)}
-                                  </p>
+                                {/* El número grande sigue la moneda activa del toggle: en
+                                    modo dólares sale el Cambio/Falta en USD; en pesos, en MXN.
+                                    Debajo, chiquito, el equivalente en la otra moneda. */}
+                                {usdPrimary ? (
+                                  <>
+                                    <p className={`text-3xl font-black leading-none tabular-nums ${cambio >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                                      US${(cambio >= 0 ? cambioUsd : faltaUsd).toFixed(2)}
+                                    </p>
+                                    <p className={`text-[11px] font-bold mt-1 tabular-nums ${cambio >= 0 ? "text-emerald-400/70" : "text-red-400/70"}`}>
+                                      ≈ {fmt(cambio >= 0 ? cambio : faltaCubrir)}
+                                    </p>
+                                  </>
+                                ) : (
+                                  <>
+                                    <p className={`text-3xl font-black leading-none tabular-nums ${cambio >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                                      {fmt(cambio >= 0 ? cambio : faltaCubrir)}
+                                    </p>
+                                    {(cambio >= 0 ? cambioUsd : faltaUsd) > 0 && (
+                                      <p className={`text-[11px] font-bold mt-1 tabular-nums ${cambio >= 0 ? "text-emerald-400/70" : "text-red-400/70"}`}>
+                                        ≈ US${(cambio >= 0 ? cambioUsd : faltaUsd).toFixed(2)}
+                                      </p>
+                                    )}
+                                  </>
                                 )}
                               </div>
                             </div>
