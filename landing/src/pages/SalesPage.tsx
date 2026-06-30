@@ -25,6 +25,7 @@ import {
 } from "recharts";
 import { getCashReport, storageUrl } from "@tadaima/api";
 import { buildPaymentSummary } from "@/lib/paymentSummary";
+import { discountPct } from "@/lib/promo";
 import { CancelTicketModal } from "@/components/cancel/CancelTicketModal";
 import { useActiveSessionQuery } from "@/hooks/queries/useCashSession";
 import { getTodayLocal, toLocalYmd, daysAgoLocal, BUSINESS_TZ } from "@/lib/date";
@@ -144,24 +145,28 @@ function printTicket(sale: SaleDetail) {
   const win = window.open("", "_blank", "width=340,height=600");
   if (!win) return;
   const pay = buildPaymentSummary(sale);
+  // Subtotal previo + % de descuento (derivado) para reimprimir el desglose Promo.
+  const reSubBefore = sale.subtotal ?? (sale.total + (sale.discount ?? 0));
+  const rePct = discountPct(sale.discount ?? 0, reSubBefore);
+  const rePromoLabel = rePct > 0 ? `Promo (${rePct}%)` : "Promo";
   // Bloque de pago del ticket: método(s) + efectivo/dólares/cambio (TC de la venta).
   const paymentBlock = `
   <div class="divider"></div>
   <table style="font-size:10px">
     <tr><td>Método de pago</td><td style="text-align:right;font-weight:900">${pay.methodLabel}</td></tr>
-    ${pay.isMixed ? pay.lines.map(l => `<tr><td style="font-size:9px;color:#555">· ${l.name}</td><td style="text-align:right;font-size:9px;color:#555">${fmt(l.amount)}</td></tr>`).join("") : ""}
+    ${pay.isMixed ? pay.lines.map(l => `<tr><td style="font-size:9px">· ${l.name}</td><td style="text-align:right;font-size:9px">${fmt(l.amount)}</td></tr>`).join("") : ""}
     ${pay.cashReceived != null ? `<tr><td>Recibido</td><td style="text-align:right">${fmt(pay.cashReceived)}</td></tr>` : ""}
-    ${pay.hasUsd && pay.pesosCash != null ? `<tr><td style="font-size:9px;color:#555">· Pesos</td><td style="text-align:right;font-size:9px;color:#555">${fmt(pay.pesosCash)}</td></tr>` : ""}
-    ${pay.hasUsd ? `<tr><td style="font-size:9px;color:#555">· Dólares</td><td style="text-align:right;font-size:9px;color:#555">$${pay.usd.toFixed(2)} USD${pay.exchangeRate ? ` (≈ ${fmt(pay.usdAsMxn)} a $${pay.exchangeRate.toFixed(2)})` : ""}</td></tr>` : ""}
+    ${pay.hasUsd && pay.pesosCash != null ? `<tr><td style="font-size:9px">· Pesos</td><td style="text-align:right;font-size:9px">${fmt(pay.pesosCash)}</td></tr>` : ""}
+    ${pay.hasUsd ? `<tr><td style="font-size:9px">· Dólares</td><td style="text-align:right;font-size:9px">$${pay.usd.toFixed(2)} USD${pay.exchangeRate ? ` (≈ ${fmt(pay.usdAsMxn)} a $${pay.exchangeRate.toFixed(2)})` : ""}</td></tr>` : ""}
     ${pay.change != null && pay.change > 0 ? `<tr><td style="font-weight:900">Cambio</td><td style="text-align:right;font-weight:900">${fmt(pay.change)}</td></tr>` : ""}
   </table>`;
   const items = (sale.items || [])
     .map(i => {
       const name = i.product?.name || String(i.product_id);
       return `<tr>
-        <td style="padding:2px 0;font-size:10px;">${name}</td>
+        <td style="padding:2px 0;font-size:11px;font-weight:700;">${name}</td>
         <td style="text-align:center;padding:2px 4px;font-size:10px;">×${i.quantity}</td>
-        <td style="text-align:right;font-size:10px;">${fmt(i.price * i.quantity)}</td>
+        <td style="text-align:right;font-size:11px;font-weight:900;">${fmt(i.price * i.quantity)}</td>
       </tr>`;
     })
     .join("");
@@ -172,11 +177,11 @@ function printTicket(sale: SaleDetail) {
     *{margin:0;padding:0;box-sizing:border-box}
     body{font-family:'Courier New',monospace;font-size:11px;width:280px;padding:12px 8px}
     h2{font-size:16px;text-align:center;font-weight:900;margin-bottom:4px}
-    .sub{font-size:9px;text-align:center;color:#555;margin-bottom:8px}
+    .sub{font-size:9px;text-align:center;color:#000;margin-bottom:8px}
     .divider{border-top:1px dashed #000;margin:8px 0}
     table{width:100%;border-collapse:collapse}
     .total-row td{font-weight:900;font-size:13px;border-top:1px solid #000;padding-top:6px}
-    .footer{text-align:center;font-size:9px;color:#555;margin-top:10px}
+    .footer{text-align:center;font-size:9px;color:#000;margin-top:10px}
     @media print{@page{margin:0;size:58mm auto;orientation:portrait}body{width:58mm}}
   </style></head><body>
   <h2>TADAIMA</h2>
@@ -196,7 +201,9 @@ function printTicket(sale: SaleDetail) {
     </tr></thead>
     <tbody>${items}</tbody>
     ${(sale.pre_sale_orders ?? []).length === 0 ? `
-    <tfoot><tr class="total-row">
+    <tfoot>
+      ${(sale.discount ?? 0) > 0 ? `<tr><td colspan="2" style="font-size:9px">Subtotal</td><td style="text-align:right;font-size:9px">${fmt(reSubBefore)}</td></tr><tr><td colspan="2" style="font-size:9px">${rePromoLabel}</td><td style="text-align:right;font-size:9px">-${fmt(sale.discount ?? 0)}</td></tr>` : ""}
+      <tr class="total-row">
       <td colspan="2">TOTAL</td>
       <td style="text-align:right">${fmt(sale.total)}</td>
     </tr></tfoot>` : ""}
@@ -480,6 +487,9 @@ function SaleRow({
 }) {
   const itemCount = sale.items?.reduce((s, i) => s + i.quantity, 0) ?? 0;
   const paymentName = getPaymentMethodName(sale);
+  // Descuento del ticket: monto + % derivado (chip en la fila + línea en el detalle).
+  const saleDiscount = sale.discount ?? 0;
+  const saleDiscPct = discountPct(saleDiscount, sale.subtotal ?? (sale.total + saleDiscount));
 
   const previewItems = (sale.items || []).slice(0, 3);
 
@@ -595,6 +605,12 @@ function SaleRow({
                 <p className="text-[8px] font-black uppercase tracking-widest" style={{ color: "#10B981" }}
                    title={`Recibió ${sale.cash_received_usd} USD${sale.exchange_rate ? ` a $${sale.exchange_rate}` : ""}`}>
                   {sale.cash_received_usd} USD
+                </p>
+              )}
+              {saleDiscPct > 0 && (
+                <p className="text-[8px] font-black uppercase tracking-widest" style={{ color: "#f59e0b" }}
+                   title={`Descuento de ${fmt(saleDiscount)} (${saleDiscPct}%)`}>
+                  −{saleDiscPct}%
                 </p>
               )}
               {sale.cancellation_status === "partial" && cancelled > 0 ? (
@@ -798,6 +814,11 @@ function SaleRow({
                   <span className="text-[9px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>Cómo se pagó</span>
                   <span className="text-[10px] font-black px-2 py-0.5 rounded-full border" style={paymentTone(pay.methodLabel)}>{pay.methodLabel}</span>
                 </div>
+                {saleDiscPct > 0 && (
+                  <div className="flex justify-between text-[10px] mt-1.5" style={{ color: "#f59e0b" }}>
+                    <span>Descuento ({saleDiscPct}%)</span><span className="font-bold">−{fmt(saleDiscount)}</span>
+                  </div>
+                )}
                 {pay.isMixed && pay.lines.map((l, li) => (
                   <div key={li} className="flex justify-between text-[10px] mt-1.5" style={{ color: "var(--td-text-lo)" }}><span>· {l.name}</span><span className="font-bold">{fmt(l.amount)}</span></div>
                 ))}

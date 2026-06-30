@@ -34,7 +34,7 @@ function buildTicketsHtml(detail: CashSessionDetail | null): string {
       `<div class="row"><span>${i.quantity} × ${i.name}</span><span>${fmt(i.total)}</span></div>`
     ).join("");
     const pays = t.payments.map(p => `${p.method} ${fmt(p.amount)}`).join(" + ");
-    return `<div class="row" style="font-weight:900; margin-top:4px"><span>#${t.id}${cancelled ? " CANCELADO" : ""}</span><span>${fmt(t.total)}</span></div>${items}<div class="row" style="color:#555"><span>${pays}</span><span></span></div>`;
+    return `<div class="row" style="font-weight:900; margin-top:4px"><span>#${t.id}${cancelled ? " CANCELADO" : ""}</span><span>${fmt(t.total)}</span></div>${items}<div class="row"><span>${pays}</span><span></span></div>`;
   }).join("");
   const presale = detail.pre_sale_payments.map(p =>
     `<div class="row"><span>${p.folio} · ${p.method}</span><span>+${fmt(p.amount)}</span></div>`
@@ -57,7 +57,7 @@ function buildPrintHtml(s: CashSessionReport, detail: CashSessionDetail | null =
     <html><head><title>Corte ${s.id}</title><style>
       body { font-family: ui-monospace, monospace; width: 58mm; margin: 0; padding: 8px; font-size: 11px; color: #000 }
       h2 { font-size: 14px; text-align: center; margin: 0 0 4px }
-      .sub { text-align: center; color: #555; font-size: 9px; margin-bottom: 8px }
+      .sub { text-align: center; color: #000; font-size: 9px; margin-bottom: 8px }
       .row { display: flex; justify-content: space-between; padding: 2px 0 }
       .divider { border-top: 1px dashed #000; margin: 6px 0 }
       .total { font-weight: 900; font-size: 13px; border-top: 1px solid #000; padding-top: 4px; margin-top: 4px }
