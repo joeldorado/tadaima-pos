@@ -524,7 +524,7 @@ class ReportsController extends Controller
                 "product" as type,
                 COUNT(DISTINCT sale_items.sale_id) as times_sold,
                 COALESCE(SUM(sale_items.quantity), 0) as total_quantity,
-                COALESCE(SUM(sale_items.total), 0) as total_revenue
+                COALESCE(SUM(sale_items.total * CASE WHEN sales.discount > 0 THEN sales.total * 1.0 / NULLIF(sales.subtotal, 0) ELSE 1 END), 0) as total_revenue
             ')
             ->groupBy('sale_items.product_id', 'products.name', 'products.sku')
             ->get();
@@ -545,7 +545,7 @@ class ReportsController extends Controller
                 "manga" as type,
                 COUNT(DISTINCT sale_items.sale_id) as times_sold,
                 COALESCE(SUM(sale_items.quantity), 0) as total_quantity,
-                COALESCE(SUM(sale_items.total), 0) as total_revenue
+                COALESCE(SUM(sale_items.total * CASE WHEN sales.discount > 0 THEN sales.total * 1.0 / NULLIF(sales.subtotal, 0) ELSE 1 END), 0) as total_revenue
             ')
             ->groupBy('sale_items.manga_id', 'mangas.name', 'mangas.code')
             ->get();

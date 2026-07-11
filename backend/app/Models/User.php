@@ -17,7 +17,7 @@ class User extends Authenticatable
     protected $fillable = [
         'name', 'email', 'password', 'password_enc',
         'company_id', 'store_id', 'phone', 'address', 'active', 'can_view_cost',
-        'avatar_url', 'last_seen_at',
+        'can_edit_catalog', 'avatar_url', 'last_seen_at',
     ];
 
     // password_enc en $hidden: nunca se auto-serializa. Solo se expone descifrado
@@ -32,6 +32,7 @@ class User extends Authenticatable
             'password_enc'      => 'encrypted',
             'active'            => 'boolean',
             'can_view_cost'     => 'boolean',
+            'can_edit_catalog'  => 'boolean',
             'last_seen_at'      => 'datetime',
         ];
     }
@@ -85,6 +86,16 @@ class User extends Authenticatable
     public function canViewCost(): bool
     {
         return $this->isAdminRole() || (bool) $this->can_view_cost;
+    }
+
+    /**
+     * Gate de edición de la tienda online (catálogo): admin siempre; el resto
+     * vía el flag can_edit_catalog que el admin enciende en Permisos. Espejo de
+     * canViewCost(). Lo usa CatalogController para gatear las 6 rutas admin.
+     */
+    public function canEditCatalog(): bool
+    {
+        return $this->isAdminRole() || (bool) $this->can_edit_catalog;
     }
 
     /**

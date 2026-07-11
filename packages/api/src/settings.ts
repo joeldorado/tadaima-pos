@@ -67,17 +67,30 @@ export interface CatalogSettings {
   id: number
   store_id: number
   store_name: string
+  store_phone: string | null
   catalog_url: string | null
+  whatsapp_number: string | null
   show_price: boolean
   show_stock: boolean
+  show_search: boolean
+  show_categories: boolean
+  show_description: boolean
+  cart_enabled: boolean
+  hide_out_of_stock: boolean
   public_url: string | null
   updated_at: string | null
 }
 
 export interface UpdateCatalogSettingsPayload {
   catalog_url?: string | null
+  whatsapp_number?: string | null
   show_price?: boolean
   show_stock?: boolean
+  show_search?: boolean
+  show_categories?: boolean
+  show_description?: boolean
+  cart_enabled?: boolean
+  hide_out_of_stock?: boolean
 }
 
 export async function getCatalogSettings(storeId: number): Promise<CatalogSettings> {

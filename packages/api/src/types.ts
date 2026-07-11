@@ -7,6 +7,8 @@ export interface User {
   phone: string | null
   active: boolean
   can_view_cost: boolean
+  /** Permite editar la tienda online (catálogo) sin ser admin. Lo activa el admin en Permisos. */
+  can_edit_catalog: boolean
   /**
    * Password en claro — SOLO presente cuando el que consulta es admin (copia
    * reversible). undefined para no-admin; null si el usuario no tiene copia

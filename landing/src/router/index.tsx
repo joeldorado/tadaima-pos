@@ -33,7 +33,17 @@ export const router = createBrowserRouter([
     Component: LoginPage,
   },
   {
+    // Catálogo de cadena (v2): una sola URL global. Los paths con slug se
+    // conservan como alias (links viejos) y rinden el mismo catálogo global.
+    path: '/catalogo',
+    Component: OnlineCatalogPage,
+  },
+  {
     path: '/catalogo/:catalogUrl',
+    Component: OnlineCatalogPage,
+  },
+  {
+    path: '/tienda-online',
     Component: OnlineCatalogPage,
   },
   {

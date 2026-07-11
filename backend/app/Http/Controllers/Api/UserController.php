@@ -98,10 +98,27 @@ class UserController extends Controller
      */
     public function store(StoreUserRequest $request): JsonResponse
     {
+        // Gate de creación (anti-escalada): admin crea libremente. Un gerente
+        // puede crear usuarios de SU tienda pero NUNCA un admin. Cualquier otro
+        // (cajero, etc.) no crea usuarios. Antes este endpoint no tenía guard →
+        // cualquier token podía crear/promover a admin por API directa.
+        $authUser = $request->user();
+        if (! $authUser->isAdminRole()) {
+            if (! $authUser->hasRole(['gerente', 'manager'])) {
+                return $this->error('No autorizado para crear usuarios.', 403);
+            }
+            if (! $authUser->canActOnStore($request->integer('store_id'))) {
+                return $this->error('Solo puedes crear usuarios de tu tienda.', 403);
+            }
+            if ($this->roleIsAdmin($request->role_id)) {
+                return $this->error('No puedes asignar el rol de administrador.', 403);
+            }
+        }
+
         $user = DB::transaction(function () use ($request) {
             $data = $request->only([
                 'name', 'email', 'password', 'phone', 'address',
-                'company_id', 'store_id', 'active', 'can_view_cost',
+                'company_id', 'store_id', 'active', 'can_view_cost', 'can_edit_catalog',
             ]);
 
             // La UI no manda company_id → derivarlo del admin que crea, o de la
@@ -162,14 +179,16 @@ class UserController extends Controller
         $authUser = $request->user();
         $isAdmin  = $authUser->isAdminRole();
         $isSelf   = (int) $authUser->id === (int) $user->id;
-        $isManager = $authUser->can_view_cost && (int) $authUser->store_id === (int) $user->store_id && ! $user->isAdminRole();
+        // "Gerente" = rol real (no el flag can_view_cost, que un cajero podría
+        // tener) + misma tienda + el target NO es admin (no se toca a un admin).
+        $isManager = $authUser->hasRole(['gerente', 'manager']) && (int) $authUser->store_id === (int) $user->store_id && ! $user->isAdminRole();
 
         if (! $isAdmin && ! $isSelf && ! $isManager) {
             return $this->error('No autorizado para modificar este usuario.', 403);
         }
 
         $fields = $isAdmin
-            ? ['name', 'email', 'phone', 'address', 'company_id', 'store_id', 'active', 'can_view_cost']
+            ? ['name', 'email', 'phone', 'address', 'company_id', 'store_id', 'active', 'can_view_cost', 'can_edit_catalog']
             : ['name', 'email', 'phone', 'address'];
 
         $data = $request->only($fields);
@@ -195,7 +214,7 @@ class UserController extends Controller
         $authUser = request()->user();
         $isAdmin  = $authUser?->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
         $isSelf   = (int) $authUser?->id === (int) $user->id;
-        $isManager = $authUser?->can_view_cost && (int) $authUser?->store_id === (int) $user->store_id && ! $user->isAdminRole();
+        $isManager = $authUser?->hasRole(['gerente', 'manager']) && (int) $authUser?->store_id === (int) $user->store_id && ! $user->isAdminRole();
 
         if (! $isAdmin && ! $isManager) {
             return $this->error('No autorizado para desactivar este usuario.', 403);
@@ -211,6 +230,17 @@ class UserController extends Controller
         return $this->success(null, 'Usuario desactivado.');
     }
 
+    /** ¿El rol (por id) es de administrador? Bloquea que un no-admin escale roles. */
+    private function roleIsAdmin(int|string|null $roleId): bool
+    {
+        if (! $roleId) {
+            return false;
+        }
+        $name = DB::table('roles')->where('id', $roleId)->value('name');
+
+        return $name !== null && in_array($name, User::ADMIN_ROLES, true);
+    }
+
     /**
      * POST /users/{user}/roles
      * Body: { role_id: int }
@@ -223,6 +253,18 @@ class UserController extends Controller
     public function assignRole(Request $request, User $user): JsonResponse
     {
         $request->validate(['role_id' => ['required', 'integer', 'exists:roles,id']]);
+
+        // Gate (anti-escalada): admin asigna cualquier rol. Un gerente solo
+        // cambia el rol de usuarios NO-admin de SU tienda, y NUNCA a admin.
+        $authUser = $request->user();
+        if (! $authUser->isAdminRole()) {
+            $canManage = $authUser->hasRole(['gerente', 'manager'])
+                && $authUser->canActOnStore($user->store_id)
+                && ! $user->isAdminRole();
+            if (! $canManage || $this->roleIsAdmin($request->role_id)) {
+                return $this->error('No autorizado para asignar este rol.', 403);
+            }
+        }
 
         DB::transaction(function () use ($request, $user) {
             DB::table('model_has_roles')
@@ -272,7 +314,7 @@ class UserController extends Controller
         $authUser = $request->user();
         $isAdmin  = $authUser?->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
         $isSelf   = (int) $authUser?->id === (int) $user->id;
-        $isManager = $authUser?->can_view_cost && (int) $authUser?->store_id === (int) $user->store_id && ! $user->isAdminRole();
+        $isManager = $authUser?->hasRole(['gerente', 'manager']) && (int) $authUser?->store_id === (int) $user->store_id && ! $user->isAdminRole();
 
         if (! $isAdmin && ! $isSelf && ! $isManager) {
             return $this->error('Sin permisos para cambiar el avatar de otro usuario.', 403);
@@ -317,7 +359,7 @@ class UserController extends Controller
         $authUser = $request->user();
         $isAdmin  = $authUser?->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
         $isSelf   = (int) $authUser?->id === (int) $user->id;
-        $isManager = $authUser?->can_view_cost && (int) $authUser?->store_id === (int) $user->store_id && ! $user->isAdminRole();
+        $isManager = $authUser?->hasRole(['gerente', 'manager']) && (int) $authUser?->store_id === (int) $user->store_id && ! $user->isAdminRole();
 
         if (! $isAdmin && ! $isSelf && ! $isManager) {
             return $this->error('Sin permisos para cambiar el avatar de otro usuario.', 403);
@@ -366,7 +408,7 @@ class UserController extends Controller
         $authUser = $request->user();
         $isAdmin  = $authUser?->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
         $isSelf   = (int) $authUser?->id === (int) $user->id;
-        $isManager = $authUser?->can_view_cost && (int) $authUser?->store_id === (int) $user->store_id && ! $user->isAdminRole();
+        $isManager = $authUser?->hasRole(['gerente', 'manager']) && (int) $authUser?->store_id === (int) $user->store_id && ! $user->isAdminRole();
 
         if (! $isAdmin && ! $isSelf && ! $isManager) {
             return $this->error('Sin permisos para cambiar el avatar de otro usuario.', 403);

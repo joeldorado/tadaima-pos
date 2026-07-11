@@ -44,6 +44,19 @@ class UserCompanyDerivationTest extends TestCase
             'company_id' => $this->company->id,
             'active' => true,
         ]);
+
+        // store() ahora exige rol admin REAL para crear usuarios libremente (gate
+        // anti-escalada 2026-06-27). Antes el endpoint no tenía guard y este
+        // "admin" sin rol pasaba igual. Le asignamos el rol para probar la
+        // derivación de company (el objeto de este test), no el gate.
+        $adminRoleId = DB::table('roles')->where('name', 'admin')->value('id')
+            ?? DB::table('roles')->insertGetId([
+                'name' => 'admin', 'guard_name' => 'api',
+                'created_at' => now(), 'updated_at' => now(),
+            ]);
+        DB::table('model_has_roles')->insert([
+            'role_id' => $adminRoleId, 'model_type' => User::class, 'model_id' => $this->admin->id,
+        ]);
     }
 
     public function test_new_user_inherits_company_from_creator(): void

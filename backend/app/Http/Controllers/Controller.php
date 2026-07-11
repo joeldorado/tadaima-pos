@@ -55,6 +55,22 @@ abstract class Controller
     }
 
     /**
+     * Gate de edición de la tienda online: 403 si el usuario NO es admin ni
+     * tiene el flag can_edit_catalog. Flag-based (no role-based), espejo de
+     * can_view_cost — un gerente sin el flag no edita el catálogo. Usa el
+     * request global para no atar la firma de los métodos que no lo reciben.
+     */
+    protected function catalogEditError(): ?JsonResponse
+    {
+        $user = request()->user();
+        if ($user && ! $user->canEditCatalog()) {
+            return $this->error('No tienes permiso para editar el catálogo online.', 403);
+        }
+
+        return null;
+    }
+
+    /**
      * Guard de scope de tienda: devuelve la respuesta 403 si el usuario
      * autenticado NO puede operar sobre la tienda dada, o null si puede.
      * Uso: if ($resp = $this->storeScopeError($request, $storeId)) return $resp;

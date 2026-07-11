@@ -406,7 +406,18 @@ export function ReportsPage() {
         const prodName = item.product?.name ?? "Artículo Desconocido";
         const prodSku = item.product?.sku ?? "—";
         const qty = item.quantity;
-        const itemTotal = item.total;
+        // Prorratea la promo/descuento de la venta a este item (Joel 2026-06-29): el
+        // descuento vive a nivel venta (sales.discount) y NO baja sale_items.total, así
+        // que sin esto el Bruto/Utilidad por producto se inflaría con las promos. Solo
+        // se aplica en ventas COMPLETADAS con descuento real; las que tienen
+        // cancelación/devolución conservan el comportamiento crudo (la sección de
+        // cancelados resta el line_total crudo y debe netear igual). Sin descuento el
+        // ratio = 1 (no cambia nada). El costo NO se prorratea (es el mismo con/ sin promo).
+        const saleHasReversal = (sale.cancelled_items?.length ?? 0) > 0 || sale.status === "returned";
+        const discRatio = (!saleHasReversal && (sale.discount ?? 0) > 0 && sale.subtotal > 0)
+          ? sale.total / sale.subtotal
+          : 1;
+        const itemTotal = item.total * discRatio;
         const unitPrice = item.price;
 
         if (!map.has(prodId)) {
@@ -463,7 +474,7 @@ export function ReportsPage() {
         const matchesCancelledFilter = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.includes("cancelled");
         if (matchesCancelledFilter) {
           const itemsToProcess = hasCancellations 
-            ? sale.cancelled_items.map((ci: any) => ({
+            ? (sale.cancelled_items ?? []).map((ci: any) => ({
                 product_id: ci.product_id,
                 name: ci.name,
                 sku: ci.sku,
@@ -608,7 +619,7 @@ export function ReportsPage() {
           if (item.status === 'delivered' && item.delivered_at) {
             const deliveredYmd = toLocalYmd(new Date(item.delivered_at));
             if (deliveredYmd >= from && deliveredYmd <= to) {
-              const unitCost = item.cost ?? item.catalog?.cost ?? 0;
+              const unitCost = item.cost ?? 0;
               itemCostTotal = unitCost * qty;
             }
           }
@@ -3128,9 +3139,11 @@ export function ReportsPage() {
                                 ) : null}
                               </div>
                             </td>
-                            <td style={{ ...tdStyle, fontWeight: 900, color: uiTotals.profit < 0 ? "#FF4422" : "#00CC66" }}>
-                              {fmt(uiTotals.profit)}
-                            </td>
+                            {canViewCost && (
+                              <td style={{ ...tdStyle, fontWeight: 900, color: uiTotals.profit < 0 ? "#FF4422" : "#00CC66" }}>
+                                {fmt(uiTotals.profit)}
+                              </td>
+                            )}
                           </tr>
                         )}
                       </tbody>
@@ -3140,7 +3153,7 @@ export function ReportsPage() {
 
                 {/* Section summary card below the table */}
                 {groupedProducts.length > 0 && (
-                  <div className="grid grid-cols-1 md:grid-cols-6 gap-4 mt-1">
+                  <div className={`grid grid-cols-1 ${canViewCost ? "md:grid-cols-6" : "md:grid-cols-5"} gap-4 mt-1`}>
                     <div className="p-4 rounded-2xl" style={{ ...GLASS, border: "1px solid rgba(255,255,255,0.05)" }}>
                       <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: TM }}>Venta Bruta Total</p>
                       <p className="text-xl font-black mt-1" style={{ color: uiTotals.bruto < 0 ? "#FF4422" : TP }}>{fmt(uiTotals.bruto)}</p>
@@ -3161,10 +3174,12 @@ export function ReportsPage() {
                       <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "#00CC66" }}>Neto Real para la Tienda</p>
                       <p className="text-xl font-black mt-1" style={{ color: uiTotals.neto < 0 ? "#FF4422" : "#00CC66" }}>{fmt(uiTotals.neto)}</p>
                     </div>
-                    <div className="p-4 rounded-2xl" style={{ ...GLASS, border: "1px solid rgba(0,204,102,0.2)", background: "rgba(0,204,102,0.05)" }}>
-                      <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "#00CC66" }}>Utilidad Neta</p>
-                      <p className="text-xl font-black mt-1" style={{ color: uiTotals.profit < 0 ? "#FF4422" : "#00CC66" }}>{fmt(uiTotals.profit)}</p>
-                    </div>
+                    {canViewCost && (
+                      <div className="p-4 rounded-2xl" style={{ ...GLASS, border: "1px solid rgba(0,204,102,0.2)", background: "rgba(0,204,102,0.05)" }}>
+                        <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "#00CC66" }}>Utilidad Neta</p>
+                        <p className="text-xl font-black mt-1" style={{ color: uiTotals.profit < 0 ? "#FF4422" : "#00CC66" }}>{fmt(uiTotals.profit)}</p>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -3277,7 +3292,7 @@ export function ReportsPage() {
 
                   {/* Summary Cards Row inside Modal */}
                   {groupedProducts.length > 0 && (
-                    <div className="grid grid-cols-1 md:grid-cols-6 gap-4 pt-4 border-t" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+                    <div className={`grid grid-cols-1 ${canViewCost ? "md:grid-cols-6" : "md:grid-cols-5"} gap-4 pt-4 border-t`} style={{ borderColor: "rgba(255,255,255,0.08)" }}>
                       <div className="p-3.5 rounded-2xl" style={{ ...GLASS, border: "1px solid rgba(255,255,255,0.05)" }}>
                         <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: TM }}>Venta Bruta Total</p>
                         <p className="text-lg font-black mt-0.5" style={{ color: TP }}>{fmt(uiTotals.bruto)}</p>

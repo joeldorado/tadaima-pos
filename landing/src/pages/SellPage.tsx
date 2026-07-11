@@ -9,7 +9,7 @@ import {
   Mail,
   TriangleAlert, PackageX, Bookmark, Calendar, PackageCheck, ClipboardList, Banknote,
   Truck, CheckCircle2, Printer, History, Receipt, RefreshCw,
-  ShoppingCart, Crown, Circle, Trash2, XCircle, Clock, Bell,
+  ShoppingCart, Crown, Circle, Trash2, XCircle, Clock, Bell, Scissors,
 } from "lucide-react";
 import { ImageWithFallback } from "@/components/figma/ImageWithFallback";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -20,7 +20,6 @@ import { CameraScannerModal } from "@/components/CameraScannerModal";
 import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
 import { useViewportMaxHeight } from "@/hooks/useViewportMaxHeight";
 import { PaymentRestrictionBadge, getPayRestriction } from "@/components/ui/PaymentRestrictionBadge";
-const tadaimaLogo = null // TODO: replace with real logo asset
 import { toast } from "sonner";
 import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, closeSession, forceCloseSession, getActiveSession, createLayaway, getCustomers, createCustomer, refreshMember, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getPreSaleOrders, getSales, getProductsLight, storageUrl, getCashReport, sendPreSaleAssignAlert, getCatalogCustomerUsage } from "@tadaima/api";
 import type { OpenSessionConflict } from "@tadaima/api";
@@ -41,11 +40,12 @@ import { useCustomersAllQuery } from "@/hooks/queries/useCustomers";
 import { useTodayHistorialQuery } from "@/hooks/queries/useHistorial";
 import { queryKeys } from "@/lib/queryKeys";
 import { prependSaleToSalesCaches, prependPreSaleOrderToCaches, patchPreSaleOrderInCaches, decrementProductStockInCaches, invalidateAfterSale } from "@/lib/optimisticSale";
-import { getTodayLocal } from "@/lib/date";
+import { getTodayLocal, toLocalYmd, BUSINESS_TZ } from "@/lib/date";
 import { isValidEmail, isValidPhone } from "@/lib/validation";
 import { PRICE_LEVEL_LABELS, PRICE_LEVEL_COLORS, PRICE_LEVEL_RGB } from "@/lib/priceLevels";
 import type { CashSession, CashRegisterInfo, PaymentMethod as ApiPaymentMethod, PreSaleCatalog, PreSaleOrder, PreSaleOrderItem, SaleDetail, Terminal, ExternalCardLookup } from "@tadaima/api";
 import { buildPaymentSummary } from "@/lib/paymentSummary";
+import { computePromoDiscount, computeRegularChargeAmount, discountPct } from "@/lib/promo";
 import type { HistorialEntry } from "@/hooks/queries/useHistorial";
 import { useCartDraftStore } from "@/stores/cartDraftStore";
 import { useActiveStore } from "@/contexts/StoreContext";
@@ -55,6 +55,30 @@ import { CancelTicketModal } from "@/components/cancel/CancelTicketModal";
 import { motion as Motion, AnimatePresence } from "motion/react";
 
 // API_BASE removed — using @tadaima/api (Laravel backend)
+
+// Logo de Tadaima para el ticket, como data URI. Se incrusta inline en la ventana
+// de impresión: el CSP (img-src 'self' data:) lo permite y, al ir embebido, no
+// depende de la red ni del origen opaco about:blank de la ventana → imprime
+// confiable. Se carga una sola vez y se cachea a nivel módulo. Reusa el patrón de
+// ReportsPage (fetch → blob → readAsDataURL).
+let ticketLogoDataUrl: string | null = null;
+async function loadTicketLogo(): Promise<string | null> {
+  if (ticketLogoDataUrl) return ticketLogoDataUrl;
+  try {
+    const res = await fetch("/tadaima-logo.jpeg");
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    ticketLogoDataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error("logo read error"));
+      reader.readAsDataURL(blob);
+    });
+    return ticketLogoDataUrl;
+  } catch {
+    return null;
+  }
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type PriceLevel = "a" | "b" | "c" | "d" | "e";
@@ -133,6 +157,8 @@ interface Mesa {
   /** true = socio Tadaima ACTIVO/elegible → aplica precio socio (b). Joel 2026-06-25. */
   customerSocioEligible?: boolean;
   isNewCustomer?: boolean;
+  /** Promo/descuento aplicado a la mesa, en PESOS (monto absoluto, no %).
+   *  Lo setea el botón "Promo" (desde 2+ piezas). Joel 2026-06-29. */
   discount: number;
   paymentMethod: PaymentMethod;
   isPreventa: boolean;
@@ -161,6 +187,10 @@ const fmt = (n: number) =>
     style: "currency", currency: "MXN",
     minimumFractionDigits: 0, maximumFractionDigits: 0,
   }).format(n || 0);
+
+// Pesos con sufijo "MXN" — para el panel de cobro, donde conviven con US$ y el
+// cajero necesita distinguir la moneda de un vistazo (Joel 2026-06-29).
+const fmtMXN = (n: number) => `${fmt(n)} MXN`;
 
 const fmtUSD = (n: number) =>
   new Intl.NumberFormat("en-US", {
@@ -440,6 +470,12 @@ export function SellPage() {
   );
   const activeSessionQuery  = useActiveSessionQuery();
   const cashSession: CashSession | null = activeSessionQuery.data ?? null;
+  // Caja abierta de un día anterior: el cajero la dejó sin cortar (caso real
+  // 2026-06-29: abierta desde el 25). Comparamos el día local del negocio
+  // (Tijuana) de la apertura contra hoy; si es anterior, mostramos un aviso
+  // proactivo arriba de la barra de Caja para que haga el corte.
+  const openedYmd = cashSession?.opened_at ? toLocalYmd(new Date(cashSession.opened_at)) : null;
+  const isStaleSession = !!openedYmd && openedYmd < getTodayLocal();
   const cashRegistersQuery  = useCashRegistersQuery(activeStore?.id, { enabled: !cashSession });
   const cashRegisters: CashRegisterInfo[] = cashRegistersQuery.data ?? [];
   // Sesiones abiertas en la tienda activa — solo el admin las muestra en la
@@ -593,6 +629,10 @@ export function SellPage() {
   const [showTerminalModal, setShowTerminalModal] = useState(false);
   const [tcDraft, setTcDraft] = useState("15.50");
 
+  // Logo del ticket (data URI) — se precarga al montar para tenerlo listo al imprimir.
+  const [ticketLogo, setTicketLogo] = useState<string | null>(ticketLogoDataUrl);
+  useEffect(() => { void loadTicketLogo().then(setTicketLogo); }, []);
+
   const [search, setSearch]         = useState("");
   // Debounce the search so we don't fire a backend request on every keystroke.
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -641,7 +681,8 @@ export function SellPage() {
 
   // showCatalog se declara arriba (junto a las queries) para condicionar el polling.
   const [selectedCat, setSelectedCat] = useState("Todo");
-  const [showDiscount, setShowDiscount] = useState(false);
+  const [showPromo, setShowPromo] = useState(false);
+  const [promoFinalDraft, setPromoFinalDraft] = useState("");
   const [customerSearch, setCustomerSearch] = useState("");
   const [showCustDrop, setShowCustDrop]     = useState(false);
   const [requireCustomerFlash, setRequireCustomerFlash] = useState(false);
@@ -655,6 +696,8 @@ export function SellPage() {
   // ── Ticket / Historial ────────────────────────────────────────────────
   interface CompletedSaleData {
     id?: number; total: number; paymentMethod: string; customerName?: string;
+    /** Promo/descuento aplicado (monto en pesos) y subtotal previo, para el ticket. */
+    discountAmount?: number; subtotalBeforeDiscount?: number;
     customerPhone?: string;
     customerEmail?: string;
     items: Array<{ name: string; quantity: number; price: number }>;
@@ -1750,8 +1793,8 @@ export function SellPage() {
     }
   };
 
-  const toggleDiscount = (d: number) =>
-    updMesa(activeMesa.id, m => ({ ...m, discount: m.discount === d ? 0 : d }));
+  // (toggleDiscount eliminado: el descuento por % se reemplazó por el botón
+  //  "Promo" — ver applyPromoPct/applyPromoFinal/clearPromo más abajo.)
 
   const setCustomer = (c: Customer) => {
     const isSocio = !!c.external_member_id;
@@ -1993,7 +2036,8 @@ export function SellPage() {
   }, [mesas, activeMesa.id]);
   
   const subtotal       = useMemo(() => activeMesa.items.reduce((s, i) => s + getItemPrice(i) * i.quantity, 0), [activeMesa.items]);
-  const discountAmt    = subtotal * (activeMesa.discount / 100);
+  // Promo en pesos (monto absoluto en activeMesa.discount), clampeado a [0, subtotal].
+  const discountAmt    = Math.min(Math.max(0, activeMesa.discount), subtotal);
   const totalBeforeComm = subtotal - discountAmt;
   const totalDeposit   = useMemo(() => activeMesa.items.reduce((s, i) => s + (i.depositAmount ?? 0), 0), [activeMesa.items]);
   const totalItems     = activeMesa.items.reduce((s, i) => s + i.quantity, 0);
@@ -2014,6 +2058,19 @@ export function SellPage() {
   // Total a cobrar al cliente = subtotal − descuento. SIN comisión.
   const total = totalBeforeComm;
 
+  // ── Promo / descuento por cantidad (botón "Promo", desde 2+ piezas) ──────────
+  // Guarda el descuento como MONTO ABSOLUTO en activeMesa.discount. El cajero lo
+  // captura por % rápido o por precio final del combo (computePromoDiscount).
+  const applyPromo = (amount: number) =>
+    updMesa(activeMesa.id, m => ({ ...m, discount: Math.min(Math.max(0, amount), subtotal) }));
+  const applyPromoPct = (pct: number) => applyPromo(computePromoDiscount({ subtotal, pct }));
+  const applyPromoFinal = () => {
+    const fp = parseFloat(promoFinalDraft);
+    if (!Number.isFinite(fp)) return;
+    applyPromo(computePromoDiscount({ subtotal, finalPrice: fp }));
+  };
+  const clearPromo = () => { setPromoFinalDraft(""); updMesa(activeMesa.id, m => ({ ...m, discount: 0 })); };
+
   // El monto real a cobrar en la transacción actual (sin comisión, la tienda absorbe).
   // Mixed cart (catálogo + regular sin modo preventa explícito): cobra regular + anticipos.
   const currentPayAmount = useMemo(() => {
@@ -2025,15 +2082,17 @@ export function SellPage() {
       // Modo preventa explícito: solo se cobran los anticipos.
       return totalDeposit;
     }
-    // Cart mixto sin modo preventa: regular full price + anticipos de catálogo.
+    // Cart mixto sin modo preventa: regular full price + anticipos de catálogo,
+    // MENOS el descuento de promo (bug 2026-06-29: antes no se restaba y el panel
+    // cobraba el precio completo aunque el backend sí aplicara el descuento).
     const regularSubtotal = activeMesa.items
       .filter(i => i.sellingCatalogId == null)
       .reduce((s, i) => s + getItemPrice(i) * i.quantity, 0);
     const catalogDeposit = activeMesa.items
       .filter(i => i.sellingCatalogId != null)
       .reduce((s, i) => s + (i.depositAmount ?? 0), 0);
-    return regularSubtotal + catalogDeposit;
-  }, [activeMesa.loadedPreSaleOrderId, activeMesa.isPreventa, activeMesa.items, totalDeposit, totalBeforeComm]);
+    return computeRegularChargeAmount({ regularSubtotal, catalogDeposit, discountAmt });
+  }, [activeMesa.loadedPreSaleOrderId, activeMesa.isPreventa, activeMesa.items, totalDeposit, totalBeforeComm, discountAmt]);
     
   const totalUSD       = tc > 0 ? currentPayAmount / tc : 0;
 
@@ -2699,9 +2758,13 @@ export function SellPage() {
     // Formato clásico de ticket (Joel 2026-06-12): nombre en su línea y abajo
     // "cant × precio unitario" + importe. Antes salía "×2 $800" (importe de la
     // línea) y se leía como si cada pieza costara $800.
+    // Jerarquía pensada para térmico (monocromo): el nombre manda (11px bold),
+    // el detalle cant×precio queda chico pero en NEGRO + sangría (el gris #555
+    // no imprimía en la Xprinter, se veía lavado). El color nunca debe cargar la
+    // jerarquía en papel térmico — la dan tamaño y sangría.
     const itemRows = (name: string, qty: number, unitPrice: number) => `
-      <tr><td colspan="3" style="padding:3px 0 0;font-size:10px">${name}</td></tr>
-      <tr><td colspan="2" style="padding:0 0 3px 8px;font-size:9px;color:#555">${qty} × ${fmt(unitPrice)}</td><td style="text-align:right;font-size:10px;font-weight:700;vertical-align:bottom;padding-bottom:3px">${fmt(unitPrice * qty)}</td></tr>`;
+      <tr><td colspan="3" style="padding:4px 0 0;font-size:11px;font-weight:700">${name}</td></tr>
+      <tr><td colspan="2" style="padding:0 0 4px 8px;font-size:9px">${qty} × ${fmt(unitPrice)}</td><td style="text-align:right;font-size:11px;font-weight:900;vertical-align:bottom;padding-bottom:4px">${fmt(unitPrice * qty)}</td></tr>`;
     const regularRows = sale.items.map(i => itemRows(i.name, i.quantity, i.price)).join("");
 
     // Saldo restante de la preventa (QA 2026-06-08): en anticipo nuevo es
@@ -2724,11 +2787,15 @@ export function SellPage() {
         </tfoot>
       </table>` : "";
 
+    // % de descuento para el ticket (derivado del monto y el subtotal previo).
+    const ticketSubBefore = sale.subtotalBeforeDiscount ?? (sale.total + (sale.discountAmount ?? 0));
+    const ticketDiscPct = discountPct(sale.discountAmount ?? 0, ticketSubBefore);
+    const promoLabel = ticketDiscPct > 0 ? `Promo (${ticketDiscPct}%)` : "Promo";
     const regularSection = sale.items.length > 0 ? `
       ${sale.preSaleCode ? `<div class="divider"></div><div style="font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:4px">PRODUCTOS</div>` : ""}
       <table>
         <tbody>${regularRows}</tbody>
-        ${!sale.preSaleCode ? `<tfoot><tr class="total-row"><td colspan="2">TOTAL</td><td style="text-align:right">${fmt(sale.total)}</td></tr></tfoot>` : ""}
+        ${!sale.preSaleCode ? `<tfoot>${(sale.discountAmount ?? 0) > 0 ? `<tr><td colspan="2" style="font-size:9px">Subtotal</td><td style="text-align:right;font-size:9px">${fmt(ticketSubBefore)}</td></tr><tr><td colspan="2" style="font-size:9px">${promoLabel}</td><td style="text-align:right;font-size:9px">-${fmt(sale.discountAmount ?? 0)}</td></tr>` : ""}<tr class="total-row"><td colspan="2">TOTAL</td><td style="text-align:right">${fmt(sale.total)}</td></tr></tfoot>` : ""}
       </table>` : "";
 
     const grandTotal = sale.preSaleCode ? `
@@ -2751,28 +2818,33 @@ export function SellPage() {
     // Desglose por método cuando el cobro fue mixto/dividido (varios métodos).
     const breakdown = sale.paymentBreakdown ?? [];
     const breakdownRows = breakdown.length > 1
-      ? breakdown.map(b => `<tr><td style="font-size:9px;color:#555">· ${b.name}</td><td style="text-align:right;font-size:9px;color:#555">${fmt(b.amount)}</td></tr>`).join("")
+      ? breakdown.map(b => `<tr><td style="font-size:9px">· ${b.name}</td><td style="text-align:right;font-size:9px">${fmt(b.amount)}</td></tr>`).join("")
       : "";
     const paymentRows = `
       <tr><td>Método de pago</td><td style="text-align:right;font-weight:900">${sale.paymentMethod}</td></tr>
       ${breakdownRows}
       ${sale.amountReceived != null ? `<tr><td>Recibido</td><td style="text-align:right">${fmt(sale.amountReceived)}</td></tr>` : ""}
-      ${usdNum > 0 ? `<tr><td style="font-size:9px;color:#555">· Pesos</td><td style="text-align:right;font-size:9px;color:#555">${fmt(Math.max(0, mxnPart))}</td></tr>
-      <tr><td style="font-size:9px;color:#555">· Dólares</td><td style="text-align:right;font-size:9px;color:#555">$${usdNum.toFixed(2)} USD <span style="color:#888">(≈ ${fmt(usdMxn)} a $${rate.toFixed(2)})</span></td></tr>` : ""}
+      ${usdNum > 0 ? `<tr><td style="font-size:9px">· Pesos</td><td style="text-align:right;font-size:9px">${fmt(Math.max(0, mxnPart))}</td></tr>
+      <tr><td style="font-size:9px">· Dólares</td><td style="text-align:right;font-size:9px">$${usdNum.toFixed(2)} USD <span>(≈ ${fmt(usdMxn)} a $${rate.toFixed(2)})</span></td></tr>` : ""}
       ${sale.change != null && sale.change > 0 ? `<tr><td style="font-weight:900">Cambio</td><td style="text-align:right;font-weight:900">${fmt(sale.change)}</td></tr>` : ""}
     `;
 
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Ticket</title>
     <style>*{margin:0;padding:0;box-sizing:border-box}
-    @page{size:58mm auto;margin:0}
-    html,body{width:58mm}
-    body{font-family:'Courier New',monospace;font-size:11px;padding:2mm 1.5mm;overflow-wrap:anywhere;word-break:break-word}
-    h2{font-size:15px;text-align:center;font-weight:900;margin-bottom:2px}.sub{font-size:9px;text-align:center;color:#555;margin-bottom:2px}
+    html{background:#e5e7eb}
+    body{font-family:'Courier New',monospace;font-size:11px;width:58mm;margin:0 auto;background:#fff;padding:56px 1.5mm 2mm;overflow-wrap:anywhere;word-break:break-word}
+    h2{font-size:15px;text-align:center;font-weight:900;margin-bottom:2px}.sub{font-size:9px;text-align:center;color:#000;margin-bottom:2px}
     .divider{border-top:1px dashed #000;margin:6px 0}table{width:100%;border-collapse:collapse;table-layout:fixed}
     td{word-break:break-word}
     .total-row td{font-weight:900;font-size:13px;border-top:1px solid #000;padding-top:6px}
-    .footer{text-align:center;font-size:9px;color:#555;margin-top:8px}</style></head><body>
-    <h2>TADAIMA</h2>
+    .footer{text-align:center;font-size:9px;color:#000;margin-top:8px}
+    .logo{display:block;margin:1mm auto 0;width:44mm;max-width:88%;filter:grayscale(1) contrast(1.18)}
+    .no-print{position:fixed;top:0;left:0;right:0;display:flex;gap:8px;justify-content:center;padding:8px;background:#111;z-index:9}
+    .no-print button{font-family:system-ui,sans-serif;font-size:13px;font-weight:700;padding:8px 16px;border:0;border-radius:8px;cursor:pointer}
+    .no-print .print-btn{background:#10b981;color:#fff}.no-print .close-btn{background:#374151;color:#fff}
+    @media print{@page{size:58mm auto;margin:0}html{background:#fff}body{width:58mm;margin:0;padding:2mm 1.5mm}.no-print{display:none!important}}</style></head><body>
+    <div class="no-print"><button class="print-btn" type="button">🖨️ Imprimir</button><button class="close-btn" type="button">Cerrar</button></div>
+    ${ticketLogo ? `<img class="logo" src="${ticketLogo}" alt="TADAIMA">` : `<h2>TADAIMA</h2>`}
     <div class="sub">Manga & Hobby Store</div>
     ${sale.storeName ? `<div class="sub" style="font-weight:900;color:#000">${sale.storeName}</div>` : ""}
     <div class="divider"></div>
@@ -2790,9 +2862,37 @@ export function SellPage() {
     <table style="font-size:10px">${paymentRows}</table>
     <div class="divider"></div><div class="footer">¡Gracias por tu compra!</div></body></html>`;
 
-    // Impresión por iframe oculto: sin popup (no lo bloquea el navegador ni deja
-    // ventana abierta) y compatible con impresión silenciosa (Chrome --kiosk-printing)
-    // para que el ticket salga automático. El @page 58mm auto lo mantiene vertical.
+    // Ventana real de ticket — mismo método que el corte de caja, que ya imprime
+    // bien. El iframe oculto 0×0 anterior hacía que Chrome ignorara el @page 58mm y
+    // girara el ticket 90°; una ventana con viewport sí respeta el tamaño → sale
+    // vertical. Nombre fijo "tadaima_ticket": cada ticket reemplaza al anterior (no
+    // se acumulan ventanas). Trae barra Imprimir/Cerrar para ver el detalle o
+    // reimprimir. Bajo Chrome --kiosk-printing el print queda silencioso igual.
+    const w = window.open("", "tadaima_ticket", "width=360,height=600");
+    if (w) {
+      w.document.open();
+      w.document.write(html);
+      w.document.close();
+      // El CSP (script-src 'self') bloquea scripts/onclick inline en la ventana,
+      // así que el print y los botones se disparan/cablean desde AQUÍ (el padre).
+      // Esperamos a que el logo pinte antes de imprimir (con fallback por si la
+      // imagen no resuelve), para que el ticket salga con el logo.
+      let fired = false;
+      const fire = () => { if (fired) return; fired = true; try { w.focus(); w.print(); } catch { /* noop */ } };
+      const logoImg = w.document.querySelector("img.logo") as HTMLImageElement | null;
+      if (logoImg && !logoImg.complete) {
+        logoImg.addEventListener("load", fire, { once: true });
+        logoImg.addEventListener("error", fire, { once: true });
+        setTimeout(fire, 1200);
+      } else {
+        setTimeout(fire, 250);
+      }
+      w.document.querySelector(".print-btn")?.addEventListener("click", () => { try { w.print(); } catch { /* noop */ } });
+      w.document.querySelector(".close-btn")?.addEventListener("click", () => { try { w.close(); } catch { /* noop */ } });
+      return;
+    }
+    // Fallback si el navegador bloquea el popup: método iframe anterior (degradado,
+    // puede salir girado) para no perder la impresión automática.
     const iframe = document.createElement("iframe");
     iframe.setAttribute("aria-hidden", "true");
     iframe.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
@@ -2802,7 +2902,6 @@ export function SellPage() {
     idoc.open();
     idoc.write(html);
     idoc.close();
-    // Espera a que el iframe pinte el contenido, dispara el print y lo retira.
     setTimeout(() => {
       try { iframe.contentWindow?.focus(); iframe.contentWindow?.print(); } catch { /* noop */ }
       setTimeout(() => iframe.remove(), 1500);
@@ -3497,6 +3596,10 @@ export function SellPage() {
         // Efectivo entregado (MXN, incluye USD) + cambio — para el ticket y el
         // detalle del Historial (antes solo vivían en memoria y se perdían).
         ...(receivedSnapshot > 0 ? { cash_received: receivedSnapshot, change_amount: changeSnapshot } : {}),
+        // Promo / descuento por cantidad (monto absoluto en pesos). El backend
+        // recalcula total = subtotal − discount y lo guarda en sales.discount,
+        // que reportes/corte/historial ya leen. Joel 2026-06-29.
+        ...(discountAmt > 0 ? { discount: discountAmt } : {}),
       });
 
       // Escritura optimista — la venta aparece en la lista de Ventas y el
@@ -3517,6 +3620,7 @@ export function SellPage() {
       const completedSale: CompletedSaleData = {
         id: saleResult?.id,
         total,
+        ...(discountAmt > 0 ? { discountAmount: discountAmt, subtotalBeforeDiscount: subtotal } : {}),
         paymentMethod: payMethodSnapshot,
         customerName: customerNameSnapshot,
         ...(customerPhoneSnapshot ? { customerPhone: customerPhoneSnapshot } : {}),
@@ -4011,6 +4115,30 @@ export function SellPage() {
         </div>
       )}
 
+      {/* Aviso: caja abierta de un día anterior (quedó sin cortar). Empuja a
+          hacer el corte y dispara el MISMO flujo de cierre (no hay lógica nueva). */}
+      {isStaleSession && cashSession && (
+        <div
+          className="flex items-center gap-3 shrink-0 px-4 py-2.5"
+          style={{ background: "rgba(245,158,11,0.14)", borderBottom: "1px solid rgba(245,158,11,0.4)" }}
+        >
+          <AlertTriangle size={16} style={{ color: "#F59E0B", flexShrink: 0 }} />
+          <span className="text-[11px] font-bold leading-tight" style={{ color: "var(--td-text-hi)" }}>
+            Tu caja sigue abierta desde el{" "}
+            {new Date(cashSession.opened_at).toLocaleDateString("es-MX", { day: "2-digit", month: "long", timeZone: BUSINESS_TZ })}
+            . Haz el corte para cerrar el día.
+          </span>
+          <button
+            onClick={() => { setCloseCashAmount(""); setShowCloseCashModal(true); }}
+            className="ml-auto shrink-0 flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-transform active:scale-95"
+            style={{ background: "linear-gradient(135deg, #7A3800, #F59E0B)", color: "#fff" }}
+          >
+            <Scissors size={13} />
+            Cerrar caja ahora
+          </button>
+        </div>
+      )}
+
       {/* ══════════════════ TOP TABS (CAJAS) ══════════════════════════════════ */}
       <div
         className="flex items-center shrink-0 overflow-x-auto no-scrollbar"
@@ -4022,8 +4150,9 @@ export function SellPage() {
             <span className="text-[10px] font-black uppercase tracking-[0.18em]" style={{ color: THI }}>
               Caja · {activeStore?.name ?? "Sin tienda"}
             </span>
-            <span className="text-[9px] font-bold uppercase tracking-[0.15em]" style={{ color: TLO }}>
+            <span className="text-[9px] font-bold uppercase tracking-[0.15em]" style={{ color: isStaleSession ? "#F59E0B" : TLO }}>
               {user?.name?.split(" ")[0] ?? "—"}
+              {cashSession?.opened_at ? ` · Abierta ${new Date(cashSession.opened_at).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}` : ""}
             </span>
           </div>
         </div>
@@ -4106,11 +4235,11 @@ export function SellPage() {
               Preventas, Cliente, Escanear) y solo visible cuando hay productos. */}
           <button
             onClick={() => { setCloseCashAmount(""); setShowCloseCashModal(true); }}
-            className="h-full px-5 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-colors"
-            style={{ color: "rgba(245,158,11,0.7)" }}
-            title={`Cerrar sesión: ${cashSession?.register?.name ?? "Caja"} · Abierta ${cashSession?.opened_at ? new Date(cashSession.opened_at).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }) : ""}`}
+            className="h-full px-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-colors"
+            style={{ background: "rgba(245,158,11,0.18)", color: "#F59E0B", borderLeft: "1px solid rgba(245,158,11,0.4)" }}
+            title={`Cerrar sesión y hacer el corte del día: ${cashSession?.register?.name ?? "Caja"} · Abierta ${cashSession?.opened_at ? new Date(cashSession.opened_at).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }) : ""}`}
           >
-            <X size={12} />
+            <Scissors size={13} />
             Cerrar Caja
           </button>
         </div>
@@ -5294,6 +5423,22 @@ export function SellPage() {
               {/* ── Sección 1: Resumen monetario · Total centrado horizontal ── */}
               <div className="flex flex-col gap-4">
 
+                {/* Botón Promo — descuento por cantidad, alcanzable desde 2+ piezas (Joel 2026-06-29) */}
+                {totalItems >= 2 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowPromo(true)}
+                    className="self-center flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-colors"
+                    style={discountAmt > 0
+                      ? { background: "rgba(16,185,129,0.14)", border: "1px solid rgba(16,185,129,0.38)", color: "#34d399" }
+                      : { background: SOFT, border: CARD_B, color: TLO }}
+                    title="Promo / descuento por cantidad"
+                  >
+                    <Tag size={11} className="text-[#E0221A]" />
+                    {discountAmt > 0 ? `Promo −${fmt(discountAmt)}` : "Aplicar promo"}
+                  </button>
+                )}
+
                 {/* Subtotal + modifiers — only when they differ from total */}
                 {(discountAmt > 0 || (activeMesa.paymentMethod === "Tarjeta" && activeTerminal)) && (
                   <div className="flex flex-col gap-0.5 pb-1" style={{ borderBottom: CARD_B }}>
@@ -5304,11 +5449,11 @@ export function SellPage() {
                     {discountAmt > 0 && (
                       <div className="flex items-center justify-between gap-3">
                         <button
-                          onClick={() => setShowDiscount(!showDiscount)}
+                          onClick={() => setShowPromo(true)}
                           className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest transition-colors"
                           style={{ color: TLO }}
                         >
-                          <Tag size={9} className="text-[#E0221A]" /> % Desc. <ChevronDown size={9} />
+                          <Tag size={9} className="text-[#E0221A]" /> Promo <ChevronDown size={9} />
                         </button>
                         <p className="text-sm font-black text-emerald-500">-{fmt(discountAmt)}</p>
                       </div>
@@ -5620,8 +5765,11 @@ export function SellPage() {
                     // ¿Falta cubrir el total? (para el aviso "completa con…").
                     const faltaCubrir   = Math.max(0, currentPayAmount - totalReceived);
 
-                    // Cambio en dual currency cuando se cobró con USD.
-                    const cambioUsd = cambio > 0 && receivedUsd > 0 ? cambio / tc : 0;
+                    // Equivalentes en USD del cambio y del faltante. El número
+                    // grande de abajo sigue la moneda activa del toggle (usdPrimary):
+                    // en dólares lo muestra en USD, en pesos en MXN, con el otro chiquito.
+                    const cambioUsd = tc > 0 && cambio > 0      ? cambio / tc      : 0;
+                    const faltaUsd  = tc > 0 && faltaCubrir > 0 ? faltaCubrir / tc : 0;
 
                     return (
                       <div className="flex flex-col gap-2 flex-1 min-w-0">
@@ -5761,22 +5909,18 @@ export function SellPage() {
                           <div
                             className={`rounded-xl px-4 py-3 flex flex-col gap-2 border-2 ${cambio >= 0 ? "bg-emerald-500/12 border-emerald-500/35" : "bg-red-500/12 border-red-500/35"}`}
                           >
-                            {/* Total a cobrar */}
-                            <div className="flex items-center justify-between">
-                              <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: TLO }}>Total a cobrar</span>
-                              <span className="text-base font-black tabular-nums" style={{ color: "var(--td-text-hi)" }}>{fmt(currentPayAmount)}</span>
-                            </div>
-
-                            {/* Recibido (con desglose pesos + dólares cuando hubo USD) */}
+                            {/* Recibido (con desglose pesos + dólares cuando hubo USD).
+                                El total NO se repite aquí: ya está arriba, grande, como
+                                "Total a pagar" (Joel 2026-06-29). */}
                             <div className="flex items-center justify-between">
                               <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: TLO }}>Recibido</span>
-                              <span className="text-base font-black tabular-nums" style={{ color: "var(--td-text-hi)" }}>{fmt(totalReceived)}</span>
+                              <span className="text-base font-black tabular-nums" style={{ color: "var(--td-text-hi)" }}>{fmtMXN(totalReceived)}</span>
                             </div>
                             {receivedUsd > 0 && (
                               <div className="flex flex-col gap-0.5 pl-1 -mt-1">
                                 {receivedMxn > 0 && (
                                   <div className="flex items-center justify-between text-[10px] font-bold" style={{ color: TLO }}>
-                                    <span>· Pesos</span><span className="tabular-nums">{fmt(receivedMxn)}</span>
+                                    <span>· Pesos</span><span className="tabular-nums">{fmtMXN(receivedMxn)}</span>
                                   </div>
                                 )}
                                 <div className="flex items-center justify-between text-[10px] font-bold text-amber-400">
@@ -5791,15 +5935,29 @@ export function SellPage() {
                                 {cambio >= 0 ? "Cambio" : "Falta"}
                               </span>
                               <div className="text-right">
-                                <p className={`text-3xl font-black leading-none tabular-nums ${cambio >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                                  {fmt(cambio >= 0 ? cambio : faltaCubrir)}
-                                </p>
-                                {/* Cambio dual: si cobró con USD, ofrece el equivalente
-                                    en dólares (útil si decide regresarle parte en USD). */}
-                                {cambio > 0 && cambioUsd > 0 && (
-                                  <p className="text-[11px] font-bold text-emerald-400/70 mt-1 tabular-nums">
-                                    ≈ US${cambioUsd.toFixed(2)}
-                                  </p>
+                                {/* El número grande sigue la moneda activa del toggle: en
+                                    modo dólares sale el Cambio/Falta en USD; en pesos, en MXN.
+                                    Debajo, chiquito, el equivalente en la otra moneda. */}
+                                {usdPrimary ? (
+                                  <>
+                                    <p className={`text-3xl font-black leading-none tabular-nums ${cambio >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                                      US${(cambio >= 0 ? cambioUsd : faltaUsd).toFixed(2)}
+                                    </p>
+                                    <p className={`text-[11px] font-bold mt-1 tabular-nums ${cambio >= 0 ? "text-emerald-400/70" : "text-red-400/70"}`}>
+                                      ≈ {fmtMXN(cambio >= 0 ? cambio : faltaCubrir)}
+                                    </p>
+                                  </>
+                                ) : (
+                                  <>
+                                    <p className={`text-3xl font-black leading-none tabular-nums ${cambio >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                                      {fmtMXN(cambio >= 0 ? cambio : faltaCubrir)}
+                                    </p>
+                                    {(cambio >= 0 ? cambioUsd : faltaUsd) > 0 && (
+                                      <p className={`text-[11px] font-bold mt-1 tabular-nums ${cambio >= 0 ? "text-emerald-400/70" : "text-red-400/70"}`}>
+                                        ≈ US${(cambio >= 0 ? cambioUsd : faltaUsd).toFixed(2)}
+                                      </p>
+                                    )}
+                                  </>
                                 )}
                               </div>
                             </div>
@@ -6168,14 +6326,14 @@ export function SellPage() {
         )}
       </AnimatePresence>
 
-      {/* Modal Descuento */}
+      {/* Modal Promo — descuento por cantidad (Joel 2026-06-29) */}
       <AnimatePresence>
-        {showDiscount && (
+        {showPromo && (
           <div className="fixed inset-0 z-[150] flex items-center justify-center p-4">
             <Motion.div 
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              onClick={() => setShowDiscount(false)}
-              className="absolute inset-0 bg-black/80 backdrop-blur-md" 
+              onClick={() => setShowPromo(false)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-md"
             />
             <Motion.div 
               initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
@@ -6187,30 +6345,76 @@ export function SellPage() {
                 boxShadow: "0 0 100px rgba(0,0,0,0.8), inset 0 0 40px rgba(16,185,129,0.05)"
               }}
             >
-              <h3 className="text-xl font-black uppercase tracking-[0.2em] mb-8 text-center" style={{ color: THI }}>Descuento</h3>
-              <div className="grid grid-cols-2 gap-4">
-                {[5, 10, 25, 50].map(pct => (
-                  <button 
+              <h3 className="text-xl font-black uppercase tracking-[0.2em] text-center" style={{ color: THI }}>Promo</h3>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-center mt-1 mb-6" style={{ color: TLO }}>
+                Descuento por cantidad · {totalItems} piezas
+              </p>
+
+              <p className="text-[10px] font-black uppercase tracking-widest mb-2" style={{ color: TLO }}>% rápido</p>
+              <div className="grid grid-cols-4 gap-2">
+                {[5, 10, 15, 20].map(pct => (
+                  <button
                     key={pct}
-                    onClick={() => { toggleDiscount(pct); setShowDiscount(false); }}
-                    className={`py-4 rounded-2xl border transition-all font-black ${
-                      activeMesa.discount === pct 
-                        ? 'bg-[#E0221A] text-white border-transparent' 
-                        : ''
-                      }`}
-                    style={activeMesa.discount === pct ? undefined : { background: SOFT, border: CARD_B, color: TMD }}
+                    onClick={() => { setPromoFinalDraft(""); applyPromoPct(pct); }}
+                    className="py-3 rounded-2xl border transition-all font-black text-sm"
+                    style={{ background: SOFT, border: CARD_B, color: TMD }}
                   >
                     {pct}%
                   </button>
                 ))}
               </div>
-              <button
-                onClick={() => { toggleDiscount(0); setShowDiscount(false); }}
-                className="w-full mt-4 py-3 text-[10px] font-black uppercase tracking-widest transition-colors"
-                style={{ color: TLO }}
-              >
-                Quitar Descuento
-              </button>
+
+              <p className="text-[10px] font-black uppercase tracking-widest mt-6 mb-2" style={{ color: TLO }}>Precio final del combo</p>
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-lg pointer-events-none" style={{ color: "var(--td-placeholder)" }}>$</span>
+                  <input
+                    type="number" min="0" step="0.01"
+                    value={promoFinalDraft}
+                    onChange={e => setPromoFinalDraft(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter") applyPromoFinal(); }}
+                    placeholder={subtotal.toFixed(2)}
+                    className="w-full rounded-xl py-3 pl-9 pr-4 text-2xl font-black text-center focus:outline-none tabular-nums"
+                    style={{ background: "var(--td-input-bg)", border: "2px solid var(--td-input-border)", color: "var(--td-input-text)" }}
+                  />
+                </div>
+                <button
+                  onClick={applyPromoFinal}
+                  className="px-4 rounded-xl font-black text-[11px] uppercase tracking-widest text-white"
+                  style={{ background: "#E0221A" }}
+                >
+                  Aplicar
+                </button>
+              </div>
+
+              <div className="mt-6 rounded-2xl px-4 py-3 flex flex-col gap-1.5" style={{ background: SOFT, border: CARD_B }}>
+                <div className="flex items-center justify-between text-[11px] font-bold" style={{ color: TMD }}>
+                  <span>Subtotal</span><span className="tabular-nums">{fmt(subtotal)}</span>
+                </div>
+                <div className="flex items-center justify-between text-[11px] font-black text-emerald-500">
+                  <span>Descuento</span><span className="tabular-nums">−{fmt(discountAmt)}</span>
+                </div>
+                <div className="flex items-center justify-between text-base font-black pt-1.5" style={{ borderTop: CARD_B, color: THI }}>
+                  <span>Total</span><span className="tabular-nums">{fmt(total)}</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 mt-5">
+                <button
+                  onClick={clearPromo}
+                  className="py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-colors"
+                  style={{ background: SOFT, border: CARD_B, color: TLO }}
+                >
+                  Quitar promo
+                </button>
+                <button
+                  onClick={() => setShowPromo(false)}
+                  className="py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest text-white"
+                  style={{ background: "#10b981" }}
+                >
+                  Listo
+                </button>
+              </div>
             </Motion.div>
           </div>
         )}
