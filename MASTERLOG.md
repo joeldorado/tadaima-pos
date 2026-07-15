@@ -655,7 +655,7 @@ docker compose up --build -d
 
 > Sesiones anteriores a 2026-05-14 (>20 días) archivadas en git history para mantener el log ligero. Decisiones load-bearing preservadas en ADRs (§7) y secciones de arquitectura.
 
-### Sesión 2026-07-15 — Descuentos v2 FASE 3: PROMOCIONES NxM por producto (2x1, 3x2…)
+### Sesión 2026-07-15 — Descuentos v2 FASE 3: PROMOCIONES NxM por producto (2x1, 3x2…) — DEPLOYADO rev tadaima-00114-ntt
 
 **Promos "compra N, paga M" pegadas al producto, aplicadas SOLAS en caja.** El motor ya existía en `saleCalc.ts` desde la Fase 0 — esta fase lo activó end-to-end.
 
