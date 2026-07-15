@@ -7999,7 +7999,11 @@ export function SellPage() {
                     const hasCardPayment = (sale.payments ?? []).some(p => /tarjeta|card/i.test(p.payment_method?.name ?? ""));
                     const itemCount = sale.items?.reduce((s, i) => s + i.quantity, 0) ?? 0;
                     const dateStr = sale.sold_at || sale.created_at;
-                    const discount = (sale as unknown as Record<string, unknown>).discount_amount as number | undefined;
+                    // Rollup del descuento de la venta (v2 = Σ beneficios por
+                    // línea; legacy = descuento global). El campo real del API
+                    // es `discount` — antes se leía `discount_amount`, que no
+                    // existe a nivel venta, y el chip "Descuento" nunca salía.
+                    const discount = sale.discount;
                     return (
                       <div key={entryKey} style={{ background: "var(--td-card-bg)", border: `1px solid ${isOpen ? "rgba(224,34,26,0.3)" : "var(--td-card-border)"}`, borderRadius: 16, overflow: "hidden" }}>
                         <button onClick={() => setExpandedEntryKey(isOpen ? null : entryKey)}
@@ -8082,15 +8086,36 @@ export function SellPage() {
                             <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 10 }}>
                               {(sale.items || []).length === 0
                                 ? <p style={{ fontSize: 10, color: "var(--td-text-ghost)", textAlign: "center", padding: "8px 0" }}>Sin detalle</p>
-                                : (sale.items || []).map((item, idx) => (
-                                  <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", borderBottom: idx < (sale.items || []).length - 1 ? "1px solid var(--td-divider)" : "none" }}>
-                                    <span style={{ flex: 1, fontSize: 11, fontWeight: 700, color: "var(--td-text-hi)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.product?.name || `#${item.product_id}`}</span>
-                                    {item.product?.sku && <span style={{ fontSize: 8, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.1em", flexShrink: 0 }}>{item.product.sku}</span>}
-                                    <span style={{ fontSize: 10, color: "var(--td-text-ghost)", flexShrink: 0 }}>×{item.quantity}</span>
-                                    <span style={{ fontSize: 10, fontWeight: 700, color: "var(--td-text-md)", flexShrink: 0, width: 52, textAlign: "right" }}>{fmt(item.price)}</span>
-                                    <span style={{ fontSize: 11, fontWeight: 900, color: "var(--td-text-hi)", flexShrink: 0, width: 62, textAlign: "right" }}>{fmt(item.price * item.quantity)}</span>
+                                : (sale.items || []).map((item, idx) => {
+                                  // Descuentos v2: neto de la línea + etiqueta del beneficio.
+                                  const itemDisc = item.discount_amount ?? 0;
+                                  const itemNet = item.price * item.quantity - itemDisc;
+                                  const discReason = item.discount_reason
+                                    ? (DISCOUNT_REASON_LABELS[item.discount_reason as keyof typeof DISCOUNT_REASON_LABELS] ?? item.discount_reason)
+                                    : "";
+                                  const discLabel = item.benefit_type === "promo"
+                                    ? `Promo ${item.promo_name ?? ""}`.trim()
+                                    : `Desc.${discReason ? ` ${discReason}` : ""}`;
+                                  return (
+                                  <div key={idx} style={{ padding: "3px 0", borderBottom: idx < (sale.items || []).length - 1 ? "1px solid var(--td-divider)" : "none" }}>
+                                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                      <span style={{ flex: 1, fontSize: 11, fontWeight: 700, color: "var(--td-text-hi)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.product?.name || `#${item.product_id}`}</span>
+                                      {item.product?.sku && <span style={{ fontSize: 8, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.1em", flexShrink: 0 }}>{item.product.sku}</span>}
+                                      <span style={{ fontSize: 10, color: "var(--td-text-ghost)", flexShrink: 0 }}>×{item.quantity}</span>
+                                      <span style={{ fontSize: 10, fontWeight: 700, color: "var(--td-text-md)", flexShrink: 0, width: 52, textAlign: "right" }}>{fmt(item.price)}</span>
+                                      <span style={{ fontSize: 11, fontWeight: 900, color: "var(--td-text-hi)", flexShrink: 0, width: 62, textAlign: "right", ...(itemDisc > 0 ? { textDecoration: "line-through", color: "var(--td-text-ghost)", fontWeight: 700 } : {}) }}>{fmt(item.price * item.quantity)}</span>
+                                    </div>
+                                    {itemDisc > 0 && (
+                                      <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, marginTop: 1 }}>
+                                        <span style={{ fontSize: 9, fontWeight: 900, color: "#E0221A", background: "rgba(224,34,26,0.10)", border: "1px solid rgba(224,34,26,0.30)", borderRadius: 999, padding: "1px 7px" }}>
+                                          {discLabel} −{fmt(itemDisc)}
+                                        </span>
+                                        <span style={{ fontSize: 11, fontWeight: 900, color: "var(--td-text-hi)", flexShrink: 0, width: 62, textAlign: "right" }}>{fmt(itemNet)}</span>
+                                      </div>
+                                    )}
                                   </div>
-                                ))}
+                                  );
+                                })}
                             </div>
                             {/* Detalle de lo cancelado (ADR-016) — snapshot + monto
                                 regresado en rojo. Simbólico: el total ya lo descuenta. */}
