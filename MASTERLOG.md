@@ -655,7 +655,7 @@ docker compose up --build -d
 
 > Sesiones anteriores a 2026-05-14 (>20 días) archivadas en git history para mantener el log ligero. Decisiones load-bearing preservadas en ADRs (§7) y secciones de arquitectura.
 
-### Sesión 2026-07-14 — Descuentos v2 FASE 0: lineId + recalculateSale (fundación, cero cambio visible)
+### Sesión 2026-07-14 — Descuentos v2 FASE 0: lineId + recalculateSale (fundación, cero cambio visible) — DEPLOYADO rev tadaima-00111-vb4
 
 **Contexto:** arranca el proyecto Descuentos v2 (spec del cliente): eliminar el descuento global de mesa (buggy: estado mutable que sobrevive cambios del carrito) y reemplazarlo por descuentos por línea + promos NxM + cupones + módulo Insumos. Plan de 6 fases en `~/.claude/plans/ok-si-lo-ocupamos-structured-feigenbaum.md`; directo en main, deploy por fase.
 
