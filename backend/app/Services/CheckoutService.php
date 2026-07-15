@@ -17,6 +17,11 @@ use Illuminate\Support\Facades\DB;
 
 class CheckoutService
 {
+    public function __construct(
+        private readonly SaleCalculator $calculator = new SaleCalculator(),
+    ) {
+    }
+
     /**
      * Convierte un SalesDraft en una Sale real.
      *
@@ -53,14 +58,50 @@ class CheckoutService
         ?float $exchangeRate = null,
         ?float $cashReceived = null,
         ?float $change = null,
+        bool $calcV2 = false,
     ): Sale {
-        return DB::transaction(function () use ($storeId, $registerSessionId, $customerId, $items, $paymentsData, $discount, $userId, $cashReceivedUsd, $exchangeRate, $cashReceived, $change) {
+        return DB::transaction(function () use ($storeId, $registerSessionId, $customerId, $items, $paymentsData, $discount, $userId, $cashReceivedUsd, $exchangeRate, $cashReceived, $change, $calcV2) {
             // Guard de precios (2026-05-30): el carrito vive client-side (ADR-014)
             // y el backend confiaba 100% en el `price` enviado. Validamos que el
             // precio de cada item NO dañado coincida con un nivel del catálogo
             // del producto (base o precio por tienda). Los dañados llevan flag
             // `is_damaged` y permiten precio manual.
             $this->assertPricesMatchCatalog($storeId, $items);
+
+            // Descuentos v2: recomputar el beneficio de CADA línea server-side
+            // (SaleCalculator, gemelo de saleCalc.ts). El cliente solo manda
+            // kind/basis/value/reason — NUNCA un monto. El zip con los
+            // SaleItems es POSICIONAL: los draft items se crean abajo en este
+            // mismo orden y checkout() los relee ordenados por id.
+            $v2Lines = null;
+            if ($calcV2) {
+                $calc = $this->calculator->calculate(array_map(
+                    static fn (array $i) => [
+                        'product_id'    => (int) $i['product_id'],
+                        'unit_price'    => (float) $i['price'],
+                        'qty'           => (float) $i['quantity'],
+                        'line_discount' => $i['line_discount'] ?? null,
+                    ],
+                    array_values($items),
+                ));
+
+                $v2Lines = [];
+                foreach (array_values($items) as $idx => $item) {
+                    $d = $item['line_discount'] ?? null;
+                    $v2Lines[] = array_merge($calc['lines'][$idx], [
+                        'discount_kind'          => is_array($d) ? $d['kind'] : null,
+                        'discount_basis'         => is_array($d) ? $d['basis'] : null,
+                        'discount_value'         => is_array($d) ? round((float) $d['value'], 2) : null,
+                        'discount_reason'        => is_array($d) ? ($d['reason'] ?? null) : null,
+                        'discount_note'          => is_array($d) ? ($d['note'] ?? null) : null,
+                        'discount_authorized_by' => is_array($d) ? $userId : null,
+                    ]);
+                }
+
+                // En v2 el "descuento" de la venta es el rollup computado aquí;
+                // el param $discount legacy debe venir en 0 (validado en request).
+                $discount = $calc['line_benefit_total'];
+            }
 
             $draft = SalesDraft::create([
                 'store_id'            => $storeId,
@@ -102,6 +143,7 @@ class CheckoutService
                 exchangeRate:    $exchangeRate,
                 cashReceived:    $cashReceived,
                 change:          $change,
+                v2Lines:         $v2Lines,
             );
         });
     }
@@ -115,8 +157,9 @@ class CheckoutService
         ?float $exchangeRate = null,
         ?float $cashReceived = null,
         ?float $change = null,
+        ?array $v2Lines = null,
     ): Sale {
-        return DB::transaction(function () use ($draftId, $paymentsData, $discount, $userId, $cashReceivedUsd, $exchangeRate, $cashReceived, $change) {
+        return DB::transaction(function () use ($draftId, $paymentsData, $discount, $userId, $cashReceivedUsd, $exchangeRate, $cashReceived, $change, $v2Lines) {
 
             // ── 1. Lock draft y validar estado ────────────────────────────────
             $draft = SalesDraft::lockForUpdate()->findOrFail($draftId);
@@ -128,10 +171,17 @@ class CheckoutService
             }
 
             // ── 2. Cargar items y validar que no esté vacío ───────────────────
-            $draftItems = $draft->items()->with('product.paymentMethod')->get();
+            // orderBy(id) explícito: el zip posicional con $v2Lines (Descuentos
+            // v2) depende de releer los draft items en su orden de inserción.
+            $draftItems = $draft->items()->with('product.paymentMethod')->orderBy('id')->get();
 
             if ($draftItems->isEmpty()) {
                 throw new \DomainException('No hay productos en la venta.');
+            }
+
+            if ($v2Lines !== null && count($v2Lines) !== $draftItems->count()) {
+                // Invariante del zip posicional — si truena, hay un bug de plomería.
+                throw new \DomainException('Inconsistencia interna en el cálculo de descuentos (v2Lines != items).');
             }
 
             // ── 2b. Restricciones de pago por producto (solo-efectivo, etc.) ──
@@ -187,7 +237,13 @@ class CheckoutService
             // invariante que mantiene `sale_items.cost` inmutable aunque el
             // admin re-precie `products.cost` después). El producto ya viene
             // eager-loaded en línea 111 (`->with('product')`), sin query extra.
-            foreach ($draftItems as $draftItem) {
+            foreach ($draftItems->values() as $idx => $draftItem) {
+                // Descuentos v2: columnas de beneficio por línea (zip posicional
+                // con el resultado de SaleCalculator). `total` sigue siendo BRUTO
+                // (qty×price) — el neto es derivable (total − discount_amount) y
+                // sales.discount es el rollup, así los reportes viejos no cambian.
+                $meta = $v2Lines[$idx] ?? null;
+
                 SaleItem::create([
                     'sale_id'    => $sale->id,
                     'product_id' => $draftItem->product_id,
@@ -196,6 +252,17 @@ class CheckoutService
                     'price'      => $draftItem->price,
                     'total'      => $draftItem->total,
                     'cost'       => $draftItem->product?->cost,
+                    'benefit_type'           => $meta['benefit_type'] ?? null,
+                    'discount_kind'          => $meta['discount_kind'] ?? null,
+                    'discount_basis'         => $meta['discount_basis'] ?? null,
+                    'discount_value'         => $meta['discount_value'] ?? null,
+                    'discount_amount'        => $meta['discount_amount'] ?? 0,
+                    'discount_reason'        => $meta['discount_reason'] ?? null,
+                    'discount_note'          => $meta['discount_note'] ?? null,
+                    'discount_authorized_by' => $meta['discount_authorized_by'] ?? null,
+                    'applied_promotion_id'   => $meta['applied_promotion_id'] ?? null,
+                    'promo_name'             => $meta['promo_name'] ?? null,
+                    'promo_free_qty'         => $meta['promo_free_qty'] ?? null,
                 ]);
             }
 

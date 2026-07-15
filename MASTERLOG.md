@@ -655,6 +655,32 @@ docker compose up --build -d
 
 > Sesiones anteriores a 2026-05-14 (>20 días) archivadas en git history para mantener el log ligero. Decisiones load-bearing preservadas en ADRs (§7) y secciones de arquitectura.
 
+### Sesión 2026-07-14/15 — Descuentos v2 FASE 1: descuento POR LÍNEA end-to-end + eliminado el descuento global
+
+**El reemplazo completo del "Promo" global buggy.** El cajero ahora descuenta N de M unidades de una línea (ej. 2 de 3 dañadas): si N < M la línea se PARTE en unidades a precio completo + unidades descontadas; quitar el descuento re-fusiona. Caso del cliente validado end-to-end: 3 uds $100, 2 dañadas −$20 c/u = **$260** (test API + test UI Playwright).
+
+**Backend (el server ya NO confía en montos del cliente):**
+- Migración `2026_07_14_000001`: 11 columnas de beneficio en `sale_items` (benefit_type, discount_kind/basis/value/**amount**/reason/note/authorized_by + applied_promotion_id/promo_name/promo_free_qty para Fase 3). `sale_items.total` sigue BRUTO; `sales.discount` = rollup Σ beneficios → el invariante `total = subtotal − discount` sobrevive en TODOS los reportes.
+- `SaleCalculator.php` (gemelo de saleCalc.ts): recomputa cada beneficio server-side. Payload v2 = `calc_version: 2` + `items[].line_discount {kind,basis,value,reason,note}` — **nunca viaja un monto**. Pago que no cuadra con el recompute → 422.
+- `CheckoutRequest`: v2 prohíbe el `discount` global (`in:0`) y `calc_version` sin items (`prohibited`); percent > 100 → 422. Path legacy intacto (ventana de compat para PWA cacheado, se retira en Fase 5).
+- Zip posicional items→draft_items→sale_items con `orderBy(id)` + guard de conteo. `discount_authorized_by` = user del token, nunca del payload.
+- Tests: `LineDiscountCheckoutTest` 8/8 (split persiste, server pisa montos manipulados, legacy vivo, clamp, resource). Suite completa **222/222**.
+
+**Frontend:**
+- ELIMINADO: modal Promo, botón Promo, `Mesa.discount`, applyPromoPct/Final/clearPromo. `promo.ts` queda congelado solo para reimprimir tickets históricos (`discountPct`).
+- `LineDiscountModal` (componente nuevo en components/sell/): unidades a descontar (menos que la línea → aviso de split), $/% × por unidad/por línea, motivos (Dañado/Caducidad/Exhibición/Cortesía/Otro) + nota, preview en vivo con el MISMO cálculo del cobro.
+- SellPage: `applyLineDiscount` (split) / `removeLineDiscount` (merge-back, prefiere línea padre); botón "Desc." + badge rojo con motivo en cada línea; neto con tachado del bruto; merge de addToCart solo en líneas "planas"; stock guard suma todas las líneas del producto.
+- Los TRES checkout builders mandan v2 (arregla de paso el gap: los flujos mixtos de preventa nunca enviaban el descuento).
+- Tickets (SellPage + SalesPage): sub-línea por beneficio ("Desc. Dañado −$40", negro puro 58mm), totales Subtotal/Descuentos/TOTAL; ventas viejas conservan el render "Promo (X%)". `esc()` nuevo escapa nombres/etiquetas en el HTML del ticket.
+
+**Reviews (security + code, hallazgos corregidos antes del commit):**
+- security: cero CRITICAL. Fix M1: `discount` bajo v2 era `max:0` → `in:0` (un negativo inflaba el total y rompía el invariante); `calc_version` prohibido sin items. Fix M2: escape HTML en tickets (promo_name de Fase 3 iba a ser sink XSS). H1 conocido: path legacy sigue confiando en `discount` hasta Fase 5 (aceptado, roadmap).
+- code: fix HIGH — los tickets de los 2 flujos mixtos mostraban el BRUTO (sin restar descuentos de línea) aunque el cobro era correcto; ahora usan el neto + sub-líneas de descuento. + LOWs: key en modal, merge-back prefiere parentLineId, comment stale.
+
+**Verificación:** phpunit 222/222 · vitest 73/73 · vite build ✅ · Playwright: `line-discounts.spec.ts` 4/4 (LD-01 API split $260, LD-02 monto manipulado 422, LD-03 legacy+v2 422, LD-04 UI completo) + suite general 29 passed / 0 failed.
+
+**Fix de entorno e2e:** `landing/.env.local` apuntaba a :8002 (override muerto de otra sesión) → :8000. Esto desbloqueó los tests de UI que antes ni corrían (TC-54..70). Backend local para e2e: `php -S` desde `public/` con el router de Laravel (`vendor/laravel/framework/.../server.php`) — artisan serve no propaga env vars al hijo.
+
 ### Sesión 2026-07-14 — Descuentos v2 FASE 0: lineId + recalculateSale (fundación, cero cambio visible) — DEPLOYADO rev tadaima-00111-vb4
 
 **Contexto:** arranca el proyecto Descuentos v2 (spec del cliente): eliminar el descuento global de mesa (buggy: estado mutable que sobrevive cambios del carrito) y reemplazarlo por descuentos por línea + promos NxM + cupones + módulo Insumos. Plan de 6 fases en `~/.claude/plans/ok-si-lo-ocupamos-structured-feigenbaum.md`; directo en main, deploy por fase.

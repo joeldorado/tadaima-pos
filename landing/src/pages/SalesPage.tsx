@@ -26,6 +26,7 @@ import {
 import { getCashReport, storageUrl } from "@tadaima/api";
 import { buildPaymentSummary } from "@/lib/paymentSummary";
 import { discountPct } from "@/lib/promo";
+import { DISCOUNT_REASON_LABELS } from "@/lib/discountReasons";
 import { CancelTicketModal } from "@/components/cancel/CancelTicketModal";
 import { useActiveSessionQuery } from "@/hooks/queries/useCashSession";
 import { getTodayLocal, toLocalYmd, daysAgoLocal, BUSINESS_TZ } from "@/lib/date";
@@ -144,11 +145,17 @@ const fmtDateTime = (dateStr: string) =>
 function printTicket(sale: SaleDetail) {
   const win = window.open("", "_blank", "width=340,height=600");
   if (!win) return;
+  // Escape básico para strings interpolados en el HTML del ticket (nombres,
+  // etiquetas promo/desc). El CSP no bloquea inyección de markup — escapar.
+  const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const pay = buildPaymentSummary(sale);
-  // Subtotal previo + % de descuento (derivado) para reimprimir el desglose Promo.
+  // Subtotal previo + % de descuento (derivado) para reimprimir el desglose.
   const reSubBefore = sale.subtotal ?? (sale.total + (sale.discount ?? 0));
   const rePct = discountPct(sale.discount ?? 0, reSubBefore);
-  const rePromoLabel = rePct > 0 ? `Promo (${rePct}%)` : "Promo";
+  // Descuentos v2: si algún item trae beneficio por línea, la etiqueta es
+  // "Descuentos" (Σ de líneas). Ventas legacy conservan "Promo (X%)".
+  const hasLineBenefits = (sale.items ?? []).some(i => (i.discount_amount ?? 0) > 0);
+  const rePromoLabel = hasLineBenefits ? "Descuentos" : (rePct > 0 ? `Promo (${rePct}%)` : "Promo");
   // Bloque de pago del ticket: método(s) + efectivo/dólares/cambio (TC de la venta).
   const paymentBlock = `
   <div class="divider"></div>
@@ -163,11 +170,24 @@ function printTicket(sale: SaleDetail) {
   const items = (sale.items || [])
     .map(i => {
       const name = i.product?.name || String(i.product_id);
+      const discAmt = i.discount_amount ?? 0;
+      // Sub-línea del beneficio (Descuentos v2) — negro puro, jerarquía por
+      // tamaño/sangría (regla térmica rev 00108, los grises no imprimen).
+      const reasonLabel = i.discount_reason
+        ? (DISCOUNT_REASON_LABELS[i.discount_reason as keyof typeof DISCOUNT_REASON_LABELS] ?? i.discount_reason)
+        : "";
+      const discLabel = i.benefit_type === "promo"
+        ? `Promo ${i.promo_name ?? ""}`.trim()
+        : `Desc.${reasonLabel ? ` ${reasonLabel}` : ""}`;
       return `<tr>
-        <td style="padding:2px 0;font-size:11px;font-weight:700;">${name}</td>
+        <td style="padding:2px 0;font-size:11px;font-weight:700;">${esc(name)}</td>
         <td style="text-align:center;padding:2px 4px;font-size:10px;">×${i.quantity}</td>
         <td style="text-align:right;font-size:11px;font-weight:900;">${fmt(i.price * i.quantity)}</td>
-      </tr>`;
+      </tr>${discAmt > 0 ? `<tr>
+        <td style="padding:0 0 2px 8px;font-size:9px;font-weight:900">${esc(discLabel)}</td>
+        <td></td>
+        <td style="text-align:right;font-size:10px;font-weight:900">-${fmt(discAmt)}</td>
+      </tr>` : ""}`;
     })
     .join("");
 

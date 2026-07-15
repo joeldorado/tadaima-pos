@@ -20,6 +20,19 @@ class SaleItemResource extends JsonResource
             'price'      => $this->price,
             'total'      => $this->total,
 
+            // Descuentos v2 — beneficio por línea. NULL/0 en ventas legacy.
+            // El ticket/historial branchean por forma de datos: si algún item
+            // trae benefit_type → render v2; si no y sales.discount > 0 → legacy.
+            'benefit_type'    => $this->benefit_type,
+            'discount_kind'   => $this->discount_kind,
+            'discount_basis'  => $this->discount_basis,
+            'discount_value'  => $this->discount_value !== null ? (float) $this->discount_value : null,
+            'discount_amount' => (float) ($this->discount_amount ?? 0),
+            'discount_reason' => $this->discount_reason,
+            'discount_note'   => $this->discount_note,
+            'promo_name'      => $this->promo_name,
+            'promo_free_qty'  => $this->promo_free_qty,
+
             // `cost` snapshot al momento del INSERT (lo que se vendió a ese costo).
             // Solo se expone a admins — gerente/cajero no ven margen. Esta es la
             // verdad histórica; `product.cost` puede mutar después, pero esta

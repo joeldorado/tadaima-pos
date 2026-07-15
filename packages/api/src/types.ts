@@ -234,6 +234,21 @@ export interface SaleItemDetail {
   price: number
   total: number
   /**
+   * Descuentos v2 — beneficio POR LÍNEA. NULL/0 en ventas legacy (pre-Fase 1).
+   * `total` sigue siendo BRUTO (qty×price); el neto = total − discount_amount.
+   * El ticket/historial branchean: algún item con benefit_type → render v2;
+   * si no y sales.discount > 0 → render legacy "Promo (X%)".
+   */
+  benefit_type?: 'discount' | 'promo' | null
+  discount_kind?: 'fixed' | 'percent' | null
+  discount_basis?: 'unit' | 'line' | null
+  discount_value?: number | null
+  discount_amount?: number
+  discount_reason?: string | null
+  discount_note?: string | null
+  promo_name?: string | null
+  promo_free_qty?: number | null
+  /**
    * Cost snapshot al momento EXACTO del checkout. Solo viene cuando el caller
    * es admin (security gate en `SaleItemResource`). NULL para ventas pre-
    * migración cost_at_sale (2026-05-22). Esta es la verdad histórica:
@@ -396,6 +411,18 @@ export interface SalePayment {
  *   B) Direct: `items` + `store_id` + `register_session_id` (+ `customer_id`)
  *      cuando el carrito vive solo en frontend hasta el cobro.
  */
+/**
+ * Descuento por línea (Descuentos v2). El cliente manda tipo/base/valor +
+ * motivo; el MONTO lo recomputa el backend (SaleCalculator) — nunca se envía
+ * un monto pre-calculado.
+ */
+export interface SaleLineDiscountInput {
+  kind: 'fixed' | 'percent'
+  basis: 'unit' | 'line'
+  value: number
+  reason: 'danado' | 'caducidad' | 'exhibicion' | 'cortesia' | 'otro'
+  note?: string
+}
 export interface SaleDirectItem {
   product_id: number
   quantity: number
@@ -403,10 +430,15 @@ export interface SaleDirectItem {
   price_level?: 'a' | 'b' | 'c'
   /** Mercancía dañada → precio manual permitido fuera del catálogo. */
   is_damaged?: boolean
+  /** Descuento por línea (requiere calc_version: 2 en el input). */
+  line_discount?: SaleLineDiscountInput
 }
 export interface CreateSaleInput {
   draft_id?: number
+  /** Legacy (pre-Descuentos v2). PROHIBIDO cuando calc_version = 2. */
   discount?: number
+  /** 2 = Descuentos v2: el backend recomputa beneficios por línea server-side. */
+  calc_version?: 2
   payments: SalePayment[]
   // Modo B (direct checkout)
   items?: SaleDirectItem[]

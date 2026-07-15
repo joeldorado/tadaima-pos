@@ -45,8 +45,10 @@ import { isValidEmail, isValidPhone } from "@/lib/validation";
 import { PRICE_LEVEL_LABELS, PRICE_LEVEL_COLORS, PRICE_LEVEL_RGB } from "@/lib/priceLevels";
 import type { CashSession, CashRegisterInfo, PaymentMethod as ApiPaymentMethod, PreSaleCatalog, PreSaleOrder, PreSaleOrderItem, SaleDetail, Terminal, ExternalCardLookup } from "@tadaima/api";
 import { buildPaymentSummary } from "@/lib/paymentSummary";
-import { computePromoDiscount, computeRegularChargeAmount, discountPct } from "@/lib/promo";
-import { newLineId, recalculateSale } from "@/lib/saleCalc";
+import { computeRegularChargeAmount, discountPct } from "@/lib/promo";
+import { newLineId, recalculateSale, type LineDiscount } from "@/lib/saleCalc";
+import { LineDiscountModal } from "@/components/sell/LineDiscountModal";
+import { DISCOUNT_REASON_LABELS } from "@/lib/discountReasons";
 import type { HistorialEntry } from "@/hooks/queries/useHistorial";
 import { useCartDraftStore } from "@/stores/cartDraftStore";
 import { useActiveStore } from "@/contexts/StoreContext";
@@ -136,6 +138,12 @@ interface CartItem {
    *  y que los mutadores (+/−, borrar, nivel) apunten a la línea exacta.
    *  Descuentos v2, Joel 2026-07-14. */
   lineId: string;
+  /** Descuento manual de ESTA línea (Descuentos v2). El monto se recomputa
+   *  siempre vía recalculateSale — aquí solo vive la captura del cajero. */
+  discount?: LineDiscount;
+  /** lineId de la línea origen cuando esta línea nació de un split por
+   *  descuento parcial. Solo carrito (permite merge-back); NO viaja al backend. */
+  parentLineId?: string;
   product: Product;
   quantity: number;
   priceLevel: PriceLevel;
@@ -163,9 +171,6 @@ interface Mesa {
   /** true = socio Tadaima ACTIVO/elegible → aplica precio socio (b). Joel 2026-06-25. */
   customerSocioEligible?: boolean;
   isNewCustomer?: boolean;
-  /** Promo/descuento aplicado a la mesa, en PESOS (monto absoluto, no %).
-   *  Lo setea el botón "Promo" (desde 2+ piezas). Joel 2026-06-29. */
-  discount: number;
   paymentMethod: PaymentMethod;
   isPreventa: boolean;
   depositAmount: number;
@@ -343,7 +348,6 @@ const makeMesa = (n?: number): Mesa => {
     id: `mesa-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     name: mesaLabel(num),
     items: [],
-    discount: 0,
     paymentMethod: "Efectivo",
     isPreventa: false,
     depositAmount: 0,
@@ -692,8 +696,8 @@ export function SellPage() {
 
   // showCatalog se declara arriba (junto a las queries) para condicionar el polling.
   const [selectedCat, setSelectedCat] = useState("Todo");
-  const [showPromo, setShowPromo] = useState(false);
-  const [promoFinalDraft, setPromoFinalDraft] = useState("");
+  // Línea del carrito con el modal de descuento abierto (Descuentos v2).
+  const [discountModalLineId, setDiscountModalLineId] = useState<string | null>(null);
   const [customerSearch, setCustomerSearch] = useState("");
   const [showCustDrop, setShowCustDrop]     = useState(false);
   const [requireCustomerFlash, setRequireCustomerFlash] = useState(false);
@@ -711,7 +715,11 @@ export function SellPage() {
     discountAmount?: number; subtotalBeforeDiscount?: number;
     customerPhone?: string;
     customerEmail?: string;
-    items: Array<{ name: string; quantity: number; price: number }>;
+    items: Array<{
+      name: string; quantity: number; price: number;
+      /** Descuentos v2: monto y etiqueta del beneficio de esta línea (p.ej. "Desc. Dañado"). */
+      discountAmount?: number; discountLabel?: string;
+    }>;
     soldAt: string;
     // contexto del punto de venta
     storeName?: string;
@@ -1535,8 +1543,16 @@ export function SellPage() {
     if (priceLevel === "a" && activeMesa?.customerSocioEligible && !activeMesa?.isPreventa && activeMesa?.paymentMethod !== "Tarjeta" && (product.price_b ?? 0) > 0) {
       priceLevel = "b";
     }
-    const preItem = activeMesa.items.find(i => i.product.id === product.id);
-    const newQty = (preItem?.quantity ?? 0) + quantity;
+    // Con Descuentos v2 el mismo producto puede vivir en 2+ líneas (split).
+    // Solo se fusiona en una línea "plana" (sin descuento/dañado/preventa) del
+    // mismo nivel; el guard de stock suma TODAS las líneas del producto.
+    const isMergeable = (i: CartItem) =>
+      i.product.id === product.id && i.priceLevel === priceLevel &&
+      !i.discount && !i.isDamaged && !i.isFromPreSale && i.sellingCatalogId == null;
+    const productQtyInMesa = activeMesa.items
+      .filter(i => i.product.id === product.id)
+      .reduce((s, i) => s + i.quantity, 0);
+    const newQty = productQtyInMesa + quantity;
 
     // Stock cross-caja (solo tabs del mismo browser): si otra caja ya tiene
     // este producto en su carrito, no pasarse del stock_total del catálogo.
@@ -1561,7 +1577,7 @@ export function SellPage() {
       product.price_a || 0;
 
     updMesa(mesaId, m => {
-      const ex = m.items.find(i => i.product.id === product.id);
+      const ex = m.items.find(isMergeable);
 
       if (m.isPreventa) {
         const maxStock = product.stock_details?.preventa;
@@ -1572,7 +1588,7 @@ export function SellPage() {
       }
 
       const newItems = ex
-        ? m.items.map(i => i.product.id === product.id
+        ? m.items.map(i => i.lineId === ex.lineId
             ? {
                 ...i,
                 quantity: i.quantity + quantity,
@@ -1633,9 +1649,14 @@ export function SellPage() {
     }
 
     // Stock cross-tab (mismo browser): respeta lo que tienen otras cajas/mesas locales.
+    // Con líneas split del mismo producto, el guard compara la SUMA de todas
+    // sus líneas en esta mesa (no solo la línea que se está incrementando).
     if (d > 0 && !activeMesa.isPreventa && currentItem.sellingCatalogId == null && !currentItem.isFromPreSale) {
+      const otherLinesQty = activeMesa.items
+        .filter(i => i.product.id === currentItem.product.id && i.lineId !== lineId)
+        .reduce((s, i) => s + i.quantity, 0);
       const available = availableStockFor(currentItem.product, mesaId);
-      if (available !== undefined && newQty > available) {
+      if (available !== undefined && newQty + otherLinesQty > available) {
         const reserved = reservedInOtherMesas(currentItem.product.id, mesaId);
         toast.error(
           reserved > 0
@@ -1808,8 +1829,8 @@ export function SellPage() {
     }
   };
 
-  // (toggleDiscount eliminado: el descuento por % se reemplazó por el botón
-  //  "Promo" — ver applyPromoPct/applyPromoFinal/clearPromo más abajo.)
+  // (El descuento global "Promo" fue reemplazado por descuentos POR LÍNEA —
+  //  ver applyLineDiscount/removeLineDiscount, Descuentos v2 2026-07-14.)
 
   const setCustomer = (c: Customer) => {
     const isSocio = !!c.external_member_id;
@@ -1970,7 +1991,7 @@ export function SellPage() {
     const mesaId = activeMesa.id;
     updMesa(mesaId, m => ({
       ...m, items: [], customerId: undefined, customerName: undefined,
-      customerPhone: "", customerEmail: "", customerIsSocio: false, customerSocioEligible: false, isNewCustomer: false, discount: 0, depositAmount: 0,
+      customerPhone: "", customerEmail: "", customerIsSocio: false, customerSocioEligible: false, isNewCustomer: false, depositAmount: 0,
       selectedTerminalId: undefined, absorbCommission: true,
       isPreventa: false, loadedPreSaleOrderId: undefined, loadedPreSaleOrderCode: undefined,
       cashReceived: "",
@@ -2052,9 +2073,8 @@ export function SellPage() {
   
   // Totales vía recalculateSale (saleCalc.ts): función PURA que se recalcula
   // completa en cada cambio del carrito — nunca se acarrea un descuento previo
-  // (ese acarreo era el bug del descuento "atorado"). Fase 0: el descuento
-  // global viejo entra como passthrough; en Fase 1 se elimina y aquí entran
-  // descuentos por línea, promos NxM y cupón.
+  // (ese acarreo era el bug del descuento global "atorado", eliminado en Fase 1).
+  // Cada línea lleva su propio descuento; promos NxM y cupón entran en F3/F4.
   const saleCalcResult = useMemo(
     () => recalculateSale({
       lines: activeMesa.items.map(i => ({
@@ -2062,15 +2082,21 @@ export function SellPage() {
         productId: i.product.id,
         unitPrice: getItemPrice(i),
         qty: i.quantity,
+        ...(i.discount ? { discount: i.discount } : {}),
       })),
-      legacyGlobalDiscount: activeMesa.discount,
     }),
-    [activeMesa.items, activeMesa.discount]
+    [activeMesa.items]
   );
   const subtotal = saleCalcResult.subtotal;
-  // Promo en pesos (monto absoluto en activeMesa.discount), clampeado a [0, subtotal].
-  const discountAmt    = Math.min(Math.max(0, activeMesa.discount), subtotal);
+  // Σ beneficios por línea — lo que el ticket/corte muestran como "Descuentos".
+  const discountAmt    = saleCalcResult.lineBenefitTotal;
   const totalBeforeComm = saleCalcResult.total;
+  /** Resultado por línea, indexado por lineId (para badge y neto en el carrito). */
+  const lineCalcById = useMemo(() => {
+    const map: Record<string, (typeof saleCalcResult.lines)[number]> = {};
+    for (const l of saleCalcResult.lines) map[l.lineId] = l;
+    return map;
+  }, [saleCalcResult]);
   const totalDeposit   = useMemo(() => activeMesa.items.reduce((s, i) => s + (i.depositAmount ?? 0), 0), [activeMesa.items]);
   const totalItems     = activeMesa.items.reduce((s, i) => s + i.quantity, 0);
   // Subtotal de ítems nuevos (no de preventa cargada) — usado en carrito mixto
@@ -2090,18 +2116,65 @@ export function SellPage() {
   // Total a cobrar al cliente = subtotal − descuento. SIN comisión.
   const total = totalBeforeComm;
 
-  // ── Promo / descuento por cantidad (botón "Promo", desde 2+ piezas) ──────────
-  // Guarda el descuento como MONTO ABSOLUTO en activeMesa.discount. El cajero lo
-  // captura por % rápido o por precio final del combo (computePromoDiscount).
-  const applyPromo = (amount: number) =>
-    updMesa(activeMesa.id, m => ({ ...m, discount: Math.min(Math.max(0, amount), subtotal) }));
-  const applyPromoPct = (pct: number) => applyPromo(computePromoDiscount({ subtotal, pct }));
-  const applyPromoFinal = () => {
-    const fp = parseFloat(promoFinalDraft);
-    if (!Number.isFinite(fp)) return;
-    applyPromo(computePromoDiscount({ subtotal, finalPrice: fp }));
+  // ── Descuento por LÍNEA (Descuentos v2 — reemplaza al botón "Promo" global) ──
+  // El cajero descuenta N de M unidades de una línea: si N < M la línea se parte
+  // (split) en unidades a precio completo + unidades descontadas. El monto lo
+  // recomputa recalculateSale (y el backend lo recomputa de nuevo — nunca se
+  // manda un monto). Quitar el descuento de una línea spliteada la re-fusiona.
+  const applyLineDiscount = (lineId: string, unitsToDiscount: number, discount: LineDiscount) => {
+    updMesa(activeMesa.id, m => {
+      const line = m.items.find(i => i.lineId === lineId);
+      if (!line) return m;
+      const units = Math.max(1, Math.min(Math.floor(unitsToDiscount), line.quantity));
+
+      if (units >= line.quantity) {
+        // Toda la línea descontada — sin split.
+        return { ...m, items: m.items.map(i => i.lineId === lineId ? { ...i, discount } : i) };
+      }
+
+      // Split: la línea original conserva las unidades a precio completo; la
+      // nueva línea lleva las unidades descontadas + referencia al padre.
+      const discountedLine: CartItem = {
+        ...line,
+        lineId: newLineId(),
+        parentLineId: line.lineId,
+        quantity: units,
+        discount,
+      };
+      const idx = m.items.findIndex(i => i.lineId === lineId);
+      const items = [...m.items];
+      items[idx] = { ...line, quantity: line.quantity - units };
+      items.splice(idx + 1, 0, discountedLine);
+      return { ...m, items };
+    });
   };
-  const clearPromo = () => { setPromoFinalDraft(""); updMesa(activeMesa.id, m => ({ ...m, discount: 0 })); };
+
+  const removeLineDiscount = (lineId: string) => {
+    updMesa(activeMesa.id, m => {
+      const line = m.items.find(i => i.lineId === lineId);
+      if (!line) return m;
+      // Merge-back: preferir la línea PADRE del split; si ya no existe,
+      // cualquier otra línea "plana" del mismo producto y nivel sirve.
+      const isPlainSibling = (i: CartItem) =>
+        i.lineId !== lineId &&
+        i.product.id === line.product.id &&
+        i.priceLevel === line.priceLevel &&
+        !i.discount && !i.isDamaged && !i.isFromPreSale && i.sellingCatalogId == null;
+      const target =
+        (line.parentLineId ? m.items.find(i => i.lineId === line.parentLineId && isPlainSibling(i)) : undefined)
+        ?? m.items.find(isPlainSibling);
+      if (target) {
+        return {
+          ...m,
+          items: m.items
+            .filter(i => i.lineId !== lineId)
+            .map(i => i.lineId === target.lineId ? { ...i, quantity: i.quantity + line.quantity } : i),
+        };
+      }
+      const { discount: _drop, parentLineId: _dropParent, ...rest } = line;
+      return { ...m, items: m.items.map(i => i.lineId === lineId ? (rest as CartItem) : i) };
+    });
+  };
 
   // El monto real a cobrar en la transacción actual (sin comisión, la tienda absorbe).
   // Mixed cart (catálogo + regular sin modo preventa explícito): cobra regular + anticipos.
@@ -2794,6 +2867,10 @@ export function SellPage() {
   };
 
   const doPrintTicket = (sale: CompletedSaleData) => {
+    // Escape básico para strings que se interpolan en el HTML del ticket
+    // (nombres de producto, etiquetas de descuento/promo). El CSP bloquea
+    // scripts inline pero no inyección de markup — escapar siempre.
+    const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     const regularTotal = sale.items.reduce((s, i) => s + i.price * i.quantity, 0);
     // Formato clásico de ticket (Joel 2026-06-12): nombre en su línea y abajo
     // "cant × precio unitario" + importe. Antes salía "×2 $800" (importe de la
@@ -2802,10 +2879,13 @@ export function SellPage() {
     // el detalle cant×precio queda chico pero en NEGRO + sangría (el gris #555
     // no imprimía en la Xprinter, se veía lavado). El color nunca debe cargar la
     // jerarquía en papel térmico — la dan tamaño y sangría.
-    const itemRows = (name: string, qty: number, unitPrice: number) => `
-      <tr><td colspan="3" style="padding:4px 0 0;font-size:11px;font-weight:700">${name}</td></tr>
-      <tr><td colspan="2" style="padding:0 0 4px 8px;font-size:9px">${qty} × ${fmt(unitPrice)}</td><td style="text-align:right;font-size:11px;font-weight:900;vertical-align:bottom;padding-bottom:4px">${fmt(unitPrice * qty)}</td></tr>`;
-    const regularRows = sale.items.map(i => itemRows(i.name, i.quantity, i.price)).join("");
+    const itemRows = (name: string, qty: number, unitPrice: number, discountAmount = 0, discountLabel = "") => `
+      <tr><td colspan="3" style="padding:4px 0 0;font-size:11px;font-weight:700">${esc(name)}</td></tr>
+      <tr><td colspan="2" style="padding:0 0 ${discountAmount > 0 ? "0" : "4px"} 8px;font-size:9px">${qty} × ${fmt(unitPrice)}</td><td style="text-align:right;font-size:11px;font-weight:900;vertical-align:bottom;padding-bottom:${discountAmount > 0 ? "0" : "4px"}">${fmt(unitPrice * qty)}</td></tr>
+      ${discountAmount > 0 ? `<tr><td colspan="2" style="padding:0 0 4px 8px;font-size:9px;font-weight:900">${esc(discountLabel || "Desc.")}</td><td style="text-align:right;font-size:10px;font-weight:900;padding-bottom:4px">-${fmt(discountAmount)}</td></tr>` : ""}`;
+    const regularRows = sale.items.map(i => itemRows(i.name, i.quantity, i.price, i.discountAmount ?? 0, i.discountLabel ?? "")).join("");
+    // v2 = algún item trae beneficio por línea; legacy = solo el monto global.
+    const hasLineBenefits = sale.items.some(i => (i.discountAmount ?? 0) > 0);
 
     // Saldo restante de la preventa (QA 2026-06-08): en anticipo nuevo es
     // total − anticipo; en liquidación el folio queda en ceros.
@@ -2830,7 +2910,9 @@ export function SellPage() {
     // % de descuento para el ticket (derivado del monto y el subtotal previo).
     const ticketSubBefore = sale.subtotalBeforeDiscount ?? (sale.total + (sale.discountAmount ?? 0));
     const ticketDiscPct = discountPct(sale.discountAmount ?? 0, ticketSubBefore);
-    const promoLabel = ticketDiscPct > 0 ? `Promo (${ticketDiscPct}%)` : "Promo";
+    // v2: "Descuentos" (suma de beneficios por línea). Legacy (ventas viejas
+    // con descuento global): "Promo (X%)" reconstruido vía discountPct.
+    const promoLabel = hasLineBenefits ? "Descuentos" : (ticketDiscPct > 0 ? `Promo (${ticketDiscPct}%)` : "Promo");
     const regularSection = sale.items.length > 0 ? `
       ${sale.preSaleCode ? `<div class="divider"></div><div style="font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:4px">PRODUCTOS</div>` : ""}
       <table>
@@ -3175,24 +3257,31 @@ export function SellPage() {
               price_level: (["a","b","c"].includes(ci.priceLevel) ? ci.priceLevel : "a") as "a" | "b" | "c",
               // Dañado → precio manual; el backend salta la validación de catálogo.
               ...(ci.isDamaged ? { is_damaged: true } : {}),
+              // Descuento por línea (v2): viaja la captura, el monto lo recomputa el server.
+              ...(ci.discount ? { line_discount: { kind: ci.discount.kind, basis: ci.discount.basis, value: ci.discount.value, reason: ci.discount.reason, ...(ci.discount.note ? { note: ci.discount.note } : {}) } } : {}),
             }))
             .filter(i => !Number.isNaN(i.product_id));
+          // Neto regular (con descuentos por línea) — el pago debe cuadrar con
+          // el recompute del backend, no con el bruto.
+          const regularNet = regularItems.reduce(
+            (sum, i) => sum + (lineCalcById[i.lineId]?.net ?? getItemPrice(i) * i.quantity), 0);
 
           if (directItems.length > 0) {
             // Efectivo del ticket (liquidación + regular + anticipo nuevo) en MXN
             // incluyendo USD convertido + cambio, para el detalle/ticket.
             const ticketReceivedUsd = parseFloat(cashReceivedUsd) || 0;
             const ticketReceived    = (parseFloat(cashReceived) || 0) + ticketReceivedUsd * tc;
-            const ticketTotalForCash = liquidationAmount + regularSubtotal + newPreventaDeposit;
+            const ticketTotalForCash = liquidationAmount + regularNet + newPreventaDeposit;
             const ticketChange = ticketReceived > ticketTotalForCash ? ticketReceived - ticketTotalForCash : 0;
             const saleResult = await createSale({
+              calc_version: 2,
               items: directItems,
               store_id: activeStore?.id ?? 0,
               register_session_id: cashSession?.id,
               ...(activeMesa.customerId ? { customer_id: Number(activeMesa.customerId) } : {}),
               payments: [{
                 payment_method_id: payMethodId,
-                amount: regularSubtotal,
+                amount: regularNet,
                 ...(activeMesa.paymentMethod === "Tarjeta" && activeMesa.selectedTerminalId
                   ? { terminal_id: activeMesa.selectedTerminalId } : {}),
               }],
@@ -3266,19 +3355,31 @@ export function SellPage() {
         draftStore.clearDraft(mesaId);
         draftStore.clearDraftItems(mesaId);
 
-        // 4. Ticket: items entregados (liquidados) + productos regulares
-        const ticketTotal = liquidationAmount + regularSubtotal + newPreventaDeposit;
+        // 4. Ticket: items entregados (liquidados) + productos regulares.
+        // El total del ticket usa el NETO de las líneas regulares (con sus
+        // descuentos v2) — debe cuadrar con lo realmente cobrado, no el bruto.
+        const regularNetTicket = regularItems.reduce(
+          (sum, i) => sum + (lineCalcById[i.lineId]?.net ?? getItemPrice(i) * i.quantity), 0);
+        const regularBenefitTicket = regularItems.reduce(
+          (sum, i) => sum + (i.discount ? (lineCalcById[i.lineId]?.benefit?.amount ?? 0) : 0), 0);
+        const ticketTotal = liquidationAmount + regularNetTicket + newPreventaDeposit;
         const deliveredAndRegular = [
           ...liquidationItems.map(i => ({
             name: liquidatedCodeSnap ? `${i.product.name} (Folio ${liquidatedCodeSnap})` : i.product.name,
             quantity: i.quantity,
             price: getItemPrice(i),
           })),
-          ...regularItems.map(i => ({
-            name: i.product.name,
-            quantity: i.quantity,
-            price: getItemPrice(i),
-          })),
+          ...regularItems.map(i => {
+            const benefitAmt = i.discount ? (lineCalcById[i.lineId]?.benefit?.amount ?? 0) : 0;
+            return {
+              name: i.product.name,
+              quantity: i.quantity,
+              price: getItemPrice(i),
+              ...(benefitAmt > 0 && i.discount
+                ? { discountAmount: benefitAmt, discountLabel: `Desc. ${DISCOUNT_REASON_LABELS[i.discount.reason]}` }
+                : {}),
+            };
+          }),
         ];
 
         const mixedTicket: CompletedSaleData = {
@@ -3312,7 +3413,7 @@ export function SellPage() {
         triggerPrintFlow(mixedTicket);
 
         const parts: string[] = [`Preventa liquidada · ${fmt(liquidationAmount)}`];
-        if (regularSubtotal > 0) parts.push(`Venta ${fmt(regularSubtotal)}`);
+        if (regularNetTicket > 0) parts.push(`Venta ${fmt(regularNetTicket)}`);
         if (newOrderCode) parts.push(`Nuevo folio ${newOrderCode} · Anticipo ${fmt(newPreventaDeposit)}`);
         toast.success(parts.join(" · "), {
           style: { background: '#064e3b', color: '#fff', border: '1px solid #10b981', borderRadius: '16px' }
@@ -3420,8 +3521,14 @@ export function SellPage() {
               price_level: (["a","b","c"].includes(ci.priceLevel) ? ci.priceLevel : "a") as "a" | "b" | "c",
               // Dañado → precio manual; el backend salta la validación de catálogo.
               ...(ci.isDamaged ? { is_damaged: true } : {}),
+              // Descuento por línea (v2): viaja la captura, el monto lo recomputa el server.
+              ...(ci.discount ? { line_discount: { kind: ci.discount.kind, basis: ci.discount.basis, value: ci.discount.value, reason: ci.discount.reason, ...(ci.discount.note ? { note: ci.discount.note } : {}) } } : {}),
             }))
             .filter(i => !Number.isNaN(i.product_id));
+          // Neto regular (con descuentos por línea) — debe cuadrar con el
+          // recompute server-side del backend (SaleCalculator).
+          const regularNet = regularItems.reduce(
+            (sum, i) => sum + (lineCalcById[i.lineId]?.net ?? getItemPrice(i) * i.quantity), 0);
 
           if (directItems.length > 0 && regularSubtotal > 0) {
             // Efectivo del ticket (incluye USD convertido a TC) + cambio, para el
@@ -3429,16 +3536,17 @@ export function SellPage() {
             // ticket; el anticipo de preventa vive en pre_sale_orders).
             const ticketReceivedUsd = parseFloat(cashReceivedUsd) || 0;
             const ticketReceived    = (parseFloat(cashReceived) || 0) + ticketReceivedUsd * tc;
-            const ticketTotalForCash = catalogDeposit + regularSubtotal;
+            const ticketTotalForCash = catalogDeposit + regularNet;
             const ticketChange = ticketReceived > ticketTotalForCash ? ticketReceived - ticketTotalForCash : 0;
             const saleResult = await createSale({
+              calc_version: 2,
               items: directItems,
               store_id: activeStore?.id ?? 0,
               register_session_id: cashSession?.id,
               ...(activeMesa.customerId ? { customer_id: Number(activeMesa.customerId) } : {}),
               payments: [{
                 payment_method_id: payMethodId,
-                amount: regularSubtotal,
+                amount: regularNet,
                 ...(activeMesa.paymentMethod === "Tarjeta" && activeMesa.selectedTerminalId
                   ? { terminal_id: activeMesa.selectedTerminalId } : {}),
               }],
@@ -3483,7 +3591,10 @@ export function SellPage() {
         const customerPhoneSnap = activeMesa.customerPhone;
         const customerEmailSnap = activeMesa.customerEmail;
         const payMethodSnap    = activeMesa.paymentMethod;
-        const regularSubtotalFinal = regularItems.reduce((s, i) => s + getItemPrice(i) * i.quantity, 0);
+        // NETO de las líneas regulares (con descuentos v2) — el ticket debe
+        // cuadrar con lo cobrado, no con el bruto.
+        const regularSubtotalFinal = regularItems.reduce(
+          (sum, i) => sum + (lineCalcById[i.lineId]?.net ?? getItemPrice(i) * i.quantity), 0);
 
         setCashReceived("");
         clearCart();
@@ -3506,11 +3617,17 @@ export function SellPage() {
           customerName: customerNameSnap,
           ...(customerPhoneSnap ? { customerPhone: customerPhoneSnap } : {}),
           ...(customerEmailSnap ? { customerEmail: customerEmailSnap } : {}),
-          items: regularItems.map(i => ({
-            name: i.product.name,
-            quantity: i.quantity,
-            price: getItemPrice(i),
-          })),
+          items: regularItems.map(i => {
+            const benefitAmt = i.discount ? (lineCalcById[i.lineId]?.benefit?.amount ?? 0) : 0;
+            return {
+              name: i.product.name,
+              quantity: i.quantity,
+              price: getItemPrice(i),
+              ...(benefitAmt > 0 && i.discount
+                ? { discountAmount: benefitAmt, discountLabel: `Desc. ${DISCOUNT_REASON_LABELS[i.discount.reason]}` }
+                : {}),
+            };
+          }),
           soldAt: new Date().toISOString(),
           storeName: activeStore?.name,
           cashierName: user?.name,
@@ -3582,11 +3699,17 @@ export function SellPage() {
       const paymentMethodId = PM_IDS[activeMesa.paymentMethod] ?? 1;
 
       // Snapshot cart before clearing (for ticket)
-      const cartSnapshot = activeMesa.items.map(ci => ({
-        name: ci.product.name,
-        quantity: ci.quantity,
-        price: ci.damagedPrice ?? ci.product[`price_${ci.priceLevel}` as keyof Product] as number ?? ci.product.price_a,
-      }));
+      const cartSnapshot = activeMesa.items.map(ci => {
+        const benefitAmt = ci.discount ? (lineCalcById[ci.lineId]?.benefit?.amount ?? 0) : 0;
+        return {
+          name: ci.product.name,
+          quantity: ci.quantity,
+          price: ci.damagedPrice ?? ci.product[`price_${ci.priceLevel}` as keyof Product] as number ?? ci.product.price_a,
+          ...(benefitAmt > 0 && ci.discount
+            ? { discountAmount: benefitAmt, discountLabel: `Desc. ${DISCOUNT_REASON_LABELS[ci.discount.reason]}` }
+            : {}),
+        };
+      });
       const customerNameSnapshot = activeMesa.customerName;
       const customerPhoneSnapshot = activeMesa.customerPhone;
       const customerEmailSnapshot = activeMesa.customerEmail;
@@ -3612,6 +3735,8 @@ export function SellPage() {
           price_level: (["a","b","c"].includes(ci.priceLevel) ? ci.priceLevel : "a") as "a" | "b" | "c",
           // Dañado → precio manual; el backend salta la validación de catálogo.
           ...(ci.isDamaged ? { is_damaged: true } : {}),
+          // Descuento por línea (v2): viaja la captura, el monto lo recomputa el server.
+          ...(ci.discount ? { line_discount: { kind: ci.discount.kind, basis: ci.discount.basis, value: ci.discount.value, reason: ci.discount.reason, ...(ci.discount.note ? { note: ci.discount.note } : {}) } } : {}),
         }))
         .filter(i => !Number.isNaN(i.product_id));
 
@@ -3621,6 +3746,7 @@ export function SellPage() {
       }
 
       const saleResult = await createSale({
+        calc_version: 2,
         items: saleItems,
         store_id: activeStore?.id ?? 0,
         register_session_id: cashSession?.id,
@@ -3636,10 +3762,9 @@ export function SellPage() {
         // Efectivo entregado (MXN, incluye USD) + cambio — para el ticket y el
         // detalle del Historial (antes solo vivían en memoria y se perdían).
         ...(receivedSnapshot > 0 ? { cash_received: receivedSnapshot, change_amount: changeSnapshot } : {}),
-        // Promo / descuento por cantidad (monto absoluto en pesos). El backend
-        // recalcula total = subtotal − discount y lo guarda en sales.discount,
-        // que reportes/corte/historial ya leen. Joel 2026-06-29.
-        ...(discountAmt > 0 ? { discount: discountAmt } : {}),
+        // Descuentos v2: los beneficios viajan POR LÍNEA en items[].line_discount
+        // y el backend recomputa + hace el rollup en sales.discount. El campo
+        // `discount` global legacy ya no se envía (prohibido con calc_version 2).
       });
 
       // Escritura optimista — la venta aparece en la lista de Ventas y el
@@ -5125,6 +5250,11 @@ export function SellPage() {
                     const priceLevels = getPriceLevels(item.product);
                     const unitPrice = getItemPrice(item);
                     const lineTotal = unitPrice * item.quantity;
+                    // Descuentos v2: neto/beneficio de ESTA línea según recalculateSale.
+                    const lineCalc = lineCalcById[item.lineId];
+                    const lineDiscAmt = item.discount ? (lineCalc?.benefit?.amount ?? 0) : 0;
+                    const lineNet = lineDiscAmt > 0 ? (lineCalc?.net ?? lineTotal) : lineTotal;
+                    const canLineDiscount = item.sellingCatalogId == null && !item.isFromPreSale;
                     const activePriceLabel = PRICE_LEVEL_LABELS[item.priceLevel] ?? "Precio";
                     const activePriceColor = item.isDamaged ? "#F97316" : (PRICE_LEVEL_COLORS[item.priceLevel] ?? "var(--td-text-hi)");
                     const activePriceRgb = item.isDamaged ? "249,115,22" : (PRICE_LEVEL_RGB[item.priceLevel] ?? "255,255,255");
@@ -5355,11 +5485,25 @@ export function SellPage() {
                             Subtotal
                           </p>
                           <p className={`text-[30px] leading-none font-black ${item.isDamaged ? "text-orange-400" : item.isFromPreSale ? "text-amber-400/70" : "text-white"}`}>
-                            {fmt(lineTotal)}
+                            {fmt(lineNet)}
                           </p>
+                          {lineDiscAmt > 0 && (
+                            <p className="text-[11px] font-black line-through" style={{ color: TLO }}>{fmt(lineTotal)}</p>
+                          )}
                           <p className="mt-1 text-center text-[14px] font-black" style={{ color: TMD }}>
                             {item.quantity} × {fmt(unitPrice)}
                           </p>
+                          {/* Badge del descuento por línea: monto + motivo + quitar */}
+                          {lineDiscAmt > 0 && item.discount && (
+                            <button
+                              onClick={() => removeLineDiscount(item.lineId)}
+                              title={`Quitar descuento${item.discount.note ? ` · ${item.discount.note}` : ""}`}
+                              className="mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-black"
+                              style={{ background: "rgba(224,34,26,0.14)", color: "var(--td-red)", border: "1px solid rgba(224,34,26,0.4)" }}
+                            >
+                              −{fmt(lineDiscAmt)} · {DISCOUNT_REASON_LABELS[item.discount.reason]} <X size={10} />
+                            </button>
+                          )}
                           {!item.isFromPreSale && item.isDamaged && (
                             <p className="text-[10px] font-black uppercase tracking-widest mt-0.5" style={{ color: TLO }}>
                               Precio base {activePriceLabel}
@@ -5420,6 +5564,20 @@ export function SellPage() {
                       )}
                       </div>
 
+                      {canLineDiscount && !item.preSaleItemDelivered && (
+                        <button
+                          onClick={() => setDiscountModalLineId(item.lineId)}
+                          title={item.discount ? "Editar descuento de esta línea" : "Descuento en esta línea (ej. unidades dañadas)"}
+                          className="inline-flex h-[54px] items-center justify-center gap-1.5 self-center rounded-2xl px-4 text-[12px] font-black transition-colors"
+                          style={item.discount
+                            ? { border: "1px solid rgba(224,34,26,0.45)", background: "rgba(224,34,26,0.16)", color: "var(--td-red)" }
+                            : { border: CARD_B, background: MUTED, color: TMD }}
+                        >
+                          <Tag size={13} />
+                          {item.discount ? "Desc. ✓" : "Desc."}
+                        </button>
+                      )}
+
                       {!item.preSaleItemDelivered && (
                         <button
                           onClick={() => { void removeFromCart(item.lineId); }}
@@ -5463,23 +5621,9 @@ export function SellPage() {
               {/* ── Sección 1: Resumen monetario · Total centrado horizontal ── */}
               <div className="flex flex-col gap-4">
 
-                {/* Botón Promo — descuento por cantidad, alcanzable desde 2+ piezas (Joel 2026-06-29) */}
-                {totalItems >= 2 && (
-                  <button
-                    type="button"
-                    onClick={() => setShowPromo(true)}
-                    className="self-center flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-colors"
-                    style={discountAmt > 0
-                      ? { background: "rgba(16,185,129,0.14)", border: "1px solid rgba(16,185,129,0.38)", color: "#34d399" }
-                      : { background: SOFT, border: CARD_B, color: TLO }}
-                    title="Promo / descuento por cantidad"
-                  >
-                    <Tag size={11} className="text-[#E0221A]" />
-                    {discountAmt > 0 ? `Promo −${fmt(discountAmt)}` : "Aplicar promo"}
-                  </button>
-                )}
-
-                {/* Subtotal + modifiers — only when they differ from total */}
+                {/* Subtotal + modifiers — only when they differ from total.
+                    El descuento ahora es POR LÍNEA (botón "Desc." en cada fila);
+                    aquí solo se muestra el Σ de beneficios (Descuentos v2). */}
                 {(discountAmt > 0 || (activeMesa.paymentMethod === "Tarjeta" && activeTerminal)) && (
                   <div className="flex flex-col gap-0.5 pb-1" style={{ borderBottom: CARD_B }}>
                     <div className="flex items-center justify-between gap-3">
@@ -5488,13 +5632,9 @@ export function SellPage() {
                     </div>
                     {discountAmt > 0 && (
                       <div className="flex items-center justify-between gap-3">
-                        <button
-                          onClick={() => setShowPromo(true)}
-                          className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest transition-colors"
-                          style={{ color: TLO }}
-                        >
-                          <Tag size={9} className="text-[#E0221A]" /> Promo <ChevronDown size={9} />
-                        </button>
+                        <p className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest" style={{ color: TLO }}>
+                          <Tag size={9} className="text-[#E0221A]" /> Descuentos
+                        </p>
                         <p className="text-sm font-black text-emerald-500">-{fmt(discountAmt)}</p>
                       </div>
                     )}
@@ -6366,99 +6506,23 @@ export function SellPage() {
         )}
       </AnimatePresence>
 
-      {/* Modal Promo — descuento por cantidad (Joel 2026-06-29) */}
-      <AnimatePresence>
-        {showPromo && (
-          <div className="fixed inset-0 z-[150] flex items-center justify-center p-4">
-            <Motion.div 
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              onClick={() => setShowPromo(false)}
-              className="absolute inset-0 bg-black/80 backdrop-blur-md"
-            />
-            <Motion.div 
-              initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
-              className="relative rounded-[32px] p-8 w-full max-w-sm shadow-2xl overflow-hidden"
-              style={{
-                background: "var(--td-popup-bg)",
-                backdropFilter: "blur(20px)",
-                border: "1px solid var(--td-popup-border)",
-                boxShadow: "0 0 100px rgba(0,0,0,0.8), inset 0 0 40px rgba(16,185,129,0.05)"
-              }}
-            >
-              <h3 className="text-xl font-black uppercase tracking-[0.2em] text-center" style={{ color: THI }}>Promo</h3>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-center mt-1 mb-6" style={{ color: TLO }}>
-                Descuento por cantidad · {totalItems} piezas
-              </p>
-
-              <p className="text-[10px] font-black uppercase tracking-widest mb-2" style={{ color: TLO }}>% rápido</p>
-              <div className="grid grid-cols-4 gap-2">
-                {[5, 10, 15, 20].map(pct => (
-                  <button
-                    key={pct}
-                    onClick={() => { setPromoFinalDraft(""); applyPromoPct(pct); }}
-                    className="py-3 rounded-2xl border transition-all font-black text-sm"
-                    style={{ background: SOFT, border: CARD_B, color: TMD }}
-                  >
-                    {pct}%
-                  </button>
-                ))}
-              </div>
-
-              <p className="text-[10px] font-black uppercase tracking-widest mt-6 mb-2" style={{ color: TLO }}>Precio final del combo</p>
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-lg pointer-events-none" style={{ color: "var(--td-placeholder)" }}>$</span>
-                  <input
-                    type="number" min="0" step="0.01"
-                    value={promoFinalDraft}
-                    onChange={e => setPromoFinalDraft(e.target.value)}
-                    onKeyDown={e => { if (e.key === "Enter") applyPromoFinal(); }}
-                    placeholder={subtotal.toFixed(2)}
-                    className="w-full rounded-xl py-3 pl-9 pr-4 text-2xl font-black text-center focus:outline-none tabular-nums"
-                    style={{ background: "var(--td-input-bg)", border: "2px solid var(--td-input-border)", color: "var(--td-input-text)" }}
-                  />
-                </div>
-                <button
-                  onClick={applyPromoFinal}
-                  className="px-4 rounded-xl font-black text-[11px] uppercase tracking-widest text-white"
-                  style={{ background: "#E0221A" }}
-                >
-                  Aplicar
-                </button>
-              </div>
-
-              <div className="mt-6 rounded-2xl px-4 py-3 flex flex-col gap-1.5" style={{ background: SOFT, border: CARD_B }}>
-                <div className="flex items-center justify-between text-[11px] font-bold" style={{ color: TMD }}>
-                  <span>Subtotal</span><span className="tabular-nums">{fmt(subtotal)}</span>
-                </div>
-                <div className="flex items-center justify-between text-[11px] font-black text-emerald-500">
-                  <span>Descuento</span><span className="tabular-nums">−{fmt(discountAmt)}</span>
-                </div>
-                <div className="flex items-center justify-between text-base font-black pt-1.5" style={{ borderTop: CARD_B, color: THI }}>
-                  <span>Total</span><span className="tabular-nums">{fmt(total)}</span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 mt-5">
-                <button
-                  onClick={clearPromo}
-                  className="py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-colors"
-                  style={{ background: SOFT, border: CARD_B, color: TLO }}
-                >
-                  Quitar promo
-                </button>
-                <button
-                  onClick={() => setShowPromo(false)}
-                  className="py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest text-white"
-                  style={{ background: "#10b981" }}
-                >
-                  Listo
-                </button>
-              </div>
-            </Motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+      {/* Modal de descuento por LÍNEA (Descuentos v2 — reemplaza al Promo global) */}
+      {discountModalLineId && (() => {
+        const line = activeMesa.items.find(i => i.lineId === discountModalLineId);
+        if (!line) return null;
+        return (
+          <LineDiscountModal
+            key={line.lineId}
+            productName={line.product.name}
+            lineQty={line.quantity}
+            unitPrice={getItemPrice(line)}
+            existing={line.discount}
+            onConfirm={(units, d) => applyLineDiscount(line.lineId, units, d)}
+            onRemove={line.discount ? () => removeLineDiscount(line.lineId) : undefined}
+            onClose={() => setDiscountModalLineId(null)}
+          />
+        );
+      })()}
 
       {/* ── Full-screen: Modal Preventas (4 tabs) ───────────────────────────── */}
       <AnimatePresence>
@@ -7980,8 +8044,15 @@ export function SellPage() {
                               paymentMethod: sum.methodLabel,
                               ...(sum.isMixed ? { paymentBreakdown: sum.lines } : {}),
                               ...(sale.customer?.name ? { customerName: sale.customer.name } : {}),
-                              items: (sale.items || []).map(i => ({ name: i.product?.name || String(i.product_id), quantity: i.quantity, price: i.price })),
+                              items: (sale.items || []).map(i => ({
+                                name: i.product?.name || String(i.product_id), quantity: i.quantity, price: i.price,
+                                ...((i.discount_amount ?? 0) > 0
+                                  ? { discountAmount: i.discount_amount ?? 0, discountLabel: i.benefit_type === "promo" ? `Promo ${i.promo_name ?? ""}`.trim() : `Desc.${i.discount_reason ? ` ${DISCOUNT_REASON_LABELS[i.discount_reason as keyof typeof DISCOUNT_REASON_LABELS] ?? i.discount_reason}` : ""}` }
+                                  : {}),
+                              })),
                               soldAt: dateStr,
+                              // Totales del ticket: Σ descuentos (v2 o legacy) + subtotal previo.
+                              ...((sale.discount ?? 0) > 0 ? { discountAmount: sale.discount, subtotalBeforeDiscount: sale.subtotal } : {}),
                               ...(activeStore?.name ? { storeName: activeStore.name } : {}),
                               ...(sale.user?.name ? { cashierName: sale.user.name } : {}),
                               ...(sum.cashReceived != null ? { amountReceived: sum.cashReceived } : {}),

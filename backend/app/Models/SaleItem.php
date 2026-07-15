@@ -19,15 +19,33 @@ class SaleItem extends Model
         'price',
         'total',
         'cost',
+        // Descuentos v2 — beneficio por línea (computado por SaleCalculator).
+        'benefit_type',
+        'discount_kind',
+        'discount_basis',
+        'discount_value',
+        'discount_amount',
+        'discount_reason',
+        'discount_note',
+        'discount_authorized_by',
+        'applied_promotion_id',
+        'promo_name',
+        'promo_free_qty',
     ];
 
     protected $casts = [
-        'quantity'   => 'float',
-        'price'      => 'float',
-        'total'      => 'float',
-        'cost'       => 'float',
-        'created_at' => 'datetime',
+        'quantity'        => 'float',
+        'price'           => 'float',
+        'total'           => 'float',
+        'cost'            => 'float',
+        'discount_value'  => 'float',
+        'discount_amount' => 'float',
+        'promo_free_qty'  => 'integer',
+        'created_at'      => 'datetime',
     ];
+
+    public const BENEFIT_DISCOUNT = 'discount';
+    public const BENEFIT_PROMO    = 'promo';
 
     protected static function booted(): void
     {

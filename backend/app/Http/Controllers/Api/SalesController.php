@@ -145,6 +145,7 @@ class SalesController extends Controller
                     exchangeRate:      $request->input('exchange_rate') !== null ? (float) $request->input('exchange_rate') : null,
                     cashReceived:      $request->input('cash_received') !== null ? (float) $request->input('cash_received') : null,
                     change:            $request->input('change_amount') !== null ? (float) $request->input('change_amount') : null,
+                    calcV2:            (int) $request->input('calc_version') === 2,
                 );
             } else {
                 $sale = $this->checkoutService->checkout(
