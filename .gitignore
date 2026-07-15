@@ -29,6 +29,9 @@ backend/public/hot
 test-results/
 playwright-report/
 
+# Graphify — grafo de conocimiento generado (artefactos, ~8MB, se regenera con /graphify)
+graphify-out/
+
 # Respaldos de base de datos (contienen datos de prod — nunca subir)
 backups/
 
