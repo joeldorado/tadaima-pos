@@ -11,7 +11,7 @@ import {
   MessageCircle,
   Upload, Camera, Loader2,
   ArrowUp, ArrowDown, ArrowUpDown,
-  ChevronLeft, ChevronsLeft, ChevronsRight, Trash2, Pencil, RefreshCw, PackageX,
+  ChevronLeft, ChevronsLeft, ChevronsRight, Trash2, Pencil, RefreshCw, PackageX, TicketPercent
 } from "lucide-react";
 import { useActiveStore } from "@/contexts/StoreContext";
 import { useAuth } from "@tadaima/auth";
@@ -45,6 +45,7 @@ import { StoreStockBreakdown } from "@/components/inventory/StoreStockBreakdown"
 import { MangaBatchModal } from "@/components/products/MangaBatchModal";
 import { MangaEditModal } from "@/components/products/MangaEditModal";
 import { QuickStockModal } from "@/components/products/QuickStockModal";
+import { ProductPromotionsTab } from "@/components/products/ProductPromotionsTab";
 import type { Product, Manga } from "@tadaima/api";
 import {
   useReactTable,
@@ -612,7 +613,7 @@ function ProductModal({
     };
   });
 
-  const [activeTab, setActiveTab] = useState<"general" | "precios" | "inventario">("general");
+  const [activeTab, setActiveTab] = useState<"general" | "precios" | "inventario" | "promociones">("general");
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   // Aplica un archivo de imagen al formulario. Compartido por el <input file>
@@ -734,13 +735,14 @@ function ProductModal({
           const generalOk = !!formData.nombre?.trim();
           const preciosOk = (formData.precioA ?? 0) > 0;
           const inventarioOk = !!product || (formData.stockUbicaciones ?? []).length > 0;
-          const tabValid: Record<string, boolean> = { general: generalOk, precios: preciosOk, inventario: inventarioOk };
+          const tabValid: Record<string, boolean> = { general: generalOk, precios: preciosOk, inventario: inventarioOk, promociones: true };
           return (
             <div className="flex px-6 pt-4 gap-4">
               {([
                 { id: "general", label: "General", icon: Package },
                 { id: "precios", label: "Precios", icon: DollarSign },
-                { id: "inventario", label: "Inventario", icon: Warehouse }
+                { id: "inventario", label: "Inventario", icon: Warehouse },
+                { id: "promociones", label: "Promos", icon: TicketPercent }
               ] as const).map((tab) => (
                 <button
                   key={tab.id}
@@ -1013,6 +1015,10 @@ function ProductModal({
                 </div>
               </div>
             </div>
+          )}
+
+          {activeTab === "promociones" && (
+            <ProductPromotionsTab productId={product?.id ?? null} />
           )}
 
           {activeTab === "inventario" && (() => {

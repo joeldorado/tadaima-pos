@@ -40,9 +40,11 @@ class ProductController extends Controller
 
         // Light siempre carga mangaDetails: la Caja necesita volume_number para
         // distinguir tomos de la misma serie en el catálogo (QA 2026-06-11).
+        // activePromotions: promos NxM vigentes (Fase 3) — el motor de Caja las
+        // evalúa por línea; el filtro de vigencia va en SQL (currentlyActive).
         $relations = $light
-            ? ['price', 'images', 'paymentMethod', 'mangaDetails']
-            : ['category', 'supplier', 'price', 'images', 'paymentMethod'];
+            ? ['price', 'images', 'paymentMethod', 'mangaDetails', 'activePromotions']
+            : ['category', 'supplier', 'price', 'images', 'paymentMethod', 'activePromotions'];
         if ($needsMangaDetails && ! $light) {
             $relations[] = 'mangaDetails';
         }
@@ -134,7 +136,7 @@ class ProductController extends Controller
      */
     public function show(Product $product): JsonResponse
     {
-        $product->load(['category', 'supplier', 'price', 'images', 'paymentMethod'])
+        $product->load(['category', 'supplier', 'price', 'images', 'paymentMethod', 'activePromotions'])
                 ->loadSum('inventory', 'quantity');
 
         return $this->success(new ProductResource($product));
@@ -170,7 +172,7 @@ class ProductController extends Controller
             return $product;
         });
 
-        $product->load(['category', 'supplier', 'price', 'images', 'paymentMethod', 'mangaDetails'])
+        $product->load(['category', 'supplier', 'price', 'images', 'paymentMethod', 'mangaDetails', 'activePromotions'])
                 ->loadSum('inventory', 'quantity');
 
         SystemLog::write(

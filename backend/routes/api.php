@@ -22,6 +22,7 @@ use App\Http\Controllers\Api\PreSaleOrdersController;
 use App\Http\Controllers\Api\ProductCategoryController;
 use App\Http\Controllers\Api\SuppliersController;
 use App\Http\Controllers\Api\ProductController;
+use App\Http\Controllers\Api\ProductPromotionsController;
 use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\SalesDraftController;
 use App\Http\Controllers\Api\SaleCancellationsController;
@@ -112,6 +113,11 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
         Route::get('store-prices',               [ProductController::class, 'storePrices']);
         Route::put('store-prices/{store}',       [ProductController::class, 'updateStorePrices']);
         Route::delete('store-prices/{store}',    [ProductController::class, 'removeStorePrices']);
+        // Promociones NxM (Descuentos v2 — Fase 3)
+        Route::get('promotions',                 [ProductPromotionsController::class, 'index']);
+        Route::post('promotions',                [ProductPromotionsController::class, 'store']);
+        Route::put('promotions/{promotion}',     [ProductPromotionsController::class, 'update']);
+        Route::delete('promotions/{promotion}',  [ProductPromotionsController::class, 'destroy']);
     });
 
     // ── Customers ─────────────────────────────────────────────────────────────

@@ -30,6 +30,8 @@ final class SaleCalculator
      *   qty: float,
      *   line_discount?: array{kind: string, basis: string, value: float, reason?: ?string, note?: ?string}|null,
      * }> $lines Líneas en el MISMO orden en que se persistirán (zip posicional).
+     * @param iterable<\App\Models\ProductPromotion> $promotions Promos VIGENTES
+     *   de los productos del carrito (el caller filtra con currentlyActive()).
      *
      * @return array{
      *   lines: array<int, array{
@@ -45,8 +47,14 @@ final class SaleCalculator
      *   total: float,
      * }
      */
-    public function calculate(array $lines): array
+    public function calculate(array $lines, iterable $promotions = []): array
     {
+        // Agrupar promos por producto para el lookup por línea.
+        $promosByProduct = [];
+        foreach ($promotions as $promo) {
+            $promosByProduct[(int) $promo->product_id][] = $promo;
+        }
+
         $resultLines = [];
         $subtotal    = 0.0;
         $netSum      = 0.0;
@@ -56,9 +64,14 @@ final class SaleCalculator
 
             $benefitType    = null;
             $discountAmount = 0.0;
+            $appliedPromoId = null;
+            $promoName      = null;
+            $promoFreeQty   = null;
 
             $discount = $line['line_discount'] ?? null;
             if (is_array($discount)) {
+                // Precedencia: descuento manual > promo (no-stacking). Una línea
+                // descontada a mano queda FUERA del motor NxM.
                 $discountAmount = $this->lineDiscountAmount(
                     kind:      (string) $discount['kind'],
                     basis:     (string) $discount['basis'],
@@ -69,9 +82,23 @@ final class SaleCalculator
                 if ($discountAmount > 0) {
                     $benefitType = 'discount';
                 }
+            } else {
+                // Mejor promo para el cliente (mayor ahorro; empate → mayor
+                // priority, luego menor id) — espejo de bestPromoBenefit en
+                // saleCalc.ts. Q se evalúa POR LÍNEA (no pooled entre splits).
+                $best = $this->bestPromoBenefit(
+                    $promosByProduct[(int) $line['product_id']] ?? [],
+                    (float) $line['unit_price'],
+                    (float) $line['qty'],
+                );
+                if ($best !== null) {
+                    $benefitType    = 'promo';
+                    $discountAmount = $best['amount'];
+                    $appliedPromoId = $best['promo_id'];
+                    $promoName      = $best['promo_name'];
+                    $promoFreeQty   = $best['free_qty'];
+                }
             }
-            // Fase 3: else → evaluar promos NxM activas del producto aquí
-            // (mejor-para-cliente; misma precedencia manual > promo que saleCalc.ts).
 
             $net = self::round2(max(0.0, $gross - $discountAmount));
 
@@ -79,9 +106,9 @@ final class SaleCalculator
                 'gross'                => $gross,
                 'benefit_type'         => $benefitType,
                 'discount_amount'      => $discountAmount,
-                'applied_promotion_id' => null,
-                'promo_name'           => null,
-                'promo_free_qty'       => null,
+                'applied_promotion_id' => $appliedPromoId,
+                'promo_name'           => $promoName,
+                'promo_free_qty'       => $promoFreeQty,
             ];
 
             $subtotal += $gross;
@@ -97,6 +124,61 @@ final class SaleCalculator
             'line_benefit_total' => self::round2($subtotal - $netSum),
             'total'              => $netSum,
         ];
+    }
+
+    /**
+     * Beneficio de una promo NxM sobre una línea: groups = floor(Q/N),
+     * gratis = groups × (N−M), resto a precio completo. Espejo de
+     * computePromoBenefit en saleCalc.ts. Null si no alcanza (Q < N) o inválida.
+     *
+     * @param array<int, \App\Models\ProductPromotion> $promos
+     * @return array{amount: float, promo_id: int, promo_name: string, free_qty: int}|null
+     */
+    private function bestPromoBenefit(array $promos, float $unitPrice, float $qty): ?array
+    {
+        $best = null;
+
+        foreach ($promos as $promo) {
+            $buyN = (int) $promo->buy_n;
+            $payM = (int) $promo->pay_m;
+            if ($buyN < 1 || $payM < 1 || $payM >= $buyN) {
+                continue;
+            }
+            $groups  = (int) floor($qty / $buyN);
+            $freeQty = $groups * ($buyN - $payM);
+            if ($freeQty <= 0) {
+                continue;
+            }
+            $amount = self::round2($freeQty * $unitPrice);
+            if ($amount <= 0) {
+                continue;
+            }
+
+            $candidate = [
+                'amount'     => $amount,
+                'promo_id'   => (int) $promo->id,
+                'promo_name' => (string) $promo->name,
+                'free_qty'   => $freeQty,
+                'priority'   => (int) $promo->priority,
+            ];
+
+            if (
+                $best === null
+                || $candidate['amount'] > $best['amount']
+                || ($candidate['amount'] === $best['amount']
+                    && ($candidate['priority'] > $best['priority']
+                        || ($candidate['priority'] === $best['priority'] && $candidate['promo_id'] < $best['promo_id'])))
+            ) {
+                $best = $candidate;
+            }
+        }
+
+        if ($best === null) {
+            return null;
+        }
+        unset($best['priority']);
+
+        return $best;
     }
 
     /**

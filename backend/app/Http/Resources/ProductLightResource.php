@@ -87,6 +87,18 @@ class ProductLightResource extends JsonResource
             'volume_number' => $this->relationLoaded('mangaDetails')
                 ? $this->mangaDetails?->volume_number
                 : null,
+
+            // Promos NxM VIGENTES (Fase 3) — el motor de Caja (saleCalc.ts)
+            // elige la mejor por línea; el backend recomputa igual al cobrar.
+            'active_promotions' => $this->relationLoaded('activePromotions')
+                ? $this->activePromotions->map(fn ($p) => [
+                    'id'       => $p->id,
+                    'name'     => $p->name,
+                    'buy_n'    => (int) $p->buy_n,
+                    'pay_m'    => (int) $p->pay_m,
+                    'priority' => (int) $p->priority,
+                ])->values()
+                : [],
         ];
     }
 }

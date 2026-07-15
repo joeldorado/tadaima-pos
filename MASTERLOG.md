@@ -655,6 +655,27 @@ docker compose up --build -d
 
 > Sesiones anteriores a 2026-05-14 (>20 días) archivadas en git history para mantener el log ligero. Decisiones load-bearing preservadas en ADRs (§7) y secciones de arquitectura.
 
+### Sesión 2026-07-15 — Descuentos v2 FASE 3: PROMOCIONES NxM por producto (2x1, 3x2…)
+
+**Promos "compra N, paga M" pegadas al producto, aplicadas SOLAS en caja.** El motor ya existía en `saleCalc.ts` desde la Fase 0 — esta fase lo activó end-to-end.
+
+**Backend:**
+- Migración `2026_07_15_000002`: `product_promotions` (product_id, name, buy_n/pay_m, starts_at/ends_at, status active|paused|expired, priority). Índice (product_id, status, ends_at).
+- `ProductPromotion` con scope `currentlyActive()` (vigencia lazy en SQL, sin cron); listado admin marca `expired` honesto (write-behind).
+- CRUD anidado `products/{product}/promotions` (mutar = admin/gerente vía adminOrManagerGate; listar = todos). Validación `pay_m < buy_n`.
+- `SaleCalculator::bestPromoBenefit` (espejo exacto de saleCalc.ts): groups=floor(Q/N), gratis=groups×(N−M), mejor-para-cliente gana (ahorro > priority > id), POR LÍNEA. CheckoutService carga las vigentes de los productos del carrito y recomputa — `applied_promotion_id` del cliente jamás se lee. Snapshot promo_name/promo_free_qty en sale_items (ADR-015: borrar la promo no toca tickets).
+- `active_promotions` embebido en el payload de productos (light + full, eager-load) — cero round-trips extra en Caja.
+- Tests: `PromotionCheckoutTest` 6 (2x1 con snapshot, mejor gana, no-stacking manual>promo, pausada/vencida/futura no aplican, Q<N full, pago con promo inexistente → 422) + `PromotionCrudTest` 7 (validación, RBAC, pause/resume, expiración lazy, 404 cross-product, **TZ negocio**). Suite **244/244**.
+
+**Frontend:**
+- 4ª tab **"Promos"** en el editor de producto (`ProductPromotionsTab.tsx`): alta nombre/N×M/vigencia/prioridad + pausar/reanudar + eliminar; aviso "guarda el producto primero" en alta nueva.
+- Caja: badge VERDE automático en la línea ("2x1 Verano · 1 gratis −$100"), neto con bruto tachado; el badge aparece/desaparece solo al cambiar cantidades. Los 3 snapshots de ticket generalizados (etiqueta "Promo X" además de "Desc. motivo").
+- El motor del carrito recibe las promos del payload de productos (`recalculateSale({promotions})`).
+
+**Review (code-reviewer) — 1 HIGH corregido antes del deploy:** las fechas de vigencia se guardaban en UTC crudo → una promo "vence el 20" moría a las ~5pm de Tijuana. Fix: `vigencyDates()` en el controller ancla fechas planas al día completo en la TZ del negocio vía `DateRange` (mismo patrón de cortes, TODO #117), display en la tab convierte de vuelta con BUSINESS_TZ, y test de regresión con Carbon::setTestNow (22:00 Tijuana del último día = viva; 00:30 del siguiente = muerta). + MEDIUM: 422 de total desincronizado (promo vencida con cache fresco) ahora refresca productos y avisa claro al cajero en vez del error críptico.
+
+**Verificación:** phpunit 244/244 · vitest 73/73 · vite build ✅ · Playwright `promotions.spec.ts` 3/3 (API snapshot, pausada→422/full ok, UI badge verde + total) + insumos 3/3 + line-discounts 4/4 + suite general 27 passed / 0 failed.
+
 ### Sesión 2026-07-15 — Descuentos v2 FASE 2: módulo INSUMOS ligado a caja + fix Historial — DEPLOYADO rev tadaima-00113-k7r
 
 **Módulo Insumos completo** (compras de operación pagadas con efectivo de la caja) + fix del Historial del Día que pidió Joel (las líneas con descuento salían en bruto).

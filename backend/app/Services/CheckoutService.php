@@ -75,6 +75,18 @@ class CheckoutService
             // mismo orden y checkout() los relee ordenados por id.
             $v2Lines = null;
             if ($calcV2) {
+                // Promos NxM VIGENTES de los productos del carrito (Fase 3). El
+                // server elige la mejor por línea — lo que mande el cliente es
+                // solo advisory; nunca se confía en su selección ni en montos.
+                $cartProductIds = array_values(array_unique(array_map(
+                    static fn (array $i) => (int) $i['product_id'],
+                    $items,
+                )));
+                $activePromos = \App\Models\ProductPromotion::query()
+                    ->whereIn('product_id', $cartProductIds)
+                    ->currentlyActive()
+                    ->get();
+
                 $calc = $this->calculator->calculate(array_map(
                     static fn (array $i) => [
                         'product_id'    => (int) $i['product_id'],
@@ -83,7 +95,7 @@ class CheckoutService
                         'line_discount' => $i['line_discount'] ?? null,
                     ],
                     array_values($items),
-                ));
+                ), $activePromos);
 
                 $v2Lines = [];
                 foreach (array_values($items) as $idx => $item) {

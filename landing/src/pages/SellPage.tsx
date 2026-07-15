@@ -116,6 +116,8 @@ interface Product {
   // false = sin inventario en la tienda activa ("No asignado" → el cajero le
   // agrega stock; no se puede cobrar hasta que tenga stock). Default true.
   is_assigned?: boolean;
+  /** Promos NxM VIGENTES (Fase 3) — el motor elige la mejor por línea. */
+  active_promotions?: Array<{ id: number; name: string; buy_n: number; pay_m: number; priority: number }>;
 }
 
 interface Customer {
@@ -581,6 +583,7 @@ export function SellPage() {
           product_type: p.product_type ?? "product",
           volume_number: p.volume_number ?? null,
           is_assigned: p.is_assigned ?? true,
+          active_promotions: p.active_promotions ?? [],
         } as Product;
       });
   }, [productsQuery.data]);
@@ -2084,6 +2087,18 @@ export function SellPage() {
         qty: i.quantity,
         ...(i.discount ? { discount: i.discount } : {}),
       })),
+      // Promos NxM vigentes de los productos del carrito (Fase 3). El motor
+      // elige la mejor por línea; el backend recomputa igual al cobrar.
+      promotions: activeMesa.items.flatMap(i =>
+        (i.product.active_promotions ?? []).map(ap => ({
+          id: ap.id,
+          productId: i.product.id,
+          name: ap.name,
+          buyN: ap.buy_n,
+          payM: ap.pay_m,
+          priority: ap.priority,
+        }))
+      ),
     }),
     [activeMesa.items]
   );
@@ -3119,6 +3134,17 @@ export function SellPage() {
    * Para otros errores, muestra toast.error genérico.
    */
   const handleCheckoutError = (msg: string) => {
+    // Total desincronizado (ej. una promo venció con el cache aún "fresco"):
+    // el server recomputó distinto al cliente. Refrescar productos/promos y
+    // pedir re-cobro con mensaje claro — sin esto el cajero ve un 422 críptico.
+    if (/no coinciden con el total/i.test(msg)) {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+      toast.warning(
+        "Los precios o promociones cambiaron desde que armaste la venta. Actualizamos el catálogo — revisa el total y cobra de nuevo.",
+        { duration: 8000, style: { background: '#1a1400', color: '#fbbf24', border: '1px solid #78350f', borderRadius: '16px' } },
+      );
+      return;
+    }
     const stockMatch = msg.match(/Stock insuficiente(?: en Exhibición)? para '([^']+)'\. Disponible: ([\d.]+), solicitado/);
     if (stockMatch) {
       const productName = stockMatch[1];
@@ -3370,13 +3396,17 @@ export function SellPage() {
             price: getItemPrice(i),
           })),
           ...regularItems.map(i => {
-            const benefitAmt = i.discount ? (lineCalcById[i.lineId]?.benefit?.amount ?? 0) : 0;
+            const benefit = lineCalcById[i.lineId]?.benefit ?? null;
+            const benefitAmt = benefit?.amount ?? 0;
+            const benefitLabel = benefit?.type === "promo"
+              ? `Promo ${benefit.promoLabel ?? ""}`.trim()
+              : i.discount ? `Desc. ${DISCOUNT_REASON_LABELS[i.discount.reason]}` : "";
             return {
               name: i.product.name,
               quantity: i.quantity,
               price: getItemPrice(i),
-              ...(benefitAmt > 0 && i.discount
-                ? { discountAmount: benefitAmt, discountLabel: `Desc. ${DISCOUNT_REASON_LABELS[i.discount.reason]}` }
+              ...(benefitAmt > 0 && benefitLabel
+                ? { discountAmount: benefitAmt, discountLabel: benefitLabel }
                 : {}),
             };
           }),
@@ -3618,13 +3648,17 @@ export function SellPage() {
           ...(customerPhoneSnap ? { customerPhone: customerPhoneSnap } : {}),
           ...(customerEmailSnap ? { customerEmail: customerEmailSnap } : {}),
           items: regularItems.map(i => {
-            const benefitAmt = i.discount ? (lineCalcById[i.lineId]?.benefit?.amount ?? 0) : 0;
+            const benefit = lineCalcById[i.lineId]?.benefit ?? null;
+            const benefitAmt = benefit?.amount ?? 0;
+            const benefitLabel = benefit?.type === "promo"
+              ? `Promo ${benefit.promoLabel ?? ""}`.trim()
+              : i.discount ? `Desc. ${DISCOUNT_REASON_LABELS[i.discount.reason]}` : "";
             return {
               name: i.product.name,
               quantity: i.quantity,
               price: getItemPrice(i),
-              ...(benefitAmt > 0 && i.discount
-                ? { discountAmount: benefitAmt, discountLabel: `Desc. ${DISCOUNT_REASON_LABELS[i.discount.reason]}` }
+              ...(benefitAmt > 0 && benefitLabel
+                ? { discountAmount: benefitAmt, discountLabel: benefitLabel }
                 : {}),
             };
           }),
@@ -3700,13 +3734,17 @@ export function SellPage() {
 
       // Snapshot cart before clearing (for ticket)
       const cartSnapshot = activeMesa.items.map(ci => {
-        const benefitAmt = ci.discount ? (lineCalcById[ci.lineId]?.benefit?.amount ?? 0) : 0;
+        const benefit = lineCalcById[ci.lineId]?.benefit ?? null;
+        const benefitAmt = benefit?.amount ?? 0;
+        const benefitLabel = benefit?.type === "promo"
+          ? `Promo ${benefit.promoLabel ?? ""}`.trim()
+          : ci.discount ? `Desc. ${DISCOUNT_REASON_LABELS[ci.discount.reason]}` : "";
         return {
           name: ci.product.name,
           quantity: ci.quantity,
           price: ci.damagedPrice ?? ci.product[`price_${ci.priceLevel}` as keyof Product] as number ?? ci.product.price_a,
-          ...(benefitAmt > 0 && ci.discount
-            ? { discountAmount: benefitAmt, discountLabel: `Desc. ${DISCOUNT_REASON_LABELS[ci.discount.reason]}` }
+          ...(benefitAmt > 0 && benefitLabel
+            ? { discountAmount: benefitAmt, discountLabel: benefitLabel }
             : {}),
         };
       });
@@ -5250,9 +5288,10 @@ export function SellPage() {
                     const priceLevels = getPriceLevels(item.product);
                     const unitPrice = getItemPrice(item);
                     const lineTotal = unitPrice * item.quantity;
-                    // Descuentos v2: neto/beneficio de ESTA línea según recalculateSale.
+                    // Descuentos v2/Fase 3: beneficio de ESTA línea (manual o promo NxM).
                     const lineCalc = lineCalcById[item.lineId];
-                    const lineDiscAmt = item.discount ? (lineCalc?.benefit?.amount ?? 0) : 0;
+                    const lineBenefit = lineCalc?.benefit ?? null;
+                    const lineDiscAmt = lineBenefit?.amount ?? 0;
                     const lineNet = lineDiscAmt > 0 ? (lineCalc?.net ?? lineTotal) : lineTotal;
                     const canLineDiscount = item.sellingCatalogId == null && !item.isFromPreSale;
                     const activePriceLabel = PRICE_LEVEL_LABELS[item.priceLevel] ?? "Precio";
@@ -5503,6 +5542,17 @@ export function SellPage() {
                             >
                               −{fmt(lineDiscAmt)} · {DISCOUNT_REASON_LABELS[item.discount.reason]} <X size={10} />
                             </button>
+                          )}
+                          {/* Badge de promo NxM automática (Fase 3): verde, no removible —
+                              se quita sola si baja la cantidad o si aplican descuento manual. */}
+                          {lineDiscAmt > 0 && !item.discount && lineBenefit?.type === "promo" && (
+                            <span
+                              className="mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-black"
+                              style={{ background: "rgba(16,185,129,0.12)", color: "#34d399", border: "1px solid rgba(16,185,129,0.4)" }}
+                              title={`Promoción automática: ${lineBenefit.promoLabel ?? ""}`}
+                            >
+                              {lineBenefit.promoLabel ?? "Promo"} · {lineBenefit.freeQty ?? 0} gratis −{fmt(lineDiscAmt)}
+                            </span>
                           )}
                           {!item.isFromPreSale && item.isDamaged && (
                             <p className="text-[10px] font-black uppercase tracking-widest mt-0.5" style={{ color: TLO }}>

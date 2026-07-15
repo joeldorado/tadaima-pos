@@ -61,6 +61,17 @@ class Product extends Model
         return $this->hasOne(ProductPaymentMethod::class);
     }
 
+    public function promotions(): HasMany
+    {
+        return $this->hasMany(ProductPromotion::class);
+    }
+
+    /** Promos vigentes AHORA (para el payload de Caja / motor NxM). */
+    public function activePromotions(): HasMany
+    {
+        return $this->promotions()->currentlyActive();
+    }
+
     public function inventory(): HasMany
     {
         return $this->hasMany(Inventory::class);

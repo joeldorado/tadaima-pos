@@ -70,8 +70,34 @@ export interface Product {
   images: Array<{ id: number; image_path: string; url: string; sort_order: number }>
   /** Discriminador producto normal vs tomo de librería (default 'product'). */
   product_type?: 'product' | 'manga'
+  /** Promos NxM VIGENTES (Fase 3) — el motor de Caja elige la mejor por línea. */
+  active_promotions?: ActiveProductPromotion[]
   created_at: string
   updated_at: string
+}
+
+/** Promo NxM vigente tal como viaja en el payload de producto (Caja). */
+export interface ActiveProductPromotion {
+  id: number
+  name: string
+  buy_n: number
+  pay_m: number
+  priority: number
+}
+
+/** Promo NxM completa (CRUD del editor de producto — incluye pausadas/vencidas). */
+export interface ProductPromotion {
+  id: number
+  product_id: number
+  name: string
+  buy_n: number
+  pay_m: number
+  starts_at: string | null
+  ends_at: string | null
+  status: 'active' | 'paused' | 'expired'
+  priority: number
+  created_at?: string
+  updated_at?: string
 }
 
 export interface CreateProductInput {

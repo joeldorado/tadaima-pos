@@ -124,6 +124,18 @@ class ProductResource extends JsonResource
                 ],
             ),
 
+            // Promos NxM VIGENTES (Fase 3). El editor de producto usa su
+            // propio endpoint CRUD para ver también pausadas/vencidas.
+            'active_promotions' => $this->relationLoaded('activePromotions')
+                ? $this->activePromotions->map(fn ($p) => [
+                    'id'       => $p->id,
+                    'name'     => $p->name,
+                    'buy_n'    => (int) $p->buy_n,
+                    'pay_m'    => (int) $p->pay_m,
+                    'priority' => (int) $p->priority,
+                ])->values()
+                : [],
+
             'created_at' => $this->created_at?->toISOString(),
             'updated_at' => $this->updated_at?->toISOString(),
         ];
