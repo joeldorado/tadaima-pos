@@ -655,7 +655,7 @@ docker compose up --build -d
 
 > Sesiones anteriores a 2026-05-14 (>20 días) archivadas en git history para mantener el log ligero. Decisiones load-bearing preservadas en ADRs (§7) y secciones de arquitectura.
 
-### Sesión 2026-07-15 — Descuentos v2 FASE 2: módulo INSUMOS ligado a caja + fix Historial
+### Sesión 2026-07-15 — Descuentos v2 FASE 2: módulo INSUMOS ligado a caja + fix Historial — DEPLOYADO rev tadaima-00113-k7r
 
 **Módulo Insumos completo** (compras de operación pagadas con efectivo de la caja) + fix del Historial del Día que pidió Joel (las líneas con descuento salían en bruto).
 
