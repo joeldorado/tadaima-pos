@@ -655,7 +655,7 @@ docker compose up --build -d
 
 > Sesiones anteriores a 2026-05-14 (>20 días) archivadas en git history para mantener el log ligero. Decisiones load-bearing preservadas en ADRs (§7) y secciones de arquitectura.
 
-### Sesión 2026-07-14/15 — Descuentos v2 FASE 1: descuento POR LÍNEA end-to-end + eliminado el descuento global
+### Sesión 2026-07-14/15 — Descuentos v2 FASE 1: descuento POR LÍNEA end-to-end + eliminado el descuento global — DEPLOYADO rev tadaima-00112-mkl
 
 **El reemplazo completo del "Promo" global buggy.** El cajero ahora descuenta N de M unidades de una línea (ej. 2 de 3 dañadas): si N < M la línea se PARTE en unidades a precio completo + unidades descontadas; quitar el descuento re-fusiona. Caso del cliente validado end-to-end: 3 uds $100, 2 dañadas −$20 c/u = **$260** (test API + test UI Playwright).
 
