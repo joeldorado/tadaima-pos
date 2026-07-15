@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { newLineId } from '@/lib/saleCalc'
 
 // Tracks the server-side draft ID and draft item IDs for each mesa (cart tab).
 // Persisted to localStorage so draft references survive page reloads.
@@ -89,6 +90,26 @@ export const useCartDraftStore = create<CartDraftState>()(
     }),
     {
       name: 'tadaima-cart-draft',
+      // v1 (Descuentos v2, 2026-07-14): cada item del carrito lleva lineId.
+      // migrate asigna lineId a snapshots persistidos antes del cambio para
+      // que un carrito abierto sobreviva el deploy sin romper mutadores.
+      version: 1,
+      migrate: (persisted: unknown): CartDraftState => {
+        const state = persisted as {
+          mesasSnapshot?: Array<{ items?: Array<{ lineId?: string }> }> | null
+        } & Record<string, unknown>
+        const snap = state?.mesasSnapshot
+        const migrated = Array.isArray(snap)
+          ? {
+              ...state,
+              mesasSnapshot: snap.map(m => ({
+                ...m,
+                items: (m.items ?? []).map(i => (i.lineId ? i : { ...i, lineId: newLineId() })),
+              })),
+            }
+          : state
+        return migrated as unknown as CartDraftState
+      },
       // Only persist the data fields — functions are recreated by Zustand
       partialize: (state) => ({
         draftIds: state.draftIds,

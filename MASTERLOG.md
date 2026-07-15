@@ -655,6 +655,24 @@ docker compose up --build -d
 
 > Sesiones anteriores a 2026-05-14 (>20 días) archivadas en git history para mantener el log ligero. Decisiones load-bearing preservadas en ADRs (§7) y secciones de arquitectura.
 
+### Sesión 2026-07-14 — Descuentos v2 FASE 0: lineId + recalculateSale (fundación, cero cambio visible)
+
+**Contexto:** arranca el proyecto Descuentos v2 (spec del cliente): eliminar el descuento global de mesa (buggy: estado mutable que sobrevive cambios del carrito) y reemplazarlo por descuentos por línea + promos NxM + cupones + módulo Insumos. Plan de 6 fases en `~/.claude/plans/ok-si-lo-ocupamos-structured-feigenbaum.md`; directo en main, deploy por fase.
+
+**Fase 0 (esta sesión) — solo frontend, paridad exacta de comportamiento:**
+- **`landing/src/lib/saleCalc.ts` (NUEVO):** calculadora PURA de totales (`recalculateSale`) — el total es siempre función del estado actual de líneas, nunca acarreo. Incluye ya el motor completo de fases futuras: descuento manual por línea (fixed/percent × unit/line, clamp ≥0), motor promo NxM (`floor(Q/N)×(N−M)`, mejor-para-cliente, por línea), cupón (solo líneas sin beneficio, min_purchase/max_discount/scope), no-stacking estructural. Redondeo único a nivel line-net. 25 tests en `saleCalc.test.ts` (incluye el caso del cliente: 3 uds, 2 dañadas −$20 = $260). El gemelo server (`SaleCalculator.php`) llega en Fase 1.
+- **`CartItem.lineId`:** identidad estable de LÍNEA (crypto.randomUUID) — prerequisito del split de líneas de Fase 1. Asignado en los 4 puntos de creación (addToCart, addScanToCart, toCartItem de liquidación, addCatalogToCart); mutadores tier-1 (`changeQty/removeFromCart/changeLevel/toggleDamaged/setDamagedPrice`) re-keyed de product.id → lineId (7 call sites + React key del carrito).
+- **Persistencia:** `cartDraftStore` bump a version 1 con `migrate` que asigna lineId a carritos guardados pre-deploy; hidratación defensiva también en SellPage.
+- **SellPage totales:** `useMemo(recalculateSale)` reemplaza el math incremental; `activeMesa.discount` entra como `legacyGlobalDiscount` (passthrough temporal, muere en Fase 1).
+
+**Review (code-reviewer) — 1 HIGH corregido antes de commit:** en liquidación de folio los precios ratio-scaled tienen decimales repetidos; el redondeo por línea podía mostrar/gatear $99.99 mientras el pago real postea order.balance=$100. Fix: la rama `loadedPreSaleOrderId` de `currentPayAmount` suma RAW (paridad exacta con math previo). También: `setDamagedPrice` ahora clampa a 2 decimales (input permitía 33.335 → desync amount vs items[].price).
+
+**Verificación:** vitest 73/73 ✅ · vite build ✅ · tsc 452 vs baseline 449 (los +3 son usos nuevos del patrón `activeMesa` pre-existente, misma clase TS18048, no regresión) · Playwright e2e completo contra SQLite local: **17 passed / 15 did-not-run / 3 skipped = idéntico al baseline** (comparado con stash) ✅.
+
+**Nota entorno local:** `php artisan serve --env=sqlitelocal` NO propaga el env al server hijo (relee `.env` = MySQL). Workaround que sí funciona: `DB_CONNECTION=sqlite DB_DATABASE=.../local.sqlite php -S 127.0.0.1:8000 -t public`. El e2e espera admin password `password` (el seeder siembra `devaccess` — ajustar con tinker).
+
+**Siguiente:** Fase 1 — migración M1 (ALTER sale_items), SaleCalculator.php, CheckoutService v2 (server recomputa, deja de confiar en el monto del cliente), LineDiscountModal con auto-split, y ELIMINAR el modal Promo + mesa.discount.
+
 ### Sesión 2026-06-24 — QA previa + LIMPIEZA DE BD para handoff al cliente (admin Pier, prod a cero)
 
 **Contexto:** Joel pidió dejar la BD de prod lista para entregar al cliente: limpiar todos los datos de QA y dejar solo un usuario admin, para que el cliente cree tienda → terminales → usuarios desde cero. Antes de limpiar, una última QA "a ver si no truena algo" con BD vacía. Proxy Cloud SQL ya abierto por Joel.

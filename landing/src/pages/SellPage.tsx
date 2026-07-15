@@ -46,6 +46,7 @@ import { PRICE_LEVEL_LABELS, PRICE_LEVEL_COLORS, PRICE_LEVEL_RGB } from "@/lib/p
 import type { CashSession, CashRegisterInfo, PaymentMethod as ApiPaymentMethod, PreSaleCatalog, PreSaleOrder, PreSaleOrderItem, SaleDetail, Terminal, ExternalCardLookup } from "@tadaima/api";
 import { buildPaymentSummary } from "@/lib/paymentSummary";
 import { computePromoDiscount, computeRegularChargeAmount, discountPct } from "@/lib/promo";
+import { newLineId, recalculateSale } from "@/lib/saleCalc";
 import type { HistorialEntry } from "@/hooks/queries/useHistorial";
 import { useCartDraftStore } from "@/stores/cartDraftStore";
 import { useActiveStore } from "@/contexts/StoreContext";
@@ -130,6 +131,11 @@ interface Customer {
 }
 
 interface CartItem {
+  /** Identidad estable de la LÍNEA (no del producto). Permite que el mismo
+   *  producto exista en 2+ líneas (ej. split por descuento de unidades dañadas)
+   *  y que los mutadores (+/−, borrar, nivel) apunten a la línea exacta.
+   *  Descuentos v2, Joel 2026-07-14. */
+  lineId: string;
   product: Product;
   quantity: number;
   priceLevel: PriceLevel;
@@ -379,8 +385,13 @@ export function SellPage() {
       const snap = draftStore.mesasSnapshot;
       if (Array.isArray(snap) && snap.length > 0) {
         // Normaliza labels antiguos ("Caja 1..5") al nuevo esquema
-        // ("Caja Principal" / "Venta 2..5"). Preserva los items intactos.
-        return (snap as Mesa[]).map((m, idx) => ({ ...m, name: mesaLabel(idx + 1) }));
+        // ("Caja Principal" / "Venta 2..5"). Asigna lineId a items de snapshots
+        // previos a Descuentos v2 (carritos persistidos sin lineId).
+        return (snap as Mesa[]).map((m, idx) => ({
+          ...m,
+          name: mesaLabel(idx + 1),
+          items: (m.items ?? []).map(i => (i.lineId ? i : { ...i, lineId: newLineId() })),
+        }));
       }
       return [makeMesa(1)];
     })()
@@ -1502,6 +1513,7 @@ export function SellPage() {
       if (m.items.some(i => i.product.id === product.id)) return m;
       actuallyAdded = true;
       const newItem = {
+        lineId: newLineId(),
         product, quantity: 1, priceLevel,
         ...(m.isPreventa ? { depositAmount: unitPrice } : {}),
       };
@@ -1568,6 +1580,7 @@ export function SellPage() {
               }
             : i)
         : [...m.items, {
+            lineId: newLineId(),
             product, quantity, priceLevel,
             ...(m.isPreventa ? { depositAmount: unitPrice * quantity } : {}),
           }];
@@ -1589,9 +1602,9 @@ export function SellPage() {
   /**
    * Quitar producto del carrito (ADR-014: solo state local, sin sync server).
    */
-  const removeFromCart = (pid: string) => {
+  const removeFromCart = (lineId: string) => {
     const mesaId = activeMesa.id;
-    updMesa(mesaId, m => ({ ...m, items: m.items.filter(i => i.product.id !== pid) }));
+    updMesa(mesaId, m => ({ ...m, items: m.items.filter(i => i.lineId !== lineId) }));
   };
 
   /**
@@ -1599,9 +1612,9 @@ export function SellPage() {
    * Sin más toast "Sincronizando…" porque no hay nada que sincronizar — el server
    * se entera del carrito completo al detonar el cobro.
    */
-  const changeQty = (pid: string, d: number) => {
+  const changeQty = (lineId: string, d: number) => {
     const mesaId = activeMesa.id;
-    const currentItem = activeMesa.items.find(i => i.product.id === pid);
+    const currentItem = activeMesa.items.find(i => i.lineId === lineId);
     if (!currentItem) return;
     const oldQty = currentItem.quantity;
     const newQty = oldQty + d;
@@ -1640,7 +1653,7 @@ export function SellPage() {
     updMesa(mesaId, m => ({
       ...m,
       items: m.items
-        .map(i => i.product.id === pid
+        .map(i => i.lineId === lineId
           ? {
               ...i,
               quantity: newQty,
@@ -1661,20 +1674,20 @@ export function SellPage() {
 
   const changeDeposit = (val: number) => updMesa(activeMesa.id, m => ({ ...m, depositAmount: val }));
 
-  const changeLevel = (pid: string, level: PriceLevel) => {
+  const changeLevel = (lineId: string, level: PriceLevel) => {
     // Socio inactivo: no se puede forzar precio socio (b) a mano.
     if (level === "b" && activeMesa?.customerIsSocio && !activeMesa?.customerSocioEligible) {
       toast.info("Socio inactivo — no aplica precio socio.");
       return;
     }
-    updMesa(activeMesa.id, m => ({ ...m, items: m.items.map(i => i.product.id === pid ? { ...i, priceLevel: level } : i) }));
+    updMesa(activeMesa.id, m => ({ ...m, items: m.items.map(i => i.lineId === lineId ? { ...i, priceLevel: level } : i) }));
   };
 
-  const toggleDamaged = (pid: string) =>
+  const toggleDamaged = (lineId: string) =>
     updMesa(activeMesa.id, m => ({
       ...m,
       items: m.items.map(i => {
-        if (i.product.id !== pid) return i;
+        if (i.lineId !== lineId) return i;
         const willBeDamaged = !i.isDamaged;
         if (willBeDamaged && (i.product.stock_damaged ?? 0) <= 0) {
           toast.error("Este producto no tiene unidades dañadas registradas");
@@ -1691,10 +1704,12 @@ export function SellPage() {
       }),
     }));
 
-  const setDamagedPrice = (pid: string, price: number) =>
+  const setDamagedPrice = (lineId: string, price: number) =>
     updMesa(activeMesa.id, m => ({
       ...m,
-      items: m.items.map(i => i.product.id === pid ? { ...i, damagedPrice: Math.max(0, price) } : i),
+      // round2: el input numérico permite >2 decimales y un precio como 33.335
+      // desincroniza el amount del pago (redondeado) vs items[].price (crudo).
+      items: m.items.map(i => i.lineId === lineId ? { ...i, damagedPrice: Math.round(Math.max(0, price) * 100) / 100 } : i),
     }));
 
 
@@ -2035,10 +2050,27 @@ export function SellPage() {
     return map;
   }, [mesas, activeMesa.id]);
   
-  const subtotal       = useMemo(() => activeMesa.items.reduce((s, i) => s + getItemPrice(i) * i.quantity, 0), [activeMesa.items]);
+  // Totales vía recalculateSale (saleCalc.ts): función PURA que se recalcula
+  // completa en cada cambio del carrito — nunca se acarrea un descuento previo
+  // (ese acarreo era el bug del descuento "atorado"). Fase 0: el descuento
+  // global viejo entra como passthrough; en Fase 1 se elimina y aquí entran
+  // descuentos por línea, promos NxM y cupón.
+  const saleCalcResult = useMemo(
+    () => recalculateSale({
+      lines: activeMesa.items.map(i => ({
+        lineId: i.lineId,
+        productId: i.product.id,
+        unitPrice: getItemPrice(i),
+        qty: i.quantity,
+      })),
+      legacyGlobalDiscount: activeMesa.discount,
+    }),
+    [activeMesa.items, activeMesa.discount]
+  );
+  const subtotal = saleCalcResult.subtotal;
   // Promo en pesos (monto absoluto en activeMesa.discount), clampeado a [0, subtotal].
   const discountAmt    = Math.min(Math.max(0, activeMesa.discount), subtotal);
-  const totalBeforeComm = subtotal - discountAmt;
+  const totalBeforeComm = saleCalcResult.total;
   const totalDeposit   = useMemo(() => activeMesa.items.reduce((s, i) => s + (i.depositAmount ?? 0), 0), [activeMesa.items]);
   const totalItems     = activeMesa.items.reduce((s, i) => s + i.quantity, 0);
   // Subtotal de ítems nuevos (no de preventa cargada) — usado en carrito mixto
@@ -2075,8 +2107,14 @@ export function SellPage() {
   // Mixed cart (catálogo + regular sin modo preventa explícito): cobra regular + anticipos.
   const currentPayAmount = useMemo(() => {
     if (activeMesa.loadedPreSaleOrderId) {
-      // Items de preventa ya vienen con precio proporcional al saldo → subtotal = balance + items nuevos
-      return totalBeforeComm;
+      // Items de preventa ya vienen con precio proporcional al saldo (ratio del
+      // balance → precios con decimales repetidos). Aquí se suma RAW, sin el
+      // redondeo por línea de saleCalc: el pago real que se postea al backend
+      // es order.balance, y redondear por línea puede mostrar/gatear 1¢ menos
+      // de lo que se cobra (review Fase 0 2026-07-14). Paridad exacta con el
+      // math previo: subtotal crudo − descuento.
+      const rawSubtotal = activeMesa.items.reduce((s, i) => s + getItemPrice(i) * i.quantity, 0);
+      return rawSubtotal - discountAmt;
     }
     if (activeMesa.isPreventa) {
       // Modo preventa explícito: solo se cobran los anticipos.
@@ -2283,6 +2321,7 @@ export function SellPage() {
     const levelMap: Record<number, PriceLevel> = { 1: "a", 2: "b", 3: "c", 4: "d", 5: "e" };
 
     const toCartItem = (it: PreSaleOrderItem, delivered: boolean): CartItem => ({
+      lineId: newLineId(),
       product: {
         id: String(it.product_id ?? `catalog-${it.pre_sale_catalog_id}`),
         name: it.catalog?.product_name ?? "Producto preventa",
@@ -2442,6 +2481,7 @@ export function SellPage() {
       }
 
       const item: CartItem = {
+        lineId: newLineId(),
         product: {
           id: `catalog-${catalog.id}`,
           name: catalog.product_name,
@@ -2513,7 +2553,7 @@ export function SellPage() {
         notes: apartarNotes || undefined,
       });
       // Remove the layawayed item from the cart
-      await removeFromCart(item.product.id);
+      removeFromCart(item.lineId);
       // Stock changed → refresh products + reservedStock para que otras cajas
       // vean inmediatamente que ya no está reservado en este draft.
       void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
@@ -5094,7 +5134,7 @@ export function SellPage() {
                     layout
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
-                    key={`${item.product.id}-${item.priceLevel}`}
+                    key={item.lineId}
                     className={`group rounded-2xl p-4 flex items-center gap-4 transition-all border ${
                       item.preSaleItemDelivered
                         ? "bg-emerald-500/[0.04] border-emerald-500/15 opacity-50"
@@ -5157,7 +5197,7 @@ export function SellPage() {
                       {(item.product.stock_damaged ?? 0) > 0 && (
                         <div className="flex gap-2 mt-2 flex-wrap">
                           <button
-                            onClick={() => toggleDamaged(item.product.id)}
+                            onClick={() => toggleDamaged(item.lineId)}
                             className={`text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg border transition-all flex items-center gap-1 ${
                               item.isDamaged
                                 ? "bg-orange-500/20 border-orange-500/50 text-orange-400"
@@ -5208,7 +5248,7 @@ export function SellPage() {
                               type="number"
                               min={0}
                               value={item.damagedPrice ?? ""}
-                              onChange={e => setDamagedPrice(item.product.id, parseFloat(e.target.value) || 0)}
+                              onChange={e => setDamagedPrice(item.lineId, parseFloat(e.target.value) || 0)}
                               className="w-20 bg-transparent outline-none text-sm font-black text-orange-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none placeholder:text-orange-400/30"
                               placeholder="0"
                             />
@@ -5243,7 +5283,7 @@ export function SellPage() {
                           <div className="relative">
                             <select
                               value={item.priceLevel}
-                              onChange={e => changeLevel(item.product.id, e.target.value as PriceLevel)}
+                              onChange={e => changeLevel(item.lineId, e.target.value as PriceLevel)}
                               className="w-full appearance-none rounded-2xl px-4 py-3 pr-10 text-[11px] font-black uppercase tracking-[0.14em] outline-none transition-colors"
                               style={{
                                 color: activePriceColor,
@@ -5273,7 +5313,7 @@ export function SellPage() {
                       ) : (
                         <div className="flex h-[54px] items-center gap-3 rounded-2xl px-3" style={{ border: CARD_B, background: MUTED }}>
                           <button
-                            onClick={() => { void changeQty(item.product.id, -1); }}
+                            onClick={() => { void changeQty(item.lineId, -1); }}
                             className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors"
                             style={{ color: TLO, background: SOFT }}
                           >
@@ -5281,7 +5321,7 @@ export function SellPage() {
                           </button>
                           <span className="w-8 text-center text-base font-black" style={{ color: THI }}>{item.quantity}</span>
                           <button
-                            onClick={() => { void changeQty(item.product.id, 1); }}
+                            onClick={() => { void changeQty(item.lineId, 1); }}
                             className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors"
                             style={{ color: TLO, background: SOFT }}
                           >
@@ -5382,7 +5422,7 @@ export function SellPage() {
 
                       {!item.preSaleItemDelivered && (
                         <button
-                          onClick={() => { void removeFromCart(item.product.id); }}
+                          onClick={() => { void removeFromCart(item.lineId); }}
                           className="inline-flex h-[54px] min-w-[118px] items-center justify-center gap-1.5 self-center rounded-2xl border border-[#E0221A]/25 bg-[#E0221A]/10 px-4 text-[12px] font-black text-[#FF8A80] transition-colors hover:bg-[#E0221A]/16 hover:text-white"
                         >
                           <Trash2 size={13} />
