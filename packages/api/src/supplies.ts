@@ -1,0 +1,96 @@
+import { apiClient } from './client'
+
+/**
+ * Insumos (Fase 2): catálogo de insumos de operación + compras pagadas con
+ * efectivo de la caja (crean un cash_movement 'salida' linkeado en la misma
+ * transacción — el corte se auto-balancea).
+ */
+
+export interface Supply {
+  id: number
+  company_id: number
+  name: string
+  category: string | null
+  unit: string | null
+  is_active: boolean
+  created_at?: string
+  updated_at?: string
+}
+
+export interface SupplyMovementRecord {
+  id: number
+  supply_id: number
+  type: 'purchase' | 'consumption' | 'adjustment'
+  quantity: number
+  amount: number
+  note: string | null
+  register_session_id: number | null
+  cash_movement_id: number | null
+  user_id: number
+  created_at: string
+  supply?: Pick<Supply, 'id' | 'name' | 'category' | 'unit'>
+  user?: { id: number; name: string }
+}
+
+export interface SupplyReport {
+  period: { from: string; to: string }
+  total: number
+  by_category: Array<{ category: string; purchases: number; total: number }>
+  top_supplies: Array<{
+    id: number
+    name: string
+    category: string | null
+    purchases: number
+    quantity: number
+    total: number
+  }>
+}
+
+export async function getSupplies(params?: { all?: boolean }): Promise<Supply[]> {
+  const response = await apiClient.get<Supply[]>('/supplies', {
+    params: params?.all ? { all: 1 } : {},
+  })
+  return response.data
+}
+
+export async function createSupply(input: {
+  name: string
+  category?: string
+  unit?: string
+  is_active?: boolean
+}): Promise<Supply> {
+  const response = await apiClient.post<Supply>('/supplies', input)
+  return response.data
+}
+
+export async function updateSupply(
+  id: number,
+  input: { name: string; category?: string; unit?: string; is_active?: boolean },
+): Promise<Supply> {
+  const response = await apiClient.put<Supply>(`/supplies/${id}`, input)
+  return response.data
+}
+
+/** Compra con efectivo de la caja abierta del usuario (422 si no hay caja). */
+export async function registerSupplyPurchase(input: {
+  supply_id: number
+  quantity: number
+  amount: number
+  note?: string
+}): Promise<SupplyMovementRecord> {
+  const response = await apiClient.post<SupplyMovementRecord>('/supplies/movements', input)
+  return response.data
+}
+
+export async function getSupplyMovements(params?: {
+  supply_id?: number
+  type?: 'purchase' | 'consumption' | 'adjustment'
+}): Promise<SupplyMovementRecord[]> {
+  const response = await apiClient.get<SupplyMovementRecord[]>('/supplies/movements', { params })
+  return response.data
+}
+
+export async function getSupplyReport(params?: { from?: string; to?: string }): Promise<SupplyReport> {
+  const response = await apiClient.get<SupplyReport>('/reports/supplies', { params })
+  return response.data
+}

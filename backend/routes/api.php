@@ -27,6 +27,7 @@ use App\Http\Controllers\Api\SalesDraftController;
 use App\Http\Controllers\Api\SaleCancellationsController;
 use App\Http\Controllers\Api\SalesController;
 use App\Http\Controllers\Api\StoreController;
+use App\Http\Controllers\Api\SuppliesController;
 use App\Http\Controllers\Api\TerminalController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\WarehouseController;
@@ -264,6 +265,7 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
         Route::get('top-products', [ReportsController::class, 'topProducts']);
         Route::get('customers',    [ReportsController::class, 'customers']);
         Route::get('pre-sales',    [ReportsController::class, 'preSales']);
+        Route::get('supplies',     [SuppliesController::class, 'report']);
     });
 
     // ── Catalog (admin) ───────────────────────────────────────────────────────
@@ -288,5 +290,14 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     Route::prefix('logs')->group(function () {
         Route::get('/',  [SystemLogController::class, 'index']);
         Route::post('/', [SystemLogController::class, 'store']);
+    });
+
+    // ── Insumos (Fase 2) — catálogo + compras con efectivo de caja ────────────
+    Route::prefix('supplies')->group(function () {
+        Route::get('/',          [SuppliesController::class, 'index']);
+        Route::post('/',         [SuppliesController::class, 'store']);
+        Route::get('movements',  [SuppliesController::class, 'movements']);
+        Route::post('movements', [SuppliesController::class, 'storeMovement']);
+        Route::put('{supply}',   [SuppliesController::class, 'update']);
     });
 });

@@ -111,6 +111,9 @@ export interface CashSessionReport {
   total_entradas: number
   total_salidas: number
   total_ajustes: number
+  /** Insumos comprados con efectivo de esta caja (ya incluidos en total_salidas — informativo). */
+  total_supplies?: number
+  supplies_count?: number
   /** Ventas del turno sin filtrar por método: efectivo, tarjeta, etc. */
   total_sales: number
   /** Parte de las ventas que sí entró físicamente a caja (no tarjeta). */
@@ -187,6 +190,8 @@ export interface CashSessionDetail {
   tickets: CashTicket[]
   pre_sale_payments: { id: number; folio: string; status: string; method: string; amount: number; created_at: string }[]
   movements: { id: number; type: string; amount: number; description: string | null; created_at: string }[]
+  /** Compras de insumos de la sesión (drill-down; su salida ya viene en movements). */
+  supply_purchases?: { id: number; name: string; category: string | null; quantity: number; amount: number; note: string | null; created_at: string }[]
 }
 
 /** GET /reports/cash/{sessionId}/detail — desglose completo del corte. */

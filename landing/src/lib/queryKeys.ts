@@ -34,6 +34,12 @@ export const queryKeys = {
     all: ['transfers'] as const,
     list: (params?: Record<string, unknown>) => ['transfers', 'list', params ?? {}] as const,
   },
+  supplies: {
+    all: ['supplies'] as const,
+    list: (params?: Record<string, unknown>) => ['supplies', 'list', params ?? {}] as const,
+    movements: (params?: Record<string, unknown>) => ['supplies', 'movements', params ?? {}] as const,
+    report: (params?: Record<string, unknown>) => ['supplies', 'report', params ?? {}] as const,
+  },
   inventory: {
     all: ['inventory'] as const,
     byProduct: (productId: number) => ['inventory', 'byProduct', productId] as const,

@@ -322,7 +322,18 @@ class ReportsController extends Controller
             ->get()
             ->keyBy('register_session_id');
 
-        $data = $sessions->map(function ($s) use ($movementTotals, $saleTotals, $salePaymentTotals, $preSaleTotals) {
+        // Compras de insumos por sesión (Fase 2). El efectivo ya está restado
+        // vía su cash_movement 'salida' linkeado — esto es drill-down
+        // informativo para el corte, NUNCA se re-resta de expected_cash.
+        $supplyTotals = DB::table('supply_movements')
+            ->whereIn('register_session_id', $sessionIds)
+            ->where('type', \App\Models\SupplyMovement::TYPE_PURCHASE)
+            ->selectRaw('register_session_id, COUNT(*) as count, COALESCE(SUM(amount), 0) as total')
+            ->groupBy('register_session_id')
+            ->get()
+            ->keyBy('register_session_id');
+
+        $data = $sessions->map(function ($s) use ($movementTotals, $saleTotals, $salePaymentTotals, $preSaleTotals, $supplyTotals) {
             $movements = $movementTotals->get($s->id, collect());
             $entradas  = (float) ($movements->firstWhere('type', 'entrada')?->total ?? 0);
             $salidas   = (float) ($movements->firstWhere('type', 'salida')?->total ?? 0);
@@ -359,6 +370,10 @@ class ReportsController extends Controller
                 'total_cash_pre_sale_payments' => round($cashPreSales, 2),
                 'cash_collected'  => $cashCollected,
                 'sales_count'     => $salesCnt,
+                // Insumos comprados con efectivo de esta caja (ya incluidos en
+                // total_salidas — informativo, no volver a restar).
+                'total_supplies'  => round((float) ($supplyTotals->get($s->id)?->total ?? 0), 2),
+                'supplies_count'  => (int) ($supplyTotals->get($s->id)?->count ?? 0),
                 'expected_cash'   => $expected,
                 'difference'      => $s->closing_cash !== null ? round((float) $s->closing_cash - $expected, 2) : null,
             ];
@@ -372,6 +387,7 @@ class ReportsController extends Controller
             'total_pre_sale_payments' => round($data->sum('total_pre_sale_payments'), 2),
             'total_entradas'  => round($data->sum('total_entradas'), 2),
             'total_salidas'   => round($data->sum('total_salidas'), 2),
+            'total_supplies'  => round($data->sum('total_supplies'), 2),
         ];
 
         return $this->success([
@@ -489,6 +505,31 @@ class ReportsController extends Controller
             'tickets'           => $tickets,
             'pre_sale_payments' => $preSalePayments,
             'movements'         => $movements,
+            // Insumos comprados con efectivo de esta caja (drill-down del
+            // corte; su salida ya viene en movements[]).
+            'supply_purchases'  => DB::table('supply_movements')
+                ->join('supplies', 'supplies.id', '=', 'supply_movements.supply_id')
+                ->where('supply_movements.register_session_id', $session->id)
+                ->where('supply_movements.type', \App\Models\SupplyMovement::TYPE_PURCHASE)
+                ->orderBy('supply_movements.created_at')
+                ->get([
+                    'supply_movements.id',
+                    'supplies.name',
+                    'supplies.category',
+                    'supply_movements.quantity',
+                    'supply_movements.amount',
+                    'supply_movements.note',
+                    'supply_movements.created_at',
+                ])
+                ->map(fn ($p) => [
+                    'id'         => $p->id,
+                    'name'       => $p->name,
+                    'category'   => $p->category,
+                    'quantity'   => (float) $p->quantity,
+                    'amount'     => (float) $p->amount,
+                    'note'       => $p->note,
+                    'created_at' => $p->created_at,
+                ]),
         ]);
     }
 

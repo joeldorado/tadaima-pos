@@ -26,27 +26,38 @@ const fmtDate = (iso: string | null): string =>
   iso ? new Date(iso).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" }) : "—";
 
 /** Bloque de tickets desglosados para la impresión del corte. */
+// Escape básico para strings interpolados en el HTML del corte impreso
+// (nombres de item/insumo, descripciones, notas). document.write no escapa
+// y el CSP no bloquea inyección de markup — escapar SIEMPRE.
+function esc(t: string): string {
+  return t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 function buildTicketsHtml(detail: CashSessionDetail | null): string {
   if (!detail || detail.tickets.length === 0) return "";
   const tickets = detail.tickets.map(t => {
     const cancelled = t.status === "returned" || t.cancellation_status === "full";
     const items = t.items.map(i =>
-      `<div class="row"><span>${i.quantity} × ${i.name}</span><span>${fmt(i.total)}</span></div>`
+      `<div class="row"><span>${i.quantity} × ${esc(i.name)}</span><span>${fmt(i.total)}</span></div>`
     ).join("");
     const pays = t.payments.map(p => `${p.method} ${fmt(p.amount)}`).join(" + ");
     return `<div class="row" style="font-weight:900; margin-top:4px"><span>#${t.id}${cancelled ? " CANCELADO" : ""}</span><span>${fmt(t.total)}</span></div>${items}<div class="row"><span>${pays}</span><span></span></div>`;
   }).join("");
   const presale = detail.pre_sale_payments.map(p =>
-    `<div class="row"><span>${p.folio} · ${p.method}</span><span>+${fmt(p.amount)}</span></div>`
+    `<div class="row"><span>${esc(p.folio)} · ${esc(p.method)}</span><span>+${fmt(p.amount)}</span></div>`
   ).join("");
   const movs = detail.movements.map(m =>
-    `<div class="row"><span>${m.description || m.type}</span><span>${m.type === "salida" ? "-" : "+"}${fmt(m.amount)}</span></div>`
+    `<div class="row"><span>${esc(m.description || m.type)}</span><span>${m.type === "salida" ? "-" : "+"}${fmt(m.amount)}</span></div>`
+  ).join("");
+  const supplies = (detail.supply_purchases ?? []).map(p =>
+    `<div class="row"><span>${esc(p.name)}${p.quantity !== 1 ? ` ×${p.quantity}` : ""}</span><span>-${fmt(p.amount)}</span></div>`
   ).join("");
   return `
     <div class="divider"></div>
     <div class="sub">DESGLOSE DE TICKETS</div>
     ${tickets}
     ${presale ? `<div class="divider"></div><div class="sub">PREVENTA</div>${presale}` : ""}
+    ${supplies ? `<div class="divider"></div><div class="sub">INSUMOS DEL DÍA</div>${supplies}` : ""}
     ${movs ? `<div class="divider"></div><div class="sub">MOVIMIENTOS</div>${movs}` : ""}
   `;
 }
@@ -77,6 +88,7 @@ function buildPrintHtml(s: CashSessionReport, detail: CashSessionDetail | null =
       <div class="row"><span>Cobrado en caja</span><span>+${fmt(s.cash_collected)}</span></div>
       ${s.total_entradas > 0 ? `<div class="row"><span>Entradas</span><span>+${fmt(s.total_entradas)}</span></div>` : ""}
       ${s.total_salidas > 0 ? `<div class="row"><span>Salidas de caja</span><span>-${fmt(s.total_salidas)}</span></div>` : ""}
+      ${(s.total_supplies ?? 0) > 0 ? `<div class="row"><span>&nbsp;&nbsp;De salidas, insumos (${s.supplies_count ?? 0})</span><span>-${fmt(s.total_supplies ?? 0)}</span></div>` : ""}
       ${s.total_ajustes !== 0 ? `<div class="row"><span>Ajustes</span><span>${s.total_ajustes > 0 ? "+" : ""}${fmt(s.total_ajustes)}</span></div>` : ""}
       <div class="row total"><span>Esperado</span><span>${fmt(s.expected_cash)}</span></div>
       <div class="row total"><span>Cerrado</span><span>${s.closing_cash != null ? fmt(s.closing_cash) : "—"}</span></div>
@@ -89,6 +101,8 @@ function buildPrintHtml(s: CashSessionReport, detail: CashSessionDetail | null =
 
 /** Impresión 58mm del corte (resumen + desglose). Reusada por la página Cortes. */
 export function printCashCut(s: CashSessionReport, detail: CashSessionDetail | null = null): void {
+  // OJO: NO usar "noopener" aquí — window.open devolvería null y no podríamos
+  // escribir el documento. La defensa contra inyección es esc() en el HTML.
   const w = window.open("", "_blank", "width=340,height=600");
   if (!w) return;
   w.document.write(buildPrintHtml(s, detail));
@@ -172,6 +186,10 @@ export function CashCloseSummaryModal({ session: s, open, onClose }: CashCloseSu
           <Row label="Cobrado en caja" value={`+${fmt(s.cash_collected)}`} valueColor="#10b981" bold />
           {s.total_entradas > 0 && <Row label="Entradas" value={`+${fmt(s.total_entradas)}`} valueColor="#10b981" />}
           {s.total_salidas > 0 && <Row label="Salidas de caja" value={`-${fmt(s.total_salidas)}`} valueColor="#DC2626" />}
+          {/* Insumos: ya incluidos en Salidas (informativo, no se re-resta). */}
+          {(s.total_supplies ?? 0) > 0 && (
+            <Row label={`· De salidas, insumos (${s.supplies_count ?? 0})`} value={`-${fmt(s.total_supplies ?? 0)}`} valueColor="#F97316" />
+          )}
           {s.total_ajustes !== 0 && <Row label="Ajustes" value={`${s.total_ajustes > 0 ? "+" : ""}${fmt(s.total_ajustes)}`} />}
         </div>
 
@@ -223,6 +241,20 @@ export function CashCloseSummaryModal({ session: s, open, onClose }: CashCloseSu
                   <p style={{ margin: "0 0 6px", fontSize: 9, fontWeight: 900, color: "#F59E0B", textTransform: "uppercase", letterSpacing: "0.1em" }}>Preventa (anticipos / liquidaciones)</p>
                   {detail.pre_sale_payments.map(p => (
                     <Row key={p.id} label={`${p.folio} · ${p.method}`} value={`+${fmt(p.amount)}`} valueColor="#F59E0B" />
+                  ))}
+                </div>
+              )}
+
+              {(detail.supply_purchases ?? []).length > 0 && (
+                <div style={{ padding: "10px 12px", background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", borderRadius: 12 }}>
+                  <p style={{ margin: "0 0 6px", fontSize: 9, fontWeight: 900, color: "#F97316", textTransform: "uppercase", letterSpacing: "0.1em" }}>Insumos del día</p>
+                  {(detail.supply_purchases ?? []).map(p => (
+                    <Row
+                      key={p.id}
+                      label={`${p.name}${p.quantity !== 1 ? ` ×${p.quantity}` : ""}${p.note ? ` · ${p.note}` : ""}`}
+                      value={`-${fmt(p.amount)}`}
+                      valueColor="#F97316"
+                    />
                   ))}
                 </div>
               )}

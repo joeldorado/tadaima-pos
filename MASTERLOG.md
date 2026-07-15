@@ -655,6 +655,27 @@ docker compose up --build -d
 
 > Sesiones anteriores a 2026-05-14 (>20 días) archivadas en git history para mantener el log ligero. Decisiones load-bearing preservadas en ADRs (§7) y secciones de arquitectura.
 
+### Sesión 2026-07-15 — Descuentos v2 FASE 2: módulo INSUMOS ligado a caja + fix Historial
+
+**Módulo Insumos completo** (compras de operación pagadas con efectivo de la caja) + fix del Historial del Día que pidió Joel (las líneas con descuento salían en bruto).
+
+**Backend:**
+- Migración `2026_07_15_000001`: `supplies` (catálogo por empresa: name/category/unit/is_active) + `supply_movements` (type purchase|consumption|adjustment, quantity, amount, note, register_session_id, **cash_movement_id** linkeado, user_id).
+- `SupplyService::registerPurchase`: transacción única → valida caja abierta del usuario (422 si no) → crea `cash_movements salida "Insumo: X"` → crea supply_movement linkeado (patrón ADR-016). **Clave:** el corte ya resta TODAS las salidas en expected_cash → la compra se auto-balancea; el bloque de insumos en reportes es informativo, jamás se re-resta.
+- `SuppliesController`: catálogo (CRUD admin/gerente vía adminOrManagerGate; listar todos), compras (cualquier user con caja abierta), movimientos (cajero solo los suyos), `GET /reports/supplies?from&to` (gasto por categoría + top insumos).
+- `ReportsController`: `total_supplies`/`supplies_count` por sesión en `/reports/cash` + summary; `supply_purchases[]` en el detail del corte.
+- Tests: `SupplyPurchaseCashLinkTest` (7: salida linkeada misma tx, atómico, sin caja→422, expected_cash refleja, consumo no toca caja, RBAC, amount>0) + `SupplyReportRangeTest` (2). Suite **231/231**.
+
+**Frontend:**
+- Página **Insumos** (`/insumos`, nav para admin/gerente/cajero): tab Registrar compra (insumo + qty + efectivo + nota, aviso si no hay caja abierta, compras recientes) · tab Catálogo (CRUD con modal, admin/gerente) · tab Reporte (rango, por categoría + top).
+- `CashCloseSummaryModal`: fila "· De salidas, insumos (N)" en el resumen + bloque "Insumos del día" en el desglose + ambas en la impresión 58mm.
+- `packages/api/src/supplies.ts` + hooks `useSupplies` + queryKeys + PageKey/nav/ruta.
+- **Fix Historial del Día** (pedido de Joel tras probar Fase 1 en prod): las filas de items ahora muestran bruto tachado + badge "Desc. Dañado −$X" + neto; el chip "Descuento" del footer leía `sale.discount_amount` (campo inexistente) → `sale.discount` (nunca se había mostrado).
+
+**Review (code-reviewer): 0 CRITICAL/HIGH.** Fixes aplicados: (1) invalidación con key real `queryKeys.reports.cash()` + `cash-session-detail` (el `["cash"]` a secas no prefixea `['reports','cash']` → Cortes quedaba stale 30s); (2) `esc()` en TODO el HTML del corte impreso (nombres de insumo/item/descripciones — document.write no escapa). OJO aprendido: `noopener` en `window.open` devuelve null y ROMPE la impresión — no usarlo; la defensa es el escape.
+
+**Verificación:** phpunit 231/231 · vitest 73/73 · vite build ✅ · Playwright: `insumos.spec.ts` 3/3 (salida linkeada + expected_cash baja $80, sin caja 422, flujo UI completo) + `line-discounts.spec.ts` 4/4 + suite 27 passed / 0 failed.
+
 ### Sesión 2026-07-14/15 — Descuentos v2 FASE 1: descuento POR LÍNEA end-to-end + eliminado el descuento global — DEPLOYADO rev tadaima-00112-mkl
 
 **El reemplazo completo del "Promo" global buggy.** El cajero ahora descuenta N de M unidades de una línea (ej. 2 de 3 dañadas): si N < M la línea se PARTE en unidades a precio completo + unidades descontadas; quitar el descuento re-fusiona. Caso del cliente validado end-to-end: 3 uds $100, 2 dañadas −$20 c/u = **$260** (test API + test UI Playwright).
