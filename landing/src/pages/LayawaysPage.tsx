@@ -12,6 +12,8 @@ import {
 } from "@tadaima/api";
 import type { Layaway, LayawayStatus, PaymentMethod, Product, Customer } from "@tadaima/api";
 import { useActiveStore } from "@/contexts/StoreContext";
+import { getTodayLocal } from "@/lib/date";
+import { SingleDatePicker } from "@/components/ui/SingleDatePicker";
 
 // ─── Design tokens ─────────────────────────────────────────────────────────────
 const BG   = "var(--td-page-bg)";
@@ -712,7 +714,14 @@ export function LayawaysPage() {
                 {/* Expires at */}
                 <div>
                   <label className="text-[9px] font-black uppercase tracking-widest mb-2 block" style={{ color: T.TM }}>Fecha de vencimiento</label>
-                  <input type="date" value={newForm.expires_at} onChange={e => setNewForm(f => ({ ...f, expires_at: e.target.value }))} style={T.input} />
+                  <SingleDatePicker
+                    value={newForm.expires_at}
+                    onChange={d => setNewForm(f => ({ ...f, expires_at: d }))}
+                    onClear={() => setNewForm(f => ({ ...f, expires_at: "" }))}
+                    minValue={getTodayLocal()}
+                    placeholder="Sin vencimiento"
+                    ariaLabel="Fecha de vencimiento del apartado"
+                  />
                 </div>
 
                 {/* Notes */}

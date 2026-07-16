@@ -19,6 +19,9 @@ export interface Supply {
   updated_at?: string
 }
 
+/** Origen del dinero de una compra: caja del usuario, caja chica o dinero propio. */
+export type SupplyMoneySource = 'caja' | 'caja_chica' | 'propio'
+
 export interface SupplyMovementRecord {
   id: number
   supply_id: number
@@ -26,6 +29,10 @@ export interface SupplyMovementRecord {
   quantity: number
   amount: number
   note: string | null
+  /** null en consumo/ajuste (no manejan dinero); compras legacy = 'caja'. */
+  money_source: SupplyMoneySource | null
+  /** Solo con money_source='propio': quién puso el dinero. */
+  payer_name: string | null
   register_session_id: number | null
   cash_movement_id: number | null
   user_id: number
@@ -38,6 +45,8 @@ export interface SupplyReport {
   period: { from: string; to: string }
   total: number
   by_category: Array<{ category: string; purchases: number; total: number }>
+  /** Desglose por origen del dinero — solo 'caja' descuenta del corte. */
+  by_source: Array<{ source: SupplyMoneySource; purchases: number; total: number }>
   top_supplies: Array<{
     id: number
     name: string
@@ -75,12 +84,18 @@ export async function updateSupply(
   return response.data
 }
 
-/** Compra con efectivo de la caja abierta del usuario (422 si no hay caja). */
+/**
+ * Compra de insumo. Origen default 'caja' = efectivo de la caja abierta del
+ * usuario (422 si no hay caja). Con 'caja_chica' o 'propio' NO se exige caja
+ * ni se toca el corte — solo queda el registro (propio requiere payer_name).
+ */
 export async function registerSupplyPurchase(input: {
   supply_id: number
   quantity: number
   amount: number
   note?: string
+  money_source?: SupplyMoneySource
+  payer_name?: string
 }): Promise<SupplyMovementRecord> {
   const response = await apiClient.post<SupplyMovementRecord>('/supplies/movements', input)
   return response.data

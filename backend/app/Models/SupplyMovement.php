@@ -22,12 +22,25 @@ class SupplyMovement extends Model
         self::TYPE_ADJUSTMENT,
     ];
 
+    /** Origen del dinero de una COMPRA (NULL en consumo/ajuste: no aplica). */
+    public const SOURCE_CAJA       = 'caja';
+    public const SOURCE_CAJA_CHICA = 'caja_chica';
+    public const SOURCE_PROPIO     = 'propio';
+
+    public const SOURCES = [
+        self::SOURCE_CAJA,
+        self::SOURCE_CAJA_CHICA,
+        self::SOURCE_PROPIO,
+    ];
+
     protected $fillable = [
         'supply_id',
         'type',
         'quantity',
         'amount',
         'note',
+        'money_source',
+        'payer_name',
         'register_session_id',
         'cash_movement_id',
         'user_id',

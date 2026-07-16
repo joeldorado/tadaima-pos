@@ -8,6 +8,7 @@ import { useSaleCancellationsQuery } from "@/hooks/queries/useSaleCancellations"
 import { useStoresQuery } from "@/hooks/queries/useStores";
 import { useUsersQuery } from "@/hooks/queries/useUsers";
 import { daysAgoLocal, getTodayLocal } from "@/lib/date";
+import { DateRangePicker } from "@/components/ui/DateRangePicker";
 
 const fmt = (n: number) =>
   new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", minimumFractionDigits: 0 }).format(n || 0);
@@ -86,12 +87,18 @@ export function TabCancelaciones() {
 
       {/* Filtros */}
       <div className="rounded-2xl p-3 mb-4 flex flex-wrap gap-2 items-end" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)" }}>
-        <Field label="Desde">
-          <input type="date" value={from} onChange={e => { setFrom(e.target.value); setPage(1); }} className="filter-input" style={inputStyle} />
-        </Field>
-        <Field label="Hasta">
-          <input type="date" value={to} onChange={e => { setTo(e.target.value); setPage(1); }} className="filter-input" style={inputStyle} />
-        </Field>
+        {/* Rango con el picker compartido (estándar del proyecto para rangos).
+            Div (no <label> Field): un label envolviendo el AriaButton duplica el press. */}
+        <div className="flex flex-col gap-1">
+          <span className="text-[9px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>Rango</span>
+          <DateRangePicker
+            from={from}
+            to={to}
+            onChange={(f, t) => { setFrom(f); setTo(t); setPage(1); }}
+            maxValue={getTodayLocal()}
+            ariaLabel="Rango de cancelaciones"
+          />
+        </div>
         <Field label="Motivo">
           <select value={reasonCode} onChange={e => { setReasonCode(e.target.value); setPage(1); }} style={inputStyle}>
             <option value="">Todos</option>

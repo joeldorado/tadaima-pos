@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import {
   createSupply, updateSupply, registerSupplyPurchase, getStores,
-  type Supply, type Store,
+  type Supply, type Store, type SupplyMoneySource,
 } from "@tadaima/api";
 import { useAuth } from "@tadaima/auth";
 import { queryKeys } from "@/lib/queryKeys";
@@ -15,6 +15,7 @@ import { useSuppliesQuery, useSupplyMovementsQuery, useSupplyReportQuery } from 
 import { useActiveSessionQuery } from "@/hooks/queries/useCashSession";
 import { isAdmin as isAdminRole, isManager as isManagerRole } from "@/lib/permisos";
 import { getTodayLocal, daysAgoLocal } from "@/lib/date";
+import { DateRangePicker } from "@/components/ui/DateRangePicker";
 
 // ─── Tokens visuales (convención de páginas glass) ────────────────────────────
 const PANEL  = "var(--td-panel-bg)";
@@ -39,6 +40,25 @@ const inputStyle: React.CSSProperties = {
 };
 
 type Tab = "comprar" | "catalogo" | "reporte";
+
+// ─── Origen del dinero de la compra ───────────────────────────────────────────
+const MONEY_SOURCES: Array<{ key: SupplyMoneySource; label: string }> = [
+  { key: "caja",       label: "Caja" },
+  { key: "caja_chica", label: "Caja chica" },
+  { key: "propio",     label: "Dinero propio" },
+];
+
+const SOURCE_COLORS: Record<SupplyMoneySource, { color: string; bg: string; border: string }> = {
+  caja:       { color: "var(--td-text-md)", bg: "var(--td-surface-soft)",    border: "1px solid var(--td-card-border)" },
+  caja_chica: { color: "#F59E0B",           bg: "rgba(245,158,11,0.10)",     border: "1px solid rgba(245,158,11,0.35)" },
+  propio:     { color: "#60A5FA",           bg: "rgba(96,165,250,0.10)",     border: "1px solid rgba(96,165,250,0.35)" },
+};
+
+const sourceLabel = (source: SupplyMoneySource | null, payerName?: string | null): string => {
+  if (source === "caja_chica") return "Caja chica";
+  if (source === "propio") return payerName ? `Propio · ${payerName}` : "Propio";
+  return "Caja";
+};
 
 /**
  * Insumos (Fase 2): compras de operación (cinta, bolsas…) pagadas con efectivo
@@ -65,7 +85,13 @@ export function SuppliesPage() {
   const [qty, setQty] = useState("1");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
+  // Origen del dinero: 'caja' (default, sale del cajón y pega al corte) /
+  // 'caja_chica' / 'propio' (con nombre de quién lo puso). Los dos últimos NO
+  // exigen caja abierta ni tocan el corte — solo queda el registro.
+  const [moneySource, setMoneySource] = useState<SupplyMoneySource>("caja");
+  const [payerName, setPayerName] = useState("");
   const [saving, setSaving] = useState(false);
+  const isCajaSource = moneySource === "caja";
 
   // Combobox de insumo con alta al vuelo (QA Joel 2026-07-16): teclear el
   // nombre filtra el catálogo; si no existe y eres admin/gerente, "Crear y
@@ -114,22 +140,29 @@ export function SuppliesPage() {
     const a = parseFloat(amount) || 0;
     if (!sid) { toast.error("Elige un insumo."); return; }
     if (q <= 0) { toast.error("La cantidad debe ser mayor a 0."); return; }
-    if (a <= 0) { toast.error("Captura cuánto efectivo salió de la caja."); return; }
+    if (a <= 0) { toast.error(isCajaSource ? "Captura cuánto efectivo salió de la caja." : "Captura cuánto costó."); return; }
+    if (moneySource === "propio" && !payerName.trim()) { toast.error("Indica quién puso el dinero."); return; }
     setSaving(true);
     try {
       await registerSupplyPurchase({
         supply_id: sid, quantity: q, amount: a,
         ...(note.trim() ? { note: note.trim().slice(0, 255) } : {}),
+        money_source: moneySource,
+        ...(moneySource === "propio" ? { payer_name: payerName.trim().slice(0, 100) } : {}),
       });
-      toast.success(`Compra registrada · salió ${fmt(a)} de tu caja`);
-      setQty("1"); setAmount(""); setNote("");
+      toast.success(isCajaSource
+        ? `Compra registrada · salió ${fmt(a)} de tu caja`
+        : `Compra registrada · ${fmt(a)} de ${sourceLabel(moneySource, payerName.trim())} (no toca tu corte)`);
+      setQty("1"); setAmount(""); setNote(""); setPayerName("");
       void queryClient.invalidateQueries({ queryKey: queryKeys.supplies.all });
-      // El corte también cambia (salida nueva): invalidar el reporte de cortes
-      // y el drill-down del corte abierto (keys reales — ["cash"] a secas no
-      // prefixea ['reports','cash'] y dejaba números stale en Cortes).
-      void queryClient.invalidateQueries({ queryKey: queryKeys.reports.cash() });
-      void queryClient.invalidateQueries({ queryKey: ["cash-session-detail"] });
-      void queryClient.invalidateQueries({ queryKey: ["cash"] });
+      if (isCajaSource) {
+        // El corte también cambia (salida nueva): invalidar el reporte de cortes
+        // y el drill-down del corte abierto (keys reales — ["cash"] a secas no
+        // prefixea ['reports','cash'] y dejaba números stale en Cortes).
+        void queryClient.invalidateQueries({ queryKey: queryKeys.reports.cash() });
+        void queryClient.invalidateQueries({ queryKey: ["cash-session-detail"] });
+        void queryClient.invalidateQueries({ queryKey: ["cash"] });
+      }
     } catch (err: unknown) {
       toast.error((err as { message?: string }).message ?? "No se pudo registrar la compra");
     } finally {
@@ -160,7 +193,7 @@ export function SuppliesPage() {
         <div>
           <h1 className="text-xl font-black uppercase tracking-wide" style={{ color: THI }}>Insumos</h1>
           <p className="text-[11px] font-bold" style={{ color: TMD }}>
-            Compras de operación pagadas con efectivo de tu caja — aparecen solas en el corte.
+            Compras de operación con su origen: de tu caja (pega al corte), caja chica o dinero propio.
           </p>
         </div>
       </div>
@@ -186,12 +219,13 @@ export function SuppliesPage() {
         <div className="grid gap-5 lg:grid-cols-[1fr_1.2fr]">
           <Motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
             className="rounded-3xl p-6" style={{ background: PANEL, border: BORDER }}>
-            {!hasOpenSession && !sessionQuery.isLoading && (
+            {isCajaSource && !hasOpenSession && !sessionQuery.isLoading && (
               <div className="mb-4 flex items-start gap-2 rounded-2xl p-3"
                 style={{ background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.3)" }}>
                 <AlertTriangle size={15} className="mt-0.5 shrink-0" style={{ color: "#F59E0B" }} />
                 <p className="text-[11px] font-bold" style={{ color: "#F59E0B" }}>
-                  Necesitas una <b>caja abierta</b> para registrar una compra — el efectivo sale de tu cajón y queda en tu corte.
+                  Con origen <b>Caja</b> necesitas una caja abierta — el efectivo sale de tu cajón y queda en tu corte.
+                  Si el dinero salió de otro lado, cambia el origen abajo.
                 </p>
               </div>
             )}
@@ -263,21 +297,61 @@ export function SuppliesPage() {
                 <input type="number" min={0.01} step={1} value={qty} onChange={e => setQty(e.target.value)} style={{ ...inputStyle, marginTop: 6 }} />
               </div>
               <div>
-                <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>Efectivo que salió ($)</label>
+                <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>
+                  {isCajaSource ? "Efectivo que salió ($)" : "Monto ($)"}
+                </label>
                 <input type="number" min={0.01} step={0.5} value={amount} onChange={e => setAmount(e.target.value)}
                   onKeyDown={e => { if (e.key === "Enter") void submitPurchase(); }}
                   placeholder="80" style={{ ...inputStyle, marginTop: 6 }} />
               </div>
             </div>
 
+            {/* Origen del dinero (QA Joel 2026-07-18): registro de quién pagó. */}
+            <label className="mt-4 block text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>¿De dónde salió el dinero?</label>
+            <div className="mt-1.5 flex flex-wrap gap-2">
+              {MONEY_SOURCES.map(s => {
+                const active = moneySource === s.key;
+                const c = SOURCE_COLORS[s.key];
+                return (
+                  <button
+                    key={s.key}
+                    type="button"
+                    onClick={() => setMoneySource(s.key)}
+                    data-testid={`money-source-${s.key}`}
+                    className="rounded-full px-4 py-2 text-[11px] font-black uppercase tracking-widest transition-colors"
+                    style={active
+                      ? { background: c.bg, border: c.border, color: c.color === "var(--td-text-md)" ? THI : c.color, boxShadow: "inset 0 0 0 1px currentColor" }
+                      : { background: SOFT, border: CARD_B, color: TLO, cursor: "pointer" }}
+                  >
+                    {s.label}
+                  </button>
+                );
+              })}
+            </div>
+            {moneySource === "propio" && (
+              <input
+                value={payerName}
+                onChange={e => setPayerName(e.target.value)}
+                maxLength={100}
+                placeholder="¿Quién puso el dinero? ej. Mario"
+                data-testid="payer-name-input"
+                style={{ ...inputStyle, marginTop: 8 }}
+              />
+            )}
+            {!isCajaSource && (
+              <p className="mt-1.5 text-[10px] font-bold" style={{ color: TLO }}>
+                Este origen no toca tu caja ni el corte — queda solo como registro del gasto.
+              </p>
+            )}
+
             <label className="mt-4 block text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>Nota (opcional)</label>
             <input value={note} onChange={e => setNote(e.target.value)} maxLength={255} placeholder="ej. OXXO de enfrente" style={{ ...inputStyle, marginTop: 6 }} />
 
             <button
               onClick={() => void submitPurchase()}
-              disabled={saving || !hasOpenSession}
+              disabled={saving || (isCajaSource && !hasOpenSession)}
               className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl py-3 text-xs font-black uppercase tracking-widest disabled:opacity-40"
-              style={{ background: "#10b981", color: "#04120c", border: "none", cursor: saving || !hasOpenSession ? "not-allowed" : "pointer" }}
+              style={{ background: "#10b981", color: "#04120c", border: "none", cursor: saving || (isCajaSource && !hasOpenSession) ? "not-allowed" : "pointer" }}
             >
               {saving ? <Loader2 size={14} className="animate-spin" /> : <Wallet size={14} />}
               Registrar compra
@@ -300,6 +374,16 @@ export function SuppliesPage() {
                         {m.user?.name ? ` · ${m.user.name}` : ""}{m.note ? ` · ${m.note}` : ""}
                       </p>
                     </div>
+                    <span
+                      className="shrink-0 rounded-full px-2.5 py-1 text-[9px] font-black uppercase tracking-wider"
+                      style={{
+                        color: SOURCE_COLORS[m.money_source ?? "caja"].color,
+                        background: SOURCE_COLORS[m.money_source ?? "caja"].bg,
+                        border: SOURCE_COLORS[m.money_source ?? "caja"].border,
+                      }}
+                    >
+                      {sourceLabel(m.money_source, m.payer_name)}
+                    </span>
                     <span className="text-[10px] font-bold" style={{ color: TLO }}>×{m.quantity}</span>
                     <span className="text-[13px] font-black" style={{ color: "var(--td-red)" }}>−{fmt(m.amount)}</span>
                   </div>
@@ -362,12 +446,14 @@ export function SuppliesPage() {
         <div className="rounded-3xl p-6" style={{ background: PANEL, border: BORDER }}>
           <div className="mb-5 flex flex-wrap items-end gap-3">
             <div>
-              <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>Desde</label>
-              <input type="date" value={from} onChange={e => setFrom(e.target.value)} style={{ ...inputStyle, marginTop: 6, width: 170 }} />
-            </div>
-            <div>
-              <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>Hasta</label>
-              <input type="date" value={to} onChange={e => setTo(e.target.value)} style={{ ...inputStyle, marginTop: 6, width: 170 }} />
+              <label className="mb-1.5 block text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>Rango</label>
+              <DateRangePicker
+                from={from}
+                to={to}
+                onChange={(f, t) => { setFrom(f); setTo(t); }}
+                maxValue={getTodayLocal()}
+                ariaLabel="Rango del reporte de insumos"
+              />
             </div>
             <div className="ml-auto text-right">
               <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: TLO }}>Gasto total</p>
@@ -376,6 +462,28 @@ export function SuppliesPage() {
               </p>
             </div>
           </div>
+
+          {/* Desglose por origen del dinero */}
+          {(reportQuery.data?.by_source ?? []).length > 0 && (
+            <div className="mb-5">
+              <p className="mb-2 text-[10px] font-black uppercase tracking-widest" style={{ color: TLO }}>Por origen del dinero</p>
+              <div className="flex flex-wrap gap-2">
+                {(reportQuery.data?.by_source ?? []).map(s => (
+                  <div key={s.source} className="flex items-center gap-2 rounded-2xl px-4 py-2.5"
+                    style={{ background: SOURCE_COLORS[s.source]?.bg ?? CARD, border: SOURCE_COLORS[s.source]?.border ?? CARD_B }}>
+                    <span className="text-[10px] font-black uppercase tracking-wider" style={{ color: SOURCE_COLORS[s.source]?.color ?? TMD }}>
+                      {sourceLabel(s.source)}
+                    </span>
+                    <span className="text-[13px] font-black" style={{ color: THI }}>{fmt(s.total)}</span>
+                    <span className="text-[10px] font-bold" style={{ color: TLO }}>({s.purchases})</span>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-1.5 text-[10px] font-bold" style={{ color: TLO }}>
+                Solo las compras con origen <b>Caja</b> descuentan del corte; caja chica y dinero propio son gasto registrado fuera del cajón.
+              </p>
+            </div>
+          )}
 
           <div className="grid gap-5 lg:grid-cols-2">
             <div>

@@ -21,6 +21,7 @@ import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
 import { useViewportMaxHeight } from "@/hooks/useViewportMaxHeight";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { PaymentRestrictionBadge, getPayRestriction } from "@/components/ui/PaymentRestrictionBadge";
+import { SingleDatePicker } from "@/components/ui/SingleDatePicker";
 import { toast } from "sonner";
 import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, forceCloseSession, getActiveSession, createLayaway, getCustomers, createCustomer, refreshMember, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getPreSaleOrders, getSales, getProductsLight, storageUrl, sendPreSaleAssignAlert, getCatalogCustomerUsage } from "@tadaima/api";
 import type { OpenSessionConflict } from "@tadaima/api";
@@ -7237,13 +7238,13 @@ export function SellPage() {
                     <Calendar size={10} />
                     Fecha límite de entrega <span className="normal-case font-bold" style={{ color: "var(--td-text-ghost)" }}>(opcional)</span>
                   </p>
-                  <input
-                    type="date"
+                  <SingleDatePicker
                     value={apartarExpiresAt}
-                    onChange={e => setApartarExpiresAt(e.target.value)}
-                    min={getTodayLocal()}
-                    className="w-full rounded-2xl px-4 py-2.5 text-sm font-bold outline-none focus:bg-amber-500/5 transition-all"
-                    style={{ background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", color: "var(--td-input-text)", colorScheme: "light" }}
+                    onChange={setApartarExpiresAt}
+                    onClear={() => setApartarExpiresAt("")}
+                    minValue={getTodayLocal()}
+                    placeholder="Sin fecha límite"
+                    ariaLabel="Fecha límite de entrega del apartado"
                   />
                 </div>
 

@@ -96,4 +96,32 @@ class SupplyCompanyScopeTest extends TestCase
             ])
             ->assertStatus(201);
     }
+
+    public function test_movements_history_and_report_scoped_by_company(): void
+    {
+        // Compra de la empresa A (gerente A, con caja abierta)…
+        $this->actingAs($this->managerA)->postJson('/api/v1/supplies/movements', [
+            'supply_id' => $this->supplyA->id, 'quantity' => 1, 'amount' => 50,
+        ])->assertStatus(201);
+
+        // …y una compra de la empresa B sembrada directo (sin pasar por caja).
+        DB::table('supply_movements')->insert([
+            'supply_id' => $this->supplyB->id, 'type' => 'purchase',
+            'quantity' => 1, 'amount' => 999, 'user_id' => $this->managerA->id,
+            'created_at' => now(),
+        ]);
+
+        // Historial (fix 2026-07-18): solo movimientos de MI empresa.
+        $resp = $this->actingAs($this->managerA)->getJson('/api/v1/supplies/movements');
+        $resp->assertOk();
+        $supplyIds = array_column($resp->json('data'), 'supply_id');
+        $this->assertContains($this->supplyA->id, $supplyIds);
+        $this->assertNotContains($this->supplyB->id, $supplyIds);
+
+        // Reporte (fix 2026-07-18): el gasto de B no se cuela en el total de A.
+        $report = $this->actingAs($this->managerA)
+            ->getJson('/api/v1/reports/supplies?from=' . now()->subDay()->toDateString() . '&to=' . now()->addDay()->toDateString())
+            ->assertOk();
+        $this->assertSame(50.0, (float) $report->json('data.total'));
+    }
 }

@@ -3,7 +3,7 @@ import {
   TrendingUp, Package, Users,
   DollarSign,
   ShoppingBag, Star, Calendar, Store,
-  ChevronDown, ChevronRight, Clock, RefreshCw, ChevronLeft,
+  ChevronDown, ChevronRight, Clock, RefreshCw,
   FileSpreadsheet,
   Maximize2, X,
 } from "lucide-react";
@@ -25,20 +25,7 @@ import { getTodayLocal, daysAgoLocal, BUSINESS_TZ, toLocalYmd } from "@/lib/date
 import { queryKeys } from "@/lib/queryKeys";
 import type { SalesReport, InventoryReport, TopProductsReport, CustomersReport } from "@tadaima/api";
 import type { SaleDetail, Store as StoreType, PreSaleOrder, PreSaleOrderPayment } from "@tadaima/api";
-import {
-  Button as AriaButton,
-  CalendarCell,
-  CalendarGrid,
-  CalendarGridBody,
-  CalendarGridHeader,
-  CalendarHeaderCell,
-  CalendarHeading,
-  Dialog,
-  DialogTrigger,
-  Popover,
-  RangeCalendar,
-} from "react-aria-components";
-import { parseDate } from "@internationalized/date";
+import { DateRangePicker } from "@/components/ui/DateRangePicker";
 
 // ─── Design tokens ─────────────────────────────────────────────────────────────
 const BG   = "var(--td-page-bg)";
@@ -93,11 +80,6 @@ const fmtDate = (iso: string) => {
 
 // const fmtTime = (iso: string) =>
 //   new Date(iso).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", timeZone: BUSINESS_TZ });
-
-// ─── Date conversion helpers ──────────────────────────────────────────────────
-const parseYmd = (iso: string) => parseDate(iso);
-const toYmdFromDateValue = (value: ReturnType<typeof parseDate>) =>
-  `${value.year}-${String(value.month).padStart(2, "0")}-${String(value.day).padStart(2, "0")}`;
 
 
 // "cortes" se movió a la página /cajas (visible a los 3 roles) — Joel 2026-06-12.
@@ -1230,148 +1212,20 @@ export function ReportsPage() {
 
             <div className="w-px h-5 mx-1" style={{ background: "var(--td-divider)" }} />
 
-            {/* Date range picker — Bonito con Popover */}
-            <DialogTrigger>
-              <AriaButton
-                className="flex items-center gap-2 rounded-xl px-3 py-1.5 text-[10px] font-black uppercase tracking-widest transition-all outline-none"
-                style={{
-                  background: "var(--td-panel-bg)",
-                  border: "1px solid var(--td-panel-border)",
-                  color: TP,
-                }}
-              >
-                <Calendar size={12} style={{ color: TM }} />
-                <span style={{ color: TM }}>{fmtDate(from)}</span>
-                <span style={{ color: TM }}>→</span>
-                <span style={{ color: TM }}>{fmtDate(to)}</span>
-              </AriaButton>
-
-              <Popover
-                placement="bottom start"
-                offset={8}
-                className="rounded-2xl p-0 outline-none"
-                style={{
-                  background: "var(--td-popup-bg)",
-                  border: "1px solid var(--td-panel-border)",
-                  boxShadow: "0 24px 80px rgba(0,0,0,0.48), inset 0 1px 0 rgba(255,255,255,0.04)",
-                }}
-              >
-                <Dialog className="outline-none">
-                  <div className="w-[660px] max-w-[calc(100vw-32px)] p-4">
-                    <RangeCalendar
-                      aria-label="Rango de fechas de reporte"
-                      value={{ start: parseYmd(from), end: parseYmd(to) }}
-                      onChange={(range) => {
-                        if (!range?.start || !range?.end) return;
-                        const startStr = toYmdFromDateValue(range.start);
-                        const endStr = toYmdFromDateValue(range.end);
-                        if (startStr <= endStr) {
-                          setFrom(startStr);
-                          setTo(endStr);
-                          setActivePreset(""); // Clear selected preset on manual calendar selection
-                        }
-                      }}
-                      maxValue={parseYmd(today)}
-                      minValue={parseYmd(daysAgoLocal(365))}
-                      visibleDuration={{ months: 2 }}
-                      pageBehavior="single"
-                      className="w-full"
-                    >
-                      <div className="flex items-center justify-between gap-2 mb-4">
-                        <AriaButton
-                          slot="previous"
-                          className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-black/20 text-white/60 transition-colors hover:border-white/20 hover:text-white"
-                        >
-                          <ChevronLeft size={14} />
-                        </AriaButton>
-
-                        <div className="grid flex-1 grid-cols-2 gap-3">
-                          <CalendarHeading className="text-center text-[10px] font-black uppercase tracking-[0.18em]" style={{ color: TP }} />
-                          <CalendarHeading offset={{ months: 1 }} className="text-center text-[10px] font-black uppercase tracking-[0.18em]" style={{ color: TP }} />
-                        </div>
-
-                        <AriaButton
-                          slot="next"
-                          className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-black/20 text-white/60 transition-colors hover:border-white/20 hover:text-white"
-                        >
-                          <ChevronRight size={14} />
-                        </AriaButton>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-3">
-                        <CalendarGrid weekdayStyle="short" className="w-full border-separate border-spacing-y-1">
-                          <CalendarGridHeader>
-                            {(day) => (
-                              <CalendarHeaderCell className="pb-2 text-center text-[9px] font-black uppercase tracking-widest" style={{ color: TM }}>
-                                {day}
-                              </CalendarHeaderCell>
-                            )}
-                          </CalendarGridHeader>
-                          <CalendarGridBody>
-                            {(date) => (
-                              <CalendarCell
-                                date={date}
-                                className={({ isSelected, isSelectionStart, isSelectionEnd, isFocusVisible, isOutsideMonth, isDisabled }) =>
-                                  [
-                                    "flex h-8 w-8 items-center justify-center rounded-lg text-[9px] font-bold transition-all outline-none",
-                                    "data-[hovered]:bg-white/8",
-                                    isOutsideMonth ? "text-white/20" : "text-white/80",
-                                    isDisabled ? "opacity-25" : "",
-                                    isSelected ? "text-white bg-[#FF4422]" : "bg-black/10",
-                                    isSelectionStart || isSelectionEnd ? "ring-1 ring-[#FF7A59]" : "",
-                                    isFocusVisible ? "ring-1 ring-white/70" : "",
-                                  ].join(" ")
-                                }
-                              />
-                            )}
-                          </CalendarGridBody>
-                        </CalendarGrid>
-
-                        <CalendarGrid offset={{ months: 1 }} weekdayStyle="short" className="w-full border-separate border-spacing-y-1">
-                          <CalendarGridHeader>
-                            {(day) => (
-                              <CalendarHeaderCell className="pb-2 text-center text-[9px] font-black uppercase tracking-widest" style={{ color: TM }}>
-                                {day}
-                              </CalendarHeaderCell>
-                            )}
-                          </CalendarGridHeader>
-                          <CalendarGridBody>
-                            {(date) => (
-                              <CalendarCell
-                                date={date}
-                                className={({ isSelected, isSelectionStart, isSelectionEnd, isFocusVisible, isOutsideMonth, isDisabled }) =>
-                                  [
-                                    "flex h-8 w-8 items-center justify-center rounded-lg text-[9px] font-bold transition-all outline-none",
-                                    "data-[hovered]:bg-white/8",
-                                    isOutsideMonth ? "text-white/20" : "text-white/80",
-                                    isDisabled ? "opacity-25" : "",
-                                    isSelected ? "text-white bg-[#FF4422]" : "bg-black/10",
-                                    isSelectionStart || isSelectionEnd ? "ring-1 ring-[#FF7A59]" : "",
-                                    isFocusVisible ? "ring-1 ring-white/70" : "",
-                                  ].join(" ")
-                                }
-                              />
-                            )}
-                          </CalendarGridBody>
-                        </CalendarGrid>
-                      </div>
-                    </RangeCalendar>
-
-                    <div
-                      className="mt-4 flex items-center justify-between rounded-lg px-3 py-2 text-[9px]"
-                      style={{ background: "rgba(0,0,0,0.16)", border: "1px solid rgba(255,255,255,0.06)" }}
-                    >
-                      <div className="font-black uppercase tracking-[0.12em]" style={{ color: TM }}>
-                        <span style={{ color: TP }}>Desde</span>
-                        <span className="mx-1.5">{fmtDate(from)}</span>
-                        <span style={{ color: TM }}>•</span>
-                        <span className="mx-1.5"><span style={{ color: TP }}>Hasta</span> {fmtDate(to)}</span>
-                      </div>
-                    </div>
-                  </div>
-                </Dialog>
-              </Popover>
-            </DialogTrigger>
+            {/* Rango con el picker compartido (de-dup 2026-07-18: antes había un
+                RangeCalendar inline copiado — mismo look, una sola implementación). */}
+            <DateRangePicker
+              from={from}
+              to={to}
+              onChange={(f, t) => {
+                setFrom(f);
+                setTo(t);
+                setActivePreset(""); // Clear selected preset on manual calendar selection
+              }}
+              minValue={daysAgoLocal(365)}
+              maxValue={today}
+              ariaLabel="Rango de fechas de reporte"
+            />
 
             {/* Store select — admin only */}
             {isAdmin && stores.length > 0 && (

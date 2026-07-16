@@ -119,11 +119,13 @@ class SuppliesController extends Controller
         try {
             $movement = $type === SupplyMovement::TYPE_PURCHASE
                 ? $this->service->registerPurchase(
-                    supply:   $supply,
-                    quantity: (float) $request->input('quantity'),
-                    amount:   (float) $request->input('amount'),
-                    note:     $request->input('note'),
-                    userId:   $userId,
+                    supply:      $supply,
+                    quantity:    (float) $request->input('quantity'),
+                    amount:      (float) $request->input('amount'),
+                    note:        $request->input('note'),
+                    userId:      $userId,
+                    moneySource: (string) $request->input('money_source', SupplyMovement::SOURCE_CAJA),
+                    payerName:   $request->input('payer_name') ? trim((string) $request->input('payer_name')) : null,
                 )
                 : $this->service->registerNonCashMovement(
                     supply:   $supply,
@@ -148,6 +150,9 @@ class SuppliesController extends Controller
         $isCashier = $user->hasRole(['cajero']) && ! $isAdmin;
 
         $movements = SupplyMovement::with(['supply:id,name,category,unit', 'user:id,name'])
+            // Scoping por empresa (fix 2026-07-18): sin esto el historial
+            // mezclaba movimientos de insumos de otras empresas.
+            ->whereHas('supply', fn ($q) => $q->where('company_id', $user->company_id))
             ->when($request->integer('supply_id'), fn ($q, $id) => $q->where('supply_id', $id))
             ->when($request->input('type'), fn ($q, $t) => $q->where('type', $t))
             ->when($isCashier, fn ($q) => $q->where('user_id', $user->id))
@@ -172,6 +177,8 @@ class SuppliesController extends Controller
 
         $base = DB::table('supply_movements')
             ->join('supplies', 'supplies.id', '=', 'supply_movements.supply_id')
+            // Scoping por empresa (fix 2026-07-18): el gasto es de UNA empresa.
+            ->where('supplies.company_id', $request->user()->company_id)
             ->where('supply_movements.type', SupplyMovement::TYPE_PURCHASE)
             ->when($fromUtc, fn ($q) => $q->where('supply_movements.created_at', '>=', $fromUtc))
             ->when($toUtc,   fn ($q) => $q->where('supply_movements.created_at', '<=', $toUtc));
@@ -202,10 +209,25 @@ class SuppliesController extends Controller
                 'total'     => round((float) $r->total, 2),
             ]);
 
+        // Desglose por ORIGEN del dinero (caja / caja_chica / propio). Solo las
+        // compras con origen 'caja' descuentan del corte; las demás son gasto
+        // registrado fuera del cajón.
+        $bySource = (clone $base)
+            ->selectRaw("COALESCE(supply_movements.money_source, 'caja') as source, COUNT(*) as purchases, COALESCE(SUM(supply_movements.amount), 0) as total")
+            ->groupBy('source')
+            ->orderByDesc('total')
+            ->get()
+            ->map(fn ($r) => [
+                'source'    => $r->source,
+                'purchases' => (int) $r->purchases,
+                'total'     => round((float) $r->total, 2),
+            ]);
+
         return $this->success([
             'period'       => ['from' => $from, 'to' => $to],
             'total'        => round((float) (clone $base)->sum('supply_movements.amount'), 2),
             'by_category'  => $byCategory,
+            'by_source'    => $bySource,
             'top_supplies' => $topSupplies,
         ]);
     }

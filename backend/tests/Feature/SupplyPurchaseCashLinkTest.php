@@ -187,4 +187,78 @@ class SupplyPurchaseCashLinkTest extends TestCase
             ])
             ->assertStatus(422);
     }
+
+    // ── Origen del dinero (2026-07-18): caja_chica / propio NO tocan la caja ──
+
+    public function test_propio_purchase_without_session_and_does_not_touch_cash(): void
+    {
+        // Sin caja abierta: con origen 'propio' la compra SÍ entra.
+        $this->session->update(['status' => 'closed', 'closed_at' => now()]);
+
+        $this->actingAs($this->cashier)
+            ->postJson('/api/v1/supplies/movements', [
+                'supply_id'    => $this->supply->id,
+                'quantity'     => 1,
+                'amount'       => 120,
+                'money_source' => 'propio',
+                'payer_name'   => 'Mario',
+            ])
+            ->assertStatus(201)
+            ->assertJsonPath('data.money_source', 'propio')
+            ->assertJsonPath('data.payer_name', 'Mario');
+
+        $movement = SupplyMovement::first();
+        $this->assertNull($movement->cash_movement_id);
+        $this->assertNull($movement->register_session_id);
+        $this->assertSame(0, CashMovement::count());
+    }
+
+    public function test_caja_chica_purchase_does_not_alter_expected_cash(): void
+    {
+        // Con caja ABIERTA pero origen caja_chica: el corte queda intacto.
+        $this->actingAs($this->cashier)->postJson('/api/v1/supplies/movements', [
+            'supply_id' => $this->supply->id, 'quantity' => 2, 'amount' => 60,
+            'money_source' => 'caja_chica',
+        ])->assertStatus(201)->assertJsonPath('data.money_source', 'caja_chica');
+
+        $this->assertSame(0, CashMovement::count());
+
+        $resp = $this->actingAs($this->admin)
+            ->getJson('/api/v1/reports/cash?from=' . now()->subDay()->toDateString() . '&to=' . now()->addDay()->toDateString())
+            ->assertStatus(200);
+
+        $row = collect($resp->json('data.sessions'))->firstWhere('id', $this->session->id);
+        $this->assertNotNull($row);
+        $this->assertSame(0.0, (float) $row['total_salidas']);
+        $this->assertSame(0.0, (float) $row['total_supplies']);
+        $this->assertSame(500.0, (float) $row['expected_cash']);
+    }
+
+    public function test_propio_requires_payer_name(): void
+    {
+        $this->actingAs($this->cashier)
+            ->postJson('/api/v1/supplies/movements', [
+                'supply_id' => $this->supply->id, 'quantity' => 1, 'amount' => 50,
+                'money_source' => 'propio',
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['payer_name']);
+
+        $this->assertSame(0, SupplyMovement::count());
+    }
+
+    public function test_caja_source_persists_money_source_and_default_still_requires_session(): void
+    {
+        // Default (sin money_source) sigue siendo caja → exige sesión y la marca.
+        $this->actingAs($this->cashier)->postJson('/api/v1/supplies/movements', [
+            'supply_id' => $this->supply->id, 'quantity' => 1, 'amount' => 30,
+        ])->assertStatus(201)->assertJsonPath('data.money_source', 'caja');
+
+        // Explicitar 'caja' sin sesión → mismo 422 de siempre.
+        $this->session->update(['status' => 'closed', 'closed_at' => now()]);
+        $this->actingAs($this->cashier)->postJson('/api/v1/supplies/movements', [
+            'supply_id' => $this->supply->id, 'quantity' => 1, 'amount' => 30,
+            'money_source' => 'caja',
+        ])->assertStatus(422);
+    }
 }

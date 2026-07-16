@@ -49,6 +49,8 @@ interface Props {
   /** Fin del rango en "YYYY-MM-DD". */
   to: string;
   onChange: (from: string, to: string) => void;
+  /** Fecha mínima seleccionable ("YYYY-MM-DD") — días anteriores deshabilitados. */
+  minValue?: string;
   /** Fecha máxima seleccionable ("YYYY-MM-DD"), p.ej. hoy. */
   maxValue?: string;
   ariaLabel?: string;
@@ -66,6 +68,7 @@ export function DateRangePicker({
   from,
   to,
   onChange,
+  minValue,
   maxValue,
   ariaLabel = "Rango de fechas",
   minWidth = 230,
@@ -76,6 +79,7 @@ export function DateRangePicker({
     return start && end ? { start, end } : null;
   }, [from, to]);
 
+  const min = useMemo(() => safeParse(minValue) ?? undefined, [minValue]);
   const max = useMemo(() => safeParse(maxValue) ?? undefined, [maxValue]);
 
   return (
@@ -113,6 +117,7 @@ export function DateRangePicker({
             <RangeCalendar
               aria-label={ariaLabel}
               value={value}
+              minValue={min}
               maxValue={max}
               onChange={(range) => {
                 if (!range?.start || !range?.end) return;

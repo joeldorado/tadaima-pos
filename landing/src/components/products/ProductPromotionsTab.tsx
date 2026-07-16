@@ -11,6 +11,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/queryKeys";
 import { BUSINESS_TZ } from "@/lib/date";
 import { isAdmin as isAdminRole } from "@/lib/permisos";
+import { SingleDatePicker } from "@/components/ui/SingleDatePicker";
 
 interface Props {
   /** null = producto nuevo sin guardar (las promos requieren id). */
@@ -194,11 +195,33 @@ export function ProductPromotionsTab({ productId }: Props) {
             </div>
             <div>
               <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>Inicia (opcional)</label>
-              <input type="date" value={startsAt} onChange={e => setStartsAt(e.target.value)} style={{ ...inputStyle, marginTop: 4 }} />
+              <div className="mt-1">
+                <SingleDatePicker
+                  value={startsAt}
+                  onChange={(d) => {
+                    setStartsAt(d);
+                    // Si Inicia rebasa el Vence ya elegido, limpiar Vence
+                    // (el backend valida ends_at >= starts_at y daría 422).
+                    if (endsAt && d > endsAt) setEndsAt("");
+                  }}
+                  onClear={() => setStartsAt("")}
+                  placeholder="Sin fecha de inicio"
+                  ariaLabel="Fecha en que inicia la promoción"
+                />
+              </div>
             </div>
             <div>
               <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>Vence (opcional)</label>
-              <input type="date" value={endsAt} onChange={e => setEndsAt(e.target.value)} style={{ ...inputStyle, marginTop: 4 }} />
+              <div className="mt-1">
+                <SingleDatePicker
+                  value={endsAt}
+                  onChange={setEndsAt}
+                  onClear={() => setEndsAt("")}
+                  {...(startsAt ? { minValue: startsAt } : {})}
+                  placeholder="Sin vencimiento"
+                  ariaLabel="Fecha en que vence la promoción"
+                />
+              </div>
             </div>
             <div>
               <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>Prioridad (desempate)</label>

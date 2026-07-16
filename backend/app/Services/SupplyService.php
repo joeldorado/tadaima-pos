@@ -26,9 +26,14 @@ class SupplyService
     }
 
     /**
-     * Compra de insumo con efectivo de la caja del usuario.
+     * Compra de insumo. Según el ORIGEN del dinero:
+     * - 'caja' (default): efectivo del cajón del usuario → exige caja abierta y
+     *   crea la salida ligada (camino histórico, el corte la refleja).
+     * - 'caja_chica' / 'propio': el dinero NO salió de ningún cajón → sin sesión,
+     *   sin cash_movement; queda solo el registro con su origen (y el nombre de
+     *   quién puso el dinero cuando es propio).
      *
-     * @throws \DomainException si el usuario no tiene caja abierta
+     * @throws \DomainException si origen=caja y el usuario no tiene caja abierta
      */
     public function registerPurchase(
         Supply $supply,
@@ -36,7 +41,22 @@ class SupplyService
         float $amount,
         ?string $note,
         int $userId,
+        string $moneySource = SupplyMovement::SOURCE_CAJA,
+        ?string $payerName = null,
     ): SupplyMovement {
+        if ($moneySource !== SupplyMovement::SOURCE_CAJA) {
+            return SupplyMovement::create([
+                'supply_id'    => $supply->id,
+                'type'         => SupplyMovement::TYPE_PURCHASE,
+                'quantity'     => round($quantity, 2),
+                'amount'       => round($amount, 2),
+                'note'         => $note,
+                'money_source' => $moneySource,
+                'payer_name'   => $moneySource === SupplyMovement::SOURCE_PROPIO ? $payerName : null,
+                'user_id'      => $userId,
+            ]);
+        }
+
         $session = $this->cashService->activeSession($userId);
         if (! $session) {
             throw new \DomainException(
@@ -58,6 +78,7 @@ class SupplyService
                 'quantity'            => round($quantity, 2),
                 'amount'              => round($amount, 2),
                 'note'                => $note,
+                'money_source'        => SupplyMovement::SOURCE_CAJA,
                 'register_session_id' => $session->id,
                 'cash_movement_id'    => $cashMovement->id,
                 'user_id'             => $userId,

@@ -81,6 +81,32 @@ class SupplyReportRangeTest extends TestCase
         $this->assertSame(80.0, (float) $top->first()['total']);
     }
 
+    public function test_report_includes_non_cash_purchases_and_breaks_down_by_source(): void
+    {
+        // Caja ($80) + caja chica ($45) + propio ($30): el gasto TOTAL suma las
+        // tres y by_source separa los orígenes.
+        $this->buy($this->cinta, 80);
+        $this->actingAs($this->admin)->postJson('/api/v1/supplies/movements', [
+            'supply_id' => $this->bolsas->id, 'quantity' => 1, 'amount' => 45,
+            'money_source' => 'caja_chica',
+        ])->assertStatus(201);
+        $this->actingAs($this->admin)->postJson('/api/v1/supplies/movements', [
+            'supply_id' => $this->limpiador->id, 'quantity' => 1, 'amount' => 30,
+            'money_source' => 'propio', 'payer_name' => 'Mario',
+        ])->assertStatus(201);
+
+        $resp = $this->actingAs($this->admin)
+            ->getJson('/api/v1/reports/supplies?from=' . now()->subDay()->toDateString() . '&to=' . now()->addDay()->toDateString())
+            ->assertStatus(200);
+
+        $this->assertSame(155.0, (float) $resp->json('data.total'));
+
+        $bySource = collect($resp->json('data.by_source'));
+        $this->assertSame(80.0, (float) $bySource->firstWhere('source', 'caja')['total']);
+        $this->assertSame(45.0, (float) $bySource->firstWhere('source', 'caja_chica')['total']);
+        $this->assertSame(30.0, (float) $bySource->firstWhere('source', 'propio')['total']);
+    }
+
     public function test_report_respects_date_range(): void
     {
         $this->buy($this->cinta, 80);
