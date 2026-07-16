@@ -403,31 +403,34 @@ export function exportReportPdf(params: ReportExportParams): void {
             prod.total_quantity,
             fmt(prod.pre_sale_apartado || 0),
             fmt(prod.pre_sale_deuda || 0),
-            fmt(pactado)
+            fmt(pactado),
+            // Costo real snapshot (anticipos incluidos) — solo con canViewCost.
+            ...(canViewCost ? [fmt(prod.pre_sale_costo_real || 0)] : [])
           ];
         });
 
         // Totals
-        let t4Cant = 0, t4Ap = 0, t4Deu = 0, t4Tot = 0;
+        let t4Cant = 0, t4Ap = 0, t4Deu = 0, t4Tot = 0, t4Cost = 0;
         preSaleProducts.forEach(p => {
           t4Cant += p.total_quantity || 0;
           t4Ap += p.pre_sale_apartado || 0;
           t4Deu += p.pre_sale_deuda || 0;
           t4Tot += ((p.pre_sale_apartado || 0) + (p.pre_sale_deuda || 0));
+          t4Cost += p.pre_sale_costo_real || 0;
         });
 
         tbl4Body.push([
           "TOTAL PREVENTAS",
-          "",
           t4Cant.toString(),
           fmt(t4Ap),
           fmt(t4Deu),
-          fmt(t4Tot)
+          fmt(t4Tot),
+          ...(canViewCost ? [fmt(t4Cost)] : [])
         ]);
 
         autoTable(doc, {
           startY: currentY,
-          head: [["Producto", "Cant. Preventa", "Abonado (Apartado)", "Pendiente (Deuda)", "Pactado (Total)"]],
+          head: [["Producto", "Cant. Preventa", "Abonado (Apartado)", "Pendiente (Deuda)", "Pactado (Total)", ...(canViewCost ? ["Costo Producto"] : [])]],
           body: tbl4Body,
           theme: "striped",
           headStyles: { fillColor: [136, 51, 238], fontSize: 8, fontStyle: "bold" },

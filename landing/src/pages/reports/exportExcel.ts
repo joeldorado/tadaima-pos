@@ -256,7 +256,10 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
             const deposit = prod.pre_sale_apartado || 0;
             const pending = prod.pre_sale_deuda || 0;
             const pactado = deposit + pending;
-            const cost = prod.total_cost || 0;
+            // Costo real snapshot del folio (anticipos incluidos), no total_cost:
+            // total_cost solo se llena el día de entrega (Opción B) y dejaba $0
+            // en anticipos aunque el costo sí existiera.
+            const cost = prod.pre_sale_costo_real || 0;
             totPreQty += prod.sales_count || 0; totPreDeposit += deposit; totPrePending += pending; totPrePactado += pactado; totPreCost += cost;
             setCell(r4, T4_COL, prod.name, { alignment: { horizontal: "left", vertical: "middle", wrapText: true } });
             setCell(r4, T4_COL + 1, prod.sales_count, { alignment: { horizontal: "center", vertical: "middle" } });

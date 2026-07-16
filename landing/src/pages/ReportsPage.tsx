@@ -128,6 +128,9 @@ interface GroupedProduct {
   total_profit: number;
   pre_sale_apartado?: number;
   pre_sale_deuda?: number;
+  /** Costo real (snapshot) de los items de preventa del rango, incluye anticipos.
+   *  Informativo: NO entra a total_cost/total_profit (la utilidad se reconoce al entregar). */
+  pre_sale_costo_real?: number;
   commission_amount?: number;
   product_type?: 'product' | 'manga';
 }
@@ -629,6 +632,7 @@ export function ReportsPage() {
               price_breakdown: {},
               pre_sale_apartado: 0,
               pre_sale_deuda: 0,
+              pre_sale_costo_real: 0,
               product_type: item.product_type ?? 'product',
             });
           }
@@ -661,6 +665,10 @@ export function ReportsPage() {
 
           pGroup.pre_sale_apartado = (pGroup.pre_sale_apartado ?? 0) + itemApartado;
           pGroup.pre_sale_deuda = (pGroup.pre_sale_deuda ?? 0) + itemDeuda;
+          // Costo real SIEMPRE (anticipos incluidos), aparte de Opción B: es el
+          // dato informativo que Excel/PDF muestran en "Costo Producto". item.cost
+          // llega null si el usuario no puede ver costos (gate en el Resource).
+          pGroup.pre_sale_costo_real = (pGroup.pre_sale_costo_real ?? 0) + (item.cost ?? 0) * qty;
         }
       }
     }
@@ -1035,6 +1043,13 @@ export function ReportsPage() {
                         <div className="flex items-center justify-between text-xs py-1.5 px-3" style={{ background: "rgba(255, 68, 34, 0.08)", border: "1px solid rgba(255, 68, 34, 0.15)", borderRadius: 9 }}>
                           <span style={{ color: TS, fontWeight: 700 }}>Total Deuda (Pendiente)</span>
                           <span style={{ color: "#FF4422", fontWeight: 900 }}>{fmt(prod.pre_sale_deuda)}</span>
+                        </div>
+                      )}
+                      {/* Costo real snapshot (anticipos incluidos) — informativo, no afecta utilidad (Opción B) */}
+                      {canViewCost && (prod.pre_sale_costo_real ?? 0) > 0 && (
+                        <div className="flex items-center justify-between text-xs py-1.5 px-3" style={{ background: "rgba(255, 255, 255, 0.04)", border: "1px solid rgba(255, 255, 255, 0.10)", borderRadius: 9 }}>
+                          <span style={{ color: TS, fontWeight: 700 }}>Costo Real (Producto)</span>
+                          <span style={{ color: TP, fontWeight: 900 }}>{fmt(prod.pre_sale_costo_real ?? 0)}</span>
                         </div>
                       )}
                     </div>

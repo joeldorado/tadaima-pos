@@ -19,6 +19,9 @@ export interface GroupedProduct {
   total_profit: number;
   pre_sale_apartado?: number;
   pre_sale_deuda?: number;
+  /** Costo real (snapshot) de los items de preventa del rango, incluye anticipos.
+   *  Informativo: NO entra a total_cost/total_profit (la utilidad se reconoce al entregar). */
+  pre_sale_costo_real?: number;
   commission_amount?: number;
   product_type?: 'product' | 'manga';
 }
