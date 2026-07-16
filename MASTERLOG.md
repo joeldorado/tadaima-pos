@@ -655,6 +655,17 @@ docker compose up --build -d
 
 > Sesiones anteriores a 2026-05-14 (>20 días) archivadas en git history para mantener el log ligero. Decisiones load-bearing preservadas en ADRs (§7) y secciones de arquitectura.
 
+### Sesión 2026-07-16 — QA prod rev 00119: 4 fixes UX (menú, catálogos preventa, insumos, caja angosta) — DEPLOYADO rev tadaima-00120-jnf
+
+QA de Joel en prod. Commit `a9f0e23`. Bundle `index-BcIkSdhJ.js` (markers "Nuevo · Sin asignar", "quick-assign-modal", "floating-menu-btn", "y usarlo").
+
+1. **Menú**: el logo Tadaima ES el toggle colapsar/expandir (se quitó el botón que quedaba hasta abajo); modo colapsado conserva los grupos como dropdown inline (`RailGroup`, mismo `openGroups`) en vez de aplanar → rail corto sin scroll.
+2. **Preventas→Catálogos (gerente)**: el status es GLOBAL en BD (no existe por tienda); el badge ahora es por-tienda para gerente: sin unidades asignadas → "Nuevo · Sin asignar" (ámbar, tooltip con status global) o "Llegó · Sin participación" (gris). + botón **Asignar** → `QuickAssignModal` (pide unidades de MI tienda vía `updatePreSaleCatalog({store_limits})` — backend `storeLimitScope` ya protege otras tiendas; toggle "Publicar ahora" si el global está draft, publicar es global). Editar catálogo ajeno sin unidades mías → cae directo al tab Unidades (`initialTab`). OJO: backend bloquea asignar en arrived/closed/cancelled (PreSaleCatalogsController:198-201) — el botón solo sale en draft/published. Se agregó `store_limits` a `UpdatePreSaleCatalogInput` (types.ts).
+3. **Insumos**: combobox con alta al vuelo en Registrar compra — teclear filtra, "Crear '{x}' y usarlo" da de alta (POST /supplies solo pide name) y auto-selecciona; solo admin/gerente crean. **Scoping**: catálogo por EMPRESA (tiendas comparten nombres, correcto); gastos amarrados a la sesión del comprador (no se cruzan). **Gap cerrado**: index filtraba NADA (leakeaba insumos entre empresas), update/movements sin check de pertenencia → ahora company_id filtrado + 403. `SupplyCompanyScopeTest` 4/4.
+4. **Caja < 1024px**: sidebar oculta + botón flotante (logo, abajo-izq; sube a bottom-24 en <768 por la barra de cobro) que abre el menú como drawer overlay con backdrop → carrito+cobro recuperan ~216px. Solo en /caja; Dashboard intacto.
+
+Suite backend 252/252 · vitest 73/73.
+
 ### Sesión 2026-07-16 — Mitigación de cajas abiertas por días (logout guard + bloqueo venta stale) — DEPLOYADO rev tadaima-00119-jrp
 
 Pedido por Joel: cajas quedan abiertas por días en pruebas. Decisiones: logout BLOQUEADO hasta corte · venta BLOQUEADA sobre caja de día anterior · auto-cierre por cron DIFERIDO. Commit `fdc9e2f`.
