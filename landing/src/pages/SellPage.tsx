@@ -2969,7 +2969,7 @@ export function SellPage() {
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Ticket</title>
     <style>*{margin:0;padding:0;box-sizing:border-box}
     html{background:#e5e7eb}
-    body{font-family:'Courier New',monospace;font-size:11px;width:58mm;margin:0 auto;background:#fff;padding:56px 1.5mm 2mm;overflow-wrap:anywhere;word-break:break-word}
+    body{font-family:'Courier New',monospace;font-size:11px;font-weight:700;width:58mm;margin:0 auto;background:#fff;padding:56px 1.5mm 2mm;overflow-wrap:anywhere;word-break:break-word}
     h2{font-size:15px;text-align:center;font-weight:900;margin-bottom:2px}.sub{font-size:9px;text-align:center;color:#000;margin-bottom:2px}
     .divider{border-top:1px dashed #000;margin:6px 0}table{width:100%;border-collapse:collapse;table-layout:fixed}
     td{word-break:break-word}

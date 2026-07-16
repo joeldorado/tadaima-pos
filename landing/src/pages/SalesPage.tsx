@@ -195,7 +195,7 @@ function printTicket(sale: SaleDetail) {
   <title>Ticket #${sale.id}</title>
   <style>
     *{margin:0;padding:0;box-sizing:border-box}
-    body{font-family:'Courier New',monospace;font-size:11px;width:280px;padding:12px 8px}
+    body{font-family:'Courier New',monospace;font-size:11px;font-weight:700;width:280px;padding:12px 8px}
     h2{font-size:16px;text-align:center;font-weight:900;margin-bottom:4px}
     .sub{font-size:9px;text-align:center;color:#000;margin-bottom:8px}
     .divider{border-top:1px dashed #000;margin:8px 0}
