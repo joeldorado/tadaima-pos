@@ -582,7 +582,7 @@ function ProductModal({
   onAddCategoria: (c: string) => void;
   proveedores: string[];
   onAddProveedor: (p: string) => void;
-  locations: {warehouseId: number, name: string, store: string, type: 'central' | 'store' | 'bodega'}[];
+  locations: {warehouseId: number, name: string, store: string, storeId: number | null, type: 'central' | 'store' | 'bodega'}[];
 }) {
   const [formData, setFormData] = useState<Partial<Producto>>(() => {
     if (product) {
@@ -625,17 +625,6 @@ function ProductModal({
     const url = URL.createObjectURL(file);
     setFormData(prev => ({ ...prev, imagen: url }));
   };
-  // Local state for the "add warehouse" inline form in the Inventario tab
-  const [addWarehouseId, setAddWarehouseId] = useState<number | ''>('');
-  const [addQty, setAddQty] = useState<number | ''>('');
-
-  // Preselecciona el almacén cuando solo hay una opción (p.ej. gerente con una sola tienda)
-  useEffect(() => {
-    const assignedIds = new Set((formData.stockUbicaciones ?? []).map(u => u.warehouseId));
-    const available = locations.filter(l => !assignedIds.has(l.warehouseId));
-    if (addWarehouseId === '' && available.length === 1) setAddWarehouseId(available[0]!.warehouseId);
-  }, [locations, formData.stockUbicaciones, addWarehouseId]);
-
   // Load real inventory quantities from backend when editing an existing product
   useEffect(() => {
     if (!product) return
@@ -1024,30 +1013,74 @@ function ProductModal({
 
           {activeTab === "inventario" && (() => {
             const assigned = formData.stockUbicaciones ?? [];
-            const assignedIds = new Set(assigned.map(u => u.warehouseId));
-            const available = locations.filter(l => !assignedIds.has(l.warehouseId));
 
-            function handleAddLocation() {
-              if (addWarehouseId === '') return;
-              const loc = locations.find(l => l.warehouseId === addWarehouseId);
-              if (!loc) return;
-              const qty = typeof addQty === 'number' ? addQty : 0;
-              const newEntry: StockUbicacion = {
-                warehouseId: loc.warehouseId,
-                ubicacion: loc.name,
-                quantity: qty, stock: qty, total: qty,
-                comprometido: 0, disponibleVenta: qty,
-                detalle: { bodega: qty, tienda: 0, danado: 0, preventa: 0, enCamino: 0 },
-              };
-              setFormData(prev => ({ ...prev, stockUbicaciones: [...(prev.stockUbicaciones ?? []), newEntry] }));
-              setAddWarehouseId('');
-              setAddQty('');
+            // Cantidad actual de un almacén ('' = sin asignar → placeholder 0).
+            const qtyStr = (warehouseId: number): string => {
+              const e = assigned.find(u => u.warehouseId === warehouseId);
+              return e ? String(e.quantity ?? e.stock ?? 0) : "";
+            };
+            // Escribe/actualiza/borra la existencia de un almacén en stockUbicaciones.
+            const setQty = (loc: { warehouseId: number; name: string }, raw: string) => {
+              setFormData(prev => {
+                const list = prev.stockUbicaciones ?? [];
+                const idx = list.findIndex(u => u.warehouseId === loc.warehouseId);
+                if (raw === "") return idx === -1 ? prev : { ...prev, stockUbicaciones: list.filter((_, i) => i !== idx) };
+                const val = Math.max(0, parseInt(raw) || 0);
+                const entry: StockUbicacion = {
+                  warehouseId: loc.warehouseId, ubicacion: loc.name,
+                  quantity: val, stock: val, total: val, comprometido: 0, disponibleVenta: val,
+                  detalle: { bodega: val, tienda: 0, danado: 0, preventa: 0, enCamino: 0 },
+                };
+                if (idx === -1) return { ...prev, stockUbicaciones: [...list, entry] };
+                const next = [...list]; next[idx] = { ...next[idx]!, ...entry };
+                return { ...prev, stockUbicaciones: next };
+              });
+            };
+
+            // Piso primero, luego Bodega, luego Central.
+            const TYPE_ORDER: Record<string, number> = { store: 0, bodega: 1, central: 2 };
+            const slotLabel = (t: string) => t === "store" ? "Piso" : t === "bodega" ? "Bodega" : "Central";
+            const accentOf = (t: string) => t === "bodega"
+              ? { fg: "#D97706", bg: "rgba(245,158,11,0.08)", br: "rgba(245,158,11,0.28)" }
+              : t === "central"
+              ? { fg: "#60A5FA", bg: "rgba(96,165,250,0.08)", br: "rgba(96,165,250,0.28)" }
+              : { fg: "#10b981", bg: "rgba(16,185,129,0.08)", br: "rgba(16,185,129,0.28)" };
+
+            // Agrupar por tienda (Piso + Bodega juntos); central/sin-tienda al final.
+            const byStore = new Map<string, { storeName: string; list: typeof locations }>();
+            const central: typeof locations = [];
+            for (const l of locations) {
+              if (l.type === "central" || l.storeId == null) { central.push(l); continue; }
+              const key = String(l.storeId);
+              if (!byStore.has(key)) byStore.set(key, { storeName: l.store || `Tienda ${l.storeId}`, list: [] });
+              byStore.get(key)!.list.push(l);
             }
+            const storeCards = Array.from(byStore.values());
+
+            const renderSlot = (loc: typeof locations[number]) => {
+              const a = accentOf(loc.type);
+              return (
+                <div key={loc.warehouseId} style={{ flex: 1, minWidth: 120, display: "flex", flexDirection: "column", gap: 7, padding: "11px 13px", borderRadius: 14, background: a.bg, border: `1px solid ${a.br}` }}>
+                  <span style={{ fontSize: 11, fontWeight: 900, color: a.fg, textTransform: "uppercase", letterSpacing: "0.06em" }}>{slotLabel(loc.type)}</span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number" min={0}
+                      value={qtyStr(loc.warehouseId)}
+                      placeholder="0"
+                      onChange={e => setQty(loc, e.target.value)}
+                      className="w-full px-2 py-2 rounded-xl text-center outline-none font-black text-base"
+                      style={T.input}
+                    />
+                    <span style={{ fontSize: 10, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>uds</span>
+                  </div>
+                </div>
+              );
+            };
 
             return (
               <div className="space-y-4">
                 <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>
-                  Existencias por Almacén / Tienda
+                  Existencias por Tienda · Piso y Bodega
                 </label>
 
                 {/* No warehouses at all */}
@@ -1061,120 +1094,40 @@ function ProductModal({
                   </div>
                 )}
 
-                {/* Add form */}
-                {locations.length > 0 && available.length > 0 && (
-                  <div className="flex gap-2 items-end p-4 rounded-2xl" style={{ background: PRODUCT_THEME.surfaceMuted, border: PRODUCT_THEME.borderSubtle }}>
-                    <div className="flex-1">
-                      <label className="text-[9px] font-black uppercase tracking-widest block mb-1.5" style={{ color: T.textMuted }}>Almacén / Tienda</label>
-                      <select
-                        value={addWarehouseId}
-                        onChange={e => setAddWarehouseId(e.target.value === '' ? '' : Number(e.target.value))}
-                        className="w-full px-3 py-2 rounded-xl outline-none text-sm"
-                        style={T.input}
-                      >
-                        <option value="">Selecciona...</option>
-                        {available.map(l => (
-                          <option key={l.warehouseId} value={l.warehouseId}>
-                            {l.name}{l.store ? ` — ${l.store}` : ''}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div style={{ width: 90 }}>
-                      <label className="text-[9px] font-black uppercase tracking-widest block mb-1.5" style={{ color: T.textMuted }}>Cantidad</label>
-                      <input
-                        type="number" min={0}
-                        value={addQty}
-                        placeholder="0"
-                        onChange={e => setAddQty(e.target.value === '' ? '' : Math.max(0, parseInt(e.target.value) || 0))}
-                        onKeyDown={e => e.key === 'Enter' && handleAddLocation()}
-                        className="w-full px-3 py-2 rounded-xl outline-none text-center font-bold"
-                        style={T.input}
-                      />
-                    </div>
-                    <button
-                      onClick={handleAddLocation}
-                      disabled={addWarehouseId === ''}
-                      className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all"
-                      style={addWarehouseId !== '' ? T.btnRed : { ...T.input, opacity: 0.4, cursor: 'not-allowed' }}
-                    >
-                      <Plus size={13} />
-                      Agregar
-                    </button>
-                  </div>
-                )}
-
-                {/* All warehouses already added */}
-                {locations.length > 0 && available.length === 0 && assigned.length > 0 && (
-                  <p className="text-xs px-1" style={{ color: T.textMuted }}>
-                    Todos los almacenes/tiendas ya están asignados.
-                  </p>
-                )}
-
                 {/* Required warning for new product */}
                 {!product && assigned.length === 0 && locations.length > 0 && (
                   <p className="text-[11px] px-1" style={{ color: "rgba(255,100,70,0.7)" }}>
-                    * Requerido — agrega al menos una ubicación con stock.
+                    * Requerido — captura stock en al menos un almacén.
                   </p>
                 )}
 
-                {/* Assigned list */}
-                {assigned.map((loc, idx) => {
-                  const meta = locations.find(l => l.warehouseId === loc.warehouseId);
-                  const qty = loc.quantity ?? loc.stock ?? 0;
+                {/* Una tarjeta por tienda: Piso | Bodega conectados */}
+                {storeCards.map((card, i) => {
+                  const slots = card.list.slice().sort((a, b) => (TYPE_ORDER[a.type] ?? 9) - (TYPE_ORDER[b.type] ?? 9));
                   return (
-                    <div key={idx} className="flex items-center gap-3 p-4 rounded-2xl" style={{ background: PRODUCT_THEME.surfaceMuted, border: PRODUCT_THEME.borderSubtle }}>
-                      {/* Icon */}
-                      <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: PRODUCT_THEME.surfaceSoft }}>
-                        <Warehouse size={14} style={{ color: T.textSecondary }} />
-                      </div>
-
-                      {/* Info */}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-black" style={{ color: T.textPrimary }}>{loc.ubicacion}</p>
-                        <div className="flex items-center gap-1.5 mt-0.5">
-                          {meta?.type && (
-                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-widest"
-                              style={{
-                                background: meta.type === 'bodega' ? "rgba(245,158,11,0.12)" : meta.type === 'central' ? "rgba(100,160,255,0.12)" : "rgba(100,220,130,0.12)",
-                                color: meta.type === 'bodega' ? "#D97706" : meta.type === 'central' ? "#88AAFF" : "#55CC88",
-                              }}>
-                              {warehouseTypeLabel(meta.type)}
-                            </span>
-                          )}
-                          {meta?.store && (
-                            <span className="text-[10px]" style={{ color: T.textMuted }}>{meta.store}</span>
-                          )}
+                    <div key={i} className="rounded-2xl p-3" style={{ background: PRODUCT_THEME.surfaceMuted, border: PRODUCT_THEME.borderSubtle }}>
+                      <div className="flex items-center gap-2 mb-2.5 px-1">
+                        <div className="w-6 h-6 rounded-lg flex items-center justify-center shrink-0" style={{ background: PRODUCT_THEME.surfaceSoft }}>
+                          <Warehouse size={12} style={{ color: T.textSecondary }} />
                         </div>
+                        <p className="text-sm font-black" style={{ color: T.textPrimary }}>{card.storeName}</p>
                       </div>
-
-                      {/* Qty input */}
-                      <input
-                        type="number" min={0}
-                        value={qty || ''}
-                        placeholder="0"
-                        onChange={e => {
-                          const val = Math.max(0, parseInt(e.target.value) || 0);
-                          const next = [...assigned];
-                          next[idx] = { ...next[idx]!, quantity: val, stock: val, total: val, disponibleVenta: val, detalle: { bodega: val, tienda: 0, danado: 0, preventa: 0, enCamino: 0 } };
-                          setFormData(prev => ({ ...prev, stockUbicaciones: next }));
-                        }}
-                        className="w-20 px-2 py-1.5 rounded-xl text-center outline-none font-bold text-sm"
-                        style={T.input}
-                      />
-
-                      {/* Delete */}
-                      <button
-                        onClick={() => setFormData(prev => ({ ...prev, stockUbicaciones: assigned.filter((_, i) => i !== idx) }))}
-                        title="Eliminar ubicación"
-                        className="w-8 h-8 rounded-lg flex items-center justify-center transition-all hover:bg-red-500/20 hover:text-red-400"
-                        style={{ color: T.textSecondary, flexShrink: 0 }}
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      <div className="flex flex-wrap gap-2.5">
+                        {slots.map(renderSlot)}
+                      </div>
                     </div>
                   );
                 })}
+
+                {/* Almacenes sin tienda (central/legacy) */}
+                {central.length > 0 && (
+                  <div className="rounded-2xl p-3" style={{ background: PRODUCT_THEME.surfaceMuted, border: PRODUCT_THEME.borderSubtle }}>
+                    <p className="text-[10px] font-black uppercase tracking-widest mb-2.5 px-1" style={{ color: T.textMuted }}>Otros almacenes</p>
+                    <div className="flex flex-wrap gap-2.5">
+                      {central.map(renderSlot)}
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })()}
@@ -1393,6 +1346,7 @@ export function ProductsPage() {
         warehouseId: w.id,
         name: w.name,
         store: w.store?.name ?? '',
+        storeId: w.store?.id ?? null,
         type: w.type,
       })),
     [warehousesQuery.data, isAdmin, user?.store_id]
