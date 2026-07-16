@@ -655,6 +655,10 @@ docker compose up --build -d
 
 > Sesiones anteriores a 2026-05-14 (>20 días) archivadas en git history para mantener el log ligero. Decisiones load-bearing preservadas en ADRs (§7) y secciones de arquitectura.
 
+### Sesión 2026-07-17 — Promos: visibilidad cruzada sin duplicar — DEPLOYADO rev tadaima-00123-dgt
+
+Confirmación de Joel al diseño (local o todas las tiendas, visibles entre tiendas para no duplicar en el mismo producto). 2 cierres (commit del feat, bundle `index-DyHfjvT8.js`): (1) chip del tab para gerente decía "Tu tienda" en promos AJENAS → ahora "Otra tienda (visible para no duplicar)"; (2) gerente podía pausar/borrar promos globales o de otras tiendas → `promoMutationGateError` 403 backend + botones ocultos en UI (solo muta las de SU tienda; globales/ajenas = solo lectura). `PromoStoreScopeTest` 5/5, suite 259/259.
+
 ### Sesión 2026-07-16/17 — Scoping por tienda (promos + insumos) + fix "Programada" — DEPLOYADO rev tadaima-00122-vwn
 
 QA Joel: "creé una promo y no sale en /promos" + pidió que promos e insumos elijan tienda. Commit `1ff7054`. Bundle `index-fAFO6V7b.js`.
