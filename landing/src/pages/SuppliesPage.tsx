@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion as Motion } from "motion/react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
@@ -6,8 +6,8 @@ import {
   ShoppingBasket, Plus, Pencil, Loader2, Wallet, AlertTriangle, BarChart2, X,
 } from "lucide-react";
 import {
-  createSupply, updateSupply, registerSupplyPurchase,
-  type Supply,
+  createSupply, updateSupply, registerSupplyPurchase, getStores,
+  type Supply, type Store,
 } from "@tadaima/api";
 import { useAuth } from "@tadaima/auth";
 import { queryKeys } from "@/lib/queryKeys";
@@ -339,6 +339,10 @@ export function SuppliesPage() {
                     <p className="truncate text-[13px] font-black" style={{ color: THI }}>{s.name}</p>
                     <p className="text-[10px] font-bold" style={{ color: TLO }}>
                       {s.category ?? "Sin categoría"}{s.unit ? ` · ${s.unit}` : ""}{!s.is_active ? " · inactivo" : ""}
+                      {" · "}
+                      <span style={{ color: s.store_id != null ? "#60A5FA" : TLO }}>
+                        {s.store_id != null ? "Solo una tienda" : "Toda la empresa"}
+                      </span>
                     </p>
                   </div>
                   {canManageCatalog && (
@@ -426,11 +430,20 @@ function SupplyFormModal({ supply, onClose, onSaved }: {
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { user } = useAuth();
+  const isAdmin = isAdminRole(user?.roles);
   const [name, setName] = useState(supply?.name ?? "");
   const [category, setCategory] = useState(supply?.category ?? "");
   const [unit, setUnit] = useState(supply?.unit ?? "");
   const [isActive, setIsActive] = useState(supply?.is_active ?? true);
   const [saving, setSaving] = useState(false);
+  // Tienda del insumo: "" = toda la empresa (solo admin elige; gerente queda
+  // forzado a la suya en el backend).
+  const [storeSel, setStoreSel] = useState<string>(supply?.store_id != null ? String(supply.store_id) : "");
+  const [stores, setStores] = useState<Store[]>([]);
+  useEffect(() => {
+    if (isAdmin) { void getStores().then(setStores).catch(() => {}); }
+  }, [isAdmin]);
 
   const save = async () => {
     if (!name.trim()) { toast.error("El nombre es obligatorio."); return; }
@@ -441,6 +454,7 @@ function SupplyFormModal({ supply, onClose, onSaved }: {
         ...(category.trim() ? { category: category.trim() } : {}),
         ...(unit.trim() ? { unit: unit.trim() } : {}),
         is_active: isActive,
+        ...(isAdmin ? { store_id: storeSel ? parseInt(storeSel, 10) : null } : {}),
       };
       if (supply) await updateSupply(supply.id, payload);
       else await createSupply(payload);
@@ -481,6 +495,17 @@ function SupplyFormModal({ supply, onClose, onSaved }: {
             <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>Unidad</label>
             <input value={unit} onChange={e => setUnit(e.target.value)} maxLength={20} placeholder="rollo" style={{ ...inputStyle, marginTop: 6 }} />
           </div>
+        </div>
+        <div>
+          <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>Tienda</label>
+          {isAdmin ? (
+            <select value={storeSel} onChange={e => setStoreSel(e.target.value)} style={{ ...inputStyle, marginTop: 6 }} data-testid="supply-store-select">
+              <option value="">Toda la empresa (todas las tiendas)</option>
+              {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          ) : (
+            <p className="text-[11px] font-black mt-2" style={{ color: TMD }}>Tu tienda (fijo para gerente)</p>
+          )}
         </div>
         {supply && (
           <label className="flex items-center gap-2 text-[11px] font-bold" style={{ color: TMD }}>

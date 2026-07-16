@@ -9,6 +9,8 @@ import { apiClient } from './client'
 export interface Supply {
   id: number
   company_id: number
+  /** null = toda la empresa; con valor = solo esa tienda (scoping 2026-07-16). */
+  store_id?: number | null
   name: string
   category: string | null
   unit: string | null
@@ -58,6 +60,8 @@ export async function createSupply(input: {
   category?: string
   unit?: string
   is_active?: boolean
+  /** null/omitido = toda la empresa (admin); gerente queda forzado a la suya. */
+  store_id?: number | null
 }): Promise<Supply> {
   const response = await apiClient.post<Supply>('/supplies', input)
   return response.data

@@ -1,13 +1,16 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Loader2, Plus, Pause, Play, Trash2, TicketPercent } from "lucide-react";
+import { Loader2, Plus, Pause, Play, Trash2, TicketPercent, Store as StoreIcon } from "lucide-react";
 import {
   getProductPromotions, createProductPromotion, updateProductPromotion, deleteProductPromotion,
-  type ProductPromotion, type ProductPromotionInput,
+  getStores,
+  type ProductPromotion, type ProductPromotionInput, type Store,
 } from "@tadaima/api";
+import { useAuth } from "@tadaima/auth";
 import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/queryKeys";
 import { BUSINESS_TZ } from "@/lib/date";
+import { isAdmin as isAdminRole } from "@/lib/permisos";
 
 interface Props {
   /** null = producto nuevo sin guardar (las promos requieren id). */
@@ -42,6 +45,8 @@ const toDateInput = (iso: string | null): string =>
  */
 export function ProductPromotionsTab({ productId }: Props) {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const isAdmin = isAdminRole(user?.roles);
   const [promotions, setPromotions] = useState<ProductPromotion[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -54,6 +59,15 @@ export function ProductPromotionsTab({ productId }: Props) {
   const [startsAt, setStartsAt] = useState("");
   const [endsAt, setEndsAt] = useState("");
   const [priority, setPriority] = useState("0");
+  // Tienda de la promo: "" = todas (solo admin). El gerente queda forzado a la
+  // suya (el backend lo fuerza igual — esto es solo UI).
+  const [storeSel, setStoreSel] = useState<string>("");
+  const [stores, setStores] = useState<Store[]>([]);
+  useEffect(() => {
+    if (isAdmin) { void getStores().then(setStores).catch(() => {}); }
+  }, [isAdmin]);
+  const storeName = (id: number | null | undefined): string =>
+    id == null ? "Todas las tiendas" : (stores.find(s => s.id === id)?.name ?? `Tienda #${id}`);
 
   const reload = async (id: number) => {
     setLoading(true);
@@ -89,6 +103,8 @@ export function ProductPromotionsTab({ productId }: Props) {
         ...(startsAt ? { starts_at: startsAt } : {}),
         ...(endsAt ? { ends_at: endsAt } : {}),
         priority: parseInt(priority, 10) || 0,
+        // Admin elige tienda ("" = todas); gerente: el backend fuerza la suya.
+        store_id: isAdmin ? (storeSel ? parseInt(storeSel, 10) : null) : (user?.store_id ?? null),
       };
       await createProductPromotion(productId, input);
       toast.success(`Promo ${n}x${m} creada`);
@@ -111,6 +127,7 @@ export function ProductPromotionsTab({ productId }: Props) {
         name: promo.name, buy_n: promo.buy_n, pay_m: promo.pay_m,
         starts_at: promo.starts_at, ends_at: promo.ends_at,
         priority: promo.priority, status: next,
+        store_id: promo.store_id ?? null, // preservar la tienda al pausar/reanudar
       });
       toast.success(next === "paused" ? "Promoción pausada" : "Promoción reanudada");
       await reload(productId);
@@ -190,6 +207,17 @@ export function ProductPromotionsTab({ productId }: Props) {
                 Solo importa si el producto tiene VARIAS promos a la vez: en caja gana la que más ahorra y, en empate, la de prioridad más alta. Con una sola promo déjala en 0.
               </p>
             </div>
+            <div>
+              <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>Tienda</label>
+              {isAdmin ? (
+                <select value={storeSel} onChange={e => setStoreSel(e.target.value)} style={{ ...inputStyle, marginTop: 4 }} data-testid="promo-store-select">
+                  <option value="">Todas las tiendas</option>
+                  {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              ) : (
+                <p className="text-[11px] font-black mt-2.5" style={{ color: TMD }}>Tu tienda (fijo para gerente)</p>
+              )}
+            </div>
           </div>
           <p className="text-[10px] font-bold" style={{ color: TLO }}>
             Vista rápida: el cliente se lleva <b>{buyN || "N"}</b> y paga <b>{payM || "M"}</b>
@@ -219,7 +247,12 @@ export function ProductPromotionsTab({ productId }: Props) {
       ) : (
         <div className="space-y-2">
           {promotions.map(promo => {
-            const meta = STATUS_META[promo.status];
+            // "Activa" con fecha de inicio FUTURA aún no aplica en Caja ni sale
+            // en Promos → mostrar "Programada" para no confundir (QA 2026-07-16).
+            const isScheduled = promo.status === "active" && !!promo.starts_at && new Date(promo.starts_at) > new Date();
+            const meta = isScheduled
+              ? { label: `Programada · inicia ${toDateInput(promo.starts_at)}`, color: "#60A5FA" }
+              : STATUS_META[promo.status];
             return (
               <div key={promo.id} className="flex items-center gap-3 rounded-2xl px-4 py-3"
                 style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", opacity: promo.status === "expired" ? 0.55 : 1 }}>
@@ -233,6 +266,10 @@ export function ProductPromotionsTab({ productId }: Props) {
                       ? `${toDateInput(promo.starts_at) || "sin inicio"} → ${toDateInput(promo.ends_at) || "sin fin"}`
                       : "Sin vigencia (siempre)"}
                     {promo.priority > 0 ? ` · prioridad ${promo.priority}` : ""}
+                  </p>
+                  <p className="text-[9px] font-bold mt-0.5 flex items-center gap-1" style={{ color: TLO }}>
+                    <StoreIcon size={9} />
+                    {isAdmin ? storeName(promo.store_id) : (promo.store_id == null ? "Todas las tiendas" : "Tu tienda")}
                   </p>
                 </div>
                 <span className="rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-widest"

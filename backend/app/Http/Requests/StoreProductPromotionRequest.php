@@ -25,6 +25,8 @@ class StoreProductPromotionRequest extends FormRequest
             'starts_at' => ['nullable', 'date'],
             'ends_at'   => ['nullable', 'date', 'after_or_equal:starts_at'],
             'status'    => ['nullable', Rule::in(ProductPromotion::STATUSES)],
+            // null = todas las tiendas (compat con promos existentes).
+            'store_id'  => ['nullable', 'integer', 'exists:stores,id'],
             'priority'  => ['nullable', 'integer', 'min:0', 'max:999'],
         ];
     }

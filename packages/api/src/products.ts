@@ -55,8 +55,9 @@ export interface ProductLight {
   product_type?: 'product' | 'manga'
   /** Número de tomo (solo mangas) — distingue tomos de la misma serie en Caja. */
   volume_number?: number | null
-  /** Promos NxM vigentes (Descuentos v2 Fase 3) — el backend ya las embebe. */
-  active_promotions?: { id: number; name: string; buy_n: number; pay_m: number; priority: number }[]
+  /** Promos NxM vigentes (Descuentos v2 Fase 3) — el backend ya las embebe.
+   *  Con ?store_id el embed viene FILTRADO a esa tienda (o globales). */
+  active_promotions?: { id: number; name: string; buy_n: number; pay_m: number; priority: number; store_id?: number | null }[]
 }
 
 /**

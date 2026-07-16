@@ -43,13 +43,19 @@ class ProductController extends Controller
         // activePromotions: promos NxM vigentes (Fase 3) — el motor de Caja las
         // evalúa por línea; el filtro de vigencia va en SQL (currentlyActive).
         $relations = $light
-            ? ['price', 'images', 'paymentMethod', 'mangaDetails', 'activePromotions']
-            : ['category', 'supplier', 'price', 'images', 'paymentMethod', 'activePromotions'];
+            ? ['price', 'images', 'paymentMethod', 'mangaDetails']
+            : ['category', 'supplier', 'price', 'images', 'paymentMethod'];
         if ($needsMangaDetails && ! $light) {
             $relations[] = 'mangaDetails';
         }
 
         $query = Product::query()->with($relations);
+
+        // Promos scoped por tienda (2026-07-16): con ?store_id el embed solo trae
+        // promos de esa tienda o globales (store_id null) — la Caja consume esto
+        // directo y su motor queda espejo del backend. Sin store_id (vista
+        // global / página Promos del admin) van todas.
+        $query->with(['activePromotions' => fn ($q) => $q->forStore($storeId)]);
 
         if ($type !== null) {
             $query->ofType($type);

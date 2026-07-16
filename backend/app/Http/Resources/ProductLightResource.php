@@ -97,6 +97,7 @@ class ProductLightResource extends JsonResource
                     'buy_n'    => (int) $p->buy_n,
                     'pay_m'    => (int) $p->pay_m,
                     'priority' => (int) $p->priority,
+                    'store_id' => $p->store_id !== null ? (int) $p->store_id : null,
                 ])->values()
                 : [],
         ];

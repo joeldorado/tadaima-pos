@@ -33,8 +33,16 @@ class SuppliesController extends Controller
     {
         // Scoping por empresa (fix 2026-07-16): el catálogo es compartido entre
         // las tiendas de UNA empresa, nunca entre empresas distintas.
+        // Scoping por tienda (2026-07-16): un insumo con store_id solo lo ve esa
+        // tienda; store_id NULL = toda la empresa. Admin ve todo (etiquetado).
+        $user = $request->user();
+        $isAdmin = $user->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
+
         $supplies = Supply::query()
-            ->where('company_id', $request->user()->company_id)
+            ->where('company_id', $user->company_id)
+            ->when(! $isAdmin, fn ($q) => $q->where(fn ($qq) =>
+                $qq->whereNull('store_id')->orWhere('store_id', $user->store_id)
+            ))
             ->when(! $request->boolean('all'), fn ($q) => $q->active())
             ->orderBy('category')
             ->orderBy('name')
@@ -50,10 +58,19 @@ class SuppliesController extends Controller
             return $resp;
         }
 
+        // Tienda del insumo con RBAC: admin manda lo que quiera (null = toda la
+        // empresa); gerente queda forzado a SU tienda.
+        $user = $request->user();
+        $isAdmin = $user->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
+        $storeId = $isAdmin
+            ? ($request->filled('store_id') ? (int) $request->input('store_id') : null)
+            : ($user->store_id ? (int) $user->store_id : null);
+
         $supply = Supply::create(array_merge(
             $request->only(['name', 'category', 'unit']),
             [
-                'company_id' => $request->user()->company_id,
+                'company_id' => $user->company_id,
+                'store_id'   => $storeId,
                 'is_active'  => $request->boolean('is_active', true),
             ],
         ));

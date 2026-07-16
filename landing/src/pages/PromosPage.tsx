@@ -7,9 +7,11 @@ import {
   TicketPercent, Tv, Share2, Download, MessageCircle, X, Loader2, ImageOff,
 } from "lucide-react";
 import {
-  getProductsLight, getLightPrice, getProductImageBase64, getProductPromotions,
-  type ProductLight,
+  getProductsLight, getLightPrice, getProductImageBase64, getProductPromotions, getStores,
+  type ProductLight, type Store,
 } from "@tadaima/api";
+import { useAuth } from "@tadaima/auth";
+import { isAdmin as isAdminRole } from "@/lib/permisos";
 
 // ─── Tokens visuales (convención de páginas glass) ────────────────────────────
 const PANEL  = "var(--td-panel-bg)";
@@ -25,13 +27,6 @@ const fmt = (n: number) =>
   new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", minimumFractionDigits: 0 }).format(n || 0);
 
 type LightPromo = NonNullable<ProductLight["active_promotions"]>[number];
-
-/** Mejor promo del producto (misma regla de desempate que el motor: prioridad ↑, id ↓). */
-const bestPromo = (p: ProductLight): LightPromo | null => {
-  const list = p.active_promotions ?? [];
-  if (!list.length) return null;
-  return [...list].sort((a, b) => b.priority - a.priority || a.id - b.id)[0] ?? null;
-};
 
 /** Carga el logo como data-URL (mismo patrón que loadTicketLogo del ticket). */
 async function loadLogoDataUrl(): Promise<string | null> {
@@ -391,6 +386,9 @@ function TvMode({ items, onExit }: {
 // Página Promos
 // ══════════════════════════════════════════════════════════════════════════════
 export function PromosPage() {
+  const { user } = useAuth();
+  const isAdmin = isAdminRole(user?.roles);
+
   // Sin endpoint global de promos: se enumeran desde los productos light
   // (active_promotions viene embebido). Refetch 60s → la TV se actualiza sola.
   const productsQuery = useQuery({
@@ -400,13 +398,35 @@ export function PromosPage() {
     refetchInterval: 60_000,
   });
 
+  // Nombres de tienda para las etiquetas (solo admin las necesita todas).
+  const storesQuery = useQuery({
+    queryKey: ["promos-stores"],
+    queryFn: () => getStores(),
+    enabled: isAdmin,
+    staleTime: 5 * 60_000,
+  });
+  const storeName = (id: number | null | undefined): string | null => {
+    if (id == null) return null;
+    return (storesQuery.data as Store[] | undefined)?.find(s => s.id === id)?.name ?? `Tienda #${id}`;
+  };
+
   const promoItems = useMemo(() => {
     const products = productsQuery.data?.data ?? [];
     return products
-      .filter(p => p.active && (p.active_promotions?.length ?? 0) > 0)
-      .map(p => ({ product: p, promo: bestPromo(p)! }))
+      .map(p => {
+        // Scoping por tienda: gerente/cajero solo ven promos globales o de SU
+        // tienda; admin ve todas (con etiqueta de tienda).
+        const visible = (p.active_promotions ?? []).filter(pr =>
+          isAdmin || pr.store_id == null || pr.store_id === (user?.store_id ?? null));
+        return { p, visible };
+      })
+      .filter(({ p, visible }) => p.active && visible.length > 0)
+      .map(({ p, visible }) => ({
+        product: p,
+        promo: [...visible].sort((a, b) => b.priority - a.priority || a.id - b.id)[0]!,
+      }))
       .sort((a, b) => a.product.name.localeCompare(b.product.name, "es"));
-  }, [productsQuery.data]);
+  }, [productsQuery.data, isAdmin, user?.store_id]);
 
   const [shareItem, setShareItem] = useState<{ product: ProductLight; promo: LightPromo } | null>(null);
   const [tvMode, setTvMode] = useState(false);
@@ -449,6 +469,9 @@ export function PromosPage() {
           <TicketPercent size={34} className="mx-auto mb-3" style={{ color: TLO, opacity: 0.5 }} />
           <p className="text-sm font-black uppercase tracking-widest" style={{ color: THI }}>Sin promos vigentes</p>
           <p className="text-[11px] font-bold mt-1" style={{ color: TMD }}>Crea una en Productos → editar producto → tab Promos (2x1, 3x2…).</p>
+          <p className="text-[10px] font-bold mt-2" style={{ color: TLO }}>
+            ¿Creaste una y no sale? Revisa que no esté <b>Programada</b> (fecha de inicio futura), <b>Pausada</b> o <b>Vencida</b>, que el producto esté activo, y que la promo sea de tu tienda (o de todas).
+          </p>
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -472,7 +495,14 @@ export function PromosPage() {
               {/* Info */}
               <div className="p-4 flex-1 flex flex-col">
                 <p className="text-[13px] font-black leading-tight" style={{ color: THI }}>{product.name}</p>
-                <p className="text-[10px] font-bold uppercase tracking-widest mt-1" style={{ color: TLO }}>{promo.name}</p>
+                <p className="text-[10px] font-bold uppercase tracking-widest mt-1" style={{ color: TLO }}>
+                  {promo.name}
+                  {promo.store_id != null && (
+                    <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 6, fontSize: 8, fontWeight: 900, color: "#60A5FA", background: "rgba(96,165,250,0.12)", border: "1px solid rgba(96,165,250,0.3)" }}>
+                      {isAdmin ? (storeName(promo.store_id) ?? "Solo una tienda") : "Solo tu tienda"}
+                    </span>
+                  )}
+                </p>
                 <p className="text-[12px] font-black mt-2" style={{ color: GREEN }}>
                   Llévate {promo.buy_n}, paga {promo.pay_m} · {fmt(getLightPrice(product, 1) * promo.pay_m)}
                 </p>

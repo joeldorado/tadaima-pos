@@ -15,6 +15,8 @@ export interface ProductPromotionInput {
   ends_at?: string | null
   status?: 'active' | 'paused' | 'expired'
   priority?: number
+  /** null/omitido = todas las tiendas (admin); gerente queda forzado a la suya. */
+  store_id?: number | null
 }
 
 export async function getProductPromotions(productId: number): Promise<ProductPromotion[]> {

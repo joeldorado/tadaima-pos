@@ -50,7 +50,10 @@ class ProductPromotionsController extends Controller
         $promotion = $product->promotions()->create(array_merge(
             $request->only(['name', 'buy_n', 'pay_m', 'priority']),
             $this->vigencyDates($request->input('starts_at'), $request->input('ends_at')),
-            ['status' => $request->input('status', ProductPromotion::STATUS_ACTIVE)],
+            [
+                'status'   => $request->input('status', ProductPromotion::STATUS_ACTIVE),
+                'store_id' => $this->scopedStoreId($request),
+            ],
         ));
 
         return $this->success($promotion, 'Promoción creada.', 201);
@@ -70,6 +73,7 @@ class ProductPromotionsController extends Controller
             $request->only(['name', 'buy_n', 'pay_m', 'priority']),
             $this->vigencyDates($request->input('starts_at'), $request->input('ends_at')),
             $request->has('status') ? ['status' => $request->input('status')] : [],
+            $request->has('store_id') ? ['store_id' => $this->scopedStoreId($request)] : [],
         ));
 
         return $this->success($promotion->fresh(), 'Promoción actualizada.');
@@ -102,6 +106,22 @@ class ProductPromotionsController extends Controller
      *
      * @return array{starts_at: ?\Carbon\Carbon, ends_at: ?\Carbon\Carbon}
      */
+    /**
+     * Tienda de la promo con RBAC: admin manda lo que quiera (null = todas las
+     * tiendas); gerente queda FORZADO a su propia tienda — no puede crear promos
+     * globales ni de otras sucursales.
+     */
+    private function scopedStoreId(\Illuminate\Http\Request $request): ?int
+    {
+        $user = $request->user();
+        $isAdmin = $user && $user->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
+        if ($isAdmin) {
+            return $request->filled('store_id') ? (int) $request->input('store_id') : null;
+        }
+
+        return $user?->store_id ? (int) $user->store_id : null;
+    }
+
     private function vigencyDates(?string $startsAt, ?string $endsAt): array
     {
         $parse = static function (?string $value, bool $endOfDay): ?Carbon {

@@ -83,12 +83,16 @@ export interface ActiveProductPromotion {
   buy_n: number
   pay_m: number
   priority: number
+  /** null = todas las tiendas; con valor = solo esa sucursal (scoping 2026-07-16). */
+  store_id?: number | null
 }
 
 /** Promo NxM completa (CRUD del editor de producto — incluye pausadas/vencidas). */
 export interface ProductPromotion {
   id: number
   product_id: number
+  /** null = todas las tiendas; con valor = solo esa sucursal. */
+  store_id?: number | null
   name: string
   buy_n: number
   pay_m: number
