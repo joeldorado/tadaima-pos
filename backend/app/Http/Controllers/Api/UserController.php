@@ -133,6 +133,14 @@ class UserController extends Controller
             // explícitamente desde Permisos de Precios. Queda en el default de
             // la columna (false) salvo que se mande explícito en el request.
 
+            // can_manage_promos por ROL (pedido Joel 2026-07-18): gerente nace
+            // ON (default del negocio), cajero nace OFF — sin esto el default
+            // de la columna (true) dejaba a los cajeros "con permiso" en la UI
+            // de Permisos aunque el rol ya los bloqueara.
+            if (! $request->has('can_manage_promos')) {
+                $data['can_manage_promos'] = $this->roleGrantsPromos($request->input('role_id'));
+            }
+
             // Copia encriptada del password para que el admin pueda consultarlo
             // en users settings (el cast 'encrypted' del modelo lo cifra con la
             // APP_KEY). El login sigue usando el bcrypt de `password`.
@@ -241,6 +249,18 @@ class UserController extends Controller
         return $name !== null && in_array($name, User::ADMIN_ROLES, true);
     }
 
+    /** ¿El rol concede gestión de promos por default? (gerente/manager o admin). */
+    private function roleGrantsPromos(int|string|null $roleId): bool
+    {
+        if (! $roleId) {
+            return false;
+        }
+        $name = DB::table('roles')->where('id', $roleId)->value('name');
+
+        return $name !== null
+            && (in_array($name, ['gerente', 'manager'], true) || in_array($name, User::ADMIN_ROLES, true));
+    }
+
     /**
      * POST /users/{user}/roles
      * Body: { role_id: int }
@@ -266,6 +286,11 @@ class UserController extends Controller
             }
         }
 
+        // Antes de sincronizar: ¿el rol ACTUAL ya concedía promos? Solo se toca
+        // el flag cuando cambia la categoría (cajero↔gerente) — así una
+        // revocación explícita del admin sobrevive a re-asignar el mismo rol.
+        $grantedBefore = $user->isAdminRole() || $user->hasRole(['gerente', 'manager']);
+
         DB::transaction(function () use ($request, $user) {
             DB::table('model_has_roles')
                 ->where('model_type', User::class)
@@ -281,6 +306,14 @@ class UserController extends Controller
 
         // can_view_cost NO se auto-enciende al volverse gerente (feedback
         // cliente 2026-06-24): el admin lo activa explícitamente en Permisos.
+
+        // can_manage_promos SÍ se sincroniza por rol (pedido Joel 2026-07-18):
+        // promover a gerente lo enciende (default del negocio) y degradar a
+        // cajero lo apaga. Mismo rol re-asignado = sin cambios.
+        $grantsNow = $this->roleGrantsPromos($request->role_id);
+        if ($grantedBefore !== $grantsNow) {
+            $user->update(['can_manage_promos' => $grantsNow]);
+        }
 
         return $this->success(['roles' => $user->fresh()->roles], 'Rol asignado.');
     }

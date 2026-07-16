@@ -126,6 +126,56 @@ class ProductPromotionPermissionTest extends TestCase
             ->assertStatus(403);
     }
 
+    public function test_crear_usuario_define_flag_por_rol(): void
+    {
+        $gerenteRoleId = DB::table('roles')->where('name', 'gerente')->value('id')
+            ?? DB::table('roles')->insertGetId(['name' => 'gerente', 'created_at' => now(), 'updated_at' => now()]);
+        $cajeroRoleId = DB::table('roles')->where('name', 'cajero')->value('id')
+            ?? DB::table('roles')->insertGetId(['name' => 'cajero', 'created_at' => now(), 'updated_at' => now()]);
+
+        // Cajero nuevo → flag OFF (el default true de la columna NO aplica).
+        $this->actingAs($this->admin)->postJson('/api/v1/users', [
+            'name' => 'Cajero Nuevo', 'email' => 'nuevo.cajero@test.com', 'password' => 'secret123',
+            'store_id' => $this->store->id, 'role_id' => $cajeroRoleId,
+        ])->assertStatus(201)->assertJsonPath('data.can_manage_promos', false);
+
+        // Gerente nuevo → flag ON (default del negocio).
+        $this->actingAs($this->admin)->postJson('/api/v1/users', [
+            'name' => 'Gerente Nuevo', 'email' => 'nuevo.gerente@test.com', 'password' => 'secret123',
+            'store_id' => $this->store->id, 'role_id' => $gerenteRoleId,
+        ])->assertStatus(201)->assertJsonPath('data.can_manage_promos', true);
+    }
+
+    public function test_cambio_de_rol_sincroniza_flag_sin_pisar_revocaciones(): void
+    {
+        $gerenteRoleId = DB::table('roles')->where('name', 'gerente')->value('id')
+            ?? DB::table('roles')->insertGetId(['name' => 'gerente', 'created_at' => now(), 'updated_at' => now()]);
+        $cajeroRoleId = DB::table('roles')->where('name', 'cajero')->value('id')
+            ?? DB::table('roles')->insertGetId(['name' => 'cajero', 'created_at' => now(), 'updated_at' => now()]);
+
+        // Cajero (flag off) promovido a gerente → flag se enciende.
+        $cajero = $this->makeUser('promovible@test.com', 'cajero', canManagePromos: false);
+        $this->actingAs($this->admin)
+            ->postJson("/api/v1/users/{$cajero->id}/roles", ['role_id' => $gerenteRoleId])
+            ->assertOk();
+        $this->assertTrue((bool) $cajero->fresh()->can_manage_promos);
+
+        // Gerente degradado a cajero → flag se apaga.
+        $gerente = $this->makeUser('degradable@test.com', 'gerente', canManagePromos: true);
+        $this->actingAs($this->admin)
+            ->postJson("/api/v1/users/{$gerente->id}/roles", ['role_id' => $cajeroRoleId])
+            ->assertOk();
+        $this->assertFalse((bool) $gerente->fresh()->can_manage_promos);
+
+        // Gerente con flag REVOCADO re-asignado al mismo rol → la revocación
+        // sobrevive (solo se toca el flag cuando cambia la categoría).
+        $revocado = $this->makeUser('revocado@test.com', 'gerente', canManagePromos: false);
+        $this->actingAs($this->admin)
+            ->postJson("/api/v1/users/{$revocado->id}/roles", ['role_id' => $gerenteRoleId])
+            ->assertOk();
+        $this->assertFalse((bool) $revocado->fresh()->can_manage_promos);
+    }
+
     public function test_no_admin_no_puede_escribir_el_flag(): void
     {
         $gerente = $this->makeUser('gerente4@test.com', 'gerente');
