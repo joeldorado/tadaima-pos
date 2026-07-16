@@ -655,6 +655,16 @@ docker compose up --build -d
 
 > Sesiones anteriores a 2026-05-14 (>20 días) archivadas en git history para mantener el log ligero. Decisiones load-bearing preservadas en ADRs (§7) y secciones de arquitectura.
 
+### Sesión 2026-07-15/16 — Anticipo real en liquidación + merge develop (Reportes Ruben) + costo real preventas — DEPLOYADO revs tadaima-00117-wwn y tadaima-00118-lcv
+
+Tres frentes en `feat/productos-sin-costo-y-ticket-bold` (PR #2 = PR de integración):
+
+1. **fix(caja) — chip Anticipo $0 en liquidación (rev 00117)**: `loadPreSaleOrderIntoCart` nunca poblaba `depositAmount` en items cargados → el chip leía `?? 0` y mostraba $0 siempre; y el "de $X" mostraba el saldo (precio escalado), no el total original. Ahora cada línea guarda su share del anticipo pagado (total original − saldo prorrateado, mismo ratio del balance) y el chip muestra "Anticipo $X de {total original}" + "Liquidado" al saldar. SOLO display: el cobro sigue usando `activeMesa.depositAmount` (los sumadores de anticipo filtran `sellingCatalogId != null` → items cargados excluidos). Commit `c5828ab`.
+2. **merge `origin/develop` (Ruben, `899d3b4`)**: refactor ReportsPage → exports extraídos a `landing/src/pages/reports/{exportExcel,exportPdf,reportFormat,reportTypes}.ts`; Excel del Reporte del Día (SalesPage) con Comisión Terminal/IVA/Venta Neta; `CLAUDE.md` raíz. Merge validado con `git merge-tree`: **0 conflictos**; único archivo compartido SalesPage en funciones distintas (él: exportDailyReportXlsx; main: Historial; Joel: bold ticket). Gate `canViewCost` conservado en su refactor. OJO: Ruben commiteó a `develop` (retirada) — recordarle usar `dev/qa-handoff`. Commit merge `29a69b9`.
+3. **fix(reportes) — costo real de preventas en ANTICIPOS (rev 00118)**: la columna "Costo Producto" (tabla APARTADOS Y PREVENTAS) leía `total_cost`, que por **Opción B** solo se llena el día de la entrega → anticipos siempre $0 aunque el snapshot existiera (`pre_sale_order_items.cost`, ADR-015, gateado por `canViewCost()` en el Resource). Nuevo campo informativo `pre_sale_costo_real` (acumula `item.cost * qty` SIEMPRE, anticipos incluidos) → Excel (columna existente), PDF (columna nueva gateada + fix fila TOTAL desalineada de 6 celdas en tabla de 5) y pantalla ("Costo Real (Producto)" en Información de Preventa). `total_cost`/`total_profit` intactos: la utilidad se sigue reconociendo al entregar. Commit `e5f56bc`.
+
+Bundle vivo `index-CTPP_G8z.js` verificado (markers "pre_sale_costo_real", "Costo Real (Producto)", "APARTADOS Y PREVENTAS", "Comisión TPV"). `vite build` OK, `vitest` 73/73 en cada paso (post-merge y post-fix).
+
 ### Sesión 2026-07-15 — UI/UX POS (4 frentes) — DEPLOYADO rev tadaima-00116-848
 
 Rediseño pedido por Joel + Ruben. Deploy único `gcloud run deploy` (Cloud Build); bundle vivo `index-BrI9vR-c.js` verificado (markers "Colapsar menú", "Piso", "cortesía"×2, "tadaima-nav-collapsed"). `vite build` OK, `vitest` 73/73. Ticket 58mm bold (rev previa, sin deploy) viajó también en este deploy.
