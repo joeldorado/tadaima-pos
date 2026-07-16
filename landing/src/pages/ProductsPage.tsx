@@ -45,6 +45,7 @@ import { StoreStockBreakdown } from "@/components/inventory/StoreStockBreakdown"
 import { MangaBatchModal } from "@/components/products/MangaBatchModal";
 import { MangaEditModal } from "@/components/products/MangaEditModal";
 import { QuickStockModal } from "@/components/products/QuickStockModal";
+import { MissingCostModal } from "@/components/products/MissingCostModal";
 import { ProductPromotionsTab } from "@/components/products/ProductPromotionsTab";
 import type { Product, Manga } from "@tadaima/api";
 import {
@@ -1283,7 +1284,9 @@ export function ProductsPage() {
   const [showTopSellers, setShowTopSellers] = useState(false);
   const [showLowStock, setShowLowStock] = useState(false);
   const [showOutStock, setShowOutStock] = useState(false);
-  const [showNoCost, setShowNoCost] = useState(false);
+  // Modal "Productos sin Costo": tabla editable para capturar el costo real
+  // rápido (reemplaza el viejo filtro in-grid showNoCost).
+  const [showMissingCost, setShowMissingCost] = useState(false);
   const [selectedForWhatsapp, setSelectedForWhatsapp] = useState<number[]>([]);
 
   const queryClient = useQueryClient();
@@ -1904,7 +1907,6 @@ export function ProductsPage() {
     if (showTopSellers) return [...products].sort((a, b) => b.ventasTotales - a.ventasTotales).slice(0, 50);
     if (showOutStock)   return products.filter(p => !p.esUnico && getTotalStock(p.id) === 0);
     if (showLowStock)   return products.filter(p => !p.esUnico && getTotalStock(p.id) > 0 && getTotalStock(p.id) <= 10);
-    if (showNoCost)     return products.filter(p => !p.costo || p.costo <= 0);
     const q = search.toLowerCase();
     return products.filter(p => {
       // Match por nombre, SKU o código de barras — el scanner USB teclea el
@@ -1916,7 +1918,7 @@ export function ProductsPage() {
       const matchesCat = selectedCat === 'Todo' || p.categoria === selectedCat;
       return matchesSearch && matchesCat;
     });
-  }, [products, search, selectedCat, showTopSellers, showLowStock, showOutStock, showNoCost, getTotalStock]);
+  }, [products, search, selectedCat, showTopSellers, showLowStock, showOutStock, getTotalStock]);
 
   // ─── TanStack Table (lista mode) ─────────────────────────────────────────────
   const table = useReactTable({
@@ -2184,7 +2186,7 @@ export function ProductsPage() {
               <>
                 {lowStockCount > 0 && (
                   <button
-                    onClick={() => { setShowLowStock(v => !v); setShowOutStock(false); setShowTopSellers(false); setShowNoCost(false); }}
+                    onClick={() => { setShowLowStock(v => !v); setShowOutStock(false); setShowTopSellers(false); }}
                     className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all hover:scale-[1.02] active:scale-95"
                     style={{
                       background: showLowStock ? "rgba(245,158,11,0.18)" : "rgba(245,158,11,0.08)",
@@ -2202,7 +2204,7 @@ export function ProductsPage() {
                 )}
                 {outStockCount > 0 && (
                   <button
-                    onClick={() => { setShowOutStock(v => !v); setShowLowStock(false); setShowTopSellers(false); setShowNoCost(false); }}
+                    onClick={() => { setShowOutStock(v => !v); setShowLowStock(false); setShowTopSellers(false); }}
                     className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all hover:scale-[1.02] active:scale-95"
                     style={{
                       background: showOutStock ? "rgba(239,68,68,0.18)" : "rgba(239,68,68,0.08)",
@@ -2226,26 +2228,39 @@ export function ProductsPage() {
           {canViewCost && (() => {
             const noCostCount = products.filter(p => !p.costo || p.costo <= 0).length;
             const valorInvertido = products.reduce((acc, p) => acc + (p.costo || 0) * getTotalStock(p.id), 0);
+            const hasMissingCost = noCostCount > 0;
             return (
               <>
-                {noCostCount > 0 && (
-                  <button
-                    onClick={() => { setShowNoCost(v => !v); setShowTopSellers(false); setShowLowStock(false); setShowOutStock(false); }}
-                    className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all hover:scale-[1.02] active:scale-95"
-                    style={{
-                      background: showNoCost ? "rgba(239,68,68,0.15)" : "rgba(239,68,68,0.08)",
-                      border: `1px solid ${showNoCost ? "rgba(239,68,68,0.5)" : "rgba(239,68,68,0.2)"}`,
-                      color: "#EF4444",
-                    }}
-                    title="Productos sin costo registrado"
-                  >
-                    <DollarSign size={13} />
-                    Sin costo
-                    <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-red-500 text-white">{noCostCount}</span>
-                  </button>
-                )}
+                {/* Botón "Productos sin Costo": siempre visible. Deshabilitado y
+                    apagado cuando no falta ninguno; rojo con contador cuando hay
+                    ≥1 → abre el modal-tabla para capturar el costo real rápido. */}
                 <button
-                  onClick={() => { setShowTopSellers(v => !v); setShowLowStock(false); setShowOutStock(false); setShowNoCost(false); }}
+                  onClick={() => { if (hasMissingCost) setShowMissingCost(true); }}
+                  disabled={!hasMissingCost}
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all hover:scale-[1.02] active:scale-95"
+                  style={{
+                    background: hasMissingCost ? "rgba(239,68,68,0.10)" : "var(--td-card-bg)",
+                    border: `1px solid ${hasMissingCost ? "rgba(239,68,68,0.4)" : "var(--td-card-border)"}`,
+                    color: hasMissingCost ? "#EF4444" : T.textMuted,
+                    cursor: hasMissingCost ? "pointer" : "default",
+                    opacity: hasMissingCost ? 1 : 0.55,
+                  }}
+                  title={hasMissingCost
+                    ? "Productos sin costo real registrado — clic para capturarlos"
+                    : "Todos los productos tienen costo real"}
+                >
+                  <DollarSign size={13} />
+                  Productos sin Costo
+                  <span
+                    className="px-1.5 py-0.5 rounded-full text-[10px] font-black"
+                    style={{
+                      background: hasMissingCost ? "#EF4444" : "var(--td-input-bg)",
+                      color: hasMissingCost ? "#fff" : T.textMuted,
+                    }}
+                  >{noCostCount}</span>
+                </button>
+                <button
+                  onClick={() => { setShowTopSellers(v => !v); setShowLowStock(false); setShowOutStock(false); }}
                   className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all hover:scale-[1.02] active:scale-95"
                   style={{
                     background: showTopSellers ? "rgba(170,102,255,0.15)" : "rgba(170,102,255,0.08)",
@@ -2373,17 +2388,17 @@ export function ProductsPage() {
       {/* Result label + active filter chip */}
       <div className="flex items-center gap-3 mb-4">
         <p className="text-[10px] font-black uppercase tracking-[0.2em]" style={{ color: T.textMuted }}>
-          {showTopSellers ? `Top 50 Más Vendidos` : showOutStock ? "Productos Agotados" : showLowStock ? "Por Agotarse" : showNoCost ? "Sin Costo" : `${filtered.length} Productos`}
+          {showTopSellers ? `Top 50 Más Vendidos` : showOutStock ? "Productos Agotados" : showLowStock ? "Por Agotarse" : `${filtered.length} Productos`}
         </p>
         {selectedStoreId && (
           <div className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider border" style={{ background: 'rgba(204,34,0,0.08)', border: '1px solid rgba(204,34,0,0.2)', color: T.redBright }}>
             {stores.find(s => s.id === selectedStoreId)?.name ?? 'Tienda'}
           </div>
         )}
-        {(showTopSellers || showLowStock || showOutStock || showNoCost) && (
+        {(showTopSellers || showLowStock || showOutStock) && (
           <div className="flex items-center gap-3">
             <button
-              onClick={() => { setShowTopSellers(false); setShowLowStock(false); setShowOutStock(false); setShowNoCost(false); setSelectedForWhatsapp([]); }}
+              onClick={() => { setShowTopSellers(false); setShowLowStock(false); setShowOutStock(false); setSelectedForWhatsapp([]); }}
               className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider bg-red-500/10 text-red-500 hover:bg-red-500/20 transition-all border border-red-500/20"
             >
               <X size={10} /> Quitar Filtro
@@ -3067,6 +3082,24 @@ export function ProductsPage() {
           productName={stockModalProduct.name}
           kind={stockModalProduct.kind ?? "product"}
           onClose={() => setStockModalProduct(null)}
+        />
+      )}
+
+      {showMissingCost && canViewCost && (
+        <MissingCostModal
+          products={products
+            .filter(p => !p.costo || p.costo <= 0)
+            .map(p => ({
+              id: p.id,
+              nombre: p.nombre,
+              sku: p.sku,
+              categoria: p.categoria,
+              imagen: p.imagen,
+              precioA: p.precioA,
+            }))}
+          canEdit={canEdit}
+          fmt={fmt}
+          onClose={() => setShowMissingCost(false)}
         />
       )}
 

@@ -655,6 +655,12 @@ docker compose up --build -d
 
 > Sesiones anteriores a 2026-05-14 (>20 días) archivadas en git history para mantener el log ligero. Decisiones load-bearing preservadas en ADRs (§7) y secciones de arquitectura.
 
+### Sesión 2026-07-15 — Productos sin Costo (captura rápida) — DEPLOYADO rev tadaima-00115-l4f · + Ticket 58mm en BOLD (local, sin deploy)
+
+**Productos sin Costo (deployado):** botón con contador en la barra de Productos — rojo con N cuando faltan, apagado/deshabilitado en 0 — que abre un modal-tabla grande (`MissingCostModal.tsx`) para capturar el **costo real** rápido, sin abrir el editor completo del producto. Solo visible para quien ve costos (admin siempre, o flag `can_view_cost`); editar gateado a admin/gerente (igual que el backend). Cada fila guarda solo `{cost}` vía `PUT /products/{id}` (name es `sometimes` → no toca precios ni nada más), optimista + invalida el cache → la fila se pone verde, baja el contador "faltan X" y sale de la lista. Reemplaza el viejo filtro in-grid `showNoCost`. **Sin cambios de backend.** Bundle vivo `index-RcI7CXPq.js` verificado ("Productos sin Costo"×2 + testid `missing-cost-modal`). `vite build` ✅.
+
+**Ticket 58mm en BOLD (aplicado local, NO deployado por instrucción de Joel):** `font-weight:700` en el `body{}` de los 3 puntos de impresión (`doPrintTicket`/SellPage, `printTicket`/SalesPage, `buildPrintHtml`/CashCloseSummaryModal) → todo el texto sale en negrita en la térmica; título y totales en `900` siguen como el peso más fuerte (jerarquía intacta). Colores ya en `#000` (los grises restantes eran de la barra de pantalla `.no-print`, oculta al imprimir). Viaja en el próximo deploy. Ver [[project_ticket_print]].
+
 ### Sesión 2026-07-15 — Descuentos v2 FASE 3: PROMOCIONES NxM por producto (2x1, 3x2…) — DEPLOYADO rev tadaima-00114-ntt
 
 **Promos "compra N, paga M" pegadas al producto, aplicadas SOLAS en caja.** El motor ya existía en `saleCalc.ts` desde la Fase 0 — esta fase lo activó end-to-end.
