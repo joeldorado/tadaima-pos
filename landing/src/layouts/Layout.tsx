@@ -6,7 +6,7 @@ import {
   ShoppingCart, Package, LogOut, Home, Store,
   Users, Receipt, UserCircle2, ClipboardList, ArrowLeftRight, ShoppingBasket, BarChart2,
   Settings, Sun, Moon, PackageSearch, Wallet, KeyRound,
-  ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen,
+  ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, TriangleAlert,
 } from "lucide-react";
 import { NotificationBadge } from "@/components/notifications/NotificationBadge";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -19,8 +19,12 @@ import { useEffect, useState } from "react";
 import { primaryRole, canAccessPage, type PageKey } from "@/lib/permisos";
 import { useActiveStore } from "@/contexts/StoreContext";
 import { useQueryClient } from "@tanstack/react-query";
-import { getProductsLight, apiClient } from "@tadaima/api";
+import { getProductsLight, apiClient, type CashSessionReport } from "@tadaima/api";
 import { queryKeys } from "@/lib/queryKeys";
+import { useActiveSessionQuery } from "@/hooks/queries/useCashSession";
+import { CloseCashModal } from "@/components/cash/CloseCashModal";
+import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
+import { toLocalYmd, getTodayLocal } from "@/lib/date";
 
 interface NavLeaf {
   to: string;
@@ -254,12 +258,53 @@ export function Layout() {
 
   const isDark = theme === "dark";
 
-  const handleLogout = async () => {
+  // ── Guard de logout: con caja abierta NO se sale sin hacer el corte ──────
+  // La sesión activa vive en cache RQ ['cash','activeSession'] (poll 60s);
+  // montarla aquí la hace visible en TODAS las páginas, no solo en Caja.
+  const activeSessionQuery = useActiveSessionQuery();
+  const cashSession = activeSessionQuery.data ?? null;
+  const isStaleSession = !!cashSession?.opened_at &&
+    toLocalYmd(new Date(cashSession.opened_at)) < getTodayLocal();
+  const [showLogoutCorte, setShowLogoutCorte] = useState(false);
+  const [logoutCorteReport, setLogoutCorteReport] = useState<CashSessionReport | null>(null);
+
+  const finishLogout = async () => {
     await logout();
     navigate("/login", { replace: true });
   };
 
+  const handleLogout = async () => {
+    // Refresca la sesión antes de decidir (la caché puede tener 60s de edad).
+    const fresh = await activeSessionQuery.refetch().then(r => r.data ?? null).catch(() => cashSession);
+    if (fresh) {
+      setShowLogoutCorte(true);
+      return;
+    }
+    await finishLogout();
+  };
+
   const railWidth = railCollapsed ? "76px" : "216px";
+
+  // ── Aviso global de caja de días anteriores (visible en TODAS las páginas) ──
+  const staleOpenedLabel = cashSession?.opened_at
+    ? new Date(cashSession.opened_at).toLocaleDateString("es-MX", { day: "2-digit", month: "short" })
+    : "";
+  const stalePill = isStaleSession ? (
+    <button
+      onClick={() => navigate("/caja")}
+      title={`Tu caja sigue abierta desde el ${staleOpenedLabel}. Haz el corte.`}
+      data-testid="stale-cash-pill"
+      className={`flex items-center justify-center transition-all ${railCollapsed ? "flex-col gap-1 py-1" : "gap-2 w-full px-3 py-2 rounded-xl"}`}
+      style={{ background: railCollapsed ? "transparent" : "rgba(245,158,11,0.12)", border: railCollapsed ? "none" : "1px solid rgba(245,158,11,0.35)", cursor: "pointer" }}
+    >
+      <TriangleAlert size={railCollapsed ? 18 : 14} style={{ color: "#F59E0B" }} className="animate-pulse" />
+      {!railCollapsed && (
+        <span style={{ fontSize: 10, fontWeight: 800, color: "#F59E0B", textAlign: "left", lineHeight: 1.2 }}>
+          Caja abierta desde el {staleOpenedLabel} — haz corte
+        </span>
+      )}
+    </button>
+  ) : null;
 
   // ── Caja: CTA primario, en ambos modos ──────────────────────────────────────
   const CajaCTA = railCollapsed ? (
@@ -386,6 +431,7 @@ export function Layout() {
               {/* Inicio (siempre primero) + Caja + resto aplanado */}
               {flatLeaves[0] && <RailLeaf to={flatLeaves[0].to} end={flatLeaves[0].exact} label={flatLeaves[0].label} Icon={flatLeaves[0].icon} />}
               {CajaCTA}
+              {stalePill}
               {flatLeaves.slice(1).map(l => (
                 <RailLeaf key={l.to} to={l.to} end={l.exact} label={l.label} Icon={l.icon} />
               ))}
@@ -397,6 +443,7 @@ export function Layout() {
                 <WideLeaf to={visibleEntries[0].to} end={visibleEntries[0].exact} label={visibleEntries[0].label} Icon={visibleEntries[0].icon} />
               )}
               {CajaCTA}
+              {stalePill}
               {visibleEntries.slice(1).map(e => (
                 "group" in e ? (
                   <WideGroup
@@ -530,6 +577,35 @@ export function Layout() {
 
       {showChangePassword && (
         <ChangePasswordModal onClose={() => setShowChangePassword(false)} />
+      )}
+
+      {/* ── Guard de logout: corte obligatorio con caja abierta ─────────────── */}
+      {showLogoutCorte && cashSession && (
+        <CloseCashModal
+          session={cashSession}
+          title="Cierra tu caja para salir"
+          reason="Tienes la caja abierta. Haz el corte con el conteo de efectivo y después se cerrará tu sesión."
+          onClosed={(report) => {
+            setShowLogoutCorte(false);
+            if (report) {
+              // Muestra el resumen del corte (con opción de imprimir) y al
+              // cerrarlo completa el logout.
+              setLogoutCorteReport(report);
+            } else {
+              void finishLogout();
+            }
+          }}
+          onCancel={() => setShowLogoutCorte(false)}
+        />
+      )}
+      {logoutCorteReport && (
+        <CashCloseSummaryModal
+          session={logoutCorteReport}
+          onClose={() => {
+            setLogoutCorteReport(null);
+            void finishLogout();
+          }}
+        />
       )}
     </div>
   );

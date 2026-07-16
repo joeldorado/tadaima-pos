@@ -22,10 +22,11 @@ import { useViewportMaxHeight } from "@/hooks/useViewportMaxHeight";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { PaymentRestrictionBadge, getPayRestriction } from "@/components/ui/PaymentRestrictionBadge";
 import { toast } from "sonner";
-import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, closeSession, forceCloseSession, getActiveSession, createLayaway, getCustomers, createCustomer, refreshMember, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getPreSaleOrders, getSales, getProductsLight, storageUrl, getCashReport, sendPreSaleAssignAlert, getCatalogCustomerUsage } from "@tadaima/api";
+import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, forceCloseSession, getActiveSession, createLayaway, getCustomers, createCustomer, refreshMember, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getPreSaleOrders, getSales, getProductsLight, storageUrl, sendPreSaleAssignAlert, getCatalogCustomerUsage } from "@tadaima/api";
 import type { OpenSessionConflict } from "@tadaima/api";
 import type { CashSessionReport } from "@tadaima/api";
 import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
+import { CloseCashModal } from "@/components/cash/CloseCashModal";
 import { CortesModal } from "@/components/cash/CortesModal";
 import { OpenSessionConflictModal } from "@/components/cash/OpenSessionConflictModal";
 import { useQueryClient } from "@tanstack/react-query";
@@ -494,6 +495,12 @@ export function SellPage() {
   // proactivo arriba de la barra de Caja para que haga el corte.
   const openedYmd = cashSession?.opened_at ? toLocalYmd(new Date(cashSession.opened_at)) : null;
   const isStaleSession = !!openedYmd && openedYmd < getTodayLocal();
+  // Bloqueo de venta (espejo del guard backend CASH_SESSION_STALE): día-negocio
+  // anterior Y 12h+ desde apertura. La doble regla deja vivir turnos que cruzan
+  // medianoche (abrió 8pm, cobra 1am → "ayer" pero solo 5h → NO bloquea).
+  const STALE_BLOCK_HOURS = 12;
+  const isBlockedStaleSession = isStaleSession && !!cashSession?.opened_at &&
+    (Date.now() - new Date(cashSession.opened_at).getTime()) >= STALE_BLOCK_HOURS * 3600_000;
   const cashRegistersQuery  = useCashRegistersQuery(activeStore?.id, { enabled: !cashSession });
   const cashRegisters: CashRegisterInfo[] = cashRegistersQuery.data ?? [];
   // Sesiones abiertas en la tienda activa — solo el admin las muestra en la
@@ -597,8 +604,6 @@ export function SellPage() {
   const [openSessionConflict, setOpenSessionConflict] = useState<OpenSessionConflict | null>(null);
   const [resolvingConflict, setResolvingConflict] = useState(false);
   const [showCloseCashModal, setShowCloseCashModal] = useState(false);
-  const [closeCashAmount, setCloseCashAmount] = useState("");
-  const [closingCashLoading, setClosingCashLoading] = useState(false);
   // Cuando se cierra caja exitosamente, se llena con el reporte de corte y
   // se muestra el modal de resumen. null = cerrado.
   const [cashCloseSummary, setCashCloseSummary] = useState<CashSessionReport | null>(null);
@@ -2856,47 +2861,14 @@ export function SellPage() {
     }
   };
 
-  const handleCloseCash = async () => {
-    const amount = parseFloat(closeCashAmount) || 0;
-    setClosingCashLoading(true);
-    try {
-      // Manda el día local del corte — el timestamp UTC del backend ya cae
-      // en "mañana" después de las 11pm Tijuana (el corte se iba al día 12).
-      const closedSession = await closeSession(amount, getTodayLocal());
-      // Limpiar la caché de sesión activa SINCRÓNICAMENTE antes de cualquier
-      // setState. El efecto de auto-asignación (línea ~553) lee `cashSession`
-      // de la caché — si dejamos la versión vieja "open" y solo invalidamos,
-      // el re-render entre setActiveStore(null) y el refetch reasigna la tienda
-      // y el admin nunca ve el selector (síntoma: solo Tienda 1 sin hard reload).
-      queryClient.setQueryData(['cash', 'activeSession'], null);
-      void queryClient.invalidateQueries({ queryKey: ['cash'] });
-      setShowCloseCashModal(false);
-      setCloseCashAmount("");
-      toast.success("Caja cerrada — corte registrado");
-
-      // Trae el corte detallado del endpoint /reports/cash y abre el modal
-      // de Corte de Caja con resumen + opción de imprimir.
-      const today = new Date();
-      const localDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-      try {
-        const report = await getCashReport({
-          register_id: closedSession.register_id,
-          from: localDate,
-          to: localDate,
-        });
-        const match = report.sessions.find(x => x.id === closedSession.id);
-        if (match) setCashCloseSummary(match);
-      } catch {
-        // Si el fetch falla, no rompemos el flujo de cierre — solo no abre el modal
-      }
-
-      if (isAdmin) {
-        setActiveStore(null);
-      }
-    } catch {
-      toast.error("Error al cerrar la caja");
-    } finally {
-      setClosingCashLoading(false);
+  // Cierre de caja: la captura + POST /cash/close viven en CloseCashModal
+  // (compartido con el guard de logout en Layout). Aquí solo decidimos qué
+  // pasa después: abrir el resumen del corte y, si es admin, soltar la tienda.
+  const handleCashClosed = (report: CashSessionReport | null) => {
+    setShowCloseCashModal(false);
+    if (report) setCashCloseSummary(report);
+    if (isAdmin) {
+      setActiveStore(null);
     }
   };
 
@@ -3153,6 +3125,23 @@ export function SellPage() {
    * Para otros errores, muestra toast.error genérico.
    */
   const handleCheckoutError = (msg: string) => {
+    // Guard backend de caja stale/cerrada (CASH_SESSION_STALE/CLOSED): el
+    // server rechazó cobrar sobre esta sesión. Refrescamos el estado de caja
+    // y abrimos el flujo de corte — cubre PWA con cache viejo donde el guard
+    // local no alcanzó a ver la sesión como stale.
+    if (/haz el corte antes de vender/i.test(msg)) {
+      void queryClient.invalidateQueries({ queryKey: ['cash'] });
+      toast.warning(msg, { duration: 8000 });
+      setShowCloseCashModal(true);
+      return;
+    }
+    if (/caja de esta venta ya está cerrada/i.test(msg)) {
+      // Nada que cerrar: la sesión ya no existe abierta. Refrescar hace que
+      // la UI pida abrir caja nueva.
+      void queryClient.invalidateQueries({ queryKey: ['cash'] });
+      toast.warning(msg, { duration: 8000 });
+      return;
+    }
     // Total desincronizado (ej. una promo venció con el cache aún "fresco"):
     // el server recomputó distinto al cliente. Refrescar productos/promos y
     // pedir re-cobro con mensaje claro — sin esto el cajero ve un 422 críptico.
@@ -3240,6 +3229,18 @@ export function SellPage() {
 
   const handleCheckout = async (opts?: { allowZero?: boolean }) => {
     if (!activeMesa.items.length) return;
+
+    // Guard de caja de días anteriores: no se cobra sobre una sesión vieja —
+    // primero el corte (espejo del 422 CASH_SESSION_STALE del backend, corta
+    // antes para no perder el carrito en un roundtrip fallido).
+    if (isBlockedStaleSession) {
+      toast.warning(
+        `Tu caja quedó abierta desde el ${openedYmd}. Haz el corte y abre una caja nueva para cobrar.`,
+        { duration: 8000 },
+      );
+      setShowCloseCashModal(true);
+      return;
+    }
 
     // Guard $0 (Descuentos v2): un descuento que deja el cobro en $0 con
     // productos que SÍ tienen precio suele ser un descuento atorado/accidental
@@ -4362,7 +4363,7 @@ export function SellPage() {
             . Haz el corte para cerrar el día.
           </span>
           <button
-            onClick={() => { setCloseCashAmount(""); setShowCloseCashModal(true); }}
+            onClick={() => setShowCloseCashModal(true)}
             className="ml-auto shrink-0 flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-transform active:scale-95"
             style={{ background: "linear-gradient(135deg, #7A3800, #F59E0B)", color: "#fff" }}
           >
@@ -4467,7 +4468,7 @@ export function SellPage() {
           {/* Cancelar Venta movido a la barra de buscadores (junto a Catálogo,
               Preventas, Cliente, Escanear) y solo visible cuando hay productos. */}
           <button
-            onClick={() => { setCloseCashAmount(""); setShowCloseCashModal(true); }}
+            onClick={() => setShowCloseCashModal(true)}
             className="h-full px-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-colors"
             style={{ background: "rgba(245,158,11,0.18)", color: "#F59E0B", borderLeft: "1px solid rgba(245,158,11,0.4)" }}
             title={`Cerrar sesión y hacer el corte del día: ${cashSession?.register?.name ?? "Caja"} · Abierta ${cashSession?.opened_at ? new Date(cashSession.opened_at).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }) : ""}`}
@@ -4478,70 +4479,13 @@ export function SellPage() {
         </div>
       </div>
 
-      {/* ── Modal: Cerrar caja / Corte ────────────────────────────────────── */}
-      {showCloseCashModal && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-          <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.82)", backdropFilter: "blur(8px)" }} onClick={() => setShowCloseCashModal(false)} />
-          <div style={{ position: "relative", background: "var(--td-popup-bg)", border: "1px solid var(--td-popup-border)", borderRadius: 28, padding: 32, minWidth: 380, maxWidth: 460, width: "100%" }}>
-
-            {/* Header */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
-              <div>
-                <h3 style={{ color: "var(--td-text-hi)", fontSize: 17, fontWeight: 900, margin: 0 }}>Corte de Caja</h3>
-                <p style={{ color: "var(--td-text-ghost)", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.15em", margin: "4px 0 0" }}>
-                  {cashSession?.register?.name ?? "Caja"} · Apertura {cashSession?.opened_at ? new Date(cashSession.opened_at).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" }) : "—"}
-                </p>
-              </div>
-              <button onClick={() => setShowCloseCashModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--td-text-ghost)", padding: 4 }}>
-                <X size={18} />
-              </button>
-            </div>
-
-            {/* Session info */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 }}>
-              {[
-                { label: "Cajero",          value: cashSession?.user?.name ?? "—" },
-                { label: "Efectivo inicial", value: `$${(cashSession?.opening_cash ?? 0).toLocaleString("es-MX")}` },
-              ].map(({ label, value }) => (
-                <div key={label} style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", borderRadius: 14, padding: "12px 16px" }}>
-                  <p style={{ margin: 0, fontSize: 9, fontWeight: 900, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.12em" }}>{label}</p>
-                  <p style={{ margin: "4px 0 0", fontSize: 14, fontWeight: 900, color: "var(--td-text-hi)" }}>{value}</p>
-                </div>
-              ))}
-            </div>
-
-            {/* Closing cash input */}
-            <div style={{ marginBottom: 24 }}>
-              <label style={{ display: "block", fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "var(--td-text-ghost)", marginBottom: 8 }}>
-                Efectivo en Caja al Cierre ($MXN)
-              </label>
-              <input
-                type="number" min={0} step={1} value={closeCashAmount}
-                onChange={e => setCloseCashAmount(e.target.value)}
-                placeholder="0" autoFocus
-                style={{ width: "100%", background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 14, color: "var(--td-input-text)", padding: "12px 16px", fontSize: 22, fontWeight: 900, outline: "none", boxSizing: "border-box" as const }}
-              />
-              <p style={{ margin: "8px 0 0", fontSize: 10, color: "var(--td-text-ghost)", fontWeight: 600 }}>
-                Este valor se compara contra el dinero físico esperado en caja. Las ventas con tarjeta sí salen en reportes y tickets, pero no cuentan para el faltante o sobrante del cajón.
-              </p>
-            </div>
-
-            {/* Actions */}
-            <div style={{ display: "flex", gap: 10 }}>
-              <button onClick={() => setShowCloseCashModal(false)} style={{ flex: 1, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 14, color: "var(--td-text-lo)", padding: "12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-                Cancelar
-              </button>
-              <button
-                onClick={() => { void handleCloseCash(); }}
-                disabled={closingCashLoading}
-                style={{ flex: 2, background: "linear-gradient(135deg, #7A3800, #F59E0B)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 14, color: "#fff", padding: "12px", fontSize: 12, fontWeight: 900, cursor: closingCashLoading ? "not-allowed" : "pointer", opacity: closingCashLoading ? 0.6 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
-              >
-                {closingCashLoading ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-                {closingCashLoading ? "Cerrando..." : "Confirmar Corte"}
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* ── Modal: Cerrar caja / Corte (componente compartido con Layout) ─── */}
+      {showCloseCashModal && cashSession && (
+        <CloseCashModal
+          session={cashSession}
+          onClosed={handleCashClosed}
+          onCancel={() => setShowCloseCashModal(false)}
+        />
       )}
 
       <div className="flex-1 flex overflow-hidden">

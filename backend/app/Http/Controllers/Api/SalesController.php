@@ -129,6 +129,11 @@ class SalesController extends Controller
             if ($resp = $this->storeScopeError($request, $request->input('store_id'))) {
                 return $resp;
             }
+            // Guard de sesión de caja: no se vende sobre una sesión cerrada ni
+            // sobre una caja que quedó abierta de un día anterior (corte primero).
+            if ($resp = $this->cashSessionGuardError($request)) {
+                return $resp;
+            }
         }
 
         try {
@@ -164,6 +169,46 @@ class SalesController extends Controller
         }
 
         return $this->success(new SaleResource($sale), 'Venta registrada correctamente.', 201);
+    }
+
+    /**
+     * Guard anti "caja abierta por días": rechaza el checkout si la sesión de
+     * caja del body está cerrada, o si quedó abierta de un día-negocio anterior
+     * (Tijuana) Y lleva 12h+ abierta. La regla doble protege turnos que cruzan
+     * medianoche (abrió 8pm, cobra 1am → día anterior pero <12h → pasa).
+     * El frontend detecta los códigos CASH_SESSION_CLOSED / CASH_SESSION_STALE
+     * y abre el flujo de corte.
+     */
+    private function cashSessionGuardError(Request $request): ?JsonResponse
+    {
+        $session = \App\Models\CashRegisterSession::find($request->input('register_session_id'));
+        if (! $session) {
+            return null; // exists ya lo valida el FormRequest; aquí no duplicamos
+        }
+
+        if ($session->status !== \App\Models\CashRegisterSession::STATUS_OPEN) {
+            return $this->error(
+                'La caja de esta venta ya está cerrada. Abre una caja nueva para cobrar.',
+                422,
+                ['code' => ['CASH_SESSION_CLOSED']]
+            );
+        }
+
+        $tz = config('app.business_timezone', 'America/Tijuana');
+        $openedLocal = $session->opened_at?->copy()->timezone($tz);
+        if ($openedLocal) {
+            $isPrevBusinessDay = $openedLocal->toDateString() < now($tz)->toDateString();
+            $isOldEnough = $session->opened_at->diffInHours(now()) >= 12;
+            if ($isPrevBusinessDay && $isOldEnough) {
+                return $this->error(
+                    "Tu caja quedó abierta desde el {$openedLocal->format('d/m/Y')}. Haz el corte antes de vender.",
+                    422,
+                    ['code' => ['CASH_SESSION_STALE']]
+                );
+            }
+        }
+
+        return null;
     }
 
     /**
