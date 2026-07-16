@@ -121,25 +121,46 @@ class PromotionCheckoutTest extends TestCase
         $this->assertSame('2x1', SaleItem::first()->promo_name);
     }
 
-    public function test_manual_discount_excludes_promo_no_stacking(): void
+    public function test_manual_discount_stacks_on_promo_result(): void
     {
+        // STACKING (regla Joel 2026-07-17, antes no-stacking): promo primero,
+        // manual sobre el neto-promo. 2 uds @ $50 con 2x1 → neto $50; 10%
+        // manual sobre $50 = $5 → total $45; discount rollup = 50 + 5 = 55.
         $product = $this->makeProduct(50);
-        ProductPromotion::create(['product_id' => $product->id, 'name' => '2x1', 'buy_n' => 2, 'pay_m' => 1]);
+        $promo = ProductPromotion::create(['product_id' => $product->id, 'name' => '2x1', 'buy_n' => 2, 'pay_m' => 1]);
 
-        // Línea con descuento manual → la promo NO aplica sobre esa línea.
-        // 2 uds @ $50 − 10% línea = $90 (la promo habría dado $50 de beneficio,
-        // pero manual > promo por regla de negocio, aunque sea peor trato).
         $this->checkout([
             ['product_id' => $product->id, 'quantity' => 2, 'price' => 50.0,
              'line_discount' => ['kind' => 'percent', 'basis' => 'line', 'value' => 10, 'reason' => 'danado']],
-        ], 90.0)
+        ], 45.0)
             ->assertStatus(201)
-            ->assertJsonPath('data.discount', 10)
-            ->assertJsonPath('data.total', 90);
+            ->assertJsonPath('data.discount', 55)
+            ->assertJsonPath('data.total', 45);
 
         $item = SaleItem::first();
+        // Con manual presente el type queda 'discount', pero el snapshot de la
+        // promo se conserva (historial muestra ambos beneficios).
         $this->assertSame('discount', $item->benefit_type);
-        $this->assertNull($item->applied_promotion_id);
+        $this->assertSame($promo->id, (int) $item->applied_promotion_id);
+        $this->assertSame('2x1', $item->promo_name);
+        $this->assertSame(1, (int) $item->promo_free_qty);
+        $this->assertSame(55.0, (float) $item->discount_amount);
+    }
+
+    public function test_stacking_fixed_discount_case_joel(): void
+    {
+        // Caso QA Joel 2026-07-17: 2×$2,900 con 2x1 y −$100 fijo → $2,800
+        // (antes daba $5,700 porque el manual reemplazaba la promo).
+        $product = $this->makeProduct(2900);
+        ProductPromotion::create(['product_id' => $product->id, 'name' => '2x1', 'buy_n' => 2, 'pay_m' => 1]);
+
+        $this->checkout([
+            ['product_id' => $product->id, 'quantity' => 2, 'price' => 2900.0,
+             'line_discount' => ['kind' => 'fixed', 'basis' => 'line', 'value' => 100, 'reason' => 'otro']],
+        ], 2800.0)
+            ->assertStatus(201)
+            ->assertJsonPath('data.discount', 3000)
+            ->assertJsonPath('data.total', 2800);
     }
 
     public function test_paused_and_expired_promos_do_not_apply(): void

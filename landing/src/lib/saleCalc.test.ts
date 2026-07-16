@@ -189,7 +189,8 @@ describe("recalculateSale — precedencia y no-stacking", () => {
     expect(r.total).toBe(50);
   });
 
-  it("descuento manual EXCLUYE la promo en esa línea (manual > promo)", () => {
+  it("STACKING (regla Joel 2026-07-17): promo primero, descuento manual sobre el resultado", () => {
+    // 2×$50 con 2x1 → neto promo $50; 10% manual sobre ESE resultado = $5 → total $45.
     const r = recalculateSale({
       lines: [
         line({
@@ -201,10 +202,48 @@ describe("recalculateSale — precedencia y no-stacking", () => {
       ],
       promotions: [promo2x1],
     });
-    expect(r.lines[0]!.benefit).toEqual(
-      expect.objectContaining({ type: "discount", amount: 10 }),
+    expect(r.lines[0]!.promoPart).toEqual(
+      expect.objectContaining({ type: "promo", amount: 50, promoId: 7 }),
     );
-    expect(r.total).toBe(90);
+    expect(r.lines[0]!.manualPart).toBe(5);
+    expect(r.lines[0]!.benefit).toEqual(
+      expect.objectContaining({ type: "discount", amount: 55 }),
+    );
+    expect(r.total).toBe(45);
+  });
+
+  it("STACKING con monto fijo: caso QA Joel — 2×$2,900 con 2x1 y −$100 → $2,800", () => {
+    const r = recalculateSale({
+      lines: [
+        line({
+          productId: "X",
+          unitPrice: 2900,
+          qty: 2,
+          discount: { kind: "fixed", basis: "line", value: 100, reason: "otro" },
+        }),
+      ],
+      promotions: [{ id: 9, productId: "X", name: "2x1", buyN: 2, payM: 1, priority: 0 }],
+    });
+    expect(r.lines[0]!.promoPart?.amount).toBe(2900);
+    expect(r.lines[0]!.manualPart).toBe(100);
+    expect(r.total).toBe(2800);
+  });
+
+  it("el descuento manual se clampa al neto DESPUÉS de la promo", () => {
+    // 2×$50 con 2x1 → neto $50; manual fijo $80 no puede exceder $50 → total $0.
+    const r = recalculateSale({
+      lines: [
+        line({
+          productId: "X",
+          unitPrice: 50,
+          qty: 2,
+          discount: { kind: "fixed", basis: "line", value: 80, reason: "otro" },
+        }),
+      ],
+      promotions: [promo2x1],
+    });
+    expect(r.lines[0]!.manualPart).toBe(50);
+    expect(r.total).toBe(0);
   });
 
   it("con varias promos válidas gana la de mayor ahorro; empate → mayor priority", () => {

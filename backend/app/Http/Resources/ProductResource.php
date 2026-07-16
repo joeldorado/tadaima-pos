@@ -134,6 +134,7 @@ class ProductResource extends JsonResource
                     'pay_m'    => (int) $p->pay_m,
                     'priority' => (int) $p->priority,
                     'store_id' => $p->store_id !== null ? (int) $p->store_id : null,
+                    'ends_at'  => $p->ends_at?->toIso8601String(),
                 ])->values()
                 : [],
 

@@ -164,7 +164,7 @@ export function ProductPromotionsTab({ productId }: Props) {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-[11px] font-bold" style={{ color: TMD }}>
-          En caja aplica sola la <b>mejor</b> promo vigente. Un descuento manual en la línea la reemplaza (no se acumulan).
+          En caja aplica sola la <b>mejor</b> promo vigente. Un descuento manual en la línea se <b>acumula</b>: primero la promo y el descuento se calcula sobre el resultado.
         </p>
         {!showForm && (
           <button

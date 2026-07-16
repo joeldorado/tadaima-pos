@@ -5,8 +5,10 @@
  * función pura del estado actual de las líneas — se recalcula completo en cada
  * cambio del carrito y NUNCA se acarrea un descuento acumulado en el header.
  *
- * No-stacking (regla de negocio cerrada con el cliente): a lo más UN beneficio
- * por unidad. Precedencia por línea: descuento manual > promo NxM > nada.
+ * STACKING (regla actualizada por Joel 2026-07-17; antes era no-stacking):
+ * la promo NxM aplica PRIMERO y el descuento manual se calcula sobre el
+ * resultado de la promo (percent sobre el neto-promo; fixed clampeado al
+ * neto-promo). neto de línea = gross − promo − manual, nunca negativo.
  * El cupón aplica a nivel venta pero SOLO sobre líneas sin beneficio.
  *
  * El gemelo server-side (backend/app/Services/SaleCalculator.php) implementa
@@ -67,7 +69,13 @@ export interface LineBenefit {
 export interface CalcLineResult {
   lineId: string;
   gross: number;
+  /** Beneficio COMBINADO de la línea (promo + manual). Con manual presente el
+   *  type es 'discount' (compat con consumidores previos); amount = suma. */
   benefit: LineBenefit | null;
+  /** Parte PROMO del beneficio (stacking 2026-07-17) — null si no aplicó. */
+  promoPart?: LineBenefit | null;
+  /** Monto de la parte MANUAL (calculada sobre el neto-promo). 0 si no hay. */
+  manualPart?: number;
   net: number;
 }
 
@@ -103,8 +111,11 @@ function round2(n: number): number {
 export function computeLineDiscountAmount(
   d: LineDiscount,
   line: { unitPrice: number; qty: number },
+  /** Base sobre la que aplica (stacking): el neto DESPUÉS de la promo.
+   *  Default = bruto de la línea (líneas sin promo). */
+  baseOverride?: number,
 ): number {
-  const base = line.unitPrice * line.qty;
+  const base = baseOverride ?? line.unitPrice * line.qty;
   if (!Number.isFinite(d.value) || d.value <= 0 || base <= 0) return 0;
   let raw = 0;
   if (d.kind === "percent") raw = base * (d.value / 100);
@@ -173,15 +184,32 @@ export function recalculateSale(input: {
 
   const lines: CalcLineResult[] = input.lines.map((l) => {
     const gross = round2(l.unitPrice * l.qty);
-    let benefit: LineBenefit | null = null;
+
+    // STACKING (Joel 2026-07-17): la promo aplica SIEMPRE que alcance; el
+    // descuento manual se calcula sobre el neto-promo (antes lo reemplazaba).
+    const promoPart = bestPromoBenefit(promotions, l);
+    const promoAmount = promoPart?.amount ?? 0;
+    const baseAfterPromo = round2(Math.max(0, gross - promoAmount));
+
+    let manualPart = 0;
     if (l.discount) {
-      const amount = computeLineDiscountAmount(l.discount, l);
-      if (amount > 0) benefit = { type: "discount", amount };
-    } else {
-      benefit = bestPromoBenefit(promotions, l);
+      manualPart = computeLineDiscountAmount(l.discount, l, baseAfterPromo);
     }
-    const net = round2(Math.max(0, gross - (benefit?.amount ?? 0)));
-    return { lineId: l.lineId, gross, benefit, net };
+
+    const totalBenefit = round2(promoAmount + manualPart);
+    let benefit: LineBenefit | null = null;
+    if (totalBenefit > 0) {
+      benefit = manualPart > 0
+        ? {
+            type: "discount",
+            amount: totalBenefit,
+            ...(promoPart ? { promoId: promoPart.promoId, promoLabel: promoPart.promoLabel, freeQty: promoPart.freeQty } : {}),
+          }
+        : promoPart;
+    }
+
+    const net = round2(Math.max(0, gross - totalBenefit));
+    return { lineId: l.lineId, gross, benefit, promoPart, manualPart, net };
   });
 
   const subtotal = round2(lines.reduce((s, l) => s + l.gross, 0));

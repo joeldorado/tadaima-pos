@@ -5525,26 +5525,27 @@ export function SellPage() {
                           <p className="mt-1 text-center text-[14px] font-black" style={{ color: TMD }}>
                             {item.quantity} × {fmt(unitPrice)}
                           </p>
-                          {/* Badge del descuento por línea: monto + motivo + quitar */}
-                          {lineDiscAmt > 0 && item.discount && (
+                          {/* Badge del descuento MANUAL: solo la parte manual (stacking
+                              2026-07-17 — se acumula sobre el resultado de la promo). */}
+                          {item.discount && (lineCalc?.manualPart ?? 0) > 0 && (
                             <button
                               onClick={() => removeLineDiscount(item.lineId)}
                               title={`Quitar descuento${item.discount.note ? ` · ${item.discount.note}` : ""}`}
                               className="mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-black"
                               style={{ background: "rgba(224,34,26,0.14)", color: "var(--td-red)", border: "1px solid rgba(224,34,26,0.4)" }}
                             >
-                              −{fmt(lineDiscAmt)} · {DISCOUNT_REASON_LABELS[item.discount.reason]} <X size={10} />
+                              −{fmt(lineCalc?.manualPart ?? 0)} · {DISCOUNT_REASON_LABELS[item.discount.reason]} <X size={10} />
                             </button>
                           )}
-                          {/* Badge de promo NxM automática (Fase 3): verde, no removible —
-                              se quita sola si baja la cantidad o si aplican descuento manual. */}
-                          {lineDiscAmt > 0 && !item.discount && lineBenefit?.type === "promo" && (
+                          {/* Badge de promo NxM automática: verde, no removible — ahora
+                              convive con el descuento manual (stacking). */}
+                          {(lineCalc?.promoPart?.amount ?? 0) > 0 && (
                             <span
                               className="mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-black"
                               style={{ background: "rgba(16,185,129,0.12)", color: "#34d399", border: "1px solid rgba(16,185,129,0.4)" }}
-                              title={`Promoción automática: ${lineBenefit.promoLabel ?? ""}`}
+                              title={`Promoción automática: ${lineCalc?.promoPart?.promoLabel ?? ""}`}
                             >
-                              {lineBenefit.promoLabel ?? "Promo"} · {lineBenefit.freeQty ?? 0} gratis −{fmt(lineDiscAmt)}
+                              {lineCalc?.promoPart?.promoLabel ?? "Promo"} · {lineCalc?.promoPart?.freeQty ?? 0} gratis −{fmt(lineCalc?.promoPart?.amount ?? 0)}
                             </span>
                           )}
                           {!item.isFromPreSale && item.isDamaged && (
@@ -6617,6 +6618,7 @@ export function SellPage() {
             productName={line.product.name}
             lineQty={line.quantity}
             unitPrice={getItemPrice(line)}
+            promoAmount={lineCalcById[line.lineId]?.promoPart?.amount ?? 0}
             existing={line.discount}
             onConfirm={(units, d) => applyLineDiscount(line.lineId, units, d)}
             onRemove={line.discount ? () => removeLineDiscount(line.lineId) : undefined}

@@ -12,8 +12,12 @@ namespace App\Services;
  * líneas — se recalcula completo, nunca se acarrea un descuento previo (ese
  * acarreo era el bug del descuento "atorado" del modelo global viejo).
  *
- * No-stacking (regla de negocio cerrada con el cliente): a lo más UN beneficio
- * por unidad. Precedencia por línea: descuento manual > promo NxM > nada.
+ * STACKING (regla actualizada por Joel 2026-07-17; antes era no-stacking):
+ * la promo NxM aplica PRIMERO y el descuento manual se calcula sobre el
+ * resultado de la promo (percent sobre el neto-promo; fixed clampeado al
+ * neto-promo). discount_amount de la línea = promo + manual (rollup intacto);
+ * benefit_type = 'discount' si hay manual (los campos promo_* igual se
+ * persisten cuando la promo aplicó — así el historial muestra ambos).
  * El cupón (Fase 4) aplica a nivel venta pero SOLO sobre líneas sin beneficio.
  *
  * El server NO confía en montos del cliente: recibe kind/basis/value y
@@ -68,37 +72,45 @@ final class SaleCalculator
             $promoName      = null;
             $promoFreeQty   = null;
 
+            // STACKING (Joel 2026-07-17): la promo aplica SIEMPRE que alcance;
+            // el descuento manual se calcula sobre el neto-promo (antes lo
+            // reemplazaba). Espejo exacto de recalculateSale en saleCalc.ts.
+            $best = $this->bestPromoBenefit(
+                $promosByProduct[(int) $line['product_id']] ?? [],
+                (float) $line['unit_price'],
+                (float) $line['qty'],
+            );
+            $promoAmount = 0.0;
+            if ($best !== null) {
+                $benefitType    = 'promo';
+                $promoAmount    = $best['amount'];
+                $appliedPromoId = $best['promo_id'];
+                $promoName      = $best['promo_name'];
+                $promoFreeQty   = $best['free_qty'];
+            }
+            $baseAfterPromo = self::round2(max(0.0, $gross - $promoAmount));
+
+            $manualAmount = 0.0;
             $discount = $line['line_discount'] ?? null;
             if (is_array($discount)) {
-                // Precedencia: descuento manual > promo (no-stacking). Una línea
-                // descontada a mano queda FUERA del motor NxM.
-                $discountAmount = $this->lineDiscountAmount(
+                $manualAmount = $this->lineDiscountAmount(
                     kind:      (string) $discount['kind'],
                     basis:     (string) $discount['basis'],
                     value:     (float) $discount['value'],
                     unitPrice: (float) $line['unit_price'],
                     qty:       (float) $line['qty'],
+                    baseOverride: $baseAfterPromo,
                 );
-                if ($discountAmount > 0) {
+                if ($manualAmount > 0) {
+                    // Con manual presente el type es 'discount' (compat con el
+                    // enum); los campos promo_* quedan persistidos si aplicó.
                     $benefitType = 'discount';
                 }
-            } else {
-                // Mejor promo para el cliente (mayor ahorro; empate → mayor
-                // priority, luego menor id) — espejo de bestPromoBenefit en
-                // saleCalc.ts. Q se evalúa POR LÍNEA (no pooled entre splits).
-                $best = $this->bestPromoBenefit(
-                    $promosByProduct[(int) $line['product_id']] ?? [],
-                    (float) $line['unit_price'],
-                    (float) $line['qty'],
-                );
-                if ($best !== null) {
-                    $benefitType    = 'promo';
-                    $discountAmount = $best['amount'];
-                    $appliedPromoId = $best['promo_id'];
-                    $promoName      = $best['promo_name'];
-                    $promoFreeQty   = $best['free_qty'];
-                }
             }
+
+            // discount_amount = beneficio TOTAL de la línea (promo + manual):
+            // el rollup sales.discount y los netos de reportes siguen cuadrando.
+            $discountAmount = self::round2($promoAmount + $manualAmount);
 
             $net = self::round2(max(0.0, $gross - $discountAmount));
 
@@ -186,9 +198,10 @@ final class SaleCalculator
      * fixed+unit → value × qty · fixed+line → value · percent → base × value/100
      * (percent siempre sobre la base de la línea, igual que saleCalc.ts).
      */
-    private function lineDiscountAmount(string $kind, string $basis, float $value, float $unitPrice, float $qty): float
+    private function lineDiscountAmount(string $kind, string $basis, float $value, float $unitPrice, float $qty, ?float $baseOverride = null): float
     {
-        $base = $unitPrice * $qty;
+        // Stacking: la base del manual es el neto DESPUÉS de la promo.
+        $base = $baseOverride ?? ($unitPrice * $qty);
         if (! is_finite($value) || $value <= 0 || $base <= 0) {
             return 0.0;
         }

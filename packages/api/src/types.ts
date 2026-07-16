@@ -85,6 +85,8 @@ export interface ActiveProductPromotion {
   priority: number
   /** null = todas las tiendas; con valor = solo esa sucursal (scoping 2026-07-16). */
   store_id?: number | null
+  /** Fin de vigencia (ISO) — null = sin vencimiento. Para badges "hasta {fecha}". */
+  ends_at?: string | null
 }
 
 /** Promo NxM completa (CRUD del editor de producto — incluye pausadas/vencidas). */

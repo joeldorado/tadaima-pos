@@ -179,6 +179,8 @@ interface Producto {
   // false = sin inventario en la tienda activa ("No asignado" → agregar stock).
   // Solo viene con store_id; default true para la vista global admin.
   isAssigned?: boolean;
+  /** Promos NxM vigentes (embed del backend) — para el badge y filtro "Con promo". */
+  promos?: { id: number; name: string; buyN: number; payM: number; endsAt: string | null }[];
 }
 
 const fmt = (n: number) =>
@@ -213,6 +215,9 @@ function apiProductToProducto(p: Product): Producto {
     allowCash: p.allow_cash ?? true,
     allowCard: p.allow_card ?? true,
     isAssigned: p.is_assigned ?? true,
+    promos: (p.active_promotions ?? []).map(pr => ({
+      id: pr.id, name: pr.name, buyN: pr.buy_n, payM: pr.pay_m, endsAt: pr.ends_at ?? null,
+    })),
   }
 }
 
@@ -1237,6 +1242,8 @@ export function ProductsPage() {
   const [showTopSellers, setShowTopSellers] = useState(false);
   const [showLowStock, setShowLowStock] = useState(false);
   const [showOutStock, setShowOutStock] = useState(false);
+  // Filtro rápido "Promos" (QA Joel 2026-07-17): solo productos con promo vigente.
+  const [showPromos, setShowPromos] = useState(false);
   // Modal "Productos sin Costo": tabla editable para capturar el costo real
   // rápido (reemplaza el viejo filtro in-grid showNoCost).
   const [showMissingCost, setShowMissingCost] = useState(false);
@@ -1633,12 +1640,27 @@ export function ProductsPage() {
       header: 'Producto',
       cell: info => {
         const img = info.row.original.imagen;
+        const promo = info.row.original.promos?.[0];
         return (
           <div className="flex items-center gap-3">
             {img && <ProductThumb src={img} alt={info.getValue()} />}
             <div className="min-w-0">
               <p className="text-sm font-bold truncate max-w-[200px]" style={{ color: T.textPrimary }}>{info.getValue()}</p>
               <p className="text-[10px] font-mono" style={{ color: T.textMuted }}>{info.row.original.sku}</p>
+              {/* Badge de promo vigente con fecha fin (QA Joel 2026-07-17) */}
+              {promo && (
+                <span
+                  className="inline-flex items-center gap-1 mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wide"
+                  style={{ color: "#34d399", background: "rgba(16,185,129,0.10)", border: "1px solid rgba(16,185,129,0.35)" }}
+                  title={promo.name}
+                >
+                  <TicketPercent size={9} />
+                  {promo.buyN}x{promo.payM}
+                  {promo.endsAt
+                    ? ` · hasta ${new Date(promo.endsAt).toLocaleDateString("es-MX", { day: "2-digit", month: "short" })}`
+                    : " · sin vencimiento"}
+                </span>
+              )}
             </div>
           </div>
         );
@@ -1861,6 +1883,7 @@ export function ProductsPage() {
     if (showTopSellers) return [...products].sort((a, b) => b.ventasTotales - a.ventasTotales).slice(0, 50);
     if (showOutStock)   return products.filter(p => !p.esUnico && getTotalStock(p.id) === 0);
     if (showLowStock)   return products.filter(p => !p.esUnico && getTotalStock(p.id) > 0 && getTotalStock(p.id) <= 10);
+    if (showPromos)     return products.filter(p => (p.promos?.length ?? 0) > 0);
     const q = search.toLowerCase();
     return products.filter(p => {
       // Match por nombre, SKU o código de barras — el scanner USB teclea el
@@ -1872,7 +1895,7 @@ export function ProductsPage() {
       const matchesCat = selectedCat === 'Todo' || p.categoria === selectedCat;
       return matchesSearch && matchesCat;
     });
-  }, [products, search, selectedCat, showTopSellers, showLowStock, showOutStock, getTotalStock]);
+  }, [products, search, selectedCat, showTopSellers, showLowStock, showOutStock, showPromos, getTotalStock]);
 
   // ─── TanStack Table (lista mode) ─────────────────────────────────────────────
   const table = useReactTable({
@@ -2140,7 +2163,7 @@ export function ProductsPage() {
               <>
                 {lowStockCount > 0 && (
                   <button
-                    onClick={() => { setShowLowStock(v => !v); setShowOutStock(false); setShowTopSellers(false); }}
+                    onClick={() => { setShowLowStock(v => !v); setShowOutStock(false); setShowTopSellers(false); setShowPromos(false); }}
                     className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all hover:scale-[1.02] active:scale-95"
                     style={{
                       background: showLowStock ? "rgba(245,158,11,0.18)" : "rgba(245,158,11,0.08)",
@@ -2158,7 +2181,7 @@ export function ProductsPage() {
                 )}
                 {outStockCount > 0 && (
                   <button
-                    onClick={() => { setShowOutStock(v => !v); setShowLowStock(false); setShowTopSellers(false); }}
+                    onClick={() => { setShowOutStock(v => !v); setShowLowStock(false); setShowTopSellers(false); setShowPromos(false); }}
                     className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all hover:scale-[1.02] active:scale-95"
                     style={{
                       background: showOutStock ? "rgba(239,68,68,0.18)" : "rgba(239,68,68,0.08)",
@@ -2174,6 +2197,28 @@ export function ProductsPage() {
                     <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-red-500 text-white">{outStockCount}</span>
                   </button>
                 )}
+                {/* Filtro rápido "Promos" (QA Joel 2026-07-17): productos con promo vigente */}
+                {isProductos && (() => {
+                  const promosCount = products.filter(p => (p.promos?.length ?? 0) > 0).length;
+                  if (promosCount === 0) return null;
+                  return (
+                    <button
+                      onClick={() => { setShowPromos(v => !v); setShowLowStock(false); setShowOutStock(false); setShowTopSellers(false); }}
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all hover:scale-[1.02] active:scale-95"
+                      data-testid="filter-promos"
+                      style={{
+                        background: showPromos ? "rgba(16,185,129,0.18)" : "rgba(16,185,129,0.08)",
+                        border: `1px solid ${showPromos ? "rgba(16,185,129,0.6)" : "rgba(16,185,129,0.25)"}`,
+                        color: "#34d399",
+                      }}
+                      title="Productos con promoción NxM vigente"
+                    >
+                      <TicketPercent size={13} />
+                      Promos
+                      <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black text-white" style={{ background: "#10b981" }}>{promosCount}</span>
+                    </button>
+                  );
+                })()}
               </>
             );
           })()}
