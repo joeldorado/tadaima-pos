@@ -46,9 +46,13 @@ class ProductPromotionsController extends Controller
         if ($resp = $this->adminOrManagerGateError()) {
             return $resp;
         }
-        if ($request->input('status', ProductPromotion::STATUS_ACTIVE) === ProductPromotion::STATUS_ACTIVE
-            && ($resp = $this->activePromoCapError($product))) {
-            return $resp;
+        if ($request->input('status', ProductPromotion::STATUS_ACTIVE) === ProductPromotion::STATUS_ACTIVE) {
+            if ($resp = $this->duplicatePromoError($product, $request)) {
+                return $resp;
+            }
+            if ($resp = $this->activePromoCapError($product, $this->scopedStoreId($request))) {
+                return $resp;
+            }
         }
 
         $promotion = $product->promotions()->create(array_merge(
@@ -75,13 +79,17 @@ class ProductPromotionsController extends Controller
         if ($resp = $this->promoMutationGateError($request, $promotion)) {
             return $resp;
         }
-        // Tope solo al REACTIVAR (pausada/vencida → activa); editar una que ya
-        // está activa no se bloquea aunque exista un excedente legacy.
+        // Duplicado y tope solo al REACTIVAR (pausada/vencida → activa); editar
+        // una que ya está activa no se bloquea aunque exista un excedente legacy.
         if ($request->has('status')
             && $request->input('status') === ProductPromotion::STATUS_ACTIVE
-            && $promotion->status !== ProductPromotion::STATUS_ACTIVE
-            && ($resp = $this->activePromoCapError($product, $promotion->id))) {
-            return $resp;
+            && $promotion->status !== ProductPromotion::STATUS_ACTIVE) {
+            if ($resp = $this->duplicatePromoError($product, $request, $promotion->id)) {
+                return $resp;
+            }
+            if ($resp = $this->activePromoCapError($product, $this->scopedStoreId($request), $promotion->id)) {
+                return $resp;
+            }
         }
 
         $promotion->update(array_merge(
@@ -117,17 +125,71 @@ class ProductPromotionsController extends Controller
     private const MAX_ACTIVE_PROMOS = 2;
 
     /**
-     * Tope de promos activas por producto: la caja soporta varias (gana la que
-     * más ahorra), pero más de 2 activas confunde al equipo — se pausa/elimina
-     * una antes de activar otra.
+     * Anti-duplicados (pedido Joel 2026-07-18): otra promo con el MISMO NxM se
+     * permite SOLO si su vigencia NO se encima con una activa existente (2x1 de
+     * julio + 2x1 de diciembre = OK). Ventana null = infinita (se encima con
+     * todo). Tiendas: global (NULL) se encima con cualquiera; tiendas distintas
+     * no chocan entre sí.
      */
-    private function activePromoCapError(Product $product, ?int $ignoreId = null): ?JsonResponse
+    private function duplicatePromoError(
+        Product $product,
+        \Illuminate\Http\Request $request,
+        ?int $ignoreId = null,
+    ): ?JsonResponse {
+        $buyN = (int) $request->input('buy_n');
+        $payM = (int) $request->input('pay_m');
+        $dates = $this->vigencyDates($request->input('starts_at'), $request->input('ends_at'));
+        $newStart = $dates['starts_at'];
+        $newEnd   = $dates['ends_at'];
+        $storeId  = $this->scopedStoreId($request);
+
+        $existing = ProductPromotion::query()
+            ->where('product_id', $product->id)
+            ->where('status', ProductPromotion::STATUS_ACTIVE)
+            ->where('buy_n', $buyN)
+            ->where('pay_m', $payM)
+            ->when($ignoreId !== null, fn ($q) => $q->where('id', '!=', $ignoreId))
+            // Solo vivas (no vencidas).
+            ->where(fn ($q) => $q->whereNull('ends_at')->orWhere('ends_at', '>=', now()))
+            // Tienda que se encima; nueva global (NULL) choca con todas.
+            ->when($storeId !== null, fn ($q) => $q->where(fn ($qq) =>
+                $qq->whereNull('store_id')->orWhere('store_id', $storeId)
+            ))
+            // Ventana que se encima (condición omitida si el lado nuevo es infinito).
+            ->when($newEnd !== null, fn ($q) => $q->where(fn ($qq) =>
+                $qq->whereNull('starts_at')->orWhere('starts_at', '<=', $newEnd)
+            ))
+            ->when($newStart !== null, fn ($q) => $q->where(fn ($qq) =>
+                $qq->whereNull('ends_at')->orWhere('ends_at', '>=', $newStart)
+            ))
+            ->first();
+
+        if (! $existing) {
+            return null;
+        }
+
+        return $this->error(
+            "Ya existe una promo {$buyN}x{$payM} para este producto que se encima en fechas (\"{$existing->name}\"). Pausa o elimina esa, o usa un rango de fechas que no se encime.",
+            422
+        );
+    }
+
+    /**
+     * Tope de promos activas por producto EN EL MISMO ÁMBITO de tienda: la caja
+     * soporta varias (gana la que más ahorra), pero más de 2 activas confunde al
+     * equipo — se pausa/elimina una antes de activar otra. Las globales (NULL)
+     * cuentan para todas las tiendas; cada sucursal tiene su propio tope.
+     */
+    private function activePromoCapError(Product $product, ?int $storeId, ?int $ignoreId = null): ?JsonResponse
     {
         $activeCount = ProductPromotion::query()
             ->where('product_id', $product->id)
             ->where('status', ProductPromotion::STATUS_ACTIVE)
             ->where(fn ($q) => $q->whereNull('ends_at')->orWhere('ends_at', '>=', now()))
             ->when($ignoreId !== null, fn ($q) => $q->where('id', '!=', $ignoreId))
+            ->when($storeId !== null, fn ($q) => $q->where(fn ($qq) =>
+                $qq->whereNull('store_id')->orWhere('store_id', $storeId)
+            ))
             ->count();
 
         if ($activeCount < self::MAX_ACTIVE_PROMOS) {

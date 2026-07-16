@@ -9,7 +9,7 @@ import {
 import { useAuth } from "@tadaima/auth";
 import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/queryKeys";
-import { BUSINESS_TZ } from "@/lib/date";
+import { BUSINESS_TZ, getTodayLocal } from "@/lib/date";
 import { isAdmin as isAdminRole } from "@/lib/permisos";
 import { SingleDatePicker } from "@/components/ui/SingleDatePicker";
 
@@ -205,6 +205,7 @@ export function ProductPromotionsTab({ productId }: Props) {
                     if (endsAt && d > endsAt) setEndsAt("");
                   }}
                   onClear={() => setStartsAt("")}
+                  minValue={getTodayLocal()}
                   placeholder="Sin fecha de inicio"
                   ariaLabel="Fecha en que inicia la promoción"
                 />

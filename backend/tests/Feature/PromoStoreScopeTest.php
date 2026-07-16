@@ -171,6 +171,52 @@ class PromoStoreScopeTest extends TestCase
             ->assertOk();
     }
 
+    public function test_duplicate_nxm_with_overlapping_window_rejected(): void
+    {
+        $manager = $this->makeManager($this->storeA);
+
+        // Promo A: 2x1 storeA con ventana hoy → +5 días.
+        ProductPromotion::create([
+            'product_id' => $this->product->id, 'store_id' => $this->storeA->id,
+            'name' => 'Verano', 'buy_n' => 2, 'pay_m' => 1, 'status' => 'active', 'priority' => 0,
+            'starts_at' => now()->startOfDay(), 'ends_at' => now()->addDays(5)->endOfDay(),
+        ]);
+
+        $base = ['buy_n' => 2, 'pay_m' => 1, 'priority' => 0, 'store_id' => $this->storeA->id];
+        $d = fn (int $days) => now()->addDays($days)->toDateString();
+
+        // Mismo 2x1 con fechas ENCIMADAS (otro nombre) → 422 nombrando a la existente.
+        $resp = $this->actingAs($manager)->postJson(
+            "/api/v1/products/{$this->product->id}/promotions",
+            array_merge($base, ['name' => 'Copia', 'starts_at' => $d(2), 'ends_at' => $d(8)]),
+        );
+        $resp->assertStatus(422);
+        $this->assertStringContainsString('Verano', (string) $resp->json('error'));
+
+        // Mismo 2x1 pero ventana que NO se encima (+10 → +15) → se permite.
+        $this->actingAs($manager)->postJson(
+            "/api/v1/products/{$this->product->id}/promotions",
+            array_merge($base, ['name' => 'Diciembre', 'starts_at' => $d(10), 'ends_at' => $d(15)]),
+        )->assertStatus(201);
+
+        // NxM DISTINTO (3x2) encimado con A → no es duplicado… pero ya hay 2
+        // activas → lo frena el TOPE (mensaje del cap, no del duplicado).
+        $resp = $this->actingAs($manager)->postJson(
+            "/api/v1/products/{$this->product->id}/promotions",
+            ['name' => 'Tercera', 'buy_n' => 3, 'pay_m' => 2, 'priority' => 0, 'store_id' => $this->storeA->id, 'starts_at' => $d(0), 'ends_at' => $d(5)],
+        );
+        $resp->assertStatus(422);
+        $this->assertStringContainsString('2 promociones activas', (string) $resp->json('error'));
+
+        // Mismo 2x1 encimado pero en OTRA tienda → el dup-check de tiendas
+        // distintas no choca (validado creando la ajena y posteando en B).
+        $managerB = $this->makeManager($this->storeB);
+        $this->actingAs($managerB)->postJson(
+            "/api/v1/products/{$this->product->id}/promotions",
+            ['name' => 'Verano B', 'buy_n' => 2, 'pay_m' => 1, 'priority' => 0, 'store_id' => $this->storeB->id, 'starts_at' => $d(0), 'ends_at' => $d(5)],
+        )->assertStatus(201);
+    }
+
     public function test_products_embed_filters_promos_by_store(): void
     {
         $this->makePromo($this->storeB->id);

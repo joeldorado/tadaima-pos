@@ -14,7 +14,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import { useSuppliesQuery, useSupplyMovementsQuery, useSupplyReportQuery } from "@/hooks/queries/useSupplies";
 import { useActiveSessionQuery } from "@/hooks/queries/useCashSession";
 import { isAdmin as isAdminRole, isManager as isManagerRole } from "@/lib/permisos";
-import { getTodayLocal, daysAgoLocal } from "@/lib/date";
+import { getTodayLocal, BUSINESS_TZ } from "@/lib/date";
 import { DateRangePicker } from "@/components/ui/DateRangePicker";
 
 // ─── Tokens visuales (convención de páginas glass) ────────────────────────────
@@ -174,7 +174,9 @@ export function SuppliesPage() {
   const [editing, setEditing] = useState<Supply | "new" | null>(null);
 
   // ── Reporte ──────────────────────────────────────────────────────────────
-  const [from, setFrom] = useState(daysAgoLocal(30));
+  // Rango default HOY→HOY (QA Joel 2026-07-18): el día operativo es lo que se
+  // consulta a diario; días atrás se piden moviendo el rango.
+  const [from, setFrom] = useState(getTodayLocal());
   const [to, setTo] = useState(getTodayLocal());
   const reportQuery = useSupplyReportQuery({ from, to }, tab === "reporte");
 
@@ -358,14 +360,22 @@ export function SuppliesPage() {
             </button>
           </Motion.div>
 
-          {/* Compras recientes */}
+          {/* Compras de HOY (QA Joel 2026-07-18): días anteriores se consultan
+              en el tab Reporte con el rango. */}
           <div className="rounded-3xl p-6" style={{ background: PANEL, border: BORDER }}>
-            <p className="mb-3 text-[10px] font-black uppercase tracking-widest" style={{ color: TLO }}>Compras recientes</p>
-            {(movementsQuery.data ?? []).length === 0 ? (
-              <p className="py-8 text-center text-[11px] font-bold" style={{ color: TLO }}>Sin compras registradas todavía.</p>
+            <p className="mb-3 text-[10px] font-black uppercase tracking-widest" style={{ color: TLO }}>Compras de hoy</p>
+            {(() => {
+              const today = getTodayLocal();
+              const todayMovements = (movementsQuery.data ?? []).filter(m =>
+                new Date(m.created_at).toLocaleDateString("en-CA", { timeZone: BUSINESS_TZ }) === today
+              );
+              return todayMovements.length === 0 ? (
+              <p className="py-8 text-center text-[11px] font-bold" style={{ color: TLO }}>
+                Sin compras hoy — en el tab Reporte puedes consultar días anteriores con el rango.
+              </p>
             ) : (
               <div className="flex flex-col gap-2 max-h-[480px] overflow-y-auto pr-1">
-                {(movementsQuery.data ?? []).map(m => (
+                {todayMovements.map(m => (
                   <div key={m.id} className="flex items-center gap-3 rounded-2xl px-4 py-2.5" style={{ background: CARD, border: CARD_B }}>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-[12px] font-black" style={{ color: THI }}>{m.supply?.name ?? `#${m.supply_id}`}</p>
@@ -389,7 +399,8 @@ export function SuppliesPage() {
                   </div>
                 ))}
               </div>
-            )}
+            );
+            })()}
           </div>
         </div>
       )}
@@ -488,29 +499,35 @@ export function SuppliesPage() {
           <div className="grid gap-5 lg:grid-cols-2">
             <div>
               <p className="mb-2 text-[10px] font-black uppercase tracking-widest" style={{ color: TLO }}>Por categoría</p>
-              {(reportQuery.data?.by_category ?? []).length === 0 ? (
-                <p className="py-6 text-center text-[11px] font-bold" style={{ color: TLO }}>Sin compras en el rango.</p>
-              ) : (reportQuery.data?.by_category ?? []).map(c => (
-                <div key={c.category} className="mb-2 flex items-center justify-between rounded-2xl px-4 py-2.5" style={{ background: CARD, border: CARD_B }}>
-                  <div>
-                    <p className="text-[12px] font-black" style={{ color: THI }}>{c.category}</p>
-                    <p className="text-[10px] font-bold" style={{ color: TLO }}>{c.purchases} compra{c.purchases !== 1 ? "s" : ""}</p>
+              {/* Scroll interno adaptable (QA Joel 2026-07-18): con muchos
+                  insumos la página no crece infinita. */}
+              <div className="overflow-y-auto pr-1" style={{ maxHeight: "56vh" }}>
+                {(reportQuery.data?.by_category ?? []).length === 0 ? (
+                  <p className="py-6 text-center text-[11px] font-bold" style={{ color: TLO }}>Sin compras en el rango.</p>
+                ) : (reportQuery.data?.by_category ?? []).map(c => (
+                  <div key={c.category} className="mb-2 flex items-center justify-between rounded-2xl px-4 py-2.5" style={{ background: CARD, border: CARD_B }}>
+                    <div>
+                      <p className="text-[12px] font-black" style={{ color: THI }}>{c.category}</p>
+                      <p className="text-[10px] font-bold" style={{ color: TLO }}>{c.purchases} compra{c.purchases !== 1 ? "s" : ""}</p>
+                    </div>
+                    <span className="text-[14px] font-black" style={{ color: THI }}>{fmt(c.total)}</span>
                   </div>
-                  <span className="text-[14px] font-black" style={{ color: THI }}>{fmt(c.total)}</span>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
             <div>
               <p className="mb-2 text-[10px] font-black uppercase tracking-widest" style={{ color: TLO }}>Top insumos</p>
-              {(reportQuery.data?.top_supplies ?? []).map(t => (
-                <div key={t.id} className="mb-2 flex items-center justify-between rounded-2xl px-4 py-2.5" style={{ background: CARD, border: CARD_B }}>
-                  <div>
-                    <p className="text-[12px] font-black" style={{ color: THI }}>{t.name}</p>
-                    <p className="text-[10px] font-bold" style={{ color: TLO }}>{t.purchases} compra{t.purchases !== 1 ? "s" : ""} · {t.quantity} uds</p>
+              <div className="overflow-y-auto pr-1" style={{ maxHeight: "56vh" }}>
+                {(reportQuery.data?.top_supplies ?? []).map(t => (
+                  <div key={t.id} className="mb-2 flex items-center justify-between rounded-2xl px-4 py-2.5" style={{ background: CARD, border: CARD_B }}>
+                    <div>
+                      <p className="text-[12px] font-black" style={{ color: THI }}>{t.name}</p>
+                      <p className="text-[10px] font-bold" style={{ color: TLO }}>{t.purchases} compra{t.purchases !== 1 ? "s" : ""} · {t.quantity} uds</p>
+                    </div>
+                    <span className="text-[14px] font-black" style={{ color: THI }}>{fmt(t.total)}</span>
                   </div>
-                  <span className="text-[14px] font-black" style={{ color: THI }}>{fmt(t.total)}</span>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           </div>
         </div>
