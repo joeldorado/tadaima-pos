@@ -46,6 +46,10 @@ class ProductPromotionsController extends Controller
         if ($resp = $this->adminOrManagerGateError()) {
             return $resp;
         }
+        if ($request->input('status', ProductPromotion::STATUS_ACTIVE) === ProductPromotion::STATUS_ACTIVE
+            && ($resp = $this->activePromoCapError($product))) {
+            return $resp;
+        }
 
         $promotion = $product->promotions()->create(array_merge(
             $request->only(['name', 'buy_n', 'pay_m', 'priority']),
@@ -69,6 +73,14 @@ class ProductPromotionsController extends Controller
             return $this->error('La promoción no pertenece a este producto.', 404);
         }
         if ($resp = $this->promoMutationGateError($request, $promotion)) {
+            return $resp;
+        }
+        // Tope solo al REACTIVAR (pausada/vencida → activa); editar una que ya
+        // está activa no se bloquea aunque exista un excedente legacy.
+        if ($request->has('status')
+            && $request->input('status') === ProductPromotion::STATUS_ACTIVE
+            && $promotion->status !== ProductPromotion::STATUS_ACTIVE
+            && ($resp = $this->activePromoCapError($product, $promotion->id))) {
             return $resp;
         }
 
@@ -99,6 +111,33 @@ class ProductPromotionsController extends Controller
         $promotion->delete();
 
         return $this->success(null, 'Promoción eliminada.');
+    }
+
+    /** Máximo de promos ACTIVAS a la vez por producto (pedido Joel 2026-07-18). */
+    private const MAX_ACTIVE_PROMOS = 2;
+
+    /**
+     * Tope de promos activas por producto: la caja soporta varias (gana la que
+     * más ahorra), pero más de 2 activas confunde al equipo — se pausa/elimina
+     * una antes de activar otra.
+     */
+    private function activePromoCapError(Product $product, ?int $ignoreId = null): ?JsonResponse
+    {
+        $activeCount = ProductPromotion::query()
+            ->where('product_id', $product->id)
+            ->where('status', ProductPromotion::STATUS_ACTIVE)
+            ->where(fn ($q) => $q->whereNull('ends_at')->orWhere('ends_at', '>=', now()))
+            ->when($ignoreId !== null, fn ($q) => $q->where('id', '!=', $ignoreId))
+            ->count();
+
+        if ($activeCount < self::MAX_ACTIVE_PROMOS) {
+            return null;
+        }
+
+        return $this->error(
+            'Este producto ya tiene 2 promociones activas — pausa o elimina una antes de activar otra.',
+            422
+        );
     }
 
     /**

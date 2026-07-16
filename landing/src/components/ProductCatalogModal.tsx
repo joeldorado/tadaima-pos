@@ -1,8 +1,9 @@
 // @ts-nocheck
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { X, Search, Package, ChevronLeft, ChevronRight, LayoutGrid, Zap, RefreshCw } from "lucide-react";
+import { X, Search, Package, ChevronLeft, ChevronRight, LayoutGrid, Zap, RefreshCw, TicketPercent } from "lucide-react";
 import { ImageWithFallback } from "@/components/figma/ImageWithFallback";
 import { PRICE_LEVEL_LABELS, PRICE_LEVEL_COLORS, PRICE_LEVEL_RGB } from "@/lib/priceLevels";
+import { BUSINESS_TZ } from "@/lib/date";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface CatalogProduct {
@@ -23,6 +24,8 @@ interface CatalogProduct {
   volume_number?: number | null;
   /** false = sin inventario en esta tienda ("No asignado"). Default tratado como true. */
   is_assigned?: boolean;
+  /** Promos NxM vigentes (embed del backend, ya filtradas por tienda). */
+  active_promotions?: Array<{ id: number; name: string; buy_n: number; pay_m: number; priority: number; ends_at?: string | null }>;
 }
 
 type Level = "a" | "b" | "c" | "d" | "e";
@@ -233,6 +236,55 @@ function CardMedia({ image, badge, isCashOnly, volume }: {
         }}>
           Vol. {volume}
         </div>
+      )}
+    </div>
+  );
+}
+
+// Pills de promo NxM en la card (QA Joel 2026-07-18): máximo 2 visibles (las de
+// mayor prioridad, mismo desempate que el motor) + "+N" si hubiera más.
+function PromoPills({ promos }: { promos?: CatalogProduct["active_promotions"] }) {
+  if (!promos || promos.length === 0) return null;
+  const sorted = [...promos].sort((a, b) => (b.priority - a.priority) || (a.id - b.id));
+  const shown = sorted.slice(0, 2);
+  const extra = sorted.length - shown.length;
+  const fmtEnds = (iso?: string | null) =>
+    iso ? new Date(iso).toLocaleDateString("es-MX", { day: "2-digit", month: "short", timeZone: BUSINESS_TZ }) : null;
+
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 3 }}>
+      {shown.map(pr => {
+        const ends = fmtEnds(pr.ends_at);
+        return (
+          <span
+            key={pr.id}
+            title={`${pr.name} · ${pr.buy_n}x${pr.pay_m}${ends ? ` · hasta ${ends}` : " · sin vencimiento"}`}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 3,
+              padding: "2px 7px", borderRadius: 7, flexShrink: 0,
+              fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.04em",
+              color: "#34d399", background: "rgba(16,185,129,0.12)",
+              border: "1px solid rgba(16,185,129,0.35)",
+            }}
+          >
+            <TicketPercent size={9} />
+            {pr.buy_n}x{pr.pay_m}{ends ? ` · hasta ${ends}` : ""}
+          </span>
+        );
+      })}
+      {extra > 0 && (
+        <span
+          title={`${extra} promo${extra !== 1 ? "s" : ""} más activa${extra !== 1 ? "s" : ""}`}
+          style={{
+            display: "inline-flex", alignItems: "center",
+            padding: "2px 6px", borderRadius: 7, flexShrink: 0,
+            fontSize: 9, fontWeight: 900,
+            color: "var(--td-text-lo)", background: "var(--td-card-bg)",
+            border: "1px solid var(--td-card-border)",
+          }}
+        >
+          +{extra}
+        </span>
       )}
     </div>
   );
@@ -565,6 +617,7 @@ export function ProductCatalogModal({ products, onSelect, onClose, title = "Cat�
                         {p.volume_number != null && <VolumePill volume={p.volume_number} />}
                         <p style={{ margin: 0, fontSize: 9, fontWeight: 700, color: "var(--td-text-ghost)", fontFamily: "monospace", textTransform: "uppercase", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.sku}</p>
                       </div>
+                      <PromoPills promos={p.active_promotions} />
                       {otherCajaReservations.length > 0 && (
                         <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 2 }}>
                           {otherCajaReservations.map(r => (
@@ -749,6 +802,7 @@ export function ProductCatalogModal({ products, onSelect, onClose, title = "Cat�
                       {p.volume_number != null && <VolumePill volume={p.volume_number} />}
                       <p style={{ margin: 0, fontSize: 10, fontWeight: 800, color: "var(--td-text-ghost)", fontFamily: "monospace", textTransform: "uppercase", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.sku}</p>
                     </div>
+                    <PromoPills promos={p.active_promotions} />
                   </div>
 
                   {/* ── Prices: filas grandes como Preventas ─────────────────── */}

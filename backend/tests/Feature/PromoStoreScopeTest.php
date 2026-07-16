@@ -140,6 +140,37 @@ class PromoStoreScopeTest extends TestCase
             ->assertOk();
     }
 
+    public function test_max_two_active_promos_per_product(): void
+    {
+        $manager = $this->makeManager($this->storeA);
+        $this->makePromo($this->storeA->id);
+        $this->makePromo($this->storeA->id);
+
+        $payload = ['name' => 'Tercera', 'buy_n' => 3, 'pay_m' => 2, 'priority' => 0, 'store_id' => $this->storeA->id];
+
+        // Con 2 activas, crear una tercera ACTIVA → 422.
+        $this->actingAs($manager)
+            ->postJson("/api/v1/products/{$this->product->id}/promotions", $payload)
+            ->assertStatus(422);
+
+        // Crearla PAUSADA sí se permite…
+        $resp = $this->actingAs($manager)
+            ->postJson("/api/v1/products/{$this->product->id}/promotions", array_merge($payload, ['status' => 'paused']))
+            ->assertStatus(201);
+        $pausedId = (int) $resp->json('data.id');
+
+        // …pero reactivarla con las otras 2 vivas → 422.
+        $this->actingAs($manager)
+            ->putJson("/api/v1/products/{$this->product->id}/promotions/{$pausedId}", array_merge($payload, ['status' => 'active']))
+            ->assertStatus(422);
+
+        // Pausando una de las 2, la reactivación ya pasa.
+        ProductPromotion::query()->where('name', '2x1 Test')->orderBy('id')->first()?->update(['status' => 'paused']);
+        $this->actingAs($manager)
+            ->putJson("/api/v1/products/{$this->product->id}/promotions/{$pausedId}", array_merge($payload, ['status' => 'active']))
+            ->assertOk();
+    }
+
     public function test_products_embed_filters_promos_by_store(): void
     {
         $this->makePromo($this->storeB->id);
