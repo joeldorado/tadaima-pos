@@ -655,6 +655,18 @@ docker compose up --build -d
 
 > Sesiones anteriores a 2026-05-14 (>20 días) archivadas en git history para mantener el log ligero. Decisiones load-bearing preservadas en ADRs (§7) y secciones de arquitectura.
 
+### Sesión 2026-07-16/17 — Scoping por tienda (promos + insumos) + fix "Programada" — DEPLOYADO rev tadaima-00122-vwn
+
+QA Joel: "creé una promo y no sale en /promos" + pidió que promos e insumos elijan tienda. Commit `1ff7054`. Bundle `index-fAFO6V7b.js`.
+
+**Diagnóstico del "no sale":** causa más probable = promo con **fecha de inicio futura**: el chip decía "Activa" (status field) aunque `currentlyActive` la excluye hasta que empiece → invisible en Caja y /promos. Fix display: chip azul **"Programada · inicia {fecha}"** + empty-state de /promos explica las causas. (Vigencias en sí ya estaban bien: `vigencyDates` ancla a día-negocio Tijuana.) Nota: no se pudo confirmar contra la BD de prod (acceso denegado por policy — correcto).
+
+**Scoping por tienda:**
+- Migración `2026_07_17_000001`: `product_promotions.store_id` + `supplies.store_id`, ambos NULL = todas/empresa (compat con datos existentes — las promos/insumos previos quedan globales).
+- **Promos**: admin elige tienda al crear (select "Todas las tiendas"); gerente FORZADO a la suya (`scopedStoreId`). Motor: `CheckoutService` filtra `forStore($storeId)`; el embed `active_promotions` viene filtrado con `?store_id` (Caja siempre lo manda → espejo frontend saleCalc sin cambios). PromosPage: gerente/cajero solo ven globales o de su tienda; admin todas con etiqueta. Chip de tienda en el tab de promos. OJO: el tab NO edita tienda de promos existentes (solo alta) — para cambiar tienda: borrar y recrear.
+- **Insumos**: admin elige tienda en SupplyFormModal ("Toda la empresa" + tiendas); gerente forzado a la suya; `index` para no-admin filtra (NULL O su tienda); chip en el catálogo. El inline-create del combobox crea "toda la empresa" para admin.
+- Tests: `PromoStoreScopeTest` 4/4 (global aplica / misma tienda aplica / otra tienda NO / embed filtrado). Suite 258/258 · vitest 73/73.
+
 ### Sesión 2026-07-16 — Promos: página + banner WhatsApp + Modo TV + badge en Caja — DEPLOYADO rev tadaima-00121-tfx
 
 Pedido Joel (dudas de prioridad/visibilidad + idea banner/TV). Commit `a7b903f`. Bundle `index-C-otmNye.js` (markers "Modo TV", "share-banner-modal", "Prioridad (desempate)", "image-base64").
