@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo } from "react";
 import {
   Search, Shield, Check, Loader2, Save,
   ChevronRight, Package, AlertTriangle,
-  ToggleLeft, ToggleRight, DollarSign, Globe,
+  ToggleLeft, ToggleRight, DollarSign, Globe, TicketPercent,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -126,12 +126,16 @@ export function TabPermisos() {
   const [savedCanViewCost, setSavedCanViewCost] = useState(false);
   const [canEditCatalog, setCanEditCatalog]     = useState(false);
   const [savedCanEditCatalog, setSavedCanEditCatalog] = useState(false);
+  // Promos: default TRUE (modelo de revocación) — el flag nace encendido.
+  const [canManagePromos, setCanManagePromos] = useState(true);
+  const [savedCanManagePromos, setSavedCanManagePromos] = useState(true);
   const [productSearch, setProductSearch] = useState("");
 
   const isDirty =
     !permEqual(perm, savedPerm) ||
     canViewCost !== savedCanViewCost ||
-    canEditCatalog !== savedCanEditCatalog;
+    canEditCatalog !== savedCanEditCatalog ||
+    canManagePromos !== savedCanManagePromos;
 
   // ── Load data ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -159,6 +163,9 @@ export function TabPermisos() {
     setSavedCanViewCost(!!selectedUser.can_view_cost);
     setCanEditCatalog(!!selectedUser.can_edit_catalog);
     setSavedCanEditCatalog(!!selectedUser.can_edit_catalog);
+    // !== false (no !!): usuarios previos a la columna vienen undefined = true.
+    setCanManagePromos(selectedUser.can_manage_promos !== false);
+    setSavedCanManagePromos(selectedUser.can_manage_promos !== false);
     setProductSearch("");
   }, [selectedUser?.id]);
 
@@ -214,6 +221,17 @@ export function TabPermisos() {
         );
       }
 
+      if (canManagePromos !== savedCanManagePromos) {
+        tasks.push(
+          updateUser(selectedUser.id, { can_manage_promos: canManagePromos }).then(() => {
+            setUsers(prev => prev.map(u =>
+              u.id === selectedUser.id ? { ...u, can_manage_promos: canManagePromos } : u
+            ));
+            setSelectedUser(prev => prev ? { ...prev, can_manage_promos: canManagePromos } : prev);
+          })
+        );
+      }
+
       if (!permEqual(perm, savedPerm)) {
         const next: PermMap = { ...permMap, [String(selectedUser.id)]: perm };
         tasks.push(
@@ -225,6 +243,7 @@ export function TabPermisos() {
       setSavedPerm(structuredClone(perm));
       setSavedCanViewCost(canViewCost);
       setSavedCanEditCatalog(canEditCatalog);
+      setSavedCanManagePromos(canManagePromos);
       toast.success("Permisos guardados");
     } catch {
       toast.error("Error al guardar permisos");
@@ -414,6 +433,31 @@ export function TabPermisos() {
               <div style={{ marginTop: 8, padding: "6px 10px", borderRadius: 8, background: canEditCatalog ? "rgba(0,200,100,0.07)" : "rgba(255,255,255,0.03)", border: `1px solid ${canEditCatalog ? "rgba(0,200,100,0.18)" : "var(--td-divider)"}` }}>
                 <span style={{ fontSize: 10, fontWeight: 800, color: canEditCatalog ? "#00CC66" : TM }}>
                   {canEditCatalog ? "ACTIVO — puede editar catálogo" : "INACTIVO — no edita catálogo"}
+                </span>
+              </div>
+            </SectionBox>
+
+            {/* 1c. Gestionar Promociones (default ENCENDIDO — el admin lo revoca) */}
+            <SectionBox icon={TicketPercent} title="Gestionar Promociones">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div>
+                  <p style={{ fontSize: 12, fontWeight: 700, color: TS, margin: 0 }}>
+                    Permitir crear y editar promos NxM
+                  </p>
+                  <p style={{ fontSize: 10, color: TM, margin: "3px 0 0" }}>
+                    Crear, pausar y eliminar promociones 2x1/3x2 de sus productos. Solo aplica a gerentes — viene encendido por default.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setCanManagePromos(v => !v)}
+                  style={{ background: "none", border: "none", cursor: "pointer", color: canManagePromos ? "#00CC66" : TM, flexShrink: 0 }}
+                >
+                  {canManagePromos ? <ToggleRight size={32} /> : <ToggleLeft size={32} />}
+                </button>
+              </div>
+              <div style={{ marginTop: 8, padding: "6px 10px", borderRadius: 8, background: canManagePromos ? "rgba(0,200,100,0.07)" : "rgba(255,255,255,0.03)", border: `1px solid ${canManagePromos ? "rgba(0,200,100,0.18)" : "var(--td-divider)"}` }}>
+                <span style={{ fontSize: 10, fontWeight: 800, color: canManagePromos ? "#00CC66" : TM }}>
+                  {canManagePromos ? "ACTIVO — puede gestionar promos" : "INACTIVO — promos solo lectura"}
                 </span>
               </div>
             </SectionBox>

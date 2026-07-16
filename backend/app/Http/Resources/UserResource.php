@@ -17,6 +17,7 @@ class UserResource extends JsonResource
             'active'           => $this->active,
             'can_view_cost'    => $this->can_view_cost,
             'can_edit_catalog' => $this->can_edit_catalog,
+            'can_manage_promos' => $this->can_manage_promos,
 
             // Password en claro SOLO para admin (copia reversible `password_enc`,
             // descifrada por el cast del modelo). El campo NO existe para no-admin.

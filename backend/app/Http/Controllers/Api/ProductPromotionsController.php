@@ -46,6 +46,9 @@ class ProductPromotionsController extends Controller
         if ($resp = $this->adminOrManagerGateError()) {
             return $resp;
         }
+        if ($resp = $this->promoManageError()) {
+            return $resp;
+        }
         if ($request->input('status', ProductPromotion::STATUS_ACTIVE) === ProductPromotion::STATUS_ACTIVE) {
             if ($resp = $this->duplicatePromoError($product, $request)) {
                 return $resp;
@@ -71,6 +74,9 @@ class ProductPromotionsController extends Controller
     public function update(StoreProductPromotionRequest $request, Product $product, ProductPromotion $promotion): JsonResponse
     {
         if ($resp = $this->adminOrManagerGateError()) {
+            return $resp;
+        }
+        if ($resp = $this->promoManageError()) {
             return $resp;
         }
         if ((int) $promotion->product_id !== (int) $product->id) {
@@ -107,6 +113,9 @@ class ProductPromotionsController extends Controller
     public function destroy(Product $product, ProductPromotion $promotion): JsonResponse
     {
         if ($resp = $this->adminOrManagerGateError()) {
+            return $resp;
+        }
+        if ($resp = $this->promoManageError()) {
             return $resp;
         }
         if ((int) $promotion->product_id !== (int) $product->id) {

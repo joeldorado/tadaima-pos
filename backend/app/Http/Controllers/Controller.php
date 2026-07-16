@@ -71,6 +71,22 @@ abstract class Controller
     }
 
     /**
+     * Gate de gestión de promociones: 403 si el usuario NO es admin y le
+     * REVOCARON el flag can_manage_promos (nace en true — pedido Joel
+     * 2026-07-18). Se usa DESPUÉS de adminOrManagerGateError: el rol sigue
+     * siendo requisito, este flag solo quita el permiso a un gerente puntual.
+     */
+    protected function promoManageError(): ?JsonResponse
+    {
+        $user = request()->user();
+        if ($user && ! $user->canManagePromos()) {
+            return $this->error('No tienes permiso para gestionar promociones — pídele al admin que te lo active en Permisos.', 403);
+        }
+
+        return null;
+    }
+
+    /**
      * Guard de scope de tienda: devuelve la respuesta 403 si el usuario
      * autenticado NO puede operar sobre la tienda dada, o null si puede.
      * Uso: if ($resp = $this->storeScopeError($request, $storeId)) return $resp;

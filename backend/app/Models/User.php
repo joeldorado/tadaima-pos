@@ -17,7 +17,7 @@ class User extends Authenticatable
     protected $fillable = [
         'name', 'email', 'password', 'password_enc',
         'company_id', 'store_id', 'phone', 'address', 'active', 'can_view_cost',
-        'can_edit_catalog', 'avatar_url', 'last_seen_at',
+        'can_edit_catalog', 'can_manage_promos', 'avatar_url', 'last_seen_at',
     ];
 
     // password_enc en $hidden: nunca se auto-serializa. Solo se expone descifrado
@@ -33,6 +33,7 @@ class User extends Authenticatable
             'active'            => 'boolean',
             'can_view_cost'     => 'boolean',
             'can_edit_catalog'  => 'boolean',
+            'can_manage_promos' => 'boolean',
             'last_seen_at'      => 'datetime',
         ];
     }
@@ -96,6 +97,21 @@ class User extends Authenticatable
     public function canEditCatalog(): bool
     {
         return $this->isAdminRole() || (bool) $this->can_edit_catalog;
+    }
+
+    /**
+     * Gate de gestión de promociones NxM: admin siempre; el resto vía el flag
+     * can_manage_promos que — a diferencia de los otros dos — nace en TRUE
+     * (modelo de REVOCACIÓN: los gerentes crean promos por default y el admin
+     * lo quita por usuario en Permisos). El rol admin/gerente sigue siendo
+     * requisito aparte (adminOrManagerGateError) — este flag solo revoca.
+     */
+    public function canManagePromos(): bool
+    {
+        // `!== false` (no cast a bool): la columna es NOT NULL default TRUE,
+        // así que null solo significa "atributo no cargado en este modelo"
+        // (p.ej. User::create sin el campo) — se trata como el default.
+        return $this->isAdminRole() || $this->can_manage_promos !== false;
     }
 
     /**

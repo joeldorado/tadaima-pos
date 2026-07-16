@@ -48,6 +48,9 @@ export function ProductPromotionsTab({ productId }: Props) {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const isAdmin = isAdminRole(user?.roles);
+  // Permiso "Gestionar Promociones" (2026-07-18): default TRUE; el admin lo
+  // revoca por usuario en Permisos. `!== false` porque undefined = true.
+  const canManagePromos = isAdmin || user?.can_manage_promos !== false;
   const [promotions, setPromotions] = useState<ProductPromotion[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -167,7 +170,7 @@ export function ProductPromotionsTab({ productId }: Props) {
         <p className="text-[11px] font-bold" style={{ color: TMD }}>
           En caja aplica sola la <b>mejor</b> promo vigente. Un descuento manual en la línea se <b>acumula</b>: primero la promo y el descuento se calcula sobre el resultado.
         </p>
-        {!showForm && (
+        {!showForm && canManagePromos && (
           <button
             onClick={() => setShowForm(true)}
             className="flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-[11px] font-black uppercase tracking-widest"
@@ -177,6 +180,12 @@ export function ProductPromotionsTab({ productId }: Props) {
           </button>
         )}
       </div>
+
+      {!canManagePromos && (
+        <p className="rounded-xl px-3 py-2 text-[10px] font-bold" style={{ background: "var(--td-surface-soft)", border: "1px solid var(--td-card-border)", color: TLO }}>
+          Solo lectura — pide al admin el permiso "Gestionar Promociones" en Permisos.
+        </p>
+      )}
 
       {showForm && (
         <div className="rounded-2xl p-4 space-y-3" style={{ background: "var(--td-surface-soft)", border: "1px solid var(--td-card-border)" }}>
@@ -308,7 +317,7 @@ export function ProductPromotionsTab({ productId }: Props) {
                 </span>
                 {/* Gerente solo muta promos de SU tienda; las globales o de otra
                     tienda son solo-lectura (se ven para no duplicarlas). */}
-                {(isAdmin || promo.store_id === (user?.store_id ?? null)) && (
+                {canManagePromos && (isAdmin || promo.store_id === (user?.store_id ?? null)) && (
                   <>
                     {promo.status !== "expired" && (
                       <button onClick={() => void toggleStatus(promo)} className="rounded-lg p-1.5 hover:bg-white/10"

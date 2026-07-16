@@ -12,6 +12,7 @@ export interface CreateUserPayload {
   active?: boolean
   can_view_cost?: boolean
   can_edit_catalog?: boolean
+  can_manage_promos?: boolean
   role_id?: number
 }
 
@@ -26,6 +27,7 @@ export interface UpdateUserPayload {
   active?: boolean
   can_view_cost?: boolean
   can_edit_catalog?: boolean
+  can_manage_promos?: boolean
 }
 
 export interface GetUsersParams {
