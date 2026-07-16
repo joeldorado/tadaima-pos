@@ -19,6 +19,7 @@ import { PreSaleDifusionPanel } from "@/components/presales/PreSaleDifusionPanel
 import { CameraScannerModal } from "@/components/CameraScannerModal";
 import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
 import { useViewportMaxHeight } from "@/hooks/useViewportMaxHeight";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { PaymentRestrictionBadge, getPayRestriction } from "@/components/ui/PaymentRestrictionBadge";
 import { toast } from "sonner";
 import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, closeSession, forceCloseSession, getActiveSession, createLayaway, getCustomers, createCustomer, refreshMember, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getPreSaleOrders, getSales, getProductsLight, storageUrl, getCashReport, sendPreSaleAssignAlert, getCatalogCustomerUsage } from "@tadaima/api";
@@ -644,6 +645,12 @@ export function SellPage() {
 
   const [tc, setTc]           = useState(15.50);
   const [showTc, setShowTc]   = useState(false);
+  // Caja responsiva: bajo 768px el panel de cobro pasa a hoja completa que se
+  // abre desde una barra inferior fija (TOTAL + COBRAR nunca se ocultan).
+  const isNarrow = useMediaQuery("(max-width: 767px)");
+  const [payOpen, setPayOpen] = useState(false);
+  // Guard $0: confirmación cuando un descuento deja el cobro en $0 (cortesía).
+  const [zeroConfirmOpen, setZeroConfirmOpen] = useState(false);
   const [showTerminalModal, setShowTerminalModal] = useState(false);
   const [tcDraft, setTcDraft] = useState("15.50");
 
@@ -2202,7 +2209,8 @@ export function SellPage() {
       // de lo que se cobra (review Fase 0 2026-07-14). Paridad exacta con el
       // math previo: subtotal crudo − descuento.
       const rawSubtotal = activeMesa.items.reduce((s, i) => s + getItemPrice(i) * i.quantity, 0);
-      return rawSubtotal - discountAmt;
+      // Clamp ≥0: un descuento ≥ subtotal no debe mostrar/gatear un total negativo.
+      return Math.max(0, rawSubtotal - discountAmt);
     }
     if (activeMesa.isPreventa) {
       // Modo preventa explícito: solo se cobran los anticipos.
@@ -3219,8 +3227,19 @@ export function SellPage() {
     toast.error(msg);
   };
 
-  const handleCheckout = async () => {
+  const handleCheckout = async (opts?: { allowZero?: boolean }) => {
     if (!activeMesa.items.length) return;
+
+    // Guard $0 (Descuentos v2): un descuento que deja el cobro en $0 con
+    // productos que SÍ tienen precio suele ser un descuento atorado/accidental
+    // (p.ej. rehidratado de localStorage). Pedimos confirmación explícita
+    // (cortesía real) antes de cobrar $0. No aplica a preventa (anticipos $0
+    // válidos) ni a carritos legítimamente sin subtotal.
+    if (!opts?.allowZero && !activeMesa.isPreventa && !activeMesa.loadedPreSaleOrderId
+        && subtotal > 0 && currentPayAmount <= 0.005) {
+      setZeroConfirmOpen(true);
+      return;
+    }
 
     // Guard de método incompatible — también cubre los atajos de Enter que
     // llaman handleCheckout directo sin pasar por el disabled del botón.
@@ -5657,10 +5676,19 @@ export function SellPage() {
             asegura que el botón Cobrar y el cambio queden siempre visibles. */}
         <aside
           ref={tcRef}
-          className="hidden md:flex shrink-0 w-[420px] xl:w-[460px] flex-col"
+          className={`flex-col ${isNarrow ? (payOpen ? "flex fixed inset-0 z-50 w-full" : "hidden") : "hidden md:flex md:shrink-0 md:w-[360px] lg:w-[420px] xl:w-[460px]"}`}
           style={{ background: "var(--td-panel-bg)", borderLeft: CARD_B }}
           aria-label="Panel de cobro"
         >
+          {/* Header de la hoja (solo móvil): título + cerrar */}
+          {isNarrow && payOpen && (
+            <div className="flex items-center justify-between px-5 py-3 shrink-0" style={{ borderBottom: CARD_B }}>
+              <span style={{ fontSize: 13, fontWeight: 900, color: "var(--td-text-hi)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Cobro</span>
+              <button onClick={() => setPayOpen(false)} className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: "var(--td-card-bg)", border: CARD_B, color: "var(--td-text-md)" }} aria-label="Cerrar cobro">
+                <X size={16} />
+              </button>
+            </div>
+          )}
           {/* Contenedor scrolleable: contenido alineado al FONDO (justify-end)
               para que crezca de abajo hacia arriba. Cuando solo hay TOTAL, el
               espacio sobrante queda arriba; cuando se agrega cash input + cambio,
@@ -6452,6 +6480,55 @@ export function SellPage() {
         </aside>
       </div>
       {/* ↑ cierra contenedor horizontal de 2 columnas (cart + sidebar) */}
+
+      {/* Barra de cobro fija (solo pantallas angostas <768px): el panel lateral
+          se oculta ahí, así que TOTAL + COBRAR viven aquí SIEMPRE visibles y
+          abren la hoja de cobro completa. Arregla "se ocultan datos y botones". */}
+      {isNarrow && !payOpen && (activeMesa?.items?.length ?? 0) > 0 && (
+        <div
+          className="fixed inset-x-0 bottom-0 z-40 flex items-center gap-3 px-4 py-3"
+          style={{ background: "var(--td-panel-bg)", borderTop: CARD_B, boxShadow: "0 -8px 24px rgba(0,0,0,0.28)" }}
+        >
+          <div className="flex flex-col min-w-0 flex-1">
+            <span style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--td-text-lo)" }}>Total a pagar</span>
+            <span style={{ fontSize: 22, fontWeight: 900, color: "var(--td-text-hi)", lineHeight: 1 }}>{fmt(currentPayAmount)}</span>
+          </div>
+          <button
+            onClick={() => setPayOpen(true)}
+            className="flex items-center gap-2 px-6 py-3 rounded-2xl shrink-0 active:scale-95 transition-transform"
+            style={{ background: "var(--td-red)", color: "#fff", fontWeight: 900, fontSize: 14 }}
+          >
+            <Zap size={16} /> Cobrar
+          </button>
+        </div>
+      )}
+
+      {/* Confirmación de cobro en $0 (descuento 100% / cortesía) — Fase D hardening */}
+      {zeroConfirmOpen && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setZeroConfirmOpen(false)} />
+          <div className="relative w-full max-w-sm rounded-3xl overflow-hidden" style={{ background: "var(--td-popup-bg)", border: "1px solid var(--td-popup-border)" }}>
+            <div className="p-6 flex flex-col gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0" style={{ background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.35)" }}>
+                  <AlertTriangle size={22} color="#F59E0B" />
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <p style={{ margin: 0, fontSize: 15, fontWeight: 900, color: "var(--td-text-hi)" }}>¿Cobrar $0?</p>
+                  <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: "var(--td-text-lo)" }}>El total quedó en $0 por un descuento.</p>
+                </div>
+              </div>
+              <p style={{ fontSize: 12.5, fontWeight: 600, color: "var(--td-text-md)", lineHeight: 1.5, margin: 0 }}>
+                Subtotal {fmt(subtotal)} · descuento {fmt(discountAmt)}. Si es una cortesía, confirma. Si no, cancela y revisa los descuentos por línea.
+              </p>
+            </div>
+            <div className="flex gap-2 p-4" style={{ borderTop: "1px solid var(--td-divider)" }}>
+              <button onClick={() => setZeroConfirmOpen(false)} className="flex-1 py-3 rounded-2xl font-black text-xs uppercase tracking-widest" style={{ background: "var(--td-card-bg)", border: CARD_B, color: "var(--td-text-md)" }}>Cancelar</button>
+              <button onClick={() => { setZeroConfirmOpen(false); void handleCheckout({ allowZero: true }); }} className="flex-1 py-3 rounded-2xl font-black text-xs uppercase tracking-widest" style={{ background: "#F59E0B", color: "#1a1204" }}>Sí, cobrar $0</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal Terminales de Pago */}
       <AnimatePresence>
