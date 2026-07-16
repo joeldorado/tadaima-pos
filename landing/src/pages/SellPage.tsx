@@ -8154,7 +8154,18 @@ export function SellPage() {
                               items: (sale.items || []).map(i => ({
                                 name: i.product?.name || String(i.product_id), quantity: i.quantity, price: i.price,
                                 ...((i.discount_amount ?? 0) > 0
-                                  ? { discountAmount: i.discount_amount ?? 0, discountLabel: i.benefit_type === "promo" ? `Promo ${i.promo_name ?? ""}`.trim() : `Desc.${i.discount_reason ? ` ${DISCOUNT_REASON_LABELS[i.discount_reason as keyof typeof DISCOUNT_REASON_LABELS] ?? i.discount_reason}` : ""}` }
+                                  ? {
+                                      discountAmount: i.discount_amount ?? 0,
+                                      // Stacking: si promo y manual conviven, la etiqueta une ambos.
+                                      discountLabel: [
+                                        i.promo_name ? `Promo ${i.promo_name}`.trim() : "",
+                                        (() => {
+                                          const promoAmt = i.promo_name ? Math.min(i.discount_amount ?? 0, (i.promo_free_qty ?? 0) * i.price) : 0;
+                                          const manualAmt = (i.discount_amount ?? 0) - promoAmt;
+                                          return manualAmt > 0.005 ? `Desc.${i.discount_reason ? ` ${DISCOUNT_REASON_LABELS[i.discount_reason as keyof typeof DISCOUNT_REASON_LABELS] ?? i.discount_reason}` : ""}` : "";
+                                        })(),
+                                      ].filter(Boolean).join(" + "),
+                                    }
                                   : {}),
                               })),
                               soldAt: dateStr,
@@ -8190,15 +8201,16 @@ export function SellPage() {
                               {(sale.items || []).length === 0
                                 ? <p style={{ fontSize: 10, color: "var(--td-text-ghost)", textAlign: "center", padding: "8px 0" }}>Sin detalle</p>
                                 : (sale.items || []).map((item, idx) => {
-                                  // Descuentos v2: neto de la línea + etiqueta del beneficio.
+                                  // Descuentos v2 + stacking (2026-07-17): promo y descuento
+                                  // manual CONVIVEN — parte promo derivada del snapshot
+                                  // (free_qty × precio), el manual es el resto.
                                   const itemDisc = item.discount_amount ?? 0;
                                   const itemNet = item.price * item.quantity - itemDisc;
+                                  const promoPartAmt = item.promo_name ? Math.min(itemDisc, (item.promo_free_qty ?? 0) * item.price) : 0;
+                                  const manualPartAmt = Math.max(0, Math.round((itemDisc - promoPartAmt) * 100) / 100);
                                   const discReason = item.discount_reason
                                     ? (DISCOUNT_REASON_LABELS[item.discount_reason as keyof typeof DISCOUNT_REASON_LABELS] ?? item.discount_reason)
                                     : "";
-                                  const discLabel = item.benefit_type === "promo"
-                                    ? `Promo ${item.promo_name ?? ""}`.trim()
-                                    : `Desc.${discReason ? ` ${discReason}` : ""}`;
                                   return (
                                   <div key={idx} style={{ padding: "3px 0", borderBottom: idx < (sale.items || []).length - 1 ? "1px solid var(--td-divider)" : "none" }}>
                                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -8209,10 +8221,17 @@ export function SellPage() {
                                       <span style={{ fontSize: 11, fontWeight: 900, color: "var(--td-text-hi)", flexShrink: 0, width: 62, textAlign: "right", ...(itemDisc > 0 ? { textDecoration: "line-through", color: "var(--td-text-ghost)", fontWeight: 700 } : {}) }}>{fmt(item.price * item.quantity)}</span>
                                     </div>
                                     {itemDisc > 0 && (
-                                      <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, marginTop: 1 }}>
-                                        <span style={{ fontSize: 9, fontWeight: 900, color: "#E0221A", background: "rgba(224,34,26,0.10)", border: "1px solid rgba(224,34,26,0.30)", borderRadius: 999, padding: "1px 7px" }}>
-                                          {discLabel} −{fmt(itemDisc)}
-                                        </span>
+                                      <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, marginTop: 1, flexWrap: "wrap" }}>
+                                        {promoPartAmt > 0 && (
+                                          <span style={{ fontSize: 9, fontWeight: 900, color: "#34d399", background: "rgba(16,185,129,0.10)", border: "1px solid rgba(16,185,129,0.35)", borderRadius: 999, padding: "1px 7px" }}>
+                                            Promo {item.promo_name ?? ""} −{fmt(promoPartAmt)}
+                                          </span>
+                                        )}
+                                        {manualPartAmt > 0 && (
+                                          <span style={{ fontSize: 9, fontWeight: 900, color: "#E0221A", background: "rgba(224,34,26,0.10)", border: "1px solid rgba(224,34,26,0.30)", borderRadius: 999, padding: "1px 7px" }}>
+                                            Desc.{discReason ? ` ${discReason}` : ""} −{fmt(manualPartAmt)}
+                                          </span>
+                                        )}
                                         <span style={{ fontSize: 11, fontWeight: 900, color: "var(--td-text-hi)", flexShrink: 0, width: 62, textAlign: "right" }}>{fmt(itemNet)}</span>
                                       </div>
                                     )}

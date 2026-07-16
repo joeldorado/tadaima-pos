@@ -128,6 +128,21 @@ function getPaymentMethodName(sale: SaleDetail): string {
 const fmt = (n: number) =>
   new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", minimumFractionDigits: 0 }).format(n);
 
+/**
+ * Partes del beneficio de una línea (stacking 2026-07-17): la promo NxM y el
+ * descuento manual CONVIVEN. discount_amount persiste el TOTAL; la parte promo
+ * se deriva del snapshot (promo_free_qty × precio) y el manual es el resto.
+ */
+function lineBenefitParts(item: { price: number; discount_amount?: number | null; promo_name?: string | null; promo_free_qty?: number | null; discount_reason?: string | null }) {
+  const total = item.discount_amount ?? 0;
+  const promoAmount = item.promo_name ? Math.min(total, (item.promo_free_qty ?? 0) * item.price) : 0;
+  const manualAmount = Math.max(0, Math.round((total - promoAmount) * 100) / 100);
+  const reasonLabel = item.discount_reason
+    ? (DISCOUNT_REASON_LABELS[item.discount_reason as keyof typeof DISCOUNT_REASON_LABELS] ?? item.discount_reason)
+    : "";
+  return { total, promoAmount, manualAmount, promoLabel: item.promo_name ?? null, freeQty: item.promo_free_qty ?? 0, reasonLabel };
+}
+
 // % de comisión efectivo (comisión/venta) — sin decimales de ruido: 6% se ve
 // "6%", 3.55% se ve "3.55%".
 const fmtPct = (p: number) => `${Number(p.toFixed(2))}%`;
@@ -170,24 +185,23 @@ function printTicket(sale: SaleDetail) {
   const items = (sale.items || [])
     .map(i => {
       const name = i.product?.name || String(i.product_id);
-      const discAmt = i.discount_amount ?? 0;
-      // Sub-línea del beneficio (Descuentos v2) — negro puro, jerarquía por
+      // Sub-líneas de beneficio (stacking 2026-07-17): promo y descuento manual
+      // CONVIVEN — cada uno con su propia sub-línea. Negro puro, jerarquía por
       // tamaño/sangría (regla térmica rev 00108, los grises no imprimen).
-      const reasonLabel = i.discount_reason
-        ? (DISCOUNT_REASON_LABELS[i.discount_reason as keyof typeof DISCOUNT_REASON_LABELS] ?? i.discount_reason)
-        : "";
-      const discLabel = i.benefit_type === "promo"
-        ? `Promo ${i.promo_name ?? ""}`.trim()
-        : `Desc.${reasonLabel ? ` ${reasonLabel}` : ""}`;
+      const parts = lineBenefitParts(i);
+      const subLines = [
+        parts.promoAmount > 0
+          ? `<tr><td style="padding:0 0 2px 8px;font-size:9px;font-weight:900">${esc(`Promo ${parts.promoLabel ?? ""}`.trim())}</td><td></td><td style="text-align:right;font-size:10px;font-weight:900">-${fmt(parts.promoAmount)}</td></tr>`
+          : "",
+        parts.manualAmount > 0
+          ? `<tr><td style="padding:0 0 2px 8px;font-size:9px;font-weight:900">${esc(`Desc.${parts.reasonLabel ? ` ${parts.reasonLabel}` : ""}`)}</td><td></td><td style="text-align:right;font-size:10px;font-weight:900">-${fmt(parts.manualAmount)}</td></tr>`
+          : "",
+      ].join("");
       return `<tr>
         <td style="padding:2px 0;font-size:11px;font-weight:700;">${esc(name)}</td>
         <td style="text-align:center;padding:2px 4px;font-size:10px;">×${i.quantity}</td>
         <td style="text-align:right;font-size:11px;font-weight:900;">${fmt(i.price * i.quantity)}</td>
-      </tr>${discAmt > 0 ? `<tr>
-        <td style="padding:0 0 2px 8px;font-size:9px;font-weight:900">${esc(discLabel)}</td>
-        <td></td>
-        <td style="text-align:right;font-size:10px;font-weight:900">-${fmt(discAmt)}</td>
-      </tr>` : ""}`;
+      </tr>${subLines}`;
     })
     .join("");
 
@@ -658,6 +672,11 @@ function SaleRow({
             const name = item.product?.name || info?.name || String(item.product_id);
             const sku  = item.product?.sku  || info?.sku  || "";
             const img  = info?.imagen;
+            // Beneficios de la línea (QA Joel 2026-07-17: "la promo no se ve en
+            // Ventas/Historial") — badges de promo/descuento + neto real.
+            const parts = lineBenefitParts(item);
+            const grossLine = item.price * item.quantity;
+            const netLine = Math.max(0, grossLine - parts.total);
             return (
               <div
                 key={idx}
@@ -669,6 +688,20 @@ function SaleRow({
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-bold truncate" style={{ color: "var(--td-text-hi)" }}>{name}</p>
                   {sku && <p className="text-[9px] uppercase tracking-widest mt-0.5 truncate" style={{ color: "var(--td-text-lo)" }}>{sku}</p>}
+                  {(parts.promoAmount > 0 || parts.manualAmount > 0) && (
+                    <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                      {parts.promoAmount > 0 && (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-black" style={{ color: "#34d399", background: "rgba(16,185,129,0.10)", border: "1px solid rgba(16,185,129,0.35)" }}>
+                          Promo {parts.promoLabel ?? ""} · {parts.freeQty} gratis −{fmt(parts.promoAmount)}
+                        </span>
+                      )}
+                      {parts.manualAmount > 0 && (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-black" style={{ color: "var(--td-red)", background: "rgba(224,34,26,0.10)", border: "1px solid rgba(224,34,26,0.35)" }}>
+                          Desc.{parts.reasonLabel ? ` ${parts.reasonLabel}` : ""} −{fmt(parts.manualAmount)}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-5 flex-shrink-0 text-right">
@@ -681,8 +714,18 @@ function SaleRow({
                     <p className="text-[8px] uppercase" style={{ color: "var(--td-text-lo)" }}>unit.</p>
                   </div>
                   <div className="text-right w-[70px]">
-                    <p className="text-sm font-black" style={{ color: "var(--td-text-hi)" }}>{fmt(item.price * item.quantity)}</p>
-                    <p className="text-[8px] uppercase" style={{ color: "var(--td-text-lo)" }}>subtotal</p>
+                    {parts.total > 0 ? (
+                      <>
+                        <p className="text-sm font-black" style={{ color: "var(--td-text-hi)" }}>{fmt(netLine)}</p>
+                        <p className="text-[9px] font-bold line-through" style={{ color: "var(--td-text-lo)" }}>{fmt(grossLine)}</p>
+                        <p className="text-[8px] uppercase" style={{ color: "var(--td-text-lo)" }}>neto</p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-sm font-black" style={{ color: "var(--td-text-hi)" }}>{fmt(grossLine)}</p>
+                        <p className="text-[8px] uppercase" style={{ color: "var(--td-text-lo)" }}>subtotal</p>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>

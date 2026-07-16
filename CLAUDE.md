@@ -115,6 +115,41 @@ ya buildeado. `deploy.sh` hace build + push + deploy; `docker/entrypoint.sh` cor
 `php artisan migrate --force` al arrancar, así que **las migraciones se aplican solas a prod
 en cada deploy**. DB de producción: MySQL en Cloud SQL (`pos-lite-db`).
 
+## Descuentos y Promos — modelo de datos para reportes (Descuentos v2)
+
+> Para quien arme reportes/exportes (Ruben): TODO el detalle de beneficios vive
+> POR LÍNEA en `sale_items`. No infieras descuentos del total — léelos de aquí.
+
+**Columnas de `sale_items` (beneficios por línea):**
+
+| Columna | Qué es |
+|---|---|
+| `total` | **BRUTO** de la línea (`price × quantity`) — NO baja con descuentos |
+| `discount_amount` | Beneficio TOTAL de la línea (promo + descuento manual). **Neto real de la línea = `total − discount_amount`** |
+| `benefit_type` | `promo` (solo promo) · `discount` (manual, con o sin promo debajo) · null |
+| `discount_kind/basis/value` | Captura del descuento manual (`fixed/percent`, `unit/line`, valor) |
+| `discount_reason` / `discount_note` | Motivo (`danado, caducidad, exhibicion, cortesia, otro`) + nota |
+| `discount_authorized_by` | User que autorizó el descuento manual |
+| `applied_promotion_id`, `promo_name`, `promo_free_qty` | Snapshot de la promo NxM aplicada (sobrevive aunque la promo se edite/borre) |
+
+**Regla de STACKING (desde 2026-07-17):** la promo NxM aplica PRIMERO y el descuento
+manual se calcula sobre el resultado. Cuando conviven, `benefit_type='discount'` pero
+los campos `promo_*` quedan poblados. Para separar las partes:
+`parte_promo = promo_free_qty × price` · `parte_manual = discount_amount − parte_promo`.
+
+**Rollups:** `sales.discount = Σ discount_amount` de sus líneas y
+`sales.total = sales.subtotal − sales.discount`. Ventas ANTERIORES a Descuentos v2
+(legacy) pueden traer `sales.discount > 0` con `discount_amount = 0` en todas las
+líneas → para esas, prorratear `total/subtotal` (así lo hace ReportsPage).
+
+**Promos (`product_promotions`):** NxM por producto (`buy_n`/`pay_m`), `status`
+(`active/paused/expired`), vigencia `starts_at/ends_at` (ancladas a día-negocio
+America/Tijuana), `priority` (desempate cuando 2 promos ahorran igual) y `store_id`
+(**null = todas las tiendas**; con valor = solo esa sucursal — el motor solo aplica
+promos de la tienda de la venta). El server SIEMPRE recomputa
+(`app/Services/SaleCalculator.php`, gemelo de `landing/src/lib/saleCalc.ts`) — nunca
+confíes en montos del cliente.
+
 ## Convenciones
 
 - **TypeScript estricto** en todo `landing/` y `packages/`. Inmutabilidad: crea objetos

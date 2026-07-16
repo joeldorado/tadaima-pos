@@ -428,18 +428,30 @@ export function ReportsPage() {
         const prodName = item.product?.name ?? "Artículo Desconocido";
         const prodSku = item.product?.sku ?? "—";
         const qty = item.quantity;
-        // Prorratea la promo/descuento de la venta a este item (Joel 2026-06-29): el
-        // descuento vive a nivel venta (sales.discount) y NO baja sale_items.total, así
-        // que sin esto el Bruto/Utilidad por producto se inflaría con las promos. Solo
-        // se aplica en ventas COMPLETADAS con descuento real; las que tienen
-        // cancelación/devolución conservan el comportamiento crudo (la sección de
-        // cancelados resta el line_total crudo y debe netear igual). Sin descuento el
-        // ratio = 1 (no cambia nada). El costo NO se prorratea (es el mismo con/ sin promo).
+        // Neto del item para el reporte (Joel 2026-07-17 "que salga lo real"):
+        //  1. Descuentos v2/promos: si la venta trae beneficios POR LÍNEA
+        //     (sale_items.discount_amount), el neto es EXACTO por línea
+        //     (total bruto − beneficio de ESA línea) — ya no se prorratea, así
+        //     el producto con promo absorbe SU descuento y no contamina a los
+        //     demás productos del ticket.
+        //  2. Ventas legacy (descuento global sin líneas): prorrateo proporcional
+        //     como antes (Joel 2026-06-29). Sin descuento el ratio = 1.
+        //  Con cancelación/devolución se conserva el crudo (la sección de
+        //  cancelados resta line_total crudo y debe netear igual). El costo NO
+        //  se prorratea (es el mismo con/sin promo).
         const saleHasReversal = (sale.cancelled_items?.length ?? 0) > 0 || sale.status === "returned";
-        const discRatio = (!saleHasReversal && (sale.discount ?? 0) > 0 && sale.subtotal > 0)
-          ? sale.total / sale.subtotal
-          : 1;
-        const itemTotal = item.total * discRatio;
+        const saleHasLineBenefits = (sale.items ?? []).some(si => (si.discount_amount ?? 0) > 0);
+        let itemTotal: number;
+        if (saleHasReversal) {
+          itemTotal = item.total;
+        } else if (saleHasLineBenefits) {
+          itemTotal = Math.max(0, item.total - (item.discount_amount ?? 0));
+        } else {
+          const discRatio = ((sale.discount ?? 0) > 0 && sale.subtotal > 0)
+            ? sale.total / sale.subtotal
+            : 1;
+          itemTotal = item.total * discRatio;
+        }
         const unitPrice = item.price;
 
         if (!map.has(prodId)) {
