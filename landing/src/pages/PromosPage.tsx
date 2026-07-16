@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion as Motion, AnimatePresence } from "motion/react";
 import { toast } from "sonner";
-import { toPng } from "html-to-image";
+import { toBlob } from "html-to-image";
 import {
   TicketPercent, Tv, Share2, Download, MessageCircle, X, Loader2, ImageOff,
 } from "lucide-react";
@@ -164,8 +164,16 @@ function ShareBannerModal({ product, promo, onClose }: {
     if (!nodeRef.current) return null;
     setExporting(true);
     try {
-      const dataUrl = await toPng(nodeRef.current, { pixelRatio: 1, cacheBust: false });
-      const blob = await (await fetch(dataUrl)).blob();
+      // toBlob directo (canvas.toBlob) — NADA de fetch(dataUrl): el CSP de la
+      // app no permite data: en connect-src y el fetch se bloqueaba (QA Joel
+      // 2026-07-17: "descargar imagen no genera nada").
+      // skipFonts: el banner usa fuentes del sistema; sin esto html-to-image
+      // intenta fetch de los stylesheets de Google Fonts y el CSP lo bloquea.
+      const blob = await toBlob(nodeRef.current, { pixelRatio: 1, cacheBust: false, skipFonts: true });
+      if (!blob) {
+        toast.error("No se pudo generar la imagen");
+        return null;
+      }
       return new File([blob], `promo-${promo.buy_n}x${promo.pay_m}-${product.sku || product.id}.png`, { type: "image/png" });
     } catch {
       toast.error("No se pudo generar la imagen");
