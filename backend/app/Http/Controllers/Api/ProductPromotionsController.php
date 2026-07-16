@@ -68,6 +68,9 @@ class ProductPromotionsController extends Controller
         if ((int) $promotion->product_id !== (int) $product->id) {
             return $this->error('La promoción no pertenece a este producto.', 404);
         }
+        if ($resp = $this->promoMutationGateError($request, $promotion)) {
+            return $resp;
+        }
 
         $promotion->update(array_merge(
             $request->only(['name', 'buy_n', 'pay_m', 'priority']),
@@ -89,10 +92,35 @@ class ProductPromotionsController extends Controller
         if ((int) $promotion->product_id !== (int) $product->id) {
             return $this->error('La promoción no pertenece a este producto.', 404);
         }
+        if ($resp = $this->promoMutationGateError(request(), $promotion)) {
+            return $resp;
+        }
 
         $promotion->delete();
 
         return $this->success(null, 'Promoción eliminada.');
+    }
+
+    /**
+     * Un gerente solo puede EDITAR/PAUSAR/BORRAR promos de SU tienda. Las
+     * globales (store_id null) y las de otras tiendas son solo-lectura para él
+     * (se listan para que no las duplique en el mismo producto). Admin: todo.
+     */
+    private function promoMutationGateError(\Illuminate\Http\Request $request, ProductPromotion $promotion): ?JsonResponse
+    {
+        $user = $request->user();
+        $isAdmin = $user && $user->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
+        if ($isAdmin) {
+            return null;
+        }
+        if ($promotion->store_id !== null && (int) $promotion->store_id === (int) $user?->store_id) {
+            return null;
+        }
+
+        return $this->error(
+            'Solo puedes modificar promociones de tu tienda. Las globales o de otras sucursales las gestiona el admin.',
+            403
+        );
     }
 
     /**

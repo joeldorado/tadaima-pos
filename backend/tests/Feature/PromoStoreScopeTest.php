@@ -104,6 +104,42 @@ class PromoStoreScopeTest extends TestCase
         $this->checkout(200.0)->assertStatus(201)->assertJsonPath('data.total', 200);
     }
 
+    private function makeManager(Store $store): User
+    {
+        $manager = User::create([
+            'name' => "Gerente {$store->name}", 'email' => "gerente{$store->id}@test.com", 'password' => bcrypt('x'),
+            'company_id' => $store->company_id, 'store_id' => $store->id,
+        ]);
+        $roleId = \Illuminate\Support\Facades\DB::table('roles')->where('name', 'gerente')->value('id')
+            ?? \Illuminate\Support\Facades\DB::table('roles')->insertGetId(['name' => 'gerente', 'created_at' => now(), 'updated_at' => now()]);
+        \Illuminate\Support\Facades\DB::table('model_has_roles')->insert([
+            'role_id' => $roleId, 'model_type' => User::class, 'model_id' => $manager->id,
+        ]);
+
+        return $manager;
+    }
+
+    public function test_manager_cannot_mutate_other_store_or_global_promos(): void
+    {
+        $managerA = $this->makeManager($this->storeA);
+        $globalPromo = $this->makePromo(null);
+        $storeBPromo = $this->makePromo($this->storeB->id);
+
+        // Ni la global ni la de otra tienda se pueden borrar/editar.
+        $this->actingAs($managerA)
+            ->deleteJson("/api/v1/products/{$this->product->id}/promotions/{$globalPromo->id}")
+            ->assertStatus(403);
+        $this->actingAs($managerA)
+            ->deleteJson("/api/v1/products/{$this->product->id}/promotions/{$storeBPromo->id}")
+            ->assertStatus(403);
+
+        // La de SU tienda sí.
+        $ownPromo = $this->makePromo($this->storeA->id);
+        $this->actingAs($managerA)
+            ->deleteJson("/api/v1/products/{$this->product->id}/promotions/{$ownPromo->id}")
+            ->assertOk();
+    }
+
     public function test_products_embed_filters_promos_by_store(): void
     {
         $this->makePromo($this->storeB->id);

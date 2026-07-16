@@ -269,22 +269,34 @@ export function ProductPromotionsTab({ productId }: Props) {
                   </p>
                   <p className="text-[9px] font-bold mt-0.5 flex items-center gap-1" style={{ color: TLO }}>
                     <StoreIcon size={9} />
-                    {isAdmin ? storeName(promo.store_id) : (promo.store_id == null ? "Todas las tiendas" : "Tu tienda")}
+                    {isAdmin
+                      ? storeName(promo.store_id)
+                      : promo.store_id == null
+                        ? "Todas las tiendas"
+                        : promo.store_id === (user?.store_id ?? null)
+                          ? "Tu tienda"
+                          : "Otra tienda (visible para no duplicar)"}
                   </p>
                 </div>
                 <span className="rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-widest"
                   style={{ color: meta.color, border: `1px solid ${meta.color}66`, background: `${meta.color}18` }}>
                   {meta.label}
                 </span>
-                {promo.status !== "expired" && (
-                  <button onClick={() => void toggleStatus(promo)} className="rounded-lg p-1.5 hover:bg-white/10"
-                    title={promo.status === "active" ? "Pausar" : "Reanudar"}>
-                    {promo.status === "active" ? <Pause size={14} style={{ color: "#F59E0B" }} /> : <Play size={14} style={{ color: "#34d399" }} />}
-                  </button>
+                {/* Gerente solo muta promos de SU tienda; las globales o de otra
+                    tienda son solo-lectura (se ven para no duplicarlas). */}
+                {(isAdmin || promo.store_id === (user?.store_id ?? null)) && (
+                  <>
+                    {promo.status !== "expired" && (
+                      <button onClick={() => void toggleStatus(promo)} className="rounded-lg p-1.5 hover:bg-white/10"
+                        title={promo.status === "active" ? "Pausar" : "Reanudar"}>
+                        {promo.status === "active" ? <Pause size={14} style={{ color: "#F59E0B" }} /> : <Play size={14} style={{ color: "#34d399" }} />}
+                      </button>
+                    )}
+                    <button onClick={() => void remove(promo)} className="rounded-lg p-1.5 hover:bg-white/10" title="Eliminar">
+                      <Trash2 size={14} style={{ color: "var(--td-red)" }} />
+                    </button>
+                  </>
                 )}
-                <button onClick={() => void remove(promo)} className="rounded-lg p-1.5 hover:bg-white/10" title="Eliminar">
-                  <Trash2 size={14} style={{ color: "var(--td-red)" }} />
-                </button>
               </div>
             );
           })}
