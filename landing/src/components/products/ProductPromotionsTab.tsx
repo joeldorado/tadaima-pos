@@ -186,6 +186,9 @@ export function ProductPromotionsTab({ productId }: Props) {
             <div>
               <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>Prioridad (desempate)</label>
               <input type="number" min={0} step={1} value={priority} onChange={e => setPriority(e.target.value)} style={{ ...inputStyle, marginTop: 4 }} />
+              <p className="text-[9px] font-bold mt-1" style={{ color: TLO }}>
+                Solo importa si el producto tiene VARIAS promos a la vez: en caja gana la que más ahorra y, en empate, la de prioridad más alta. Con una sola promo déjala en 0.
+              </p>
             </div>
           </div>
           <p className="text-[10px] font-bold" style={{ color: TLO }}>

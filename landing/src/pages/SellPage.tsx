@@ -5061,6 +5061,19 @@ export function SellPage() {
                                   Tomo {p.volume_number}
                                 </span>
                               )}
+                              {/* Promo NxM vigente — el cajero la ve ANTES de agregar (QA Joel 2026-07-16) */}
+                              {(p.active_promotions?.length ?? 0) > 0 && (() => {
+                                const promo = [...(p.active_promotions ?? [])].sort((a, b) => b.priority - a.priority || a.id - b.id)[0]!;
+                                return (
+                                  <span title={promo.name} style={{
+                                    marginLeft: 8, padding: "1px 7px", borderRadius: 6, verticalAlign: "middle",
+                                    fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em",
+                                    color: "#34d399", background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.35)",
+                                  }}>
+                                    Promo {promo.buy_n}x{promo.pay_m}
+                                  </span>
+                                );
+                              })()}
                             </p>
                             <p className="text-[11px] uppercase tracking-[0.15em] mt-0.5" style={{ color: "var(--td-text-ghost)" }}>{p.sku}</p>
 

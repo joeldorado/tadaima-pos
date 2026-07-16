@@ -109,6 +109,9 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
         Route::post('images',                    [ProductController::class, 'addImage']);
         Route::delete('images/{image}',          [ProductController::class, 'removeImage']);
         Route::put('images/reorder',             [ProductController::class, 'reorderImages']);
+        // Primera imagen en base64 (banner de promo: canvas necesita bytes
+        // same-origin — la URL pública de GCS taintéa el canvas sin CORS).
+        Route::get('image-base64',               [ProductController::class, 'imageBase64']);
         // Store prices
         Route::get('store-prices',               [ProductController::class, 'storePrices']);
         Route::put('store-prices/{store}',       [ProductController::class, 'updateStorePrices']);

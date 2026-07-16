@@ -21,6 +21,7 @@ import { AdminPage } from '@/pages/AdminPage'
 import { LayawaysPage } from '@/pages/LayawaysPage'
 import { OnlineCatalogPage } from '@/pages/OnlineCatalogPage'
 import { SuppliesPage } from '@/pages/SuppliesPage'
+import { PromosPage } from '@/pages/PromosPage'
 
 function IndexPage() {
   const { user } = useAuth()
@@ -67,6 +68,7 @@ export const router = createBrowserRouter([
       { path: 'buscar-tiendas', element: <ProtectedRoute requiresPage="stock_search"><StockSearchPage /></ProtectedRoute> },
       { path: 'transfers', element: <ProtectedRoute requiresPage="transfers"><TransfersPage /></ProtectedRoute> },
       { path: 'insumos', element: <ProtectedRoute requiresPage="supplies"><SuppliesPage /></ProtectedRoute> },
+      { path: 'promos',  element: <ProtectedRoute requiresPage="promos"><PromosPage /></ProtectedRoute> },
       { path: 'clients',   element: <ProtectedRoute requiresPage="clients"><ClientsPage /></ProtectedRoute> },
       { path: 'pre-sales', element: <ProtectedRoute requiresPage="presales"><PreSalesPage /></ProtectedRoute> },
       { path: 'reports',   element: <ProtectedRoute requiresPage="reports"><ReportsPage /></ProtectedRoute> },

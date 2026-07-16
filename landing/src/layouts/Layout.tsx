@@ -6,7 +6,7 @@ import {
   ShoppingCart, Package, LogOut, Home, Store,
   Users, Receipt, UserCircle2, ClipboardList, ArrowLeftRight, ShoppingBasket, BarChart2,
   Settings, Sun, Moon, PackageSearch, Wallet, KeyRound,
-  ChevronDown, ChevronRight, PanelLeftClose, TriangleAlert,
+  ChevronDown, ChevronRight, PanelLeftClose, TriangleAlert, TicketPercent,
 } from "lucide-react";
 import { NotificationBadge } from "@/components/notifications/NotificationBadge";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -68,18 +68,20 @@ const NAV_TREE: NavEntry[] = [
     ],
   },
   { to: "/insumos", label: "Insumos", icon: ShoppingBasket, page: "supplies" },
+  { to: "/promos",  label: "Promos",  icon: TicketPercent,  page: "promos"   },
 ];
 
 const NAV_BY_ROLE: Record<string, PageKey[]> = {
-  admin:   ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers", "supplies", "reports"],
+  admin:   ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers", "supplies", "promos", "reports"],
   // Gerente: sin Tiendas. Solo gestiona la suya; el switcher del header basta
   // para alternar entre tiendas asignadas. La página /stores es CRUD admin.
   // Reportes habilitado para gerente (verificará permisos/scope en backend)
   // "Cajas" (cortes de caja) visible a los 3 roles — backend acota por rol.
-  gerente: ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers", "supplies", "reports"],
+  gerente: ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers", "supplies", "promos", "reports"],
   // Cajero: sin Tiendas, con Preventas para ver catálogos disponibles +
   // difusión + vencidos de su sucursal. "Buscar en Tiendas" para localizar stock.
-  cajero:  ["inicio", "products", "stock_search", "sales", "cash_cuts", "presales", "supplies"],
+  // Promos: consulta + Modo TV (crear promos sigue en el modal de Producto).
+  cajero:  ["inicio", "products", "stock_search", "sales", "cash_cuts", "presales", "supplies", "promos"],
   unknown: ["inicio"],
 };
 

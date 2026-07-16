@@ -62,23 +62,26 @@ export type PageKey =
   | "presales"
   | "transfers"
   | "supplies"
+  | "promos"      // Promos NxM: lista + banner compartible + Modo TV
   | "reports"
   | "settings"
   | "admin";      // AdminPage (sucursales, usuarios, permisos…)
 
 const PAGE_ACCESS: Record<Role, PageKey[]> = {
-  admin:   ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers", "supplies", "reports", "settings", "admin"],
+  admin:   ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers", "supplies", "promos", "reports", "settings", "admin"],
   // Gerente: NO ve "Tiendas" — gestiona solo la suya, el switcher del header
   // basta para alternar entre las que tiene asignadas. La página /stores es
   // CRUD de tiendas (solo admin). Reportes ahora habilitado para gerente (restringido en backend).
   // SÍ ve "Buscar en Tiendas" (existencias por sucursal, sin datos financieros).
   // "Cajas" (cortes de caja) visible a los 3 roles — el backend acota:
   // cajero → solo sus cortes, gerente → su tienda, admin → todo.
-  gerente: ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers", "supplies", "reports"],
+  gerente: ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers", "supplies", "promos", "reports"],
   // Cajero: NO ve Tiendas (lo confunde — su tienda es fija). En su lugar
   // ve Preventas con un panel adicional de catálogos disponibles + vencidos
   // de su sucursal. SÍ ve "Buscar en Tiendas" para localizar stock.
-  cajero:  ["inicio", "products", "stock_search", "sales", "cash_cuts", "presales", "supplies"],
+  // Cajero SÍ ve Promos (consulta + Modo TV en la pantalla de la tienda);
+  // crear/editar promos sigue viviendo en el modal de Producto (admin/gerente).
+  cajero:  ["inicio", "products", "stock_search", "sales", "cash_cuts", "presales", "supplies", "promos"],
   unknown: ["inicio"],
 };
 

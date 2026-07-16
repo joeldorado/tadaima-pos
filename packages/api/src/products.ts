@@ -55,6 +55,8 @@ export interface ProductLight {
   product_type?: 'product' | 'manga'
   /** Número de tomo (solo mangas) — distingue tomos de la misma serie en Caja. */
   volume_number?: number | null
+  /** Promos NxM vigentes (Descuentos v2 Fase 3) — el backend ya las embebe. */
+  active_promotions?: { id: number; name: string; buy_n: number; pay_m: number; priority: number }[]
 }
 
 /**
@@ -79,6 +81,16 @@ export async function getProductsLight(
     }
   }
   return raw
+}
+
+/**
+ * Primera imagen del producto como data-URL base64. Para el banner de promo:
+ * el export PNG (canvas) necesita bytes same-origin — la URL pública de GCS
+ * sin CORS taintéa el canvas. 404 si el producto no tiene imagen.
+ */
+export async function getProductImageBase64(productId: number): Promise<string> {
+  const response = await apiClient.get<{ data_url: string }>(`/products/${productId}/image-base64`)
+  return response.data.data_url
 }
 
 /**

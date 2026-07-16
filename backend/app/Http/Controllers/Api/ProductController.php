@@ -446,6 +446,41 @@ class ProductController extends Controller
     }
 
     /**
+     * GET /products/{product}/image-base64
+     * Primera imagen del producto como data-URL base64. Para el banner de promo:
+     * el export a PNG (canvas) necesita bytes same-origin — la URL pública de
+     * GCS sin CORS taintéa el canvas. Sin SSRF: el path sale de la BD.
+     */
+    public function imageBase64(Product $product): JsonResponse
+    {
+        $image = $product->images()->orderBy('sort_order')->first();
+        if (! $image || ! $image->image_path || $image->image_path === '0') {
+            return $this->error('El producto no tiene imagen.', 404);
+        }
+
+        try {
+            $bytes = Storage::get($image->image_path);
+        } catch (\Throwable) {
+            $bytes = null;
+        }
+        if ($bytes === null) {
+            return $this->error('No se pudo leer la imagen.', 404);
+        }
+
+        $ext = strtolower(pathinfo($image->image_path, PATHINFO_EXTENSION));
+        $mime = match ($ext) {
+            'png'         => 'image/png',
+            'webp'        => 'image/webp',
+            'gif'         => 'image/gif',
+            default       => 'image/jpeg',
+        };
+
+        return $this->success([
+            'data_url' => "data:{$mime};base64," . base64_encode($bytes),
+        ]);
+    }
+
+    /**
      * PUT /products/{product}/images/reorder
      * Reordena imágenes. Body: { "order": [{ id: 1, sort_order: 0 }, ...] }
      */
