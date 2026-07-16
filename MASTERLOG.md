@@ -655,6 +655,16 @@ docker compose up --build -d
 
 > Sesiones anteriores a 2026-05-14 (>20 días) archivadas en git history para mantener el log ligero. Decisiones load-bearing preservadas en ADRs (§7) y secciones de arquitectura.
 
+### Sesión 2026-07-18 — Permiso can_manage_promos + anti-duplicados NxM + Insumos hoy/scroll — DEPLOYADO rev tadaima-00129-vp9
+
+QA de Joel (commits `be94403` + `09cbfe6`, bundle `index-CCcYz8zb.js` verificado: "Gestionar Promociones", "promos solo lectura", "Compras de hoy"). Backend 273/273 (+6 tests), vitest 75/75, QA navegador local.
+
+**(1) Permiso por usuario "Gestionar Promociones" (`users.can_manage_promos`, migración `2026_07_19_000001`):** default **TRUE** (modelo de REVOCACIÓN, al revés de can_view_cost/can_edit_catalog): gerentes siguen creando promos como siempre; el admin lo QUITA por usuario en Admin→Permisos (nueva SectionBox con toggle). Gate en capas: rol admin/gerente (igual) + `promoManageError()` (Controller base, espejo de catalogEditError) en store/update/destroy de promos + scope de tienda intacto; admin siempre. Sin permiso el tab Promos queda solo-lectura con nota. OJO patrón: helper `canManagePromos()` usa `!== false` (columna NOT NULL default 1 — null = atributo no cargado, se trata como default). `ProductPromotionPermissionTest` 5/5.
+
+**(2) Promos — Inicia sin pasado + anti-duplicados por rango:** el calendario "Inicia" ya no acepta fechas anteriores a hoy (`minValue`). `duplicatePromoError`: otro MISMO NxM en el producto solo si la vigencia NO se encima con una activa (2x1 julio + 2x1 diciembre OK; encimada → 422 nombrando a la existente). Tiendas distintas no chocan; global choca con todas; crear pausada se permite (al reactivar se re-valida). + El tope de 2 activas ahora es POR ÁMBITO de tienda (antes contaba todas las sucursales juntas y Norte quedaba bloqueada por las promos de Centro).
+
+**(3) Insumos:** Reporte abre con rango HOY→HOY (antes 30 días); "Compras recientes"→"Compras de hoy" (solo día-negocio; histórico vía rango del Reporte); listas Por categoría/Top insumos con scroll interno (max 56vh) para que no crezcan infinito.
+
 ### Sesión 2026-07-18 — UX Promos/filtros + promos visibles en catálogo de Caja + tope 2 activas — DEPLOYADO rev tadaima-00128-t66
 
 QA de Joel (3 cierres, commits `57b7593` + `c436730`, bundle `index-DhNlvHAL.js` verificado con markers "Ver todos"/"aquí no hay nada más que guardar"/"Productos con Promo"). Suite backend 267/267 (+1 test), vitest 75/75, QA en navegador local.
