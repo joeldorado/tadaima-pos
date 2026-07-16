@@ -655,6 +655,16 @@ docker compose up --build -d
 
 > Sesiones anteriores a 2026-05-14 (>20 días) archivadas en git history para mantener el log ligero. Decisiones load-bearing preservadas en ADRs (§7) y secciones de arquitectura.
 
+### Sesión 2026-07-17 — STACKING promo+descuento (CAMBIO DE REGLA) + visibilidad total de beneficios — DEPLOYADO revs tadaima-00124/00125/00126
+
+QA de Joel, 3 deploys:
+
+**rev 00124-xwg — fix(promos) banner no generaba imagen:** el export hacía `fetch(dataUrl)` y el CSP no permite `data:` en connect-src → bloqueado silencioso. Ahora `toBlob()` de html-to-image directo + `skipFonts` (evita fetch de Google Fonts que el CSP también bloquearía).
+
+**rev 00125-fwd — feat STACKING (CAMBIO DE REGLA DE NEGOCIO, Joel 2026-07-17; antes no-stacking cerrado 2026-07-14):** la promo NxM aplica PRIMERO y el descuento manual se calcula SOBRE el resultado (percent sobre neto-promo; fixed clampeado). Caso QA: 2×$2,900 con 2x1 −$100 → **$2,800** (antes $5,700: el manual reemplazaba la promo). `saleCalc.ts` + `SaleCalculator.php` en espejo; `CalcLineResult` expone `promoPart`/`manualPart`; **`sale_items.discount_amount` = beneficio TOTAL (promo+manual)** — rollup `sales.discount` intacto; `benefit_type='discount'` con manual pero `promo_*` SIEMPRE persistidos si la promo aplicó (así el historial muestra ambos). Caja: badges promo (verde) y desc (rojo) CONVIVEN; `LineDiscountModal` preview usa base neto-promo. + Productos: chip filtro "Promos" + badge "2x1 · hasta {fecha}" (embed trae `ends_at`). Tests: saleCalc 75/75, `PromotionCheckoutTest` reescrito a stacking, suite 260/260.
+
+**rev 00126-tqj — feat visibilidad de beneficios en TODO el detalle + reportes exactos:** (1) SalesPage (Ventas/Historial) detalle expandido: badges por línea + neto real con bruto tachado (antes solo bruto — QA "la promo no se ve"); (2) ticket reimpresión con sub-líneas SEPARADAS promo/desc (helper `lineBenefitParts`: parte promo = `promo_free_qty × price`, manual = resto); (3) SellPage Historial del Día: chips separados; (4) **ReportsPage: neto por producto EXACTO** — con beneficios por línea usa `total − discount_amount` de ESA línea (el producto con promo absorbe SU descuento; ya no prorratea al resto del ticket); legacy sin líneas conserva prorrateo. Exports Excel/PDF de Ruben heredan el número (leen groupedProducts). (5) **CLAUDE.md raíz: sección "Descuentos y Promos — modelo de datos para reportes"** para Ruben (columnas, stacking, separar partes, rollups, legacy, store_id).
+
 ### Sesión 2026-07-17 — Promos: visibilidad cruzada sin duplicar — DEPLOYADO rev tadaima-00123-dgt
 
 Confirmación de Joel al diseño (local o todas las tiendas, visibles entre tiendas para no duplicar en el mismo producto). 2 cierres (commit del feat, bundle `index-DyHfjvT8.js`): (1) chip del tab para gerente decía "Tu tienda" en promos AJENAS → ahora "Otra tienda (visible para no duplicar)"; (2) gerente podía pausar/borrar promos globales o de otras tiendas → `promoMutationGateError` 403 backend + botones ocultos en UI (solo muta las de SU tienda; globales/ajenas = solo lectura). `PromoStoreScopeTest` 5/5, suite 259/259.
