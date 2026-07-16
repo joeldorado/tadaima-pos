@@ -1188,7 +1188,7 @@ function ReporteDelDia({
 
   const handlePrint = () => printDailyReport(report, fromDate, toDate, storeName, isAdmin);
   const handlePdf   = () => exportDailyReportPdf(report, fromDate, toDate, storeName, isAdmin);
-  const handleExcel = () => { void exportDailyReportXlsx(report, fromDate, toDate, storeName, isAdmin); };
+  const handleExcel = () => { void exportDailyReportXlsx(report, fromDate, toDate, storeName, isAdmin, ivaPct); };
 
   return (
     <div id="reporte-dia-print" className="space-y-4">
@@ -1892,7 +1892,7 @@ function exportDailyReportPdf(r: DailyReport, fromDate: string, toDate: string, 
 // Export a Excel (.xlsx) — las 5 tablas del corte del gerente, una debajo de
 // otra en una sola hoja, con columnas exactas y fila Total por tabla. Costo y
 // Utilidad solo si isAdmin. exceljs se carga con import dinámico (bundle).
-async function exportDailyReportXlsx(r: DailyReport, fromDate: string, toDate: string, storeName: string, isAdmin: boolean): Promise<void> {
+async function exportDailyReportXlsx(r: DailyReport, fromDate: string, toDate: string, storeName: string, isAdmin: boolean, ivaPct: number): Promise<void> {
   const mod = await import("exceljs");
   const ExcelJS = ((mod as unknown as { default?: typeof mod }).default ?? mod);
   const MONEY = '"$"#,##0.00';
@@ -1902,7 +1902,7 @@ async function exportDailyReportXlsx(r: DailyReport, fromDate: string, toDate: s
 
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Corte del Día");
-  ws.columns = [{ width: 40 }, { width: 14 }, { width: 16 }, { width: 16 }, { width: 16 }];
+  ws.columns = [{ width: 40 }, { width: 14 }, { width: 16 }, { width: 16 }, { width: 16 }, { width: 16 }, { width: 16 }];
 
   const t = ws.addRow([`Reporte del Día · ${storeName}`]);
   t.font = { bold: true, size: 14 };
@@ -1918,32 +1918,73 @@ async function exportDailyReportXlsx(r: DailyReport, fromDate: string, toDate: s
     row.font = { bold: true, size: 12, color: { argb: "FFCC2200" } };
   };
 
-  // Tabla por producto (Fecha | Producto | Cantidad | Venta [| Costo | Utilidad]).
-  const prodTable = (title: string, rows: CorteProdRow[], total: CorteTotal): void => {
+  // Tabla por producto (Ajustada según tipo efectivo/tarjeta u otros)
+  const prodTable = (title: string, rows: CorteProdRow[], total: CorteTotal, isCard: boolean = false): void => {
     sectionTitle(title);
-    const headCells = isAdmin
-      ? ["Fecha", "Producto", "Cantidad", "Venta", "Costo", "Utilidad"]
-      : ["Fecha", "Producto", "Cantidad", "Venta"];
+    
+    let headCells: string[] = [];
+    if (isCard) {
+      headCells = isAdmin 
+        ? ["Producto", "Costo", "Venta", "Comisión Terminal", `IVA ${ivaPct}%`, "Venta Neta", "Utilidad"]
+        : ["Producto", "Venta", "Comisión Terminal", `IVA ${ivaPct}%`, "Venta Neta"];
+    } else {
+      headCells = isAdmin
+        ? ["Nombre Producto", "Costo", "Venta", "Utilidad"]
+        : ["Nombre Producto", "Venta"];
+    }
     const headRow = ws.addRow(headCells);
     headRow.font = { bold: true };
+
     rows.forEach(row => {
-      const util = row.venta - row.costo;
-      const xr = isAdmin
-        ? ws.addRow([fmtDate(row.fecha), row.name, row.cantidad, row.venta, row.tieneCosto ? row.costo : 0, row.tieneCosto ? util : 0])
-        : ws.addRow([fmtDate(row.fecha), row.name, row.cantidad, row.venta]);
-      if (isAdmin) money(xr, 4, 5, 6); else money(xr, 4);
+      let xr;
+      if (isCard) {
+        const comision = row.comision || 0;
+        const iva = comision * (ivaPct / 100);
+        const ventaNeta = row.venta - comision - iva;
+        const utilidad = ventaNeta - (row.tieneCosto ? row.costo : 0);
+        
+        xr = isAdmin
+          ? ws.addRow([row.name, row.tieneCosto ? row.costo : 0, row.venta, comision, iva, ventaNeta, row.tieneCosto ? utilidad : 0])
+          : ws.addRow([row.name, row.venta, comision, iva, ventaNeta]);
+          
+        if (isAdmin) money(xr, 2, 3, 4, 5, 6, 7); else money(xr, 2, 3, 4, 5);
+      } else {
+        const util = row.venta - row.costo;
+        xr = isAdmin
+          ? ws.addRow([row.name, row.tieneCosto ? row.costo : 0, row.venta, row.tieneCosto ? util : 0])
+          : ws.addRow([row.name, row.venta]);
+          
+        if (isAdmin) money(xr, 2, 3, 4); else money(xr, 2);
+      }
     });
-    const utilidad = total.venta - total.costo;
-    const totalRow = isAdmin
-      ? ws.addRow(["", "Total", total.cantidad, total.venta, total.costo, utilidad])
-      : ws.addRow(["", "Total", total.cantidad, total.venta]);
-    totalRow.font = { bold: true };
-    if (isAdmin) money(totalRow, 4, 5, 6); else money(totalRow, 4);
+
+    let totalRow;
+    if (isCard) {
+      const totalComision = total.comision || 0;
+      const totalIva = totalComision * (ivaPct / 100);
+      const totalVentaNeta = total.venta - totalComision - totalIva;
+      const totalUtilidad = totalVentaNeta - total.costo;
+      
+      totalRow = isAdmin
+        ? ws.addRow(["Total", total.costo, total.venta, totalComision, totalIva, totalVentaNeta, totalUtilidad])
+        : ws.addRow(["Total", total.venta, totalComision, totalIva, totalVentaNeta]);
+        
+      totalRow.font = { bold: true };
+      if (isAdmin) money(totalRow, 2, 3, 4, 5, 6, 7); else money(totalRow, 2, 3, 4, 5);
+    } else {
+      const utilidad = total.venta - total.costo;
+      totalRow = isAdmin
+        ? ws.addRow(["Total", total.costo, total.venta, utilidad])
+        : ws.addRow(["Total", total.venta]);
+        
+      totalRow.font = { bold: true };
+      if (isAdmin) money(totalRow, 2, 3, 4); else money(totalRow, 2);
+    }
     ws.addRow([]);
   };
 
-  prodTable("Ventas normales", c.ventasNormales.rows, c.ventasNormales.total);
-  prodTable("Ventas con tarjeta", c.ventasTarjeta.rows, c.ventasTarjeta.total);
+  prodTable("Ventas normales", c.ventasNormales.rows, c.ventasNormales.total, false);
+  prodTable("Ventas con tarjeta", c.ventasTarjeta.rows, c.ventasTarjeta.total, true);
 
   // Tabla de abonos (Fecha | Producto | Cantidad | Venta | Abono | Resta
   // [| Costo | Utilidad]) — fórmulas del Excel: Resta = Venta − Abono,
@@ -1968,8 +2009,8 @@ async function exportDailyReportXlsx(r: DailyReport, fromDate: string, toDate: s
   if (isAdmin) money(abonoTotal, 4, 5, 6, 7, 8); else money(abonoTotal, 4, 5, 6);
   ws.addRow([]);
 
-  prodTable("Preventa liquidación", c.liquidacion.rows, c.liquidacion.total);
-  prodTable("Preventa vencidas", c.vencidas.rows, c.vencidas.total);
+  prodTable("Preventa liquidación", c.liquidacion.rows, c.liquidacion.total, false);
+  prodTable("Preventa vencidas", c.vencidas.rows, c.vencidas.total, false);
 
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf as BlobPart], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
