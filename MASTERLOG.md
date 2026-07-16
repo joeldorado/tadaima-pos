@@ -655,6 +655,18 @@ docker compose up --build -d
 
 > Sesiones anteriores a 2026-05-14 (>20 días) archivadas en git history para mantener el log ligero. Decisiones load-bearing preservadas en ADRs (§7) y secciones de arquitectura.
 
+### Sesión 2026-07-18 — UX Promos/filtros + promos visibles en catálogo de Caja + tope 2 activas — DEPLOYADO rev tadaima-00128-t66
+
+QA de Joel (3 cierres, commits `57b7593` + `c436730`, bundle `index-DhNlvHAL.js` verificado con markers "Ver todos"/"aquí no hay nada más que guardar"/"Productos con Promo"). Suite backend 267/267 (+1 test), vitest 75/75, QA en navegador local.
+
+**(1) Modal Editar Producto — doble "Guardar" confundía:** en el tab Promos (edición) el footer ya NO muestra Eliminar/Cancelar/Guardar Cambios (guardaban el PRODUCTO); ahora solo "Cerrar" + hint "Las promociones se guardan al instante con su propio botón". En alta y en los otros tabs el footer sigue normal. (ProductsPage `ProductModal`, condicionado por `activeTab === "promociones" && product`.)
+
+**(2) Filtros de Productos — chip "✕ Ver todos":** aparece solo con filtro activo (Por agotarse/Agotados/Promos/Más vendidos) y limpia los 4. + "Más vendidos" ahora también apaga Promos (quedaba prendido por debajo) y el header dice "Productos con Promo" con ese filtro. ("Productos sin Costo" NO es filtro de grid — abre su modal.)
+
+**(3) Promos visibles en el catálogo de Caja (`ProductCatalogModal`):** pill verde `🎟 {n}x{m} · hasta {fecha}` bajo el nombre en ambas variantes de card (normal y preventa) — máx. 2 pills (orden: prioridad desc, id asc — mismo desempate que el motor) + chip "+N"; tooltip con nombre/vigencia. Los productos ya traían `active_promotions` filtrado por tienda en el payload.
+
+**(4) Tope de 2 promos ACTIVAS por producto (pedido "sería mejor 2 solo activas"):** `ProductPromotionsController::activePromoCapError` — crear una 3ra activa o REACTIVAR una pausada con 2 vivas → 422 "pausa o elimina una antes de activar otra". Crear pausada sí; editar una ya activa no se bloquea (tolerante a excedentes legacy). Test `test_max_two_active_promos_per_product`.
+
 ### Sesión 2026-07-18 — Insumos con ORIGEN DEL DINERO + calendarios estandarizados — DEPLOYADO rev tadaima-00127-xg4
 
 Pedido de Joel (QA del equipo): registrar de dónde salió el dinero de cada compra de insumo, y usar el calendario de rango "bonito" en todos lados. Bundle `index-scLTK2ey.js` verificado vivo (markers "Por origen del dinero", "Dinero propio", "Sin vencimiento"). Backend 266/266 (6 tests nuevos), vitest 75/75. QA manual en navegador local (sqlite): compra propio sin caja ✓, reporte by_source ✓, pickers abren/limpian ✓.
