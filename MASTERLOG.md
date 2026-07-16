@@ -655,6 +655,19 @@ docker compose up --build -d
 
 > Sesiones anteriores a 2026-05-14 (>20 días) archivadas en git history para mantener el log ligero. Decisiones load-bearing preservadas en ADRs (§7) y secciones de arquitectura.
 
+### Sesión 2026-07-16 — Mitigación de cajas abiertas por días (logout guard + bloqueo venta stale) — DEPLOYADO rev tadaima-00119-jrp
+
+Pedido por Joel: cajas quedan abiertas por días en pruebas. Decisiones: logout BLOQUEADO hasta corte · venta BLOQUEADA sobre caja de día anterior · auto-cierre por cron DIFERIDO. Commit `fdc9e2f`.
+
+1. **CloseCashModal compartido** (`landing/src/components/cash/CloseCashModal.tsx`): extraído del inline de SellPage; conteo + POST /cash/close + limpieza sincrónica de cache `['cash','activeSession']`; entrega el corte vía `onClosed` (el consumidor decide resumen/print).
+2. **Logout guard** (`Layout.tsx`): logout con caja abierta → corte OBLIGATORIO en modal (sin opción de saltar), luego resumen imprimible (CashCloseSummaryModal) → logout. Refetch de la sesión antes de decidir. + **pill ámbar global** en sidebar (`stale-cash-pill`) cuando la caja es de día anterior, visible en todas las páginas, click → /caja. Resuelve pendiente `task_bloquear_logout_caja_abierta`. LIMITACIÓN: el logout involuntario por 401/token caduco no se puede gatear (AuthContext limpia directo) — lo cubre el punto 3.
+3. **Guard backend** (`SalesController::cashSessionGuardError`): POST /sales → 422 `CASH_SESSION_CLOSED` (sesión cerrada) o `CASH_SESSION_STALE` (**día-negocio Tijuana anterior Y 12h+ desde apertura** — doble regla deja vivir turnos que cruzan medianoche: abrió 8pm cobra 1am = 5h → pasa). Espejo frontend en `handleCheckout` (`isBlockedStaleSession`, corta antes del roundtrip → abre corte) + `handleCheckoutError` maneja los 422 (cubre PWA vieja).
+4. **Tests**: `CashSessionGuardTest` 4/4 (fresh OK / closed 422 / stale 30h 422 / medianoche 5h OK con `Carbon::setTestNow`). Suite backend 248/248, vitest 73/73.
+
+**Fase futura (diferida)**: auto-cierre nocturno 5am Tijuana. OJO: Cloud Run NO corre scheduler (supervisord = solo php-fpm+nginx; `drafts:cleanup` hourly de routes/console.php NUNCA dispara en prod) → requiere Cloud Scheduler → endpoint/job. Diseño: force-close con closing_cash=apertura + SystemLog 'auto-cerrada' para revisión de gerente.
+
+Bundle vivo `index-DfAHtoc2.js` (markers "Cierra tu caja para salir", "stale-cash-pill", "haz el corte antes de vender").
+
 ### Sesión 2026-07-15/16 — Anticipo real en liquidación + merge develop (Reportes Ruben) + costo real preventas — DEPLOYADO revs tadaima-00117-wwn y tadaima-00118-lcv
 
 Tres frentes en `feat/productos-sin-costo-y-ticket-bold` (PR #2 = PR de integración):
