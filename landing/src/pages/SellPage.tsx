@@ -2474,13 +2474,24 @@ export function SellPage() {
     // Distribute balance proportionally across PENDING items; delivered show at $0
     const pendingTotal = itemsWithStock.reduce((s, i) => s + (i.product.price_a || 0) * i.quantity, 0);
     const ratio = pendingTotal > 0 ? balance / pendingTotal : 1;
-    const balancedItems: CartItem[] = preSaleItems.map(i => ({
-      ...i,
-      product: {
-        ...i.product,
-        price_a: i.preSaleItemDelivered ? 0 : (i.product.price_a || 0) * ratio,
-      },
-    }));
+    const round2 = (n: number) => Math.round(n * 100) / 100;
+    const balancedItems: CartItem[] = preSaleItems.map(i => {
+      const origLineTotal = (i.product.price_a || 0) * i.quantity;
+      const delivered = i.preSaleItemDelivered;
+      const saldoShare = delivered ? 0 : origLineTotal * ratio;
+      // Anticipo ya pagado (share por línea): total original − saldo restante.
+      // Invariante: depositAmount + lineTotal(escalado) = total original.
+      // Es SOLO display; el cobro de liquidación usa activeMesa.depositAmount.
+      const paidShare = round2(Math.max(0, origLineTotal - saldoShare));
+      return {
+        ...i,
+        depositAmount: paidShare,
+        product: {
+          ...i.product,
+          price_a: delivered ? 0 : (i.product.price_a || 0) * ratio,
+        },
+      };
+    });
 
     // Política: liquidación de preventa no se cobra con Tarjeta. Si la mesa
     // estaba en Tarjeta, forzar Efectivo + avisar.
@@ -5401,9 +5412,15 @@ export function SellPage() {
 
                       {/* ── Anticipo individual (solo items de preventa: catálogo o ya cargados de orden) ── */}
                       {(item.sellingCatalogId != null || item.isFromPreSale) && (() => {
-                        const itemTotal = lineTotal;
                         const dep = item.depositAmount ?? 0;
-                        const full = dep >= itemTotal && itemTotal > 0;
+                        // Preventa cargada (liquidación): el precio de línea ya viene
+                        // escalado al SALDO; el total original = anticipo + saldo.
+                        const itemTotal = item.isFromPreSale
+                          ? Math.round((dep + lineTotal) * 100) / 100
+                          : lineTotal;
+                        const full = item.isFromPreSale
+                          ? lineTotal <= 0.005
+                          : dep >= itemTotal && itemTotal > 0;
                         return (
                           <div className="flex items-center gap-2 mt-2.5 flex-wrap">
                             <span className="text-[9px] font-black uppercase tracking-widest" style={{ color: TLO }}>
