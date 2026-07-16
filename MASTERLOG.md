@@ -655,6 +655,17 @@ docker compose up --build -d
 
 > Sesiones anteriores a 2026-05-14 (>20 días) archivadas en git history para mantener el log ligero. Decisiones load-bearing preservadas en ADRs (§7) y secciones de arquitectura.
 
+### Sesión 2026-07-16 — Promos: página + banner WhatsApp + Modo TV + badge en Caja — DEPLOYADO rev tadaima-00121-tfx
+
+Pedido Joel (dudas de prioridad/visibilidad + idea banner/TV). Commit `a7b903f`. Bundle `index-C-otmNye.js` (markers "Modo TV", "share-banner-modal", "Prioridad (desempate)", "image-base64").
+
+1. **Página /promos** (admin/gerente/cajero; PageKey `promos` en permisos.ts + NAV_BY_ROLE + hoja en NAV_TREE): lista promos NxM vigentes leyendo `active_promotions` embebido de products light (NO hay endpoint global de promos; se agregó el campo a `ProductLight` en packages/api). Refetch 60s.
+2. **Banner compartible** (`ShareBannerModal` en PromosPage): nodo 1080×1350 branding (logo data-URL, gradiente rojo, foto, NxM gigante, precio "llévate N paga M", vigencia de `getProductPromotions`) → PNG con **html-to-image** (dep nueva). Compartir: `navigator.share({files})` (móvil → share sheet → WhatsApp → lista contactos SIN número), `wa.me/?text=` (texto, desktop) y descarga. **Backend nuevo**: `GET /products/{id}/image-base64` (primera imagen como data-URL; la URL pública de GCS sin CORS taintéa el canvas — por eso base64 same-origin). `ProductImageBase64Test` 2/2.
+3. **Modo TV** (`TvMode`): carrusel fullscreen (requestFullscreen) auto-rotativo 8s con motion; foto con glow + NxM gigante gradiente + precio; dots de progreso; sale con Esc/doble-click; slide "Bienvenido a Tadaima" sin promos; se actualiza solo con el refetch.
+4. **Caja**: badge verde "Promo NxM" en el renglón de resultado del producto (antes el cajero solo veía la promo al aplicar en carrito). **ProductPromotionsTab**: help-text bajo "Prioridad (desempate)" — solo importa con VARIAS promos (gana la que más ahorra; empate → prioridad mayor; con una sola, dejar en 0).
+
+Respuestas documentadas: prioridad = desempate puro (SaleCalculator:165-172); promos GLOBALES por producto (sin store_id). Backend 254/254 · vitest 73/73.
+
 ### Sesión 2026-07-16 — QA prod rev 00119: 4 fixes UX (menú, catálogos preventa, insumos, caja angosta) — DEPLOYADO rev tadaima-00120-jnf
 
 QA de Joel en prod. Commit `a9f0e23`. Bundle `index-BcIkSdhJ.js` (markers "Nuevo · Sin asignar", "quick-assign-modal", "floating-menu-btn", "y usarlo").
