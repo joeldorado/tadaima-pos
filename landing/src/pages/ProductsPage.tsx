@@ -1138,6 +1138,23 @@ function ProductModal({
           })()}
         </div>
 
+        {activeTab === "promociones" && product ? (
+          /* Tab Promos en EDICIÓN: las promos se guardan al instante con su
+             propio botón ("Crear promo" / pausar / eliminar) — mostrar aquí
+             "Guardar Cambios" confundía (guardaba el PRODUCTO, no la promo). */
+          <div className="p-6 flex items-center justify-between gap-4" style={{ borderTop: PRODUCT_THEME.borderPanel }}>
+            <span className="text-xs font-bold text-gray-500">
+              Las promociones se guardan al instante con su propio botón — aquí no hay nada más que guardar.
+            </span>
+            <button
+              onClick={onClose}
+              className="px-8 py-2.5 rounded-full text-sm font-bold transition-all"
+              style={SECONDARY_BUTTON}
+            >
+              Cerrar
+            </button>
+          </div>
+        ) : (
         <div className="p-6 flex items-center justify-between gap-4" style={{ borderTop: PRODUCT_THEME.borderPanel }}>
            {canManage && product ? (
              <div className="flex items-center gap-2">
@@ -1187,6 +1204,7 @@ function ProductModal({
             })()}
            </div>
         </div>
+        )}
       </div>
     </div>
   );
@@ -2148,6 +2166,20 @@ export function ProductsPage() {
           <p className="text-sm mt-1" style={{ color: T.textSecondary }}>Gestión multi-ubicación y catálogo avanzado</p>
         </div>
         <div className="flex items-center gap-3">
+          {/* Chip "Ver todos" (QA Joel 2026-07-18): al activar un filtro no era
+              obvio cómo limpiarlo — este chip aparece solo con filtro activo. */}
+          {(showTopSellers || showLowStock || showOutStock || showPromos) && (
+            <button
+              onClick={() => { setShowTopSellers(false); setShowLowStock(false); setShowOutStock(false); setShowPromos(false); }}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all hover:scale-[1.02] active:scale-95"
+              data-testid="filter-clear"
+              style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", color: T.textSecondary }}
+              title="Quitar el filtro y mostrar todos los productos"
+            >
+              <X size={13} />
+              Ver todos
+            </button>
+          )}
           {/* Tabs Por agotarse + Agotados — respetan el filtro de tienda activo
               (selectedStoreId). Admin con "Todas las tiendas" ve totales globales;
               al elegir una tienda específica el conteo y la tabla se filtran a ella. */}
@@ -2259,7 +2291,7 @@ export function ProductsPage() {
                   >{noCostCount}</span>
                 </button>
                 <button
-                  onClick={() => { setShowTopSellers(v => !v); setShowLowStock(false); setShowOutStock(false); }}
+                  onClick={() => { setShowTopSellers(v => !v); setShowLowStock(false); setShowOutStock(false); setShowPromos(false); }}
                   className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all hover:scale-[1.02] active:scale-95"
                   style={{
                     background: showTopSellers ? "rgba(170,102,255,0.15)" : "rgba(170,102,255,0.08)",
@@ -2387,7 +2419,7 @@ export function ProductsPage() {
       {/* Result label + active filter chip */}
       <div className="flex items-center gap-3 mb-4">
         <p className="text-[10px] font-black uppercase tracking-[0.2em]" style={{ color: T.textMuted }}>
-          {showTopSellers ? `Top 50 Más Vendidos` : showOutStock ? "Productos Agotados" : showLowStock ? "Por Agotarse" : `${filtered.length} Productos`}
+          {showTopSellers ? `Top 50 Más Vendidos` : showOutStock ? "Productos Agotados" : showLowStock ? "Por Agotarse" : showPromos ? "Productos con Promo" : `${filtered.length} Productos`}
         </p>
         {selectedStoreId && (
           <div className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider border" style={{ background: 'rgba(204,34,0,0.08)', border: '1px solid rgba(204,34,0,0.2)', color: T.redBright }}>
