@@ -67,6 +67,47 @@ export function SuppliesPage() {
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // Combobox de insumo con alta al vuelo (QA Joel 2026-07-16): teclear el
+  // nombre filtra el catálogo; si no existe y eres admin/gerente, "Crear y
+  // usarlo" lo da de alta ahí mismo (POST /supplies solo pide name) y lo deja
+  // seleccionado — sin brincar a la pestaña Catálogo.
+  const [supplyText, setSupplyText] = useState("");
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [creatingSupply, setCreatingSupply] = useState(false);
+  const supplyMatches = useMemo(() => {
+    const q = supplyText.trim().toLowerCase();
+    if (!q) return activeSupplies.slice(0, 8);
+    return activeSupplies
+      .filter(s => s.name.toLowerCase().includes(q) || (s.category ?? "").toLowerCase().includes(q))
+      .slice(0, 8);
+  }, [activeSupplies, supplyText]);
+  const exactMatch = useMemo(
+    () => activeSupplies.find(s => s.name.trim().toLowerCase() === supplyText.trim().toLowerCase()) ?? null,
+    [activeSupplies, supplyText],
+  );
+
+  const pickSupply = (s: Supply) => {
+    setSupplyId(String(s.id));
+    setSupplyText(s.name);
+    setPickerOpen(false);
+  };
+
+  const createAndPick = async () => {
+    const name = supplyText.trim();
+    if (!name) return;
+    setCreatingSupply(true);
+    try {
+      const created = await createSupply({ name });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.supplies.all });
+      pickSupply(created);
+      toast.success(`Insumo "${created.name}" creado y seleccionado`);
+    } catch {
+      toast.error("No se pudo crear el insumo");
+    } finally {
+      setCreatingSupply(false);
+    }
+  };
+
   const submitPurchase = async () => {
     const sid = Number(supplyId);
     const q = parseFloat(qty) || 0;
@@ -156,17 +197,63 @@ export function SuppliesPage() {
             )}
 
             <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>Insumo</label>
-            <select value={supplyId} onChange={e => setSupplyId(e.target.value)} style={{ ...inputStyle, marginTop: 6 }}>
-              <option value="">— Elegir insumo —</option>
-              {activeSupplies.map(s => (
-                <option key={s.id} value={s.id}>
-                  {s.name}{s.category ? ` · ${s.category}` : ""}{s.unit ? ` (${s.unit})` : ""}
-                </option>
-              ))}
-            </select>
-            {activeSupplies.length === 0 && !suppliesQuery.isLoading && (
+            <div style={{ position: "relative" }}>
+              <input
+                type="text"
+                value={supplyText}
+                placeholder="Escribe el insumo (cinta, bolsas…)"
+                data-testid="supply-combobox"
+                onChange={e => { setSupplyText(e.target.value); setSupplyId(""); setPickerOpen(true); }}
+                onFocus={() => setPickerOpen(true)}
+                onBlur={() => window.setTimeout(() => setPickerOpen(false), 150)}
+                onKeyDown={e => {
+                  if (e.key === "Escape") { setPickerOpen(false); return; }
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    if (exactMatch) { pickSupply(exactMatch); return; }
+                    if (supplyMatches.length > 0) { pickSupply(supplyMatches[0]!); return; }
+                    if (canManageCatalog && supplyText.trim()) void createAndPick();
+                  }
+                }}
+                style={{ ...inputStyle, marginTop: 6 }}
+              />
+              {pickerOpen && (supplyMatches.length > 0 || (canManageCatalog && supplyText.trim() && !exactMatch)) && (
+                <div
+                  style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 30, marginTop: 4, background: "var(--td-popup-bg)", border: "1px solid var(--td-popup-border)", borderRadius: 14, overflow: "hidden", boxShadow: "0 12px 32px rgba(0,0,0,0.4)" }}
+                >
+                  {supplyMatches.map(s => (
+                    <button
+                      key={s.id}
+                      onMouseDown={e => { e.preventDefault(); pickSupply(s); }}
+                      className="w-full text-left px-4 py-2.5 text-[12px] font-bold transition-colors"
+                      style={{ color: THI, background: String(s.id) === supplyId ? "var(--td-hover-bg)" : "transparent", border: "none", cursor: "pointer", display: "block" }}
+                      onMouseEnter={e => (e.currentTarget.style.background = "var(--td-hover-bg)")}
+                      onMouseLeave={e => (e.currentTarget.style.background = String(s.id) === supplyId ? "var(--td-hover-bg)" : "transparent")}
+                    >
+                      {s.name}
+                      {(s.category || s.unit) && (
+                        <span style={{ color: TLO, fontWeight: 600 }}>{s.category ? ` · ${s.category}` : ""}{s.unit ? ` (${s.unit})` : ""}</span>
+                      )}
+                    </button>
+                  ))}
+                  {canManageCatalog && supplyText.trim() && !exactMatch && (
+                    <button
+                      onMouseDown={e => { e.preventDefault(); void createAndPick(); }}
+                      disabled={creatingSupply}
+                      data-testid="supply-create-inline"
+                      className="w-full text-left px-4 py-2.5 text-[12px] font-black transition-colors flex items-center gap-2"
+                      style={{ color: "var(--td-red)", background: "rgba(224,34,26,0.06)", border: "none", borderTop: "1px solid var(--td-divider)", cursor: "pointer" }}
+                    >
+                      {creatingSupply ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} strokeWidth={3} />}
+                      Crear "{supplyText.trim()}" y usarlo
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+            {activeSupplies.length === 0 && !suppliesQuery.isLoading && !supplyText.trim() && (
               <p className="mt-1 text-[10px] font-bold" style={{ color: TLO }}>
-                No hay insumos en el catálogo{canManageCatalog ? " — créalos en la pestaña Catálogo." : " — pide a tu gerente que los dé de alta."}
+                {canManageCatalog ? "No hay insumos aún — escribe el nombre y créalo aquí mismo." : "No hay insumos en el catálogo — pide a tu gerente que los dé de alta."}
               </p>
             )}
 

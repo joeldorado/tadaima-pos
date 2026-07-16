@@ -6,7 +6,7 @@ import {
   ShoppingCart, Package, LogOut, Home, Store,
   Users, Receipt, UserCircle2, ClipboardList, ArrowLeftRight, ShoppingBasket, BarChart2,
   Settings, Sun, Moon, PackageSearch, Wallet, KeyRound,
-  ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, TriangleAlert,
+  ChevronDown, ChevronRight, PanelLeftClose, TriangleAlert,
 } from "lucide-react";
 import { NotificationBadge } from "@/components/notifications/NotificationBadge";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -22,6 +22,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { getProductsLight, apiClient, type CashSessionReport } from "@tadaima/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { useActiveSessionQuery } from "@/hooks/queries/useCashSession";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { CloseCashModal } from "@/components/cash/CloseCashModal";
 import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
 import { toLocalYmd, getTodayLocal } from "@/lib/date";
@@ -108,6 +109,49 @@ function RailLeaf({ to, end, label, Icon }: { to: string; end?: boolean; label: 
   );
 }
 
+// ─── Grupo en modo colapsado: icono + chevron, hijos inline al abrir ──────────
+// Mismo concepto de dropdown que el modo ancho (pedido Joel 2026-07-16: "mantén
+// ese mismo dropdown sin scroll") — cerrado por default para que el rail quede
+// corto; el grupo con la ruta activa se abre solo.
+function RailGroup({ group, isOpen, onToggle, pathname }: { group: NavGroup; isOpen: boolean; onToggle: () => void; pathname: string }) {
+  const Icon = group.icon;
+  const hasActiveChild = group.children.some(c => isPathActive(pathname, c.to, c.exact));
+  return (
+    <div className="flex flex-col items-center w-full">
+      <button
+        onClick={onToggle}
+        title={group.label}
+        className="flex flex-col items-center gap-1"
+        style={{ background: "transparent", border: "none", cursor: "pointer", padding: 0 }}
+      >
+        <div
+          className="relative w-10 h-10 rounded-xl flex items-center justify-center transition-all"
+          style={hasActiveChild && !isOpen
+            ? { background: "var(--td-nav-active-bg)", border: "1px solid var(--td-nav-active-border)" }
+            : { background: "transparent", border: "1px solid transparent" }}
+        >
+          <Icon size={18} strokeWidth={hasActiveChild ? 2.3 : 1.8} style={{ color: hasActiveChild ? "var(--td-icon-active)" : "var(--td-icon-inactive)" }} />
+          <span className="absolute -bottom-0.5 -right-0.5 flex items-center justify-center w-3.5 h-3.5 rounded-full" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-divider)" }}>
+            {isOpen
+              ? <ChevronDown size={9} strokeWidth={3} style={{ color: "var(--td-text-lo)" }} />
+              : <ChevronRight size={9} strokeWidth={3} style={{ color: "var(--td-text-lo)" }} />}
+          </span>
+        </div>
+        <span style={{ fontSize: "9px", fontWeight: hasActiveChild ? 700 : 600, color: hasActiveChild ? "var(--td-nav-active-label)" : "var(--td-text-lo)" }}>
+          {group.label}
+        </span>
+      </button>
+      {isOpen && (
+        <div className="flex flex-col items-center gap-1 mt-1 mb-0.5 py-1 rounded-xl w-[56px]" style={{ background: "var(--td-hover-bg)" }}>
+          {group.children.map(c => (
+            <RailLeaf key={c.to} to={c.to} end={c.exact} label={c.label} Icon={c.icon} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Sidebar ancha (modo expandido): fila icono + etiqueta ────────────────────
 function WideLeaf({ to, end, label, Icon, indent }: { to: string; end?: boolean; label: string; Icon: typeof Home; indent?: boolean }) {
   return (
@@ -186,12 +230,6 @@ export function Layout() {
     } else if (allowedPages.includes(entry.page)) {
       visibleEntries.push(entry);
     }
-  }
-  // Hojas planas para el modo colapsado (icon-rail): grupos aplanados.
-  const flatLeaves: NavLeaf[] = [];
-  for (const e of visibleEntries) {
-    if ("group" in e) e.children.forEach(c => flatLeaves.push(c));
-    else flatLeaves.push(e);
   }
 
   // Rail colapsado (icon-rail) vs ancho, persistido. Grupos abiertos persistidos;
@@ -285,6 +323,16 @@ export function Layout() {
 
   const railWidth = railCollapsed ? "76px" : "216px";
 
+  // ── Caja en pantalla angosta: menú FLOTANTE (drawer overlay) ──────────────
+  // < 1024px en /caja, la sidebar fija aplasta el carrito + panel de cobro
+  // (QA Joel 2026-07-16). Se oculta y un botón flotante (logo) la abre como
+  // drawer encima del contenido. Fuera de /caja no cambia nada.
+  const isCajaRoute = location.pathname === "/caja" || location.pathname.startsWith("/caja/");
+  const narrowViewport = useMediaQuery("(max-width: 1023px)");
+  const overlayMode = isCajaRoute && narrowViewport;
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  useEffect(() => { setDrawerOpen(false); }, [location.pathname, overlayMode]);
+
   // ── Aviso global de caja de días anteriores (visible en TODAS las páginas) ──
   const staleOpenedLabel = cashSession?.opened_at
     ? new Date(cashSession.opened_at).toLocaleDateString("es-MX", { day: "2-digit", month: "short" })
@@ -343,22 +391,43 @@ export function Layout() {
       className="flex h-screen overflow-hidden app-bg"
       onClick={() => setShowUserMenu(false)}
     >
+      {/* ── Backdrop del drawer (solo Caja angosta con menú abierto) ─────────── */}
+      {overlayMode && drawerOpen && (
+        <div
+          className="fixed inset-0 z-40"
+          style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(2px)" }}
+          onClick={() => setDrawerOpen(false)}
+        />
+      )}
+
       {/* ── Sidebar ──────────────────────────────────────────────────────────── */}
       <aside
         // z-20: el menú del avatar (z-50) vive DENTRO del stacking context del
         // aside (glass-dark = backdrop-filter); las secciones del Dashboard son
         // `relative z-10` y al venir después en el DOM tapaban el popup
         // (QA Joel 2026-06-11). Los modales (z-50+, fixed) siguen por encima.
-        className={`glass-dark flex flex-col shrink-0 relative z-20 animate-in fade-in slide-in-from-left duration-300 ${railCollapsed ? "items-center px-0" : "px-3"} py-5`}
-        style={{ width: railWidth, transition: "width 0.2s ease" }}
+        // En overlayMode (Caja < 1024px) la sidebar sale del flow: oculta por
+        // default, y como drawer fixed encima del contenido cuando drawerOpen.
+        className={`glass-dark flex-col shrink-0 animate-in fade-in slide-in-from-left duration-300 ${railCollapsed ? "items-center px-0" : "px-3"} py-5 ${
+          overlayMode
+            ? (drawerOpen ? "flex fixed inset-y-0 left-0 z-50" : "hidden")
+            : "flex relative z-20"
+        }`}
+        style={{ width: railWidth, transition: "width 0.2s ease", ...(overlayMode && drawerOpen ? { boxShadow: "8px 0 32px rgba(0,0,0,0.45)" } : {}) }}
       >
 
         {/* Header: logo + (modo ancho) wordmark + toggle */}
         <div className={`flex items-center ${railCollapsed ? "justify-center" : "justify-between"} w-full mb-3`}>
           <div className={`flex items-center gap-2 ${railCollapsed ? "" : "px-1"}`}>
+            {/* El logo ES el toggle de colapsar/expandir (pedido Joel 2026-07-16) */}
             <div
               className="flex items-center justify-center"
-              style={{ background: "#fff", borderRadius: "10px", padding: "4px", width: railCollapsed ? "52px" : "40px", height: railCollapsed ? "52px" : "40px", boxShadow: "0 0 18px rgba(204,34,0,0.4), 0 4px 10px rgba(0,0,0,0.25)", border: "1px solid rgba(204,34,0,0.15)", overflow: "hidden", flexShrink: 0 }}
+              role="button"
+              tabIndex={0}
+              onClick={() => setRailCollapsed(v => !v)}
+              onKeyDown={e => { if (e.key === "Enter" || e.key === " ") setRailCollapsed(v => !v); }}
+              title={railCollapsed ? "Expandir menú" : "Colapsar menú"}
+              style={{ background: "#fff", borderRadius: "10px", padding: "4px", width: railCollapsed ? "52px" : "40px", height: railCollapsed ? "52px" : "40px", boxShadow: "0 0 18px rgba(204,34,0,0.4), 0 4px 10px rgba(0,0,0,0.25)", border: "1px solid rgba(204,34,0,0.15)", overflow: "hidden", flexShrink: 0, cursor: "pointer" }}
             >
               <img
                 src="/tadaima-logo.jpeg"
@@ -428,12 +497,24 @@ export function Layout() {
         >
           {railCollapsed ? (
             <>
-              {/* Inicio (siempre primero) + Caja + resto aplanado */}
-              {flatLeaves[0] && <RailLeaf to={flatLeaves[0].to} end={flatLeaves[0].exact} label={flatLeaves[0].label} Icon={flatLeaves[0].icon} />}
+              {/* Inicio primero, Caja segundo, luego grupos (dropdown inline) y hojas */}
+              {visibleEntries[0] && !("group" in visibleEntries[0]) && (
+                <RailLeaf to={visibleEntries[0].to} end={visibleEntries[0].exact} label={visibleEntries[0].label} Icon={visibleEntries[0].icon} />
+              )}
               {CajaCTA}
               {stalePill}
-              {flatLeaves.slice(1).map(l => (
-                <RailLeaf key={l.to} to={l.to} end={l.exact} label={l.label} Icon={l.icon} />
+              {visibleEntries.slice(1).map(e => (
+                "group" in e ? (
+                  <RailGroup
+                    key={e.key}
+                    group={e}
+                    isOpen={openGroups[e.key] !== undefined ? openGroups[e.key] : e.children.some(c => isPathActive(location.pathname, c.to, c.exact))}
+                    onToggle={() => toggleGroup(e.key)}
+                    pathname={location.pathname}
+                  />
+                ) : (
+                  <RailLeaf key={e.to} to={e.to} end={e.exact} label={e.label} Icon={e.icon} />
+                )
               ))}
             </>
           ) : (
@@ -460,19 +541,6 @@ export function Layout() {
             </>
           )}
 
-          {/* Expandir (solo en modo colapsado) */}
-          {railCollapsed && (
-            <button
-              onClick={() => setRailCollapsed(false)}
-              title="Expandir menú"
-              className="flex flex-col items-center gap-1 mt-1"
-              style={{ background: "transparent", border: "none", cursor: "pointer" }}
-            >
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: "transparent", border: "1px solid transparent", color: "var(--td-text-lo)" }}>
-                <PanelLeftOpen size={18} />
-              </div>
-            </button>
-          )}
         </nav>
 
         {/* Notifications */}
@@ -567,6 +635,20 @@ export function Layout() {
           )}
         </div>
       </aside>
+
+      {/* ── Botón flotante para abrir el menú (Caja angosta) ─────────────────── */}
+      {overlayMode && !drawerOpen && (
+        <button
+          onClick={() => setDrawerOpen(true)}
+          title="Abrir menú"
+          aria-label="Abrir menú"
+          data-testid="floating-menu-btn"
+          className="fixed left-3 z-40 flex items-center justify-center bottom-4 max-[767px]:bottom-24"
+          style={{ width: 44, height: 44, background: "#fff", borderRadius: 12, padding: 4, border: "1px solid rgba(204,34,0,0.2)", boxShadow: "0 0 18px rgba(204,34,0,0.35), 0 6px 16px rgba(0,0,0,0.35)", cursor: "pointer", overflow: "hidden" }}
+        >
+          <img src="/tadaima-logo.jpeg" alt="Menú" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+        </button>
+      )}
 
       {/* ── Main content ─────────────────────────────────────────────────────── */}
       <main className="flex-1 overflow-y-auto">

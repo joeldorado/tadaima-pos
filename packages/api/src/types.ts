@@ -772,6 +772,9 @@ export interface UpdatePreSaleCatalogInput {
   limit_per_customer?: number | null
   arrival_date?: string | null
   pickup_deadline?: string | null
+  /** Unidades por tienda. El backend scopea al gerente (solo SU tienda se
+   *  reemplaza; las demás se preservan) — ver syncStoreLimits/storeLimitScope. */
+  store_limits?: { store_id: number; limit_qty: number }[]
 }
 
 export interface UpdatePreSaleCatalogStatusInput {

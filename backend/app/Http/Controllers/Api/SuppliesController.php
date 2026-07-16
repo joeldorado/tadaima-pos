@@ -31,7 +31,10 @@ class SuppliesController extends Controller
     /** GET /supplies — catálogo (activos por default; ?all=1 incluye inactivos). */
     public function index(Request $request): JsonResponse
     {
+        // Scoping por empresa (fix 2026-07-16): el catálogo es compartido entre
+        // las tiendas de UNA empresa, nunca entre empresas distintas.
         $supplies = Supply::query()
+            ->where('company_id', $request->user()->company_id)
             ->when(! $request->boolean('all'), fn ($q) => $q->active())
             ->orderBy('category')
             ->orderBy('name')
@@ -65,6 +68,12 @@ class SuppliesController extends Controller
             return $resp;
         }
 
+        // Pertenencia por empresa (fix 2026-07-16): el route-model-binding trae
+        // cualquier id — sin este check un gerente podía editar insumos ajenos.
+        if ((int) $supply->company_id !== (int) $request->user()->company_id) {
+            return $this->error('Este insumo no pertenece a tu empresa.', 403);
+        }
+
         $supply->update(array_merge(
             $request->only(['name', 'category', 'unit']),
             $request->has('is_active') ? ['is_active' => $request->boolean('is_active')] : [],
@@ -80,6 +89,13 @@ class SuppliesController extends Controller
     public function storeMovement(StoreSupplyMovementRequest $request): JsonResponse
     {
         $supply = Supply::findOrFail((int) $request->input('supply_id'));
+
+        // Pertenencia por empresa (fix 2026-07-16): sin esto cualquier usuario
+        // autenticado podía registrar compras contra insumos de otra empresa.
+        if ((int) $supply->company_id !== (int) $request->user()->company_id) {
+            return $this->error('Este insumo no pertenece a tu empresa.', 403);
+        }
+
         $type   = (string) $request->input('type', SupplyMovement::TYPE_PURCHASE);
         $userId = $request->user()->id;
 

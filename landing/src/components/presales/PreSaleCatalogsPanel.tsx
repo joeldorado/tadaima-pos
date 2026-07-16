@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { toast } from "sonner";
 import { PreSalesSkeleton } from "./PreSalesSkeleton";
-import { updatePreSaleCatalogStatus, storageUrl } from "@tadaima/api";
+import { updatePreSaleCatalog, updatePreSaleCatalogStatus, storageUrl } from "@tadaima/api";
 import type { PreSaleCatalog, PreSaleCatalogStatus } from "@tadaima/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { usePreSaleCatalogsQuery } from "@/hooks/queries/usePreSales";
@@ -90,6 +90,92 @@ function StatusBadge({ status }: { status: PreSaleCatalogStatus }) {
     <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 99, fontSize: 9, fontWeight: 900, color: cfg.color, background: cfg.bg, border: `1px solid ${cfg.color}22` }}>
       {cfg.icon}{cfg.label}
     </span>
+  );
+}
+
+// ─── Modal rápido "Asignar unidades" (gerente, catálogo sin unidades de su tienda) ──
+// Solo pide limit_qty; el backend (syncStoreLimits + storeLimitScope) solo toca
+// la fila de SU tienda. Si el catálogo global está en draft, ofrece publicarlo
+// (global, endpoint existente) para que su cajero lo vea en Caja.
+function QuickAssignModal({ catalog, storeId, onClose, onDone }: {
+  catalog: PreSaleCatalog;
+  storeId: number;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [qty, setQty] = useState("");
+  const [publishNow, setPublishNow] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const isDraft = catalog.status === "draft";
+
+  const submit = async () => {
+    const n = parseInt(qty, 10);
+    if (!Number.isFinite(n) || n <= 0) { toast.error("Escribe cuántas unidades asignas a tu tienda."); return; }
+    setSaving(true);
+    try {
+      await updatePreSaleCatalog(catalog.id, { store_limits: [{ store_id: storeId, limit_qty: n }] });
+      let published = catalog.status === "published";
+      if (isDraft && publishNow) {
+        await updatePreSaleCatalogStatus(catalog.id, { status: "published" });
+        published = true;
+      }
+      toast.success(published
+        ? `${n} unidades asignadas — tu cajero ya lo ve en Caja`
+        : `${n} unidades asignadas (sigue en Borrador; publícalo para que lo vea tu cajero)`);
+      onDone();
+    } catch {
+      toast.error("No se pudo asignar. Intenta de nuevo.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.8)", backdropFilter: "blur(6px)" }} onClick={onClose} />
+      <div style={{ position: "relative", background: "var(--td-popup-bg)", border: "1px solid var(--td-popup-border)", borderRadius: 24, padding: 28, width: "100%", maxWidth: 420 }} data-testid="quick-assign-modal">
+        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 900, color: TP }}>Asignar a mi tienda</h3>
+        <p style={{ margin: "6px 0 0", fontSize: 11, fontWeight: 700, color: TS }}>{catalog.product_name}</p>
+        <p style={{ margin: "4px 0 16px", fontSize: 10, color: TM }}>
+          Status global: {STATUS_CFG[catalog.status].label}. Asignas unidades solo para TU sucursal; las demás tiendas no se tocan.
+        </p>
+
+        <label style={{ display: "block", fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.14em", color: TM, marginBottom: 6 }}>
+          Unidades para mi tienda
+        </label>
+        <input
+          type="number" min={1} step={1} value={qty} autoFocus placeholder="0"
+          onChange={e => setQty(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") void submit(); }}
+          data-testid="quick-assign-qty"
+          style={{ width: "100%", background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 12, color: "var(--td-input-text)", padding: "10px 14px", fontSize: 20, fontWeight: 900, outline: "none", boxSizing: "border-box" }}
+        />
+
+        {isDraft && (
+          <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, cursor: "pointer" }}>
+            <input type="checkbox" checked={publishNow} onChange={e => setPublishNow(e.target.checked)} />
+            <span style={{ fontSize: 11, fontWeight: 700, color: TS }}>
+              Publicar ahora para que lo vea tu cajero
+              <span style={{ display: "block", fontSize: 9, fontWeight: 600, color: TM }}>Publicar es global: también lo verán las tiendas que tengan unidades asignadas.</span>
+            </span>
+          </label>
+        )}
+
+        <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+          <button onClick={onClose} style={{ flex: 1, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 12, color: TM, padding: "10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+            Cancelar
+          </button>
+          <button
+            onClick={() => { void submit(); }}
+            disabled={saving}
+            data-testid="quick-assign-save"
+            style={{ flex: 2, background: "linear-gradient(135deg, #7A3800, #F59E0B)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 12, color: "#fff", padding: "10px", fontSize: 12, fontWeight: 900, cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.6 : 1 }}
+          >
+            {saving ? "Asignando…" : "Asignar unidades"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -274,6 +360,9 @@ export function PreSaleCatalogsPanel({ restrictedStoreId = null }: { restrictedS
   const invalidateCatalogs = () => queryClient.invalidateQueries({ queryKey: queryKeys.preSaleCatalogs.all });
   const [showNew, setShowNew]     = useState(false);
   const [editCatalog, setEditCatalog]       = useState<PreSaleCatalog | null>(null);
+  // Shortcut "Asignar" (QA Joel 2026-07-16): gerente asigna unidades de SU
+  // tienda a un catálogo creado por alguien más, sin pasar por el modal completo.
+  const [assignCatalog, setAssignCatalog]   = useState<PreSaleCatalog | null>(null);
   const [convertCatalog, setConvertCatalog] = useState<PreSaleCatalog | null>(null);
   const [historyCatalog, setHistoryCatalog] = useState<PreSaleCatalog | null>(null);
   const [search, setSearch]       = useState("");
@@ -444,6 +533,20 @@ export function PreSaleCatalogsPanel({ restrictedStoreId = null }: { restrictedS
       cell: ({ row: { original: c } }: CellContext<PreSaleCatalog, unknown>) => {
         const info = stockInfo(c);
         if (info == null) {
+          // Gerente + catálogo asignable → shortcut directo al modal de asignar.
+          // (El backend bloquea store_limits en arrived/closed/cancelled.)
+          const canQuickAssign = restrictedStoreId != null && (c.status === "draft" || c.status === "published");
+          if (canQuickAssign) {
+            return (
+              <button
+                onClick={() => setAssignCatalog(c)}
+                data-testid={`quick-assign-${c.id}`}
+                style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 12px", borderRadius: 9, fontSize: 10, fontWeight: 900, cursor: "pointer", color: "#F59E0B", background: "rgba(245,158,11,0.10)", border: "1px solid rgba(245,158,11,0.35)" }}
+              >
+                <Plus size={10} strokeWidth={3} />Asignar
+              </button>
+            );
+          }
           return (
             <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 9px", borderRadius: 8, fontSize: 10, fontWeight: 800, color: "#DC2626", background: "rgba(220,38,38,0.08)", border: "1px solid rgba(220,38,38,0.25)" }}>
               <AlertTriangle size={9} />Sin asignar
@@ -484,7 +587,28 @@ export function PreSaleCatalogsPanel({ restrictedStoreId = null }: { restrictedS
       header: "Status",
       accessorFn: r => r.status,
       meta: { tdStyle: { padding: "12px 14px" } },
-      cell: ({ row: { original: c } }: CellContext<PreSaleCatalog, unknown>) => <StatusBadge status={c.status} />,
+      cell: ({ row: { original: c } }: CellContext<PreSaleCatalog, unknown>) => {
+        // Vista por tienda para el gerente (QA Joel 2026-07-16): el status es
+        // GLOBAL; si MI tienda no tiene unidades asignadas, mostrar "Llegó/
+        // Publicado" confunde — se ve como nuevo hasta que asigne.
+        if (restrictedStoreId != null && stockInfo(c) == null) {
+          if (c.status === "draft" || c.status === "published") {
+            return (
+              <span title={`Status global: ${STATUS_CFG[c.status].label}`} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 99, fontSize: 9, fontWeight: 900, color: "#F59E0B", background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.25)" }}>
+                <AlertTriangle size={10} />Nuevo · Sin asignar
+              </span>
+            );
+          }
+          if (c.status === "arrived") {
+            return (
+              <span title="El producto llegó (global), pero tu tienda no participó en esta preventa" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 99, fontSize: 9, fontWeight: 900, color: TM, background: "var(--td-card-bg)", border: "1px solid var(--td-divider)" }}>
+                <Truck size={10} />Llegó · Sin participación
+              </span>
+            );
+          }
+        }
+        return <StatusBadge status={c.status} />;
+      },
     },
     {
       id: "actions",
@@ -708,12 +832,23 @@ export function PreSaleCatalogsPanel({ restrictedStoreId = null }: { restrictedS
           <NewPreSaleCatalogModal
             catalog={editCatalog}
             restrictedStoreId={restrictedStoreId}
+            // Gerente editando un catálogo sin unidades de SU tienda (creado por
+            // alguien más): cae directo al tab Unidades, que es lo que va a capturar.
+            initialTab={restrictedStoreId != null && stockInfo(editCatalog) == null ? "stock" : undefined}
             onClose={() => setEditCatalog(null)}
             onSuccess={updated => {
               void invalidateCatalogs();
               setEditCatalog(null);
               toast.success(`"${updated.product_name}" actualizado`);
             }}
+          />
+        )}
+        {assignCatalog && restrictedStoreId != null && (
+          <QuickAssignModal
+            catalog={assignCatalog}
+            storeId={restrictedStoreId}
+            onClose={() => setAssignCatalog(null)}
+            onDone={() => { void invalidateCatalogs(); setAssignCatalog(null); }}
           />
         )}
         {historyCatalog && (

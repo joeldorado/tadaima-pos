@@ -17,6 +17,9 @@ interface Props {
    * null = admin (todas las tiendas).
    */
   restrictedStoreId?: number | null;
+  /** Tab inicial (p.ej. "stock" cuando el gerente edita un catálogo ajeno sin
+   *  unidades de su tienda — cae directo donde va a capturar). */
+  initialTab?: "general" | "precios" | "stock";
 }
 
 type Tab = "general" | "precios" | "stock";
@@ -108,10 +111,10 @@ function ListPicker({ label, items, value, onChange, onAdd, adding }: {
   );
 }
 
-export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restrictedStoreId = null }: Props) {
+export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restrictedStoreId = null, initialTab }: Props) {
   const isEdit = !!catalog;
 
-  const [tab, setTab]               = useState<Tab>("general");
+  const [tab, setTab]               = useState<Tab>(initialTab ?? "general");
   const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [suppliers, setSuppliers]   = useState<Supplier[]>([]);
   const [addingCat, setAddingCat]   = useState(false);
