@@ -655,6 +655,20 @@ docker compose up --build -d
 
 > Sesiones anteriores a 2026-05-14 (>20 días) archivadas en git history para mantener el log ligero. Decisiones load-bearing preservadas en ADRs (§7) y secciones de arquitectura.
 
+### Sesión 2026-07-16 — Promo "descuento por cantidad" (escalones) + Tienda Online v2.3 — DEPLOYADO rev tadaima-00132-b5d
+
+Commit `8a09d4a` (bundle `index-BZNIM3Jg.js` verificado: "Descuento por cantidad", "Recoger en", qty_discount; API público ya expone `type`/`tiers` = migraciones `2026_07_20_*` aplicadas). Backend 287/287 (+10), vitest 81/81 (+6). QA E2E local: venta en Caja 5×$150 con [2→100, 3→400] cobró $250 y snapshot `promo_amount=500`.
+
+**(1) Promo tipo `qty_discount` (pedido Joel):** "compra N → −$X" con ESCALONES (`product_promotions.type` + `tiers` JSON; buy_n/pay_m ahora nullable). Motor GREEDY por grupos QUE SE REPITE (5 pzas con 2→100/3→400 = 400+100=500, decisión Joel) — espejo exacto `SaleCalculator.php` ↔ `saleCalc.ts` (`qtyDiscountAmount`), clamp al bruto de la línea, stacking con descuento manual intacto.
+
+**(2) Exclusividad de tipos:** un producto NO convive con NxM y qty_discount vigentes con ventana/tienda encimadas — `promoTypeConflictError` 422 nombrando la existente (ambos sentidos, validado también al reactivar); dup mismo tipo re-usa el overlap compartido (`overlappingActivePromos`). Ventanas que no se enciman sí se permiten.
+
+**(3) Snapshot `sale_items.promo_amount`:** monto directo de la parte promo (la derivación `promo_free_qty×price` no existe en el nuevo tipo). Ventas nuevas (ambos tipos) lo llenan; lectores (SalesPage `lineBenefitParts`, SellPage historial) con fallback legacy. Para reportes de Ruben: `parte_promo = promo_amount ?? promo_free_qty×price`.
+
+**(4) UI:** selector de tipo + escalones dinámicos en tab Promos (toggle de status reenvía los campos de su tipo); `landing/src/lib/promoLabel.ts` compartido ("2+ pzas −$100" / tooltip por escalones) en catálogo de Caja, card pública, ProductsPage, PromosPage (banner/TV/grid/WhatsApp con `promoDisplay`) y tickets ("0 gratis" suprimido cuando freeQty=0).
+
+**(5) Tienda Online v2.3:** buscador en fila propia en móvil + tabs y categorías fusionados en una fila scrolleable (menos amontonado); chips de categoría sin productos en el contexto NO se pintan (y el filtro activo se auto-suelta); glass de cards ~0.92 opaco; carrito con selector PROMINENTE "Recoger en: {sucursal} (N disp.)" y tiendas sin WhatsApp excluidas de default/selector; CatalogTab precarga `stores.phone` como WhatsApp editable.
+
 ### Sesión 2026-07-16 — Tienda Online v2.2: lo más nuevo + filtros arriba + fondo shader — DEPLOYADO rev tadaima-00131-6mz
 
 Commit `2f90352` (bundle `index-CioTfgj0.js` verificado: "Más nuevos", "webgl2"; API prod devuelve ids desc). Backend 277/277 (+test de orden), vitest 75/75, QA navegador local desktop+móvil.
