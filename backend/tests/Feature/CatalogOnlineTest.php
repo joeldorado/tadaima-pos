@@ -235,6 +235,34 @@ class CatalogOnlineTest extends TestCase
         $resp->assertJsonPath('data.catalog.cart_enabled', true); // flags globales con default
     }
 
+    public function test_catalogo_global_expone_promos_vigentes(): void
+    {
+        Inventory::create(['product_id' => $this->product->id, 'warehouse_id' => $this->warehouseA->id, 'quantity' => 3]);
+
+        \App\Models\ProductPromotion::create([
+            'product_id' => $this->product->id, 'store_id' => null,
+            'name' => 'Verano 2x1', 'buy_n' => 2, 'pay_m' => 1, 'status' => 'active', 'priority' => 0,
+        ]);
+        // Pausada y vencida NO deben salir en el payload público.
+        \App\Models\ProductPromotion::create([
+            'product_id' => $this->product->id, 'store_id' => null,
+            'name' => 'Pausada', 'buy_n' => 3, 'pay_m' => 2, 'status' => 'paused', 'priority' => 0,
+        ]);
+        \App\Models\ProductPromotion::create([
+            'product_id' => $this->product->id, 'store_id' => null,
+            'name' => 'Vencida', 'buy_n' => 4, 'pay_m' => 3, 'status' => 'active', 'priority' => 0,
+            'ends_at' => now()->subDay(),
+        ]);
+
+        $resp = $this->getJson('/api/v1/public/catalog')->assertOk();
+        $promos = $resp->json('data.data.0.active_promotions');
+
+        $this->assertCount(1, $promos);
+        $this->assertSame('Verano 2x1', $promos[0]['name']);
+        $this->assertSame(2, $promos[0]['buy_n']);
+        $this->assertSame(1, $promos[0]['pay_m']);
+    }
+
     public function test_catalogo_global_excluye_productos_sin_stock(): void
     {
         // El producto del setUp no tiene inventory → no aparece.

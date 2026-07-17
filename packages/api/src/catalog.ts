@@ -131,6 +131,15 @@ export interface GlobalCatalogItem {
   /** Desglose de stock vendible por sucursal (solo las que tienen existencia). */
   stores: CatalogStoreStock[]
   total: number
+  /** Promos NxM vigentes (globales o por tienda; store_id null = todas). */
+  active_promotions?: Array<{
+    id: number
+    name: string
+    buy_n: number
+    pay_m: number
+    ends_at: string | null
+    store_id: number | null
+  }>
 }
 
 export interface GlobalCatalogResponse {

@@ -276,7 +276,10 @@ class CatalogController extends Controller
 
         $query = Product::query()
             ->where('active', true)
-            ->with(['price', 'images', 'category'])
+            // activePromotions = scope currentlyActive (status + ventana); aquí
+            // van TODAS las vigentes (globales y por tienda) — la card pública
+            // etiqueta "en {sucursal}" cuando la promo es de una sola tienda.
+            ->with(['price', 'images', 'category', 'activePromotions'])
             // Solo productos con stock vendible (>0) en alguna tienda ("salga si está en inventario").
             ->whereExists(function ($q) {
                 $q->selectRaw('1')
@@ -322,6 +325,16 @@ class CatalogController extends Controller
                 'images'       => $p->images->map(fn ($img) => ['id' => $img->id, 'path' => $img->image_path, 'sort_order' => $img->sort_order]),
                 'stores'       => $stores,
                 'total'        => (float) $stores->sum('qty'),
+                // Promos NxM vigentes (Tienda Online v2.0, 2026-07-18) — la
+                // card muestra pill "2x1 · hasta {fecha}".
+                'active_promotions' => $p->activePromotions->map(fn ($pr) => [
+                    'id'       => $pr->id,
+                    'name'     => $pr->name,
+                    'buy_n'    => (int) $pr->buy_n,
+                    'pay_m'    => (int) $pr->pay_m,
+                    'ends_at'  => $pr->ends_at?->toIso8601String(),
+                    'store_id' => $pr->store_id !== null ? (int) $pr->store_id : null,
+                ])->values(),
             ];
 
             if ($showPrice && $p->price) {

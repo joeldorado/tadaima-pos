@@ -174,13 +174,16 @@ export function CartDrawer({
                     Esta sucursal no tiene WhatsApp configurado; se abrirá sin destinatario.
                   </p>
                 )}
-                <button
-                  onClick={() => sendGroup(group)}
-                  className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-400/30 bg-emerald-500/15 px-4 py-2.5 text-[11px] font-black uppercase tracking-widest text-emerald-200 hover:bg-emerald-500/25 transition-colors"
-                >
-                  <MessageCircle size={14} />
-                  Enviar a {group.storeName}
-                </button>
+                {/* Con UNA sola sucursal, el envío vive en el footer sticky (v2.0). */}
+                {groups.length > 1 && (
+                  <button
+                    onClick={() => sendGroup(group)}
+                    className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-400/30 bg-emerald-500/15 px-4 py-2.5 text-[11px] font-black uppercase tracking-widest text-emerald-200 hover:bg-emerald-500/25 transition-colors"
+                  >
+                    <MessageCircle size={14} />
+                    Enviar a {group.storeName}
+                  </button>
+                )}
               </div>
             ))}
 
@@ -191,6 +194,26 @@ export function CartDrawer({
               Vaciar carrito
             </button>
           </div>
+        )}
+
+        {/* Footer sticky (v2.0): CTA siempre visible en móvil + safe-area. */}
+        {!empty && groups.length === 1 && (
+          <footer
+            className="p-4 border-t border-white/10"
+            style={{ paddingBottom: "max(16px, env(safe-area-inset-bottom))", background: "var(--td-popup-bg)" }}
+          >
+            <button
+              onClick={() => sendGroup(groups[0]!)}
+              className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-400/30 bg-emerald-500/15 px-4 py-3 text-[11px] font-black uppercase tracking-widest text-emerald-200 hover:bg-emerald-500/25 transition-colors"
+              style={{ minHeight: 48, fontFamily: DISPLAY }}
+            >
+              <MessageCircle size={15} />
+              Enviar a {groups[0]!.storeName}
+              {showPrice && groupTotal(groups[0]!) > 0 && (
+                <span className="text-amber-300">· {fmt(groupTotal(groups[0]!))}</span>
+              )}
+            </button>
+          </footer>
         )}
       </aside>
     </div>
