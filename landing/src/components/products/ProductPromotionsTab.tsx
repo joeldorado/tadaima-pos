@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Loader2, Plus, Pause, Play, Trash2, TicketPercent, Store as StoreIcon } from "lucide-react";
+import { Loader2, Plus, Pause, Play, Trash2, TicketPercent, Store as StoreIcon, CopyPlus } from "lucide-react";
 import {
   getProductPromotions, createProductPromotion, updateProductPromotion, deleteProductPromotion,
   getStores,
@@ -77,6 +77,34 @@ export function ProductPromotionsTab({ productId }: Props) {
   }, [isAdmin]);
   const storeName = (id: number | null | undefined): string =>
     id == null ? "Todas las tiendas" : (stores.find(s => s.id === id)?.name ?? `Tienda #${id}`);
+
+  // Override local (2026-07-20): una promo LOCAL viva apaga a la GLOBAL en su
+  // tienda (el motor de Caja ya lo aplica) — aquí solo se señaliza.
+  const isLive = (p: ProductPromotion): boolean =>
+    p.status === "active" && (!p.ends_at || new Date(p.ends_at) >= new Date());
+  const liveLocals = promotions.filter(p => isLive(p) && p.store_id != null);
+  const hasLiveGlobal = promotions.some(p => isLive(p) && p.store_id == null);
+
+  /** Prellena el form con los datos de una promo GLOBAL para crear la
+   *  variante LOCAL de la tienda del usuario ("Personalizar para mi tienda"). */
+  const personalize = (promo: ProductPromotion) => {
+    setPromoType(promo.type === "qty_discount" ? "qty_discount" : "nxm");
+    setName(`${promo.name} · local`.slice(0, 100));
+    setBuyN(String(promo.buy_n ?? 2));
+    setPayM(String(promo.pay_m ?? 1));
+    setTiers(promo.tiers?.length
+      ? promo.tiers.map(t => ({ qty: String(t.qty), amount: String(t.amount) }))
+      : [{ qty: "2", amount: "" }]);
+    // Inicio en el pasado no se puede re-elegir en el picker (minValue hoy):
+    // vacío = empieza ya. El vencimiento sí se conserva.
+    const today = getTodayLocal();
+    const startsInput = toDateInput(promo.starts_at);
+    setStartsAt(startsInput > today ? startsInput : "");
+    setEndsAt(toDateInput(promo.ends_at));
+    setPriority(String(promo.priority));
+    setStoreSel(user?.store_id ? String(user.store_id) : "");
+    setShowForm(true);
+  };
 
   const reload = async (id: number) => {
     setLoading(true);
@@ -424,6 +452,32 @@ export function ProductPromotionsTab({ productId }: Props) {
                   style={{ color: meta.color, border: `1px solid ${meta.color}66`, background: `${meta.color}18` }}>
                   {meta.label}
                 </span>
+                {/* Override local: la LOCAL apaga a la GLOBAL en su tienda */}
+                {promo.store_id == null && isLive(promo) && liveLocals.length > 0 && (
+                  <span className="rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-widest"
+                    title="En esas tiendas aplica su promo local, no esta global"
+                    style={{ color: "#F59E0B", border: "1px solid #F59E0B66", background: "#F59E0B18" }}>
+                    {liveLocals.some(l => l.store_id === (user?.store_id ?? null)) && !isAdmin
+                      ? "Opacada en tu tienda"
+                      : `Opacada en ${new Set(liveLocals.map(l => l.store_id)).size} tienda(s)`}
+                  </span>
+                )}
+                {promo.store_id != null && isLive(promo) && hasLiveGlobal && (
+                  <span className="rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-widest"
+                    title="En esta tienda aplica esta promo local en lugar de la global"
+                    style={{ color: "#60A5FA", border: "1px solid #60A5FA66", background: "#60A5FA18" }}>
+                    Reemplaza a la global
+                  </span>
+                )}
+                {/* "Personalizar para mi tienda" (override local 2026-07-20):
+                    crea una variante LOCAL prellenada que REEMPLAZA a la
+                    global en la tienda del usuario. */}
+                {canManagePromos && promo.store_id == null && !!user?.store_id && promo.status !== "expired" && (
+                  <button onClick={() => personalize(promo)} className="rounded-lg p-1.5 hover:bg-white/10"
+                    title="Personalizar para mi tienda (crea una promo local que reemplaza a esta en tu sucursal)">
+                    <CopyPlus size={14} style={{ color: "#60A5FA" }} />
+                  </button>
+                )}
                 {/* Gerente solo muta promos de SU tienda; las globales o de otra
                     tienda son solo-lectura (se ven para no duplicarlas). */}
                 {canManagePromos && (isAdmin || promo.store_id === (user?.store_id ?? null)) && (

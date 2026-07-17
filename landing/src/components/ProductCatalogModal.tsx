@@ -26,7 +26,7 @@ interface CatalogProduct {
   /** false = sin inventario en esta tienda ("No asignado"). Default tratado como true. */
   is_assigned?: boolean;
   /** Promos vigentes (embed del backend, ya filtradas por tienda). */
-  active_promotions?: Array<{ id: number; name: string; type?: string; buy_n: number | null; pay_m: number | null; tiers?: Array<{ qty: number; amount: number }> | null; priority: number; ends_at?: string | null }>;
+  active_promotions?: Array<{ id: number; name: string; type?: string; buy_n: number | null; pay_m: number | null; tiers?: Array<{ qty: number; amount: number }> | null; priority: number; store_id?: number | null; ends_at?: string | null }>;
 }
 
 type Level = "a" | "b" | "c" | "d" | "e";
@@ -246,7 +246,10 @@ function CardMedia({ image, badge, isCashOnly, volume }: {
 // mayor prioridad, mismo desempate que el motor) + "+N" si hubiera más.
 function PromoPills({ promos }: { promos?: CatalogProduct["active_promotions"] }) {
   if (!promos || promos.length === 0) return null;
-  const sorted = [...promos].sort((a, b) => (b.priority - a.priority) || (a.id - b.id));
+  // Override local (2026-07-20): el embed ya viene filtrado a global+tu
+  // tienda; si hay LOCAL, la global no aplica aquí y no se pinta.
+  const pool = promos.some(pr => pr.store_id != null) ? promos.filter(pr => pr.store_id != null) : promos;
+  const sorted = [...pool].sort((a, b) => (b.priority - a.priority) || (a.id - b.id));
   const shown = sorted.slice(0, 2);
   const extra = sorted.length - shown.length;
   const fmtEnds = (iso?: string | null) =>

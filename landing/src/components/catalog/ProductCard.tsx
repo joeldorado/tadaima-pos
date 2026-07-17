@@ -50,7 +50,9 @@ export function ProductCard({
   const topStore = item.stores.length ? [...item.stores].sort((a, b) => b.qty - a.qty)[0]! : null
   // Mejor promo vigente (mismo desempate que el motor: prioridad no viaja al
   // público, así que id asc = la más vieja gana el pill).
-  const promo = item.active_promotions?.[0] ?? null
+  // Locales primero si conviven (la local reemplaza a la global en su tienda).
+  const promo = [...(item.active_promotions ?? [])]
+    .sort((a, b) => (b.store_id != null ? 1 : 0) - (a.store_id != null ? 1 : 0))[0] ?? null
   const promoEnds = promo ? fmtEnds(promo.ends_at) : null
   const promoStoreName = promo?.store_id != null
     ? item.stores.find((s) => s.store_id === promo.store_id)?.store_name ?? "una sucursal"

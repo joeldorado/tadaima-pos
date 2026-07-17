@@ -230,4 +230,103 @@ class PromoStoreScopeTest extends TestCase
         $this->assertContains($globalPromo->id, $ids);
         $this->assertCount(1, $ids, 'La promo de otra tienda no debe venir en el embed');
     }
+
+    // ── Override local (Joel 2026-07-20): la promo de TIENDA apaga la GLOBAL ─
+
+    private function checkoutQty(int $qty, float $payment): \Illuminate\Testing\TestResponse
+    {
+        return $this->actingAs($this->user)->postJson('/api/v1/sales', [
+            'store_id'            => $this->storeA->id,
+            'register_session_id' => $this->session->id,
+            'calc_version'        => 2,
+            'items'               => [['product_id' => $this->product->id, 'quantity' => $qty, 'price' => 100.0]],
+            'payments'            => [['payment_method_id' => $this->cashMethod->id, 'amount' => $payment]],
+        ]);
+    }
+
+    public function test_local_gana_sobre_global_aunque_ahorre_menos(): void
+    {
+        // Global 2x1 (en 4 pzas daría 2 gratis = -$200); local 4x3 (1 gratis =
+        // -$100). Con override, en tienda A aplica LA LOCAL: total $300.
+        $this->makePromo(null);
+        $local = ProductPromotion::create([
+            'product_id' => $this->product->id, 'store_id' => $this->storeA->id,
+            'name' => '4x3 Local A', 'buy_n' => 4, 'pay_m' => 3, 'status' => 'active',
+        ]);
+
+        $this->checkoutQty(4, 300.0)->assertStatus(201)->assertJsonPath('data.total', 300);
+
+        $item = \App\Models\SaleItem::orderByDesc('id')->firstOrFail();
+        $this->assertSame($local->id, (int) $item->applied_promotion_id);
+    }
+
+    public function test_global_no_revive_si_la_local_no_alcanza(): void
+    {
+        // Global 2x1 + local 3x2: con 2 pzas la local no alcanza — y la global
+        // NO revive (la tienda decidió su propia promo). Precio completo $200.
+        $this->makePromo(null);
+        ProductPromotion::create([
+            'product_id' => $this->product->id, 'store_id' => $this->storeA->id,
+            'name' => '3x2 Local A', 'buy_n' => 3, 'pay_m' => 2, 'status' => 'active',
+        ]);
+
+        $this->checkoutQty(2, 200.0)->assertStatus(201)->assertJsonPath('data.total', 200);
+    }
+
+    public function test_local_de_otra_tienda_no_apaga_la_global_aqui(): void
+    {
+        // La local es de la tienda B → en tienda A la global sigue viva.
+        $this->makePromo(null);
+        ProductPromotion::create([
+            'product_id' => $this->product->id, 'store_id' => $this->storeB->id,
+            'name' => '4x3 Local B', 'buy_n' => 4, 'pay_m' => 3, 'status' => 'active',
+        ]);
+
+        $this->checkoutQty(2, 100.0)->assertStatus(201)->assertJsonPath('data.total', 100);
+    }
+
+    public function test_crear_local_sobre_global_encimada_se_permite(): void
+    {
+        // Antes chocaba (dup/typeConflict con "global choca con todas") — ahora
+        // el ámbito es EXACTO: la local es un reemplazo deliberado.
+        $this->makePromo(null); // global 2x1 sin ventana (infinita)
+        $manager = $this->makeManager($this->storeA);
+
+        // Mismo 2x1 local → permitido.
+        $this->actingAs($manager)
+            ->postJson("/api/v1/products/{$this->product->id}/promotions", [
+                'name' => '2x1 de mi tienda', 'buy_n' => 2, 'pay_m' => 1,
+            ])->assertStatus(201);
+
+        // También de OTRO tipo (qty_discount) encima de la global NxM (en otra
+        // tienda, para no chocar con la local 2x1 recién creada en A).
+        $managerB = $this->makeManager($this->storeB);
+        $this->actingAs($managerB)
+            ->postJson("/api/v1/products/{$this->product->id}/promotions", [
+                'name' => 'Cantidad B', 'type' => 'qty_discount',
+                'tiers' => [['qty' => 2, 'amount' => 50]],
+            ])->assertStatus(201);
+    }
+
+    public function test_local_vs_local_misma_tienda_siguen_chocando(): void
+    {
+        $manager = $this->makeManager($this->storeA);
+        ProductPromotion::create([
+            'product_id' => $this->product->id, 'store_id' => $this->storeA->id,
+            'name' => '2x1 Local A', 'buy_n' => 2, 'pay_m' => 1, 'status' => 'active',
+        ]);
+
+        // Mismo NxM local en la misma tienda con ventana encimada → 422.
+        $this->actingAs($manager)
+            ->postJson("/api/v1/products/{$this->product->id}/promotions", [
+                'name' => 'Otro 2x1 A', 'buy_n' => 2, 'pay_m' => 1,
+            ])->assertStatus(422);
+
+        // Y de tipo distinto en la misma tienda también choca (exclusividad).
+        $this->actingAs($manager)
+            ->postJson("/api/v1/products/{$this->product->id}/promotions", [
+                'name' => 'Cantidad A', 'type' => 'qty_discount',
+                'tiers' => [['qty' => 2, 'amount' => 50]],
+            ])->assertStatus(422);
+    }
 }

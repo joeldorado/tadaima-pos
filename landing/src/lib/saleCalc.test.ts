@@ -219,6 +219,29 @@ describe("computePromoBenefit — tipo qty_discount (escalones, greedy por grupo
     ).toBeNull();
   });
 
+  it("override local: la promo de tienda apaga la global (aunque ahorre menos)", () => {
+    const global2x1: PromoDef = { id: 1, productId: "X", name: "2x1 Global", buyN: 2, payM: 1, priority: 0, storeId: null };
+    const local4x3: PromoDef = { id: 2, productId: "X", name: "4x3 Local", buyN: 4, payM: 3, priority: 0, storeId: 7 };
+    // 4 pzas @ $100: global daría −$200; con la local presente aplica −$100.
+    const r = recalculateSale({
+      lines: [{ lineId: "a", productId: "X", unitPrice: 100, qty: 4 }],
+      promotions: [global2x1, local4x3],
+    });
+    expect(r.total).toBe(300);
+    expect(r.lines[0]?.promoPart?.promoId).toBe(2);
+  });
+
+  it("override local: la global NO revive si la local no alcanza por cantidad", () => {
+    const global2x1: PromoDef = { id: 1, productId: "X", name: "2x1 Global", buyN: 2, payM: 1, priority: 0, storeId: null };
+    const local3x2: PromoDef = { id: 2, productId: "X", name: "3x2 Local", buyN: 3, payM: 2, priority: 0, storeId: 7 };
+    const r = recalculateSale({
+      lines: [{ lineId: "a", productId: "X", unitPrice: 100, qty: 2 }],
+      promotions: [global2x1, local3x2],
+    });
+    expect(r.total).toBe(200); // precio completo — sin promo
+    expect(r.lines[0]?.promoPart ?? null).toBeNull();
+  });
+
   it("stacking: manual sobre el neto de la qty_discount (espejo del test PHP)", () => {
     const result = recalculateSale({
       lines: [

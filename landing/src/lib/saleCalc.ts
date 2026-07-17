@@ -47,6 +47,10 @@ export interface PromoDef {
   /** Solo qty_discount: escalones (greedy por grupos, se repite). */
   tiers?: PromoTier[];
   priority: number;
+  /** null/undefined = promo GLOBAL; con valor = promo LOCAL de una tienda.
+   *  Override local (2026-07-20): si el producto tiene local, la global se
+   *  desactiva en esa tienda (el embed ya viene filtrado a global+tu tienda). */
+  storeId?: number | null;
 }
 
 export interface CouponDef {
@@ -186,14 +190,23 @@ export function computePromoBenefit(
   return { type: "promo", amount, promoId: promo.id, promoLabel: promo.name, freeQty };
 }
 
-/** Mejor promo para el cliente: mayor ahorro; empate → mayor priority, luego menor id. */
+/**
+ * Mejor promo para el cliente: mayor ahorro; empate → mayor priority, luego
+ * menor id. OVERRIDE LOCAL (2026-07-20, espejo de SaleCalculator.php): si el
+ * producto tiene promo LOCAL (storeId != null — el embed ya viene filtrado a
+ * global+tienda del usuario), las GLOBALES del producto se descartan; gana la
+ * local aunque ahorre menos, y si no alcanza por cantidad la global NO revive.
+ */
 function bestPromoBenefit(
   promos: PromoDef[],
   line: { productId: string; unitPrice: number; qty: number },
 ): LineBenefit | null {
+  let candidates = promos.filter((p) => p.productId === line.productId);
+  if (candidates.some((p) => p.storeId != null)) {
+    candidates = candidates.filter((p) => p.storeId != null);
+  }
   let best: { benefit: LineBenefit; promo: PromoDef } | null = null;
-  for (const promo of promos) {
-    if (promo.productId !== line.productId) continue;
+  for (const promo of candidates) {
     const benefit = computePromoBenefit(promo, line);
     if (!benefit) continue;
     if (

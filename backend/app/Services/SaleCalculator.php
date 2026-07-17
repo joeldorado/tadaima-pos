@@ -62,6 +62,28 @@ final class SaleCalculator
             $promosByProduct[(int) $promo->product_id][] = $promo;
         }
 
+        // OVERRIDE LOCAL (Joel 2026-07-20): si el producto tiene promo LOCAL
+        // vigente (store_id != null — el caller ya filtró forStore, así que
+        // cualquier local ES de la tienda de la venta), la GLOBAL queda
+        // desactivada para esa tienda. Gana la local aunque ahorre menos: es
+        // lo que la tienda configuró. El override es por EXISTENCIA (si la
+        // local no alcanza por cantidad, la global NO revive — predecible).
+        // Espejo de recalculateSale en saleCalc.ts.
+        foreach ($promosByProduct as $productId => $promos) {
+            $hasLocal = false;
+            foreach ($promos as $promo) {
+                if ($promo->store_id !== null) {
+                    $hasLocal = true;
+                    break;
+                }
+            }
+            if ($hasLocal) {
+                $promosByProduct[$productId] = array_values(
+                    array_filter($promos, fn ($p) => $p->store_id !== null)
+                );
+            }
+        }
+
         $resultLines = [];
         $subtotal    = 0.0;
         $netSum      = 0.0;

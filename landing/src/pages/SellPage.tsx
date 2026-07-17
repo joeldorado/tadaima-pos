@@ -121,7 +121,7 @@ interface Product {
   // agrega stock; no se puede cobrar hasta que tenga stock). Default true.
   is_assigned?: boolean;
   /** Promos NxM VIGENTES (Fase 3) — el motor elige la mejor por línea. */
-  active_promotions?: Array<{ id: number; name: string; type?: 'nxm' | 'qty_discount'; buy_n: number | null; pay_m: number | null; tiers?: Array<{ qty: number; amount: number }> | null; priority: number }>;
+  active_promotions?: Array<{ id: number; name: string; type?: 'nxm' | 'qty_discount'; buy_n: number | null; pay_m: number | null; tiers?: Array<{ qty: number; amount: number }> | null; priority: number; store_id?: number | null }>;
 }
 
 interface Customer {
@@ -2113,6 +2113,8 @@ export function SellPage() {
           payM: ap.pay_m ?? 0,
           ...(ap.tiers ? { tiers: ap.tiers } : {}),
           priority: ap.priority,
+          // Override local: la promo de la tienda apaga la global (motor).
+          storeId: ap.store_id ?? null,
         }))
       ),
     }),
@@ -5067,7 +5069,10 @@ export function SellPage() {
                               )}
                               {/* Promo NxM vigente — el cajero la ve ANTES de agregar (QA Joel 2026-07-16) */}
                               {(p.active_promotions?.length ?? 0) > 0 && (() => {
-                                const promo = [...(p.active_promotions ?? [])].sort((a, b) => b.priority - a.priority || a.id - b.id)[0]!;
+                                const pool = (p.active_promotions ?? []);
+                                // Override local: si hay promo de la tienda, la global no aplica aquí.
+                                const cands = pool.some(pr => pr.store_id != null) ? pool.filter(pr => pr.store_id != null) : pool;
+                                const promo = [...cands].sort((a, b) => b.priority - a.priority || a.id - b.id)[0]!;
                                 return (
                                   <span title={`${promo.name} · ${promoTiersLabel(promo)}`} style={{
                                     marginLeft: 8, padding: "1px 7px", borderRadius: 6, verticalAlign: "middle",

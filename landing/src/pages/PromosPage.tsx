@@ -465,10 +465,18 @@ export function PromosPage() {
         return { p, visible };
       })
       .filter(({ p, visible }) => p.active && visible.length > 0)
-      .map(({ p, visible }) => ({
-        product: p,
-        promo: [...visible].sort((a, b) => b.priority - a.priority || a.id - b.id)[0]!,
-      }))
+      .map(({ p, visible }) => {
+        // Override local (2026-07-20): para gerente/cajero, si SU tienda tiene
+        // promo local, esa es la que aplica (la global queda opacada ahí).
+        // Admin sin filtro: sigue viendo la de mayor prioridad con etiquetas.
+        const pool = !isAdmin && visible.some(pr => pr.store_id != null)
+          ? visible.filter(pr => pr.store_id != null)
+          : visible;
+        return {
+          product: p,
+          promo: [...pool].sort((a, b) => b.priority - a.priority || a.id - b.id)[0]!,
+        };
+      })
       .sort((a, b) => a.product.name.localeCompare(b.product.name, "es"));
   }, [productsQuery.data, isAdmin, user?.store_id]);
 

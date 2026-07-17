@@ -144,8 +144,8 @@ class ProductPromotionsController extends Controller
      * Anti-duplicados (pedido Joel 2026-07-18): otra promo con el MISMO NxM se
      * permite SOLO si su vigencia NO se encima con una activa existente (2x1 de
      * julio + 2x1 de diciembre = OK). Ventana null = infinita (se encima con
-     * todo). Tiendas: global (NULL) se encima con cualquiera; tiendas distintas
-     * no chocan entre sí.
+     * todo). Tiendas: ámbito EXACTO desde el override local (2026-07-20) —
+     * una local sobre la global es un REEMPLAZO deliberado y se permite.
      */
     private function duplicatePromoError(
         Product $product,
@@ -209,10 +209,14 @@ class ProductPromotionsController extends Controller
     }
 
     /**
-     * Query base compartida: promos ACTIVAS vivas del producto cuya VENTANA y
-     * ÁMBITO de tienda se enciman con lo que se está creando/reactivando.
-     * Ventana null = infinita (se encima con todo). Tienda global (NULL) choca
-     * con cualquiera; tiendas distintas no chocan entre sí.
+     * Query base compartida: promos ACTIVAS vivas del producto cuya VENTANA se
+     * encima con lo que se está creando/reactivando, EN EL MISMO ÁMBITO EXACTO
+     * de tienda. Ventana null = infinita (se encima con todo).
+     *
+     * ÁMBITO EXACTO (override local, Joel 2026-07-20): una LOCAL ya NO choca
+     * con la GLOBAL — la local REEMPLAZA a la global en su tienda (el motor la
+     * apaga ahí), así que crearla encima es deliberado y permitido. Local solo
+     * choca con locales de SU tienda; global solo con globales.
      */
     private function overlappingActivePromos(
         Product $product,
@@ -230,10 +234,9 @@ class ProductPromotionsController extends Controller
             ->when($ignoreId !== null, fn ($q) => $q->where('id', '!=', $ignoreId))
             // Solo vivas (no vencidas).
             ->where(fn ($q) => $q->whereNull('ends_at')->orWhere('ends_at', '>=', now()))
-            // Tienda que se encima; nueva global (NULL) choca con todas.
-            ->when($storeId !== null, fn ($q) => $q->where(fn ($qq) =>
-                $qq->whereNull('store_id')->orWhere('store_id', $storeId)
-            ))
+            // Mismo ámbito exacto de tienda (ver docblock).
+            ->when($storeId === null, fn ($q) => $q->whereNull('store_id'))
+            ->when($storeId !== null, fn ($q) => $q->where('store_id', $storeId))
             // Ventana que se encima (condición omitida si el lado nuevo es infinito).
             ->when($newEnd !== null, fn ($q) => $q->where(fn ($qq) =>
                 $qq->whereNull('starts_at')->orWhere('starts_at', '<=', $newEnd)
@@ -244,10 +247,9 @@ class ProductPromotionsController extends Controller
     }
 
     /**
-     * Tope de promos activas por producto EN EL MISMO ÁMBITO de tienda: la caja
-     * soporta varias (gana la que más ahorra), pero más de 2 activas confunde al
-     * equipo — se pausa/elimina una antes de activar otra. Las globales (NULL)
-     * cuentan para todas las tiendas; cada sucursal tiene su propio tope.
+     * Tope de promos activas por producto EN EL MISMO ÁMBITO EXACTO de tienda
+     * (override local 2026-07-20): máx 2 globales y máx 2 locales por sucursal.
+     * La global "opacada" por una local ya no bloquea el tope de esa tienda.
      */
     private function activePromoCapError(Product $product, ?int $storeId, ?int $ignoreId = null): ?JsonResponse
     {
@@ -256,9 +258,8 @@ class ProductPromotionsController extends Controller
             ->where('status', ProductPromotion::STATUS_ACTIVE)
             ->where(fn ($q) => $q->whereNull('ends_at')->orWhere('ends_at', '>=', now()))
             ->when($ignoreId !== null, fn ($q) => $q->where('id', '!=', $ignoreId))
-            ->when($storeId !== null, fn ($q) => $q->where(fn ($qq) =>
-                $qq->whereNull('store_id')->orWhere('store_id', $storeId)
-            ))
+            ->when($storeId === null, fn ($q) => $q->whereNull('store_id'))
+            ->when($storeId !== null, fn ($q) => $q->where('store_id', $storeId))
             ->count();
 
         if ($activeCount < self::MAX_ACTIVE_PROMOS) {
