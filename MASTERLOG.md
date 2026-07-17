@@ -655,6 +655,18 @@ docker compose up --build -d
 
 > Sesiones anteriores a 2026-05-14 (>20 días) archivadas en git history para mantener el log ligero. Decisiones load-bearing preservadas en ADRs (§7) y secciones de arquitectura.
 
+### Sesión 2026-07-16 — Tienda Online v2.0 + FIX imágenes 404 (GCS) + cuadrícula + cajeros sin promos — DEPLOYADO rev tadaima-00130-bxq
+
+Commits `db80b4e` + `1d77055` + `ed4cc90` (bundle `index-D1xln0rX.js` verificado: "Filtrar y ordenar", "Cargar más", "Con promo"; fotos reales cargando en prod). Backend 276/276, vitest 75/75.
+
+**(1) FIX imágenes del catálogo público (bug de prod):** las fotos viven en GCS (`tadaima-media`) pero `/public/catalog` mandaba solo el `path` crudo y el front armaba `{origen}/storage/{path}` → **404 en todas las fotos**. Ahora `CatalogController` manda `url` resuelta por imagen (accessor `ProductImage->url`, en los 3 endpoints de catálogo) y el front la usa con fallback al path (dev/carritos viejos en localStorage). Verificado vivo: Naruto/Deadpool renderean desde `storage.googleapis.com`.
+
+**(2) Tienda Online v2.0 (brief de Joel: refinamiento SIN redesign, misma identidad glass/rojo/Space Grotesk):** header+buscador+tabs sticky con blur; búsqueda con debounce 250ms + ✕ + contador; tabs con contadores visibles al buscar; chips Relevancia/Precio↑↓/A-Z + "Con promo"; pill de promo `2x1 · hasta {fecha} · {tienda}` en la card pública (backend expone `active_promotions` vigentes en `/public/catalog` + test); badge Agotado (grayscale + CTA "Sin stock"); stock en 1 línea "Disponible · N sucursales" expandible; agregar → toast + bump del botón flotante SIN abrir el drawer; skeletons; "Cargar más" (antes tope silencioso de 100); drawer con CTA sticky "Enviar a {tienda} · $total" + safe-area; página dark-locked (`data-theme="dark"`).
+
+**(3) Layout en cuadrícula (QA de Joel post-v2.0):** las filas horizontales tipo Netflix dejaban hueco con pocas cards y scroll grosero → cada categoría es cuadrícula 2/3/4/5 columnas que llena el ancho; "Ver todo" → "Filtrar y ordenar" (la cuadrícula ya muestra todo); `CategoryRow.tsx` eliminado.
+
+**(4) can_manage_promos por ROL al crear/reasignar usuario:** cajeros nacen con el flag OFF (`roleGrantsPromos`: solo gerente/admin ON); al cambiar de categoría de rol se sincroniza, re-asignar el mismo rol preserva revocaciones manuales; backfill `2026_07_19_000002` apagó no-gerentes existentes. `ProductPromotionPermissionTest` 7/7.
+
 ### Sesión 2026-07-18 — Permiso can_manage_promos + anti-duplicados NxM + Insumos hoy/scroll — DEPLOYADO rev tadaima-00129-vp9
 
 QA de Joel (commits `be94403` + `09cbfe6`, bundle `index-CCcYz8zb.js` verificado: "Gestionar Promociones", "promos solo lectura", "Compras de hoy"). Backend 273/273 (+6 tests), vitest 75/75, QA navegador local.
