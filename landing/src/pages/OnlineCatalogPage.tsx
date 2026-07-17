@@ -4,7 +4,6 @@ import { getGlobalCatalog } from "@tadaima/api";
 import type { GlobalCatalogItem, GlobalCatalogResponse } from "@tadaima/api";
 import { useCart } from "@/hooks/useCart";
 import { ProductCard } from "@/components/catalog/ProductCard";
-import { CategoryRow } from "@/components/catalog/CategoryRow";
 import { CartDrawer } from "@/components/catalog/CartDrawer";
 
 const CART_KEY = "global";
@@ -128,7 +127,7 @@ export function OnlineCatalogPage() {
       productId: item.id,
       name: item.name,
       price: item.price,
-      image: item.images?.[0]?.path ?? undefined,
+      image: item.images?.[0]?.url ?? item.images?.[0]?.path ?? undefined,
       stores: item.stores,
     });
     // v2.0: NO abrir el drawer en cada add (interrumpía el browsing) —
@@ -377,14 +376,38 @@ export function OnlineCatalogPage() {
             )}
           </div>
         ) : (
+          // v2.1: secciones en CUADRÍCULA que llena el ancho (antes filas
+          // horizontales tipo Netflix — con pocas cards dejaban hueco y
+          // obligaban a scrollear de más).
           sections.map((section) => (
-            <CategoryRow
-              key={section.key}
-              title={section.name}
-              items={section.items}
-              {...cardProps}
-              onSeeAll={() => setActiveCategory(section.name)}
-            />
+            <section key={section.key} className="mt-7">
+              <div className="flex items-center justify-between mb-3 px-1">
+                <h2
+                  className="text-sm font-black uppercase tracking-widest"
+                  style={{ color: "var(--td-text-hi)", fontFamily: DISPLAY }}
+                >
+                  {section.name} <span style={{ color: "var(--td-text-ghost)" }}>· {section.items.length}</span>
+                </h2>
+                <button
+                  onClick={() => setActiveCategory(section.name)}
+                  className="inline-flex items-center gap-1 text-[11px] font-black uppercase tracking-widest cursor-pointer hover:brightness-125 transition"
+                  style={{ color: "#FF8A80" }}
+                >
+                  Filtrar y ordenar
+                </button>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                {section.items.map((item, i) => (
+                  <div
+                    key={item.id}
+                    className="td-fadeup"
+                    style={{ animation: "tdFadeUp 0.35s ease-out both", animationDelay: `${Math.min(i, 12) * 30}ms` }}
+                  >
+                    <ProductCard item={item} {...cardProps} />
+                  </div>
+                ))}
+              </div>
+            </section>
           ))
         )}
 

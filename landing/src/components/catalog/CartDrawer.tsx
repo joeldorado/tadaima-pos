@@ -111,7 +111,8 @@ export function CartDrawer({
                 </div>
 
                 {group.items.map((it) => {
-                  const img = it.image ? storageUrl(it.image) : ""
+                  // it.image puede ser URL absoluta (GCS) o path legacy de carritos viejos.
+                  const img = it.image ? (it.image.startsWith("http") ? it.image : storageUrl(it.image)) : ""
                   return (
                     <div key={it.productId} className="flex gap-3">
                       <div className="w-14 h-14 rounded-xl bg-black/50 border border-white/10 overflow-hidden flex items-center justify-center shrink-0">

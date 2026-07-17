@@ -40,7 +40,9 @@ export function ProductCard({
   onAdd,
   onWhatsAppClick,
 }: ProductCardProps) {
-  const img = item.images?.[0]?.path ? storageUrl(item.images[0].path) : null
+  // `url` viene resuelta del backend (GCS en prod); `path` es fallback legacy.
+  const firstImg = item.images?.[0]
+  const img = firstImg?.url || (firstImg?.path ? storageUrl(firstImg.path) : null)
   const hasPrice = showPrice && typeof item.price === "number"
   const isManga = item.product_type === "manga"
   const isOut = (item.total ?? 0) <= 0

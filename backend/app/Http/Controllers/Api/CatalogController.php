@@ -222,7 +222,7 @@ class CatalogController extends Controller
                 'name'        => $p->name,
                 'description' => $p->description,
                 'category'    => $p->category ? ['id' => $p->category->id, 'name' => $p->category->name] : null,
-                'images'      => $p->images->map(fn ($img) => ['id' => $img->id, 'path' => $img->image_path, 'sort_order' => $img->sort_order]),
+                'images'      => $p->images->map(fn ($img) => ['id' => $img->id, 'path' => $img->image_path, 'url' => $img->url, 'sort_order' => $img->sort_order]),
             ];
 
             if ($showPrice && $p->price) {
@@ -322,7 +322,7 @@ class CatalogController extends Controller
                 'product_type' => $p->product_type, // 'manga' | 'product' → secciones en el catálogo
                 'description'  => $p->description,
                 'category'     => $p->category ? ['id' => $p->category->id, 'name' => $p->category->name] : null,
-                'images'       => $p->images->map(fn ($img) => ['id' => $img->id, 'path' => $img->image_path, 'sort_order' => $img->sort_order]),
+                'images'       => $p->images->map(fn ($img) => ['id' => $img->id, 'path' => $img->image_path, 'url' => $img->url, 'sort_order' => $img->sort_order]),
                 'stores'       => $stores,
                 'total'        => (float) $stores->sum('qty'),
                 // Promos NxM vigentes (Tienda Online v2.0, 2026-07-18) — la
@@ -456,7 +456,7 @@ class CatalogController extends Controller
                 'active'      => $p->active,
                 'category'    => $p->category ? ['id' => $p->category->id, 'name' => $p->category->name] : null,
                 'price_1'     => $p->price?->price_1,
-                'images'      => $p->images->map(fn ($img) => ['id' => $img->id, 'path' => $img->image_path, 'sort_order' => $img->sort_order]),
+                'images'      => $p->images->map(fn ($img) => ['id' => $img->id, 'path' => $img->image_path, 'url' => $img->url, 'sort_order' => $img->sort_order]),
             ],
         ];
     }

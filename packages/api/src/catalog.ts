@@ -5,7 +5,7 @@ export interface CatalogProductItem {
   name: string
   description: string | null
   category: { id: number; name: string } | null
-  images: Array<{ id: number; path: string | null; sort_order: number }>
+  images: Array<{ id: number; path: string | null; url?: string | null; sort_order: number }>
   price?: number
   stock?: number
 }
@@ -126,7 +126,8 @@ export interface GlobalCatalogItem {
   product_type: string
   description: string | null
   category: { id: number; name: string } | null
-  images: Array<{ id: number; path: string | null; sort_order: number }>
+  /** `url` = URL absoluta lista para usar (GCS en prod). `path` queda como fallback legacy. */
+  images: Array<{ id: number; path: string | null; url?: string | null; sort_order: number }>
   price?: number
   /** Desglose de stock vendible por sucursal (solo las que tienen existencia). */
   stores: CatalogStoreStock[]
