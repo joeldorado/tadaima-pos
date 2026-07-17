@@ -22,6 +22,7 @@ import { LayawaysPage } from '@/pages/LayawaysPage'
 import { OnlineCatalogPage } from '@/pages/OnlineCatalogPage'
 import { SuppliesPage } from '@/pages/SuppliesPage'
 import { PromosPage } from '@/pages/PromosPage'
+import { DocsPage } from '@/pages/DocsPage'
 
 function IndexPage() {
   const { user } = useAuth()
@@ -76,6 +77,7 @@ export const router = createBrowserRouter([
       { path: 'stores',    element: <ProtectedRoute requiresPage="stores"><StoresPage /></ProtectedRoute> },
       { path: 'admin',     element: <ProtectedRoute requiresPage="admin"><AdminPage /></ProtectedRoute> },
       { path: 'layaways',  Component: LayawaysPage },
+      { path: 'documentacion', element: <ProtectedRoute requiresPage="docs"><DocsPage /></ProtectedRoute> },
       // Walkthrough QA para demos al cliente. Admin only (gate adicional
       // dentro del componente). No tiene link en nav — accesible por URL.
       { path: 'demo',      Component: DemoWalkthroughPage },
