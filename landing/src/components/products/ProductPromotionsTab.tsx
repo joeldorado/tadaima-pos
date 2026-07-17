@@ -11,6 +11,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/queryKeys";
 import { BUSINESS_TZ, getTodayLocal } from "@/lib/date";
 import { isAdmin as isAdminRole } from "@/lib/permisos";
+import { promoShortLabel, promoTiersLabel } from "@/lib/promoLabel";
 import { SingleDatePicker } from "@/components/ui/SingleDatePicker";
 
 interface Props {
@@ -58,8 +59,12 @@ export function ProductPromotionsTab({ productId }: Props) {
 
   // Form de alta
   const [name, setName] = useState("");
+  // Tipo de promo (2026-07-20): 'nxm' (2x1) | 'qty_discount' ("2 pzas → −$100").
+  const [promoType, setPromoType] = useState<"nxm" | "qty_discount">("nxm");
   const [buyN, setBuyN] = useState("2");
   const [payM, setPayM] = useState("1");
+  // Escalones del tipo qty_discount (strings para inputs controlados).
+  const [tiers, setTiers] = useState<Array<{ qty: string; amount: string }>>([{ qty: "2", amount: "" }]);
   const [startsAt, setStartsAt] = useState("");
   const [endsAt, setEndsAt] = useState("");
   const [priority, setPriority] = useState("0");
@@ -91,17 +96,39 @@ export function ProductPromotionsTab({ productId }: Props) {
   const invalidateProducts = () =>
     void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
 
+  const parsedTiers = (): Array<{ qty: number; amount: number }> =>
+    tiers
+      .map(t => ({ qty: parseInt(t.qty, 10) || 0, amount: parseFloat(t.amount) || 0 }))
+      .filter(t => t.qty > 0 || t.amount > 0);
+
   const submit = async () => {
     if (productId == null) return;
-    const n = parseInt(buyN, 10) || 0;
-    const m = parseInt(payM, 10) || 0;
     if (!name.trim()) { toast.error("Ponle nombre a la promo (ej. Buen Fin)."); return; }
-    if (n < 2) { toast.error("Una promo NxM necesita al menos 2 piezas (ej. 2x1)."); return; }
-    if (m < 1 || m >= n) { toast.error("Lo que paga debe ser MENOR que lo que se lleva (ej. 2x1)."); return; }
+
+    let typedFields: Partial<ProductPromotionInput> = {};
+    let successLabel = "";
+    if (promoType === "nxm") {
+      const n = parseInt(buyN, 10) || 0;
+      const m = parseInt(payM, 10) || 0;
+      if (n < 2) { toast.error("Una promo NxM necesita al menos 2 piezas (ej. 2x1)."); return; }
+      if (m < 1 || m >= n) { toast.error("Lo que paga debe ser MENOR que lo que se lleva (ej. 2x1)."); return; }
+      typedFields = { type: "nxm", buy_n: n, pay_m: m };
+      successLabel = `Promo ${n}x${m} creada`;
+    } else {
+      const clean = parsedTiers();
+      if (clean.length === 0) { toast.error("Agrega al menos un escalón (ej. 2 piezas → $100)."); return; }
+      if (clean.some(t => t.qty < 2)) { toast.error("Cada escalón necesita al menos 2 piezas."); return; }
+      if (clean.some(t => t.amount <= 0)) { toast.error("El descuento de cada escalón debe ser mayor a $0."); return; }
+      if (new Set(clean.map(t => t.qty)).size !== clean.length) { toast.error("Hay dos escalones con la misma cantidad de piezas."); return; }
+      typedFields = { type: "qty_discount", tiers: clean };
+      successLabel = "Promo por cantidad creada";
+    }
+
     setSaving(true);
     try {
       const input: ProductPromotionInput = {
-        name: name.trim(), buy_n: n, pay_m: m,
+        name: name.trim(),
+        ...typedFields,
         // Fechas PLANAS (YYYY-MM-DD): el backend las ancla al día completo en
         // la zona del negocio (inicio/fin de día Tijuana) — nunca mandar hora.
         ...(startsAt ? { starts_at: startsAt } : {}),
@@ -111,8 +138,9 @@ export function ProductPromotionsTab({ productId }: Props) {
         store_id: isAdmin ? (storeSel ? parseInt(storeSel, 10) : null) : (user?.store_id ?? null),
       };
       await createProductPromotion(productId, input);
-      toast.success(`Promo ${n}x${m} creada`);
-      setName(""); setBuyN("2"); setPayM("1"); setStartsAt(""); setEndsAt(""); setPriority("0");
+      toast.success(successLabel);
+      setName(""); setBuyN("2"); setPayM("1"); setTiers([{ qty: "2", amount: "" }]);
+      setStartsAt(""); setEndsAt(""); setPriority("0");
       setShowForm(false);
       await reload(productId);
       invalidateProducts();
@@ -128,7 +156,11 @@ export function ProductPromotionsTab({ productId }: Props) {
     const next = promo.status === "active" ? "paused" : "active";
     try {
       await updateProductPromotion(productId, promo.id, {
-        name: promo.name, buy_n: promo.buy_n, pay_m: promo.pay_m,
+        name: promo.name,
+        // Mandar los campos de SU tipo (el backend prohíbe los del otro).
+        ...(promo.type === "qty_discount"
+          ? { type: "qty_discount" as const, tiers: (promo.tiers ?? []).map(t => ({ qty: t.qty, amount: t.amount })) }
+          : { type: "nxm" as const, buy_n: promo.buy_n ?? 2, pay_m: promo.pay_m ?? 1 }),
         starts_at: promo.starts_at, ends_at: promo.ends_at,
         priority: promo.priority, status: next,
         store_id: promo.store_id ?? null, // preservar la tienda al pausar/reanudar
@@ -189,19 +221,83 @@ export function ProductPromotionsTab({ productId }: Props) {
 
       {showForm && (
         <div className="rounded-2xl p-4 space-y-3" style={{ background: "var(--td-surface-soft)", border: "1px solid var(--td-card-border)" }}>
+          {/* Tipo de promo (2026-07-20): NxM o descuento por cantidad — un
+              producto NO puede tener ambas vigentes a la vez (valida el server). */}
+          <div className="grid grid-cols-2 gap-2">
+            {([
+              { key: "nxm" as const, title: "NxM (2x1, 3x2…)", desc: "Se lleva N y paga M" },
+              { key: "qty_discount" as const, title: "Descuento por cantidad", desc: "Ej. 2 pzas → −$100" },
+            ]).map(t => {
+              const active = promoType === t.key;
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  onClick={() => setPromoType(t.key)}
+                  className="rounded-xl px-3 py-2 text-left"
+                  style={active
+                    ? { background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.5)" }
+                    : { background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)" }}
+                >
+                  <p className="text-[11px] font-black" style={{ color: active ? "#34d399" : THI }}>{t.title}</p>
+                  <p className="text-[9px] font-bold" style={{ color: TLO }}>{t.desc}</p>
+                </button>
+              );
+            })}
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
               <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>Nombre</label>
-              <input value={name} onChange={e => setName(e.target.value)} maxLength={100} placeholder="Buen Fin 2x1" style={{ ...inputStyle, marginTop: 4 }} autoFocus />
+              <input value={name} onChange={e => setName(e.target.value)} maxLength={100} placeholder={promoType === "nxm" ? "Buen Fin 2x1" : "Descuento por volumen"} style={{ ...inputStyle, marginTop: 4 }} autoFocus />
             </div>
-            <div>
-              <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>Se lleva (N)</label>
-              <input type="number" min={2} step={1} value={buyN} onChange={e => setBuyN(e.target.value)} style={{ ...inputStyle, marginTop: 4 }} />
-            </div>
-            <div>
-              <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>Paga (M)</label>
-              <input type="number" min={1} step={1} value={payM} onChange={e => setPayM(e.target.value)} style={{ ...inputStyle, marginTop: 4 }} />
-            </div>
+            {promoType === "nxm" ? (
+              <>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>Se lleva (N)</label>
+                  <input type="number" min={2} step={1} value={buyN} onChange={e => setBuyN(e.target.value)} style={{ ...inputStyle, marginTop: 4 }} />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>Paga (M)</label>
+                  <input type="number" min={1} step={1} value={payM} onChange={e => setPayM(e.target.value)} style={{ ...inputStyle, marginTop: 4 }} />
+                </div>
+              </>
+            ) : (
+              <div className="col-span-2 space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>Escalones</label>
+                {tiers.map((tier, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <input
+                      type="number" min={2} step={1} value={tier.qty}
+                      onChange={e => setTiers(prev => prev.map((t, i) => i === idx ? { ...t, qty: e.target.value } : t))}
+                      placeholder="Pzas" style={{ ...inputStyle, width: 90 }} aria-label={`Piezas del escalón ${idx + 1}`}
+                    />
+                    <span className="text-[11px] font-black shrink-0" style={{ color: TMD }}>pzas → −$</span>
+                    <input
+                      type="number" min={1} step={1} value={tier.amount}
+                      onChange={e => setTiers(prev => prev.map((t, i) => i === idx ? { ...t, amount: e.target.value } : t))}
+                      placeholder="100" style={{ ...inputStyle }} aria-label={`Descuento del escalón ${idx + 1}`}
+                    />
+                    {tiers.length > 1 && (
+                      <button type="button" onClick={() => setTiers(prev => prev.filter((_, i) => i !== idx))}
+                        className="rounded-lg p-1.5 hover:bg-white/10 shrink-0" title="Quitar escalón">
+                        <Trash2 size={13} style={{ color: "var(--td-red)" }} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {tiers.length < 5 && (
+                  <button type="button" onClick={() => setTiers(prev => [...prev, { qty: "", amount: "" }])}
+                    className="flex items-center gap-1 text-[10px] font-black uppercase tracking-widest"
+                    style={{ color: "#34d399" }}>
+                    <Plus size={12} /> Agregar escalón
+                  </button>
+                )}
+                <p className="text-[9px] font-bold" style={{ color: TLO }}>
+                  El descuento se repite por grupos y gana el escalón mayor: con 2→$100 y 3→$400, llevar 5 pzas descuenta $500 (400 + 100).
+                </p>
+              </div>
+            )}
             <div>
               <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>Inicia (opcional)</label>
               <div className="mt-1">
@@ -252,11 +348,20 @@ export function ProductPromotionsTab({ productId }: Props) {
               )}
             </div>
           </div>
-          <p className="text-[10px] font-bold" style={{ color: TLO }}>
-            Vista rápida: el cliente se lleva <b>{buyN || "N"}</b> y paga <b>{payM || "M"}</b>
-            {parseInt(buyN, 10) > parseInt(payM, 10) && parseInt(payM, 10) > 0
-              ? ` → ${parseInt(buyN, 10) - parseInt(payM, 10)} gratis por cada ${buyN}.` : "."}
-          </p>
+          {promoType === "nxm" ? (
+            <p className="text-[10px] font-bold" style={{ color: TLO }}>
+              Vista rápida: el cliente se lleva <b>{buyN || "N"}</b> y paga <b>{payM || "M"}</b>
+              {parseInt(buyN, 10) > parseInt(payM, 10) && parseInt(payM, 10) > 0
+                ? ` → ${parseInt(buyN, 10) - parseInt(payM, 10)} gratis por cada ${buyN}.` : "."}
+            </p>
+          ) : (
+            <p className="text-[10px] font-bold" style={{ color: TLO }}>
+              Vista rápida: {parsedTiers().filter(t => t.qty >= 2 && t.amount > 0).length > 0
+                ? parsedTiers().filter(t => t.qty >= 2 && t.amount > 0).sort((a, b) => a.qty - b.qty)
+                    .map(t => `${t.qty} pzas → −$${t.amount}`).join(" · ")
+                : "agrega escalones (ej. 2 pzas → −$100)."}
+            </p>
+          )}
           <div className="flex gap-2">
             <button onClick={() => setShowForm(false)} className="flex-1 rounded-xl px-4 py-2 text-[11px] font-black uppercase"
               style={{ border: "1px solid var(--td-input-border)", color: TMD, background: "transparent" }}>
@@ -289,8 +394,12 @@ export function ProductPromotionsTab({ productId }: Props) {
             return (
               <div key={promo.id} className="flex items-center gap-3 rounded-2xl px-4 py-3"
                 style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", opacity: promo.status === "expired" ? 0.55 : 1 }}>
-                <span className="rounded-xl px-2.5 py-1.5 text-[13px] font-black" style={{ background: "rgba(16,185,129,0.12)", color: "#34d399" }}>
-                  {promo.buy_n}x{promo.pay_m}
+                <span
+                  className="rounded-xl px-2.5 py-1.5 text-[13px] font-black whitespace-nowrap"
+                  style={{ background: "rgba(16,185,129,0.12)", color: "#34d399" }}
+                  title={promoTiersLabel(promo)}
+                >
+                  {promoShortLabel(promo)}
                 </span>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13px] font-black" style={{ color: THI }}>{promo.name}</p>

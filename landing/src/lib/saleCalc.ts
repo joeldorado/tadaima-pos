@@ -29,13 +29,23 @@ export interface LineDiscount {
   authorizedByUserId?: number;
 }
 
+/** Escalón de una promo por cantidad: "llévate qty → −$amount". */
+export interface PromoTier {
+  qty: number;
+  amount: number;
+}
+
 export interface PromoDef {
   id: number;
   /** product.id del catálogo de Caja (string — así viaja en el carrito). */
   productId: string;
   name: string;
+  /** 'nxm' (default, usa buyN/payM) | 'qty_discount' (usa tiers). */
+  type?: "nxm" | "qty_discount";
   buyN: number;
   payM: number;
+  /** Solo qty_discount: escalones (greedy por grupos, se repite). */
+  tiers?: PromoTier[];
   priority: number;
 }
 
@@ -124,15 +134,47 @@ export function computeLineDiscountAmount(
 }
 
 /**
- * Beneficio de una promo NxM sobre una línea (evaluada POR LÍNEA, no pooled
- * entre líneas split del mismo producto — default pre-aprobado spec §8):
- * groups = floor(Q/N) · gratis = groups × (N−M) · resto a precio completo.
- * Devuelve null si la promo no alcanza a aplicar (Q < N) o es inválida.
+ * Descuento por cantidad con escalones, GREEDY: escalón mayor primero y SE
+ * REPITE por grupos (decisión Joel 2026-07-20): 5 pzas con [2→100, 3→400] =
+ * 1 grupo de 3 (−400) + 1 grupo de 2 (−100) = 500. Espejo de
+ * qtyDiscountAmount en SaleCalculator.php.
+ */
+export function qtyDiscountAmount(tiers: PromoTier[], qty: number): number {
+  const clean = tiers
+    .filter((t) => Number.isInteger(t.qty) && t.qty >= 2 && Number.isFinite(t.amount) && t.amount > 0)
+    .sort((a, b) => b.qty - a.qty);
+  if (clean.length === 0) return 0;
+  let remaining = Math.floor(qty);
+  let amount = 0;
+  for (const tier of clean) {
+    if (remaining < tier.qty) continue;
+    const groups = Math.floor(remaining / tier.qty);
+    amount += groups * tier.amount;
+    remaining -= groups * tier.qty;
+  }
+  return round2(amount);
+}
+
+/**
+ * Beneficio de una promo sobre una línea (evaluada POR LÍNEA, no pooled
+ * entre líneas split del mismo producto — default pre-aprobado spec §8).
+ * - 'nxm': groups = floor(Q/N) · gratis = groups × (N−M) · resto a precio
+ *   completo. freeQty > 0.
+ * - 'qty_discount': monto directo por escalones (freeQty = 0), clampeado al
+ *   bruto de la línea.
+ * Devuelve null si la promo no alcanza a aplicar o es inválida.
+ * Espejo de bestPromoBenefit en SaleCalculator.php.
  */
 export function computePromoBenefit(
   promo: PromoDef,
   line: { unitPrice: number; qty: number },
 ): LineBenefit | null {
+  if (promo.type === "qty_discount") {
+    const gross = round2(line.unitPrice * line.qty);
+    const amount = Math.min(qtyDiscountAmount(promo.tiers ?? [], line.qty), gross);
+    if (amount <= 0) return null;
+    return { type: "promo", amount, promoId: promo.id, promoLabel: promo.name, freeQty: 0 };
+  }
   const { buyN, payM } = promo;
   if (!Number.isInteger(buyN) || !Number.isInteger(payM)) return null;
   if (buyN < 1 || payM < 1 || payM >= buyN) return null;

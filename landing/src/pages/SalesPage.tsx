@@ -133,9 +133,13 @@ const fmt = (n: number) =>
  * descuento manual CONVIVEN. discount_amount persiste el TOTAL; la parte promo
  * se deriva del snapshot (promo_free_qty × precio) y el manual es el resto.
  */
-function lineBenefitParts(item: { price: number; discount_amount?: number | null; promo_name?: string | null; promo_free_qty?: number | null; discount_reason?: string | null }) {
+function lineBenefitParts(item: { price: number; discount_amount?: number | null; promo_name?: string | null; promo_free_qty?: number | null; promo_amount?: number | null; discount_reason?: string | null }) {
   const total = item.discount_amount ?? 0;
-  const promoAmount = item.promo_name ? Math.min(total, (item.promo_free_qty ?? 0) * item.price) : 0;
+  // promo_amount = snapshot directo (2026-07-20, cubre qty_discount); ventas
+  // anteriores no lo traen → fallback legacy promo_free_qty × price (NxM).
+  const promoAmount = item.promo_name
+    ? Math.min(total, item.promo_amount ?? ((item.promo_free_qty ?? 0) * item.price))
+    : 0;
   const manualAmount = Math.max(0, Math.round((total - promoAmount) * 100) / 100);
   const reasonLabel = item.discount_reason
     ? (DISCOUNT_REASON_LABELS[item.discount_reason as keyof typeof DISCOUNT_REASON_LABELS] ?? item.discount_reason)
@@ -692,7 +696,7 @@ function SaleRow({
                     <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                       {parts.promoAmount > 0 && (
                         <span className="px-1.5 py-0.5 rounded text-[9px] font-black" style={{ color: "#34d399", background: "rgba(16,185,129,0.10)", border: "1px solid rgba(16,185,129,0.35)" }}>
-                          Promo {parts.promoLabel ?? ""} · {parts.freeQty} gratis −{fmt(parts.promoAmount)}
+                          Promo {parts.promoLabel ?? ""} ·{parts.freeQty > 0 ? ` ${parts.freeQty} gratis` : ""} −{fmt(parts.promoAmount)}
                         </span>
                       )}
                       {parts.manualAmount > 0 && (

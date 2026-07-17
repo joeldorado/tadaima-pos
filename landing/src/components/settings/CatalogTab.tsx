@@ -78,7 +78,10 @@ export function CatalogTab() {
         );
         const map: Record<number, string> = {};
         list.forEach((st, i) => {
-          map[st.id] = settings[i]?.whatsapp_number ?? "";
+          // Precarga (Joel 2026-07-20): sin whatsapp_number explícito, el
+          // teléfono del alta de la tienda es el default visible (el catálogo
+          // público ya usa ese fallback — aquí se hace explícito y editable).
+          map[st.id] = settings[i]?.whatsapp_number || st.phone || "";
         });
         setWaByStore(map);
       })
@@ -212,7 +215,7 @@ export function CatalogTab() {
                     value={waByStore[st.id] ?? ""}
                     disabled={!canEdit}
                     onChange={(e) => setWaByStore((m) => ({ ...m, [st.id]: e.target.value }))}
-                    placeholder={st.phone ? `Usa el tel. ${st.phone}` : "664 123 4567"}
+                    placeholder="664 123 4567 — sin número la tienda NO recibe pedidos"
                     className="w-full px-4 py-2.5 rounded-xl outline-none border border-white/5 bg-white/[0.03] font-bold text-sm text-white placeholder:text-white/15 focus:border-emerald-400/30 transition-all disabled:opacity-50"
                   />
                 </div>

@@ -93,22 +93,9 @@ export function OnlineCatalogPage() {
     [data, typeFilter]
   );
 
-  // Chips de categoría (v2.2): "Todas" + una por categoría con contador,
-  // calculadas sobre el tipo activo.
-  const categories = useMemo(() => {
-    const map = new Map<string, number>();
-    byType.forEach((p) => {
-      const name = p.category?.name ?? "Otros";
-      map.set(name, (map.get(name) ?? 0) + 1);
-    });
-    return Array.from(map.entries())
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => a.name.localeCompare(b.name, "es"));
-  }, [byType]);
-
-  const searching = search.trim().length > 0;
-
-  const gridItems = useMemo(() => {
+  // Items del CONTEXTO actual (tipo + búsqueda + Con promo) SIN el filtro de
+  // categoría — es la base de los chips: un chip con 0 aquí no se pinta.
+  const contextItems = useMemo(() => {
     const q = search.trim().toLowerCase();
     let list = byType;
     if (q) {
@@ -119,15 +106,43 @@ export function OnlineCatalogPage() {
         return name.includes(q) || desc.includes(q) || cat.includes(q);
       });
     }
-    if (categoryFilter) list = list.filter((p) => (p.category?.name ?? "Otros") === categoryFilter);
     if (promoOnly) list = list.filter((p) => (p.active_promotions?.length ?? 0) > 0);
+    return list;
+  }, [byType, search, promoOnly]);
+
+  // Chips de categoría: "Todas" + una por categoría con contador del CONTEXTO
+  // actual (tipo + búsqueda + Con promo) — sin productos = sin chip (v2.3).
+  const categories = useMemo(() => {
+    const map = new Map<string, number>();
+    contextItems.forEach((p) => {
+      const name = p.category?.name ?? "Otros";
+      map.set(name, (map.get(name) ?? 0) + 1);
+    });
+    return Array.from(map.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => a.name.localeCompare(b.name, "es"));
+  }, [contextItems]);
+
+  // Si la categoría activa se quedó sin productos en este contexto, soltarla.
+  useEffect(() => {
+    if (categoryFilter && !categories.some((c) => c.name === categoryFilter)) {
+      setCategoryFilter(null);
+    }
+  }, [categories, categoryFilter]);
+
+  const searching = search.trim().length > 0;
+
+  const gridItems = useMemo(() => {
+    const list = categoryFilter
+      ? contextItems.filter((p) => (p.category?.name ?? "Otros") === categoryFilter)
+      : contextItems;
     if (sortMode === "new") return list; // orden natural = más nuevos primero
     const sorted = [...list];
     if (sortMode === "name") sorted.sort((a, b) => a.name.localeCompare(b.name, "es"));
     if (sortMode === "price_asc") sorted.sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
     if (sortMode === "price_desc") sorted.sort((a, b) => (b.price ?? -Infinity) - (a.price ?? -Infinity));
     return sorted;
-  }, [byType, search, categoryFilter, promoOnly, sortMode]);
+  }, [contextItems, categoryFilter, sortMode]);
 
   const hasAnyPromo = useMemo(() => data.some((p) => (p.active_promotions?.length ?? 0) > 0), [data]);
 
@@ -244,9 +259,10 @@ export function OnlineCatalogPage() {
         className="sticky top-0 z-30"
         style={{ background: "rgba(11,8,13,0.82)", backdropFilter: "blur(18px) saturate(150%)", WebkitBackdropFilter: "blur(18px) saturate(150%)", borderBottom: "1px solid var(--td-panel-border)" }}
       >
-        <div className="max-w-5xl mx-auto px-4 py-3">
-          <div className="flex items-center gap-3.5">
-            {/* Logo con más presencia (v2.2 premium) */}
+        <div className="max-w-5xl mx-auto px-4 py-3.5">
+          {/* Fila 1: logo + título; el buscador baja a su PROPIA fila en móvil
+              (v2.3 — estaban amontonados) y se queda inline en pantalla ancha. */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
             <div
               className="shrink-0"
               style={{ background: "#fff", borderRadius: 14, padding: "6px 11px", border: "1px solid rgba(204,34,0,0.18)", boxShadow: "0 0 26px rgba(204,34,0,0.45), 0 4px 14px rgba(0,0,0,0.35)" }}
@@ -258,9 +274,8 @@ export function OnlineCatalogPage() {
               <h1 className="text-xl font-black leading-tight" style={{ fontFamily: DISPLAY, color: "var(--td-text-hi)", letterSpacing: "-0.01em" }}>Catálogo</h1>
             </div>
 
-            {/* Buscador (en la barra sticky) */}
             {showSearch && (
-              <div className="relative flex-1 ml-2">
+              <div className="relative basis-full md:basis-auto md:flex-1 md:ml-3">
                 <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2" style={{ color: "var(--td-text-ghost)" }} />
                 <input
                   value={searchInput}
@@ -283,55 +298,58 @@ export function OnlineCatalogPage() {
             )}
           </div>
 
-          {/* Tabs por tipo + contadores */}
-          {tabs.length > 1 && (
-            <div className="flex items-center gap-2 mt-3">
-              {tabs.map((t) => {
-                const active = typeFilter === t.key;
-                return (
-                  <button
-                    key={t.key}
-                    onClick={() => { setTypeFilter(t.key); setCategoryFilter(null); }}
-                    className="px-3.5 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-widest cursor-pointer transition-all"
-                    style={active
-                      ? { background: "var(--td-red-g)", border: "1px solid var(--td-red-brd)", color: "#fff", boxShadow: "0 0 18px rgba(224,34,26,0.3)" }
-                      : { background: "var(--td-surface-muted)", border: "1px solid var(--td-divider)", color: "var(--td-text-md)" }}
-                  >
-                    {t.label} <span style={{ opacity: 0.65 }}>· {t.count}</span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
+          {/* Fila 2: tabs de tipo + separador + categorías, UNA fila scrolleable
+              (v2.3 — antes eran 2 filas y se sentía apretado). Los chips de
+              categoría con 0 productos en el contexto actual NO se pintan. */}
+          <div className="td-chiprow flex items-center gap-2 mt-3.5 overflow-x-auto -mx-4 px-4">
+            {tabs.length > 1 && tabs.map((t) => {
+              const active = typeFilter === t.key;
+              return (
+                <button
+                  key={t.key}
+                  onClick={() => { setTypeFilter(t.key); setCategoryFilter(null); }}
+                  className="shrink-0 px-3.5 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-widest cursor-pointer transition-all"
+                  style={active
+                    ? { background: "var(--td-red-g)", border: "1px solid var(--td-red-brd)", color: "#fff", boxShadow: "0 0 18px rgba(224,34,26,0.3)" }
+                    : { background: "var(--td-surface-muted)", border: "1px solid var(--td-divider)", color: "var(--td-text-md)" }}
+                >
+                  {t.label} <span style={{ opacity: 0.65 }}>· {t.count}</span>
+                </button>
+              );
+            })}
 
-          {/* Categorías como FILTRO (v2.2): fila scrolleable, siempre arriba */}
-          {categories.length > 1 && (
-            <div className="td-chiprow flex items-center gap-1.5 mt-2.5 overflow-x-auto -mx-4 px-4">
-              <button
-                onClick={() => setCategoryFilter(null)}
-                className="shrink-0 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all"
-                style={chipStyle(categoryFilter === null)}
-              >
-                Todas
-              </button>
-              {categories.map((c) => {
-                const active = categoryFilter === c.name;
-                return (
-                  <button
-                    key={c.name}
-                    onClick={() => setCategoryFilter(active ? null : c.name)}
-                    className="shrink-0 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all"
-                    style={chipStyle(active)}
-                  >
-                    {c.name} <span style={{ opacity: 0.6 }}>· {c.count}</span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
+            {tabs.length > 1 && categories.length > 1 && (
+              <span aria-hidden className="shrink-0 w-px h-5 mx-1" style={{ background: "var(--td-divider)" }} />
+            )}
 
-          {/* Orden + Con promo (v2.2): global, arriba */}
-          <div className="td-chiprow flex items-center gap-1.5 mt-2 overflow-x-auto -mx-4 px-4 pb-0.5">
+            {categories.length > 1 && (
+              <>
+                <button
+                  onClick={() => setCategoryFilter(null)}
+                  className="shrink-0 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all"
+                  style={chipStyle(categoryFilter === null)}
+                >
+                  Todas
+                </button>
+                {categories.map((c) => {
+                  const active = categoryFilter === c.name;
+                  return (
+                    <button
+                      key={c.name}
+                      onClick={() => setCategoryFilter(active ? null : c.name)}
+                      className="shrink-0 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all"
+                      style={chipStyle(active)}
+                    >
+                      {c.name} <span style={{ opacity: 0.6 }}>· {c.count}</span>
+                    </button>
+                  );
+                })}
+              </>
+            )}
+          </div>
+
+          {/* Fila 3: orden + Con promo */}
+          <div className="td-chiprow flex items-center gap-1.5 mt-2.5 overflow-x-auto -mx-4 px-4 pb-0.5">
             {sortChips.map((c) => {
               const active = sortMode === c.key;
               return (

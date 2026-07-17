@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { useActiveStore } from "@/contexts/StoreContext";
 import { useAuth } from "@tadaima/auth";
+import { promoShortLabel, promoTiersLabel } from "@/lib/promoLabel";
 import { isAdmin as isAdminRole, isManager as isManagerRole } from "@/lib/permisos";
 import { toast } from "sonner";
 import { createProduct, updateProduct, deleteProduct, forceDeleteProduct, uploadProductImage, removeProductImage, getInventory, updateInventory, getPrice, sendStockAlert, getCategories, createCategory, getSuppliers, createSupplier } from "@tadaima/api";
@@ -180,7 +181,7 @@ interface Producto {
   // Solo viene con store_id; default true para la vista global admin.
   isAssigned?: boolean;
   /** Promos NxM vigentes (embed del backend) — para el badge y filtro "Con promo". */
-  promos?: { id: number; name: string; buyN: number; payM: number; endsAt: string | null }[];
+  promos?: { id: number; name: string; type?: string; buyN: number | null; payM: number | null; tiers?: { qty: number; amount: number }[] | null; endsAt: string | null }[];
 }
 
 const fmt = (n: number) =>
@@ -216,7 +217,9 @@ function apiProductToProducto(p: Product): Producto {
     allowCard: p.allow_card ?? true,
     isAssigned: p.is_assigned ?? true,
     promos: (p.active_promotions ?? []).map(pr => ({
-      id: pr.id, name: pr.name, buyN: pr.buy_n, payM: pr.pay_m, endsAt: pr.ends_at ?? null,
+      id: pr.id, name: pr.name, ...(pr.type ? { type: pr.type } : {}),
+      buyN: pr.buy_n, payM: pr.pay_m, ...(pr.tiers ? { tiers: pr.tiers } : {}),
+      endsAt: pr.ends_at ?? null,
     })),
   }
 }
@@ -1670,10 +1673,10 @@ export function ProductsPage() {
                 <span
                   className="inline-flex items-center gap-1 mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wide"
                   style={{ color: "#34d399", background: "rgba(16,185,129,0.10)", border: "1px solid rgba(16,185,129,0.35)" }}
-                  title={promo.name}
+                  title={`${promo.name} · ${promoTiersLabel({ type: promo.type, buy_n: promo.buyN, pay_m: promo.payM, tiers: promo.tiers })}`}
                 >
                   <TicketPercent size={9} />
-                  {promo.buyN}x{promo.payM}
+                  {promoShortLabel({ type: promo.type, buy_n: promo.buyN, pay_m: promo.payM, tiers: promo.tiers })}
                   {promo.endsAt
                     ? ` · hasta ${new Date(promo.endsAt).toLocaleDateString("es-MX", { day: "2-digit", month: "short" })}`
                     : " · sin vencimiento"}

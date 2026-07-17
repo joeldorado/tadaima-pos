@@ -20,12 +20,24 @@ class ProductPromotion extends Model
         self::STATUS_EXPIRED,
     ];
 
+    /** "Compra N, paga M" (2x1). Usa buy_n/pay_m. */
+    public const TYPE_NXM = 'nxm';
+    /** "Compra N piezas → −$X" con escalones. Usa tiers (greedy por grupos). */
+    public const TYPE_QTY_DISCOUNT = 'qty_discount';
+
+    public const TYPES = [
+        self::TYPE_NXM,
+        self::TYPE_QTY_DISCOUNT,
+    ];
+
     protected $fillable = [
         'product_id',
         'store_id',
         'name',
+        'type',
         'buy_n',
         'pay_m',
+        'tiers',
         'starts_at',
         'ends_at',
         'status',
@@ -36,6 +48,7 @@ class ProductPromotion extends Model
         'store_id'  => 'integer',
         'buy_n'     => 'integer',
         'pay_m'     => 'integer',
+        'tiers'     => 'array',
         'priority'  => 'integer',
         'starts_at' => 'datetime',
         'ends_at'   => 'datetime',

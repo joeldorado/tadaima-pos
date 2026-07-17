@@ -50,6 +50,9 @@ class ProductPromotionsController extends Controller
             return $resp;
         }
         if ($request->input('status', ProductPromotion::STATUS_ACTIVE) === ProductPromotion::STATUS_ACTIVE) {
+            if ($resp = $this->promoTypeConflictError($product, $request)) {
+                return $resp;
+            }
             if ($resp = $this->duplicatePromoError($product, $request)) {
                 return $resp;
             }
@@ -59,9 +62,10 @@ class ProductPromotionsController extends Controller
         }
 
         $promotion = $product->promotions()->create(array_merge(
-            $request->only(['name', 'buy_n', 'pay_m', 'priority']),
+            $request->only(['name', 'buy_n', 'pay_m', 'tiers', 'priority']),
             $this->vigencyDates($request->input('starts_at'), $request->input('ends_at')),
             [
+                'type'     => $request->promoType(),
                 'status'   => $request->input('status', ProductPromotion::STATUS_ACTIVE),
                 'store_id' => $this->scopedStoreId($request),
             ],
@@ -90,6 +94,9 @@ class ProductPromotionsController extends Controller
         if ($request->has('status')
             && $request->input('status') === ProductPromotion::STATUS_ACTIVE
             && $promotion->status !== ProductPromotion::STATUS_ACTIVE) {
+            if ($resp = $this->promoTypeConflictError($product, $request, $promotion->id)) {
+                return $resp;
+            }
             if ($resp = $this->duplicatePromoError($product, $request, $promotion->id)) {
                 return $resp;
             }
@@ -99,7 +106,7 @@ class ProductPromotionsController extends Controller
         }
 
         $promotion->update(array_merge(
-            $request->only(['name', 'buy_n', 'pay_m', 'priority']),
+            $request->only(['name', 'buy_n', 'pay_m', 'tiers', 'priority']),
             $this->vigencyDates($request->input('starts_at'), $request->input('ends_at')),
             $request->has('status') ? ['status' => $request->input('status')] : [],
             $request->has('store_id') ? ['store_id' => $this->scopedStoreId($request)] : [],
@@ -142,21 +149,84 @@ class ProductPromotionsController extends Controller
      */
     private function duplicatePromoError(
         Product $product,
-        \Illuminate\Http\Request $request,
+        StoreProductPromotionRequest $request,
         ?int $ignoreId = null,
     ): ?JsonResponse {
-        $buyN = (int) $request->input('buy_n');
-        $payM = (int) $request->input('pay_m');
+        $type  = $request->promoType();
+        $query = $this->overlappingActivePromos($product, $request, $ignoreId)
+            ->where('type', $type);
+
+        // NxM: duplicado = mismo N y M. qty_discount: cualquier otra del mismo
+        // tipo encimada es duplicado (los escalones competirían entre sí).
+        if ($type === ProductPromotion::TYPE_NXM) {
+            $query->where('buy_n', (int) $request->input('buy_n'))
+                ->where('pay_m', (int) $request->input('pay_m'));
+        }
+
+        $existing = $query->first();
+        if (! $existing) {
+            return null;
+        }
+
+        $label = $type === ProductPromotion::TYPE_NXM
+            ? "una promo {$request->input('buy_n')}x{$request->input('pay_m')}"
+            : 'una promo de descuento por cantidad';
+
+        return $this->error(
+            "Ya existe {$label} para este producto que se encima en fechas (\"{$existing->name}\"). Pausa o elimina esa, o usa un rango de fechas que no se encime.",
+            422
+        );
+    }
+
+    /**
+     * Exclusividad de TIPOS (pedido Joel 2026-07-20): un producto no puede
+     * tener a la vez una promo NxM y una de descuento por cantidad vigentes
+     * con ventana y ámbito de tienda encimados — una u otra.
+     */
+    private function promoTypeConflictError(
+        Product $product,
+        StoreProductPromotionRequest $request,
+        ?int $ignoreId = null,
+    ): ?JsonResponse {
+        $type = $request->promoType();
+
+        $existing = $this->overlappingActivePromos($product, $request, $ignoreId)
+            ->where('type', '!=', $type)
+            ->first();
+
+        if (! $existing) {
+            return null;
+        }
+
+        $existingLabel = $existing->type === ProductPromotion::TYPE_NXM
+            ? "{$existing->buy_n}x{$existing->pay_m}"
+            : 'de descuento por cantidad';
+
+        return $this->error(
+            "Este producto ya tiene la promo \"{$existing->name}\" ({$existingLabel}) vigente en esas fechas. No pueden convivir una NxM y una de descuento por cantidad — pausa o elimina esa primero.",
+            422
+        );
+    }
+
+    /**
+     * Query base compartida: promos ACTIVAS vivas del producto cuya VENTANA y
+     * ÁMBITO de tienda se enciman con lo que se está creando/reactivando.
+     * Ventana null = infinita (se encima con todo). Tienda global (NULL) choca
+     * con cualquiera; tiendas distintas no chocan entre sí.
+     */
+    private function overlappingActivePromos(
+        Product $product,
+        StoreProductPromotionRequest $request,
+        ?int $ignoreId = null,
+    ): \Illuminate\Database\Eloquent\Builder {
         $dates = $this->vigencyDates($request->input('starts_at'), $request->input('ends_at'));
         $newStart = $dates['starts_at'];
         $newEnd   = $dates['ends_at'];
         $storeId  = $this->scopedStoreId($request);
 
-        $existing = ProductPromotion::query()
+        return ProductPromotion::query()
             ->where('product_id', $product->id)
             ->where('status', ProductPromotion::STATUS_ACTIVE)
-            ->where('buy_n', $buyN)
-            ->where('pay_m', $payM)
             ->when($ignoreId !== null, fn ($q) => $q->where('id', '!=', $ignoreId))
             // Solo vivas (no vencidas).
             ->where(fn ($q) => $q->whereNull('ends_at')->orWhere('ends_at', '>=', now()))
@@ -170,17 +240,7 @@ class ProductPromotionsController extends Controller
             ))
             ->when($newStart !== null, fn ($q) => $q->where(fn ($qq) =>
                 $qq->whereNull('ends_at')->orWhere('ends_at', '>=', $newStart)
-            ))
-            ->first();
-
-        if (! $existing) {
-            return null;
-        }
-
-        return $this->error(
-            "Ya existe una promo {$buyN}x{$payM} para este producto que se encima en fechas (\"{$existing->name}\"). Pausa o elimina esa, o usa un rango de fechas que no se encime.",
-            422
-        );
+            ));
     }
 
     /**

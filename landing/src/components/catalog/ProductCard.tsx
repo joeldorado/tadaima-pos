@@ -5,6 +5,7 @@ import type { GlobalCatalogItem } from "@tadaima/api"
 import { HoverCard } from "@/components/aceternity/HoverCard"
 import { ImageWithFallback } from "@/components/figma/ImageWithFallback"
 import { buildOrderMessage, buildWhatsAppLink } from "@/lib/catalogWhatsApp"
+import { promoShortLabel, promoTiersLabel } from "@/lib/promoLabel"
 
 const DISPLAY = "'Space Grotesk', system-ui, sans-serif"
 
@@ -77,11 +78,13 @@ export function ProductCard({
       accent="rgba(224,34,26,0.20)"
       className="h-full rounded-3xl p-2.5 flex flex-col"
       style={{
-        background: "var(--td-card-bg)",
+        // v2.3: glass MÁS OPACO (Joel) — con el fondo shader animado, la card
+        // casi transparente perdía legibilidad. Gradiente oscuro ~0.92.
+        background: "linear-gradient(160deg, rgba(28,18,24,0.92) 0%, rgba(15,10,16,0.94) 100%)",
         border: "1px solid var(--td-card-border)",
         backdropFilter: "blur(16px) saturate(160%)",
         WebkitBackdropFilter: "blur(16px) saturate(160%)",
-        boxShadow: "0 8px 28px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.05)",
+        boxShadow: "0 8px 28px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05)",
       }}
     >
       {/* Imagen: aspect-ratio fijo (CLS) + placeholder de marca cuando no hay foto */}
@@ -131,12 +134,12 @@ export function ProductCard({
       {promo && (
         <div className="mt-1.5">
           <span
-            title={`${promo.name} · ${promo.buy_n}x${promo.pay_m}${promoEnds ? ` · hasta ${promoEnds}` : ""}${promoStoreName ? ` · en ${promoStoreName}` : ""}`}
+            title={`${promo.name} · ${promoTiersLabel(promo)}${promoEnds ? ` · hasta ${promoEnds}` : ""}${promoStoreName ? ` · en ${promoStoreName}` : ""}`}
             className="inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md"
             style={{ background: "rgba(16,185,129,0.14)", border: "1px solid rgba(16,185,129,0.35)", color: "#34D399" }}
           >
             <TicketPercent size={10} />
-            {promo.buy_n}x{promo.pay_m}
+            {promoShortLabel(promo)}
             {promoEnds ? ` · hasta ${promoEnds}` : ""}
             {promoStoreName ? ` · ${promoStoreName}` : ""}
           </span>

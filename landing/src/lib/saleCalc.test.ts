@@ -175,6 +175,70 @@ describe("computePromoBenefit — motor NxM", () => {
   });
 });
 
+describe("computePromoBenefit — tipo qty_discount (escalones, greedy por grupos)", () => {
+  const qtyPromo = (tiers: { qty: number; amount: number }[]): PromoDef => ({
+    id: 9,
+    productId: "1",
+    name: "Por cantidad",
+    type: "qty_discount",
+    buyN: 0,
+    payM: 0,
+    tiers,
+    priority: 0,
+  });
+  const TIERS = [
+    { qty: 2, amount: 100 },
+    { qty: 3, amount: 400 },
+  ];
+
+  it("caso Joel: 5 pzas con [2→100, 3→400] = 400 + 100 = 500 (se repite por grupos)", () => {
+    expect(computePromoBenefit(qtyPromo(TIERS), { unitPrice: 200, qty: 5 })).toEqual(
+      expect.objectContaining({ type: "promo", amount: 500, freeQty: 0 }),
+    );
+  });
+
+  it("2 pzas → 100; 3 pzas → 400 (mejor escalón); 6 pzas → 2 grupos de 3 = 800", () => {
+    expect(computePromoBenefit(qtyPromo(TIERS), { unitPrice: 200, qty: 2 })?.amount).toBe(100);
+    expect(computePromoBenefit(qtyPromo(TIERS), { unitPrice: 200, qty: 3 })?.amount).toBe(400);
+    expect(computePromoBenefit(qtyPromo(TIERS), { unitPrice: 200, qty: 6 })?.amount).toBe(800);
+  });
+
+  it("no alcanza el escalón mínimo → null", () => {
+    expect(computePromoBenefit(qtyPromo(TIERS), { unitPrice: 200, qty: 1 })).toBeNull();
+  });
+
+  it("clampeado al bruto de la línea (nunca deja la línea negativa)", () => {
+    expect(
+      computePromoBenefit(qtyPromo([{ qty: 2, amount: 500 }]), { unitPrice: 100, qty: 2 })?.amount,
+    ).toBe(200);
+  });
+
+  it("escalones inválidos se ignoran; sin escalones válidos → null", () => {
+    expect(
+      computePromoBenefit(qtyPromo([{ qty: 1, amount: 50 }, { qty: 0, amount: 10 }]), { unitPrice: 100, qty: 5 }),
+    ).toBeNull();
+  });
+
+  it("stacking: manual sobre el neto de la qty_discount (espejo del test PHP)", () => {
+    const result = recalculateSale({
+      lines: [
+        {
+          lineId: "a",
+          productId: "1",
+          unitPrice: 200,
+          qty: 2,
+          discount: { kind: "fixed", basis: "line", value: 50, reason: "otro" },
+        },
+      ],
+      promotions: [qtyPromo([{ qty: 2, amount: 100 }])],
+    });
+    // gross 400 − promo 100 − manual 50 = 250
+    expect(result.total).toBe(250);
+    expect(result.lines[0]?.promoPart?.amount).toBe(100);
+    expect(result.lines[0]?.manualPart).toBe(50);
+  });
+});
+
 describe("recalculateSale — precedencia y no-stacking", () => {
   const promo2x1: PromoDef = { id: 7, productId: "X", name: "2x1", buyN: 2, payM: 1, priority: 0 };
 

@@ -94,8 +94,10 @@ class ProductLightResource extends JsonResource
                 ? $this->activePromotions->map(fn ($p) => [
                     'id'       => $p->id,
                     'name'     => $p->name,
-                    'buy_n'    => (int) $p->buy_n,
-                    'pay_m'    => (int) $p->pay_m,
+                    'type'     => $p->type ?? \App\Models\ProductPromotion::TYPE_NXM,
+                    'buy_n'    => $p->buy_n !== null ? (int) $p->buy_n : null,
+                    'pay_m'    => $p->pay_m !== null ? (int) $p->pay_m : null,
+                    'tiers'    => $p->tiers,
                     'priority' => (int) $p->priority,
                     'store_id' => $p->store_id !== null ? (int) $p->store_id : null,
                     'ends_at'  => $p->ends_at?->toIso8601String(),

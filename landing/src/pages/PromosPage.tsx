@@ -28,6 +28,34 @@ const fmt = (n: number) =>
 
 type LightPromo = NonNullable<ProductLight["active_promotions"]>[number];
 
+/**
+ * Piezas de display por TIPO de promo (banner/TV/grid, 2026-07-20):
+ * - nxm: badge "2×1" + "1 gratis" + "Llévate N, paga M · $".
+ * - qty_discount: badge "−$100" + escalones + "Llévate N y ahorra $X".
+ * badgeScale achica el badge gigante cuando el texto es largo ("−$1,000").
+ */
+function promoDisplay(promo: LightPromo, price: number) {
+  if (promo.type === "qty_discount") {
+    const tiers = [...(promo.tiers ?? [])].filter(t => t.qty >= 2 && t.amount > 0).sort((a, b) => a.qty - b.qty);
+    const first = tiers[0];
+    return {
+      badge: first ? `−${fmt(first.amount)}` : "Promo",
+      badgeScale: 0.55,
+      sub: `${tiers.map(t => `${t.qty} pzas −${fmt(t.amount)}`).join(" · ") || "Por cantidad"} · ${promo.name}`,
+      cta: first ? `Llévate ${first.qty} y ahorra ${fmt(first.amount)}` : "Descuento por cantidad",
+    };
+  }
+  const buyN = promo.buy_n ?? 0;
+  const payM = promo.pay_m ?? 0;
+  const free = buyN - payM;
+  return {
+    badge: `${buyN}×${payM}`,
+    badgeScale: 1,
+    sub: `${free === 1 ? "1 gratis" : `${free} gratis`} · ${promo.name}`,
+    cta: `Llévate ${buyN}, paga ${payM} · ${fmt(price * payM)}`,
+  };
+}
+
 /** Carga el logo como data-URL (mismo patrón que loadTicketLogo del ticket). */
 async function loadLogoDataUrl(): Promise<string | null> {
   try {
@@ -58,7 +86,7 @@ function PromoBanner({ product, promo, imgDataUrl, logoDataUrl, endsAt, nodeRef 
   nodeRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const price = getLightPrice(product, 1);
-  const free = promo.buy_n - promo.pay_m;
+  const disp = promoDisplay(promo, price);
   const vigencia = endsAt
     ? `Válido hasta el ${new Date(endsAt).toLocaleDateString("es-MX", { day: "numeric", month: "long", year: "numeric" })}`
     : "Promoción por tiempo limitado";
@@ -90,15 +118,15 @@ function PromoBanner({ product, promo, imgDataUrl, logoDataUrl, endsAt, nodeRef 
       {/* Badge NxM gigante */}
       <div style={{ marginTop: 44, zIndex: 1, textAlign: "center" }}>
         <div style={{
-          fontSize: 230, fontWeight: 900, lineHeight: 0.9, letterSpacing: "-0.04em",
+          fontSize: Math.round(230 * disp.badgeScale), fontWeight: 900, lineHeight: 0.9, letterSpacing: "-0.04em",
           background: "linear-gradient(135deg, #FF3322 0%, #FFB199 100%)",
           WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent",
           textShadow: "0 0 80px rgba(255,51,34,0.25)",
         }}>
-          {promo.buy_n}×{promo.pay_m}
+          {disp.badge}
         </div>
-        <div style={{ marginTop: 8, fontSize: 34, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.35em", color: GREEN }}>
-          {free === 1 ? "1 gratis" : `${free} gratis`} · {promo.name}
+        <div style={{ marginTop: 8, fontSize: 30, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.2em", color: GREEN, padding: "0 60px" }}>
+          {disp.sub}
         </div>
       </div>
 
@@ -113,7 +141,7 @@ function PromoBanner({ product, promo, imgDataUrl, logoDataUrl, endsAt, nodeRef 
       <div style={{ marginTop: 44, zIndex: 1, textAlign: "center", padding: "0 80px" }}>
         <div style={{ fontSize: 52, fontWeight: 900, lineHeight: 1.1 }}>{product.name}</div>
         <div style={{ marginTop: 18, fontSize: 36, fontWeight: 800, color: "rgba(255,255,255,0.85)" }}>
-          Llévate {promo.buy_n} y paga solo {promo.pay_m} · {fmt(price * promo.pay_m)}
+          {disp.cta}
         </div>
       </div>
 
@@ -210,10 +238,11 @@ function ShareBannerModal({ product, promo, onClose }: {
 
   const handleWhatsAppText = () => {
     const price = getLightPrice(product, 1);
+    const disp = promoDisplay(promo, price);
     const lines = [
-      `🔥 *PROMO ${promo.buy_n}x${promo.pay_m}* — ${promo.name}`,
+      `🔥 *PROMO ${disp.badge}* — ${promo.name}`,
       `${product.name}`,
-      `Llévate ${promo.buy_n} y paga solo ${promo.pay_m} · ${fmt(price * promo.pay_m)}`,
+      disp.cta,
       endsAt ? `Válido hasta el ${new Date(endsAt).toLocaleDateString("es-MX", { day: "numeric", month: "long" })}` : "Por tiempo limitado",
       `Solo en tienda · Tadaima 🏪`,
     ];
@@ -354,20 +383,27 @@ function TvMode({ items, onExit }: {
 
             {/* Texto */}
             <div style={{ maxWidth: "44vw" }}>
-              <div style={{
-                fontSize: "22vh", fontWeight: 900, lineHeight: 0.9, letterSpacing: "-0.04em",
-                background: "linear-gradient(135deg, #FF3322 0%, #FFB199 100%)",
-                WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent",
-              }}>
-                {current.promo.buy_n}×{current.promo.pay_m}
-              </div>
-              <div style={{ marginTop: "1vh", fontSize: "3.4vh", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.3em", color: GREEN }}>
-                {current.promo.buy_n - current.promo.pay_m === 1 ? "1 gratis" : `${current.promo.buy_n - current.promo.pay_m} gratis`} · {current.promo.name}
-              </div>
-              <div style={{ marginTop: "3vh", fontSize: "5.4vh", fontWeight: 900, lineHeight: 1.1 }}>{current.product.name}</div>
-              <div style={{ marginTop: "1.6vh", fontSize: "3.4vh", fontWeight: 800, color: "rgba(255,255,255,0.85)" }}>
-                Llévate {current.promo.buy_n}, paga {current.promo.pay_m} · {fmt(getLightPrice(current.product, 1) * current.promo.pay_m)}
-              </div>
+              {(() => {
+                const disp = promoDisplay(current.promo, getLightPrice(current.product, 1));
+                return (
+                  <>
+                    <div style={{
+                      fontSize: `${Math.round(22 * disp.badgeScale)}vh`, fontWeight: 900, lineHeight: 0.9, letterSpacing: "-0.04em",
+                      background: "linear-gradient(135deg, #FF3322 0%, #FFB199 100%)",
+                      WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent",
+                    }}>
+                      {disp.badge}
+                    </div>
+                    <div style={{ marginTop: "1vh", fontSize: "3vh", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.2em", color: GREEN }}>
+                      {disp.sub}
+                    </div>
+                    <div style={{ marginTop: "3vh", fontSize: "5.4vh", fontWeight: 900, lineHeight: 1.1 }}>{current.product.name}</div>
+                    <div style={{ marginTop: "1.6vh", fontSize: "3.4vh", fontWeight: 800, color: "rgba(255,255,255,0.85)" }}>
+                      {disp.cta}
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           </Motion.div>
         ) : (
@@ -450,7 +486,7 @@ export function PromosPage() {
           <div>
             <h1 className="text-xl font-black uppercase tracking-wide" style={{ color: THI }}>Promos</h1>
             <p className="text-[11px] font-bold" style={{ color: TMD }}>
-              Promociones NxM vigentes — comparte el banner o proyecta el Modo TV en tienda.
+              Promociones vigentes (2x1 o descuento por cantidad) — comparte el banner o proyecta el Modo TV en tienda.
             </p>
           </div>
         </div>
@@ -496,7 +532,7 @@ export function PromosPage() {
                   ? <img src={product.image} alt={product.name} loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                   : <span style={{ fontSize: 34, fontWeight: 900, color: "rgba(255,255,255,0.12)" }}>Tadaima</span>}
                 <span style={{ position: "absolute", top: 10, left: 10, padding: "4px 12px", borderRadius: 10, fontSize: 15, fontWeight: 900, color: "#fff", background: "linear-gradient(135deg, #BB1100, #FF3322)", boxShadow: "0 4px 14px rgba(224,34,26,0.5)" }}>
-                  {promo.buy_n}×{promo.pay_m}
+                  {promoDisplay(promo, getLightPrice(product, 1)).badge}
                 </span>
               </div>
 
@@ -512,7 +548,7 @@ export function PromosPage() {
                   )}
                 </p>
                 <p className="text-[12px] font-black mt-2" style={{ color: GREEN }}>
-                  Llévate {promo.buy_n}, paga {promo.pay_m} · {fmt(getLightPrice(product, 1) * promo.pay_m)}
+                  {promoDisplay(promo, getLightPrice(product, 1)).cta}
                 </p>
                 {promo.priority > 0 && (
                   <p className="text-[9px] font-bold mt-1" style={{ color: TLO }}>Prioridad {promo.priority}</p>

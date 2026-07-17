@@ -41,6 +41,7 @@ import { useExchangeRateQuery } from "@/hooks/queries/useSystemSettings";
 import { usePreSaleCatalogsQuery, usePreSaleOrdersQuery } from "@/hooks/queries/usePreSales";
 import { useCustomersAllQuery } from "@/hooks/queries/useCustomers";
 import { useTodayHistorialQuery } from "@/hooks/queries/useHistorial";
+import { promoShortLabel, promoTiersLabel } from "@/lib/promoLabel";
 import { queryKeys } from "@/lib/queryKeys";
 import { prependSaleToSalesCaches, prependPreSaleOrderToCaches, patchPreSaleOrderInCaches, decrementProductStockInCaches, invalidateAfterSale } from "@/lib/optimisticSale";
 import { getTodayLocal, toLocalYmd, BUSINESS_TZ } from "@/lib/date";
@@ -120,7 +121,7 @@ interface Product {
   // agrega stock; no se puede cobrar hasta que tenga stock). Default true.
   is_assigned?: boolean;
   /** Promos NxM VIGENTES (Fase 3) — el motor elige la mejor por línea. */
-  active_promotions?: Array<{ id: number; name: string; buy_n: number; pay_m: number; priority: number }>;
+  active_promotions?: Array<{ id: number; name: string; type?: 'nxm' | 'qty_discount'; buy_n: number | null; pay_m: number | null; tiers?: Array<{ qty: number; amount: number }> | null; priority: number }>;
 }
 
 interface Customer {
@@ -2107,8 +2108,10 @@ export function SellPage() {
           id: ap.id,
           productId: i.product.id,
           name: ap.name,
-          buyN: ap.buy_n,
-          payM: ap.pay_m,
+          type: ap.type ?? ("nxm" as const),
+          buyN: ap.buy_n ?? 0,
+          payM: ap.pay_m ?? 0,
+          ...(ap.tiers ? { tiers: ap.tiers } : {}),
           priority: ap.priority,
         }))
       ),
@@ -5066,12 +5069,12 @@ export function SellPage() {
                               {(p.active_promotions?.length ?? 0) > 0 && (() => {
                                 const promo = [...(p.active_promotions ?? [])].sort((a, b) => b.priority - a.priority || a.id - b.id)[0]!;
                                 return (
-                                  <span title={promo.name} style={{
+                                  <span title={`${promo.name} · ${promoTiersLabel(promo)}`} style={{
                                     marginLeft: 8, padding: "1px 7px", borderRadius: 6, verticalAlign: "middle",
                                     fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em",
                                     color: "#34d399", background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.35)",
                                   }}>
-                                    Promo {promo.buy_n}x{promo.pay_m}
+                                    Promo {promoShortLabel(promo)}
                                   </span>
                                 );
                               })()}
@@ -5546,7 +5549,8 @@ export function SellPage() {
                               style={{ background: "rgba(16,185,129,0.12)", color: "#34d399", border: "1px solid rgba(16,185,129,0.4)" }}
                               title={`Promoción automática: ${lineCalc?.promoPart?.promoLabel ?? ""}`}
                             >
-                              {lineCalc?.promoPart?.promoLabel ?? "Promo"} · {lineCalc?.promoPart?.freeQty ?? 0} gratis −{fmt(lineCalc?.promoPart?.amount ?? 0)}
+                              {/* qty_discount no regala piezas (freeQty 0) — solo monto */}
+                              {lineCalc?.promoPart?.promoLabel ?? "Promo"} ·{(lineCalc?.promoPart?.freeQty ?? 0) > 0 ? ` ${lineCalc?.promoPart?.freeQty} gratis` : ""} −{fmt(lineCalc?.promoPart?.amount ?? 0)}
                             </span>
                           )}
                           {!item.isFromPreSale && item.isDamaged && (
@@ -8161,7 +8165,7 @@ export function SellPage() {
                                       discountLabel: [
                                         i.promo_name ? `Promo ${i.promo_name}`.trim() : "",
                                         (() => {
-                                          const promoAmt = i.promo_name ? Math.min(i.discount_amount ?? 0, (i.promo_free_qty ?? 0) * i.price) : 0;
+                                          const promoAmt = i.promo_name ? Math.min(i.discount_amount ?? 0, i.promo_amount ?? ((i.promo_free_qty ?? 0) * i.price)) : 0;
                                           const manualAmt = (i.discount_amount ?? 0) - promoAmt;
                                           return manualAmt > 0.005 ? `Desc.${i.discount_reason ? ` ${DISCOUNT_REASON_LABELS[i.discount_reason as keyof typeof DISCOUNT_REASON_LABELS] ?? i.discount_reason}` : ""}` : "";
                                         })(),
@@ -8207,7 +8211,7 @@ export function SellPage() {
                                   // (free_qty × precio), el manual es el resto.
                                   const itemDisc = item.discount_amount ?? 0;
                                   const itemNet = item.price * item.quantity - itemDisc;
-                                  const promoPartAmt = item.promo_name ? Math.min(itemDisc, (item.promo_free_qty ?? 0) * item.price) : 0;
+                                  const promoPartAmt = item.promo_name ? Math.min(itemDisc, item.promo_amount ?? ((item.promo_free_qty ?? 0) * item.price)) : 0;
                                   const manualPartAmt = Math.max(0, Math.round((itemDisc - promoPartAmt) * 100) / 100);
                                   const discReason = item.discount_reason
                                     ? (DISCOUNT_REASON_LABELS[item.discount_reason as keyof typeof DISCOUNT_REASON_LABELS] ?? item.discount_reason)

@@ -151,20 +151,33 @@ export function CartDrawer({
                           </button>
                         </div>
 
-                        {/* Selector de sucursal (si el producto está en más de una) */}
-                        {it.stores.length > 1 && (
-                          <select
-                            value={it.selectedStoreId ?? ""}
-                            onChange={(e) => onSetStore(it.productId, Number(e.target.value))}
-                            className="mt-1.5 w-full rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1.5 text-[11px] font-bold text-white/80 outline-none focus:border-white/20"
-                          >
-                            {it.stores.map((s) => (
-                              <option key={s.store_id} value={s.store_id}>
-                                {s.store_name} ({s.qty} disp.)
-                              </option>
-                            ))}
-                          </select>
-                        )}
+                        {/* Selector de sucursal PROMINENTE (v2.3): visible siempre
+                            que el producto esté en más de una tienda pedible.
+                            Solo tiendas CON WhatsApp (sin número no reciben
+                            pedidos); guard `?? []` para carritos legacy. */}
+                        {(() => {
+                          const stores = it.stores ?? []
+                          const orderable = stores.filter((s) => !!s.whatsapp)
+                          const options = orderable.length ? orderable : stores
+                          if (options.length <= 1) return null
+                          return (
+                            <label className="mt-2 flex items-center gap-1.5 rounded-xl border border-emerald-400/25 bg-emerald-500/[0.06] px-2.5 py-1.5">
+                              <Store size={12} className="shrink-0 text-emerald-300" />
+                              <span className="text-[9px] font-black uppercase tracking-widest text-emerald-200/80 shrink-0">Recoger en</span>
+                              <select
+                                value={it.selectedStoreId ?? ""}
+                                onChange={(e) => onSetStore(it.productId, Number(e.target.value))}
+                                className="flex-1 min-w-0 bg-transparent text-[11px] font-black text-white outline-none cursor-pointer"
+                              >
+                                {options.map((s) => (
+                                  <option key={s.store_id} value={s.store_id} style={{ background: "#16090c" }}>
+                                    {s.store_name} ({s.qty} disp.)
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          )
+                        })()}
                       </div>
                     </div>
                   )

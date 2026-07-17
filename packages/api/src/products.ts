@@ -57,7 +57,7 @@ export interface ProductLight {
   volume_number?: number | null
   /** Promos NxM vigentes (Descuentos v2 Fase 3) — el backend ya las embebe.
    *  Con ?store_id el embed viene FILTRADO a esa tienda (o globales). */
-  active_promotions?: { id: number; name: string; buy_n: number; pay_m: number; priority: number; store_id?: number | null }[]
+  active_promotions?: { id: number; name: string; type?: 'nxm' | 'qty_discount'; buy_n: number | null; pay_m: number | null; tiers?: { qty: number; amount: number }[] | null; priority: number; store_id?: number | null }[]
 }
 
 /**

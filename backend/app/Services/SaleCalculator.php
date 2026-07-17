@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Models\ProductPromotion;
+
 /**
  * Calculadora ÚNICA de totales de venta — gemelo server-side de
  * `landing/src/lib/saleCalc.ts` (Descuentos v2, 2026-07-14).
@@ -45,6 +47,7 @@ final class SaleCalculator
      *     applied_promotion_id: ?int,
      *     promo_name: ?string,
      *     promo_free_qty: ?int,
+     *     promo_amount: ?float,
      *   }>,
      *   subtotal: float,
      *   line_benefit_total: float,
@@ -121,6 +124,9 @@ final class SaleCalculator
                 'applied_promotion_id' => $appliedPromoId,
                 'promo_name'           => $promoName,
                 'promo_free_qty'       => $promoFreeQty,
+                // Snapshot directo del monto promo (2026-07-20): con el tipo
+                // qty_discount ya no se puede derivar de promo_free_qty × price.
+                'promo_amount'         => $best !== null ? $promoAmount : null,
             ];
 
             $subtotal += $gross;
@@ -139,9 +145,15 @@ final class SaleCalculator
     }
 
     /**
-     * Beneficio de una promo NxM sobre una línea: groups = floor(Q/N),
-     * gratis = groups × (N−M), resto a precio completo. Espejo de
-     * computePromoBenefit en saleCalc.ts. Null si no alcanza (Q < N) o inválida.
+     * Mejor beneficio de promo sobre una línea. Espejo de computePromoBenefit
+     * en saleCalc.ts. Null si ninguna alcanza o son inválidas.
+     *
+     * - 'nxm': groups = floor(Q/N), gratis = groups × (N−M), resto a precio
+     *   completo. free_qty > 0.
+     * - 'qty_discount' (2026-07-20): escalones [{qty, amount}], GREEDY por
+     *   grupos del escalón mayor al menor y SE REPITE (5 pzas con 2→100/3→400
+     *   = 400 + 100). free_qty = 0 (no hay piezas gratis, es monto directo).
+     *   Monto clampeado al bruto de la línea.
      *
      * @param array<int, \App\Models\ProductPromotion> $promos
      * @return array{amount: float, promo_id: int, promo_name: string, free_qty: int}|null
@@ -151,19 +163,28 @@ final class SaleCalculator
         $best = null;
 
         foreach ($promos as $promo) {
-            $buyN = (int) $promo->buy_n;
-            $payM = (int) $promo->pay_m;
-            if ($buyN < 1 || $payM < 1 || $payM >= $buyN) {
-                continue;
-            }
-            $groups  = (int) floor($qty / $buyN);
-            $freeQty = $groups * ($buyN - $payM);
-            if ($freeQty <= 0) {
-                continue;
-            }
-            $amount = self::round2($freeQty * $unitPrice);
-            if ($amount <= 0) {
-                continue;
+            if (($promo->type ?? ProductPromotion::TYPE_NXM) === ProductPromotion::TYPE_QTY_DISCOUNT) {
+                $amount = $this->qtyDiscountAmount((array) ($promo->tiers ?? []), $qty);
+                $amount = min($amount, self::round2($unitPrice * $qty));
+                if ($amount <= 0) {
+                    continue;
+                }
+                $freeQty = 0;
+            } else {
+                $buyN = (int) $promo->buy_n;
+                $payM = (int) $promo->pay_m;
+                if ($buyN < 1 || $payM < 1 || $payM >= $buyN) {
+                    continue;
+                }
+                $groups  = (int) floor($qty / $buyN);
+                $freeQty = $groups * ($buyN - $payM);
+                if ($freeQty <= 0) {
+                    continue;
+                }
+                $amount = self::round2($freeQty * $unitPrice);
+                if ($amount <= 0) {
+                    continue;
+                }
             }
 
             $candidate = [
@@ -191,6 +212,43 @@ final class SaleCalculator
         unset($best['priority']);
 
         return $best;
+    }
+
+    /**
+     * Descuento por cantidad con escalones, GREEDY: ordena escalones de mayor
+     * a menor qty y consume la cantidad en grupos repetibles. 5 pzas con
+     * [{2,100},{3,400}] → 1 grupo de 3 (−400) + 1 grupo de 2 (−100) = 500.
+     * Espejo de qtyDiscountAmount en saleCalc.ts.
+     *
+     * @param array<int, array{qty?: int|string, amount?: int|float|string}> $tiers
+     */
+    private function qtyDiscountAmount(array $tiers, float $qty): float
+    {
+        $clean = [];
+        foreach ($tiers as $tier) {
+            $tQty    = (int) ($tier['qty'] ?? 0);
+            $tAmount = (float) ($tier['amount'] ?? 0);
+            if ($tQty >= 2 && $tAmount > 0) {
+                $clean[] = ['qty' => $tQty, 'amount' => $tAmount];
+            }
+        }
+        if ($clean === []) {
+            return 0.0;
+        }
+        usort($clean, fn ($a, $b) => $b['qty'] <=> $a['qty']);
+
+        $remaining = (int) floor($qty);
+        $amount    = 0.0;
+        foreach ($clean as $tier) {
+            if ($remaining < $tier['qty']) {
+                continue;
+            }
+            $groups     = intdiv($remaining, $tier['qty']);
+            $amount    += $groups * $tier['amount'];
+            $remaining -= $groups * $tier['qty'];
+        }
+
+        return self::round2($amount);
     }
 
     /**

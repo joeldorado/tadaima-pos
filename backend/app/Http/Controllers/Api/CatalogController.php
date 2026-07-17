@@ -332,8 +332,10 @@ class CatalogController extends Controller
                 'active_promotions' => $p->activePromotions->map(fn ($pr) => [
                     'id'       => $pr->id,
                     'name'     => $pr->name,
-                    'buy_n'    => (int) $pr->buy_n,
-                    'pay_m'    => (int) $pr->pay_m,
+                    'type'     => $pr->type ?? \App\Models\ProductPromotion::TYPE_NXM,
+                    'buy_n'    => $pr->buy_n !== null ? (int) $pr->buy_n : null,
+                    'pay_m'    => $pr->pay_m !== null ? (int) $pr->pay_m : null,
+                    'tiers'    => $pr->tiers,
                     'ends_at'  => $pr->ends_at?->toIso8601String(),
                     'store_id' => $pr->store_id !== null ? (int) $pr->store_id : null,
                 ])->values(),

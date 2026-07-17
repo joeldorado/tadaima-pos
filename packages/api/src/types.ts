@@ -78,12 +78,22 @@ export interface Product {
   updated_at: string
 }
 
-/** Promo NxM vigente tal como viaja en el payload de producto (Caja). */
+/** Escalón de una promo por cantidad: "llévate qty → −$amount". */
+export interface PromoTierDef {
+  qty: number
+  amount: number
+}
+
+/** Promo vigente tal como viaja en el payload de producto (Caja). */
 export interface ActiveProductPromotion {
   id: number
   name: string
-  buy_n: number
-  pay_m: number
+  /** 'nxm' (2x1, usa buy_n/pay_m) | 'qty_discount' (usa tiers). */
+  type?: 'nxm' | 'qty_discount'
+  buy_n: number | null
+  pay_m: number | null
+  /** Solo qty_discount: escalones (greedy por grupos, se repite). */
+  tiers?: PromoTierDef[] | null
   priority: number
   /** null = todas las tiendas; con valor = solo esa sucursal (scoping 2026-07-16). */
   store_id?: number | null
@@ -91,15 +101,17 @@ export interface ActiveProductPromotion {
   ends_at?: string | null
 }
 
-/** Promo NxM completa (CRUD del editor de producto — incluye pausadas/vencidas). */
+/** Promo completa (CRUD del editor de producto — incluye pausadas/vencidas). */
 export interface ProductPromotion {
   id: number
   product_id: number
   /** null = todas las tiendas; con valor = solo esa sucursal. */
   store_id?: number | null
   name: string
-  buy_n: number
-  pay_m: number
+  type?: 'nxm' | 'qty_discount'
+  buy_n: number | null
+  pay_m: number | null
+  tiers?: PromoTierDef[] | null
   starts_at: string | null
   ends_at: string | null
   status: 'active' | 'paused' | 'expired'
@@ -282,6 +294,8 @@ export interface SaleItemDetail {
   discount_note?: string | null
   promo_name?: string | null
   promo_free_qty?: number | null
+  /** Snapshot directo del monto promo de la línea (2026-07-20). Ventas viejas: null → derivar promo_free_qty × price. */
+  promo_amount?: number | null
   /**
    * Cost snapshot al momento EXACTO del checkout. Solo viene cuando el caller
    * es admin (security gate en `SaleItemResource`). NULL para ventas pre-
