@@ -655,6 +655,18 @@ docker compose up --build -d
 
 > Sesiones anteriores a 2026-05-14 (>20 días) archivadas en git history para mantener el log ligero. Decisiones load-bearing preservadas en ADRs (§7) y secciones de arquitectura.
 
+### Sesión 2026-07-16 — Tienda Online v2.2: lo más nuevo + filtros arriba + fondo shader — DEPLOYADO rev tadaima-00131-6mz
+
+Commit `2f90352` (bundle `index-CioTfgj0.js` verificado: "Más nuevos", "webgl2"; API prod devuelve ids desc). Backend 277/277 (+test de orden), vitest 75/75, QA navegador local desktop+móvil.
+
+**(1) Lo más NUEVO primero:** `/public/catalog` ordena `orderByDesc(products.id)` (antes por nombre) — orden estable para "Cargar más"; el grid de entrada es "Lo más nuevo · N".
+
+**(2) Filtros globales arriba (pedido de Joel):** ya no hay "Filtrar y ordenar" por sección — UN solo grid y en la barra STICKY viven: tabs Todo/Productos/Mangas + fila de chips de **categorías** ("Todas" + una por categoría con contador, scrolleable, filtran el grid) + fila de **orden** (Más nuevos default · Precio ↑↓ · A-Z) y "Con promo". Siempre visibles al scrollear.
+
+**(3) Fondo shader WebGL (`ShaderBackground.tsx`):** nebulosa fbm (shader de @atzedent que pasó Joel) tintada rojo/ámbar Tadaima; canvas fixed detrás (contenido `z-10`), `pointer-events:none`, 0.5×DPR, NO se monta con `prefers-reduced-motion` o sin WebGL2 (queda el bg de siempre), cleanup completo al desmontar.
+
+**(4) Premium:** logo del header 26→42px con más glow/aire; `ImageWithFallback` con fade-in al cargar (lazy+async ya estaban; maneja imágenes cacheadas vía `el.complete`).
+
 ### Sesión 2026-07-16 — Tienda Online v2.0 + FIX imágenes 404 (GCS) + cuadrícula + cajeros sin promos — DEPLOYADO rev tadaima-00130-bxq
 
 Commits `db80b4e` + `1d77055` + `ed4cc90` (bundle `index-D1xln0rX.js` verificado: "Filtrar y ordenar", "Cargar más", "Con promo"; fotos reales cargando en prod). Backend 276/276, vitest 75/75.
