@@ -655,6 +655,20 @@ docker compose up --build -d
 
 > Sesiones anteriores a 2026-05-14 (>20 días) archivadas en git history para mantener el log ligero. Decisiones load-bearing preservadas en ADRs (§7) y secciones de arquitectura.
 
+### Sesión 2026-07-16 — Override LOCAL de promos (la de tienda apaga la global) — DEPLOYADO rev tadaima-00133-nzw
+
+Commit `fa8ae0c` (bundle `index-DHznmcTQ.js` verificado: "Personalizar para mi tienda", "Opacada", "Reemplaza a la global"). Backend 292/292 (+5), vitest 83/83 (+2). QA E2E local con gerente real: personalizó la global 2+pzas−$100 a local −$50 y su venta cobró −$50.
+
+**Regla nueva (pedido Joel, feedback de gerentes):** si un producto tiene promo LOCAL vigente en una tienda, la GLOBAL queda DESACTIVADA ahí — gana la local aunque ahorre menos, y si la local no alcanza por cantidad la global NO revive. Admin sigue siendo el único que toca globales; el gerente "modifica" creando su variante local.
+
+**(1) Motor** (`SaleCalculator.php` ↔ `saleCalc.ts`, en paridad): al agrupar promos por producto, si hay local (store_id != null; el set ya viene filtrado forStore) se descartan las globales de ese producto. `PromoDef.storeId` nuevo en TS; SellPage lo mapea.
+
+**(2) Validaciones a ámbito EXACTO** (`overlappingActivePromos`): local ya NO choca con global (dup ni exclusividad de tipos — crear la local encima es el override deliberado); local vs local misma tienda y global vs global siguen chocando; cap de 2 activas por ámbito exacto (máx 2 globales + máx 2 locales por sucursal).
+
+**(3) UX tab Promos:** botón "Personalizar para mi tienda" (CopyPlus azul) en promos globales para usuarios con tienda — prellena tipo/valores/vigencia (inicio pasado → vacío = empieza ya) y crea la local; chips "Opacada en tu tienda / en N tienda(s)" (global) y "Reemplaza a la global" (local).
+
+**(4) Display prefiere la local** donde se pinta UNA promo: badge de la lista de Caja (SellPage), PromoPills del catálogo de Caja (si hay local, la global no se pinta), PromosPage para gerente/cajero (admin sigue viendo todas con etiquetas) y card pública (local primero, etiquetada con su tienda).
+
 ### Sesión 2026-07-16 — Promo "descuento por cantidad" (escalones) + Tienda Online v2.3 — DEPLOYADO rev tadaima-00132-b5d
 
 Commit `8a09d4a` (bundle `index-BZNIM3Jg.js` verificado: "Descuento por cantidad", "Recoger en", qty_discount; API público ya expone `type`/`tiers` = migraciones `2026_07_20_*` aplicadas). Backend 287/287 (+10), vitest 81/81 (+6). QA E2E local: venta en Caja 5×$150 con [2→100, 3→400] cobró $250 y snapshot `promo_amount=500`.
