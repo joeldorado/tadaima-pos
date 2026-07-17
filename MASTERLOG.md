@@ -655,6 +655,20 @@ docker compose up --build -d
 
 > Sesiones anteriores a 2026-05-14 (>20 días) archivadas en git history para mantener el log ligero. Decisiones load-bearing preservadas en ADRs (§7) y secciones de arquitectura.
 
+### Sesión 2026-07-17 — Centro de Documentación in-app (`/documentacion`) — DEPLOYADO rev tadaima-00134-92t
+
+Commit `3bd7634` (bundle `index-R31qr3kh.js` verificado en prod: "Centro de ayuda"). `vite build` OK, 0 errores tsc en archivos tocados. QA navegador local (admin, tema oscuro y claro): menú visible, hub renderiza, deep-link `?tema=descuento-cantidad` abre el tema, sin errores de consola.
+
+**Pedido Joel:** llevar el slide-tutorial de promos/descuentos/insumos DENTRO del sistema, en una ruta de documentación con tutoriales de todo el sistema, para todos los roles.
+
+**(1) Arquitectura data-driven:** el contenido vive como DATOS (no JSX) en `landing/src/content/docs/*` (un archivo por categoría) con modelo de bloques tipado (`types.ts`: prose/steps/callout/tiers/chips/fields/table). Renderers presentacionales en `landing/src/components/docs/DocBlocks.tsx`. Agregar un tutorial = agregar un objeto + registrarlo en `index.ts`; no se toca página ni router.
+
+**(2) Hub** (`landing/src/pages/DocsPage.tsx`): rail de categorías + contenido del tema activo; tema por `useSearchParams` (`?tema=slug`, deep-link compartible); navegación Anterior/Siguiente; tokens `--td-*` (oscuro/claro nativo). Reutiliza el material del slide: NxM, descuento por cantidad con la visualización de grupos (5 pzas = −$400 + −$100 = −$500), override local con chips "Opacada"/"Reemplaza a la global", insumos con origen del dinero.
+
+**(3) 17 tutoriales en 6 categorías:** Catálogo y precios (alta de producto, promo 2x1, descuento por cantidad, reglas, personalizar por tienda) · Caja y ventas (cobro, cortes, insumos) · Pedidos (preventas, apartados) · Inventario (existencias, traslados) · Clientes y reportes · Difusión y administración (tienda en línea, RBAC, tiendas). Contenido verificado contra las páginas reales + `DemoWalkthroughPage` (WALKTHROUGH por rol).
+
+**(4) RBAC/menú:** nuevo `PageKey` `docs` en `permisos.ts` (admin/gerente/cajero) + `NAV_BY_ROLE` en `Layout.tsx`; ruta `documentacion` con `requiresPage="docs"`. Entrada de nav "Documentación" (ícono BookOpen) visible para todo el equipo.
+
 ### Sesión 2026-07-16 — Override LOCAL de promos (la de tienda apaga la global) — DEPLOYADO rev tadaima-00133-nzw
 
 Commit `fa8ae0c` (bundle `index-DHznmcTQ.js` verificado: "Personalizar para mi tienda", "Opacada", "Reemplaza a la global"). Backend 292/292 (+5), vitest 83/83 (+2). QA E2E local con gerente real: personalizó la global 2+pzas−$100 a local −$50 y su venta cobró −$50.
