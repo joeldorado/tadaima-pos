@@ -118,7 +118,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
         const T3_COLS = canViewCost ? 8 : 6;
 
         const T4_COL = T3_COL + T3_COLS + 3; // Preventa
-        const T4_COLS = canViewCost ? 6 : 5;
+        const T4_COLS = canViewCost ? 7 : 5;
 
         const T5_COL = T4_COL + T4_COLS + 3; // Devoluciones
         const T5_COLS = 3;
@@ -134,7 +134,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
         // Draw Column Headers
         setSubHeaderRow(hrRow, T2_COL, ["Producto", "Cant. Efectivo", ...(canViewCost ? ["Costo Producto"] : []), "Venta Efectivo", ...(canViewCost ? ["Utilidad Efectivo"] : [])], "FF55CC77");
         setSubHeaderRow(hrRow, T3_COL, ["Producto", "Cant. Tarjeta", "Bruto Tarjeta", ...(canViewCost ? ["Costo Producto"] : []), "Comisión TPV", ivaLabel, "Neto Tarjeta", ...(canViewCost ? ["Utilidad Tarjeta"] : [])], "FF4488DD");
-        setSubHeaderRow(hrRow, T4_COL, ["Producto", "Cant. Preventa", "Abonado", "Pendiente", "Pactado", ...(canViewCost ? ["Costo Producto"] : [])], "FFCC88FF");
+        setSubHeaderRow(hrRow, T4_COL, ["Producto", "Cant. Preventa", "Abonado", "Pendiente", "Pactado", ...(canViewCost ? ["Costo Producto", "Utilidad"] : [])], "FFCC88FF");
         setSubHeaderRow(hrRow, T5_COL, ["Producto", "Cant. Devuelta", "Monto Devuelto"], "FFFF8866");
 
         // We will keep a separate row pointer for each table, starting at tableStartRow + 2
@@ -251,7 +251,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
         // TABLE 4: PREVENTAS
         // Campos correctos: pre_sale_apartado (abonado) y pre_sale_deuda (pendiente).
         // Pactado = abonado + pendiente (igual que el PDF y la vista en pantalla).
-        let totPreQty = 0, totPreDeposit = 0, totPrePending = 0, totPrePactado = 0, totPreCost = 0;
+        let totPreQty = 0, totPreDeposit = 0, totPrePending = 0, totPrePactado = 0, totPreCost = 0, totPreUtilidad = 0;
         presaleProducts.forEach((prod) => {
             const deposit = prod.pre_sale_apartado || 0;
             const pending = prod.pre_sale_deuda || 0;
@@ -260,7 +260,8 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
             // total_cost solo se llena el día de entrega (Opción B) y dejaba $0
             // en anticipos aunque el costo sí existiera.
             const cost = prod.pre_sale_costo_real || 0;
-            totPreQty += prod.sales_count || 0; totPreDeposit += deposit; totPrePending += pending; totPrePactado += pactado; totPreCost += cost;
+            const utilidad = pactado - cost; // Utilidad esperada al liquidar el folio.
+            totPreQty += prod.sales_count || 0; totPreDeposit += deposit; totPrePending += pending; totPrePactado += pactado; totPreCost += cost; totPreUtilidad += utilidad;
             setCell(r4, T4_COL, prod.name, { alignment: { horizontal: "left", vertical: "middle", wrapText: true } });
             setCell(r4, T4_COL + 1, prod.sales_count, { alignment: { horizontal: "center", vertical: "middle" } });
             setCell(r4, T4_COL + 2, deposit, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } }, alignment: { horizontal: "right", vertical: "middle" } });
@@ -268,6 +269,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
             setCell(r4, T4_COL + 4, pactado, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, color: { argb: "FF444444" } }, alignment: { horizontal: "right", vertical: "middle" } });
             if (canViewCost) {
                 setCell(r4, T4_COL + 5, cost, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, color: { argb: "FF444444" } }, alignment: { horizontal: "right", vertical: "middle" } });
+                setCell(r4, T4_COL + 6, utilidad, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, bold: true, color: { argb: utilidad < 0 ? "FFFF2200" : "FF009944" } }, alignment: { horizontal: "right", vertical: "middle" } });
             }
             sheet.getRow(r4).height = 20;
             r4++;
@@ -279,6 +281,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
             setCell(r4, T4_COL + 3, totPrePending, totalMoneyOpts("FFFF2200"));
             setCell(r4, T4_COL + 4, totPrePactado, totalMoneyOpts("FF444444"));
             if (canViewCost) setCell(r4, T4_COL + 5, totPreCost, totalMoneyOpts("FF444444"));
+            if (canViewCost) setCell(r4, T4_COL + 6, totPreUtilidad, totalMoneyOpts(totPreUtilidad < 0 ? "FFFF2200" : "FF009944"));
             sheet.getRow(r4).height = 20;
             r4++;
         }
@@ -305,7 +308,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
         const colWidths = {
             [T2_COL]: 28, [T2_COL + 1]: 14, [T2_COL + 2]: 15, [T2_COL + 3]: 15, [T2_COL + 4]: 15,
             [T3_COL]: 28, [T3_COL + 1]: 14, [T3_COL + 2]: 13.5, [T3_COL + 3]: 13.5, [T3_COL + 4]: 13.5, [T3_COL + 5]: 13.5, [T3_COL + 6]: 13.5, [T3_COL + 7]: 13.5,
-            [T4_COL]: 28, [T4_COL + 1]: 14, [T4_COL + 2]: 15, [T4_COL + 3]: 15, [T4_COL + 4]: 15, [T4_COL + 5]: 15,
+            [T4_COL]: 28, [T4_COL + 1]: 14, [T4_COL + 2]: 15, [T4_COL + 3]: 15, [T4_COL + 4]: 15, [T4_COL + 5]: 15, [T4_COL + 6]: 15,
             [T5_COL]: 28, [T5_COL + 1]: 14, [T5_COL + 2]: 15
         };
 

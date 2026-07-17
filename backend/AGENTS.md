@@ -134,6 +134,18 @@ delgados → `app/Services/`). Decisiones load-bearing:
 cliente** — la tienda la absorbe. Se guarda el `commission_amount` por venta solo
 para reportes.
 
+> ⚠️ **NO QUITAR — `SaleResource.cancelled_items[].cost` (2026-07, Ruben/Reportes).**
+> El `map` de `cancelled_items` en `app/Http/Resources/SaleResource.php` expone el
+> campo **`cost`** (el `cost_at_sale` del snapshot, ver ADR-015 + línea 96 de
+> `SaleCancellationService`), gateado igual que `SaleItemResource` (solo admin /
+> `can_view_cost`, si no `null`).
+> **Por qué existe:** el Reporte de Ventas (`landing/src/pages/ReportsPage.tsx`)
+> netea las ventas canceladas (positivo + negativo → 0). Sin este `cost`, la
+> cancelación restaría **$0 de costo**, inflando el Costo y descuadrando la
+> Utilidad Neta (bug real: producto costo 100, se cancela 1 venta → utilidad salía
+> $100 de menos). Es aditivo y respeta el gating; **no lo elimines** al refactorizar
+> el Resource ni al regenerar `cancelled_items`.
+
 **Tiendas y bodegas:** toda tienda necesita su almacén `type='store'` para
 recibir inventario. El selector de inventario en alta de producto lista
 *warehouses*, no *stores*. Por eso `StoreController::store` auto-crea el warehouse

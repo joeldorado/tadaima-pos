@@ -391,9 +391,11 @@ export function ReportsPage() {
         || (sale.status ?? "").toLowerCase().includes("return");
 
       // 1. Regular items
-      const isFullCancel = sale.status === "returned" || sale.cancellation_status === "full";
+      // NOTA: incluso las ventas TOTALMENTE canceladas se cuentan aquí en POSITIVO.
+      // El bloque de cancelaciones (más abajo) las resta en negativo, de modo que
+      // netean a 0 (la venta se anula) en vez de restarse sin haberse sumado —lo
+      // que antes descuadraba ingresos/costo/utilidad. Fix descuadre cancelados 2026.
       for (const item of sale.items) {
-        if (isFullCancel) continue;
         // Filter regular items using OR matching: must match at least one selected filter criteria
         const matchesRegularFilter = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.some(filter => {
           if (filter === "cash") return methods.some(m => isCashMethod(m) || isDollarMethod(m));
@@ -489,17 +491,24 @@ export function ReportsPage() {
       if (hasCancellations || isLegacyReturn) {
         const matchesCancelledFilter = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.includes("cancelled");
         if (matchesCancelledFilter) {
-          const itemsToProcess = hasCancellations 
-            ? (sale.cancelled_items ?? []).map((ci: any) => ({
-                product_id: ci.product_id,
-                name: ci.name,
-                sku: ci.sku,
-                qty_cancelled: Number(ci.qty_cancelled || ci.quantity || 0),
-                line_total: Number(ci.line_total || 0),
-                price: Number(ci.price || 0),
-                cost: Number(ci.cost ?? 0),
-                product_type: ci.product_type ?? 'product'
-              }))
+          const itemsToProcess = hasCancellations
+            ? (sale.cancelled_items ?? []).map((ci: any) => {
+                // cancelled_items NO trae 'cost' (ver tipo en packages/api). Sin el
+                // costo, la cancelación restaría $0 de costo y la utilidad quedaría mal.
+                // Fallback: tomar el costo del item ORIGINAL de la venta por product_id.
+                const origItem = (sale.items ?? []).find((si) => si.product_id === ci.product_id);
+                const unitCost = Number(ci.cost ?? origItem?.cost ?? origItem?.product?.cost ?? 0);
+                return {
+                  product_id: ci.product_id,
+                  name: ci.name,
+                  sku: ci.sku,
+                  qty_cancelled: Number(ci.qty_cancelled || ci.quantity || 0),
+                  line_total: Number(ci.line_total || 0),
+                  price: Number(ci.price || 0),
+                  cost: unitCost,
+                  product_type: ci.product_type ?? 'product'
+                };
+              })
             : (sale.items || []).map((item: any) => ({
                 product_id: item.product_id,
                 name: item.product?.name ?? "Artículo Devuelto",
@@ -933,6 +942,11 @@ export function ReportsPage() {
               ) : null}
             </div>
           </td>
+          {canViewCost && (
+            <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontSize: fontS, verticalAlign: "middle" }}>
+              <span style={{ color: TS, fontWeight: 700 }}>{fmt(prod.total_cost)}</span>
+            </td>
+          )}
           <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontSize: fontS, verticalAlign: "middle" }}>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
               <span style={{ color: prod.total_revenue < 0 ? "#FF4422" : "#00CC66", fontWeight: 900 }}>{fmt(prod.total_revenue)}</span>
@@ -946,11 +960,6 @@ export function ReportsPage() {
               ) : null}
             </div>
           </td>
-          {canViewCost && (
-            <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontSize: fontS, verticalAlign: "middle" }}>
-              <span style={{ color: TS, fontWeight: 700 }}>{fmt(prod.total_cost)}</span>
-            </td>
-          )}
           {canViewCost && (
             <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontSize: fontS, verticalAlign: "middle" }}>
               <span style={{ color: (prod.total_profit - (prod.commission_amount || 0) - ((prod.commission_amount || 0) * ivaRate)) < 0 ? "#FF4422" : "#00CC66", fontWeight: 900 }}>
@@ -1367,7 +1376,7 @@ export function ReportsPage() {
                   <div className="overflow-y-auto" style={{ maxHeight: 420 }}>
                     <table className="w-full">
                       <thead><tr style={{ borderBottom: DIV }}>
-                        {(canViewCost ? ["Producto", "Cant. Vendida", "Ingresos Totales", "Costo", "Utilidad Neta"] : ["Producto", "Cant. Vendida", "Ingresos Totales"]).map(h => <th key={h} style={thStyle}>{h}</th>)}
+                        {(canViewCost ? ["Producto", "Cant. Vendida", "Costo", "Ingresos Totales", "Utilidad Neta"] : ["Producto", "Cant. Vendida", "Ingresos Totales"]).map(h => <th key={h} style={thStyle}>{h}</th>)}
                       </tr></thead>                      <tbody>
                         {/* 1) Render regular products */}
                         {regularProducts.map(prod => renderProductRow(prod, 16, 10, 12))}
@@ -1409,6 +1418,9 @@ export function ReportsPage() {
                           <tr style={{ background: "rgba(255,255,255,0.03)", borderTop: "2px solid rgba(255,255,255,0.1)" }}>
                             <td style={{ ...tdStyle, fontWeight: 900, color: TP }}>TOTAL GENERAL</td>
                             <td style={{ ...tdStyle, fontWeight: 700, color: TP }}>{uiTotals.cantidad}</td>
+                            {canViewCost && (
+                              <td style={{ ...tdStyle, fontWeight: 700, color: TS }}>{fmt(uiTotals.costo)}</td>
+                            )}
                             <td style={tdStyle}>
                               <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
                                 <span style={{ color: uiTotals.bruto < 0 ? "#FF4422" : "#00CC66", fontWeight: 900 }}>{fmt(uiTotals.bruto)}</span>
@@ -1419,9 +1431,6 @@ export function ReportsPage() {
                                 ) : null}
                               </div>
                             </td>
-                            {canViewCost && (
-                              <td style={{ ...tdStyle, fontWeight: 700, color: TS }}>{fmt(uiTotals.costo)}</td>
-                            )}
                             {canViewCost && (
                               <td style={{ ...tdStyle, fontWeight: 900, color: uiTotals.profit < 0 ? "#FF4422" : "#00CC66" }}>
                                 {fmt(uiTotals.profit)}
@@ -1507,7 +1516,7 @@ export function ReportsPage() {
                     <table className="w-full">
                       <thead>
                         <tr style={{ borderBottom: DIV }}>
-                          {(canViewCost ? ["Producto", "Cant. Vendida", "Ingresos Totales", "Costo", "Utilidad Neta"] : ["Producto", "Cant. Vendida", "Ingresos Totales"]).map(h => (
+                          {(canViewCost ? ["Producto", "Cant. Vendida", "Costo", "Ingresos Totales", "Utilidad Neta"] : ["Producto", "Cant. Vendida", "Ingresos Totales"]).map(h => (
                             <th key={h} style={{ ...thStyle, fontSize: 10, padding: "12px 18px" }}>{h}</th>
                           ))}
                         </tr>
@@ -1552,6 +1561,7 @@ export function ReportsPage() {
                           <tr style={{ background: "rgba(255,255,255,0.03)", borderTop: "2px solid rgba(255,255,255,0.1)" }}>
                             <td style={{ ...tdStyle, fontWeight: 900, color: TP }}>TOTAL GENERAL</td>
                             <td style={{ ...tdStyle, fontWeight: 700, color: TP }}>{uiTotals.cantidad}</td>
+                            {canViewCost && <td style={{ ...tdStyle, fontWeight: 700, color: TS }}>{fmt(uiTotals.costo)}</td>}
                             <td style={tdStyle}>
                               <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
                                 <span style={{ color: uiTotals.bruto < 0 ? "#FF4422" : "#00CC66", fontWeight: 900 }}>{fmt(uiTotals.bruto)}</span>
@@ -1562,7 +1572,6 @@ export function ReportsPage() {
                                 ) : null}
                               </div>
                             </td>
-                            {canViewCost && <td style={{ ...tdStyle, fontWeight: 700, color: TS }}>{fmt(uiTotals.costo)}</td>}
                             {canViewCost && <td style={{ ...tdStyle, fontWeight: 900, color: uiTotals.profit < 0 ? "#FF4422" : "#00CC66" }}>
                               {fmt(uiTotals.profit)}
                             </td>}

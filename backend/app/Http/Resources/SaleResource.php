@@ -42,7 +42,13 @@ class SaleResource extends JsonResource
             ),
             'cancelled_items' => $this->when(
                 $this->relationLoaded('cancellations'),
-                function () {
+                function () use ($request) {
+                    // El costo va gateado igual que en SaleItemResource: solo
+                    // admin o rol con can_view_cost. El snapshot SÍ guarda el
+                    // cost_at_sale (ADR-015, SaleCancellationService), aquí solo
+                    // lo exponemos para que el Reporte netee bien la utilidad de
+                    // las ventas canceladas.
+                    $canViewCost = $request->user()?->canViewCost() ?? false;
                     $itemSnapshots = collect($this->cancellations)->flatMap(fn ($c) => $c->items_snapshot ?? [])->all();
                     $productIds = collect($itemSnapshots)->pluck('product_id')->filter()->unique()->all();
                     $productTypes = \App\Models\Product::whereIn('id', $productIds)->pluck('product_type', 'id')->all();
@@ -53,6 +59,7 @@ class SaleResource extends JsonResource
                         'quantity'     => (float) ($i['qty_cancelled'] ?? 0),
                         'price'        => (float) ($i['price'] ?? 0),
                         'line_total'   => (float) ($i['line_total'] ?? 0),
+                        'cost'         => ($canViewCost && isset($i['cost']) && $i['cost'] !== null) ? (float) $i['cost'] : null,
                         'product_type' => isset($i['product_id']) ? ($productTypes[$i['product_id']] ?? 'product') : 'product',
                     ])->values()->all();
                 }
