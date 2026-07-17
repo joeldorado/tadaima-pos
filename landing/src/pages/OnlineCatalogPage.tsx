@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, Search, ShoppingBag, X } from "lucide-react";
+import { Search, ShoppingBag, X } from "lucide-react";
 import { getGlobalCatalog } from "@tadaima/api";
 import type { GlobalCatalogItem, GlobalCatalogResponse } from "@tadaima/api";
 import { useCart } from "@/hooks/useCart";
 import { ProductCard } from "@/components/catalog/ProductCard";
 import { CartDrawer } from "@/components/catalog/CartDrawer";
+import { ShaderBackground } from "@/components/catalog/ShaderBackground";
 
 const CART_KEY = "global";
 const DISPLAY = "'Space Grotesk', system-ui, sans-serif";
@@ -12,13 +13,7 @@ const BODY = "'Inter', system-ui, -apple-system, sans-serif";
 const PAGE_SIZE = 100;
 
 type TypeFilter = "all" | "product" | "manga";
-type SortMode = "rel" | "price_asc" | "price_desc" | "name";
-
-interface Section {
-  key: string;
-  name: string;
-  items: GlobalCatalogItem[];
-}
+type SortMode = "new" | "price_asc" | "price_desc" | "name";
 
 /** Animaciones locales de la tienda (fade-up de cards + bump del carrito). */
 const PAGE_CSS = `
@@ -28,6 +23,8 @@ const PAGE_CSS = `
 @media (prefers-reduced-motion: reduce) {
   .td-fadeup, .td-bump, .td-shimmer { animation: none !important; }
 }
+.td-chiprow { scrollbar-width: none; }
+.td-chiprow::-webkit-scrollbar { display: none; }
 `;
 
 /** Skeleton de card (misma silueta que ProductCard) para la carga inicial. */
@@ -52,13 +49,14 @@ export function OnlineCatalogPage() {
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
-  const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  // v2.2: la categoría es un FILTRO arriba (chip), ya no una vista aparte.
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [payload, setPayload] = useState<GlobalCatalogResponse | null>(null);
   const [extraItems, setExtraItems] = useState<GlobalCatalogItem[]>([]);
   const [loadingMore, setLoadingMore] = useState(false);
   const [pagesLoaded, setPagesLoaded] = useState(1);
   const [cartOpen, setCartOpen] = useState(false);
-  const [sortMode, setSortMode] = useState<SortMode>("rel");
+  const [sortMode, setSortMode] = useState<SortMode>("new");
   const [promoOnly, setPromoOnly] = useState(false);
   const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
   const toastTimer = useRef<number | null>(null);
@@ -80,6 +78,8 @@ export function OnlineCatalogPage() {
     return () => window.clearTimeout(t);
   }, [searchInput]);
 
+  // El backend ya manda lo más NUEVO primero (id desc) — el orden natural
+  // de `data` ES "Más nuevos".
   const data = useMemo(
     () => [...(payload?.data ?? []), ...extraItems],
     [payload, extraItems],
@@ -93,28 +93,41 @@ export function OnlineCatalogPage() {
     [data, typeFilter]
   );
 
-  const sections = useMemo<Section[]>(() => {
-    const map = new Map<string, Section>();
+  // Chips de categoría (v2.2): "Todas" + una por categoría con contador,
+  // calculadas sobre el tipo activo.
+  const categories = useMemo(() => {
+    const map = new Map<string, number>();
     byType.forEach((p) => {
-      const key = p.category ? `c${p.category.id}` : "otros";
       const name = p.category?.name ?? "Otros";
-      const g = map.get(key);
-      if (g) g.items.push(p);
-      else map.set(key, { key, name, items: [p] });
+      map.set(name, (map.get(name) ?? 0) + 1);
     });
-    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, "es"));
+    return Array.from(map.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => a.name.localeCompare(b.name, "es"));
   }, [byType]);
 
-  const searchResults = useMemo(() => {
+  const searching = search.trim().length > 0;
+
+  const gridItems = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return [];
-    return byType.filter((p) => {
-      const name = p.name?.toLowerCase() ?? "";
-      const desc = p.description?.toLowerCase() ?? "";
-      const cat = p.category?.name?.toLowerCase() ?? "";
-      return name.includes(q) || desc.includes(q) || cat.includes(q);
-    });
-  }, [byType, search]);
+    let list = byType;
+    if (q) {
+      list = list.filter((p) => {
+        const name = p.name?.toLowerCase() ?? "";
+        const desc = p.description?.toLowerCase() ?? "";
+        const cat = p.category?.name?.toLowerCase() ?? "";
+        return name.includes(q) || desc.includes(q) || cat.includes(q);
+      });
+    }
+    if (categoryFilter) list = list.filter((p) => (p.category?.name ?? "Otros") === categoryFilter);
+    if (promoOnly) list = list.filter((p) => (p.active_promotions?.length ?? 0) > 0);
+    if (sortMode === "new") return list; // orden natural = más nuevos primero
+    const sorted = [...list];
+    if (sortMode === "name") sorted.sort((a, b) => a.name.localeCompare(b.name, "es"));
+    if (sortMode === "price_asc") sorted.sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
+    if (sortMode === "price_desc") sorted.sort((a, b) => (b.price ?? -Infinity) - (a.price ?? -Infinity));
+    return sorted;
+  }, [byType, search, categoryFilter, promoOnly, sortMode]);
 
   const hasAnyPromo = useMemo(() => data.some((p) => (p.active_promotions?.length ?? 0) > 0), [data]);
 
@@ -165,32 +178,19 @@ export function OnlineCatalogPage() {
     ...(mangaCount > 0 ? [{ key: "manga" as const, label: "Mangas", count: mangaCount }] : []),
   ];
 
-  const searching = search.trim().length > 0;
-  const baseGridItems = searching
-    ? searchResults
-    : activeCategory
-      ? byType.filter((p) => (p.category?.name ?? "Otros") === activeCategory)
-      : [];
-
-  const gridItems = useMemo(() => {
-    let list = baseGridItems;
-    if (promoOnly) list = list.filter((p) => (p.active_promotions?.length ?? 0) > 0);
-    if (sortMode === "rel") return list;
-    const sorted = [...list];
-    if (sortMode === "name") sorted.sort((a, b) => a.name.localeCompare(b.name, "es"));
-    if (sortMode === "price_asc") sorted.sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
-    if (sortMode === "price_desc") sorted.sort((a, b) => (b.price ?? -Infinity) - (a.price ?? -Infinity));
-    return sorted;
-  }, [baseGridItems, sortMode, promoOnly]);
-
-  const showGrid = searching || activeCategory !== null;
-
   const sortChips: { key: SortMode; label: string }[] = [
-    { key: "rel", label: "Relevancia" },
+    { key: "new", label: "Más nuevos" },
     { key: "price_asc", label: "Precio ↑" },
     { key: "price_desc", label: "Precio ↓" },
     { key: "name", label: "A-Z" },
   ];
+
+  const chipStyle = (active: boolean, accent?: "green"): React.CSSProperties =>
+    active
+      ? accent === "green"
+        ? { background: "rgba(16,185,129,0.16)", border: "1px solid rgba(16,185,129,0.4)", color: "#34D399" }
+        : { background: "var(--td-red-dim)", border: "1px solid var(--td-red-brd)", color: "#FF8A80" }
+      : { background: "var(--td-surface-muted)", border: "1px solid var(--td-divider)", color: "var(--td-text-lo)" };
 
   // La tienda es OSCURA por diseño (identidad glass/Netflix): fijar el scope
   // de tokens a dark para que el tema claro del POS no la rompa.
@@ -205,20 +205,15 @@ export function OnlineCatalogPage() {
       <div {...rootProps}>
         <style>{PAGE_CSS}</style>
         <div className="max-w-5xl mx-auto px-4 py-6">
-          <div className="h-12 w-52 rounded-2xl td-shimmer" style={{ background: "var(--td-card-bg)", animation: "tdShimmer 1.4s ease-in-out infinite" }} />
+          <div className="h-14 w-60 rounded-2xl td-shimmer" style={{ background: "var(--td-card-bg)", animation: "tdShimmer 1.4s ease-in-out infinite" }} />
           <div className="h-12 mt-5 rounded-2xl td-shimmer" style={{ background: "var(--td-card-bg)", animation: "tdShimmer 1.4s ease-in-out infinite" }} />
-          {[0, 1].map((row) => (
-            <div key={row} className="mt-8">
-              <div className="h-4 w-40 rounded-md mb-3 td-shimmer" style={{ background: "var(--td-surface-muted)", animation: "tdShimmer 1.4s ease-in-out infinite" }} />
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                {[0, 1, 2, 3, 4].map((i) => (
-                  <div key={i} className={i >= 4 ? "hidden lg:block" : i >= 3 ? "hidden md:block" : i >= 2 ? "hidden sm:block" : ""}>
-                    <CardSkeleton />
-                  </div>
-                ))}
+          <div className="mt-8 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+            {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => (
+              <div key={i} className={i >= 8 ? "hidden lg:block" : i >= 6 ? "hidden md:block" : i >= 4 ? "hidden sm:block" : ""}>
+                <CardSkeleton />
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       </div>
     );
@@ -241,22 +236,26 @@ export function OnlineCatalogPage() {
     <div {...rootProps}>
       <style>{PAGE_CSS}</style>
 
-      {/* ── Header + buscador STICKY (v2.0): la búsqueda siempre a la mano ── */}
+      {/* Fondo animado (v2.2): nebulosa WebGL detrás de todo el contenido */}
+      <ShaderBackground />
+
+      {/* ── Header + buscador + FILTROS GLOBALES sticky (v2.2) ── */}
       <div
         className="sticky top-0 z-30"
-        style={{ background: "rgba(11,8,13,0.85)", backdropFilter: "blur(16px) saturate(150%)", WebkitBackdropFilter: "blur(16px) saturate(150%)", borderBottom: "1px solid var(--td-panel-border)" }}
+        style={{ background: "rgba(11,8,13,0.82)", backdropFilter: "blur(18px) saturate(150%)", WebkitBackdropFilter: "blur(18px) saturate(150%)", borderBottom: "1px solid var(--td-panel-border)" }}
       >
         <div className="max-w-5xl mx-auto px-4 py-3">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3.5">
+            {/* Logo con más presencia (v2.2 premium) */}
             <div
               className="shrink-0"
-              style={{ background: "#fff", borderRadius: 12, padding: "5px 9px", border: "1px solid rgba(204,34,0,0.15)", boxShadow: "0 0 18px rgba(204,34,0,0.35)" }}
+              style={{ background: "#fff", borderRadius: 14, padding: "6px 11px", border: "1px solid rgba(204,34,0,0.18)", boxShadow: "0 0 26px rgba(204,34,0,0.45), 0 4px 14px rgba(0,0,0,0.35)" }}
             >
-              <img src="/tadaima-logo.jpeg" alt="Tadaima" style={{ height: 26, display: "block", borderRadius: 4 }} />
+              <img src="/tadaima-logo.jpeg" alt="Tadaima" style={{ height: 42, display: "block", borderRadius: 6 }} />
             </div>
             <div className="min-w-0">
-              <p className="text-[9px] font-black uppercase tracking-[0.25em]" style={{ color: "#FF8A80" }}>Tienda en Línea</p>
-              <h1 className="text-lg font-black leading-tight" style={{ fontFamily: DISPLAY, color: "var(--td-text-hi)" }}>Catálogo</h1>
+              <p className="text-[9px] font-black uppercase tracking-[0.3em]" style={{ color: "#FF8A80" }}>Tienda en Línea</p>
+              <h1 className="text-xl font-black leading-tight" style={{ fontFamily: DISPLAY, color: "var(--td-text-hi)", letterSpacing: "-0.01em" }}>Catálogo</h1>
             </div>
 
             {/* Buscador (en la barra sticky) */}
@@ -265,7 +264,7 @@ export function OnlineCatalogPage() {
                 <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2" style={{ color: "var(--td-text-ghost)" }} />
                 <input
                   value={searchInput}
-                  onChange={(e) => { setSearchInput(e.target.value); setActiveCategory(null); }}
+                  onChange={(e) => setSearchInput(e.target.value)}
                   placeholder="Buscar producto, manga, categoría..."
                   className="w-full rounded-2xl pl-10 pr-9 py-2.5 text-sm font-bold outline-none transition-colors"
                   style={{ background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", color: "var(--td-input-text)" }}
@@ -284,7 +283,7 @@ export function OnlineCatalogPage() {
             )}
           </div>
 
-          {/* Tabs por tipo — visibles TAMBIÉN al buscar (v2.0) + contadores */}
+          {/* Tabs por tipo + contadores */}
           {tabs.length > 1 && (
             <div className="flex items-center gap-2 mt-3">
               {tabs.map((t) => {
@@ -292,7 +291,7 @@ export function OnlineCatalogPage() {
                 return (
                   <button
                     key={t.key}
-                    onClick={() => { setTypeFilter(t.key); setActiveCategory(null); }}
+                    onClick={() => { setTypeFilter(t.key); setCategoryFilter(null); }}
                     className="px-3.5 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-widest cursor-pointer transition-all"
                     style={active
                       ? { background: "var(--td-red-g)", border: "1px solid var(--td-red-brd)", color: "#fff", boxShadow: "0 0 18px rgba(224,34,26,0.3)" }
@@ -304,115 +303,94 @@ export function OnlineCatalogPage() {
               })}
             </div>
           )}
-        </div>
-      </div>
 
-      <div className="max-w-5xl mx-auto px-4 pt-2">
-        {/* Contenido */}
-        {byType.length === 0 ? (
-          <div className="mt-8 rounded-3xl p-8 text-center" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)" }}>
-            <ShoppingBag size={28} className="mx-auto mb-3" style={{ color: "var(--td-text-ghost)" }} />
-            <p className="text-sm font-black uppercase tracking-[0.2em]" style={{ color: "var(--td-text-md)" }}>Sin productos</p>
-          </div>
-        ) : showGrid ? (
-          <div className="mt-4">
-            <button
-              onClick={() => { setActiveCategory(null); setSearchInput(""); setSearch(""); }}
-              className="inline-flex items-center gap-1 text-[11px] font-black uppercase tracking-widest mb-3 cursor-pointer"
-              style={{ color: "var(--td-text-md)" }}
-            >
-              <ChevronLeft size={14} /> Volver
-            </button>
-            <h2 className="text-sm font-black uppercase tracking-widest" style={{ fontFamily: DISPLAY, color: "var(--td-text-hi)" }}>
-              {searching ? `Resultados · ${gridItems.length}` : activeCategory}
-            </h2>
-
-            {/* Barra de refinamiento (v2.0): orden + con promo — client-side */}
-            <div className="flex flex-wrap items-center gap-1.5 mt-2.5 mb-3">
-              {sortChips.map((c) => {
-                const active = sortMode === c.key;
+          {/* Categorías como FILTRO (v2.2): fila scrolleable, siempre arriba */}
+          {categories.length > 1 && (
+            <div className="td-chiprow flex items-center gap-1.5 mt-2.5 overflow-x-auto -mx-4 px-4">
+              <button
+                onClick={() => setCategoryFilter(null)}
+                className="shrink-0 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all"
+                style={chipStyle(categoryFilter === null)}
+              >
+                Todas
+              </button>
+              {categories.map((c) => {
+                const active = categoryFilter === c.name;
                 return (
                   <button
-                    key={c.key}
-                    onClick={() => setSortMode(c.key)}
-                    className="px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all"
-                    style={active
-                      ? { background: "var(--td-red-dim)", border: "1px solid var(--td-red-brd)", color: "#FF8A80" }
-                      : { background: "var(--td-surface-muted)", border: "1px solid var(--td-divider)", color: "var(--td-text-lo)" }}
+                    key={c.name}
+                    onClick={() => setCategoryFilter(active ? null : c.name)}
+                    className="shrink-0 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all"
+                    style={chipStyle(active)}
                   >
-                    {c.label}
+                    {c.name} <span style={{ opacity: 0.6 }}>· {c.count}</span>
                   </button>
                 );
               })}
-              {hasAnyPromo && (
-                <button
-                  onClick={() => setPromoOnly((v) => !v)}
-                  className="px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all"
-                  style={promoOnly
-                    ? { background: "rgba(16,185,129,0.16)", border: "1px solid rgba(16,185,129,0.4)", color: "#34D399" }
-                    : { background: "var(--td-surface-muted)", border: "1px solid var(--td-divider)", color: "var(--td-text-lo)" }}
-                >
-                  Con promo
-                </button>
-              )}
             </div>
+          )}
 
-            {gridItems.length === 0 ? (
-              <p className="text-xs mt-2" style={{ color: "var(--td-text-lo)" }}>
-                {promoOnly ? "No hay productos con promo aquí." : "No hay productos para tu búsqueda."}
-              </p>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                {gridItems.map((item, i) => (
-                  <div
-                    key={item.id}
-                    className="td-fadeup"
-                    style={{ animation: `tdFadeUp 0.35s ease-out both`, animationDelay: `${Math.min(i, 12) * 30}ms` }}
-                  >
-                    <ProductCard item={item} {...cardProps} />
-                  </div>
-                ))}
-              </div>
+          {/* Orden + Con promo (v2.2): global, arriba */}
+          <div className="td-chiprow flex items-center gap-1.5 mt-2 overflow-x-auto -mx-4 px-4 pb-0.5">
+            {sortChips.map((c) => {
+              const active = sortMode === c.key;
+              return (
+                <button
+                  key={c.key}
+                  onClick={() => setSortMode(c.key)}
+                  className="shrink-0 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all"
+                  style={chipStyle(active)}
+                >
+                  {c.label}
+                </button>
+              );
+            })}
+            {hasAnyPromo && (
+              <button
+                onClick={() => setPromoOnly((v) => !v)}
+                className="shrink-0 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all"
+                style={chipStyle(promoOnly, "green")}
+              >
+                Con promo
+              </button>
             )}
           </div>
+        </div>
+      </div>
+
+      <div className="relative z-10 max-w-5xl mx-auto px-4 pt-4">
+        {/* Encabezado del grid: qué estoy viendo */}
+        <h2 className="text-sm font-black uppercase tracking-widest mb-3" style={{ fontFamily: DISPLAY, color: "var(--td-text-hi)" }}>
+          {searching
+            ? `Resultados · ${gridItems.length}`
+            : categoryFilter
+              ? `${categoryFilter} · ${gridItems.length}`
+              : `Lo más nuevo · ${gridItems.length}`}
+        </h2>
+
+        {gridItems.length === 0 ? (
+          <div className="mt-4 rounded-3xl p-8 text-center" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)" }}>
+            <ShoppingBag size={28} className="mx-auto mb-3" style={{ color: "var(--td-text-ghost)" }} />
+            <p className="text-sm font-black uppercase tracking-[0.2em]" style={{ color: "var(--td-text-md)" }}>
+              {promoOnly ? "Sin productos con promo aquí" : searching ? "Nada para tu búsqueda" : "Sin productos"}
+            </p>
+          </div>
         ) : (
-          // v2.1: secciones en CUADRÍCULA que llena el ancho (antes filas
-          // horizontales tipo Netflix — con pocas cards dejaban hueco y
-          // obligaban a scrollear de más).
-          sections.map((section) => (
-            <section key={section.key} className="mt-7">
-              <div className="flex items-center justify-between mb-3 px-1">
-                <h2
-                  className="text-sm font-black uppercase tracking-widest"
-                  style={{ color: "var(--td-text-hi)", fontFamily: DISPLAY }}
-                >
-                  {section.name} <span style={{ color: "var(--td-text-ghost)" }}>· {section.items.length}</span>
-                </h2>
-                <button
-                  onClick={() => setActiveCategory(section.name)}
-                  className="inline-flex items-center gap-1 text-[11px] font-black uppercase tracking-widest cursor-pointer hover:brightness-125 transition"
-                  style={{ color: "#FF8A80" }}
-                >
-                  Filtrar y ordenar
-                </button>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+            {gridItems.map((item, i) => (
+              <div
+                key={item.id}
+                className="td-fadeup"
+                style={{ animation: "tdFadeUp 0.35s ease-out both", animationDelay: `${Math.min(i, 12) * 30}ms` }}
+              >
+                <ProductCard item={item} {...cardProps} />
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                {section.items.map((item, i) => (
-                  <div
-                    key={item.id}
-                    className="td-fadeup"
-                    style={{ animation: "tdFadeUp 0.35s ease-out both", animationDelay: `${Math.min(i, 12) * 30}ms` }}
-                  >
-                    <ProductCard item={item} {...cardProps} />
-                  </div>
-                ))}
-              </div>
-            </section>
-          ))
+            ))}
+          </div>
         )}
 
         {/* Cargar más (v2.0): antes había tope silencioso de 100 productos */}
-        {hasMorePages && byType.length > 0 && (
+        {hasMorePages && gridItems.length > 0 && (
           <div className="mt-8 text-center">
             <button
               onClick={loadMore}

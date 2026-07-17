@@ -235,6 +235,23 @@ class CatalogOnlineTest extends TestCase
         $resp->assertJsonPath('data.catalog.cart_enabled', true); // flags globales con default
     }
 
+    public function test_catalogo_global_ordena_mas_nuevo_primero(): void
+    {
+        Inventory::create(['product_id' => $this->product->id, 'warehouse_id' => $this->warehouseA->id, 'quantity' => 3]);
+
+        $nuevo = Product::create([
+            'company_id' => $this->company->id, 'name' => 'AAA Recién llegado', 'sku' => 'SKU-NUEVO', 'active' => true,
+        ]);
+        $nuevo->price()->create(['price_1' => 100]);
+        Inventory::create(['product_id' => $nuevo->id, 'warehouse_id' => $this->warehouseA->id, 'quantity' => 1]);
+
+        // Aunque alfabéticamente iría primero el viejo por nombre, el más
+        // NUEVO (id mayor) encabeza el catálogo (v2.2: "lo más nuevo").
+        $resp = $this->getJson('/api/v1/public/catalog')->assertOk();
+        $resp->assertJsonPath('data.data.0.id', $nuevo->id);
+        $resp->assertJsonPath('data.data.1.id', $this->product->id);
+    }
+
     public function test_catalogo_global_expone_promos_vigentes(): void
     {
         Inventory::create(['product_id' => $this->product->id, 'warehouse_id' => $this->warehouseA->id, 'quantity' => 3]);

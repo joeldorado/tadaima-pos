@@ -300,7 +300,9 @@ class CatalogController extends Controller
         }
 
         $perPage = min((int) ($request->per_page ?? 40), 100);
-        $results = $query->orderBy('name')->paginate($perPage);
+        // Lo más NUEVO primero (v2.2): id desc = proxy de novedad y orden
+        // estable para la paginación de "Cargar más".
+        $results = $query->orderByDesc('products.id')->paginate($perPage);
 
         $productIds = collect($results->items())->pluck('id')->all();
         $stockByProduct = $this->stockBreakdownByStore($productIds);
