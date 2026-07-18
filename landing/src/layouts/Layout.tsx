@@ -69,7 +69,8 @@ const NAV_TREE: NavEntry[] = [
   },
   { to: "/insumos", label: "Insumos", icon: ShoppingBasket, page: "supplies" },
   { to: "/promos",  label: "Promos",  icon: TicketPercent,  page: "promos"   },
-  { to: "/documentacion", label: "Documentación", icon: BookOpen, page: "docs" },
+  // "Documentación" NO va en el sidebar (pedido Joel 2026-07-17: liberar
+  // espacio) — vive en el menú del avatar, junto a Configuración.
 ];
 
 const NAV_BY_ROLE: Record<string, PageKey[]> = {
@@ -591,6 +592,20 @@ export function Layout() {
                 >
                   <Settings size={12} style={{ color: "var(--td-text-lo)" }} />
                   Configuración
+                </button>
+              )}
+
+              {/* Documentación — todos los roles (movida del sidebar, 2026-07-17). */}
+              {canAccessPage(user?.roles, "docs") && (
+                <button
+                  onClick={() => { setShowUserMenu(false); navigate("/documentacion"); }}
+                  className="w-full text-left px-4 py-2.5 text-xs font-semibold flex items-center gap-2 transition-colors"
+                  style={{ color: "var(--td-text-md)", background: "transparent", borderTop: "1px solid var(--td-divider)" }}
+                  onMouseEnter={e => (e.currentTarget.style.background = "var(--td-hover-bg)")}
+                  onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                >
+                  <BookOpen size={12} style={{ color: "var(--td-text-lo)" }} />
+                  Documentación
                 </button>
               )}
 

@@ -285,6 +285,9 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
         Route::post('products/{store}',             [CatalogController::class, 'addProduct']);
         Route::put('products/{store}/{product}',    [CatalogController::class, 'updateProduct']);
         Route::delete('products/{store}/{product}', [CatalogController::class, 'removeProduct']);
+        // Catálogo v3 — flags globales por producto (destacado / oculto).
+        Route::get('product-flags',           [CatalogController::class, 'productFlags']);
+        Route::put('product-flags/{product}', [CatalogController::class, 'updateProductFlags']);
     });
 
     // ── System Settings ───────────────────────────────────────────────────────

@@ -56,6 +56,12 @@ class SystemSettingController extends Controller
             'value' => ['present', 'nullable', 'string', 'max:5000'],
         ]);
 
+        // Las llaves catalog_* controlan el Catálogo Online público — solo
+        // admin o usuarios con can_edit_catalog (Catálogo v3, hardening).
+        if (str_starts_with($key, 'catalog_') && ($resp = $this->catalogEditError())) {
+            return $resp;
+        }
+
         $companyId = $request->user()->company_id;
 
         $setting = SystemSetting::updateOrCreate(
@@ -82,6 +88,20 @@ class SystemSettingController extends Controller
 
         if (empty($payload)) {
             return $this->error('El body no puede estar vacío.', 422);
+        }
+
+        // Hardening Catálogo v3: escrituras a llaves catalog_* requieren
+        // permiso de edición de catálogo. Otras llaves conservan su gating.
+        $touchesCatalog = collect($payload)->keys()->contains(fn ($k) => str_starts_with((string) $k, 'catalog_'));
+        if ($touchesCatalog && ($resp = $this->catalogEditError())) {
+            return $resp;
+        }
+
+        // Espejo del límite del endpoint single-key (max:5000).
+        foreach ($payload as $key => $value) {
+            if (is_string($value) && strlen($value) > 5000) {
+                return $this->error("El valor de '{$key}' excede el máximo de 5000 caracteres.", 422);
+            }
         }
 
         foreach ($payload as $key => $value) {

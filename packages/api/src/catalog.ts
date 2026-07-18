@@ -67,6 +67,8 @@ export interface PublicCatalogParams {
   category_id?: number
   per_page?: number
   page?: number
+  /** 'featured' antepone destacados server-side (Catálogo v3). */
+  sort?: 'featured'
 }
 
 export async function getCatalogProducts(
@@ -125,6 +127,8 @@ export interface GlobalCatalogItem {
   /** 'manga' (librería) | 'product' (general) — usado para las secciones del catálogo. */
   product_type: string
   description: string | null
+  /** Destacado por el admin (Catálogo v3). Opcional: tolera API previa al rollout. */
+  featured?: boolean
   category: { id: number; name: string } | null
   /** `url` = URL absoluta lista para usar (GCS en prod). `path` queda como fallback legacy. */
   images: Array<{ id: number; path: string | null; url?: string | null; sort_order: number }>
@@ -146,6 +150,44 @@ export interface GlobalCatalogItem {
   }>
 }
 
+// ─── Catálogo v3: apariencia (tema/redes) + footer con sucursales ─────────────
+
+export type CatalogThemeSlug = 'tadaima' | 'gradient' | 'navidad' | 'halloween' | 'patrio' | 'muertos'
+export type CatalogSortDefault = 'new' | 'featured'
+
+/** URLs de redes sociales del footer — solo se pintan las no vacías. */
+export interface CatalogSocials {
+  instagram?: string
+  facebook?: string
+  tiktok?: string
+  x?: string
+  youtube?: string
+  discord?: string
+}
+
+export interface CatalogAppearance {
+  theme: CatalogThemeSlug
+  socials: CatalogSocials
+  description: string | null
+}
+
+export interface CatalogFooterStore {
+  id: number
+  name: string
+  /** null cuando catalog_show_address está apagado (o la tienda no tiene). */
+  address: string | null
+  /** null cuando catalog_show_contact está apagado. */
+  phone: string | null
+  whatsapp: string | null
+}
+
+export interface CatalogFooterData {
+  show_stores: boolean
+  show_address: boolean
+  show_contact: boolean
+  stores: CatalogFooterStore[]
+}
+
 export interface GlobalCatalogResponse {
   catalog: {
     show_price: boolean
@@ -155,7 +197,12 @@ export interface GlobalCatalogResponse {
     show_description: boolean
     cart_enabled: boolean
     hide_out_of_stock: boolean
+    /** Orden de entrada del catálogo (configurable en admin). Opcional: rollout. */
+    default_sort?: CatalogSortDefault
   }
+  /** Opcionales: toleran una API previa al rollout de Catálogo v3. */
+  appearance?: CatalogAppearance
+  footer?: CatalogFooterData
   data: GlobalCatalogItem[]
   pagination: {
     total: number
@@ -169,5 +216,52 @@ export async function getGlobalCatalog(
   params?: PublicCatalogParams
 ): Promise<GlobalCatalogResponse> {
   const response = await apiClient.get<GlobalCatalogResponse>('/public/catalog', { params })
+  return response.data
+}
+
+// ─── Catálogo v3: flags por producto (admin — destacado / oculto) ─────────────
+
+export interface ProductFlagRow {
+  id: number
+  name: string
+  sku: string
+  active: boolean
+  featured: boolean
+  catalog_visible: boolean
+  price_1: number | null
+  category: { id: number; name: string } | null
+  image: string | null
+}
+
+export interface ProductFlagsResponse {
+  data: ProductFlagRow[]
+  pagination: {
+    total: number
+    per_page: number
+    current_page: number
+    last_page: number
+  }
+}
+
+export interface ProductFlagsParams {
+  search?: string
+  filter?: 'all' | 'featured' | 'hidden'
+  per_page?: number
+  page?: number
+}
+
+export async function getCatalogProductFlags(params?: ProductFlagsParams): Promise<ProductFlagsResponse> {
+  const response = await apiClient.get<ProductFlagsResponse>('/catalog/product-flags', { params })
+  return response.data
+}
+
+export async function updateProductFlags(
+  productId: number,
+  payload: { featured?: boolean; catalog_visible?: boolean }
+): Promise<{ id: number; name: string; featured: boolean; catalog_visible: boolean }> {
+  const response = await apiClient.put<{ id: number; name: string; featured: boolean; catalog_visible: boolean }>(
+    `/catalog/product-flags/${productId}`,
+    payload
+  )
   return response.data
 }

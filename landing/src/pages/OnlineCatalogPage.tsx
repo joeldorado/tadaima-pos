@@ -1,19 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Search, ShoppingBag, X } from "lucide-react";
+import { ShoppingBag } from "lucide-react";
 import { getGlobalCatalog } from "@tadaima/api";
-import type { GlobalCatalogItem, GlobalCatalogResponse } from "@tadaima/api";
+import type { CatalogAppearance, CatalogFooterData, GlobalCatalogItem, GlobalCatalogResponse } from "@tadaima/api";
 import { useCart } from "@/hooks/useCart";
 import { ProductCard } from "@/components/catalog/ProductCard";
 import { CartDrawer } from "@/components/catalog/CartDrawer";
 import { ShaderBackground } from "@/components/catalog/ShaderBackground";
+import { CatalogHeader, type CatalogTab } from "@/components/catalog/CatalogHeader";
+import { CatalogFooter } from "@/components/catalog/CatalogFooter";
+import { SocialLinks } from "@/components/catalog/SocialLinks";
+import { ctaStyle, secondaryBtnStyle, type SortMode, type TypeFilter } from "@/components/catalog/catalogUi";
+import { resolveCatalogTheme } from "@/lib/catalogThemes";
 
 const CART_KEY = "global";
 const DISPLAY = "'Space Grotesk', system-ui, sans-serif";
 const BODY = "'Inter', system-ui, -apple-system, sans-serif";
 const PAGE_SIZE = 100;
-
-type TypeFilter = "all" | "product" | "manga";
-type SortMode = "new" | "price_asc" | "price_desc" | "name";
 
 /** Animaciones locales de la tienda (fade-up de cards + bump del carrito). */
 const PAGE_CSS = `
@@ -26,6 +28,9 @@ const PAGE_CSS = `
 .td-chiprow { scrollbar-width: none; }
 .td-chiprow::-webkit-scrollbar { display: none; }
 `;
+
+const DEFAULT_APPEARANCE: CatalogAppearance = { theme: "tadaima", socials: {}, description: null };
+const DEFAULT_FOOTER: CatalogFooterData = { show_stores: false, show_address: true, show_contact: true, stores: [] };
 
 /** Skeleton de card (misma silueta que ProductCard) para la carga inicial. */
 function CardSkeleton() {
@@ -49,7 +54,6 @@ export function OnlineCatalogPage() {
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
-  // v2.2: la categoría es un FILTRO arriba (chip), ya no una vista aparte.
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [payload, setPayload] = useState<GlobalCatalogResponse | null>(null);
   const [extraItems, setExtraItems] = useState<GlobalCatalogItem[]>([]);
@@ -60,17 +64,32 @@ export function OnlineCatalogPage() {
   const [promoOnly, setPromoOnly] = useState(false);
   const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
   const toastTimer = useRef<number | null>(null);
+  const appliedDefaultSort = useRef(false);
 
   const cart = useCart(CART_KEY);
 
+  // SIEMPRE se pide sort=featured al server (destacados primero, id desc
+  // dentro de cada grupo) → página 1 correcta cuando el orden default es
+  // "Destacados", y orden de paginación estable. "Más nuevos" se re-ordena
+  // client-side por id desc (determinista, mismos items).
   useEffect(() => {
     setLoading(true);
     setError(null);
-    getGlobalCatalog({ per_page: PAGE_SIZE })
+    getGlobalCatalog({ per_page: PAGE_SIZE, sort: "featured" })
       .then(setPayload)
       .catch(() => setError("No pudimos cargar el catálogo. Intenta más tarde."))
       .finally(() => setLoading(false));
   }, []);
+
+  // Orden de ENTRADA configurable (admin → Catálogo Online): aplica una sola
+  // vez al llegar el payload; el visitante puede cambiarlo después.
+  useEffect(() => {
+    if (!payload || appliedDefaultSort.current) return;
+    appliedDefaultSort.current = true;
+    const wantsFeatured = payload.catalog.default_sort === "featured";
+    const anyFeatured = payload.data.some((p) => !!p.featured);
+    if (wantsFeatured && anyFeatured) setSortMode("featured");
+  }, [payload]);
 
   // Debounce del buscador: filtra 250ms después de dejar de teclear.
   useEffect(() => {
@@ -78,8 +97,6 @@ export function OnlineCatalogPage() {
     return () => window.clearTimeout(t);
   }, [searchInput]);
 
-  // El backend ya manda lo más NUEVO primero (id desc) — el orden natural
-  // de `data` ES "Más nuevos".
   const data = useMemo(
     () => [...(payload?.data ?? []), ...extraItems],
     [payload, extraItems],
@@ -87,6 +104,7 @@ export function OnlineCatalogPage() {
 
   const productCount = useMemo(() => data.filter((p) => p.product_type !== "manga").length, [data]);
   const mangaCount = useMemo(() => data.filter((p) => p.product_type === "manga").length, [data]);
+  const hasFeatured = useMemo(() => data.some((p) => !!p.featured), [data]);
 
   const byType = useMemo(
     () => data.filter((p) => typeFilter === "all" || (typeFilter === "manga" ? p.product_type === "manga" : p.product_type !== "manga")),
@@ -110,8 +128,6 @@ export function OnlineCatalogPage() {
     return list;
   }, [byType, search, promoOnly]);
 
-  // Chips de categoría: "Todas" + una por categoría con contador del CONTEXTO
-  // actual (tipo + búsqueda + Con promo) — sin productos = sin chip (v2.3).
   const categories = useMemo(() => {
     const map = new Map<string, number>();
     contextItems.forEach((p) => {
@@ -136,8 +152,9 @@ export function OnlineCatalogPage() {
     const list = categoryFilter
       ? contextItems.filter((p) => (p.category?.name ?? "Otros") === categoryFilter)
       : contextItems;
-    if (sortMode === "new") return list; // orden natural = más nuevos primero
+    if (sortMode === "featured") return list; // orden natural del server = destacados primero
     const sorted = [...list];
+    if (sortMode === "new") sorted.sort((a, b) => b.id - a.id);
     if (sortMode === "name") sorted.sort((a, b) => a.name.localeCompare(b.name, "es"));
     if (sortMode === "price_asc") sorted.sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
     if (sortMode === "price_desc") sorted.sort((a, b) => (b.price ?? -Infinity) - (a.price ?? -Infinity));
@@ -150,6 +167,12 @@ export function OnlineCatalogPage() {
   const cartEnabled = !!catalog?.cart_enabled;
   const showSearch = !!catalog?.show_search;
 
+  // Catálogo v3: tema activo (admin/MCP) + bloques de apariencia y footer.
+  const appearance = payload?.appearance ?? DEFAULT_APPEARANCE;
+  const footerData = payload?.footer ?? DEFAULT_FOOTER;
+  const theme = resolveCatalogTheme(appearance.theme);
+  const hasSocials = Object.values(appearance.socials ?? {}).some((v) => !!v?.trim());
+
   const handleAdd = (item: GlobalCatalogItem) => {
     cart.add({
       productId: item.id,
@@ -158,8 +181,6 @@ export function OnlineCatalogPage() {
       image: item.images?.[0]?.url ?? item.images?.[0]?.path ?? undefined,
       stores: item.stores,
     });
-    // v2.0: NO abrir el drawer en cada add (interrumpía el browsing) —
-    // toast breve + bump del botón flotante; el drawer se abre desde ahí.
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
     setToast({ id: Date.now(), text: item.name });
     toastTimer.current = window.setTimeout(() => setToast(null), 1600);
@@ -168,7 +189,7 @@ export function OnlineCatalogPage() {
   const loadMore = () => {
     if (!payload || loadingMore) return;
     setLoadingMore(true);
-    getGlobalCatalog({ per_page: PAGE_SIZE, page: pagesLoaded + 1 })
+    getGlobalCatalog({ per_page: PAGE_SIZE, page: pagesLoaded + 1, sort: "featured" })
       .then((next) => {
         setExtraItems((prev) => [...prev, ...next.data]);
         setPagesLoaded((p) => p + 1);
@@ -187,32 +208,24 @@ export function OnlineCatalogPage() {
     onAdd: handleAdd,
   };
 
-  const tabs: { key: TypeFilter; label: string; count: number }[] = [
+  const tabs: CatalogTab[] = [
     { key: "all", label: "Todo", count: data.length },
     ...(productCount > 0 ? [{ key: "product" as const, label: "Productos", count: productCount }] : []),
     ...(mangaCount > 0 ? [{ key: "manga" as const, label: "Mangas", count: mangaCount }] : []),
   ];
 
-  const sortChips: { key: SortMode; label: string }[] = [
-    { key: "new", label: "Más nuevos" },
-    { key: "price_asc", label: "Precio ↑" },
-    { key: "price_desc", label: "Precio ↓" },
-    { key: "name", label: "A-Z" },
-  ];
-
-  const chipStyle = (active: boolean, accent?: "green"): React.CSSProperties =>
-    active
-      ? accent === "green"
-        ? { background: "rgba(16,185,129,0.16)", border: "1px solid rgba(16,185,129,0.4)", color: "#34D399" }
-        : { background: "var(--td-red-dim)", border: "1px solid var(--td-red-brd)", color: "#FF8A80" }
-      : { background: "var(--td-surface-muted)", border: "1px solid var(--td-divider)", color: "var(--td-text-lo)" };
-
-  // La tienda es OSCURA por diseño (identidad glass/Netflix): fijar el scope
-  // de tokens a dark para que el tema claro del POS no la rompa.
+  // La tienda es OSCURA por diseño: fijar el scope de tokens a dark para que
+  // el tema claro del POS no la rompa. Las vars --cat-* del tema activo se
+  // inyectan aquí y re-pintan header/cards/footer/CTAs completos.
   const rootProps = {
     "data-theme": "dark",
-    className: "min-h-dvh pb-28",
-    style: { background: "var(--td-page-bg)", color: "var(--td-text-hi)", fontFamily: BODY } as React.CSSProperties,
+    className: "min-h-dvh",
+    style: {
+      ...theme.vars,
+      background: "var(--cat-page-bg, var(--td-page-bg))",
+      color: "var(--td-text-hi)",
+      fontFamily: BODY,
+    } as React.CSSProperties,
   };
 
   if (loading) {
@@ -251,139 +264,39 @@ export function OnlineCatalogPage() {
     <div {...rootProps}>
       <style>{PAGE_CSS}</style>
 
-      {/* Fondo animado (v2.2): nebulosa WebGL detrás de todo el contenido */}
-      <ShaderBackground />
+      {/* Fondo animado: nebulosa WebGL tintada por el tema activo.
+          key={slug} remonta el canvas limpio al cambiar de tema. */}
+      {theme.useShader && <ShaderBackground key={theme.slug} tint={theme.shaderTint} />}
 
-      {/* ── Header + buscador + FILTROS GLOBALES sticky (v2.2) ── */}
-      <div
-        className="sticky top-0 z-30"
-        style={{ background: "rgba(11,8,13,0.82)", backdropFilter: "blur(18px) saturate(150%)", WebkitBackdropFilter: "blur(18px) saturate(150%)", borderBottom: "1px solid var(--td-panel-border)" }}
-      >
-        <div className="max-w-5xl mx-auto px-4 py-3.5">
-          {/* Fila 1: logo + título; el buscador baja a su PROPIA fila en móvil
-              (v2.3 — estaban amontonados) y se queda inline en pantalla ancha. */}
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
-            <div
-              className="shrink-0"
-              style={{ background: "#fff", borderRadius: 14, padding: "6px 11px", border: "1px solid rgba(204,34,0,0.18)", boxShadow: "0 0 26px rgba(204,34,0,0.45), 0 4px 14px rgba(0,0,0,0.35)" }}
-            >
-              <img src="/tadaima-logo.jpeg" alt="Tadaima" style={{ height: 42, display: "block", borderRadius: 6 }} />
-            </div>
-            <div className="min-w-0">
-              <p className="text-[9px] font-black uppercase tracking-[0.3em]" style={{ color: "#FF8A80" }}>Tienda en Línea</p>
-              <h1 className="text-xl font-black leading-tight" style={{ fontFamily: DISPLAY, color: "var(--td-text-hi)", letterSpacing: "-0.01em" }}>Catálogo</h1>
-            </div>
+      <CatalogHeader
+        showSearch={showSearch}
+        searchInput={searchInput}
+        onSearchInput={setSearchInput}
+        onClearSearch={() => { setSearchInput(""); setSearch(""); }}
+        tabs={tabs}
+        typeFilter={typeFilter}
+        onTypeFilter={(key) => { setTypeFilter(key); setCategoryFilter(null); }}
+        categories={categories}
+        categoryFilter={categoryFilter}
+        onCategoryFilter={setCategoryFilter}
+        sortMode={sortMode}
+        onSortMode={setSortMode}
+        hasFeatured={hasFeatured}
+        hasAnyPromo={hasAnyPromo}
+        promoOnly={promoOnly}
+        onPromoOnly={() => setPromoOnly((v) => !v)}
+      />
 
-            {showSearch && (
-              <div className="relative basis-full md:basis-auto md:flex-1 md:ml-3">
-                <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2" style={{ color: "var(--td-text-ghost)" }} />
-                <input
-                  value={searchInput}
-                  onChange={(e) => setSearchInput(e.target.value)}
-                  placeholder="Buscar producto, manga, categoría..."
-                  className="w-full rounded-2xl pl-10 pr-9 py-2.5 text-sm font-bold outline-none transition-colors"
-                  style={{ background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", color: "var(--td-input-text)" }}
-                />
-                {searchInput && (
-                  <button
-                    aria-label="Limpiar búsqueda"
-                    onClick={() => { setSearchInput(""); setSearch(""); }}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-lg cursor-pointer hover:brightness-150 transition"
-                    style={{ color: "var(--td-text-lo)" }}
-                  >
-                    <X size={14} />
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Fila 2: tabs de tipo + separador + categorías, UNA fila scrolleable
-              (v2.3 — antes eran 2 filas y se sentía apretado). Los chips de
-              categoría con 0 productos en el contexto actual NO se pintan. */}
-          <div className="td-chiprow flex items-center gap-2 mt-3.5 overflow-x-auto -mx-4 px-4">
-            {tabs.length > 1 && tabs.map((t) => {
-              const active = typeFilter === t.key;
-              return (
-                <button
-                  key={t.key}
-                  onClick={() => { setTypeFilter(t.key); setCategoryFilter(null); }}
-                  className="shrink-0 px-3.5 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-widest cursor-pointer transition-all"
-                  style={active
-                    ? { background: "var(--td-red-g)", border: "1px solid var(--td-red-brd)", color: "#fff", boxShadow: "0 0 18px rgba(224,34,26,0.3)" }
-                    : { background: "var(--td-surface-muted)", border: "1px solid var(--td-divider)", color: "var(--td-text-md)" }}
-                >
-                  {t.label} <span style={{ opacity: 0.65 }}>· {t.count}</span>
-                </button>
-              );
-            })}
-
-            {tabs.length > 1 && categories.length > 1 && (
-              <span aria-hidden className="shrink-0 w-px h-5 mx-1" style={{ background: "var(--td-divider)" }} />
-            )}
-
-            {categories.length > 1 && (
-              <>
-                <button
-                  onClick={() => setCategoryFilter(null)}
-                  className="shrink-0 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all"
-                  style={chipStyle(categoryFilter === null)}
-                >
-                  Todas
-                </button>
-                {categories.map((c) => {
-                  const active = categoryFilter === c.name;
-                  return (
-                    <button
-                      key={c.name}
-                      onClick={() => setCategoryFilter(active ? null : c.name)}
-                      className="shrink-0 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all"
-                      style={chipStyle(active)}
-                    >
-                      {c.name} <span style={{ opacity: 0.6 }}>· {c.count}</span>
-                    </button>
-                  );
-                })}
-              </>
-            )}
-          </div>
-
-          {/* Fila 3: orden + Con promo */}
-          <div className="td-chiprow flex items-center gap-1.5 mt-2.5 overflow-x-auto -mx-4 px-4 pb-0.5">
-            {sortChips.map((c) => {
-              const active = sortMode === c.key;
-              return (
-                <button
-                  key={c.key}
-                  onClick={() => setSortMode(c.key)}
-                  className="shrink-0 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all"
-                  style={chipStyle(active)}
-                >
-                  {c.label}
-                </button>
-              );
-            })}
-            {hasAnyPromo && (
-              <button
-                onClick={() => setPromoOnly((v) => !v)}
-                className="shrink-0 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all"
-                style={chipStyle(promoOnly, "green")}
-              >
-                Con promo
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-
-      <div className="relative z-10 max-w-5xl mx-auto px-4 pt-4">
+      <div className="relative z-10 max-w-5xl mx-auto px-4 pt-4 pb-10">
         {/* Encabezado del grid: qué estoy viendo */}
         <h2 className="text-sm font-black uppercase tracking-widest mb-3" style={{ fontFamily: DISPLAY, color: "var(--td-text-hi)" }}>
           {searching
             ? `Resultados · ${gridItems.length}`
             : categoryFilter
               ? `${categoryFilter} · ${gridItems.length}`
-              : `Lo más nuevo · ${gridItems.length}`}
+              : sortMode === "featured"
+                ? `Destacados · ${gridItems.length}`
+                : `Lo más nuevo · ${gridItems.length}`}
         </h2>
 
         {gridItems.length === 0 ? (
@@ -414,13 +327,21 @@ export function OnlineCatalogPage() {
               onClick={loadMore}
               disabled={loadingMore}
               className="px-6 py-3 rounded-2xl text-[11px] font-black uppercase tracking-widest cursor-pointer transition-all hover:brightness-125 disabled:opacity-50"
-              style={{ background: "var(--td-surface-muted)", border: "1px solid var(--td-divider)", color: "var(--td-text-md)" }}
+              style={secondaryBtnStyle}
             >
               {loadingMore ? "Cargando…" : `Cargar más productos (${payload.pagination.total - data.length} restantes)`}
             </button>
           </div>
         )}
       </div>
+
+      {/* Footer estático (Catálogo v3): sucursales + descripción + redes */}
+      <CatalogFooter
+        appearance={appearance}
+        footer={footerData}
+        socialsSlot={<SocialLinks socials={appearance.socials} />}
+        hasSocials={hasSocials}
+      />
 
       {/* Toast "agregado" (v2.0) */}
       {toast && (
@@ -433,7 +354,7 @@ export function OnlineCatalogPage() {
             className="flex items-center gap-2 rounded-2xl px-4 py-2.5 text-xs font-bold"
             style={{ background: "var(--td-popup-bg)", border: "1px solid rgba(16,185,129,0.4)", color: "var(--td-text-hi)", boxShadow: "0 10px 30px rgba(0,0,0,0.45)" }}
           >
-            <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: "#34D399" }} />
+            <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: "var(--cat-good, #34D399)" }} />
             Agregado · <span className="font-black" style={{ maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{toast.text}</span>
           </div>
         </div>
@@ -445,11 +366,11 @@ export function OnlineCatalogPage() {
           onClick={() => setCartOpen(true)}
           key={`cart-${cart.count}`}
           className="fixed bottom-5 right-5 z-40 inline-flex items-center gap-2 rounded-2xl px-5 py-3.5 text-xs font-black uppercase tracking-widest cursor-pointer transition-colors td-bump"
-          style={{ background: "var(--td-red-g)", border: "1px solid var(--td-red-brd)", color: "#fff", boxShadow: "0 8px 28px rgba(224,34,26,0.4)", fontFamily: DISPLAY, animation: "tdBump 0.3s ease-out" }}
+          style={{ ...ctaStyle, fontFamily: DISPLAY, animation: "tdBump 0.3s ease-out" }}
         >
           <ShoppingBag size={16} />
           Ver pedido
-          <span className="ml-1 inline-flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full text-[10px] font-black" style={{ background: "#fff", color: "var(--td-red)" }}>
+          <span className="ml-1 inline-flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full text-[10px] font-black" style={{ background: "#fff", color: "var(--cat-accent, var(--td-red))" }}>
             {cart.count}
           </span>
         </button>

@@ -23,11 +23,15 @@ class Product extends Model
         'cost',
         'active',
         'product_type',
+        'featured',
+        'catalog_visible',
     ];
 
     protected $casts = [
-        'cost'   => 'float',
-        'active' => 'boolean',
+        'cost'            => 'float',
+        'active'          => 'boolean',
+        'featured'        => 'boolean',
+        'catalog_visible' => 'boolean',
     ];
 
     protected $attributes = [

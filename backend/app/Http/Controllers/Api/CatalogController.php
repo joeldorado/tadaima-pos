@@ -5,12 +5,12 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\AddCatalogProductRequest;
 use App\Http\Requests\UpdateCatalogSettingsRequest;
+use App\Http\Requests\UpdateProductFlagsRequest;
 use App\Models\CatalogProduct;
 use App\Models\CatalogSetting;
-use App\Models\Company;
 use App\Models\Product;
 use App\Models\Store;
-use App\Models\SystemSetting;
+use App\Services\CatalogConfigService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -272,10 +272,14 @@ class CatalogController extends Controller
      */
     public function publicCatalogGlobal(Request $request): JsonResponse
     {
-        $flags = $this->globalCatalogFlags();
+        $config = new CatalogConfigService();
+        $flags = $config->flags();
 
         $query = Product::query()
             ->where('active', true)
+            // Catálogo v3: el admin puede ocultar productos del catálogo público
+            // sin desactivarlos del POS.
+            ->where('catalog_visible', true)
             // activePromotions = scope currentlyActive (status + ventana); aquí
             // van TODAS las vigentes (globales y por tienda) — la card pública
             // etiqueta "en {sucursal}" cuando la promo es de una sola tienda.
@@ -300,8 +304,12 @@ class CatalogController extends Controller
         }
 
         $perPage = min((int) ($request->per_page ?? 40), 100);
-        // Lo más NUEVO primero (v2.2): id desc = proxy de novedad y orden
-        // estable para la paginación de "Cargar más".
+        // Orden: id desc = proxy de novedad, estable para "Cargar más".
+        // ?sort=featured antepone los destacados (v3) manteniendo novedad dentro
+        // de cada grupo.
+        if ($request->input('sort') === 'featured') {
+            $query->orderByDesc('featured');
+        }
         $results = $query->orderByDesc('products.id')->paginate($perPage);
 
         $productIds = collect($results->items())->pluck('id')->all();
@@ -323,6 +331,7 @@ class CatalogController extends Controller
                 'name'         => $p->name,
                 'product_type' => $p->product_type, // 'manga' | 'product' → secciones en el catálogo
                 'description'  => $p->description,
+                'featured'     => (bool) $p->featured, // Catálogo v3 — pill + orden "Destacados"
                 'category'     => $p->category ? ['id' => $p->category->id, 'name' => $p->category->name] : null,
                 'images'       => $p->images->map(fn ($img) => ['id' => $img->id, 'path' => $img->image_path, 'url' => $img->url, 'sort_order' => $img->sort_order]),
                 'stores'       => $stores,
@@ -350,6 +359,10 @@ class CatalogController extends Controller
 
         return $this->success([
             'catalog'    => $flags,
+            // Catálogo v3: apariencia (tema/redes/descripción) + footer con
+            // sucursales. Bloques ADITIVOS — clientes viejos los ignoran.
+            'appearance' => $config->appearance(),
+            'footer'     => $config->footer(),
             'data'       => $data,
             'pagination' => [
                 'total'        => $results->total(),
@@ -360,37 +373,72 @@ class CatalogController extends Controller
         ]);
     }
 
-    // ─── Helpers ─────────────────────────────────────────────────────────────
+    // ─── Product flags del catálogo global (Catálogo v3, admin) ─────────────
 
-    /** Flags globales del catálogo (system_settings, keys `catalog_*`), con defaults. */
-    private function globalCatalogFlags(): array
+    /**
+     * GET /catalog/product-flags
+     * Lista TODOS los productos (activos o no) con sus flags de catálogo para
+     * el panel "Productos" del admin. Filtros: search, filter=all|featured|hidden.
+     */
+    public function productFlags(Request $request): JsonResponse
     {
-        $defaults = [
-            'show_price'        => true,
-            'show_stock'        => true,
-            'show_search'       => true,
-            'show_categories'   => true,
-            'show_description'  => true,
-            'cart_enabled'      => true,
-            'hide_out_of_stock' => false,
-        ];
+        if ($resp = $this->catalogEditError()) return $resp;
 
-        // Una sola empresa (Tadaima); el público no trae user → primera company.
-        $companyId = Company::query()->min('id');
-        $stored = $companyId
-            ? SystemSetting::where('company_id', $companyId)
-                ->where('key', 'like', 'catalog_%')
-                ->pluck('value', 'key')
-            : collect();
+        $query = Product::query()
+            ->with(['price', 'images', 'category'])
+            ->when($request->filled('search'), function ($q) use ($request) {
+                $term = $request->search;
+                $q->where(fn ($qq) => $qq->where('name', 'like', "%{$term}%")->orWhere('sku', 'like', "%{$term}%"));
+            })
+            ->when($request->input('filter') === 'featured', fn ($q) => $q->where('featured', true))
+            ->when($request->input('filter') === 'hidden', fn ($q) => $q->where('catalog_visible', false))
+            ->orderByDesc('featured')
+            ->orderByDesc('id');
 
-        $flags = [];
-        foreach ($defaults as $key => $default) {
-            $raw = $stored["catalog_{$key}"] ?? null;
-            $flags[$key] = $raw === null ? $default : filter_var($raw, FILTER_VALIDATE_BOOLEAN);
-        }
+        $perPage = min((int) ($request->per_page ?? 100), 200);
+        $results = $query->paginate($perPage);
 
-        return $flags;
+        return $this->success([
+            'data' => collect($results->items())->map(fn ($p) => [
+                'id'              => $p->id,
+                'name'            => $p->name,
+                'sku'             => $p->sku,
+                'active'          => (bool) $p->active,
+                'featured'        => (bool) $p->featured,
+                'catalog_visible' => (bool) $p->catalog_visible,
+                'price_1'         => $p->price?->price_1,
+                'category'        => $p->category ? ['id' => $p->category->id, 'name' => $p->category->name] : null,
+                'image'           => $p->images->first()?->url,
+            ]),
+            'pagination' => [
+                'total'        => $results->total(),
+                'per_page'     => $results->perPage(),
+                'current_page' => $results->currentPage(),
+                'last_page'    => $results->lastPage(),
+            ],
+        ]);
     }
+
+    /**
+     * PUT /catalog/product-flags/{product}
+     * Actualiza SOLO featured/catalog_visible (superficie mínima para el
+     * panel del admin y el MCP — no abre la edición general de producto).
+     */
+    public function updateProductFlags(UpdateProductFlagsRequest $request, Product $product): JsonResponse
+    {
+        if ($resp = $this->catalogEditError()) return $resp;
+
+        $product->update($request->validated());
+
+        return $this->success([
+            'id'              => $product->id,
+            'name'            => $product->name,
+            'featured'        => (bool) $product->featured,
+            'catalog_visible' => (bool) $product->catalog_visible,
+        ], 'Producto actualizado.');
+    }
+
+    // ─── Helpers ─────────────────────────────────────────────────────────────
 
     /** Desglose de stock vendible (exhibición) por tienda para varios productos. 1 query. */
     private function stockBreakdownByStore(array $productIds): array

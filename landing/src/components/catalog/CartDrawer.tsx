@@ -63,7 +63,7 @@ export function CartDrawer({
       >
         <header className="flex items-center justify-between p-5 border-b border-white/10">
           <div className="flex items-center gap-2">
-            <ShoppingBag size={18} className="text-amber-300" />
+            <ShoppingBag size={18} style={{ color: "var(--cat-price, #FCD34D)" }} />
             <h2 className="text-sm font-black uppercase tracking-widest text-white" style={{ fontFamily: DISPLAY }}>Tu pedido</h2>
           </div>
           <button onClick={onClose} className="text-white/40 hover:text-white transition-colors">
@@ -106,7 +106,7 @@ export function CartDrawer({
                   <Store size={14} className="text-emerald-300" />
                   <p className="text-xs font-black text-white uppercase tracking-widest">{group.storeName}</p>
                   {showPrice && (
-                    <span className="ml-auto text-xs font-black text-amber-300">{fmt(groupTotal(group))}</span>
+                    <span className="ml-auto text-xs font-black" style={{ color: "var(--cat-price, #FCD34D)" }}>{fmt(groupTotal(group))}</span>
                   )}
                 </div>
 
@@ -125,7 +125,7 @@ export function CartDrawer({
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-black text-white leading-tight">{it.name}</p>
                         {showPrice && typeof it.price === "number" && (
-                          <p className="text-[11px] font-bold text-amber-300 mt-0.5">{fmt(it.price)}</p>
+                          <p className="text-[11px] font-bold mt-0.5" style={{ color: "var(--cat-price, #FCD34D)" }}>{fmt(it.price)}</p>
                         )}
 
                         <div className="flex items-center gap-2 mt-1.5">
@@ -224,7 +224,7 @@ export function CartDrawer({
               <MessageCircle size={15} />
               Enviar a {groups[0]!.storeName}
               {showPrice && groupTotal(groups[0]!) > 0 && (
-                <span className="text-amber-300">· {fmt(groupTotal(groups[0]!))}</span>
+                <span style={{ color: "var(--cat-price, #FCD34D)" }}>· {fmt(groupTotal(groups[0]!))}</span>
               )}
             </button>
           </footer>

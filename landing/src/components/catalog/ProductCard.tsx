@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Check, MessageCircle, Plus, TicketPercent } from "lucide-react"
+import { Check, MessageCircle, Plus, Star, TicketPercent } from "lucide-react"
 import { storageUrl } from "@tadaima/api"
 import type { GlobalCatalogItem } from "@tadaima/api"
 import { HoverCard } from "@/components/aceternity/HoverCard"
@@ -104,7 +104,7 @@ export function ProductCard({
           className="absolute top-2 left-2 text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md"
           style={
             isManga
-              ? { background: "rgba(224,34,26,0.24)", border: "1px solid var(--td-red-brd)", color: "#FF8A80" }
+              ? { background: "var(--cat-accent-dim, rgba(224,34,26,0.24))", border: "1px solid var(--cat-accent-brd, var(--td-red-brd))", color: "var(--cat-accent-text, #FF8A80)" }
               : { background: "rgba(0,0,0,0.45)", border: "1px solid var(--td-card-border)", color: "var(--td-text-md)" }
           }
         >
@@ -116,6 +116,16 @@ export function ProductCard({
             style={{ background: "#DC2626", color: "#fff" }}
           >
             Agotado
+          </span>
+        )}
+        {/* Destacado (v3): abajo-derecha para no chocar con el badge de tipo
+            (arriba-izquierda) en cards angostas de móvil. */}
+        {item.featured && (
+          <span
+            className="absolute bottom-2 right-2 inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md"
+            style={{ background: "var(--cat-accent-dim, rgba(224,34,26,0.24))", border: "1px solid var(--cat-accent-brd, var(--td-red-brd))", color: "var(--cat-accent-text, #FF8A80)", backdropFilter: "blur(6px)" }}
+          >
+            <Star size={9} fill="currentColor" /> Destacado
           </span>
         )}
       </div>
@@ -138,7 +148,7 @@ export function ProductCard({
           <span
             title={`${promo.name} · ${promoTiersLabel(promo)}${promoEnds ? ` · hasta ${promoEnds}` : ""}${promoStoreName ? ` · en ${promoStoreName}` : ""}`}
             className="inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md"
-            style={{ background: "rgba(16,185,129,0.14)", border: "1px solid rgba(16,185,129,0.35)", color: "#34D399" }}
+            style={{ background: "rgba(16,185,129,0.14)", border: "1px solid rgba(16,185,129,0.35)", color: "var(--cat-good, #34D399)" }}
           >
             <TicketPercent size={10} />
             {promoShortLabel(promo)}
@@ -150,7 +160,7 @@ export function ProductCard({
 
       <div className="mt-1.5">
         {hasPrice ? (
-          <p className="text-lg font-black tabular-nums leading-tight" style={{ color: "#FFB020", fontFamily: DISPLAY }}>
+          <p className="text-lg font-black tabular-nums leading-tight" style={{ color: "var(--cat-price, #FFB020)", fontFamily: DISPLAY }}>
             {fmt(item.price as number)}
           </p>
         ) : (
@@ -165,7 +175,7 @@ export function ProductCard({
       {showStock && item.stores.length > 0 && (
         item.stores.length === 1 ? (
           <p className="mt-1.5 inline-flex items-center gap-1.5 text-[10px] font-bold" style={{ color: "var(--td-text-lo)" }}>
-            <span aria-hidden className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: "#34D399" }} />
+            <span aria-hidden className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: "var(--cat-good, #34D399)" }} />
             Disponible en {item.stores[0]!.store_name}
           </p>
         ) : (
@@ -174,7 +184,7 @@ export function ProductCard({
               className="list-none inline-flex items-center gap-1.5 text-[10px] font-bold cursor-pointer select-none"
               style={{ color: "var(--td-text-lo)" }}
             >
-              <span aria-hidden className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: "#34D399" }} />
+              <span aria-hidden className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: "var(--cat-good, #34D399)" }} />
               Disponible · {item.stores.length} sucursales
               <span className="transition-transform group-open:rotate-90" style={{ color: "var(--td-text-ghost)" }}>›</span>
             </summary>
@@ -185,7 +195,7 @@ export function ProductCard({
                   className="text-[9px] font-bold px-1.5 py-0.5 rounded-md"
                   style={{ background: "var(--td-surface-muted)", border: "1px solid var(--td-divider)", color: "var(--td-text-lo)" }}
                 >
-                  {s.store_name}: <span style={{ color: "#34D399", fontWeight: 900 }}>{s.qty}</span>
+                  {s.store_name}: <span style={{ color: "var(--cat-good, #34D399)", fontWeight: 900 }}>{s.qty}</span>
                 </span>
               ))}
             </div>
@@ -201,8 +211,8 @@ export function ProductCard({
             disabled={isOut}
             className="inline-flex w-full items-center justify-center gap-2 rounded-xl px-3 text-[11px] font-black uppercase tracking-widest transition-colors cursor-pointer hover:brightness-125 disabled:opacity-45 disabled:cursor-not-allowed"
             style={justAdded
-              ? { minHeight: 44, background: "rgba(16,185,129,0.16)", border: "1px solid rgba(16,185,129,0.4)", color: "#34D399" }
-              : { minHeight: 44, background: "var(--td-red-dim)", border: "1px solid var(--td-red-brd)", color: "#FF8A80" }}
+              ? { minHeight: 44, background: "rgba(16,185,129,0.16)", border: "1px solid rgba(16,185,129,0.4)", color: "var(--cat-good, #34D399)" }
+              : { minHeight: 44, background: "var(--cat-accent-dim, var(--td-red-dim))", border: "1px solid var(--cat-accent-brd, var(--td-red-brd))", color: "var(--cat-accent-text, #FF8A80)" }}
           >
             {isOut
               ? "Sin stock"
@@ -217,7 +227,7 @@ export function ProductCard({
             rel="noreferrer"
             onClick={() => onWhatsAppClick?.(item)}
             className="inline-flex w-full items-center justify-center gap-2 rounded-xl px-3 text-[11px] font-black uppercase tracking-widest transition-colors cursor-pointer hover:brightness-125"
-            style={{ minHeight: 44, background: "rgba(37,211,102,0.14)", border: "1px solid rgba(37,211,102,0.30)", color: "#34D399" }}
+            style={{ minHeight: 44, background: "rgba(37,211,102,0.14)", border: "1px solid rgba(37,211,102,0.30)", color: "var(--cat-good, #34D399)" }}
           >
             <MessageCircle size={14} /> Pedir por WhatsApp
           </a>

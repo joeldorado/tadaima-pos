@@ -5,12 +5,19 @@ import { useEffect, useRef } from "react"
  * (basado en el shader de Matthias Hurrle @atzedent), re-tintada a la
  * identidad Tadaima (rojo profundo + ámbar).
  *
+ * Catálogo v3: el tinte de la nebulosa es un uniform (`tint`) para soportar
+ * temas festivos (navidad/halloween/patrio/muertos) — valores en
+ * lib/catalogThemes.ts. Al cambiar de tema, pasar `key={slug}` para remontar.
+ *
  * Decorativo puro:
- * - Sin interacción (solo uniforms resolution/time) y pointer-events:none.
+ * - Sin interacción (solo uniforms resolution/time/tint) y pointer-events:none.
  * - NO se monta si el dispositivo pide reduced-motion o no hay WebGL2
- *   (queda el --td-page-bg de siempre).
+ *   (queda el --cat-page-bg de siempre).
  * - Render a 0.5×devicePixelRatio para que sea barato en móvil.
  */
+
+/** Tinte original Tadaima: rojo profundo con calidez ámbar. */
+const DEFAULT_TINT: [number, number, number] = [0.24, 0.075, 0.05]
 
 const VERT = `#version 300 es
 precision highp float;
@@ -22,6 +29,7 @@ precision highp float;
 out vec4 O;
 uniform vec2 resolution;
 uniform float time;
+uniform vec3 tint;
 #define FC gl_FragCoord.xy
 #define T time
 #define R resolution
@@ -63,13 +71,18 @@ void main(void) {
     col+=.00125/d*(cos(sin(i)*vec3(1,2,3))+1.);
     float b=noise(i+p+bg*1.731);
     col+=.002*b/length(max(p,vec2(b*p.x*.02,p.y)));
-    // Tinte Tadaima: nebulosa rojo profundo con calidez ámbar
-    col=mix(col,vec3(bg*.24,bg*.075,bg*.05),d);
+    // Tinte de la nebulosa — uniform por tema (Catálogo v3)
+    col=mix(col,bg*tint,d);
   }
   O=vec4(col,1);
 }`
 
-export function ShaderBackground() {
+interface ShaderBackgroundProps {
+  /** Tinte [r,g,b] de la nebulosa — de CATALOG_THEMES[slug].shaderTint. */
+  tint?: [number, number, number]
+}
+
+export function ShaderBackground({ tint = DEFAULT_TINT }: ShaderBackgroundProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
@@ -110,6 +123,9 @@ export function ShaderBackground() {
 
     const uResolution = gl.getUniformLocation(program, "resolution")
     const uTime = gl.getUniformLocation(program, "time")
+    const uTint = gl.getUniformLocation(program, "tint")
+    gl.useProgram(program)
+    gl.uniform3f(uTint, tint[0], tint[1], tint[2])
 
     const resize = () => {
       const dpr = Math.max(1, 0.5 * window.devicePixelRatio)
@@ -140,7 +156,8 @@ export function ShaderBackground() {
       gl.deleteShader(fs)
       gl.deleteBuffer(buffer)
     }
-  }, [])
+    // tint entra por deps: si cambia el tema sin remount, recompila limpio.
+  }, [tint])
 
   return (
     <canvas
