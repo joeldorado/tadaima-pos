@@ -45,6 +45,13 @@ const VEIL =
 
 interface GalaxyBackgroundProps {
   theme: CatalogTheme
+  /**
+   * Renderiza dentro del contenedor padre en vez de a pantalla completa (tira
+   * de preview del admin). El padre necesita `position: relative`.
+   */
+  contained?: boolean
+  /** Presupuesto propio — la tira del admin es chica y no necesita 30k estrellas. */
+  budget?: { count: number; dpr: number; size: number }
 }
 
 /** WebGL disponible y sin reduced-motion. Se evalúa una vez, en el cliente. */
@@ -66,10 +73,10 @@ function useCanRenderGalaxy(): boolean {
   return canRender
 }
 
-export function GalaxyBackground({ theme }: GalaxyBackgroundProps) {
+export function GalaxyBackground({ theme, contained = false, budget: budgetProp }: GalaxyBackgroundProps) {
   const canRender = useCanRenderGalaxy()
   const isMobile = typeof window !== "undefined" && window.innerWidth < MOBILE_BREAKPOINT
-  const budget = isMobile ? BUDGET.mobile : BUDGET.desktop
+  const budget = budgetProp ?? (isMobile ? BUDGET.mobile : BUDGET.desktop)
 
   // Sin WebGL o con reduced-motion no se monta nada: queda el --cat-page-bg
   // del tema, igual que hace ShaderBackground.
@@ -78,7 +85,7 @@ export function GalaxyBackground({ theme }: GalaxyBackgroundProps) {
   return (
     <div
       aria-hidden
-      className="fixed inset-0"
+      className={`${contained ? "absolute" : "fixed"} inset-0`}
       style={{ zIndex: 0, pointerEvents: "none", background: VEIL }}
     >
       <GalaxyField

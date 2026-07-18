@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, ExternalLink, Palette } from "lucide-react";
+import { Check, ExternalLink, Eye, Palette } from "lucide-react";
 import { toast } from "sonner";
 import { getSystemSettings, batchUpdateSystemSettings } from "@tadaima/api";
 import type { CatalogBackgroundSlug, CatalogLayoutSlug, CatalogThemeSlug } from "@tadaima/api";
@@ -10,7 +10,9 @@ import {
   resolveCatalogBackground,
   type CatalogTheme,
 } from "@/lib/catalogThemes";
+import { BackgroundPreviewStrip } from "./BackgroundPreviewStrip";
 import { PanelCard, PanelLoader, SaveButton } from "./shared";
+import { StorePreviewModal, previewUrl, type PreviewSelection } from "./StorePreviewModal";
 
 const MAX_DESC = 600;
 
@@ -157,6 +159,7 @@ export function AppearancePanel({ canEdit }: Props) {
   const [description, setDescription] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
 
   useEffect(() => {
     getSystemSettings()
@@ -180,6 +183,9 @@ export function AppearancePanel({ canEdit }: Props) {
   // Nunca configurado → se muestra marcado el que hereda del tema, para que la
   // selección refleje lo que el cliente realmente está viendo.
   const activeBackground = resolveCatalogBackground(background, activeTheme);
+
+  /** Lo que se está viendo AHORA en el panel — lo que abre el preview. */
+  const selection: PreviewSelection = { theme, background: activeBackground, layout };
 
   const save = async () => {
     setSaving(true);
@@ -250,6 +256,15 @@ export function AppearancePanel({ canEdit }: Props) {
                 />
               ))}
             </div>
+
+            {/* El efecto real, en el color real, antes de guardar nada. */}
+            <div className="mt-3">
+              <BackgroundPreviewStrip
+                theme={activeTheme}
+                background={activeBackground}
+                base={baseBg(activeTheme)}
+              />
+            </div>
           </div>
 
           <div>
@@ -291,8 +306,19 @@ export function AppearancePanel({ canEdit }: Props) {
 
           <div className="flex items-center gap-3 flex-wrap">
             <SaveButton saving={saving} disabled={!canEdit} onClick={save} label="Guardar Apariencia" />
+
+            <button
+              onClick={() => setPreviewing(true)}
+              className="inline-flex items-center gap-2 px-5 py-3.5 rounded-2xl text-[10px] font-black uppercase tracking-widest text-white/70 hover:text-white border border-white/10 hover:border-white/25 transition-colors cursor-pointer"
+            >
+              <Eye size={13} />
+              Ver preview
+            </button>
+
             <a
-              href="/catalogo"
+              // Lleva la selección actual: abre lo que estás viendo aquí,
+              // aunque todavía no lo guardes.
+              href={previewUrl(selection)}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-white/40 hover:text-white/70 transition-colors"
@@ -303,6 +329,8 @@ export function AppearancePanel({ canEdit }: Props) {
           </div>
         </div>
       )}
+
+      {previewing && <StorePreviewModal selection={selection} onClose={() => setPreviewing(false)} />}
     </PanelCard>
   );
 }

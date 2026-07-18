@@ -27,11 +27,16 @@ class Product extends Model
         'catalog_visible',
     ];
 
+    // `catalog_position` (top manual del catálogo, v5) NO va en $fillable a
+    // propósito: solo se escribe por query builder (reorderFeatured) y por
+    // forceFill, así ningún update($request->validated()) futuro la toca por
+    // accidente.
     protected $casts = [
-        'cost'            => 'float',
-        'active'          => 'boolean',
-        'featured'        => 'boolean',
-        'catalog_visible' => 'boolean',
+        'cost'             => 'float',
+        'active'           => 'boolean',
+        'featured'         => 'boolean',
+        'catalog_visible'  => 'boolean',
+        'catalog_position' => 'integer',
     ];
 
     protected $attributes = [

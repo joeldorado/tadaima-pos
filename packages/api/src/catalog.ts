@@ -129,6 +129,11 @@ export interface GlobalCatalogItem {
   description: string | null
   /** Destacado por el admin (Catálogo v3). Opcional: tolera API previa al rollout. */
   featured?: boolean
+  /**
+   * Puesto en el "top" manual del admin (Catálogo v5); null = sin acomodar.
+   * Opcional: tolera API previa al rollout.
+   */
+  catalog_position?: number | null
   category: { id: number; name: string } | null
   /** `url` = URL absoluta lista para usar (GCS en prod). `path` queda como fallback legacy. */
   images: Array<{ id: number; path: string | null; url?: string | null; sort_order: number }>
@@ -240,6 +245,14 @@ export interface ProductFlagRow {
   active: boolean
   featured: boolean
   catalog_visible: boolean
+  /** Puesto en el "top" manual (Catálogo v5); null = sin acomodar. */
+  catalog_position: number | null
+  /**
+   * Si el producto SÍ se ve hoy en la tienda pública. Esta lista no filtra por
+   * active/visible/stock, así que un destacado agotado aparece aquí pero no
+   * allá — el panel lo avisa y no lo cuenta para el "top 20".
+   */
+  in_public_catalog: boolean
   price_1: number | null
   category: { id: number; name: string } | null
   image: string | null
@@ -275,5 +288,18 @@ export async function updateProductFlags(
     `/catalog/product-flags/${productId}`,
     payload
   )
+  return response.data
+}
+
+/**
+ * Guarda el "top" manual del catálogo (Catálogo v5): la posición de cada
+ * producto es su índice en `order`. Se manda la lista COMPLETA de destacados —
+ * lo que no venga se desacomoda.
+ *
+ * Devuelve la lista CANÓNICA (el server descarta ids que ya perdieron la ★);
+ * el llamador debe reemplazar su estado con ella en vez de asumir la suya.
+ */
+export async function reorderFeaturedProducts(order: number[]): Promise<{ order: number[] }> {
+  const response = await apiClient.put<{ order: number[] }>('/catalog/featured-order', { order })
   return response.data
 }

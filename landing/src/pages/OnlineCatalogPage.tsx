@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { ShoppingBag } from "lucide-react";
 import { getGlobalCatalog } from "@tadaima/api";
 import type { CatalogAppearance, CatalogFooterData, GlobalCatalogItem, GlobalCatalogResponse } from "@tadaima/api";
@@ -53,6 +54,9 @@ function CardSkeleton() {
 }
 
 export function OnlineCatalogPage() {
+  // Solo para el preview del admin (?preview_theme/_bg/_layout). Sin params, la
+  // apariencia sale del payload como siempre.
+  const [previewParams] = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // searchInput = lo tecleado; search = aplicado con debounce (250ms).
@@ -93,7 +97,12 @@ export function OnlineCatalogPage() {
     appliedDefaultSort.current = true;
     const wantsFeatured = payload.catalog.default_sort === "featured";
     const anyFeatured = payload.data.some((p) => !!p.featured);
-    if (wantsFeatured && anyFeatured) setSortMode("featured");
+    // v5: si el admin acomodó un top a mano, ese orden manda aunque el orden de
+    // entrada esté en "Más nuevos" — si no, el trabajo de acomodar no se vería.
+    // Se autocorrige: si los acomodados se quedan sin stock no llegan en el
+    // payload, y la tienda cae al orden configurado.
+    const anyPinned = payload.data.some((p) => p.catalog_position != null);
+    if (anyPinned || (wantsFeatured && anyFeatured)) setSortMode("featured");
   }, [payload]);
 
   // Debounce del buscador: filtra 250ms después de dejar de teclear.
@@ -175,11 +184,14 @@ export function OnlineCatalogPage() {
   // Catálogo v3: tema activo (admin/MCP) + bloques de apariencia y footer.
   const appearance = payload?.appearance ?? DEFAULT_APPEARANCE;
   const footerData = payload?.footer ?? DEFAULT_FOOTER;
-  const theme = resolveCatalogTheme(appearance.theme);
+  // v5: los ?preview_* dejan al admin ver una combinación ANTES de guardarla
+  // (StorePreviewModal la abre en un iframe). Van directo a los resolvers, que
+  // ya hacen whitelist y degradan solos, así que un valor basura no rompe nada.
+  const theme = resolveCatalogTheme(previewParams.get("preview_theme") ?? appearance.theme);
   // v4: el fondo es su propio eje. Sin configurar, hereda el del tema para que
   // una tienda publicada antes de v4 se vea idéntica.
-  const background = resolveCatalogBackground(appearance.background, theme);
-  const layout = resolveCatalogLayout(appearance.layout);
+  const background = resolveCatalogBackground(previewParams.get("preview_bg") ?? appearance.background, theme);
+  const layout = resolveCatalogLayout(previewParams.get("preview_layout") ?? appearance.layout);
   const hasSocials = Object.values(appearance.socials ?? {}).some((v) => !!v?.trim());
 
   const handleAdd = (item: GlobalCatalogItem) => {

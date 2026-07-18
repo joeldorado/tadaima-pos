@@ -332,7 +332,144 @@ class CatalogOnlineTest extends TestCase
             ->assertStatus(422);
     }
 
+    // ── Catálogo v5: top manual arrastrable ──────────────────────────────────
+
+    public function test_top_manual_manda_sobre_destacados_y_novedad(): void
+    {
+        [$viejo, $medio, $nuevo] = $this->makeStockedProducts(3);
+
+        // Sin acomodar: manda la novedad (id desc).
+        $this->getJson('/api/v1/public/catalog?sort=featured')
+            ->assertOk()
+            ->assertJsonPath('data.data.0.id', $nuevo->id);
+
+        // El MÁS VIEJO se destaca y se acomoda primero: debe encabezar aunque
+        // sea el id más chico.
+        $viejo->forceFill(['featured' => true, 'catalog_position' => 0])->save();
+        $medio->forceFill(['featured' => true, 'catalog_position' => 1])->save();
+
+        $resp = $this->getJson('/api/v1/public/catalog?sort=featured')->assertOk();
+        $this->assertSame(
+            [$viejo->id, $medio->id, $nuevo->id],
+            array_column($resp->json('data.data'), 'id'),
+            'El top acomodado debe ganarle a destacados y a novedad.'
+        );
+        $resp->assertJsonPath('data.data.0.catalog_position', 0);
+        $resp->assertJsonPath('data.data.2.catalog_position', null);
+    }
+
+    public function test_reorder_guarda_posiciones_y_desacomoda_lo_no_enviado(): void
+    {
+        [$a, $b, $c] = $this->makeStockedProducts(3);
+        foreach ([$a, $b, $c] as $p) {
+            $p->forceFill(['featured' => true])->save();
+        }
+        $c->forceFill(['catalog_position' => 0])->save();
+
+        $this->actingAs($this->admin)
+            ->putJson('/api/v1/catalog/featured-order', ['order' => [$b->id, $a->id]])
+            ->assertOk()
+            ->assertJsonPath('data.order', [$b->id, $a->id]);
+
+        $this->assertSame(0, $b->fresh()->catalog_position);
+        $this->assertSame(1, $a->fresh()->catalog_position);
+        // c no venía en la lista → se desacomoda.
+        $this->assertNull($c->fresh()->catalog_position);
+    }
+
+    public function test_reorder_ignora_ids_que_ya_no_estan_destacados(): void
+    {
+        [$a, $b] = $this->makeStockedProducts(2);
+        $a->forceFill(['featured' => true])->save();
+        // b NO está destacado: simula que otra pestaña le quitó la ★.
+
+        $this->actingAs($this->admin)
+            ->putJson('/api/v1/catalog/featured-order', ['order' => [$b->id, $a->id]])
+            ->assertOk()
+            // Devuelve la lista canónica, sin el que perdió la ★, y re-densificada.
+            ->assertJsonPath('data.order', [$a->id]);
+
+        $this->assertSame(0, $a->fresh()->catalog_position);
+        $this->assertNull($b->fresh()->catalog_position);
+    }
+
+    public function test_quitar_destacado_saca_del_top(): void
+    {
+        [$p] = $this->makeStockedProducts(1);
+        $p->forceFill(['featured' => true, 'catalog_position' => 0])->save();
+
+        $this->actingAs($this->admin)
+            ->putJson("/api/v1/catalog/product-flags/{$p->id}", ['featured' => false])
+            ->assertOk();
+
+        $this->assertNull($p->fresh()->catalog_position, 'Quitar la ★ debe desacomodar.');
+    }
+
+    public function test_reorder_requiere_permiso_de_catalogo(): void
+    {
+        [$p] = $this->makeStockedProducts(1);
+        $p->forceFill(['featured' => true])->save();
+
+        $this->actingAs($this->cajeroA)
+            ->putJson('/api/v1/catalog/featured-order', ['order' => [$p->id]])
+            ->assertStatus(403);
+
+        $this->assertNull($p->fresh()->catalog_position);
+    }
+
+    public function test_paginacion_acumulativa_no_duplica_ni_pierde_con_top_manual(): void
+    {
+        $products = $this->makeStockedProducts(5);
+        // Acomodo cruzado: el 5º primero y el 1º al final del top.
+        $products[4]->forceFill(['featured' => true, 'catalog_position' => 0])->save();
+        $products[0]->forceFill(['featured' => true, 'catalog_position' => 1])->save();
+
+        $ids = [];
+        foreach ([1, 2, 3] as $page) {
+            $resp = $this->getJson("/api/v1/public/catalog?sort=featured&per_page=2&page={$page}")->assertOk();
+            $ids = array_merge($ids, array_column($resp->json('data.data'), 'id'));
+        }
+
+        $this->assertCount(5, $ids);
+        $this->assertSame($ids, array_unique($ids), 'Paginar no debe repetir items.');
+        $this->assertSame([$products[4]->id, $products[0]->id], array_slice($ids, 0, 2));
+    }
+
+    public function test_product_flags_marca_lo_que_no_se_ve_en_la_tienda(): void
+    {
+        [$conStock] = $this->makeStockedProducts(1);
+        // El producto del setUp no tiene inventory → no sale en la tienda.
+        $sinStock = $this->product;
+
+        $resp = $this->actingAs($this->admin)
+            ->getJson('/api/v1/catalog/product-flags')
+            ->assertOk();
+
+        $rows = collect($resp->json('data.data'))->keyBy('id');
+        $this->assertTrue($rows[$conStock->id]['in_public_catalog']);
+        $this->assertFalse($rows[$sinStock->id]['in_public_catalog']);
+    }
+
     // ── Helper ────────────────────────────────────────────────────────────────
+
+    /** N productos con stock vendible en la tienda A, en orden de id ascendente. */
+    private function makeStockedProducts(int $n): array
+    {
+        $out = [];
+        for ($i = 1; $i <= $n; $i++) {
+            $p = Product::create([
+                'company_id' => $this->company->id,
+                'name' => "Producto {$i}", 'sku' => "SKU-TOP-{$i}", 'active' => true,
+            ]);
+            $p->price()->create(['price_1' => 100 * $i]);
+            Inventory::create([
+                'product_id' => $p->id, 'warehouse_id' => $this->warehouseA->id, 'quantity' => 5,
+            ]);
+            $out[] = $p;
+        }
+
+        return $out;
+    }
 
     private function makeUser(string $email, string $roleName, ?int $storeId, bool $canEditCatalog = false): User
     {
