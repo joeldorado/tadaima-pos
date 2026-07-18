@@ -155,6 +155,15 @@ export interface GlobalCatalogItem {
 export type CatalogThemeSlug = 'tadaima' | 'gradient' | 'navidad' | 'halloween' | 'patrio' | 'muertos'
 export type CatalogSortDefault = 'new' | 'featured'
 
+/**
+ * Catálogo v4 — el fondo es un eje INDEPENDIENTE del tema: el tema pone el
+ * color, el fondo pone el efecto. `null` = sin configurar, lo decide el tema.
+ */
+export type CatalogBackgroundSlug = 'shader' | 'gradient' | 'galaxy'
+
+/** Catálogo v4 — acomodo de la tienda pública. */
+export type CatalogLayoutSlug = 'classic' | 'sidebar' | 'masonry'
+
 /** URLs de redes sociales del footer — solo se pintan las no vacías. */
 export interface CatalogSocials {
   instagram?: string
@@ -169,6 +178,9 @@ export interface CatalogAppearance {
   theme: CatalogThemeSlug
   socials: CatalogSocials
   description: string | null
+  /** Opcionales: toleran una API previa al rollout de Catálogo v4. */
+  background?: CatalogBackgroundSlug | null
+  layout?: CatalogLayoutSlug
 }
 
 export interface CatalogFooterStore {

@@ -1,6 +1,7 @@
 import { MapPin, MessageCircle, Phone } from "lucide-react"
 import type { CatalogAppearance, CatalogFooterData } from "@tadaima/api"
 import { buildWhatsAppLink } from "@/lib/catalogWhatsApp"
+import { CATALOG_CONTAINER, CATALOG_CONTAINER_WIDE } from "./catalogUi"
 
 const DISPLAY = "'Space Grotesk', system-ui, sans-serif"
 
@@ -17,9 +18,12 @@ interface CatalogFooterProps {
   /** Slot de redes (SocialLinks) — inyectado para mantener este archivo chico. */
   socialsSlot: React.ReactNode
   hasSocials: boolean
+  /** Layout menú lateral: mismo ancho que el cuerpo para no desalinear. */
+  wide?: boolean
 }
 
-export function CatalogFooter({ appearance, footer, socialsSlot, hasSocials }: CatalogFooterProps) {
+export function CatalogFooter({ appearance, footer, socialsSlot, hasSocials, wide = false }: CatalogFooterProps) {
+  const container = wide ? CATALOG_CONTAINER_WIDE : CATALOG_CONTAINER
   const showStores = footer.show_stores && footer.stores.length > 0
   const showBrand = !!appearance.description
   // Sin contenido configurado no pintamos secciones vacías — solo la barra ©.
@@ -32,7 +36,7 @@ export function CatalogFooter({ appearance, footer, socialsSlot, hasSocials }: C
     >
       {columns > 0 && (
         <div
-          className="max-w-5xl mx-auto px-4 py-10 grid gap-8"
+          className={`${container} py-10 grid gap-8`}
           style={{ gridTemplateColumns: `repeat(auto-fit, minmax(min(240px, 100%), 1fr))` }}
         >
           {/* Marca + descripción */}
@@ -104,7 +108,7 @@ export function CatalogFooter({ appearance, footer, socialsSlot, hasSocials }: C
 
       {/* Barra inferior */}
       <div style={{ borderTop: "1px solid var(--td-divider)" }}>
-        <p className="max-w-5xl mx-auto px-4 py-4 text-center text-[11px] font-bold" style={{ color: "var(--td-text-ghost)" }}>
+        <p className={`${container} py-4 text-center text-[11px] font-bold`} style={{ color: "var(--td-text-ghost)" }}>
           Tadaima © {new Date().getFullYear()} · Tienda en línea
         </p>
       </div>

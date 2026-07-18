@@ -57,9 +57,11 @@ Ya está registrado en el `.mcp.json` de la raíz. Solo exporta
 
 | Tool | Qué hace |
 |---|---|
-| `list_options` | Qué se puede configurar (temas, toggles, órdenes, redes) |
+| `list_options` | Qué se puede configurar (colores, fondos, diseños, toggles, órdenes, redes) |
 | `get_config` | Configuración actual completa + conteo destacados/ocultos |
-| `set_theme` | Cambia el tema (`tadaima`, `gradient`, `navidad`, `halloween`, `patrio`, `muertos`) |
+| `set_theme` | Cambia el color (`tadaima`, `gradient`, `navidad`, `halloween`, `patrio`, `muertos`) |
+| `set_background` | Cambia el fondo (`shader` nebulosa, `gradient` degradado, `galaxy` galaxia 3D) |
+| `set_layout` | Cambia el acomodo (`classic`, `sidebar` menú lateral, `masonry` revista) |
 | `set_toggles` | Prende/apaga precios, existencias, carrito, buscador, footer, etc. |
 | `set_socials` | URLs de Instagram/Facebook/TikTok/X/YouTube/Discord del footer |
 | `set_description` | Descripción de la tienda (footer) |

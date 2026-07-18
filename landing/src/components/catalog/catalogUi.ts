@@ -14,6 +14,14 @@ import type React from "react"
 export type TypeFilter = "all" | "product" | "manga"
 export type SortMode = "featured" | "new" | "price_asc" | "price_desc" | "name"
 
+/**
+ * Ancho del contenido. Header, cuerpo y footer DEBEN usar el mismo o se
+ * desalinean. El layout "menú lateral" necesita más aire porque le come ~240px
+ * a la izquierda (Catálogo v4).
+ */
+export const CATALOG_CONTAINER = "max-w-5xl mx-auto px-4"
+export const CATALOG_CONTAINER_WIDE = "max-w-7xl mx-auto px-4"
+
 /** Clases compartidas de toda pill (tabs de tipo, categorías, orden, toggles). */
 export const PILL_CLASS =
   "shrink-0 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all"

@@ -1,0 +1,21 @@
+/**
+ * GalaxyField — estilos del contenedor.
+ *
+ * El efecto es casi todo WebGL, así que aquí solo se define la caja y el
+ * fondo. El degradado radial de fondo aporta la profundidad del espacio
+ * profundo detrás de las estrellas (y evita el negro plano).
+ */
+
+.galaxyfield {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 90% at 50% 45%, #141033 0%, #0a0a1c 45%, #05060f 100%);
+}
+
+/* Con fondo transparente el canvas se compone sobre lo que haya debajo. */
+.galaxyfield[data-transparent] {
+  background: transparent;
+}

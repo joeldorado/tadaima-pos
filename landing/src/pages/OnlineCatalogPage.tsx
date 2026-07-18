@@ -3,14 +3,19 @@ import { ShoppingBag } from "lucide-react";
 import { getGlobalCatalog } from "@tadaima/api";
 import type { CatalogAppearance, CatalogFooterData, GlobalCatalogItem, GlobalCatalogResponse } from "@tadaima/api";
 import { useCart } from "@/hooks/useCart";
-import { ProductCard } from "@/components/catalog/ProductCard";
 import { CartDrawer } from "@/components/catalog/CartDrawer";
-import { ShaderBackground } from "@/components/catalog/ShaderBackground";
+import { CatalogBackground } from "@/components/catalog/backgrounds";
+import { CatalogBody } from "@/components/catalog/CatalogBody";
 import { CatalogHeader, type CatalogTab } from "@/components/catalog/CatalogHeader";
 import { CatalogFooter } from "@/components/catalog/CatalogFooter";
 import { SocialLinks } from "@/components/catalog/SocialLinks";
-import { ctaStyle, secondaryBtnStyle, type SortMode, type TypeFilter } from "@/components/catalog/catalogUi";
-import { resolveCatalogTheme } from "@/lib/catalogThemes";
+import { CATALOG_CONTAINER, ctaStyle, type SortMode, type TypeFilter } from "@/components/catalog/catalogUi";
+import {
+  catalogSurfaceVars,
+  resolveCatalogBackground,
+  resolveCatalogLayout,
+  resolveCatalogTheme,
+} from "@/lib/catalogThemes";
 
 const CART_KEY = "global";
 const DISPLAY = "'Space Grotesk', system-ui, sans-serif";
@@ -171,6 +176,10 @@ export function OnlineCatalogPage() {
   const appearance = payload?.appearance ?? DEFAULT_APPEARANCE;
   const footerData = payload?.footer ?? DEFAULT_FOOTER;
   const theme = resolveCatalogTheme(appearance.theme);
+  // v4: el fondo es su propio eje. Sin configurar, hereda el del tema para que
+  // una tienda publicada antes de v4 se vea idéntica.
+  const background = resolveCatalogBackground(appearance.background, theme);
+  const layout = resolveCatalogLayout(appearance.layout);
   const hasSocials = Object.values(appearance.socials ?? {}).some((v) => !!v?.trim());
 
   const handleAdd = (item: GlobalCatalogItem) => {
@@ -221,7 +230,7 @@ export function OnlineCatalogPage() {
     "data-theme": "dark",
     className: "min-h-dvh",
     style: {
-      ...theme.vars,
+      ...catalogSurfaceVars(theme, background),
       background: "var(--cat-page-bg, var(--td-page-bg))",
       color: "var(--td-text-hi)",
       fontFamily: BODY,
@@ -232,7 +241,7 @@ export function OnlineCatalogPage() {
     return (
       <div {...rootProps}>
         <style>{PAGE_CSS}</style>
-        <div className="max-w-5xl mx-auto px-4 py-6">
+        <div className={`${CATALOG_CONTAINER} py-6`}>
           <div className="h-14 w-60 rounded-2xl td-shimmer" style={{ background: "var(--td-card-bg)", animation: "tdShimmer 1.4s ease-in-out infinite" }} />
           <div className="h-12 mt-5 rounded-2xl td-shimmer" style={{ background: "var(--td-card-bg)", animation: "tdShimmer 1.4s ease-in-out infinite" }} />
           <div className="mt-8 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
@@ -264,9 +273,10 @@ export function OnlineCatalogPage() {
     <div {...rootProps}>
       <style>{PAGE_CSS}</style>
 
-      {/* Fondo animado: nebulosa WebGL tintada por el tema activo.
-          key={slug} remonta el canvas limpio al cambiar de tema. */}
-      {theme.useShader && <ShaderBackground key={theme.slug} tint={theme.shaderTint} />}
+      {/* Fondo (v4): nebulosa / degradado / galaxia, siempre en el color del tema. */}
+      <CatalogBackground background={background} theme={theme} />
+
+
 
       <CatalogHeader
         showSearch={showSearch}
@@ -285,55 +295,34 @@ export function OnlineCatalogPage() {
         hasAnyPromo={hasAnyPromo}
         promoOnly={promoOnly}
         onPromoOnly={() => setPromoOnly((v) => !v)}
+        hideCategoriesOnDesktop={layout === "sidebar"}
+        wide={layout === "sidebar"}
       />
 
-      <div className="relative z-10 max-w-5xl mx-auto px-4 pt-4 pb-10">
-        {/* Encabezado del grid: qué estoy viendo */}
-        <h2 className="text-sm font-black uppercase tracking-widest mb-3" style={{ fontFamily: DISPLAY, color: "var(--td-text-hi)" }}>
-          {searching
+      <CatalogBody
+        layout={layout}
+        items={gridItems}
+        cardProps={cardProps}
+        heading={
+          searching
             ? `Resultados · ${gridItems.length}`
             : categoryFilter
               ? `${categoryFilter} · ${gridItems.length}`
               : sortMode === "featured"
                 ? `Destacados · ${gridItems.length}`
-                : `Lo más nuevo · ${gridItems.length}`}
-        </h2>
-
-        {gridItems.length === 0 ? (
-          <div className="mt-4 rounded-3xl p-8 text-center" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)" }}>
-            <ShoppingBag size={28} className="mx-auto mb-3" style={{ color: "var(--td-text-ghost)" }} />
-            <p className="text-sm font-black uppercase tracking-[0.2em]" style={{ color: "var(--td-text-md)" }}>
-              {promoOnly ? "Sin productos con promo aquí" : searching ? "Nada para tu búsqueda" : "Sin productos"}
-            </p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-            {gridItems.map((item, i) => (
-              <div
-                key={item.id}
-                className="td-fadeup"
-                style={{ animation: "tdFadeUp 0.35s ease-out both", animationDelay: `${Math.min(i, 12) * 30}ms` }}
-              >
-                <ProductCard item={item} {...cardProps} />
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Cargar más (v2.0): antes había tope silencioso de 100 productos */}
-        {hasMorePages && gridItems.length > 0 && (
-          <div className="mt-8 text-center">
-            <button
-              onClick={loadMore}
-              disabled={loadingMore}
-              className="px-6 py-3 rounded-2xl text-[11px] font-black uppercase tracking-widest cursor-pointer transition-all hover:brightness-125 disabled:opacity-50"
-              style={secondaryBtnStyle}
-            >
-              {loadingMore ? "Cargando…" : `Cargar más productos (${payload.pagination.total - data.length} restantes)`}
-            </button>
-          </div>
-        )}
-      </div>
+                : `Lo más nuevo · ${gridItems.length}`
+        }
+        emptyLabel={
+          promoOnly ? "Sin productos con promo aquí" : searching ? "Nada para tu búsqueda" : "Sin productos"
+        }
+        hasMorePages={hasMorePages}
+        loadingMore={loadingMore}
+        remaining={payload.pagination.total - data.length}
+        onLoadMore={loadMore}
+        categories={categories}
+        categoryFilter={categoryFilter}
+        onCategoryFilter={setCategoryFilter}
+      />
 
       {/* Footer estático (Catálogo v3): sucursales + descripción + redes */}
       <CatalogFooter
@@ -341,6 +330,7 @@ export function OnlineCatalogPage() {
         footer={footerData}
         socialsSlot={<SocialLinks socials={appearance.socials} />}
         hasSocials={hasSocials}
+        wide={layout === "sidebar"}
       />
 
       {/* Toast "agregado" (v2.0) */}
