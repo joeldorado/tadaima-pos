@@ -149,12 +149,22 @@ class SuppliesController extends Controller
         $isAdmin   = $user->isAdminRole();
         $isCashier = $user->hasRole(['cajero']) && ! $isAdmin;
 
-        $movements = SupplyMovement::with(['supply:id,name,category,unit', 'user:id,name'])
+        // Rango de fechas opcional (día-negocio), MISMO helper que /reports/supplies
+        // para que la lista detallada del Reporte cuadre con el agregado.
+        $fromUtc = $request->input('from') ? DateRange::fromUtc((string) $request->input('from')) : null;
+        $toUtc   = $request->input('to')   ? DateRange::toUtc((string) $request->input('to'))     : null;
+
+        $movements = SupplyMovement::with(['supply:id,name,category,unit,store_id', 'user:id,name'])
             // Scoping por empresa (fix 2026-07-18): sin esto el historial
             // mezclaba movimientos de insumos de otras empresas.
             ->whereHas('supply', fn ($q) => $q->where('company_id', $user->company_id))
             ->when($request->integer('supply_id'), fn ($q, $id) => $q->where('supply_id', $id))
             ->when($request->input('type'), fn ($q, $t) => $q->where('type', $t))
+            ->when($fromUtc, fn ($q) => $q->where('supply_movements.created_at', '>=', $fromUtc))
+            ->when($toUtc,   fn ($q) => $q->where('supply_movements.created_at', '<=', $toUtc))
+            // Filtro por tienda DUEÑA del insumo (supplies.store_id); NULL = toda la
+            // empresa. Reportes por tienda (2026-07). Solo aplica si se envía store_id.
+            ->when($request->filled('store_id'), fn ($q) => $q->whereHas('supply', fn ($qq) => $qq->where('store_id', $request->integer('store_id'))))
             ->when($isCashier, fn ($q) => $q->where('user_id', $user->id))
             ->orderByDesc('created_at')
             ->limit(200)

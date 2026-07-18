@@ -8,8 +8,15 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
   const {
     groupedProducts, paymentBreakdown, invReport, topReport, custReport,
     from, to, today, activeTab, canViewCost, ivaRate, effectiveStoreId,
-    selectedUserId, stores, users,
+    selectedUserId, stores, users, supplyMovements,
   } = params;
+
+  // Etiqueta legible del origen del dinero de un insumo.
+  const SUPPLY_SOURCE_LABEL: Record<string, string> = {
+    caja: "Caja",
+    caja_chica: "Caja chica",
+    propio: "Dinero propio",
+  };
     try {
       toast.info("Generando archivo de Excel...");
       const ExcelJS = await import("exceljs");
@@ -318,20 +325,39 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
             column.width = width;
         });
 
-        // ─── Tabla de EGRESOS (placeholder) ──────────────────────────────────────
-        // Los datos de egresos aún están en construcción en el backend. Por ahora
-        // dejamos la tabla vacía (Nombre · Descripción · Cantidad) para captura
-        // manual; cuando exista el endpoint se llenará desde aquí.
+        // ─── Tabla 5. EGRESOS — Insumos de operación (compras del rango) ──────────
+        // Se llena con las compras reales (supplyMovements): insumo, origen del
+        // dinero, quién lo registró, tienda y monto. Igual que la sección en pantalla.
         const egresosRow = Math.max(r2, r3, r4, r5) + 2;
-        setHeader(egresosRow, T2_COL, T2_COL + 2, " 5. EGRESOS", "FFCC7722");
-        setSubHeaderRow(egresosRow + 1, T2_COL, ["Nombre", "Descripción", "Cantidad"], "FFDD9944");
-        // Filas en blanco con borde para captura manual.
-        for (let i = 0; i < 5; i++) {
-            const er = egresosRow + 2 + i;
-            setCell(er, T2_COL, "", { alignment: { horizontal: "left", vertical: "middle" } });
-            setCell(er, T2_COL + 1, "", { alignment: { horizontal: "left", vertical: "middle" } });
-            setCell(er, T2_COL + 2, "", { numFmt: "$#,##0.00", alignment: { horizontal: "right", vertical: "middle" } });
-            sheet.getRow(er).height = 18;
+        setHeader(egresosRow, T2_COL, T2_COL + 4, " 5. EGRESOS — INSUMOS DE OPERACIÓN", "FFCC7722");
+        setSubHeaderRow(egresosRow + 1, T2_COL, ["Insumo", "Origen", "Registró", "Tienda", "Monto"], "FFDD9944");
+        let egr = egresosRow + 2;
+        let totalEgresos = 0;
+        supplyMovements.forEach((m) => {
+            const origen = SUPPLY_SOURCE_LABEL[m.money_source ?? "caja"] ?? (m.money_source ?? "—");
+            const origenTxt = m.money_source === "propio" && m.payer_name ? `${origen} · ${m.payer_name}` : origen;
+            const tienda = m.supply?.store_id
+                ? (stores.find((s) => s.id === m.supply?.store_id)?.name ?? `Tienda ${m.supply?.store_id}`)
+                : "Toda la empresa";
+            totalEgresos += m.amount || 0;
+            setCell(egr, T2_COL, m.supply?.name ?? "Insumo", { alignment: { horizontal: "left", vertical: "middle", wrapText: true } });
+            setCell(egr, T2_COL + 1, origenTxt, { alignment: { horizontal: "left", vertical: "middle" } });
+            setCell(egr, T2_COL + 2, m.user?.name ?? "—", { alignment: { horizontal: "left", vertical: "middle" } });
+            setCell(egr, T2_COL + 3, tienda, { alignment: { horizontal: "left", vertical: "middle" } });
+            setCell(egr, T2_COL + 4, m.amount || 0, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, bold: true, color: { argb: "FFCC2200" } }, alignment: { horizontal: "right", vertical: "middle" } });
+            sheet.getRow(egr).height = 18;
+            egr++;
+        });
+        if (supplyMovements.length > 0) {
+            setCell(egr, T2_COL, "TOTAL EGRESOS", totalLabelOpts);
+            setCell(egr, T2_COL + 1, "", totalLabelOpts);
+            setCell(egr, T2_COL + 2, "", totalLabelOpts);
+            setCell(egr, T2_COL + 3, "", totalLabelOpts);
+            setCell(egr, T2_COL + 4, totalEgresos, totalMoneyOpts("FFCC2200"));
+            sheet.getRow(egr).height = 20;
+        } else {
+            setCell(egr, T2_COL, "Sin egresos de insumos en el periodo", { font: { name: "Arial", size: 9, italic: true, color: { argb: "FF999999" } }, alignment: { horizontal: "left", vertical: "middle" } });
+            sheet.getRow(egr).height = 18;
         }
 
 } else if (activeTab === "inventario") {

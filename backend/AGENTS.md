@@ -146,6 +146,18 @@ para reportes.
 > $100 de menos). Es aditivo y respeta el gating; **no lo elimines** al refactorizar
 > el Resource ni al regenerar `cancelled_items`.
 
+> ⚠️ **NO QUITAR — filtros `from`/`to`/`store_id` en `GET /supplies/movements` (2026-07, Ruben/Reportes).**
+> `SuppliesController::movements` acepta ahora `?from&to` (rango día-negocio, mismo
+> `DateRange::fromUtc/toUtc` que `/reports/supplies`) y `?store_id` (filtra por la
+> tienda dueña del insumo, `supplies.store_id` vía `whereHas`; NULL = toda la
+> empresa). El eager-load ya trae `user:id,name` (**quién registró la compra**) y
+> el select del `supply` incluye `store_id`.
+> **Por qué:** el Reporte de Ventas lista los insumos (egresos) del MISMO rango y
+> tienda que el resto del reporte, y muestra **quién metió cada gasto** (es dinero
+> que sale de la tienda). Sin estos filtros la lista traía los últimos 200 de toda
+> la empresa sin importar fechas. Es aditivo (los params son opcionales) y respeta
+> el scope por empresa + el gating de cajero (solo ve las suyas). **No los elimines.**
+
 **Tiendas y bodegas:** toda tienda necesita su almacén `type='store'` para
 recibir inventario. El selector de inventario en alta de producto lista
 *warehouses*, no *stores*. Por eso `StoreController::store` auto-crea el warehouse
@@ -346,6 +358,22 @@ al dar de alta una tienda (y existe la migración de backfill
 | GET | `/reports/top-products` | Top productos |
 | GET | `/reports/customers` | Clientes |
 | GET | `/reports/pre-sales` | Preventas (anticipos + liquidaciones, utilidad real) |
+| GET | `/reports/supplies` | Insumos por rango: `total`, `by_category`, `by_source` (caja/caja_chica/propio), `top_supplies`. Scoped por empresa. |
+
+### Insumos / Suministros (`SuppliesController`)
+
+> Compras de operación (egresos). El origen del dinero (`money_source`) define si
+> pega o no al corte: `caja` crea `cash_movements salida` (el corte la refleja);
+> `caja_chica`/`propio` NO tocan la caja (solo registro). Ver notas de Descuentos/
+> Insumos en el MASTERLOG (sesiones 2026-07-15…07-18).
+
+| Método | Path | Notas |
+|---|---|---|
+| GET | `/supplies` | Catálogo de insumos (scoped por empresa + tienda del insumo) |
+| POST | `/supplies` · PUT `/supplies/{supply}` | Alta / edición (admin o gerente) |
+| POST | `/supplies/movements` | Registrar compra/consumo/ajuste (`storeMovement`). `money_source` bifurca caja vs no-caja (`SupplyService`) |
+| GET | `/supplies/movements` | Movimientos. **Filtros (Ruben/Reportes 2026-07): `?from&to&store_id`** + `?supply_id&type`. Trae `user` (quién registró); cajero solo ve los suyos. Ver ⚠️ NO QUITAR arriba. |
+| GET | `/reports/supplies` | Ver tabla de Reportes (resumen agregado). |
 
 ### Catálogo online / admin (`CatalogController`)
 
