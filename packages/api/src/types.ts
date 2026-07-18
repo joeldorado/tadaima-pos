@@ -360,6 +360,8 @@ export interface SaleDetail {
     qty_cancelled?: number
     price: number
     line_total: number
+    /** cost_at_sale del item cancelado (snapshot ADR-015). Solo para admin/can_view_cost; null si no. */
+    cost?: number | null
     product_type?: 'product' | 'manga'
   }>
   customer: { id: number; name: string; tier: string | null } | null

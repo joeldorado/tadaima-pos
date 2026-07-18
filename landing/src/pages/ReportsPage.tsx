@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo, Fragment } from "react";
 import {
-  TrendingUp, Package, Users,
+  TrendingUp, Users,
   DollarSign,
-  ShoppingBag, Star, Calendar, Store,
+  ShoppingBag, Calendar, Store,
   ChevronDown, ChevronRight, Clock, RefreshCw,
   FileSpreadsheet,
   Maximize2, X,
@@ -11,8 +11,9 @@ import { toast } from "sonner";
 import { useAuth } from "@tadaima/auth";
 import {
   getSalesReport, getInventoryReport, getTopProductsReport, getCustomersReport,
-  getPreSaleOrders,
+  getPreSaleOrders, getSupplyMovements,
 } from "@tadaima/api";
+import type { SupplyMoneySource, SupplyMovementRecord } from "@tadaima/api";
 import { ReportsSkeleton } from "@/components/reports/ReportsSkeleton";
 import { exportReportPdf } from "./reports/exportPdf";
 import { exportReportExcel } from "./reports/exportExcel";
@@ -59,6 +60,15 @@ const readIvaRate = (): number => {
   } catch {
     return DEFAULT_IVA_COMISION_PCT / 100;
   }
+};
+
+// Metadata de los orígenes del dinero de un insumo. `hitsCorte` = si esa compra
+// descuenta del corte de caja (solo 'caja' lo hace; caja_chica/propio no tocan la
+// caja — ver MASTERLOG 2026-07-18 y backend/AGENTS.md).
+const SUPPLY_SOURCE_META: Record<SupplyMoneySource, { label: string; color: string; hitsCorte: boolean }> = {
+  caja:       { label: "Caja",          color: "#33CC88", hitsCorte: true  },
+  caja_chica: { label: "Caja chica",    color: "#F59E0B", hitsCorte: false },
+  propio:     { label: "Dinero propio", color: "#4499FF", hitsCorte: false },
 };
 
 // Formato anclado a la zona del NEGOCIO (México), no la del dispositivo: una
@@ -119,9 +129,10 @@ interface GroupedProduct {
 
 const REPORT_TABS: { id: TabId; label: string; icon: React.ElementType }[] = [
   { id: "ventas", label: "Ventas", icon: TrendingUp },
-  { id: "inventario", label: "Inventario", icon: Package },
-  { id: "productos", label: "Top Productos", icon: Star },
-  { id: "clientes", label: "Top Clientes", icon: Users },
+  // Ocultas temporalmente (aún no muestran datos). Descomentar para reactivar.
+  // { id: "inventario", label: "Inventario", icon: Package },
+  // { id: "productos", label: "Top Productos", icon: Star },
+  // { id: "clientes", label: "Top Clientes", icon: Users },
 ];
 
 const SALES_HISTORY_FILTERS: Array<{ id: SalesHistoryFilter; label: string }> = [
@@ -317,6 +328,36 @@ export function ReportsPage() {
     staleTime: REPORTS_STALE,
     refetchInterval: LIVE_POLL_MS,
   });
+  // Compras de insumos (egresos) del mismo rango y tienda que el reporte, con
+  // quién las registró. Solo compras (type=purchase). Todo el desglose se deriva
+  // de aquí para que cuadre con el filtro de tienda.
+  const supplyMovementsQuery = useQuery({
+    queryKey: ["reports-supply-movements", from, to, effectiveStoreId],
+    queryFn: () => getSupplyMovements({ from, to, type: "purchase", ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}) }),
+    enabled: activeTab === "ventas",
+    staleTime: REPORTS_STALE,
+    refetchInterval: LIVE_POLL_MS,
+  });
+  const supplyMovements: SupplyMovementRecord[] = supplyMovementsQuery.data ?? [];
+  const insumosTotal = supplyMovements.reduce((a, m) => a + (m.amount || 0), 0);
+  // Solo los insumos pagados de CAJA restan al efectivo (caja chica/propio no).
+  const cajaInsumosTotal = supplyMovements
+    .filter((m) => (m.money_source ?? "caja") === "caja")
+    .reduce((a, m) => a + (m.amount || 0), 0);
+  // Agrupado por origen del dinero, con sus compras (para las tarjetas de origen).
+  const insumosBySource = useMemo(() => {
+    const order: SupplyMoneySource[] = ["caja", "caja_chica", "propio"];
+    const groups = new Map<SupplyMoneySource, { total: number; items: SupplyMovementRecord[] }>();
+    for (const m of supplyMovements) {
+      const src = (m.money_source ?? "caja") as SupplyMoneySource;
+      const g = groups.get(src) ?? { total: 0, items: [] };
+      g.total += m.amount || 0;
+      g.items.push(m);
+      groups.set(src, g);
+    }
+    return order.filter((s) => groups.has(s)).map((s) => ({ source: s, ...groups.get(s)! }));
+  }, [supplyMovements]);
+
   const salesReport: SalesReport | null = salesReportQuery.data ?? null;
   const sales: SaleDetail[] = salesListQuery.data?.data ?? [];
   const filteredSales = useMemo(() => {
@@ -391,9 +432,11 @@ export function ReportsPage() {
         || (sale.status ?? "").toLowerCase().includes("return");
 
       // 1. Regular items
-      const isFullCancel = sale.status === "returned" || sale.cancellation_status === "full";
+      // NOTA: incluso las ventas TOTALMENTE canceladas se cuentan aquí en POSITIVO.
+      // El bloque de cancelaciones (más abajo) las resta en negativo, de modo que
+      // netean a 0 (la venta se anula) en vez de restarse sin haberse sumado —lo
+      // que antes descuadraba ingresos/costo/utilidad. Fix descuadre cancelados 2026.
       for (const item of sale.items) {
-        if (isFullCancel) continue;
         // Filter regular items using OR matching: must match at least one selected filter criteria
         const matchesRegularFilter = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.some(filter => {
           if (filter === "cash") return methods.some(m => isCashMethod(m) || isDollarMethod(m));
@@ -489,17 +532,24 @@ export function ReportsPage() {
       if (hasCancellations || isLegacyReturn) {
         const matchesCancelledFilter = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.includes("cancelled");
         if (matchesCancelledFilter) {
-          const itemsToProcess = hasCancellations 
-            ? (sale.cancelled_items ?? []).map((ci: any) => ({
-                product_id: ci.product_id,
-                name: ci.name,
-                sku: ci.sku,
-                qty_cancelled: Number(ci.qty_cancelled || ci.quantity || 0),
-                line_total: Number(ci.line_total || 0),
-                price: Number(ci.price || 0),
-                cost: Number(ci.cost ?? 0),
-                product_type: ci.product_type ?? 'product'
-              }))
+          const itemsToProcess = hasCancellations
+            ? (sale.cancelled_items ?? []).map((ci: any) => {
+                // cancelled_items NO trae 'cost' (ver tipo en packages/api). Sin el
+                // costo, la cancelación restaría $0 de costo y la utilidad quedaría mal.
+                // Fallback: tomar el costo del item ORIGINAL de la venta por product_id.
+                const origItem = (sale.items ?? []).find((si) => si.product_id === ci.product_id);
+                const unitCost = Number(ci.cost ?? origItem?.cost ?? origItem?.product?.cost ?? 0);
+                return {
+                  product_id: ci.product_id,
+                  name: ci.name,
+                  sku: ci.sku,
+                  qty_cancelled: Number(ci.qty_cancelled || ci.quantity || 0),
+                  line_total: Number(ci.line_total || 0),
+                  price: Number(ci.price || 0),
+                  cost: unitCost,
+                  product_type: ci.product_type ?? 'product'
+                };
+              })
             : (sale.items || []).map((item: any) => ({
                 product_id: item.product_id,
                 name: item.product?.name ?? "Artículo Devuelto",
@@ -890,6 +940,7 @@ export function ReportsPage() {
     groupedProducts, regularProducts, tomoProducts, paymentBreakdown,
     invReport, topReport, custReport, from, to, today, activeTab,
     canViewCost, ivaRate, effectiveStoreId, selectedUserId, stores, users,
+    supplyMovements,
   });
 
   const handleExportPDF = () => exportReportPdf(buildExportParams());
@@ -933,6 +984,11 @@ export function ReportsPage() {
               ) : null}
             </div>
           </td>
+          {canViewCost && (
+            <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontSize: fontS, verticalAlign: "middle" }}>
+              <span style={{ color: TS, fontWeight: 700 }}>{fmt(prod.total_cost)}</span>
+            </td>
+          )}
           <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontSize: fontS, verticalAlign: "middle" }}>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
               <span style={{ color: prod.total_revenue < 0 ? "#FF4422" : "#00CC66", fontWeight: 900 }}>{fmt(prod.total_revenue)}</span>
@@ -946,11 +1002,6 @@ export function ReportsPage() {
               ) : null}
             </div>
           </td>
-          {canViewCost && (
-            <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontSize: fontS, verticalAlign: "middle" }}>
-              <span style={{ color: TS, fontWeight: 700 }}>{fmt(prod.total_cost)}</span>
-            </td>
-          )}
           {canViewCost && (
             <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontSize: fontS, verticalAlign: "middle" }}>
               <span style={{ color: (prod.total_profit - (prod.commission_amount || 0) - ((prod.commission_amount || 0) * ivaRate)) < 0 ? "#FF4422" : "#00CC66", fontWeight: 900 }}>
@@ -1091,7 +1142,8 @@ export function ReportsPage() {
               >
                 <activeTabMeta.icon size={13} />
                 {activeTabMeta.label}
-                <ChevronDown size={13} className={`transition-transform ${isTabSelectorOpen ? "rotate-180" : "rotate-0"}`} />
+                {/* Chevron oculto: solo hay una pestaña (Ventas). Descomentar al reactivar las demás.
+                <ChevronDown size={13} className={`transition-transform ${isTabSelectorOpen ? "rotate-180" : "rotate-0"}`} /> */}
               </button>
 
               <div
@@ -1286,7 +1338,7 @@ export function ReportsPage() {
                   {[
                     { label: "Total cobrado", val: fmt(paymentBreakdown.total), color: "#00CC66", icon: DollarSign, sub: `${paymentBreakdown.transactionCount} ${paymentBreakdown.transactionCount === 1 ? 'transacción' : 'transacciones'}` },
                     { label: "Pago con tarjeta", val: fmt(paymentBreakdown.card), color: "#4499FF", icon: Store, sub: paymentBreakdown.card > 0 ? "TPV / débito / crédito" : "sin movimientos" },
-                    { label: "Pago en efectivo", val: fmt(paymentBreakdown.cash), color: "#33CC88", icon: ShoppingBag, sub: paymentBreakdown.usd > 0 ? `incluye ${paymentBreakdown.usd} USD recibidos` : (paymentBreakdown.cash > 0 ? "cobro en MXN" : "sin movimientos") },
+                    { label: "Pago en efectivo", val: fmt(paymentBreakdown.cash), color: "#33CC88", icon: ShoppingBag, sub: cajaInsumosTotal > 0 ? `− insumos de caja ${fmt(cajaInsumosTotal)} = ${fmt(paymentBreakdown.cash - cajaInsumosTotal)}` : (paymentBreakdown.usd > 0 ? `incluye ${paymentBreakdown.usd} USD recibidos` : (paymentBreakdown.cash > 0 ? "cobro en MXN" : "sin movimientos")) },
                     { label: "Depósitos", val: fmt(paymentBreakdown.deposits), color: "#BB77FF", icon: Clock, sub: paymentBreakdown.deposits > 0 ? "transferencias / SPEI" : "sin depósitos" },
                   ].map((kpi, i) => (
                     <div key={i} className="min-h-[124px] flex flex-col" style={{ ...GLASS, borderRadius: 20, padding: "12px 20px" }}>
@@ -1367,7 +1419,7 @@ export function ReportsPage() {
                   <div className="overflow-y-auto" style={{ maxHeight: 420 }}>
                     <table className="w-full">
                       <thead><tr style={{ borderBottom: DIV }}>
-                        {(canViewCost ? ["Producto", "Cant. Vendida", "Ingresos Totales", "Costo", "Utilidad Neta"] : ["Producto", "Cant. Vendida", "Ingresos Totales"]).map(h => <th key={h} style={thStyle}>{h}</th>)}
+                        {(canViewCost ? ["Producto", "Cant. Vendida", "Costo", "Ingresos Totales", "Utilidad Neta"] : ["Producto", "Cant. Vendida", "Ingresos Totales"]).map(h => <th key={h} style={thStyle}>{h}</th>)}
                       </tr></thead>                      <tbody>
                         {/* 1) Render regular products */}
                         {regularProducts.map(prod => renderProductRow(prod, 16, 10, 12))}
@@ -1409,6 +1461,9 @@ export function ReportsPage() {
                           <tr style={{ background: "rgba(255,255,255,0.03)", borderTop: "2px solid rgba(255,255,255,0.1)" }}>
                             <td style={{ ...tdStyle, fontWeight: 900, color: TP }}>TOTAL GENERAL</td>
                             <td style={{ ...tdStyle, fontWeight: 700, color: TP }}>{uiTotals.cantidad}</td>
+                            {canViewCost && (
+                              <td style={{ ...tdStyle, fontWeight: 700, color: TS }}>{fmt(uiTotals.costo)}</td>
+                            )}
                             <td style={tdStyle}>
                               <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
                                 <span style={{ color: uiTotals.bruto < 0 ? "#FF4422" : "#00CC66", fontWeight: 900 }}>{fmt(uiTotals.bruto)}</span>
@@ -1419,9 +1474,6 @@ export function ReportsPage() {
                                 ) : null}
                               </div>
                             </td>
-                            {canViewCost && (
-                              <td style={{ ...tdStyle, fontWeight: 700, color: TS }}>{fmt(uiTotals.costo)}</td>
-                            )}
                             {canViewCost && (
                               <td style={{ ...tdStyle, fontWeight: 900, color: uiTotals.profit < 0 ? "#FF4422" : "#00CC66" }}>
                                 {fmt(uiTotals.profit)}
@@ -1466,6 +1518,54 @@ export function ReportsPage() {
                   </div>
                 )}
 
+                {/* Egresos — Insumos de operación: por origen del dinero, con quién lo registró y la tienda */}
+                {supplyMovements.length > 0 && (
+                  <div className="mt-2 p-5 rounded-2xl" style={{ ...GLASS, border: "1px solid rgba(255,255,255,0.06)" }}>
+                    <div className="flex items-center justify-between mb-3">
+                      <p style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.14em", color: TM }}>
+                        Egresos — Insumos de operación
+                      </p>
+                      <p className="text-lg font-black" style={{ color: "#FF4422" }}>−{fmt(insumosTotal)}</p>
+                    </div>
+                    <div className="flex flex-col gap-3" style={{ maxHeight: "50vh", overflowY: "auto" }}>
+                      {insumosBySource.map((g) => {
+                        const meta = SUPPLY_SOURCE_META[g.source] ?? { label: g.source, color: TM, hitsCorte: false };
+                        return (
+                          <div key={g.source} className="rounded-xl overflow-hidden" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)" }}>
+                            {/* Encabezado del origen */}
+                            <div className="flex items-center justify-between py-2.5 px-3" style={{ borderBottom: "1px solid var(--td-card-border)" }}>
+                              <div className="flex flex-col">
+                                <span style={{ fontSize: 12, fontWeight: 800, color: meta.color }}>{meta.label}</span>
+                                <span style={{ fontSize: 9, color: TM, fontWeight: 600 }}>
+                                  {g.items.length} {g.items.length === 1 ? "compra" : "compras"} · {meta.hitsCorte ? "descuenta del corte" : "no toca la caja"}
+                                </span>
+                              </div>
+                              <span style={{ fontSize: 14, fontWeight: 900, color: "#FF4422" }}>−{fmt(g.total)}</span>
+                            </div>
+                            {/* Compras de este origen: insumo · quién · tienda */}
+                            {g.items.map((m) => {
+                              const storeName = m.supply?.store_id
+                                ? (stores.find((s) => s.id === m.supply?.store_id)?.name ?? `Tienda ${m.supply?.store_id}`)
+                                : "Toda la empresa";
+                              return (
+                                <div key={m.id} className="flex items-center justify-between py-2 px-3" style={{ borderTop: "1px solid rgba(255,255,255,0.03)" }}>
+                                  <div className="flex flex-col">
+                                    <span style={{ fontSize: 11, fontWeight: 700, color: TP }}>{m.supply?.name ?? "Insumo"}</span>
+                                    <span style={{ fontSize: 9, color: TM }}>
+                                      {m.user?.name ?? "—"} · {storeName}{m.money_source === "propio" && m.payer_name ? ` · pagó ${m.payer_name}` : ""}
+                                    </span>
+                                  </div>
+                                  <span style={{ fontSize: 12, fontWeight: 800, color: "#FF4422" }}>−{fmt(m.amount)}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
               </div>
             )}
 
@@ -1507,7 +1607,7 @@ export function ReportsPage() {
                     <table className="w-full">
                       <thead>
                         <tr style={{ borderBottom: DIV }}>
-                          {(canViewCost ? ["Producto", "Cant. Vendida", "Ingresos Totales", "Costo", "Utilidad Neta"] : ["Producto", "Cant. Vendida", "Ingresos Totales"]).map(h => (
+                          {(canViewCost ? ["Producto", "Cant. Vendida", "Costo", "Ingresos Totales", "Utilidad Neta"] : ["Producto", "Cant. Vendida", "Ingresos Totales"]).map(h => (
                             <th key={h} style={{ ...thStyle, fontSize: 10, padding: "12px 18px" }}>{h}</th>
                           ))}
                         </tr>
@@ -1552,6 +1652,7 @@ export function ReportsPage() {
                           <tr style={{ background: "rgba(255,255,255,0.03)", borderTop: "2px solid rgba(255,255,255,0.1)" }}>
                             <td style={{ ...tdStyle, fontWeight: 900, color: TP }}>TOTAL GENERAL</td>
                             <td style={{ ...tdStyle, fontWeight: 700, color: TP }}>{uiTotals.cantidad}</td>
+                            {canViewCost && <td style={{ ...tdStyle, fontWeight: 700, color: TS }}>{fmt(uiTotals.costo)}</td>}
                             <td style={tdStyle}>
                               <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
                                 <span style={{ color: uiTotals.bruto < 0 ? "#FF4422" : "#00CC66", fontWeight: 900 }}>{fmt(uiTotals.bruto)}</span>
@@ -1562,7 +1663,6 @@ export function ReportsPage() {
                                 ) : null}
                               </div>
                             </td>
-                            {canViewCost && <td style={{ ...tdStyle, fontWeight: 700, color: TS }}>{fmt(uiTotals.costo)}</td>}
                             {canViewCost && <td style={{ ...tdStyle, fontWeight: 900, color: uiTotals.profit < 0 ? "#FF4422" : "#00CC66" }}>
                               {fmt(uiTotals.profit)}
                             </td>}

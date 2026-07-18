@@ -37,7 +37,7 @@ export interface SupplyMovementRecord {
   cash_movement_id: number | null
   user_id: number
   created_at: string
-  supply?: Pick<Supply, 'id' | 'name' | 'category' | 'unit'>
+  supply?: Pick<Supply, 'id' | 'name' | 'category' | 'unit' | 'store_id'>
   user?: { id: number; name: string }
 }
 
@@ -104,6 +104,11 @@ export async function registerSupplyPurchase(input: {
 export async function getSupplyMovements(params?: {
   supply_id?: number
   type?: 'purchase' | 'consumption' | 'adjustment'
+  /** Rango de fechas (día-negocio) — mismo criterio que /reports/supplies. */
+  from?: string
+  to?: string
+  /** Filtra por la tienda dueña del insumo (supplies.store_id). Solo admin. */
+  store_id?: number
 }): Promise<SupplyMovementRecord[]> {
   const response = await apiClient.get<SupplyMovementRecord[]>('/supplies/movements', { params })
   return response.data

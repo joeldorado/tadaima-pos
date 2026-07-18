@@ -8,8 +8,15 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
   const {
     groupedProducts, paymentBreakdown, invReport, topReport, custReport,
     from, to, today, activeTab, canViewCost, ivaRate, effectiveStoreId,
-    selectedUserId, stores, users,
+    selectedUserId, stores, users, supplyMovements,
   } = params;
+
+  // Etiqueta legible del origen del dinero de un insumo.
+  const SUPPLY_SOURCE_LABEL: Record<string, string> = {
+    caja: "Caja",
+    caja_chica: "Caja chica",
+    propio: "Dinero propio",
+  };
     try {
       toast.info("Generando archivo de Excel...");
       const ExcelJS = await import("exceljs");
@@ -118,7 +125,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
         const T3_COLS = canViewCost ? 8 : 6;
 
         const T4_COL = T3_COL + T3_COLS + 3; // Preventa
-        const T4_COLS = canViewCost ? 6 : 5;
+        const T4_COLS = canViewCost ? 7 : 5;
 
         const T5_COL = T4_COL + T4_COLS + 3; // Devoluciones
         const T5_COLS = 3;
@@ -134,7 +141,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
         // Draw Column Headers
         setSubHeaderRow(hrRow, T2_COL, ["Producto", "Cant. Efectivo", ...(canViewCost ? ["Costo Producto"] : []), "Venta Efectivo", ...(canViewCost ? ["Utilidad Efectivo"] : [])], "FF55CC77");
         setSubHeaderRow(hrRow, T3_COL, ["Producto", "Cant. Tarjeta", "Bruto Tarjeta", ...(canViewCost ? ["Costo Producto"] : []), "Comisión TPV", ivaLabel, "Neto Tarjeta", ...(canViewCost ? ["Utilidad Tarjeta"] : [])], "FF4488DD");
-        setSubHeaderRow(hrRow, T4_COL, ["Producto", "Cant. Preventa", "Abonado", "Pendiente", "Pactado", ...(canViewCost ? ["Costo Producto"] : [])], "FFCC88FF");
+        setSubHeaderRow(hrRow, T4_COL, ["Producto", "Cant. Preventa", "Abonado", "Pendiente", "Pactado", ...(canViewCost ? ["Costo Producto", "Utilidad"] : [])], "FFCC88FF");
         setSubHeaderRow(hrRow, T5_COL, ["Producto", "Cant. Devuelta", "Monto Devuelto"], "FFFF8866");
 
         // We will keep a separate row pointer for each table, starting at tableStartRow + 2
@@ -251,7 +258,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
         // TABLE 4: PREVENTAS
         // Campos correctos: pre_sale_apartado (abonado) y pre_sale_deuda (pendiente).
         // Pactado = abonado + pendiente (igual que el PDF y la vista en pantalla).
-        let totPreQty = 0, totPreDeposit = 0, totPrePending = 0, totPrePactado = 0, totPreCost = 0;
+        let totPreQty = 0, totPreDeposit = 0, totPrePending = 0, totPrePactado = 0, totPreCost = 0, totPreUtilidad = 0;
         presaleProducts.forEach((prod) => {
             const deposit = prod.pre_sale_apartado || 0;
             const pending = prod.pre_sale_deuda || 0;
@@ -260,7 +267,8 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
             // total_cost solo se llena el día de entrega (Opción B) y dejaba $0
             // en anticipos aunque el costo sí existiera.
             const cost = prod.pre_sale_costo_real || 0;
-            totPreQty += prod.sales_count || 0; totPreDeposit += deposit; totPrePending += pending; totPrePactado += pactado; totPreCost += cost;
+            const utilidad = pactado - cost; // Utilidad esperada al liquidar el folio.
+            totPreQty += prod.sales_count || 0; totPreDeposit += deposit; totPrePending += pending; totPrePactado += pactado; totPreCost += cost; totPreUtilidad += utilidad;
             setCell(r4, T4_COL, prod.name, { alignment: { horizontal: "left", vertical: "middle", wrapText: true } });
             setCell(r4, T4_COL + 1, prod.sales_count, { alignment: { horizontal: "center", vertical: "middle" } });
             setCell(r4, T4_COL + 2, deposit, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } }, alignment: { horizontal: "right", vertical: "middle" } });
@@ -268,6 +276,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
             setCell(r4, T4_COL + 4, pactado, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, color: { argb: "FF444444" } }, alignment: { horizontal: "right", vertical: "middle" } });
             if (canViewCost) {
                 setCell(r4, T4_COL + 5, cost, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, color: { argb: "FF444444" } }, alignment: { horizontal: "right", vertical: "middle" } });
+                setCell(r4, T4_COL + 6, utilidad, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, bold: true, color: { argb: utilidad < 0 ? "FFFF2200" : "FF009944" } }, alignment: { horizontal: "right", vertical: "middle" } });
             }
             sheet.getRow(r4).height = 20;
             r4++;
@@ -279,6 +288,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
             setCell(r4, T4_COL + 3, totPrePending, totalMoneyOpts("FFFF2200"));
             setCell(r4, T4_COL + 4, totPrePactado, totalMoneyOpts("FF444444"));
             if (canViewCost) setCell(r4, T4_COL + 5, totPreCost, totalMoneyOpts("FF444444"));
+            if (canViewCost) setCell(r4, T4_COL + 6, totPreUtilidad, totalMoneyOpts(totPreUtilidad < 0 ? "FFFF2200" : "FF009944"));
             sheet.getRow(r4).height = 20;
             r4++;
         }
@@ -305,7 +315,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
         const colWidths = {
             [T2_COL]: 28, [T2_COL + 1]: 14, [T2_COL + 2]: 15, [T2_COL + 3]: 15, [T2_COL + 4]: 15,
             [T3_COL]: 28, [T3_COL + 1]: 14, [T3_COL + 2]: 13.5, [T3_COL + 3]: 13.5, [T3_COL + 4]: 13.5, [T3_COL + 5]: 13.5, [T3_COL + 6]: 13.5, [T3_COL + 7]: 13.5,
-            [T4_COL]: 28, [T4_COL + 1]: 14, [T4_COL + 2]: 15, [T4_COL + 3]: 15, [T4_COL + 4]: 15, [T4_COL + 5]: 15,
+            [T4_COL]: 28, [T4_COL + 1]: 14, [T4_COL + 2]: 15, [T4_COL + 3]: 15, [T4_COL + 4]: 15, [T4_COL + 5]: 15, [T4_COL + 6]: 15,
             [T5_COL]: 28, [T5_COL + 1]: 14, [T5_COL + 2]: 15
         };
 
@@ -315,20 +325,39 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
             column.width = width;
         });
 
-        // ─── Tabla de EGRESOS (placeholder) ──────────────────────────────────────
-        // Los datos de egresos aún están en construcción en el backend. Por ahora
-        // dejamos la tabla vacía (Nombre · Descripción · Cantidad) para captura
-        // manual; cuando exista el endpoint se llenará desde aquí.
+        // ─── Tabla 5. EGRESOS — Insumos de operación (compras del rango) ──────────
+        // Se llena con las compras reales (supplyMovements): insumo, origen del
+        // dinero, quién lo registró, tienda y monto. Igual que la sección en pantalla.
         const egresosRow = Math.max(r2, r3, r4, r5) + 2;
-        setHeader(egresosRow, T2_COL, T2_COL + 2, " 5. EGRESOS", "FFCC7722");
-        setSubHeaderRow(egresosRow + 1, T2_COL, ["Nombre", "Descripción", "Cantidad"], "FFDD9944");
-        // Filas en blanco con borde para captura manual.
-        for (let i = 0; i < 5; i++) {
-            const er = egresosRow + 2 + i;
-            setCell(er, T2_COL, "", { alignment: { horizontal: "left", vertical: "middle" } });
-            setCell(er, T2_COL + 1, "", { alignment: { horizontal: "left", vertical: "middle" } });
-            setCell(er, T2_COL + 2, "", { numFmt: "$#,##0.00", alignment: { horizontal: "right", vertical: "middle" } });
-            sheet.getRow(er).height = 18;
+        setHeader(egresosRow, T2_COL, T2_COL + 4, " 5. EGRESOS — INSUMOS DE OPERACIÓN", "FFCC7722");
+        setSubHeaderRow(egresosRow + 1, T2_COL, ["Insumo", "Origen", "Registró", "Tienda", "Monto"], "FFDD9944");
+        let egr = egresosRow + 2;
+        let totalEgresos = 0;
+        supplyMovements.forEach((m) => {
+            const origen = SUPPLY_SOURCE_LABEL[m.money_source ?? "caja"] ?? (m.money_source ?? "—");
+            const origenTxt = m.money_source === "propio" && m.payer_name ? `${origen} · ${m.payer_name}` : origen;
+            const tienda = m.supply?.store_id
+                ? (stores.find((s) => s.id === m.supply?.store_id)?.name ?? `Tienda ${m.supply?.store_id}`)
+                : "Toda la empresa";
+            totalEgresos += m.amount || 0;
+            setCell(egr, T2_COL, m.supply?.name ?? "Insumo", { alignment: { horizontal: "left", vertical: "middle", wrapText: true } });
+            setCell(egr, T2_COL + 1, origenTxt, { alignment: { horizontal: "left", vertical: "middle" } });
+            setCell(egr, T2_COL + 2, m.user?.name ?? "—", { alignment: { horizontal: "left", vertical: "middle" } });
+            setCell(egr, T2_COL + 3, tienda, { alignment: { horizontal: "left", vertical: "middle" } });
+            setCell(egr, T2_COL + 4, m.amount || 0, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, bold: true, color: { argb: "FFCC2200" } }, alignment: { horizontal: "right", vertical: "middle" } });
+            sheet.getRow(egr).height = 18;
+            egr++;
+        });
+        if (supplyMovements.length > 0) {
+            setCell(egr, T2_COL, "TOTAL EGRESOS", totalLabelOpts);
+            setCell(egr, T2_COL + 1, "", totalLabelOpts);
+            setCell(egr, T2_COL + 2, "", totalLabelOpts);
+            setCell(egr, T2_COL + 3, "", totalLabelOpts);
+            setCell(egr, T2_COL + 4, totalEgresos, totalMoneyOpts("FFCC2200"));
+            sheet.getRow(egr).height = 20;
+        } else {
+            setCell(egr, T2_COL, "Sin egresos de insumos en el periodo", { font: { name: "Arial", size: 9, italic: true, color: { argb: "FF999999" } }, alignment: { horizontal: "left", vertical: "middle" } });
+            sheet.getRow(egr).height = 18;
         }
 
 } else if (activeTab === "inventario") {
