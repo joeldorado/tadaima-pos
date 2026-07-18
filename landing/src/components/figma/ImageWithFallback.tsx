@@ -63,6 +63,7 @@ type ImageWithFallbackProps = Omit<React.ImgHTMLAttributes<HTMLImageElement>, 's
 
 export function ImageWithFallback({ src, alt, style, className, ...rest }: ImageWithFallbackProps) {
   const [didError, setDidError] = useState(false)
+  const [loaded, setLoaded] = useState(false)
 
   // Show placeholder immediately if src is missing — no need to wait for an error event
   if (!src || didError) {
@@ -79,12 +80,16 @@ export function ImageWithFallback({ src, alt, style, className, ...rest }: Image
       src={src}
       alt={alt}
       className={className}
-      style={style}
+      // Fade-in al cargar: la foto aparece suave en vez de "brincar".
+      style={{ ...style, opacity: loaded ? 1 : 0, transition: 'opacity 0.35s ease' }}
       // Lazy: solo descarga cuando entra al viewport (ahorra bandwidth en catálogos
       // largos). Async: decodifica fuera del main thread, sin bloquear render.
       loading="lazy"
       decoding="async"
       {...rest}
+      // Imágenes ya en caché pueden estar completas antes de que onLoad enganche.
+      ref={(el) => { if (el?.complete && el.naturalWidth > 0 && !loaded) setLoaded(true) }}
+      onLoad={() => { setLoaded(true) }}
       onError={() => { setDidError(true) }}
     />
   )

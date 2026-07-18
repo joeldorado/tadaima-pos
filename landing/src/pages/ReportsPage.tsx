@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo, Fragment } from "react";
 import {
-  TrendingUp, Package, Users,
+  TrendingUp, Users,
   DollarSign,
-  ShoppingBag, Star, Calendar, Store,
-  ChevronDown, ChevronRight, Clock, RefreshCw, ChevronLeft,
+  ShoppingBag, Calendar, Store,
+  ChevronDown, ChevronRight, Clock, RefreshCw,
   FileSpreadsheet,
   Maximize2, X,
 } from "lucide-react";
@@ -11,11 +11,13 @@ import { toast } from "sonner";
 import { useAuth } from "@tadaima/auth";
 import {
   getSalesReport, getInventoryReport, getTopProductsReport, getCustomersReport,
-  getPreSaleOrders,
+  getPreSaleOrders, getSupplyMovements,
 } from "@tadaima/api";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+import type { SupplyMoneySource, SupplyMovementRecord } from "@tadaima/api";
 import { ReportsSkeleton } from "@/components/reports/ReportsSkeleton";
+import { exportReportPdf } from "./reports/exportPdf";
+import { exportReportExcel } from "./reports/exportExcel";
+import type { ReportExportParams } from "./reports/reportTypes";
 import { getSales } from "@tadaima/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useStoresQuery } from "@/hooks/queries/useStores";
@@ -24,20 +26,7 @@ import { getTodayLocal, daysAgoLocal, BUSINESS_TZ, toLocalYmd } from "@/lib/date
 import { queryKeys } from "@/lib/queryKeys";
 import type { SalesReport, InventoryReport, TopProductsReport, CustomersReport } from "@tadaima/api";
 import type { SaleDetail, Store as StoreType, PreSaleOrder, PreSaleOrderPayment } from "@tadaima/api";
-import {
-  Button as AriaButton,
-  CalendarCell,
-  CalendarGrid,
-  CalendarGridBody,
-  CalendarGridHeader,
-  CalendarHeaderCell,
-  CalendarHeading,
-  Dialog,
-  DialogTrigger,
-  Popover,
-  RangeCalendar,
-} from "react-aria-components";
-import { parseDate } from "@internationalized/date";
+import { DateRangePicker } from "@/components/ui/DateRangePicker";
 
 // ─── Design tokens ─────────────────────────────────────────────────────────────
 const BG   = "var(--td-page-bg)";
@@ -56,6 +45,31 @@ const DIV = "1px solid var(--td-divider)";
 
 const fmt = (n: number) =>
   new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", minimumFractionDigits: 0 }).format(n ?? 0);
+
+// IVA sobre la comisión TPV. Se lee de la MISMA llave que configura SalesPage
+// (`tadaima:iva-comision-pct`) para que reportes y ventas usen la misma tasa.
+// Antes estaba hardcodeado a 0.16 en ~10 sitios de este archivo.
+const DEFAULT_IVA_COMISION_PCT = 16;
+const IVA_PCT_STORAGE_KEY = "tadaima:iva-comision-pct";
+const readIvaRate = (): number => {
+  try {
+    const raw = localStorage.getItem(IVA_PCT_STORAGE_KEY);
+    if (raw === null || raw.trim() === "") return DEFAULT_IVA_COMISION_PCT / 100;
+    const v = Number(raw);
+    return Number.isFinite(v) && v > 0 && v <= 100 ? v / 100 : DEFAULT_IVA_COMISION_PCT / 100;
+  } catch {
+    return DEFAULT_IVA_COMISION_PCT / 100;
+  }
+};
+
+// Metadata de los orígenes del dinero de un insumo. `hitsCorte` = si esa compra
+// descuenta del corte de caja (solo 'caja' lo hace; caja_chica/propio no tocan la
+// caja — ver MASTERLOG 2026-07-18 y backend/AGENTS.md).
+const SUPPLY_SOURCE_META: Record<SupplyMoneySource, { label: string; color: string; hitsCorte: boolean }> = {
+  caja:       { label: "Caja",          color: "#33CC88", hitsCorte: true  },
+  caja_chica: { label: "Caja chica",    color: "#F59E0B", hitsCorte: false },
+  propio:     { label: "Dinero propio", color: "#4499FF", hitsCorte: false },
+};
 
 // Formato anclado a la zona del NEGOCIO (México), no la del dispositivo: una
 // Mac/tablet en otra zona (Tijuana) mostraría la hora corrida ~1h y el día
@@ -76,11 +90,6 @@ const fmtDate = (iso: string) => {
 
 // const fmtTime = (iso: string) =>
 //   new Date(iso).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", timeZone: BUSINESS_TZ });
-
-// ─── Date conversion helpers ──────────────────────────────────────────────────
-const parseYmd = (iso: string) => parseDate(iso);
-const toYmdFromDateValue = (value: ReturnType<typeof parseDate>) =>
-  `${value.year}-${String(value.month).padStart(2, "0")}-${String(value.day).padStart(2, "0")}`;
 
 
 // "cortes" se movió a la página /cajas (visible a los 3 roles) — Joel 2026-06-12.
@@ -111,15 +120,19 @@ interface GroupedProduct {
   total_profit: number;
   pre_sale_apartado?: number;
   pre_sale_deuda?: number;
+  /** Costo real (snapshot) de los items de preventa del rango, incluye anticipos.
+   *  Informativo: NO entra a total_cost/total_profit (la utilidad se reconoce al entregar). */
+  pre_sale_costo_real?: number;
   commission_amount?: number;
   product_type?: 'product' | 'manga';
 }
 
 const REPORT_TABS: { id: TabId; label: string; icon: React.ElementType }[] = [
   { id: "ventas", label: "Ventas", icon: TrendingUp },
-  { id: "inventario", label: "Inventario", icon: Package },
-  { id: "productos", label: "Top Productos", icon: Star },
-  { id: "clientes", label: "Top Clientes", icon: Users },
+  // Ocultas temporalmente (aún no muestran datos). Descomentar para reactivar.
+  // { id: "inventario", label: "Inventario", icon: Package },
+  // { id: "productos", label: "Top Productos", icon: Star },
+  // { id: "clientes", label: "Top Clientes", icon: Users },
 ];
 
 const SALES_HISTORY_FILTERS: Array<{ id: SalesHistoryFilter; label: string }> = [
@@ -155,6 +168,8 @@ export function ReportsPage() {
   const { user } = useAuth();
   const isAdmin   = user?.roles?.some(r => ["admin","super_admin","owner","dueño"].includes(r.toLowerCase())) ?? false;
   const canViewCost = isAdmin || !!(user as any)?.can_view_cost;
+  // Tasa de IVA sobre comisión, compartida con SalesPage vía localStorage.
+  const ivaRate = readIvaRate();
 
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<TabId>("ventas");
@@ -313,6 +328,36 @@ export function ReportsPage() {
     staleTime: REPORTS_STALE,
     refetchInterval: LIVE_POLL_MS,
   });
+  // Compras de insumos (egresos) del mismo rango y tienda que el reporte, con
+  // quién las registró. Solo compras (type=purchase). Todo el desglose se deriva
+  // de aquí para que cuadre con el filtro de tienda.
+  const supplyMovementsQuery = useQuery({
+    queryKey: ["reports-supply-movements", from, to, effectiveStoreId],
+    queryFn: () => getSupplyMovements({ from, to, type: "purchase", ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}) }),
+    enabled: activeTab === "ventas",
+    staleTime: REPORTS_STALE,
+    refetchInterval: LIVE_POLL_MS,
+  });
+  const supplyMovements: SupplyMovementRecord[] = supplyMovementsQuery.data ?? [];
+  const insumosTotal = supplyMovements.reduce((a, m) => a + (m.amount || 0), 0);
+  // Solo los insumos pagados de CAJA restan al efectivo (caja chica/propio no).
+  const cajaInsumosTotal = supplyMovements
+    .filter((m) => (m.money_source ?? "caja") === "caja")
+    .reduce((a, m) => a + (m.amount || 0), 0);
+  // Agrupado por origen del dinero, con sus compras (para las tarjetas de origen).
+  const insumosBySource = useMemo(() => {
+    const order: SupplyMoneySource[] = ["caja", "caja_chica", "propio"];
+    const groups = new Map<SupplyMoneySource, { total: number; items: SupplyMovementRecord[] }>();
+    for (const m of supplyMovements) {
+      const src = (m.money_source ?? "caja") as SupplyMoneySource;
+      const g = groups.get(src) ?? { total: 0, items: [] };
+      g.total += m.amount || 0;
+      g.items.push(m);
+      groups.set(src, g);
+    }
+    return order.filter((s) => groups.has(s)).map((s) => ({ source: s, ...groups.get(s)! }));
+  }, [supplyMovements]);
+
   const salesReport: SalesReport | null = salesReportQuery.data ?? null;
   const sales: SaleDetail[] = salesListQuery.data?.data ?? [];
   const filteredSales = useMemo(() => {
@@ -387,9 +432,11 @@ export function ReportsPage() {
         || (sale.status ?? "").toLowerCase().includes("return");
 
       // 1. Regular items
-      const isFullCancel = sale.status === "returned" || sale.cancellation_status === "full";
+      // NOTA: incluso las ventas TOTALMENTE canceladas se cuentan aquí en POSITIVO.
+      // El bloque de cancelaciones (más abajo) las resta en negativo, de modo que
+      // netean a 0 (la venta se anula) en vez de restarse sin haberse sumado —lo
+      // que antes descuadraba ingresos/costo/utilidad. Fix descuadre cancelados 2026.
       for (const item of sale.items) {
-        if (isFullCancel) continue;
         // Filter regular items using OR matching: must match at least one selected filter criteria
         const matchesRegularFilter = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.some(filter => {
           if (filter === "cash") return methods.some(m => isCashMethod(m) || isDollarMethod(m));
@@ -406,18 +453,30 @@ export function ReportsPage() {
         const prodName = item.product?.name ?? "Artículo Desconocido";
         const prodSku = item.product?.sku ?? "—";
         const qty = item.quantity;
-        // Prorratea la promo/descuento de la venta a este item (Joel 2026-06-29): el
-        // descuento vive a nivel venta (sales.discount) y NO baja sale_items.total, así
-        // que sin esto el Bruto/Utilidad por producto se inflaría con las promos. Solo
-        // se aplica en ventas COMPLETADAS con descuento real; las que tienen
-        // cancelación/devolución conservan el comportamiento crudo (la sección de
-        // cancelados resta el line_total crudo y debe netear igual). Sin descuento el
-        // ratio = 1 (no cambia nada). El costo NO se prorratea (es el mismo con/ sin promo).
+        // Neto del item para el reporte (Joel 2026-07-17 "que salga lo real"):
+        //  1. Descuentos v2/promos: si la venta trae beneficios POR LÍNEA
+        //     (sale_items.discount_amount), el neto es EXACTO por línea
+        //     (total bruto − beneficio de ESA línea) — ya no se prorratea, así
+        //     el producto con promo absorbe SU descuento y no contamina a los
+        //     demás productos del ticket.
+        //  2. Ventas legacy (descuento global sin líneas): prorrateo proporcional
+        //     como antes (Joel 2026-06-29). Sin descuento el ratio = 1.
+        //  Con cancelación/devolución se conserva el crudo (la sección de
+        //  cancelados resta line_total crudo y debe netear igual). El costo NO
+        //  se prorratea (es el mismo con/sin promo).
         const saleHasReversal = (sale.cancelled_items?.length ?? 0) > 0 || sale.status === "returned";
-        const discRatio = (!saleHasReversal && (sale.discount ?? 0) > 0 && sale.subtotal > 0)
-          ? sale.total / sale.subtotal
-          : 1;
-        const itemTotal = item.total * discRatio;
+        const saleHasLineBenefits = (sale.items ?? []).some(si => (si.discount_amount ?? 0) > 0);
+        let itemTotal: number;
+        if (saleHasReversal) {
+          itemTotal = item.total;
+        } else if (saleHasLineBenefits) {
+          itemTotal = Math.max(0, item.total - (item.discount_amount ?? 0));
+        } else {
+          const discRatio = ((sale.discount ?? 0) > 0 && sale.subtotal > 0)
+            ? sale.total / sale.subtotal
+            : 1;
+          itemTotal = item.total * discRatio;
+        }
         const unitPrice = item.price;
 
         if (!map.has(prodId)) {
@@ -473,17 +532,24 @@ export function ReportsPage() {
       if (hasCancellations || isLegacyReturn) {
         const matchesCancelledFilter = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.includes("cancelled");
         if (matchesCancelledFilter) {
-          const itemsToProcess = hasCancellations 
-            ? (sale.cancelled_items ?? []).map((ci: any) => ({
-                product_id: ci.product_id,
-                name: ci.name,
-                sku: ci.sku,
-                qty_cancelled: Number(ci.qty_cancelled || ci.quantity || 0),
-                line_total: Number(ci.line_total || 0),
-                price: Number(ci.price || 0),
-                cost: Number(ci.cost ?? 0),
-                product_type: ci.product_type ?? 'product'
-              }))
+          const itemsToProcess = hasCancellations
+            ? (sale.cancelled_items ?? []).map((ci: any) => {
+                // cancelled_items NO trae 'cost' (ver tipo en packages/api). Sin el
+                // costo, la cancelación restaría $0 de costo y la utilidad quedaría mal.
+                // Fallback: tomar el costo del item ORIGINAL de la venta por product_id.
+                const origItem = (sale.items ?? []).find((si) => si.product_id === ci.product_id);
+                const unitCost = Number(ci.cost ?? origItem?.cost ?? origItem?.product?.cost ?? 0);
+                return {
+                  product_id: ci.product_id,
+                  name: ci.name,
+                  sku: ci.sku,
+                  qty_cancelled: Number(ci.qty_cancelled || ci.quantity || 0),
+                  line_total: Number(ci.line_total || 0),
+                  price: Number(ci.price || 0),
+                  cost: unitCost,
+                  product_type: ci.product_type ?? 'product'
+                };
+              })
             : (sale.items || []).map((item: any) => ({
                 product_id: item.product_id,
                 name: item.product?.name ?? "Artículo Devuelto",
@@ -610,6 +676,7 @@ export function ReportsPage() {
               price_breakdown: {},
               pre_sale_apartado: 0,
               pre_sale_deuda: 0,
+              pre_sale_costo_real: 0,
               product_type: item.product_type ?? 'product',
             });
           }
@@ -642,6 +709,10 @@ export function ReportsPage() {
 
           pGroup.pre_sale_apartado = (pGroup.pre_sale_apartado ?? 0) + itemApartado;
           pGroup.pre_sale_deuda = (pGroup.pre_sale_deuda ?? 0) + itemDeuda;
+          // Costo real SIEMPRE (anticipos incluidos), aparte de Opción B: es el
+          // dato informativo que Excel/PDF muestran en "Costo Producto". item.cost
+          // llega null si el usuario no puede ver costos (gate en el Resource).
+          pGroup.pre_sale_costo_real = (pGroup.pre_sale_costo_real ?? 0) + (item.cost ?? 0) * qty;
         }
       }
     }
@@ -661,16 +732,20 @@ export function ReportsPage() {
     let iva = 0;
     let neto = 0;
     let profit = 0;
+    let costo = 0;
+    let cantidad = 0;
     groupedProducts.forEach(prod => {
       bruto += prod.total_revenue || 0;
+      costo += prod.total_cost || 0;
+      cantidad += prod.total_quantity || 0;
       const comm = prod.commission_amount || 0;
       comision += comm;
-      iva += comm * 0.16;
-      neto += (prod.total_revenue - comm - (comm * 0.16));
+      iva += comm * ivaRate;
+      neto += (prod.total_revenue - comm - (comm * ivaRate));
       profit += prod.total_profit || 0;
     });
     profit = profit - comision - iva;
-    return { bruto, comision, iva, neto, profit };
+    return { bruto, comision, iva, neto, profit, costo, cantidad };
   }, [groupedProducts]);
 
   const regularProducts = useMemo(() => groupedProducts.filter(p => p.product_type !== 'manga'), [groupedProducts]);
@@ -805,50 +880,20 @@ export function ReportsPage() {
         }
       }
 
-      // 2. Process cancelled/negative parts (returns)
-      if (showCancelled && (isFullCancel || (sale.cancellation_status && sale.cancellation_status !== "none")) && sale.cancelled_amount && sale.cancelled_amount > 0) {
-        contributed = true;
-        const cancelledAmount = sale.cancelled_amount;
-        const originalTotal = sale.total + cancelledAmount;
-        
-        if (originalTotal > 0 && sale.payments && sale.payments.length > 0) {
-          for (const p of sale.payments) {
-            if (!p) continue;
-            const name = (p.payment_method?.name ?? "").toLowerCase();
-            const ratio = (p.amount || 0) / originalTotal;
-            const pCancelledAmount = cancelledAmount * ratio;
-
-            total -= pCancelledAmount;
-            if (isCard(name)) {
-              card -= pCancelledAmount;
-            } else if (isTransfer(name)) {
-              deposits -= pCancelledAmount;
-            } else {
-              cash -= pCancelledAmount;
-            }
-          }
-        } else {
-          total -= cancelledAmount;
-          cash -= cancelledAmount;
-        }
-      }
-
       if (contributed) {
         contributingSales.add(sale.id);
       }
     }
 
-    // 3. Process pre-sale payments (anticipos) from filteredPreSaleOrders that are not linked to already processed sales
-    const processedLinkedSaleIds = new Set(filteredSales.map(s => s.id));
+    // 3. Pagos de preventa (anticipos) cobrados en el rango. Se cuentan TODAS las
+    // preventas —igual que la tabla de productos (groupedProducts)— para que el
+    // efectivo del anticipo del periodo sí sume a "Efectivo cobrado". Antes se
+    // saltaban las preventas ligadas a una venta, lo que dejaba fuera anticipos
+    // reales y descuadraba el resumen contra la tabla.
     const showPreSales = selectedFilters.includes("all") || selectedFilters.length === 0 || selectedFilters.some(f => ["preSales", "notPicked", "cash", "dollar", "card", "transfer", "cancelled"].includes(f));
-    
+
     if (showPreSales) {
       for (const order of filteredPreSaleOrders) {
-        // If it's linked to a sale that we already processed, ignore to avoid double-counting!
-        if (order.linked_sale_id && processedLinkedSaleIds.has(order.linked_sale_id)) {
-          continue;
-        }
-
         const paymentsInRange = presalePaymentsInRange(order.payments, from, to);
         if (paymentsInRange.length > 0) {
           let orderContributed = false;
@@ -889,1616 +934,17 @@ export function ReportsPage() {
     const activeTabMeta = (REPORT_TABS.find(tab => tab.id === activeTab) ?? REPORT_TABS[0]) as { id: TabId; label: string; icon: React.ElementType };
   const hiddenTabs = REPORT_TABS.filter(tab => tab.id !== activeTab);
 
-  const handleExportPDF = () => {
-    try {
-      toast.info("Generando archivo PDF...");
-      const doc = new jsPDF({
-        orientation: "landscape",
-        unit: "mm",
-        format: "a4"
-      });
-
-      // Title & Header Info
-      doc.setFillColor(204, 34, 0); // Tadaima Red
-      doc.rect(10, 10, 277, 18, "F");
-
-      doc.setTextColor(255, 255, 255);
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(14);
-      doc.text("TADAIMA - REPORTE DE AUDITORÍA Y VENTAS", 15, 21);
-
-      // Metadata
-      doc.setFontSize(8);
-      doc.setFont("helvetica", "normal");
-      doc.text(`Periodo: ${fmtDate(from)} al ${fmtDate(to)}`, 15, 25);
-      
-      const storeName = stores.find(s => s.id === effectiveStoreId)?.name ?? "Todas las tiendas";
-      const selectedUserName = selectedUserId ? (users.find(u => u.id === selectedUserId)?.name ?? "Todos los usuarios") : "Todos los usuarios";
-      doc.text(`Tienda: ${storeName}   |   Usuario: ${selectedUserName}`, 130, 25);
-      doc.text(`Generado: ${fmtDate(today)} ${new Date().toLocaleTimeString()}`, 230, 25);
-
-      let currentY = 33;
-
-      // Card Totals
-      doc.setDrawColor(220, 220, 220);
-      doc.setFillColor(248, 248, 248);
-      doc.roundedRect(10, currentY, 277, 16, 2, 2, "FD");
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(8);
-      doc.setTextColor(100, 100, 100);
-      doc.text("INGRESOS COBRADOS EN CAJA (CONCEPTO VS MONTO NETO REAL DEL PERIODO)", 14, currentY + 5);
-
-      doc.setFontSize(9);
-      doc.setTextColor(50, 50, 50);
-      doc.text(`Total Bruto: ${fmt(paymentBreakdown.total)}`, 14, currentY + 11);
-      doc.text(`Efectivo: ${fmt(paymentBreakdown.cash)}`, 80, currentY + 11);
-      doc.text(`Tarjetas: ${fmt(paymentBreakdown.card)}`, 140, currentY + 11);
-      doc.text(`Depósitos: ${fmt(paymentBreakdown.deposits)}`, 210, currentY + 11);
-
-      currentY += 21;
-
-      // Table 1: Detalle general
-      doc.setTextColor(50, 50, 50);
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(10);
-      doc.text("1. DETALLE GENERAL DE VENTAS POR PRODUCTO", 10, currentY);
-      currentY += 3;
-
-      const tbl1Body: any[] = [];
-      
-      const buildPdfRow = (prod: any) => {
-        const pricesStr = Object.entries(prod.price_breakdown)
-          .map(([price, qty]) => `${qty} ud. a ${fmt(parseFloat(price))}`)
-          .join(", ");
-        const comm = prod.commission_amount || 0;
-        const iva = comm * 0.16;
-        const net = prod.total_revenue - comm - iva;
-        const profit = (prod.total_profit || 0) - comm - iva;
-
-        return [
-          prod.name,
-          prod.sku,
-          prod.sales_count,
-          (prod.returned_quantity && prod.returned_quantity > 0) ? `${prod.total_quantity} (-${prod.returned_quantity} dev)` : prod.total_quantity,
-          (prod.returned_revenue && prod.returned_revenue > 0) ? `${fmt(prod.total_revenue)} (-${fmt(prod.returned_revenue)} dev)` : fmt(prod.total_revenue),
-          fmt(comm),
-          fmt(iva),
-          fmt(net),
-          ...(canViewCost ? [fmt(profit)] : []),
-          pricesStr
-        ];
-      };
-
-      // Add regular products
-      regularProducts.forEach(prod => {
-        tbl1Body.push(buildPdfRow(prod));
-      });
-
-      // Add divider row if both are present
-      let tomoPdfDividerIndex = -1;
-      if (regularProducts.length > 0 && tomoProducts.length > 0) {
-        tomoPdfDividerIndex = tbl1Body.length;
-        tbl1Body.push([
-          "MANGA NACIONAL",
-          "",
-          "",
-          "",
-          "",
-          "",
-          "",
-          "",
-          ""
-        ]);
-      }
-
-      // Add tomo products
-      tomoProducts.forEach(prod => {
-        tbl1Body.push(buildPdfRow(prod));
-      });
-
-      // Calculate totals
-      let t1Tickets = 0, t1Cant = 0, t1Bruto = 0, t1Com = 0, t1Net = 0, t1Profit = 0;
-      groupedProducts.forEach(p => {
-        t1Tickets += p.sales_count || 0;
-        t1Cant += p.total_quantity || 0;
-        t1Bruto += p.total_revenue || 0;
-        const c = p.commission_amount || 0;
-        t1Com += c;
-        t1Net += (p.total_revenue - c - (c * 0.16));
-        t1Profit += (p.total_profit || 0);
-      });
-
-      const t1IvaTotal = t1Com * 0.16;
-      t1Profit = t1Profit - t1Com - t1IvaTotal;
-      tbl1Body.push([
-        "TOTAL GENERAL",
-        "",
-        t1Tickets.toString(),
-        t1Cant.toString(),
-        fmt(t1Bruto),
-        fmt(t1Com),
-        fmt(t1IvaTotal),
-        fmt(t1Net),
-        ...(canViewCost ? [fmt(t1Profit)] : []),
-        ""
-      ]);
-
-      const pdfHeaders = canViewCost 
-        ? ["Producto", "SKU", "Tickets", "Cant.", "Bruto", "Comisión TPV", "IVA s/Comisión (16%)", "Neto Real", "Utilidad Neta", "Precios Unitarios"]
-        : ["Producto", "SKU", "Tickets", "Cant.", "Bruto", "Comisión TPV", "IVA s/Comisión (16%)", "Neto Real", "Precios Unitarios"];
-
-      autoTable(doc, {
-        startY: currentY,
-        head: [pdfHeaders],
-        body: tbl1Body,
-        theme: "striped",
-        headStyles: { fillColor: [80, 80, 80], fontSize: 8, fontStyle: "bold" },
-        bodyStyles: { fontSize: 7.5 },
-        columnStyles: {
-          0: { cellWidth: 50 },
-          1: { cellWidth: 28 },
-          2: { halign: "center" },
-          3: { halign: "center" },
-          4: { halign: "right" },
-          5: { halign: "right" },
-          6: { halign: "right" },
-          7: { halign: "right", fontStyle: "bold" },
-          ...(canViewCost ? {
-            8: { halign: "right", fontStyle: "bold", textColor: [0, 150, 70] },
-            9: { cellWidth: 60 }
-          } : {
-            8: { cellWidth: 60 }
-          })
-        },
-        didParseCell: (data) => {
-          if (tomoPdfDividerIndex !== -1 && data.row.index === tomoPdfDividerIndex) {
-            data.cell.styles.fontStyle = "bold";
-            data.cell.styles.fillColor = [220, 220, 220];
-            data.cell.styles.textColor = [50, 50, 50];
-          } else if (data.row.index === tbl1Body.length - 1) {
-            data.cell.styles.fontStyle = "bold";
-            data.cell.styles.fillColor = [240, 240, 240];
-            if ([4, 5, 6, 7].includes(data.column.index)) {
-              data.cell.styles.textColor = data.column.index === 7 ? [0, 150, 70] : [50, 50, 50];
-            }
-          }
-        }
-      });
-
-      currentY = (doc as any).lastAutoTable.finalY + 10;
-
-      // Check if page overflow
-      if (currentY > 185) {
-        doc.addPage();
-        currentY = 15;
-      }
-
-      // Table 2: Tarjetas
-      const cardProducts = groupedProducts.filter(prod => 
-        Object.keys(prod.payment_breakdown).some(m => m.toLowerCase().includes("tarjeta") || m.toLowerCase().includes("credit") || m.toLowerCase().includes("debito") || m.toLowerCase().includes("tpv") || m.toLowerCase().includes("terminal"))
-      );
-
-      if (cardProducts.length > 0) {
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(10);
-        doc.text("2. DESGLOSE DE COBROS CON TARJETA Y COMISIONES (16% IVA)", 10, currentY);
-        currentY += 3;
-
-        const tbl2Body = cardProducts.map(prod => {
-          let cardQty = 0;
-          let cardRevenue = 0;
-          Object.entries(prod.payment_breakdown).forEach(([method, data]) => {
-            if (method.toLowerCase().includes("tarjeta") || method.toLowerCase().includes("credit") || method.toLowerCase().includes("debito") || method.toLowerCase().includes("tpv") || method.toLowerCase().includes("terminal")) {
-              cardQty += data.qty;
-              cardRevenue += data.revenue;
-            }
-          });
-          const comm = prod.commission_amount || 0;
-          const iva = comm * 0.16;
-          const ratio = prod.total_revenue > 0 ? (cardRevenue / prod.total_revenue) : 0;
-          const baseProfit = (prod.total_profit || 0) * ratio;
-          const cardProfit = baseProfit - comm - iva;
-          return [
-            prod.name,
-            prod.sku,
-            cardQty,
-            fmt(cardRevenue),
-            fmt(comm),
-            fmt(iva),
-            fmt(cardRevenue - comm - iva),
-            ...(canViewCost ? [fmt(cardProfit)] : [])
-          ];
-        });
-
-        // Totals
-        let t2Cant = 0, t2Bruto = 0, t2Com = 0, t2Iva = 0, t2Net = 0, t2Profit = 0;
-        cardProducts.forEach(prod => {
-          let cardQty = 0;
-          let cardRevenue = 0;
-          Object.entries(prod.payment_breakdown).forEach(([method, data]) => {
-            if (method.toLowerCase().includes("tarjeta") || method.toLowerCase().includes("credit") || method.toLowerCase().includes("debito") || method.toLowerCase().includes("tpv") || method.toLowerCase().includes("terminal")) {
-              cardQty += data.qty;
-              cardRevenue += data.revenue;
-            }
-          });
-          const c = prod.commission_amount || 0;
-          const i = c * 0.16;
-          t2Cant += cardQty;
-          t2Bruto += cardRevenue;
-          t2Com += c;
-          t2Iva += i;
-          t2Net += (cardRevenue - c - i);
-          const ratio = prod.total_revenue > 0 ? (cardRevenue / prod.total_revenue) : 0;
-          const baseProfit = (prod.total_profit || 0) * ratio;
-          t2Profit += (baseProfit - c - i);
-        });
-
-        tbl2Body.push([
-          "TOTAL TARJETAS",
-          "",
-          t2Cant.toString(),
-          fmt(t2Bruto),
-          fmt(t2Com),
-          fmt(t2Iva),
-          fmt(t2Net),
-          ...(canViewCost ? [fmt(t2Profit)] : [])
-        ]);
-
-        const t2Headers = canViewCost
-          ? ["Producto", "SKU", "Cant. Tarjeta", "Bruto Tarjeta", "Comisión TPV", "IVA s/Comisión (16%)", "Neto Tarjeta", "Utilidad Tarjeta"]
-          : ["Producto", "SKU", "Cant. Tarjeta", "Bruto Tarjeta", "Comisión TPV", "IVA s/Comisión (16%)", "Neto Tarjeta"];
-        autoTable(doc, {
-          startY: currentY,
-          head: [t2Headers],
-          body: tbl2Body,
-          theme: "striped",
-          headStyles: { fillColor: [34, 102, 187], fontSize: 8, fontStyle: "bold" },
-          bodyStyles: { fontSize: 7.5 },
-          columnStyles: {
-            0: { cellWidth: 70 },
-            1: { cellWidth: 35 },
-            2: { halign: "center" },
-            3: { halign: "right" },
-            4: { halign: "right" },
-            5: { halign: "right" },
-            6: { halign: "right", fontStyle: "bold" },
-            ...(canViewCost ? { 7: { halign: "right", fontStyle: "bold", textColor: [0, 150, 70] } } : {})
-          },
-          didParseCell: (data) => {
-            if (data.row.index === tbl2Body.length - 1) {
-              data.cell.styles.fontStyle = "bold";
-              data.cell.styles.fillColor = [230, 240, 255];
-              if (data.column.index === 6 || (canViewCost && data.column.index === 7)) {
-                data.cell.styles.textColor = [0, 150, 70];
-              }
-            }
-          }
-        });
-
-        currentY = (doc as any).lastAutoTable.finalY + 10;
-      }
-
-      // Check page overflow for Section 3
-      if (currentY > 185) {
-        doc.addPage();
-        currentY = 15;
-      }
-
-      // Table 3: Efectivo
-      const cashProducts = groupedProducts.filter(prod => 
-        Object.keys(prod.payment_breakdown).some(m => m.toLowerCase().includes("efectivo") || m.toLowerCase().includes("cash") || m.toLowerCase().includes("dolar") || m.toLowerCase().includes("dólar") || m.toLowerCase().includes("usd") || m.toLowerCase().includes("otro") || m.toLowerCase().includes("unmapped"))
-      );
-
-      if (cashProducts.length > 0) {
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(10);
-        doc.text("3. DESGLOSE DE VENTAS EN EFECTIVO (PESOS / DÓLARES / OTROS)", 10, currentY);
-        currentY += 3;
-
-        const tbl3Body = cashProducts.map(prod => {
-          let cashQty = 0;
-          let cashRevenue = 0;
-          Object.entries(prod.payment_breakdown).forEach(([method, data]) => {
-            if (method.toLowerCase().includes("efectivo") || method.toLowerCase().includes("cash") || method.toLowerCase().includes("dolar") || method.toLowerCase().includes("dólar") || method.toLowerCase().includes("usd") || method.toLowerCase().includes("otro") || method.toLowerCase().includes("unmapped")) {
-              cashQty += data.qty;
-              cashRevenue += data.revenue;
-            }
-          });
-          const ratio = prod.total_revenue > 0 ? (cashRevenue / prod.total_revenue) : 0;
-          const cashProfit = (prod.total_profit || 0) * ratio;
-          return [
-            prod.name,
-            prod.sku,
-            cashQty,
-            fmt(cashRevenue),
-            ...(canViewCost ? [fmt(cashProfit)] : [])
-          ];
-        });
-
-        // Totals
-        let t3Cant = 0, t3Bruto = 0, t3Profit = 0;
-        cashProducts.forEach(prod => {
-          let cashQty = 0;
-          let cashRevenue = 0;
-          Object.entries(prod.payment_breakdown).forEach(([method, data]) => {
-            if (method.toLowerCase().includes("efectivo") || method.toLowerCase().includes("cash") || method.toLowerCase().includes("dolar") || method.toLowerCase().includes("dólar") || method.toLowerCase().includes("usd") || method.toLowerCase().includes("otro") || method.toLowerCase().includes("unmapped")) {
-              cashQty += data.qty;
-              cashRevenue += data.revenue;
-            }
-          });
-          t3Cant += cashQty;
-          t3Bruto += cashRevenue;
-          const ratio = prod.total_revenue > 0 ? (cashRevenue / prod.total_revenue) : 0;
-          t3Profit += (prod.total_profit || 0) * ratio;
-        });
-
-        tbl3Body.push([
-          "TOTAL EFECTIVO",
-          "",
-          t3Cant.toString(),
-          fmt(t3Bruto),
-          ...(canViewCost ? [fmt(t3Profit)] : [])
-        ]);
-
-        const t3Headers = canViewCost
-          ? ["Producto", "SKU", "Cant. Efectivo", "Monto Efectivo", "Utilidad Efectivo"]
-          : ["Producto", "SKU", "Cant. Efectivo", "Monto Efectivo"];
-        autoTable(doc, {
-          startY: currentY,
-          head: [t3Headers],
-          body: tbl3Body,
-          theme: "striped",
-          headStyles: { fillColor: [0, 153, 68], fontSize: 8, fontStyle: "bold" },
-          bodyStyles: { fontSize: 7.5 },
-          columnStyles: {
-            0: { cellWidth: 100 },
-            1: { cellWidth: 45 },
-            2: { halign: "center" },
-            3: { halign: "right", fontStyle: "bold" },
-            ...(canViewCost ? { 4: { halign: "right", fontStyle: "bold", textColor: [0, 150, 70] } } : {})
-          },
-          didParseCell: (data) => {
-            if (data.row.index === tbl3Body.length - 1) {
-              data.cell.styles.fontStyle = "bold";
-              data.cell.styles.fillColor = [230, 250, 235];
-              if (data.column.index === 3) {
-                data.cell.styles.textColor = [0, 150, 70];
-              }
-            }
-          }
-        });
-
-        currentY = (doc as any).lastAutoTable.finalY + 10;
-      }
-
-      // Check page overflow for Section 4
-      if (currentY > 185) {
-        doc.addPage();
-        currentY = 15;
-      }
-
-      // Table 4: Preventas
-      const preSaleProducts = groupedProducts.filter(prod => 
-        (prod.pre_sale_apartado && prod.pre_sale_apartado > 0) || (prod.pre_sale_deuda && prod.pre_sale_deuda > 0)
-      );
-
-      if (preSaleProducts.length > 0) {
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(10);
-        doc.text("4. CONTROL Y AUDITORÍA DE PREVENTAS (ABONADO VS DEUDA PENDIENTE)", 10, currentY);
-        currentY += 3;
-
-        const tbl4Body = preSaleProducts.map(prod => {
-          const pactado = (prod.pre_sale_apartado || 0) + (prod.pre_sale_deuda || 0);
-          return [
-            prod.name,
-            prod.sku,
-            prod.total_quantity,
-            fmt(prod.pre_sale_apartado || 0),
-            fmt(prod.pre_sale_deuda || 0),
-            fmt(pactado)
-          ];
-        });
-
-        // Totals
-        let t4Cant = 0, t4Ap = 0, t4Deu = 0, t4Tot = 0;
-        preSaleProducts.forEach(p => {
-          t4Cant += p.total_quantity || 0;
-          t4Ap += p.pre_sale_apartado || 0;
-          t4Deu += p.pre_sale_deuda || 0;
-          t4Tot += ((p.pre_sale_apartado || 0) + (p.pre_sale_deuda || 0));
-        });
-
-        tbl4Body.push([
-          "TOTAL PREVENTAS",
-          "",
-          t4Cant.toString(),
-          fmt(t4Ap),
-          fmt(t4Deu),
-          fmt(t4Tot)
-        ]);
-
-        autoTable(doc, {
-          startY: currentY,
-          head: [["Producto", "SKU", "Cant. Preventa", "Abonado (Apartado)", "Pendiente (Deuda)", "Pactado (Total)"]],
-          body: tbl4Body,
-          theme: "striped",
-          headStyles: { fillColor: [136, 51, 238], fontSize: 8, fontStyle: "bold" },
-          bodyStyles: { fontSize: 7.5 },
-          columnStyles: {
-            0: { cellWidth: 80 },
-            1: { cellWidth: 35 },
-            2: { halign: "center" },
-            3: { halign: "right", fontStyle: "bold" },
-            4: { halign: "right", fontStyle: "bold" },
-            5: { halign: "right" }
-          },
-          didParseCell: (data) => {
-            if (data.row.index === tbl4Body.length - 1) {
-              data.cell.styles.fontStyle = "bold";
-              data.cell.styles.fillColor = [245, 235, 255];
-              if (data.column.index === 3) {
-                data.cell.styles.textColor = [0, 150, 70];
-              }
-              if (data.column.index === 4) {
-                data.cell.styles.textColor = [200, 30, 0];
-              }
-            }
-          }
-        });
-      }
-
-      currentY = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 10 : currentY;
-
-      // Table 5: Devoluciones
-      const returnedProducts = groupedProducts.filter(prod => 
-        (prod.returned_quantity && prod.returned_quantity > 0)
-      );
-
-      if (returnedProducts.length > 0) {
-        if (currentY > 185) {
-          doc.addPage();
-          currentY = 15;
-        }
-
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(10);
-        doc.text("5. DEVOLUCIONES Y CANCELACIONES", 10, currentY);
-        currentY += 3;
-
-        const tbl5Body = returnedProducts.map(prod => {
-          return [
-            prod.name,
-            prod.sku,
-            prod.returned_quantity || 0,
-            fmt(prod.returned_revenue || 0)
-          ];
-        });
-
-        // Totals
-        let t5Cant = 0, t5Monto = 0;
-        returnedProducts.forEach(p => {
-          t5Cant += p.returned_quantity || 0;
-          t5Monto += p.returned_revenue || 0;
-        });
-
-        tbl5Body.push([
-          "TOTAL DEVOLUCIONES",
-          "",
-          t5Cant.toString(),
-          fmt(t5Monto)
-        ]);
-
-        autoTable(doc, {
-          startY: currentY,
-          head: [["Producto", "SKU", "Cant. Devuelta", "Monto Devuelto"]],
-          body: tbl5Body,
-          theme: "striped",
-          headStyles: { fillColor: [255, 68, 34], fontSize: 8, fontStyle: "bold" },
-          bodyStyles: { fontSize: 7.5 },
-          columnStyles: {
-            0: { cellWidth: 100 },
-            1: { cellWidth: 45 },
-            2: { halign: "center", fontStyle: "bold", textColor: [255, 68, 34] },
-            3: { halign: "right", fontStyle: "bold", textColor: [255, 68, 34] }
-          },
-          didParseCell: (data) => {
-            if (data.row.index === tbl5Body.length - 1) {
-              data.cell.styles.fontStyle = "bold";
-              data.cell.styles.fillColor = [255, 235, 230];
-            }
-          }
-        });
-      }
-
-      doc.save(`Tadaima_Reporte_Ventas_${from}_${to}.pdf`);
-      toast.success("PDF generado exitosamente!");
-    } catch (error) {
-      console.error("Error generating PDF:", error);
-      toast.error("Hubo un error al generar el PDF");
-    }
-  };
-
-  const handleExportExcel = async () => {
-    try {
-      toast.info("Generando archivo de Excel...");
-      const ExcelJS = await import("exceljs");
-      const workbook = new ExcelJS.Workbook();
-      
-      workbook.creator = "Tadaima POS";
-      workbook.lastModifiedBy = "Tadaima POS";
-      workbook.created = new Date();
-      workbook.modified = new Date();
-      
-      if (activeTab === "ventas") {
-        const sheet = workbook.addWorksheet("Reporte de Ventas");
-
-        // Set row heights for title area
-        sheet.getRow(1).height = 25;
-        sheet.getRow(2).height = 20;
-        sheet.getRow(3).height = 20;
-        sheet.getRow(4).height = 20;
-        sheet.getRow(5).height = 15;
-
-        // Try to fetch and add the Tadaima logo image
-        try {
-          const logoResponse = await fetch("/tadaima-logo.jpeg");
-          if (logoResponse.ok) {
-            const logoBlob = await logoResponse.blob();
-            const logoArrayBuffer = await logoBlob.arrayBuffer();
-            const imageId = workbook.addImage({
-              buffer: logoArrayBuffer,
-              extension: "jpeg",
-            });
-            // Align beautifully in the top-left area spanning columns A to C, rows 1 to 4
-            sheet.addImage(imageId, {
-              tl: { col: 0.1, row: 0.1 },
-              ext: { width: 85, height: 85 },
-              editAs: "oneCell"
-            });
-          }
-        } catch (logoError) {
-          console.error("No se pudo incrustar el logotipo de Tadaima POS:", logoError);
-        }
-
-        // --- TITLE & METADATA SECTION (Columns D to I) ---
-        sheet.mergeCells("D1:H1");
-        const titleCell = sheet.getCell("D1");
-        titleCell.value = "TADAIMA - REPORTE DE VENTAS";
-        titleCell.font = { name: "Arial", size: 13, bold: true, color: { argb: "FFFFFFFF" } };
-        titleCell.alignment = { vertical: "middle", horizontal: "center" };
-        titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF4422" } };
-
-        sheet.mergeCells("D2:H2");
-        const periodCell = sheet.getCell("D2");
-        periodCell.value = "Periodo: " + fmtDate(from) + " al " + fmtDate(to);
-        periodCell.font = { name: "Arial", size: 9, bold: true, color: { argb: "FF333333" } };
-        periodCell.alignment = { vertical: "middle", horizontal: "center" };
-
-        sheet.mergeCells("D3:H3");
-        const storeCell = sheet.getCell("D3");
-        const selectedStoreName = effectiveStoreId ? (stores.find((s) => s.id === effectiveStoreId)?.name ?? "Tienda #" + effectiveStoreId) : "Todas las tiendas";
-        const selectedUserName = selectedUserId ? (users.find(u => u.id === selectedUserId)?.name ?? "Todos los usuarios") : "Todos los usuarios";
-        storeCell.value = "Sucursal: " + selectedStoreName + "   |   Usuario: " + selectedUserName;
-        storeCell.font = { name: "Arial", size: 9, italic: true };
-        storeCell.alignment = { vertical: "middle", horizontal: "center" };
-
-        sheet.mergeCells("D4:H4");
-        const exportedCell = sheet.getCell("D4");
-        exportedCell.value = "Generado: " + fmtDate(today) + " " + new Date().toLocaleTimeString();
-        exportedCell.font = { name: "Arial", size: 8, color: { argb: "FF666666" } };
-        exportedCell.alignment = { vertical: "middle", horizontal: "center" };
-
-        // --- RESUMEN DE COBROS EN CAJA SECTION (Rows 6 to 10) ---
-        sheet.mergeCells("D6:H6");
-        const resHeader = sheet.getCell("D6");
-        resHeader.value = "RESUMEN DE COBROS EN CAJA";
-        resHeader.font = { name: "Arial", size: 10, bold: true, color: { argb: "FFFFFFFF" } };
-        resHeader.alignment = { vertical: "middle", horizontal: "center" };
-        resHeader.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF333333" } };
-        sheet.getRow(6).height = 20;
-
-        const summaryConcepts = [
-          { concept: "Ingreso Total Cobrado (Bruto)", value: paymentBreakdown.total, isTotal: true },
-          { concept: "Pago en Efectivo (incluye USD)", value: paymentBreakdown.cash },
-          { concept: "Pago con Tarjeta bancaria (TPV)", value: paymentBreakdown.card },
-          { concept: "Depósitos bancarios (Transferencia / SPEI)", value: paymentBreakdown.deposits },
-        ];
-
-        summaryConcepts.forEach((item, idx) => {
-          const rowNum = 7 + idx;
-          sheet.getRow(rowNum).height = 18;
-          sheet.mergeCells("D" + rowNum + ":F" + rowNum);
-          
-          const labelCell = sheet.getCell("D" + rowNum);
-          labelCell.value = item.concept;
-          labelCell.font = { name: "Arial", size: 9, bold: !!item.isTotal };
-          labelCell.alignment = { vertical: "middle", horizontal: "left" };
-
-          sheet.mergeCells("G" + rowNum + ":H" + rowNum);
-          const valCell = sheet.getCell("G" + rowNum);
-          valCell.value = item.value;
-          valCell.font = { name: "Arial", size: 9, bold: !!item.isTotal, ...(item.isTotal ? { color: { argb: "FF009944" } } : {}) };
-          valCell.numFmt = "$#,##0.00";
-          valCell.alignment = { vertical: "middle", horizontal: "right" };
-        });
-
-        // Blank rows spacing
-        let currentExcelRow = 12;
-        sheet.getRow(currentExcelRow).height = 15;
-
-        // --- Helper to style Section Headers ---
-        const styleSectionHeader = (rowNum: number, label: string, colorHex: string) => {
-          sheet.mergeCells("A" + rowNum + ":I" + rowNum);
-          const cell = sheet.getCell("A" + rowNum);
-          cell.value = label;
-          cell.font = { name: "Arial", size: 10, bold: true, color: { argb: "FFFFFFFF" } };
-          cell.alignment = { vertical: "middle", horizontal: "left" };
-          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: colorHex } };
-          sheet.getRow(rowNum).height = 24;
-        };
-
-        // --- Helper to style Header Rows ---
-        const styleHeaderRow = (headerRowInstance: any, colorHex: string) => {
-          headerRowInstance.font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFFFFFF" } };
-          headerRowInstance.eachCell((cell: any) => {
-            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: colorHex } };
-            cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
-          });
-          sheet.getRow(headerRowInstance.number).height = 25;
-        };
-
-        // =========================================================================
-        // SECTION 1: DETALLE GENERAL DE VENTAS POR PRODUCTO
-        // =========================================================================
-        currentExcelRow++;
-        styleSectionHeader(currentExcelRow, " 1. DETALLE GENERAL DE VENTAS POR PRODUCTO (TODOS LOS PRODUCTOS)", "FF333333");
-
-        currentExcelRow++;
-        const tbl1Header = sheet.getRow(currentExcelRow);
-        tbl1Header.values = [
-          "Producto",
-          "SKU",
-          "Tickets",
-          "Cant.",
-          "Bruto",
-          "Comisión TPV",
-          "IVA s/Comisión (16%)",
-          "Neto Real",
-          ...(canViewCost ? ["Utilidad Neta"] : []),
-          "Precios Unitarios",
-          "Desglose de Pagos"
-        ];
-        styleHeaderRow(tbl1Header, "FF555555");
-
-        const writeExcelRow = (prod: any) => {
-          currentExcelRow++;
-          const pricesStr = Object.entries(prod.price_breakdown)
-            .map(([price, qty]) => qty + " ud. a " + fmt(parseFloat(price)))
-            .join("\n");
-          const paymentsStr = Object.entries(prod.payment_breakdown)
-            .map(([method, data]) => (data as any).qty + " ud. con " + method + " (" + fmt((data as any).revenue) + ")")
-            .join("\n");
-
-          const prodComm = prod.commission_amount || 0;
-          const prodIva = prodComm * 0.16;
-          const netRevenue = prod.total_revenue - prodComm - prodIva;
-          const netProfit = (prod.total_profit || 0) - prodComm - prodIva;
-
-          const r = sheet.getRow(currentExcelRow);
-          r.values = [
-            prod.name,
-            prod.sku,
-            prod.sales_count,
-            (prod.returned_quantity && prod.returned_quantity > 0) ? `${prod.total_quantity} (-${prod.returned_quantity} dev)` : prod.total_quantity,
-            (prod.returned_revenue && prod.returned_revenue > 0) ? `${prod.total_revenue} (-${prod.returned_revenue} dev)` : prod.total_revenue,
-            prodComm,
-            prodIva,
-            netRevenue,
-            ...(canViewCost ? [netProfit] : []),
-            pricesStr,
-            paymentsStr
-          ];
-          
-          const lineCount = Math.max(
-            Object.keys(prod.price_breakdown).length,
-            Object.keys(prod.payment_breakdown).length,
-            1
-          );
-          r.height = 14 * lineCount + 10;
-
-          r.getCell(1).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
-          r.getCell(2).alignment = { horizontal: "center", vertical: "middle" };
-          r.getCell(3).alignment = { horizontal: "center", vertical: "middle" };
-          r.getCell(4).alignment = { horizontal: "center", vertical: "middle" };
-          
-          r.getCell(5).numFmt = "$#,##0.00";
-          r.getCell(5).font = { name: "Arial", size: 9, color: { argb: "FF444444" } };
-          r.getCell(5).alignment = { horizontal: "right", vertical: "middle" };
-          
-          r.getCell(6).numFmt = "$#,##0.00";
-          r.getCell(6).font = { name: "Arial", size: 9, color: { argb: "FFFF2200" } };
-          r.getCell(6).alignment = { horizontal: "right", vertical: "middle" };
-          
-          r.getCell(7).numFmt = "$#,##0.00";
-          r.getCell(7).font = { name: "Arial", size: 9, color: { argb: "FFF59E0B" } };
-          r.getCell(7).alignment = { horizontal: "right", vertical: "middle" };
-
-          r.getCell(8).numFmt = "$#,##0.00";
-          r.getCell(8).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
-          r.getCell(8).alignment = { horizontal: "right", vertical: "middle" };
-
-          if (canViewCost) {
-            r.getCell(9).numFmt = "$#,##0.00";
-            r.getCell(9).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
-            r.getCell(9).alignment = { horizontal: "right", vertical: "middle" };
-
-            r.getCell(10).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
-            r.getCell(11).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
-          } else {
-            r.getCell(9).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
-            r.getCell(10).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
-          }
-        };
-
-        // Write regular products
-        regularProducts.forEach(writeExcelRow);
-
-        // Add TOMO divider row if both are present
-        if (regularProducts.length > 0 && tomoProducts.length > 0) {
-          currentExcelRow++;
-          const spanChar = canViewCost ? 'K' : 'J';
-          sheet.mergeCells(`A${currentExcelRow}:${spanChar}${currentExcelRow}`);
-          const dividerCell = sheet.getCell(`A${currentExcelRow}`);
-          dividerCell.value = "📚 MANGA NACIONAL";
-          dividerCell.font = { name: "Arial", size: 9, bold: true, color: { argb: "FF333333" } };
-          dividerCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEFEFEF" } };
-          dividerCell.alignment = { horizontal: "left", vertical: "middle" };
-          sheet.getRow(currentExcelRow).height = 20;
-        }
-
-        // Write tomo products
-        tomoProducts.forEach(writeExcelRow);
-
-        // Add TOTALS Row for Section 1
-        currentExcelRow++;
-        const t1Row = sheet.getRow(currentExcelRow);
-        t1Row.height = 24;
-        
-        let t1Tickets = 0;
-        let t1Cant = 0;
-        let t1Bruto = 0;
-        let t1Comision = 0;
-        let t1Neto = 0;
-        let t1Profit = 0;
-
-        groupedProducts.forEach(prod => {
-          t1Tickets += prod.sales_count || 0;
-          t1Cant += prod.total_quantity || 0;
-          t1Bruto += prod.total_revenue || 0;
-          const comm = prod.commission_amount || 0;
-          t1Comision += comm;
-          t1Neto += (prod.total_revenue - comm - (comm * 0.16));
-          t1Profit += (prod.total_profit || 0);
-        });
-
-        t1Profit = t1Profit - t1Comision - (t1Comision * 0.16);
-
-        t1Row.values = [
-          "TOTAL GENERAL",
-          "",
-          t1Tickets,
-          t1Cant,
-          t1Bruto,
-          t1Comision,
-          t1Comision * 0.16,
-          t1Neto,
-          ...(canViewCost ? [t1Profit] : []),
-          "",
-          ""
-        ];
-        
-        sheet.mergeCells(`A${currentExcelRow}:B${currentExcelRow}`);
-        
-        t1Row.getCell(1).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFFFFFF" } };
-        t1Row.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF333333" } };
-        t1Row.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
-        t1Row.getCell(2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF333333" } }; // merged partner
-        
-        // Add double borders/bold formatting to numbers
-        const t1BoldFont = { name: "Arial", size: 9, bold: true };
-        const t1DoubleBorder = {
-          top: { style: 'thin' as const, color: { argb: 'FF888888' } },
-          bottom: { style: 'double' as const, color: { argb: 'FF333333' } }
-        };
-
-        [3, 4].forEach(col => {
-          const cell = t1Row.getCell(col);
-          cell.font = t1BoldFont;
-          cell.border = t1DoubleBorder;
-          cell.alignment = { horizontal: "center", vertical: "middle" };
-        });
-
-        t1Row.getCell(5).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF333333" } };
-        t1Row.getCell(5).border = t1DoubleBorder;
-        t1Row.getCell(5).numFmt = "$#,##0.00";
-        t1Row.getCell(5).alignment = { horizontal: "right", vertical: "middle" };
-
-        t1Row.getCell(6).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFF2200" } };
-        t1Row.getCell(6).border = t1DoubleBorder;
-        t1Row.getCell(6).numFmt = "$#,##0.00";
-        t1Row.getCell(6).alignment = { horizontal: "right", vertical: "middle" };
-
-        t1Row.getCell(7).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFF59E0B" } };
-        t1Row.getCell(7).border = t1DoubleBorder;
-        t1Row.getCell(7).numFmt = "$#,##0.00";
-        t1Row.getCell(7).alignment = { horizontal: "right", vertical: "middle" };
-
-        t1Row.getCell(8).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
-        t1Row.getCell(8).border = t1DoubleBorder;
-        t1Row.getCell(8).numFmt = "$#,##0.00";
-        t1Row.getCell(8).alignment = { horizontal: "right", vertical: "middle" };
-
-        if (canViewCost) {
-          t1Row.getCell(9).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
-          t1Row.getCell(9).border = t1DoubleBorder;
-          t1Row.getCell(9).numFmt = "$#,##0.00";
-          t1Row.getCell(9).alignment = { horizontal: "right", vertical: "middle" };
-        }
-
-        // =========================================================================
-        // SECTION 2: DETALLE DE VENTAS CON TARJETA BANCARIA Y COMISIONES
-        // =========================================================================
-        const cardProducts = groupedProducts.filter(prod => 
-          Object.keys(prod.payment_breakdown).some(m => m.toLowerCase().includes("tarjeta") || m.toLowerCase().includes("credit") || m.toLowerCase().includes("debito") || m.toLowerCase().includes("tpv") || m.toLowerCase().includes("terminal"))
-        );
-
-        if (cardProducts.length > 0) {
-          currentExcelRow += 3;
-          styleSectionHeader(currentExcelRow, " 2. DESGLOSE DE COBROS CON TARJETA Y COMISIÓN DE TERMINAL", "FF2266BB");
-
-          currentExcelRow++;
-          const tbl2Header = sheet.getRow(currentExcelRow);
-          tbl2Header.values = [
-            "Producto",
-            "SKU",
-            "Cant. Tarjeta",
-            "Bruto Tarjeta",
-            "Comisión TPV",
-            "IVA s/Comisión (16%)",
-            "Neto Tarjeta",
-            ...(canViewCost ? ["Utilidad Tarjeta"] : []),
-            "", ""
-          ];
-          styleHeaderRow(tbl2Header, "FF4488DD");
-
-          cardProducts.forEach((prod) => {
-            currentExcelRow++;
-            
-            // Extract only the units and revenue cobradas con tarjeta
-            let cardQty = 0;
-            let cardRevenue = 0;
-            Object.entries(prod.payment_breakdown).forEach(([method, data]) => {
-              const isCardMethodName = method.toLowerCase().includes("tarjeta") || method.toLowerCase().includes("credit") || method.toLowerCase().includes("debito") || method.toLowerCase().includes("tpv") || method.toLowerCase().includes("terminal");
-              if (isCardMethodName) {
-                cardQty += data.qty;
-                cardRevenue += data.revenue;
-              }
-            });
-
-            const prodComm = prod.commission_amount || 0;
-            const prodIva = prodComm * 0.16;
-            const netCard = cardRevenue - prodComm - prodIva;
-            const ratio = prod.total_revenue > 0 ? (cardRevenue / prod.total_revenue) : 0;
-            const baseProfit = (prod.total_profit || 0) * ratio;
-            const cardProfit = baseProfit - prodComm - prodIva;
-
-            const r = sheet.getRow(currentExcelRow);
-            r.values = [
-              prod.name,
-              prod.sku,
-              cardQty,
-              cardRevenue,
-              prodComm,
-              prodIva,
-              netCard,
-              ...(canViewCost ? [cardProfit] : []),
-              "", ""
-            ];
-            r.height = 20;
-
-            r.getCell(1).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
-            r.getCell(2).alignment = { horizontal: "center", vertical: "middle" };
-            r.getCell(3).alignment = { horizontal: "center", vertical: "middle" };
-            
-            r.getCell(4).numFmt = "$#,##0.00";
-            r.getCell(4).alignment = { horizontal: "right", vertical: "middle" };
-            
-            r.getCell(5).numFmt = "$#,##0.00";
-            r.getCell(5).font = { name: "Arial", size: 9, color: { argb: "FFFF2200" } };
-            r.getCell(5).alignment = { horizontal: "right", vertical: "middle" };
-            
-            r.getCell(6).numFmt = "$#,##0.00";
-            r.getCell(6).font = { name: "Arial", size: 9, color: { argb: "FFF59E0B" } };
-            r.getCell(6).alignment = { horizontal: "right", vertical: "middle" };
-            
-            r.getCell(7).numFmt = "$#,##0.00";
-            r.getCell(7).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
-            r.getCell(7).alignment = { horizontal: "right", vertical: "middle" };
-
-            if (canViewCost) {
-              r.getCell(8).numFmt = "$#,##0.00";
-              r.getCell(8).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
-              r.getCell(8).alignment = { horizontal: "right", vertical: "middle" };
-            }
-          });
-
-          // Add TOTALS Row for Section 2
-          currentExcelRow++;
-          const t2Row = sheet.getRow(currentExcelRow);
-          t2Row.height = 24;
-
-          let t2Cant = 0;
-          let t2Bruto = 0;
-          let t2Comision = 0;
-          let t2Iva = 0;
-          let t2Neto = 0;
-          let t2Profit = 0;
-
-          cardProducts.forEach(prod => {
-            let cardQty = 0;
-            let cardRevenue = 0;
-            Object.entries(prod.payment_breakdown).forEach(([method, data]) => {
-              const isCardMethodName = method.toLowerCase().includes("tarjeta") || method.toLowerCase().includes("credit") || method.toLowerCase().includes("debito") || method.toLowerCase().includes("tpv") || method.toLowerCase().includes("terminal");
-              if (isCardMethodName) {
-                cardQty += data.qty;
-                cardRevenue += data.revenue;
-              }
-            });
-            const comm = prod.commission_amount || 0;
-            const iva = comm * 0.16;
-
-            t2Cant += cardQty;
-            t2Bruto += cardRevenue;
-            t2Comision += comm;
-            t2Iva += iva;
-            t2Neto += (cardRevenue - comm - iva);
-            const ratio = prod.total_revenue > 0 ? (cardRevenue / prod.total_revenue) : 0;
-            const baseProfit = (prod.total_profit || 0) * ratio;
-            t2Profit += (baseProfit - comm - iva);
-          });
-
-          t2Row.values = [
-            "TOTAL TARJETAS",
-            "",
-            t2Cant,
-            t2Bruto,
-            t2Comision,
-            t2Iva,
-            t2Neto,
-            ...(canViewCost ? [t2Profit] : []),
-            "",
-            ""
-          ];
-
-          sheet.mergeCells(`A${currentExcelRow}:B${currentExcelRow}`);
-          
-          t2Row.getCell(1).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFFFFFF" } };
-          t2Row.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF2266BB" } };
-          t2Row.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
-          t2Row.getCell(2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF2266BB" } }; // merged partner
-
-          const t2BoldFont = { name: "Arial", size: 9, bold: true };
-          const t2DoubleBorder = {
-            top: { style: 'thin' as const, color: { argb: 'FF888888' } },
-            bottom: { style: 'double' as const, color: { argb: 'FF333333' } }
-          };
-
-          t2Row.getCell(3).font = t2BoldFont;
-          t2Row.getCell(3).border = t2DoubleBorder;
-          t2Row.getCell(3).alignment = { horizontal: "center", vertical: "middle" };
-
-          t2Row.getCell(4).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF333333" } };
-          t2Row.getCell(4).border = t2DoubleBorder;
-          t2Row.getCell(4).numFmt = "$#,##0.00";
-          t2Row.getCell(4).alignment = { horizontal: "right", vertical: "middle" };
-
-          t2Row.getCell(5).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFF2200" } };
-          t2Row.getCell(5).border = t2DoubleBorder;
-          t2Row.getCell(5).numFmt = "$#,##0.00";
-          t2Row.getCell(5).alignment = { horizontal: "right", vertical: "middle" };
-
-          t2Row.getCell(6).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFF59E0B" } };
-          t2Row.getCell(6).border = t2DoubleBorder;
-          t2Row.getCell(6).numFmt = "$#,##0.00";
-          t2Row.getCell(6).alignment = { horizontal: "right", vertical: "middle" };
-
-          t2Row.getCell(7).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
-          t2Row.getCell(7).border = t2DoubleBorder;
-          t2Row.getCell(7).numFmt = "$#,##0.00";
-          t2Row.getCell(7).alignment = { horizontal: "right", vertical: "middle" };
-
-          if (canViewCost) {
-            t2Row.getCell(8).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
-            t2Row.getCell(8).border = t2DoubleBorder;
-            t2Row.getCell(8).numFmt = "$#,##0.00";
-            t2Row.getCell(8).alignment = { horizontal: "right", vertical: "middle" };
-          }
-        }
-
-        // =========================================================================
-        // SECTION 3: DETALLE DE VENTAS EN EFECTIVO (PESOS Y DÓLARES)
-        // =========================================================================
-        const cashProducts = groupedProducts.filter(prod => 
-          Object.keys(prod.payment_breakdown).some(m => m.toLowerCase().includes("efectivo") || m.toLowerCase().includes("cash") || m.toLowerCase().includes("dolar") || m.toLowerCase().includes("dólar") || m.toLowerCase().includes("usd") || m.toLowerCase().includes("otro") || m.toLowerCase().includes("unmapped"))
-        );
-
-        if (cashProducts.length > 0) {
-          currentExcelRow += 3;
-          styleSectionHeader(currentExcelRow, " 3. DESGLOSE DE VENTAS COBRADAS EN EFECTIVO (PESOS / DÓLARES / OTROS)", "FF009944");
-
-          currentExcelRow++;
-          const tbl3Header = sheet.getRow(currentExcelRow);
-          tbl3Header.values = [
-            "Producto",
-            "SKU",
-            "Cant. Efectivo",
-            "Monto Efectivo",
-            ...(canViewCost ? ["Utilidad Efectivo"] : []),
-            "", "", "", "", ""
-          ];
-          styleHeaderRow(tbl3Header, "FF33BB66");
-
-          cashProducts.forEach((prod) => {
-            currentExcelRow++;
-            
-            // Extract only the units and revenue cobradas con efectivo
-            let cashQty = 0;
-            let cashRevenue = 0;
-            Object.entries(prod.payment_breakdown).forEach(([method, data]) => {
-              const isCashMethodName = method.toLowerCase().includes("efectivo") || method.toLowerCase().includes("cash") || method.toLowerCase().includes("dolar") || method.toLowerCase().includes("dólar") || method.toLowerCase().includes("usd") || method.toLowerCase().includes("otro") || method.toLowerCase().includes("unmapped");
-              if (isCashMethodName) {
-                cashQty += data.qty;
-                cashRevenue += data.revenue;
-              }
-            });
-
-            const ratio = prod.total_revenue > 0 ? (cashRevenue / prod.total_revenue) : 0;
-            const cashProfit = (prod.total_profit || 0) * ratio;
-
-            const r = sheet.getRow(currentExcelRow);
-            r.values = [
-              prod.name,
-              prod.sku,
-              cashQty,
-              cashRevenue,
-              ...(canViewCost ? [cashProfit] : []),
-              "", "", "", "", ""
-            ];
-            r.height = 20;
-
-            r.getCell(1).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
-            r.getCell(2).alignment = { horizontal: "center", vertical: "middle" };
-            r.getCell(3).alignment = { horizontal: "center", vertical: "middle" };
-            
-            r.getCell(4).numFmt = "$#,##0.00";
-            r.getCell(4).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
-            r.getCell(4).alignment = { horizontal: "right", vertical: "middle" };
-
-            if (canViewCost) {
-              r.getCell(5).numFmt = "$#,##0.00";
-              r.getCell(5).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
-              r.getCell(5).alignment = { horizontal: "right", vertical: "middle" };
-            }
-          });
-
-          // Add TOTALS Row for Section 3
-          currentExcelRow++;
-          const t3Row = sheet.getRow(currentExcelRow);
-          t3Row.height = 24;
-
-          let t3Cant = 0;
-          let t3Bruto = 0;
-          let t3Profit = 0;
-
-          cashProducts.forEach(prod => {
-            let cashQty = 0;
-            let cashRevenue = 0;
-            Object.entries(prod.payment_breakdown).forEach(([method, data]) => {
-              const isCashMethodName = method.toLowerCase().includes("efectivo") || method.toLowerCase().includes("cash") || method.toLowerCase().includes("dolar") || method.toLowerCase().includes("dólar") || method.toLowerCase().includes("usd") || method.toLowerCase().includes("otro") || method.toLowerCase().includes("unmapped");
-              if (isCashMethodName) {
-                cashQty += data.qty;
-                cashRevenue += data.revenue;
-              }
-            });
-            t3Cant += cashQty;
-            t3Bruto += cashRevenue;
-            const ratio = prod.total_revenue > 0 ? (cashRevenue / prod.total_revenue) : 0;
-            t3Profit += (prod.total_profit || 0) * ratio;
-          });
-
-          t3Row.values = [
-            "TOTAL EFECTIVO",
-            "",
-            t3Cant,
-            t3Bruto,
-            ...(canViewCost ? [t3Profit] : []),
-            "", "", "", "", ""
-          ];
-
-          sheet.mergeCells(`A${currentExcelRow}:B${currentExcelRow}`);
-          
-          t3Row.getCell(1).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFFFFFF" } };
-          t3Row.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF009944" } };
-          t3Row.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
-          t3Row.getCell(2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF009944" } }; // merged partner
-
-          const t3BoldFont = { name: "Arial", size: 9, bold: true };
-          const t3DoubleBorder = {
-            top: { style: 'thin' as const, color: { argb: 'FF888888' } },
-            bottom: { style: 'double' as const, color: { argb: 'FF333333' } }
-          };
-
-          t3Row.getCell(3).font = t3BoldFont;
-          t3Row.getCell(3).border = t3DoubleBorder;
-          t3Row.getCell(3).alignment = { horizontal: "center", vertical: "middle" };
-
-          t3Row.getCell(4).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
-          t3Row.getCell(4).border = t3DoubleBorder;
-          t3Row.getCell(4).numFmt = "$#,##0.00";
-          t3Row.getCell(4).alignment = { horizontal: "right", vertical: "middle" };
-
-          if (canViewCost) {
-            t3Row.getCell(5).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
-            t3Row.getCell(5).border = t3DoubleBorder;
-            t3Row.getCell(5).numFmt = "$#,##0.00";
-            t3Row.getCell(5).alignment = { horizontal: "right", vertical: "middle" };
-          }
-        }
-
-        // =========================================================================
-        // SECTION 4: CONTROL DE PREVENTAS (ANTICIPOS Y SALDOS)
-        // =========================================================================
-        const preSaleProducts = groupedProducts.filter(prod => 
-          (prod.pre_sale_apartado && prod.pre_sale_apartado > 0) || (prod.pre_sale_deuda && prod.pre_sale_deuda > 0)
-        );
-
-        if (preSaleProducts.length > 0) {
-          currentExcelRow += 3;
-          styleSectionHeader(currentExcelRow, " 4. CONTROL Y AUDITORÍA DE PREVENTAS (ABONADO VS DEUDA PENDIENTE)", "FF8833EE");
-
-          currentExcelRow++;
-          const tbl4Header = sheet.getRow(currentExcelRow);
-          tbl4Header.values = [
-            "Producto",
-            "SKU",
-            "Cant. Preventa",
-            "Abonado (Apartado)",
-            "Pendiente (Deuda)",
-            "Pactado (Total)",
-            "", "", ""
-          ];
-          styleHeaderRow(tbl4Header, "FFAA66FF");
-
-          preSaleProducts.forEach((prod) => {
-            currentExcelRow++;
-            
-            const totalPactado = (prod.pre_sale_apartado || 0) + (prod.pre_sale_deuda || 0);
-
-            const r = sheet.getRow(currentExcelRow);
-            r.values = [
-              prod.name,
-              prod.sku,
-              prod.total_quantity, // All units in pre_sale_orders
-              prod.pre_sale_apartado || 0,
-              prod.pre_sale_deuda || 0,
-              totalPactado,
-              "", "", ""
-            ];
-            r.height = 20;
-
-            r.getCell(1).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
-            r.getCell(2).alignment = { horizontal: "center", vertical: "middle" };
-            r.getCell(3).alignment = { horizontal: "center", vertical: "middle" };
-            
-            r.getCell(4).numFmt = "$#,##0.00";
-            r.getCell(4).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
-            r.getCell(4).alignment = { horizontal: "right", vertical: "middle" };
-            
-            r.getCell(5).numFmt = "$#,##0.00";
-            r.getCell(5).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFF2200" } };
-            r.getCell(5).alignment = { horizontal: "right", vertical: "middle" };
-            
-            r.getCell(6).numFmt = "$#,##0.00";
-            r.getCell(6).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF333333" } };
-            r.getCell(6).alignment = { horizontal: "right", vertical: "middle" };
-          });
-
-          // Add TOTALS Row for Section 4
-          currentExcelRow++;
-          const t4Row = sheet.getRow(currentExcelRow);
-          t4Row.height = 24;
-
-          let t4Cant = 0;
-          let t4Apartado = 0;
-          let t4Deuda = 0;
-          let t4Pactado = 0;
-
-          preSaleProducts.forEach(prod => {
-            t4Cant += prod.total_quantity;
-            t4Apartado += prod.pre_sale_apartado || 0;
-            t4Deuda += prod.pre_sale_deuda || 0;
-            t4Pactado += (prod.pre_sale_apartado || 0) + (prod.pre_sale_deuda || 0);
-          });
-
-          t4Row.values = [
-            "TOTAL PREVENTAS",
-            "",
-            t4Cant,
-            t4Apartado,
-            t4Deuda,
-            t4Pactado,
-            "", "", ""
-          ];
-
-          sheet.mergeCells(`A${currentExcelRow}:B${currentExcelRow}`);
-          
-          t4Row.getCell(1).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFFFFFF" } };
-          t4Row.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFAA66FF" } };
-          t4Row.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
-          t4Row.getCell(2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFAA66FF" } }; // merged partner
-
-          const t4BoldFont = { name: "Arial", size: 9, bold: true };
-          const t4DoubleBorder = {
-            top: { style: 'thin' as const, color: { argb: 'FF888888' } },
-            bottom: { style: 'double' as const, color: { argb: 'FF333333' } }
-          };
-
-          t4Row.getCell(3).font = t4BoldFont;
-          t4Row.getCell(3).border = t4DoubleBorder;
-          t4Row.getCell(3).alignment = { horizontal: "center", vertical: "middle" };
-
-          t4Row.getCell(4).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } };
-          t4Row.getCell(4).border = t4DoubleBorder;
-          t4Row.getCell(4).numFmt = "$#,##0.00";
-          t4Row.getCell(4).alignment = { horizontal: "right", vertical: "middle" };
-
-          t4Row.getCell(5).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFF2200" } };
-          t4Row.getCell(5).border = t4DoubleBorder;
-          t4Row.getCell(5).numFmt = "$#,##0.00";
-          t4Row.getCell(5).alignment = { horizontal: "right", vertical: "middle" };
-
-          t4Row.getCell(6).font = { name: "Arial", size: 9, bold: true, color: { argb: "FF333333" } };
-          t4Row.getCell(6).border = t4DoubleBorder;
-          t4Row.getCell(6).numFmt = "$#,##0.00";
-          t4Row.getCell(6).alignment = { horizontal: "right", vertical: "middle" };
-        }
-
-        // =========================================================================
-        // SECTION 5: DEVOLUCIONES Y CANCELACIONES
-        // =========================================================================
-        const returnedProducts = groupedProducts.filter(prod => 
-          (prod.returned_quantity && prod.returned_quantity > 0)
-        );
-
-        if (returnedProducts.length > 0) {
-          currentExcelRow += 3;
-          styleSectionHeader(currentExcelRow, " 5. DEVOLUCIONES Y CANCELACIONES", "FFFF4422");
-
-          currentExcelRow++;
-          const tbl5Header = sheet.getRow(currentExcelRow);
-          tbl5Header.values = [
-            "Producto",
-            "SKU",
-            "Cant. Devuelta",
-            "Monto Devuelto",
-            "", "", "", "", ""
-          ];
-          styleHeaderRow(tbl5Header, "FFFF7755");
-
-          returnedProducts.forEach((prod) => {
-            currentExcelRow++;
-            
-            const r = sheet.getRow(currentExcelRow);
-            r.values = [
-              prod.name,
-              prod.sku,
-              prod.returned_quantity || 0,
-              prod.returned_revenue || 0,
-              "", "", "", "", ""
-            ];
-            r.height = 20;
-
-            r.getCell(1).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
-            r.getCell(2).alignment = { horizontal: "center", vertical: "middle" };
-            
-            r.getCell(3).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFF4422" } };
-            r.getCell(3).alignment = { horizontal: "center", vertical: "middle" };
-            
-            r.getCell(4).numFmt = "$#,##0.00";
-            r.getCell(4).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFF4422" } };
-            r.getCell(4).alignment = { horizontal: "right", vertical: "middle" };
-          });
-
-          // Add TOTALS Row for Section 5
-          currentExcelRow++;
-          const t5Row = sheet.getRow(currentExcelRow);
-          t5Row.height = 24;
-
-          let t5Cant = 0;
-          let t5Monto = 0;
-
-          returnedProducts.forEach(prod => {
-            t5Cant += prod.returned_quantity || 0;
-            t5Monto += prod.returned_revenue || 0;
-          });
-
-          t5Row.values = [
-            "TOTAL DEVOLUCIONES",
-            "",
-            t5Cant,
-            t5Monto,
-            "", "", "", "", ""
-          ];
-
-          sheet.mergeCells(`A${currentExcelRow}:B${currentExcelRow}`);
-          
-          t5Row.getCell(1).font = { name: "Arial", size: 9, bold: true, color: { argb: "FFFFFFFF" } };
-          t5Row.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF4422" } };
-          t5Row.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
-          t5Row.getCell(2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF4422" } }; // merged partner
-
-          const t5BoldFont = { name: "Arial", size: 9, bold: true, color: { argb: "FFFF4422" } };
-          const t5DoubleBorder = {
-            top: { style: 'thin' as const, color: { argb: 'FF888888' } },
-            bottom: { style: 'double' as const, color: { argb: 'FF333333' } }
-          };
-
-          t5Row.getCell(3).font = t5BoldFont;
-          t5Row.getCell(3).border = t5DoubleBorder;
-          t5Row.getCell(3).alignment = { horizontal: "center", vertical: "middle" };
-
-          t5Row.getCell(4).font = t5BoldFont;
-          t5Row.getCell(4).border = t5DoubleBorder;
-          t5Row.getCell(4).numFmt = "$#,##0.00";
-          t5Row.getCell(4).alignment = { horizontal: "right", vertical: "middle" };
-        }
-
-
-        // Set optimal columns width based only on real data rows to prevent large headers inflating sizes!
-        sheet.columns.forEach((column, colIdx) => {
-          const colNumber = colIdx + 1;
-          let maxLength = 8; // default fallback minimum
-          
-          if (column.values) {
-            column.values.forEach((v, rowIdx) => {
-              // Ignore row index 1 to 14 (title, logo, metadata, summary card, section headers)
-              if (rowIdx <= 14) return;
-              
-              if (v && typeof v !== "object") {
-                const str = String(v);
-                // Skip section headers or long text banners in the middle
-                if (str.startsWith(" 1. ") || str.startsWith(" 2. ") || str.startsWith(" 3. ") || str.startsWith(" 4. ")) return;
-                
-                // For Column 9 (Precios) and 10 (Desglose de Pagos), we'll wrap text, so don't let their full length expand the columns!
-                if (colNumber === 9 || colNumber === 10) {
-                  return;
-                }
-                
-                const strLen = str.length;
-                if (strLen > maxLength) maxLength = strLen;
-              }
-            });
-          }
-          
-          column.width = Math.min(Math.max(maxLength + 2, 9), 28);
-        });
-
-        // Manual highly optimized override for pixel-perfect sizes without horizontal scroll!
-        // Giving each column just the right amount of breathing room ("respirar")!
-        sheet.getColumn(1).width = 28; // Producto (plenty of room for manga titles)
-        sheet.getColumn(1).alignment = { wrapText: true, vertical: "middle" };
-        sheet.getColumn(2).width = 17; // SKU (fully fits codes like "MANGA-6a2b8f5" or barcodes perfectly)
-        sheet.getColumn(2).alignment = { horizontal: "center", vertical: "middle" };
-        sheet.getColumn(3).width = 12.5; // Tickets & Cant. Tarjeta / Cant. Efectivo / Cant. Preventa (breathing room!)
-        sheet.getColumn(4).width = 13.5; // Cant. & Bruto Tarjeta / Monto Efectivo / Abonado (Apartado) (no cutoffs!)
-        sheet.getColumn(5).width = 13.5; // Bruto & Comisión TPV / Pendiente (Deuda) (perfect space!)
-        sheet.getColumn(6).width = 13.5; // Comisión & Neto Tarjeta / Pactado (Total) (fully readable!)
-        sheet.getColumn(7).width = 14;   // IVA s/Comisión (spacious!)
-        sheet.getColumn(8).width = 14;   // Neto Real (spacious!)
-        
-        // Enforce wrap text and moderate horizontal width on long description columns
-        sheet.getColumn(9).width = 19; // Precios Unitarios (nice list column width)
-        sheet.getColumn(9).alignment = { wrapText: true, vertical: "middle" };
-        
-        sheet.getColumn(10).width = 24; // Desglose de Pagos (nice list column width)
-        sheet.getColumn(10).alignment = { wrapText: true, vertical: "middle" };
-      } else if (activeTab === "inventario") {
-        const sheet = workbook.addWorksheet("Inventario");
-        sheet.mergeCells("A1:E1");
-        const titleCell = sheet.getCell("A1");
-        titleCell.value = "TADAIMA - REPORTE DE INVENTARIO";
-        titleCell.font = { name: "Arial", size: 14, bold: true, color: { argb: "FFFFFFFF" } };
-        titleCell.alignment = { vertical: "middle", horizontal: "center" };
-        titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF4422" } };
-        sheet.getRow(1).height = 35;
-
-        sheet.mergeCells("A2:E2");
-        const subtitleCell = sheet.getCell("A2");
-        subtitleCell.value = `Exportado: ${fmtDate(today)} ${new Date().toLocaleTimeString()}`;
-        subtitleCell.font = { name: "Arial", size: 10, italic: true };
-        subtitleCell.alignment = { vertical: "middle", horizontal: "center" };
-        sheet.getRow(2).height = 20;
-
-        sheet.addRow([]);
-
-        const headerRow = sheet.addRow(["Producto", "SKU", "Bodega", "Tienda", "Cantidad"]);
-        headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
-        headerRow.eachCell((cell) => {
-          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF333333" } };
-          cell.alignment = { vertical: "middle", horizontal: "center" };
-        });
-
-        invReport?.data.forEach((r) => {
-          const row = sheet.addRow([
-            r.product.name,
-            r.product.sku,
-            r.warehouse.name,
-            r.warehouse.store ?? "—",
-            r.quantity
-          ]);
-          row.getCell(2).alignment = { horizontal: "center" };
-          row.getCell(5).alignment = { horizontal: "center" };
-          if (r.quantity <= 5) {
-            row.getCell(5).font = { bold: true, color: { argb: "FFFF2200" } };
-          } else if (r.quantity <= 10) {
-            row.getCell(5).font = { bold: true, color: { argb: "FFFFAA00" } };
-          } else {
-            row.getCell(5).font = { bold: true, color: { argb: "FF009944" } };
-          }
-        });
-
-        sheet.columns.forEach((column) => {
-          if (column.values) {
-            let maxLength = 0;
-            column.values.forEach((v) => {
-              if (v) {
-                const strLen = String(v).length;
-                if (strLen > maxLength) maxLength = strLen;
-              }
-            });
-            column.width = Math.min(Math.max(maxLength + 3, 10), 40);
-          }
-        });
-      } else if (activeTab === "productos") {
-        const sheet = workbook.addWorksheet("Top Productos");
-        sheet.mergeCells("A1:G1");
-        const titleCell = sheet.getCell("A1");
-        titleCell.value = "TADAIMA - TOP PRODUCTOS VENDIDOS";
-        titleCell.font = { name: "Arial", size: 14, bold: true, color: { argb: "FFFFFFFF" } };
-        titleCell.alignment = { vertical: "middle", horizontal: "center" };
-        titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF4422" } };
-        sheet.getRow(1).height = 35;
-
-        sheet.mergeCells("A2:G2");
-        const subtitleCell = sheet.getCell("A2");
-        subtitleCell.value = `Periodo: ${fmtDate(from)} al ${fmtDate(to)}  |  Exportado: ${fmtDate(today)} ${new Date().toLocaleTimeString()}`;
-        subtitleCell.font = { name: "Arial", size: 10, italic: true };
-        subtitleCell.alignment = { vertical: "middle", horizontal: "center" };
-        sheet.getRow(2).height = 20;
-
-        sheet.addRow([]);
-
-        const headerRow = sheet.addRow(["Lugar", "Nombre", "SKU", "Tipo", "Veces Vendido", "Unidades Vendidas", "Ingresos Totales"]);
-        headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
-        headerRow.eachCell((cell) => {
-          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF333333" } };
-          cell.alignment = { vertical: "middle", horizontal: "center" };
-        });
-
-        topReport?.data.forEach((r, idx) => {
-          const row = sheet.addRow([
-            idx + 1,
-            r.name,
-            r.sku,
-            r.type,
-            r.times_sold,
-            r.total_quantity,
-            r.total_revenue
-          ]);
-          row.getCell(1).alignment = { horizontal: "center" };
-          row.getCell(3).alignment = { horizontal: "center" };
-          row.getCell(4).alignment = { horizontal: "center" };
-          row.getCell(5).alignment = { horizontal: "center" };
-          row.getCell(6).alignment = { horizontal: "center" };
-          row.getCell(7).numFmt = "$#,##0.00";
-          row.getCell(7).font = { bold: true, color: { argb: "FF009944" } };
-        });
-
-        sheet.columns.forEach((column) => {
-          if (column.values) {
-            let maxLength = 0;
-            column.values.forEach((v) => {
-              if (v) {
-                const strLen = String(v).length;
-                if (strLen > maxLength) maxLength = strLen;
-              }
-            });
-            column.width = Math.min(Math.max(maxLength + 3, 10), 40);
-          }
-        });
-      } else if (activeTab === "clientes") {
-        const sheet = workbook.addWorksheet("Top Clientes");
-        sheet.mergeCells("A1:F1");
-        const titleCell = sheet.getCell("A1");
-        titleCell.value = "TADAIMA - TOP CLIENTES";
-        titleCell.font = { name: "Arial", size: 14, bold: true, color: { argb: "FFFFFFFF" } };
-        titleCell.alignment = { vertical: "middle", horizontal: "center" };
-        titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF4422" } };
-        sheet.getRow(1).height = 35;
-
-        sheet.mergeCells("A2:F2");
-        const subtitleCell = sheet.getCell("A2");
-        subtitleCell.value = `Periodo: ${fmtDate(from)} al ${fmtDate(to)}  |  Exportado: ${fmtDate(today)} ${new Date().toLocaleTimeString()}`;
-        subtitleCell.font = { name: "Arial", size: 10, italic: true };
-        subtitleCell.alignment = { vertical: "middle", horizontal: "center" };
-        sheet.getRow(2).height = 20;
-
-        sheet.addRow([]);
-
-        const headerRow = sheet.addRow(["Lugar", "Cliente", "Teléfono", "Compras", "Total Gastado", "Crédito"]);
-        headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
-        headerRow.eachCell((cell) => {
-          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF333333" } };
-          cell.alignment = { vertical: "middle", horizontal: "center" };
-        });
-
-        custReport?.data.forEach((r, idx) => {
-          const row = sheet.addRow([
-            idx + 1,
-            r.name,
-            r.phone ?? "—",
-            r.total_purchases,
-            r.total_spent,
-            r.credit_balance
-          ]);
-          row.getCell(1).alignment = { horizontal: "center" };
-          row.getCell(3).alignment = { horizontal: "center" };
-          row.getCell(4).alignment = { horizontal: "center" };
-          row.getCell(5).numFmt = "$#,##0.00";
-          row.getCell(5).font = { bold: true, color: { argb: "FF009944" } };
-          row.getCell(6).numFmt = "$#,##0.00";
-        });
-
-        sheet.columns.forEach((column) => {
-          if (column.values) {
-            let maxLength = 0;
-            column.values.forEach((v) => {
-              if (v) {
-                const strLen = String(v).length;
-                if (strLen > maxLength) maxLength = strLen;
-              }
-            });
-            column.width = Math.min(Math.max(maxLength + 3, 10), 40);
-          }
-        });
-      }
-
-      const buffer = await workbook.xlsx.writeBuffer();
-      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `tadaima_reporte_${activeTab}_${from}_${to}.xlsx`;
-      a.click();
-      window.URL.revokeObjectURL(url);
-      toast.success("Excel descargado correctamente");
-    } catch (error) {
-      console.error(error);
-      toast.error("Error al exportar a Excel");
-    }
-  };
+  // Los generadores de Excel y PDF viven en ./reports/exportExcel|exportPdf.
+  // Aquí solo empaquetamos el estado actual y delegamos.
+  const buildExportParams = (): ReportExportParams => ({
+    groupedProducts, regularProducts, tomoProducts, paymentBreakdown,
+    invReport, topReport, custReport, from, to, today, activeTab,
+    canViewCost, ivaRate, effectiveStoreId, selectedUserId, stores, users,
+    supplyMovements,
+  });
+
+  const handleExportPDF = () => exportReportPdf(buildExportParams());
+  const handleExportExcel = () => { void exportReportExcel(buildExportParams()); };
 
 
 
@@ -2522,11 +968,14 @@ export function ReportsPage() {
           <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontSize: fontS, fontWeight: 900, color: TP }}>
             <div className="flex items-center gap-1.5">
               {isExpanded ? <ChevronDown size={fontS + 1} style={{ color: TM }} /> : <ChevronRight size={fontS + 1} style={{ color: TM }} />}
-              {prod.name}
+              <div className="flex flex-col">
+                <span>{prod.name}</span>
+                {prod.sku && prod.sku !== "PREVENTA" ? (
+                  <span style={{ fontSize: 9, color: TM, fontWeight: 600, letterSpacing: "0.04em" }}>SKU: {prod.sku}</span>
+                ) : null}
+              </div>
             </div>
           </td>
-          <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontFamily: "monospace", fontSize: fontS - 1 }}>{prod.sku}</td>
-          <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontSize: fontS }}>{prod.sales_count}</td>
           <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontSize: fontS, fontWeight: 700, color: TP }}>
             <div className="flex flex-col gap-0.5">
               <span>{prod.total_quantity}</span>
@@ -2535,6 +984,11 @@ export function ReportsPage() {
               ) : null}
             </div>
           </td>
+          {canViewCost && (
+            <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontSize: fontS, verticalAlign: "middle" }}>
+              <span style={{ color: TS, fontWeight: 700 }}>{fmt(prod.total_cost)}</span>
+            </td>
+          )}
           <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontSize: fontS, verticalAlign: "middle" }}>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
               <span style={{ color: prod.total_revenue < 0 ? "#FF4422" : "#00CC66", fontWeight: 900 }}>{fmt(prod.total_revenue)}</span>
@@ -2543,15 +997,15 @@ export function ReportsPage() {
               ) : null}
               {prod.commission_amount && prod.commission_amount > 0 ? (
                 <span style={{ fontSize: 9, color: TM, fontWeight: 500 }}>
-                  {fmt(prod.total_revenue)} - <span style={{ color: "#FF4422", fontWeight: 700 }} title="Comisión TPV">{fmt(prod.commission_amount)}</span> - <span style={{ color: "#F59E0B", fontWeight: 700 }} title="IVA s/Comisión (16%)">{fmt(prod.commission_amount * 0.16)}</span> = <span style={{ color: "#00CC66", fontWeight: 800 }}>{fmt(prod.total_revenue - prod.commission_amount - (prod.commission_amount * 0.16))}</span>
+                  {fmt(prod.total_revenue)} - <span style={{ color: "#FF4422", fontWeight: 700 }} title="Comisión TPV">{fmt(prod.commission_amount)}</span> - <span style={{ color: "#F59E0B", fontWeight: 700 }} title="IVA s/Comisión (16%)">{fmt(prod.commission_amount * ivaRate)}</span> = <span style={{ color: "#00CC66", fontWeight: 800 }}>{fmt(prod.total_revenue - prod.commission_amount - (prod.commission_amount * ivaRate))}</span>
                 </span>
               ) : null}
             </div>
           </td>
           {canViewCost && (
             <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontSize: fontS, verticalAlign: "middle" }}>
-              <span style={{ color: (prod.total_profit - (prod.commission_amount || 0) - ((prod.commission_amount || 0) * 0.16)) < 0 ? "#FF4422" : "#00CC66", fontWeight: 900 }}>
-                {fmt(prod.total_profit - (prod.commission_amount || 0) - ((prod.commission_amount || 0) * 0.16))}
+              <span style={{ color: (prod.total_profit - (prod.commission_amount || 0) - ((prod.commission_amount || 0) * ivaRate)) < 0 ? "#FF4422" : "#00CC66", fontWeight: 900 }}>
+                {fmt(prod.total_profit - (prod.commission_amount || 0) - ((prod.commission_amount || 0) * ivaRate))}
               </span>
             </td>
           )}
@@ -2585,11 +1039,11 @@ export function ReportsPage() {
                               </div>
                               <div className="flex items-center justify-between text-[10px]">
                                 <span style={{ color: TM }}>IVA sobre comisión (16%):</span>
-                                <span style={{ color: "#F59E0B", fontWeight: 700 }}>-{fmt(prod.commission_amount * 0.16)}</span>
+                                <span style={{ color: "#F59E0B", fontWeight: 700 }}>-{fmt(prod.commission_amount * ivaRate)}</span>
                               </div>
                               <div className="flex items-center justify-between text-[10px] pt-0.5 border-t border-dotted" style={{ borderColor: "rgba(255,255,255,0.04)" }}>
                                 <span style={{ color: TM, fontWeight: 700 }}>Neto real para la tienda:</span>
-                                <span style={{ color: "#00CC66", fontWeight: 800 }}>{fmt(data.revenue - prod.commission_amount - (prod.commission_amount * 0.16))}</span>
+                                <span style={{ color: "#00CC66", fontWeight: 800 }}>{fmt(data.revenue - prod.commission_amount - (prod.commission_amount * ivaRate))}</span>
                               </div>
                             </div>
                           )}
@@ -2634,6 +1088,13 @@ export function ReportsPage() {
                         <div className="flex items-center justify-between text-xs py-1.5 px-3" style={{ background: "rgba(255, 68, 34, 0.08)", border: "1px solid rgba(255, 68, 34, 0.15)", borderRadius: 9 }}>
                           <span style={{ color: TS, fontWeight: 700 }}>Total Deuda (Pendiente)</span>
                           <span style={{ color: "#FF4422", fontWeight: 900 }}>{fmt(prod.pre_sale_deuda)}</span>
+                        </div>
+                      )}
+                      {/* Costo real snapshot (anticipos incluidos) — informativo, no afecta utilidad (Opción B) */}
+                      {canViewCost && (prod.pre_sale_costo_real ?? 0) > 0 && (
+                        <div className="flex items-center justify-between text-xs py-1.5 px-3" style={{ background: "rgba(255, 255, 255, 0.04)", border: "1px solid rgba(255, 255, 255, 0.10)", borderRadius: 9 }}>
+                          <span style={{ color: TS, fontWeight: 700 }}>Costo Real (Producto)</span>
+                          <span style={{ color: TP, fontWeight: 900 }}>{fmt(prod.pre_sale_costo_real ?? 0)}</span>
                         </div>
                       )}
                     </div>
@@ -2681,7 +1142,8 @@ export function ReportsPage() {
               >
                 <activeTabMeta.icon size={13} />
                 {activeTabMeta.label}
-                <ChevronDown size={13} className={`transition-transform ${isTabSelectorOpen ? "rotate-180" : "rotate-0"}`} />
+                {/* Chevron oculto: solo hay una pestaña (Ventas). Descomentar al reactivar las demás.
+                <ChevronDown size={13} className={`transition-transform ${isTabSelectorOpen ? "rotate-180" : "rotate-0"}`} /> */}
               </button>
 
               <div
@@ -2802,148 +1264,20 @@ export function ReportsPage() {
 
             <div className="w-px h-5 mx-1" style={{ background: "var(--td-divider)" }} />
 
-            {/* Date range picker — Bonito con Popover */}
-            <DialogTrigger>
-              <AriaButton
-                className="flex items-center gap-2 rounded-xl px-3 py-1.5 text-[10px] font-black uppercase tracking-widest transition-all outline-none"
-                style={{
-                  background: "var(--td-panel-bg)",
-                  border: "1px solid var(--td-panel-border)",
-                  color: TP,
-                }}
-              >
-                <Calendar size={12} style={{ color: TM }} />
-                <span style={{ color: TM }}>{fmtDate(from)}</span>
-                <span style={{ color: TM }}>→</span>
-                <span style={{ color: TM }}>{fmtDate(to)}</span>
-              </AriaButton>
-
-              <Popover
-                placement="bottom start"
-                offset={8}
-                className="rounded-2xl p-0 outline-none"
-                style={{
-                  background: "var(--td-popup-bg)",
-                  border: "1px solid var(--td-panel-border)",
-                  boxShadow: "0 24px 80px rgba(0,0,0,0.48), inset 0 1px 0 rgba(255,255,255,0.04)",
-                }}
-              >
-                <Dialog className="outline-none">
-                  <div className="w-[660px] max-w-[calc(100vw-32px)] p-4">
-                    <RangeCalendar
-                      aria-label="Rango de fechas de reporte"
-                      value={{ start: parseYmd(from), end: parseYmd(to) }}
-                      onChange={(range) => {
-                        if (!range?.start || !range?.end) return;
-                        const startStr = toYmdFromDateValue(range.start);
-                        const endStr = toYmdFromDateValue(range.end);
-                        if (startStr <= endStr) {
-                          setFrom(startStr);
-                          setTo(endStr);
-                          setActivePreset(""); // Clear selected preset on manual calendar selection
-                        }
-                      }}
-                      maxValue={parseYmd(today)}
-                      minValue={parseYmd(daysAgoLocal(365))}
-                      visibleDuration={{ months: 2 }}
-                      pageBehavior="single"
-                      className="w-full"
-                    >
-                      <div className="flex items-center justify-between gap-2 mb-4">
-                        <AriaButton
-                          slot="previous"
-                          className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-black/20 text-white/60 transition-colors hover:border-white/20 hover:text-white"
-                        >
-                          <ChevronLeft size={14} />
-                        </AriaButton>
-
-                        <div className="grid flex-1 grid-cols-2 gap-3">
-                          <CalendarHeading className="text-center text-[10px] font-black uppercase tracking-[0.18em]" style={{ color: TP }} />
-                          <CalendarHeading offset={{ months: 1 }} className="text-center text-[10px] font-black uppercase tracking-[0.18em]" style={{ color: TP }} />
-                        </div>
-
-                        <AriaButton
-                          slot="next"
-                          className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-black/20 text-white/60 transition-colors hover:border-white/20 hover:text-white"
-                        >
-                          <ChevronRight size={14} />
-                        </AriaButton>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-3">
-                        <CalendarGrid weekdayStyle="short" className="w-full border-separate border-spacing-y-1">
-                          <CalendarGridHeader>
-                            {(day) => (
-                              <CalendarHeaderCell className="pb-2 text-center text-[9px] font-black uppercase tracking-widest" style={{ color: TM }}>
-                                {day}
-                              </CalendarHeaderCell>
-                            )}
-                          </CalendarGridHeader>
-                          <CalendarGridBody>
-                            {(date) => (
-                              <CalendarCell
-                                date={date}
-                                className={({ isSelected, isSelectionStart, isSelectionEnd, isFocusVisible, isOutsideMonth, isDisabled }) =>
-                                  [
-                                    "flex h-8 w-8 items-center justify-center rounded-lg text-[9px] font-bold transition-all outline-none",
-                                    "data-[hovered]:bg-white/8",
-                                    isOutsideMonth ? "text-white/20" : "text-white/80",
-                                    isDisabled ? "opacity-25" : "",
-                                    isSelected ? "text-white bg-[#FF4422]" : "bg-black/10",
-                                    isSelectionStart || isSelectionEnd ? "ring-1 ring-[#FF7A59]" : "",
-                                    isFocusVisible ? "ring-1 ring-white/70" : "",
-                                  ].join(" ")
-                                }
-                              />
-                            )}
-                          </CalendarGridBody>
-                        </CalendarGrid>
-
-                        <CalendarGrid offset={{ months: 1 }} weekdayStyle="short" className="w-full border-separate border-spacing-y-1">
-                          <CalendarGridHeader>
-                            {(day) => (
-                              <CalendarHeaderCell className="pb-2 text-center text-[9px] font-black uppercase tracking-widest" style={{ color: TM }}>
-                                {day}
-                              </CalendarHeaderCell>
-                            )}
-                          </CalendarGridHeader>
-                          <CalendarGridBody>
-                            {(date) => (
-                              <CalendarCell
-                                date={date}
-                                className={({ isSelected, isSelectionStart, isSelectionEnd, isFocusVisible, isOutsideMonth, isDisabled }) =>
-                                  [
-                                    "flex h-8 w-8 items-center justify-center rounded-lg text-[9px] font-bold transition-all outline-none",
-                                    "data-[hovered]:bg-white/8",
-                                    isOutsideMonth ? "text-white/20" : "text-white/80",
-                                    isDisabled ? "opacity-25" : "",
-                                    isSelected ? "text-white bg-[#FF4422]" : "bg-black/10",
-                                    isSelectionStart || isSelectionEnd ? "ring-1 ring-[#FF7A59]" : "",
-                                    isFocusVisible ? "ring-1 ring-white/70" : "",
-                                  ].join(" ")
-                                }
-                              />
-                            )}
-                          </CalendarGridBody>
-                        </CalendarGrid>
-                      </div>
-                    </RangeCalendar>
-
-                    <div
-                      className="mt-4 flex items-center justify-between rounded-lg px-3 py-2 text-[9px]"
-                      style={{ background: "rgba(0,0,0,0.16)", border: "1px solid rgba(255,255,255,0.06)" }}
-                    >
-                      <div className="font-black uppercase tracking-[0.12em]" style={{ color: TM }}>
-                        <span style={{ color: TP }}>Desde</span>
-                        <span className="mx-1.5">{fmtDate(from)}</span>
-                        <span style={{ color: TM }}>•</span>
-                        <span className="mx-1.5"><span style={{ color: TP }}>Hasta</span> {fmtDate(to)}</span>
-                      </div>
-                    </div>
-                  </div>
-                </Dialog>
-              </Popover>
-            </DialogTrigger>
+            {/* Rango con el picker compartido (de-dup 2026-07-18: antes había un
+                RangeCalendar inline copiado — mismo look, una sola implementación). */}
+            <DateRangePicker
+              from={from}
+              to={to}
+              onChange={(f, t) => {
+                setFrom(f);
+                setTo(t);
+                setActivePreset(""); // Clear selected preset on manual calendar selection
+              }}
+              minValue={daysAgoLocal(365)}
+              maxValue={today}
+              ariaLabel="Rango de fechas de reporte"
+            />
 
             {/* Store select — admin only */}
             {isAdmin && stores.length > 0 && (
@@ -3004,7 +1338,7 @@ export function ReportsPage() {
                   {[
                     { label: "Total cobrado", val: fmt(paymentBreakdown.total), color: "#00CC66", icon: DollarSign, sub: `${paymentBreakdown.transactionCount} ${paymentBreakdown.transactionCount === 1 ? 'transacción' : 'transacciones'}` },
                     { label: "Pago con tarjeta", val: fmt(paymentBreakdown.card), color: "#4499FF", icon: Store, sub: paymentBreakdown.card > 0 ? "TPV / débito / crédito" : "sin movimientos" },
-                    { label: "Pago en efectivo", val: fmt(paymentBreakdown.cash), color: "#33CC88", icon: ShoppingBag, sub: paymentBreakdown.usd > 0 ? `incluye ${paymentBreakdown.usd} USD recibidos` : (paymentBreakdown.cash > 0 ? "cobro en MXN" : "sin movimientos") },
+                    { label: "Pago en efectivo", val: fmt(paymentBreakdown.cash), color: "#33CC88", icon: ShoppingBag, sub: cajaInsumosTotal > 0 ? `− insumos de caja ${fmt(cajaInsumosTotal)} = ${fmt(paymentBreakdown.cash - cajaInsumosTotal)}` : (paymentBreakdown.usd > 0 ? `incluye ${paymentBreakdown.usd} USD recibidos` : (paymentBreakdown.cash > 0 ? "cobro en MXN" : "sin movimientos")) },
                     { label: "Depósitos", val: fmt(paymentBreakdown.deposits), color: "#BB77FF", icon: Clock, sub: paymentBreakdown.deposits > 0 ? "transferencias / SPEI" : "sin depósitos" },
                   ].map((kpi, i) => (
                     <div key={i} className="min-h-[124px] flex flex-col" style={{ ...GLASS, borderRadius: 20, padding: "12px 20px" }}>
@@ -3085,7 +1419,7 @@ export function ReportsPage() {
                   <div className="overflow-y-auto" style={{ maxHeight: 420 }}>
                     <table className="w-full">
                       <thead><tr style={{ borderBottom: DIV }}>
-                        {(canViewCost ? ["Producto", "SKU", "Nº Ventas (Tickets)", "Cant. Vendida", "Ingresos Totales", "Utilidad Neta"] : ["Producto", "SKU", "Nº Ventas (Tickets)", "Cant. Vendida", "Ingresos Totales"]).map(h => <th key={h} style={thStyle}>{h}</th>)}
+                        {(canViewCost ? ["Producto", "Cant. Vendida", "Costo", "Ingresos Totales", "Utilidad Neta"] : ["Producto", "Cant. Vendida", "Ingresos Totales"]).map(h => <th key={h} style={thStyle}>{h}</th>)}
                       </tr></thead>                      <tbody>
                         {/* 1) Render regular products */}
                         {regularProducts.map(prod => renderProductRow(prod, 16, 10, 12))}
@@ -3126,9 +1460,10 @@ export function ReportsPage() {
                         {groupedProducts.length > 0 && (
                           <tr style={{ background: "rgba(255,255,255,0.03)", borderTop: "2px solid rgba(255,255,255,0.1)" }}>
                             <td style={{ ...tdStyle, fontWeight: 900, color: TP }}>TOTAL GENERAL</td>
-                            <td style={tdStyle}></td>
-                            <td style={{ ...tdStyle, fontWeight: 700 }}>{groupedProducts.reduce((acc, p) => acc + (p.sales_count || 0), 0)}</td>
-                            <td style={{ ...tdStyle, fontWeight: 700, color: TP }}>{groupedProducts.reduce((acc, p) => acc + (p.total_quantity || 0), 0)}</td>
+                            <td style={{ ...tdStyle, fontWeight: 700, color: TP }}>{uiTotals.cantidad}</td>
+                            {canViewCost && (
+                              <td style={{ ...tdStyle, fontWeight: 700, color: TS }}>{fmt(uiTotals.costo)}</td>
+                            )}
                             <td style={tdStyle}>
                               <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
                                 <span style={{ color: uiTotals.bruto < 0 ? "#FF4422" : "#00CC66", fontWeight: 900 }}>{fmt(uiTotals.bruto)}</span>
@@ -3183,6 +1518,54 @@ export function ReportsPage() {
                   </div>
                 )}
 
+                {/* Egresos — Insumos de operación: por origen del dinero, con quién lo registró y la tienda */}
+                {supplyMovements.length > 0 && (
+                  <div className="mt-2 p-5 rounded-2xl" style={{ ...GLASS, border: "1px solid rgba(255,255,255,0.06)" }}>
+                    <div className="flex items-center justify-between mb-3">
+                      <p style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.14em", color: TM }}>
+                        Egresos — Insumos de operación
+                      </p>
+                      <p className="text-lg font-black" style={{ color: "#FF4422" }}>−{fmt(insumosTotal)}</p>
+                    </div>
+                    <div className="flex flex-col gap-3" style={{ maxHeight: "50vh", overflowY: "auto" }}>
+                      {insumosBySource.map((g) => {
+                        const meta = SUPPLY_SOURCE_META[g.source] ?? { label: g.source, color: TM, hitsCorte: false };
+                        return (
+                          <div key={g.source} className="rounded-xl overflow-hidden" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)" }}>
+                            {/* Encabezado del origen */}
+                            <div className="flex items-center justify-between py-2.5 px-3" style={{ borderBottom: "1px solid var(--td-card-border)" }}>
+                              <div className="flex flex-col">
+                                <span style={{ fontSize: 12, fontWeight: 800, color: meta.color }}>{meta.label}</span>
+                                <span style={{ fontSize: 9, color: TM, fontWeight: 600 }}>
+                                  {g.items.length} {g.items.length === 1 ? "compra" : "compras"} · {meta.hitsCorte ? "descuenta del corte" : "no toca la caja"}
+                                </span>
+                              </div>
+                              <span style={{ fontSize: 14, fontWeight: 900, color: "#FF4422" }}>−{fmt(g.total)}</span>
+                            </div>
+                            {/* Compras de este origen: insumo · quién · tienda */}
+                            {g.items.map((m) => {
+                              const storeName = m.supply?.store_id
+                                ? (stores.find((s) => s.id === m.supply?.store_id)?.name ?? `Tienda ${m.supply?.store_id}`)
+                                : "Toda la empresa";
+                              return (
+                                <div key={m.id} className="flex items-center justify-between py-2 px-3" style={{ borderTop: "1px solid rgba(255,255,255,0.03)" }}>
+                                  <div className="flex flex-col">
+                                    <span style={{ fontSize: 11, fontWeight: 700, color: TP }}>{m.supply?.name ?? "Insumo"}</span>
+                                    <span style={{ fontSize: 9, color: TM }}>
+                                      {m.user?.name ?? "—"} · {storeName}{m.money_source === "propio" && m.payer_name ? ` · pagó ${m.payer_name}` : ""}
+                                    </span>
+                                  </div>
+                                  <span style={{ fontSize: 12, fontWeight: 800, color: "#FF4422" }}>−{fmt(m.amount)}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
               </div>
             )}
 
@@ -3224,7 +1607,7 @@ export function ReportsPage() {
                     <table className="w-full">
                       <thead>
                         <tr style={{ borderBottom: DIV }}>
-                          {(canViewCost ? ["Producto", "SKU", "Nº Ventas (Tickets)", "Cant. Vendida", "Ingresos Totales", "Utilidad Neta"] : ["Producto", "SKU", "Nº Ventas (Tickets)", "Cant. Vendida", "Ingresos Totales"]).map(h => (
+                          {(canViewCost ? ["Producto", "Cant. Vendida", "Costo", "Ingresos Totales", "Utilidad Neta"] : ["Producto", "Cant. Vendida", "Ingresos Totales"]).map(h => (
                             <th key={h} style={{ ...thStyle, fontSize: 10, padding: "12px 18px" }}>{h}</th>
                           ))}
                         </tr>
@@ -3268,9 +1651,8 @@ export function ReportsPage() {
                         {groupedProducts.length > 0 && (
                           <tr style={{ background: "rgba(255,255,255,0.03)", borderTop: "2px solid rgba(255,255,255,0.1)" }}>
                             <td style={{ ...tdStyle, fontWeight: 900, color: TP }}>TOTAL GENERAL</td>
-                            <td style={tdStyle}></td>
-                            <td style={{ ...tdStyle, fontWeight: 700 }}>{groupedProducts.reduce((acc, p) => acc + (p.sales_count || 0), 0)}</td>
-                            <td style={{ ...tdStyle, fontWeight: 700, color: TP }}>{groupedProducts.reduce((acc, p) => acc + (p.total_quantity || 0), 0)}</td>
+                            <td style={{ ...tdStyle, fontWeight: 700, color: TP }}>{uiTotals.cantidad}</td>
+                            {canViewCost && <td style={{ ...tdStyle, fontWeight: 700, color: TS }}>{fmt(uiTotals.costo)}</td>}
                             <td style={tdStyle}>
                               <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
                                 <span style={{ color: uiTotals.bruto < 0 ? "#FF4422" : "#00CC66", fontWeight: 900 }}>{fmt(uiTotals.bruto)}</span>
@@ -3350,13 +1732,13 @@ export function ReportsPage() {
                   <div className="overflow-x-auto">
                     <table className="w-full">
                       <thead><tr style={{ borderBottom: DIV }}>
-                        {["Producto", "SKU", "Bodega", "Tienda", "Cantidad"].map(h => <th key={h} style={thStyle}>{h}</th>)}
+                        {["Producto", "Bodega", "Tienda", "Cantidad"].map(h => <th key={h} style={thStyle}>{h}</th>)}
                       </tr></thead>
                       <tbody>
                         {invReport.data.map((r, i) => (
                           <tr key={i} style={{ borderBottom: DIV }}>
                             <td style={{ ...tdStyle, color: TP, fontWeight: 700 }}>{r.product.name}</td>
-                            <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: 10 }}>{r.product.sku}</td>
+
                             <td style={tdStyle}>{r.warehouse.name}</td>
                             <td style={tdStyle}>{r.warehouse.store ?? "—"}</td>
                             <td style={{ ...tdStyle, fontWeight: 900, color: r.quantity <= 5 ? "#FF4422" : r.quantity <= 10 ? "#FFAA00" : "#00CC66" }}>
@@ -3383,14 +1765,14 @@ export function ReportsPage() {
                 </div>
                 <table className="w-full">
                   <thead><tr style={{ borderBottom: DIV }}>
-                    {["#", "Nombre", "SKU", "Tipo", "Veces", "Unidades", "Ingresos"].map(h => <th key={h} style={thStyle}>{h}</th>)}
+                    {["#", "Nombre", "Tipo", "Veces", "Unidades", "Ingresos"].map(h => <th key={h} style={thStyle}>{h}</th>)}
                   </tr></thead>
                   <tbody>
                     {topReport.data.map((r, i) => (
                       <tr key={r.id} style={{ borderBottom: DIV, background: i === 0 ? "rgba(255,170,0,0.04)" : "transparent" }}>
                         <td style={{ ...tdStyle, fontWeight: 900, color: i < 3 ? "#FFAA00" : TM }}>{i + 1}</td>
                         <td style={{ ...tdStyle, color: TP, fontWeight: 700 }}>{r.name}</td>
-                        <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: 10 }}>{r.sku}</td>
+
                         <td style={tdStyle}>
                           <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: 9, fontWeight: 900, background: r.type === "product" ? "rgba(68,153,255,0.12)" : "rgba(187,119,255,0.12)", color: r.type === "product" ? "#4499FF" : "#BB77FF" }}>
                             {r.type}

@@ -202,4 +202,106 @@ class PromotionCrudTest extends TestCase
                 'name' => 'X', 'buy_n' => 2, 'pay_m' => 1,
             ])->assertStatus(404);
     }
+
+    // ── Tipo qty_discount + exclusividad de tipos (2026-07-20) ───────────────
+
+    public function test_crea_promo_qty_discount_con_escalones(): void
+    {
+        $this->actingAs($this->admin)
+            ->postJson("/api/v1/products/{$this->product->id}/promotions", [
+                'name' => 'Por cantidad', 'type' => 'qty_discount',
+                'tiers' => [['qty' => 2, 'amount' => 100], ['qty' => 3, 'amount' => 400]],
+            ])
+            ->assertStatus(201)
+            ->assertJsonPath('data.type', 'qty_discount')
+            ->assertJsonPath('data.tiers.1.amount', 400);
+
+        // Viaja en el payload del producto con type y tiers.
+        $this->actingAs($this->admin)
+            ->getJson("/api/v1/products/{$this->product->id}")
+            ->assertJsonPath('data.active_promotions.0.type', 'qty_discount')
+            ->assertJsonPath('data.active_promotions.0.tiers.0.qty', 2);
+    }
+
+    public function test_qty_discount_valida_escalones(): void
+    {
+        // Sin tiers → 422; escalón con qty duplicada → 422; amount 0 → 422.
+        $this->actingAs($this->admin)
+            ->postJson("/api/v1/products/{$this->product->id}/promotions", [
+                'name' => 'Mal', 'type' => 'qty_discount',
+            ])->assertStatus(422);
+
+        $this->actingAs($this->admin)
+            ->postJson("/api/v1/products/{$this->product->id}/promotions", [
+                'name' => 'Mal', 'type' => 'qty_discount',
+                'tiers' => [['qty' => 2, 'amount' => 100], ['qty' => 2, 'amount' => 200]],
+            ])->assertStatus(422);
+
+        $this->actingAs($this->admin)
+            ->postJson("/api/v1/products/{$this->product->id}/promotions", [
+                'name' => 'Mal', 'type' => 'qty_discount',
+                'tiers' => [['qty' => 2, 'amount' => 0]],
+            ])->assertStatus(422);
+    }
+
+    public function test_exclusividad_nxm_y_qty_discount_no_conviven(): void
+    {
+        // Existe 2x1 vigente → crear qty_discount encimada se rechaza…
+        ProductPromotion::create([
+            'product_id' => $this->product->id, 'name' => '2x1 Verano', 'buy_n' => 2, 'pay_m' => 1,
+        ]);
+
+        $resp = $this->actingAs($this->admin)
+            ->postJson("/api/v1/products/{$this->product->id}/promotions", [
+                'name' => 'Por cantidad', 'type' => 'qty_discount',
+                'tiers' => [['qty' => 2, 'amount' => 100]],
+            ]);
+        $resp->assertStatus(422);
+        $this->assertStringContainsString('2x1 Verano', (string) $resp->json('error'));
+
+        // …y al revés: con qty_discount vigente, un NxM encimado se rechaza.
+        ProductPromotion::query()->delete();
+        ProductPromotion::create([
+            'product_id' => $this->product->id, 'name' => 'Por cantidad',
+            'type' => ProductPromotion::TYPE_QTY_DISCOUNT, 'tiers' => [['qty' => 2, 'amount' => 100]],
+        ]);
+
+        $resp2 = $this->actingAs($this->admin)
+            ->postJson("/api/v1/products/{$this->product->id}/promotions", [
+                'name' => '2x1 Invierno', 'buy_n' => 2, 'pay_m' => 1,
+            ]);
+        $resp2->assertStatus(422);
+        $this->assertStringContainsString('Por cantidad', (string) $resp2->json('error'));
+    }
+
+    public function test_exclusividad_no_choca_si_ventanas_no_se_enciman(): void
+    {
+        ProductPromotion::create([
+            'product_id' => $this->product->id, 'name' => '2x1 Julio', 'buy_n' => 2, 'pay_m' => 1,
+            'starts_at' => now()->subDays(5), 'ends_at' => now()->addDays(5),
+        ]);
+
+        // qty_discount para diciembre (no encimada) → permitida.
+        $this->actingAs($this->admin)
+            ->postJson("/api/v1/products/{$this->product->id}/promotions", [
+                'name' => 'Navidad', 'type' => 'qty_discount',
+                'tiers' => [['qty' => 2, 'amount' => 100]],
+                'starts_at' => now()->addMonths(4)->format('Y-m-d'),
+                'ends_at'   => now()->addMonths(5)->format('Y-m-d'),
+            ])->assertStatus(201);
+    }
+
+    public function test_dup_qty_discount_encimada_rechazada(): void
+    {
+        ProductPromotion::create([
+            'product_id' => $this->product->id, 'name' => 'Por cantidad',
+            'type' => ProductPromotion::TYPE_QTY_DISCOUNT, 'tiers' => [['qty' => 2, 'amount' => 100]],
+        ]);
+
+        $this->actingAs($this->admin)
+            ->postJson("/api/v1/products/{$this->product->id}/promotions", [
+                'name' => 'Otra por cantidad', 'type' => 'qty_discount',
+                'tiers' => [['qty' => 4, 'amount' => 300]],
+            ])->assertStatus(422);
+    }
 }

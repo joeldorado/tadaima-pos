@@ -53,9 +53,15 @@ export function useCart(catalogUrl: string | undefined): UseCart {
 
   const add = useCallback((line: Omit<CartLine, "qty" | "selectedStoreId">, qty = 1) => {
     const inc = Math.max(1, Math.floor(qty))
-    // Default: la sucursal con más stock de este producto.
-    const defaultStore = line.stores.length
-      ? [...line.stores].sort((a, b) => b.qty - a.qty)[0]!.store_id
+    // Default: la sucursal con más stock de este producto QUE TENGA WhatsApp
+    // (una tienda sin número no puede recibir el pedido — Joel 2026-07-20).
+    // Si ninguna tiene número, cae a la de más stock (degradado wa.me sin
+    // destinatario, con aviso en el drawer).
+    const stores = line.stores ?? []
+    const orderable = stores.filter((s) => !!s.whatsapp)
+    const pool = orderable.length ? orderable : stores
+    const defaultStore = pool.length
+      ? [...pool].sort((a, b) => b.qty - a.qty)[0]!.store_id
       : null
     setItems((prev) => {
       const existing = prev.find((i) => i.productId === line.productId)

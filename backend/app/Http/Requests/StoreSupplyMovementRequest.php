@@ -29,6 +29,21 @@ class StoreSupplyMovementRequest extends FormRequest
                 ? ['required', 'numeric', 'min:0.01']
                 : ['nullable', 'numeric', 'min:0'],
             'note'      => ['nullable', 'string', 'max:255'],
+            // Origen del dinero (solo compras): caja (default) / caja_chica /
+            // propio — con propio hay que decir QUIÉN puso el dinero.
+            'money_source' => ['nullable', Rule::in(SupplyMovement::SOURCES)],
+            'payer_name'   => [
+                'nullable', 'string', 'max:100',
+                'required_if:money_source,' . SupplyMovement::SOURCE_PROPIO,
+            ],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'payer_name.required_if' => 'Indica quién puso el dinero.',
+            'money_source.in'        => 'Origen del dinero inválido.',
         ];
     }
 }

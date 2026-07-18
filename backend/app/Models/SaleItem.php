@@ -31,6 +31,7 @@ class SaleItem extends Model
         'applied_promotion_id',
         'promo_name',
         'promo_free_qty',
+        'promo_amount',
     ];
 
     protected $casts = [
@@ -41,6 +42,7 @@ class SaleItem extends Model
         'discount_value'  => 'float',
         'discount_amount' => 'float',
         'promo_free_qty'  => 'integer',
+        'promo_amount'    => 'float',
         'created_at'      => 'datetime',
     ];
 

@@ -12,6 +12,7 @@ class Supply extends Model
 {
     protected $fillable = [
         'company_id',
+        'store_id',
         'name',
         'category',
         'unit',
@@ -19,6 +20,7 @@ class Supply extends Model
     ];
 
     protected $casts = [
+        'store_id'  => 'integer',
         'is_active' => 'boolean',
     ];
 

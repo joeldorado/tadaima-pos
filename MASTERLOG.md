@@ -655,6 +655,190 @@ docker compose up --build -d
 
 > Sesiones anteriores a 2026-05-14 (>20 días) archivadas en git history para mantener el log ligero. Decisiones load-bearing preservadas en ADRs (§7) y secciones de arquitectura.
 
+### Sesión 2026-07-17 — Centro de Documentación in-app (`/documentacion`) — DEPLOYADO rev tadaima-00134-92t
+
+Commit `3bd7634` (bundle `index-R31qr3kh.js` verificado en prod: "Centro de ayuda"). `vite build` OK, 0 errores tsc en archivos tocados. QA navegador local (admin, tema oscuro y claro): menú visible, hub renderiza, deep-link `?tema=descuento-cantidad` abre el tema, sin errores de consola.
+
+**Pedido Joel:** llevar el slide-tutorial de promos/descuentos/insumos DENTRO del sistema, en una ruta de documentación con tutoriales de todo el sistema, para todos los roles.
+
+**(1) Arquitectura data-driven:** el contenido vive como DATOS (no JSX) en `landing/src/content/docs/*` (un archivo por categoría) con modelo de bloques tipado (`types.ts`: prose/steps/callout/tiers/chips/fields/table). Renderers presentacionales en `landing/src/components/docs/DocBlocks.tsx`. Agregar un tutorial = agregar un objeto + registrarlo en `index.ts`; no se toca página ni router.
+
+**(2) Hub** (`landing/src/pages/DocsPage.tsx`): rail de categorías + contenido del tema activo; tema por `useSearchParams` (`?tema=slug`, deep-link compartible); navegación Anterior/Siguiente; tokens `--td-*` (oscuro/claro nativo). Reutiliza el material del slide: NxM, descuento por cantidad con la visualización de grupos (5 pzas = −$400 + −$100 = −$500), override local con chips "Opacada"/"Reemplaza a la global", insumos con origen del dinero.
+
+**(3) 17 tutoriales en 6 categorías:** Catálogo y precios (alta de producto, promo 2x1, descuento por cantidad, reglas, personalizar por tienda) · Caja y ventas (cobro, cortes, insumos) · Pedidos (preventas, apartados) · Inventario (existencias, traslados) · Clientes y reportes · Difusión y administración (tienda en línea, RBAC, tiendas). Contenido verificado contra las páginas reales + `DemoWalkthroughPage` (WALKTHROUGH por rol).
+
+**(4) RBAC/menú:** nuevo `PageKey` `docs` en `permisos.ts` (admin/gerente/cajero) + `NAV_BY_ROLE` en `Layout.tsx`; ruta `documentacion` con `requiresPage="docs"`. Entrada de nav "Documentación" (ícono BookOpen) visible para todo el equipo.
+
+### Sesión 2026-07-16 — Override LOCAL de promos (la de tienda apaga la global) — DEPLOYADO rev tadaima-00133-nzw
+
+Commit `fa8ae0c` (bundle `index-DHznmcTQ.js` verificado: "Personalizar para mi tienda", "Opacada", "Reemplaza a la global"). Backend 292/292 (+5), vitest 83/83 (+2). QA E2E local con gerente real: personalizó la global 2+pzas−$100 a local −$50 y su venta cobró −$50.
+
+**Regla nueva (pedido Joel, feedback de gerentes):** si un producto tiene promo LOCAL vigente en una tienda, la GLOBAL queda DESACTIVADA ahí — gana la local aunque ahorre menos, y si la local no alcanza por cantidad la global NO revive. Admin sigue siendo el único que toca globales; el gerente "modifica" creando su variante local.
+
+**(1) Motor** (`SaleCalculator.php` ↔ `saleCalc.ts`, en paridad): al agrupar promos por producto, si hay local (store_id != null; el set ya viene filtrado forStore) se descartan las globales de ese producto. `PromoDef.storeId` nuevo en TS; SellPage lo mapea.
+
+**(2) Validaciones a ámbito EXACTO** (`overlappingActivePromos`): local ya NO choca con global (dup ni exclusividad de tipos — crear la local encima es el override deliberado); local vs local misma tienda y global vs global siguen chocando; cap de 2 activas por ámbito exacto (máx 2 globales + máx 2 locales por sucursal).
+
+**(3) UX tab Promos:** botón "Personalizar para mi tienda" (CopyPlus azul) en promos globales para usuarios con tienda — prellena tipo/valores/vigencia (inicio pasado → vacío = empieza ya) y crea la local; chips "Opacada en tu tienda / en N tienda(s)" (global) y "Reemplaza a la global" (local).
+
+**(4) Display prefiere la local** donde se pinta UNA promo: badge de la lista de Caja (SellPage), PromoPills del catálogo de Caja (si hay local, la global no se pinta), PromosPage para gerente/cajero (admin sigue viendo todas con etiquetas) y card pública (local primero, etiquetada con su tienda).
+
+### Sesión 2026-07-16 — Promo "descuento por cantidad" (escalones) + Tienda Online v2.3 — DEPLOYADO rev tadaima-00132-b5d
+
+Commit `8a09d4a` (bundle `index-BZNIM3Jg.js` verificado: "Descuento por cantidad", "Recoger en", qty_discount; API público ya expone `type`/`tiers` = migraciones `2026_07_20_*` aplicadas). Backend 287/287 (+10), vitest 81/81 (+6). QA E2E local: venta en Caja 5×$150 con [2→100, 3→400] cobró $250 y snapshot `promo_amount=500`.
+
+**(1) Promo tipo `qty_discount` (pedido Joel):** "compra N → −$X" con ESCALONES (`product_promotions.type` + `tiers` JSON; buy_n/pay_m ahora nullable). Motor GREEDY por grupos QUE SE REPITE (5 pzas con 2→100/3→400 = 400+100=500, decisión Joel) — espejo exacto `SaleCalculator.php` ↔ `saleCalc.ts` (`qtyDiscountAmount`), clamp al bruto de la línea, stacking con descuento manual intacto.
+
+**(2) Exclusividad de tipos:** un producto NO convive con NxM y qty_discount vigentes con ventana/tienda encimadas — `promoTypeConflictError` 422 nombrando la existente (ambos sentidos, validado también al reactivar); dup mismo tipo re-usa el overlap compartido (`overlappingActivePromos`). Ventanas que no se enciman sí se permiten.
+
+**(3) Snapshot `sale_items.promo_amount`:** monto directo de la parte promo (la derivación `promo_free_qty×price` no existe en el nuevo tipo). Ventas nuevas (ambos tipos) lo llenan; lectores (SalesPage `lineBenefitParts`, SellPage historial) con fallback legacy. Para reportes de Ruben: `parte_promo = promo_amount ?? promo_free_qty×price`.
+
+**(4) UI:** selector de tipo + escalones dinámicos en tab Promos (toggle de status reenvía los campos de su tipo); `landing/src/lib/promoLabel.ts` compartido ("2+ pzas −$100" / tooltip por escalones) en catálogo de Caja, card pública, ProductsPage, PromosPage (banner/TV/grid/WhatsApp con `promoDisplay`) y tickets ("0 gratis" suprimido cuando freeQty=0).
+
+**(5) Tienda Online v2.3:** buscador en fila propia en móvil + tabs y categorías fusionados en una fila scrolleable (menos amontonado); chips de categoría sin productos en el contexto NO se pintan (y el filtro activo se auto-suelta); glass de cards ~0.92 opaco; carrito con selector PROMINENTE "Recoger en: {sucursal} (N disp.)" y tiendas sin WhatsApp excluidas de default/selector; CatalogTab precarga `stores.phone` como WhatsApp editable.
+
+### Sesión 2026-07-16 — Tienda Online v2.2: lo más nuevo + filtros arriba + fondo shader — DEPLOYADO rev tadaima-00131-6mz
+
+Commit `2f90352` (bundle `index-CioTfgj0.js` verificado: "Más nuevos", "webgl2"; API prod devuelve ids desc). Backend 277/277 (+test de orden), vitest 75/75, QA navegador local desktop+móvil.
+
+**(1) Lo más NUEVO primero:** `/public/catalog` ordena `orderByDesc(products.id)` (antes por nombre) — orden estable para "Cargar más"; el grid de entrada es "Lo más nuevo · N".
+
+**(2) Filtros globales arriba (pedido de Joel):** ya no hay "Filtrar y ordenar" por sección — UN solo grid y en la barra STICKY viven: tabs Todo/Productos/Mangas + fila de chips de **categorías** ("Todas" + una por categoría con contador, scrolleable, filtran el grid) + fila de **orden** (Más nuevos default · Precio ↑↓ · A-Z) y "Con promo". Siempre visibles al scrollear.
+
+**(3) Fondo shader WebGL (`ShaderBackground.tsx`):** nebulosa fbm (shader de @atzedent que pasó Joel) tintada rojo/ámbar Tadaima; canvas fixed detrás (contenido `z-10`), `pointer-events:none`, 0.5×DPR, NO se monta con `prefers-reduced-motion` o sin WebGL2 (queda el bg de siempre), cleanup completo al desmontar.
+
+**(4) Premium:** logo del header 26→42px con más glow/aire; `ImageWithFallback` con fade-in al cargar (lazy+async ya estaban; maneja imágenes cacheadas vía `el.complete`).
+
+### Sesión 2026-07-16 — Tienda Online v2.0 + FIX imágenes 404 (GCS) + cuadrícula + cajeros sin promos — DEPLOYADO rev tadaima-00130-bxq
+
+Commits `db80b4e` + `1d77055` + `ed4cc90` (bundle `index-D1xln0rX.js` verificado: "Filtrar y ordenar", "Cargar más", "Con promo"; fotos reales cargando en prod). Backend 276/276, vitest 75/75.
+
+**(1) FIX imágenes del catálogo público (bug de prod):** las fotos viven en GCS (`tadaima-media`) pero `/public/catalog` mandaba solo el `path` crudo y el front armaba `{origen}/storage/{path}` → **404 en todas las fotos**. Ahora `CatalogController` manda `url` resuelta por imagen (accessor `ProductImage->url`, en los 3 endpoints de catálogo) y el front la usa con fallback al path (dev/carritos viejos en localStorage). Verificado vivo: Naruto/Deadpool renderean desde `storage.googleapis.com`.
+
+**(2) Tienda Online v2.0 (brief de Joel: refinamiento SIN redesign, misma identidad glass/rojo/Space Grotesk):** header+buscador+tabs sticky con blur; búsqueda con debounce 250ms + ✕ + contador; tabs con contadores visibles al buscar; chips Relevancia/Precio↑↓/A-Z + "Con promo"; pill de promo `2x1 · hasta {fecha} · {tienda}` en la card pública (backend expone `active_promotions` vigentes en `/public/catalog` + test); badge Agotado (grayscale + CTA "Sin stock"); stock en 1 línea "Disponible · N sucursales" expandible; agregar → toast + bump del botón flotante SIN abrir el drawer; skeletons; "Cargar más" (antes tope silencioso de 100); drawer con CTA sticky "Enviar a {tienda} · $total" + safe-area; página dark-locked (`data-theme="dark"`).
+
+**(3) Layout en cuadrícula (QA de Joel post-v2.0):** las filas horizontales tipo Netflix dejaban hueco con pocas cards y scroll grosero → cada categoría es cuadrícula 2/3/4/5 columnas que llena el ancho; "Ver todo" → "Filtrar y ordenar" (la cuadrícula ya muestra todo); `CategoryRow.tsx` eliminado.
+
+**(4) can_manage_promos por ROL al crear/reasignar usuario:** cajeros nacen con el flag OFF (`roleGrantsPromos`: solo gerente/admin ON); al cambiar de categoría de rol se sincroniza, re-asignar el mismo rol preserva revocaciones manuales; backfill `2026_07_19_000002` apagó no-gerentes existentes. `ProductPromotionPermissionTest` 7/7.
+
+### Sesión 2026-07-18 — Permiso can_manage_promos + anti-duplicados NxM + Insumos hoy/scroll — DEPLOYADO rev tadaima-00129-vp9
+
+QA de Joel (commits `be94403` + `09cbfe6`, bundle `index-CCcYz8zb.js` verificado: "Gestionar Promociones", "promos solo lectura", "Compras de hoy"). Backend 273/273 (+6 tests), vitest 75/75, QA navegador local.
+
+**(1) Permiso por usuario "Gestionar Promociones" (`users.can_manage_promos`, migración `2026_07_19_000001`):** default **TRUE** (modelo de REVOCACIÓN, al revés de can_view_cost/can_edit_catalog): gerentes siguen creando promos como siempre; el admin lo QUITA por usuario en Admin→Permisos (nueva SectionBox con toggle). Gate en capas: rol admin/gerente (igual) + `promoManageError()` (Controller base, espejo de catalogEditError) en store/update/destroy de promos + scope de tienda intacto; admin siempre. Sin permiso el tab Promos queda solo-lectura con nota. OJO patrón: helper `canManagePromos()` usa `!== false` (columna NOT NULL default 1 — null = atributo no cargado, se trata como default). `ProductPromotionPermissionTest` 5/5.
+
+**(2) Promos — Inicia sin pasado + anti-duplicados por rango:** el calendario "Inicia" ya no acepta fechas anteriores a hoy (`minValue`). `duplicatePromoError`: otro MISMO NxM en el producto solo si la vigencia NO se encima con una activa (2x1 julio + 2x1 diciembre OK; encimada → 422 nombrando a la existente). Tiendas distintas no chocan; global choca con todas; crear pausada se permite (al reactivar se re-valida). + El tope de 2 activas ahora es POR ÁMBITO de tienda (antes contaba todas las sucursales juntas y Norte quedaba bloqueada por las promos de Centro).
+
+**(3) Insumos:** Reporte abre con rango HOY→HOY (antes 30 días); "Compras recientes"→"Compras de hoy" (solo día-negocio; histórico vía rango del Reporte); listas Por categoría/Top insumos con scroll interno (max 56vh) para que no crezcan infinito.
+
+### Sesión 2026-07-18 — UX Promos/filtros + promos visibles en catálogo de Caja + tope 2 activas — DEPLOYADO rev tadaima-00128-t66
+
+QA de Joel (3 cierres, commits `57b7593` + `c436730`, bundle `index-DhNlvHAL.js` verificado con markers "Ver todos"/"aquí no hay nada más que guardar"/"Productos con Promo"). Suite backend 267/267 (+1 test), vitest 75/75, QA en navegador local.
+
+**(1) Modal Editar Producto — doble "Guardar" confundía:** en el tab Promos (edición) el footer ya NO muestra Eliminar/Cancelar/Guardar Cambios (guardaban el PRODUCTO); ahora solo "Cerrar" + hint "Las promociones se guardan al instante con su propio botón". En alta y en los otros tabs el footer sigue normal. (ProductsPage `ProductModal`, condicionado por `activeTab === "promociones" && product`.)
+
+**(2) Filtros de Productos — chip "✕ Ver todos":** aparece solo con filtro activo (Por agotarse/Agotados/Promos/Más vendidos) y limpia los 4. + "Más vendidos" ahora también apaga Promos (quedaba prendido por debajo) y el header dice "Productos con Promo" con ese filtro. ("Productos sin Costo" NO es filtro de grid — abre su modal.)
+
+**(3) Promos visibles en el catálogo de Caja (`ProductCatalogModal`):** pill verde `🎟 {n}x{m} · hasta {fecha}` bajo el nombre en ambas variantes de card (normal y preventa) — máx. 2 pills (orden: prioridad desc, id asc — mismo desempate que el motor) + chip "+N"; tooltip con nombre/vigencia. Los productos ya traían `active_promotions` filtrado por tienda en el payload.
+
+**(4) Tope de 2 promos ACTIVAS por producto (pedido "sería mejor 2 solo activas"):** `ProductPromotionsController::activePromoCapError` — crear una 3ra activa o REACTIVAR una pausada con 2 vivas → 422 "pausa o elimina una antes de activar otra". Crear pausada sí; editar una ya activa no se bloquea (tolerante a excedentes legacy). Test `test_max_two_active_promos_per_product`.
+
+### Sesión 2026-07-18 — Insumos con ORIGEN DEL DINERO + calendarios estandarizados — DEPLOYADO rev tadaima-00127-xg4
+
+Pedido de Joel (QA del equipo): registrar de dónde salió el dinero de cada compra de insumo, y usar el calendario de rango "bonito" en todos lados. Bundle `index-scLTK2ey.js` verificado vivo (markers "Por origen del dinero", "Dinero propio", "Sin vencimiento"). Backend 266/266 (6 tests nuevos), vitest 75/75. QA manual en navegador local (sqlite): compra propio sin caja ✓, reporte by_source ✓, pickers abren/limpian ✓.
+
+**(1) Origen del dinero en compras de insumos (migración `2026_07_18_000001`):** `supply_movements.money_source` string(20) nullable (`caja`/`caja_chica`/`propio`) + `payer_name` (100, solo propio); backfill: compras históricas → `'caja'` (todas salían de caja); NULL = no aplica (consumo/ajuste). **Regla:** origen `caja` = camino histórico INTACTO (exige caja abierta, crea `cash_movements salida` ligada, el corte la refleja); `caja_chica`/`propio` = **NO exigen caja y NO tocan el corte** (`cash_movement_id`/`register_session_id` NULL — el drill-down del corte filtra por sesión, así que quedan fuera por construcción; NO es bug). `SupplyService::registerPurchase` bifurca; validación `payer_name required_if propio` con mensaje en español. UI (SuppliesPage): 3 pills "¿De dónde salió el dinero?" + input "¿Quién puso el dinero?" (propio), banner/botón/toast/invalidaciones de caja condicionados a origen caja, chip de origen en Compras recientes (Caja neutro / Caja chica ámbar / "Propio · Mario" azul), reporte con bloque "Por origen del dinero" (`by_source` en `/reports/supplies`) + hint "solo Caja descuenta del corte". **Fix de seguridad de pasada:** `GET /supplies/movements` y `/reports/supplies` NO scopeaban por `company_id` (mezclaban empresas) → scope agregado + test. Fuera de alcance (dicho): ledger real de caja chica (saldo/reposiciones) — hoy es solo registro.
+
+**(2) Calendarios estandarizados (pedido: "siempre que usemos un rango de fechas se use ese componente"):** la librería YA era `react-aria-components` con `ui/DateRangePicker`/`ui/SingleDatePicker` compartidos (Cortes/Preventas). Extensiones: `DateRangePicker` +`minValue`; `SingleDatePicker` +`onClear` (botón × HERMANO del AriaButton — botón-en-botón mata el press de react-aria; sin onClear el trigger queda byte-idéntico). Migrados de `<input type="date">` nativo: **Promos** (Inicia/Vence → 2× SingleDatePicker encadenados con ×; NO el rango: obligaría ambas fechas y mataría "Programada sin fin"; guard: mover Inicia después de Vence limpia Vence), **Insumos** filtros (DateRangePicker max hoy), **Cancelaciones** (ídem + setPage(1)), **Apartados** y **Caja→Apartar** (SingleDatePicker min hoy + ×; fuera el hack `colorScheme:light`). **De-dup ReportsPage:** el RangeCalendar inline (~140 líneas) → compartido con min 365 días/max hoy + apaga preset al elegir manual. **SalesPage inline NO se tocó** (su `isFetching` spinner es el único feedback de carga — load-bearing). 
+
+**Nota gcloud (operativo):** la config activa de la Mac suele ser de OTRO cliente (o2s1/22digital) y la config `default` tiene typo (`impuLsodigitaldorado`) → deploys SIEMPRE con `--project impusodigitaldorado --account doradoaguilusjoel@gmail.com` explícitos (un deploy sin flags casi crea el servicio en el proyecto ajeno — se mató a tiempo, verificado limpio).
+
+### Sesión 2026-07-17 — STACKING promo+descuento (CAMBIO DE REGLA) + visibilidad total de beneficios — DEPLOYADO revs tadaima-00124/00125/00126
+
+QA de Joel, 3 deploys:
+
+**rev 00124-xwg — fix(promos) banner no generaba imagen:** el export hacía `fetch(dataUrl)` y el CSP no permite `data:` en connect-src → bloqueado silencioso. Ahora `toBlob()` de html-to-image directo + `skipFonts` (evita fetch de Google Fonts que el CSP también bloquearía).
+
+**rev 00125-fwd — feat STACKING (CAMBIO DE REGLA DE NEGOCIO, Joel 2026-07-17; antes no-stacking cerrado 2026-07-14):** la promo NxM aplica PRIMERO y el descuento manual se calcula SOBRE el resultado (percent sobre neto-promo; fixed clampeado). Caso QA: 2×$2,900 con 2x1 −$100 → **$2,800** (antes $5,700: el manual reemplazaba la promo). `saleCalc.ts` + `SaleCalculator.php` en espejo; `CalcLineResult` expone `promoPart`/`manualPart`; **`sale_items.discount_amount` = beneficio TOTAL (promo+manual)** — rollup `sales.discount` intacto; `benefit_type='discount'` con manual pero `promo_*` SIEMPRE persistidos si la promo aplicó (así el historial muestra ambos). Caja: badges promo (verde) y desc (rojo) CONVIVEN; `LineDiscountModal` preview usa base neto-promo. + Productos: chip filtro "Promos" + badge "2x1 · hasta {fecha}" (embed trae `ends_at`). Tests: saleCalc 75/75, `PromotionCheckoutTest` reescrito a stacking, suite 260/260.
+
+**rev 00126-tqj — feat visibilidad de beneficios en TODO el detalle + reportes exactos:** (1) SalesPage (Ventas/Historial) detalle expandido: badges por línea + neto real con bruto tachado (antes solo bruto — QA "la promo no se ve"); (2) ticket reimpresión con sub-líneas SEPARADAS promo/desc (helper `lineBenefitParts`: parte promo = `promo_free_qty × price`, manual = resto); (3) SellPage Historial del Día: chips separados; (4) **ReportsPage: neto por producto EXACTO** — con beneficios por línea usa `total − discount_amount` de ESA línea (el producto con promo absorbe SU descuento; ya no prorratea al resto del ticket); legacy sin líneas conserva prorrateo. Exports Excel/PDF de Ruben heredan el número (leen groupedProducts). (5) **CLAUDE.md raíz: sección "Descuentos y Promos — modelo de datos para reportes"** para Ruben (columnas, stacking, separar partes, rollups, legacy, store_id).
+
+### Sesión 2026-07-17 — Promos: visibilidad cruzada sin duplicar — DEPLOYADO rev tadaima-00123-dgt
+
+Confirmación de Joel al diseño (local o todas las tiendas, visibles entre tiendas para no duplicar en el mismo producto). 2 cierres (commit del feat, bundle `index-DyHfjvT8.js`): (1) chip del tab para gerente decía "Tu tienda" en promos AJENAS → ahora "Otra tienda (visible para no duplicar)"; (2) gerente podía pausar/borrar promos globales o de otras tiendas → `promoMutationGateError` 403 backend + botones ocultos en UI (solo muta las de SU tienda; globales/ajenas = solo lectura). `PromoStoreScopeTest` 5/5, suite 259/259.
+
+### Sesión 2026-07-16/17 — Scoping por tienda (promos + insumos) + fix "Programada" — DEPLOYADO rev tadaima-00122-vwn
+
+QA Joel: "creé una promo y no sale en /promos" + pidió que promos e insumos elijan tienda. Commit `1ff7054`. Bundle `index-fAFO6V7b.js`.
+
+**Diagnóstico del "no sale":** causa más probable = promo con **fecha de inicio futura**: el chip decía "Activa" (status field) aunque `currentlyActive` la excluye hasta que empiece → invisible en Caja y /promos. Fix display: chip azul **"Programada · inicia {fecha}"** + empty-state de /promos explica las causas. (Vigencias en sí ya estaban bien: `vigencyDates` ancla a día-negocio Tijuana.) Nota: no se pudo confirmar contra la BD de prod (acceso denegado por policy — correcto).
+
+**Scoping por tienda:**
+- Migración `2026_07_17_000001`: `product_promotions.store_id` + `supplies.store_id`, ambos NULL = todas/empresa (compat con datos existentes — las promos/insumos previos quedan globales).
+- **Promos**: admin elige tienda al crear (select "Todas las tiendas"); gerente FORZADO a la suya (`scopedStoreId`). Motor: `CheckoutService` filtra `forStore($storeId)`; el embed `active_promotions` viene filtrado con `?store_id` (Caja siempre lo manda → espejo frontend saleCalc sin cambios). PromosPage: gerente/cajero solo ven globales o de su tienda; admin todas con etiqueta. Chip de tienda en el tab de promos. OJO: el tab NO edita tienda de promos existentes (solo alta) — para cambiar tienda: borrar y recrear.
+- **Insumos**: admin elige tienda en SupplyFormModal ("Toda la empresa" + tiendas); gerente forzado a la suya; `index` para no-admin filtra (NULL O su tienda); chip en el catálogo. El inline-create del combobox crea "toda la empresa" para admin.
+- Tests: `PromoStoreScopeTest` 4/4 (global aplica / misma tienda aplica / otra tienda NO / embed filtrado). Suite 258/258 · vitest 73/73.
+
+### Sesión 2026-07-16 — Promos: página + banner WhatsApp + Modo TV + badge en Caja — DEPLOYADO rev tadaima-00121-tfx
+
+Pedido Joel (dudas de prioridad/visibilidad + idea banner/TV). Commit `a7b903f`. Bundle `index-C-otmNye.js` (markers "Modo TV", "share-banner-modal", "Prioridad (desempate)", "image-base64").
+
+1. **Página /promos** (admin/gerente/cajero; PageKey `promos` en permisos.ts + NAV_BY_ROLE + hoja en NAV_TREE): lista promos NxM vigentes leyendo `active_promotions` embebido de products light (NO hay endpoint global de promos; se agregó el campo a `ProductLight` en packages/api). Refetch 60s.
+2. **Banner compartible** (`ShareBannerModal` en PromosPage): nodo 1080×1350 branding (logo data-URL, gradiente rojo, foto, NxM gigante, precio "llévate N paga M", vigencia de `getProductPromotions`) → PNG con **html-to-image** (dep nueva). Compartir: `navigator.share({files})` (móvil → share sheet → WhatsApp → lista contactos SIN número), `wa.me/?text=` (texto, desktop) y descarga. **Backend nuevo**: `GET /products/{id}/image-base64` (primera imagen como data-URL; la URL pública de GCS sin CORS taintéa el canvas — por eso base64 same-origin). `ProductImageBase64Test` 2/2.
+3. **Modo TV** (`TvMode`): carrusel fullscreen (requestFullscreen) auto-rotativo 8s con motion; foto con glow + NxM gigante gradiente + precio; dots de progreso; sale con Esc/doble-click; slide "Bienvenido a Tadaima" sin promos; se actualiza solo con el refetch.
+4. **Caja**: badge verde "Promo NxM" en el renglón de resultado del producto (antes el cajero solo veía la promo al aplicar en carrito). **ProductPromotionsTab**: help-text bajo "Prioridad (desempate)" — solo importa con VARIAS promos (gana la que más ahorra; empate → prioridad mayor; con una sola, dejar en 0).
+
+Respuestas documentadas: prioridad = desempate puro (SaleCalculator:165-172); promos GLOBALES por producto (sin store_id). Backend 254/254 · vitest 73/73.
+
+### Sesión 2026-07-16 — QA prod rev 00119: 4 fixes UX (menú, catálogos preventa, insumos, caja angosta) — DEPLOYADO rev tadaima-00120-jnf
+
+QA de Joel en prod. Commit `a9f0e23`. Bundle `index-BcIkSdhJ.js` (markers "Nuevo · Sin asignar", "quick-assign-modal", "floating-menu-btn", "y usarlo").
+
+1. **Menú**: el logo Tadaima ES el toggle colapsar/expandir (se quitó el botón que quedaba hasta abajo); modo colapsado conserva los grupos como dropdown inline (`RailGroup`, mismo `openGroups`) en vez de aplanar → rail corto sin scroll.
+2. **Preventas→Catálogos (gerente)**: el status es GLOBAL en BD (no existe por tienda); el badge ahora es por-tienda para gerente: sin unidades asignadas → "Nuevo · Sin asignar" (ámbar, tooltip con status global) o "Llegó · Sin participación" (gris). + botón **Asignar** → `QuickAssignModal` (pide unidades de MI tienda vía `updatePreSaleCatalog({store_limits})` — backend `storeLimitScope` ya protege otras tiendas; toggle "Publicar ahora" si el global está draft, publicar es global). Editar catálogo ajeno sin unidades mías → cae directo al tab Unidades (`initialTab`). OJO: backend bloquea asignar en arrived/closed/cancelled (PreSaleCatalogsController:198-201) — el botón solo sale en draft/published. Se agregó `store_limits` a `UpdatePreSaleCatalogInput` (types.ts).
+3. **Insumos**: combobox con alta al vuelo en Registrar compra — teclear filtra, "Crear '{x}' y usarlo" da de alta (POST /supplies solo pide name) y auto-selecciona; solo admin/gerente crean. **Scoping**: catálogo por EMPRESA (tiendas comparten nombres, correcto); gastos amarrados a la sesión del comprador (no se cruzan). **Gap cerrado**: index filtraba NADA (leakeaba insumos entre empresas), update/movements sin check de pertenencia → ahora company_id filtrado + 403. `SupplyCompanyScopeTest` 4/4.
+4. **Caja < 1024px**: sidebar oculta + botón flotante (logo, abajo-izq; sube a bottom-24 en <768 por la barra de cobro) que abre el menú como drawer overlay con backdrop → carrito+cobro recuperan ~216px. Solo en /caja; Dashboard intacto.
+
+Suite backend 252/252 · vitest 73/73.
+
+### Sesión 2026-07-16 — Mitigación de cajas abiertas por días (logout guard + bloqueo venta stale) — DEPLOYADO rev tadaima-00119-jrp
+
+Pedido por Joel: cajas quedan abiertas por días en pruebas. Decisiones: logout BLOQUEADO hasta corte · venta BLOQUEADA sobre caja de día anterior · auto-cierre por cron DIFERIDO. Commit `fdc9e2f`.
+
+1. **CloseCashModal compartido** (`landing/src/components/cash/CloseCashModal.tsx`): extraído del inline de SellPage; conteo + POST /cash/close + limpieza sincrónica de cache `['cash','activeSession']`; entrega el corte vía `onClosed` (el consumidor decide resumen/print).
+2. **Logout guard** (`Layout.tsx`): logout con caja abierta → corte OBLIGATORIO en modal (sin opción de saltar), luego resumen imprimible (CashCloseSummaryModal) → logout. Refetch de la sesión antes de decidir. + **pill ámbar global** en sidebar (`stale-cash-pill`) cuando la caja es de día anterior, visible en todas las páginas, click → /caja. Resuelve pendiente `task_bloquear_logout_caja_abierta`. LIMITACIÓN: el logout involuntario por 401/token caduco no se puede gatear (AuthContext limpia directo) — lo cubre el punto 3.
+3. **Guard backend** (`SalesController::cashSessionGuardError`): POST /sales → 422 `CASH_SESSION_CLOSED` (sesión cerrada) o `CASH_SESSION_STALE` (**día-negocio Tijuana anterior Y 12h+ desde apertura** — doble regla deja vivir turnos que cruzan medianoche: abrió 8pm cobra 1am = 5h → pasa). Espejo frontend en `handleCheckout` (`isBlockedStaleSession`, corta antes del roundtrip → abre corte) + `handleCheckoutError` maneja los 422 (cubre PWA vieja).
+4. **Tests**: `CashSessionGuardTest` 4/4 (fresh OK / closed 422 / stale 30h 422 / medianoche 5h OK con `Carbon::setTestNow`). Suite backend 248/248, vitest 73/73.
+
+**Fase futura (diferida)**: auto-cierre nocturno 5am Tijuana. OJO: Cloud Run NO corre scheduler (supervisord = solo php-fpm+nginx; `drafts:cleanup` hourly de routes/console.php NUNCA dispara en prod) → requiere Cloud Scheduler → endpoint/job. Diseño: force-close con closing_cash=apertura + SystemLog 'auto-cerrada' para revisión de gerente.
+
+Bundle vivo `index-DfAHtoc2.js` (markers "Cierra tu caja para salir", "stale-cash-pill", "haz el corte antes de vender").
+
+### Sesión 2026-07-15/16 — Anticipo real en liquidación + merge develop (Reportes Ruben) + costo real preventas — DEPLOYADO revs tadaima-00117-wwn y tadaima-00118-lcv
+
+Tres frentes en `feat/productos-sin-costo-y-ticket-bold` (PR #2 = PR de integración):
+
+1. **fix(caja) — chip Anticipo $0 en liquidación (rev 00117)**: `loadPreSaleOrderIntoCart` nunca poblaba `depositAmount` en items cargados → el chip leía `?? 0` y mostraba $0 siempre; y el "de $X" mostraba el saldo (precio escalado), no el total original. Ahora cada línea guarda su share del anticipo pagado (total original − saldo prorrateado, mismo ratio del balance) y el chip muestra "Anticipo $X de {total original}" + "Liquidado" al saldar. SOLO display: el cobro sigue usando `activeMesa.depositAmount` (los sumadores de anticipo filtran `sellingCatalogId != null` → items cargados excluidos). Commit `c5828ab`.
+2. **merge `origin/develop` (Ruben, `899d3b4`)**: refactor ReportsPage → exports extraídos a `landing/src/pages/reports/{exportExcel,exportPdf,reportFormat,reportTypes}.ts`; Excel del Reporte del Día (SalesPage) con Comisión Terminal/IVA/Venta Neta; `CLAUDE.md` raíz. Merge validado con `git merge-tree`: **0 conflictos**; único archivo compartido SalesPage en funciones distintas (él: exportDailyReportXlsx; main: Historial; Joel: bold ticket). Gate `canViewCost` conservado en su refactor. OJO: Ruben commiteó a `develop` (retirada) — recordarle usar `dev/qa-handoff`. Commit merge `29a69b9`.
+3. **fix(reportes) — costo real de preventas en ANTICIPOS (rev 00118)**: la columna "Costo Producto" (tabla APARTADOS Y PREVENTAS) leía `total_cost`, que por **Opción B** solo se llena el día de la entrega → anticipos siempre $0 aunque el snapshot existiera (`pre_sale_order_items.cost`, ADR-015, gateado por `canViewCost()` en el Resource). Nuevo campo informativo `pre_sale_costo_real` (acumula `item.cost * qty` SIEMPRE, anticipos incluidos) → Excel (columna existente), PDF (columna nueva gateada + fix fila TOTAL desalineada de 6 celdas en tabla de 5) y pantalla ("Costo Real (Producto)" en Información de Preventa). `total_cost`/`total_profit` intactos: la utilidad se sigue reconociendo al entregar. Commit `e5f56bc`.
+
+Bundle vivo `index-CTPP_G8z.js` verificado (markers "pre_sale_costo_real", "Costo Real (Producto)", "APARTADOS Y PREVENTAS", "Comisión TPV"). `vite build` OK, `vitest` 73/73 en cada paso (post-merge y post-fix).
+
+### Sesión 2026-07-15 — UI/UX POS (4 frentes) — DEPLOYADO rev tadaima-00116-848
+
+Rediseño pedido por Joel + Ruben. Deploy único `gcloud run deploy` (Cloud Build); bundle vivo `index-BrI9vR-c.js` verificado (markers "Colapsar menú", "Piso", "cortesía"×2, "tadaima-nav-collapsed"). `vite build` OK, `vitest` 73/73. Ticket 58mm bold (rev previa, sin deploy) viajó también en este deploy.
+
+- **(1) Menú lateral (`Layout.tsx`):** rail de 76px → sidebar ancha (216px) con etiquetas y grupos colapsables. Agrupación de Ruben: **Ventas** ⊃ Historial/Cortes/Reportes · **Inventario** ⊃ Existencias/Traslados; Productos/Insumos/Clientes/Preventas sueltos; Inicio + Caja (CTA rojo) arriba. El grupo con la ruta activa se auto-expande; estado de grupos + colapso del rail persistidos en localStorage; botón para colapsar a icon-rail (recupera espacio en Caja). Gating por rol intacto (grupo con 1 hijo → link directo). Un solo menú para Dashboard y POS.
+- **(2) Editar Producto → Inventario (`ProductsPage.tsx`):** lista plana mezclada → **una tarjeta por tienda con columnas Piso | Bodega** conectadas (cada una su input de uds), patrón QuickStock; central/sin-tienda en "Otros almacenes". Admin ve todas; gerente/cajero solo la suya. Se quitó el select "agregar ubicación" (slots directos). `locations` gana `storeId`. Mismo guardado (`updateInventory` por almacén).
+- **(3) Caja responsiva (`SellPage.tsx` + `hooks/useMediaQuery.ts`):** bajo 768px el panel se ocultaba entero (`hidden md:flex`) → ahora **hoja completa** que abre desde una **barra inferior fija** con TOTAL + COBRAR SIEMPRE visibles. Ancho md fluido (360→460).
+- **(4) Hardening Total $0 (`SellPage.tsx`):** confirmación **"¿Cobrar $0?"** cuando un descuento deja el total en $0 con subtotal>0 (evita $0 accidental por descuento atorado en localStorage; la foto del bug era caché PWA del build viejo con "PROMO" global ya retirado). Clamp ≥0 en la rama de preventa cargada. QA en prod pendiente de Joel (menú, inventario, caja angosta, preventa+descuento; hard-refresh por caché PWA).
+
+### Sesión 2026-07-15 — Productos sin Costo (captura rápida) — DEPLOYADO rev tadaima-00115-l4f · + Ticket 58mm en BOLD (local, sin deploy)
+
+**Productos sin Costo (deployado):** botón con contador en la barra de Productos — rojo con N cuando faltan, apagado/deshabilitado en 0 — que abre un modal-tabla grande (`MissingCostModal.tsx`) para capturar el **costo real** rápido, sin abrir el editor completo del producto. Solo visible para quien ve costos (admin siempre, o flag `can_view_cost`); editar gateado a admin/gerente (igual que el backend). Cada fila guarda solo `{cost}` vía `PUT /products/{id}` (name es `sometimes` → no toca precios ni nada más), optimista + invalida el cache → la fila se pone verde, baja el contador "faltan X" y sale de la lista. Reemplaza el viejo filtro in-grid `showNoCost`. **Sin cambios de backend.** Bundle vivo `index-RcI7CXPq.js` verificado ("Productos sin Costo"×2 + testid `missing-cost-modal`). `vite build` ✅.
+
+**Ticket 58mm en BOLD (aplicado local, NO deployado por instrucción de Joel):** `font-weight:700` en el `body{}` de los 3 puntos de impresión (`doPrintTicket`/SellPage, `printTicket`/SalesPage, `buildPrintHtml`/CashCloseSummaryModal) → todo el texto sale en negrita en la térmica; título y totales en `900` siguen como el peso más fuerte (jerarquía intacta). Colores ya en `#000` (los grises restantes eran de la barra de pantalla `.no-print`, oculta al imprimir). Viaja en el próximo deploy. Ver [[project_ticket_print]].
+
 ### Sesión 2026-07-15 — Descuentos v2 FASE 3: PROMOCIONES NxM por producto (2x1, 3x2…) — DEPLOYADO rev tadaima-00114-ntt
 
 **Promos "compra N, paga M" pegadas al producto, aplicadas SOLAS en caja.** El motor ya existía en `saleCalc.ts` desde la Fase 0 — esta fase lo activó end-to-end.

@@ -85,6 +85,9 @@ class CheckoutService
                 $activePromos = \App\Models\ProductPromotion::query()
                     ->whereIn('product_id', $cartProductIds)
                     ->currentlyActive()
+                    // Scoping por tienda (2026-07-16): solo promos de la tienda
+                    // de la venta o globales (store_id null).
+                    ->forStore($storeId)
                     ->get();
 
                 $calc = $this->calculator->calculate(array_map(
@@ -275,6 +278,7 @@ class CheckoutService
                     'applied_promotion_id'   => $meta['applied_promotion_id'] ?? null,
                     'promo_name'             => $meta['promo_name'] ?? null,
                     'promo_free_qty'         => $meta['promo_free_qty'] ?? null,
+                    'promo_amount'           => $meta['promo_amount'] ?? null,
                 ]);
             }
 

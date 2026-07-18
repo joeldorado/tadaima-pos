@@ -43,13 +43,19 @@ class ProductController extends Controller
         // activePromotions: promos NxM vigentes (Fase 3) — el motor de Caja las
         // evalúa por línea; el filtro de vigencia va en SQL (currentlyActive).
         $relations = $light
-            ? ['price', 'images', 'paymentMethod', 'mangaDetails', 'activePromotions']
-            : ['category', 'supplier', 'price', 'images', 'paymentMethod', 'activePromotions'];
+            ? ['price', 'images', 'paymentMethod', 'mangaDetails']
+            : ['category', 'supplier', 'price', 'images', 'paymentMethod'];
         if ($needsMangaDetails && ! $light) {
             $relations[] = 'mangaDetails';
         }
 
         $query = Product::query()->with($relations);
+
+        // Promos scoped por tienda (2026-07-16): con ?store_id el embed solo trae
+        // promos de esa tienda o globales (store_id null) — la Caja consume esto
+        // directo y su motor queda espejo del backend. Sin store_id (vista
+        // global / página Promos del admin) van todas.
+        $query->with(['activePromotions' => fn ($q) => $q->forStore($storeId)]);
 
         if ($type !== null) {
             $query->ofType($type);
@@ -443,6 +449,41 @@ class ProductController extends Controller
         $image->delete();
 
         return $this->success(null, 'Imagen eliminada.');
+    }
+
+    /**
+     * GET /products/{product}/image-base64
+     * Primera imagen del producto como data-URL base64. Para el banner de promo:
+     * el export a PNG (canvas) necesita bytes same-origin — la URL pública de
+     * GCS sin CORS taintéa el canvas. Sin SSRF: el path sale de la BD.
+     */
+    public function imageBase64(Product $product): JsonResponse
+    {
+        $image = $product->images()->orderBy('sort_order')->first();
+        if (! $image || ! $image->image_path || $image->image_path === '0') {
+            return $this->error('El producto no tiene imagen.', 404);
+        }
+
+        try {
+            $bytes = Storage::get($image->image_path);
+        } catch (\Throwable) {
+            $bytes = null;
+        }
+        if ($bytes === null) {
+            return $this->error('No se pudo leer la imagen.', 404);
+        }
+
+        $ext = strtolower(pathinfo($image->image_path, PATHINFO_EXTENSION));
+        $mime = match ($ext) {
+            'png'         => 'image/png',
+            'webp'        => 'image/webp',
+            'gif'         => 'image/gif',
+            default       => 'image/jpeg',
+        };
+
+        return $this->success([
+            'data_url' => "data:{$mime};base64," . base64_encode($bytes),
+        ]);
     }
 
     /**

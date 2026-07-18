@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "tadaima-catalog": {
+      "command": "node",
+      "args": ["mcp/catalog/dist/index.js"],
+      "env": {
+        "TADAIMA_API_URL": "https://tadaima.poslite.com.mx/api/v1",
+        "TADAIMA_API_TOKEN": "${TADAIMA_API_TOKEN}"
+      }
+    }
+  }
+}

@@ -13,6 +13,9 @@ interface Props {
   /** Cantidad total de la línea (el cajero puede descontar menos → split). */
   lineQty: number;
   unitPrice: number;
+  /** Monto de la promo NxM que ya aplica en la línea (stacking 2026-07-17):
+   *  el descuento manual se calcula sobre el neto DESPUÉS de la promo. */
+  promoAmount?: number;
   /** Descuento ya aplicado (modo edición: precarga y permite quitar). */
   existing?: LineDiscount | undefined;
   onConfirm: (unitsToDiscount: number, discount: LineDiscount) => void;
@@ -44,7 +47,7 @@ const fmt = (n: number) =>
  * `computeLineDiscountAmount` que el checkout — lo que ves es lo que se cobra
  * (y el backend lo recomputa de todos modos: nunca viaja un monto).
  */
-export function LineDiscountModal({ productName, lineQty, unitPrice, existing, onConfirm, onRemove, onClose }: Props) {
+export function LineDiscountModal({ productName, lineQty, unitPrice, promoAmount = 0, existing, onConfirm, onRemove, onClose }: Props) {
   const [units, setUnits] = useState<string>(String(lineQty));
   const [kind, setKind] = useState<"fixed" | "percent">(existing?.kind ?? "fixed");
   const [basis, setBasis] = useState<"unit" | "line">(existing?.basis ?? "unit");
@@ -58,10 +61,14 @@ export function LineDiscountModal({ productName, lineQty, unitPrice, existing, o
   const preview = useMemo(() => {
     if (valueNum <= 0) return null;
     const draft: LineDiscount = { kind, basis, value: valueNum, reason };
-    const amount = computeLineDiscountAmount(draft, { unitPrice, qty: unitsNum });
-    const base = unitPrice * unitsNum;
-    return { amount, net: Math.max(0, base - amount), base };
-  }, [kind, basis, valueNum, reason, unitPrice, unitsNum]);
+    // Stacking: si se descuenta la línea COMPLETA y trae promo, la base es el
+    // neto-promo. Al descontar menos unidades (split) la promo se re-evalúa
+    // en las líneas resultantes — el preview usa el bruto de esa parte.
+    const promoOnBase = unitsNum === lineQty ? promoAmount : 0;
+    const base = Math.max(0, unitPrice * unitsNum - promoOnBase);
+    const amount = computeLineDiscountAmount(draft, { unitPrice, qty: unitsNum }, base);
+    return { amount, net: Math.max(0, base - amount), base, promoOnBase };
+  }, [kind, basis, valueNum, reason, unitPrice, unitsNum, lineQty, promoAmount]);
 
   const invalidPct = kind === "percent" && valueNum > 100;
   const canConfirm = valueNum > 0 && !invalidPct && unitsNum >= 1;

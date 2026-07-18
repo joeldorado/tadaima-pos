@@ -66,7 +66,7 @@ function buildPrintHtml(s: CashSessionReport, detail: CashSessionDetail | null =
   const diff = s.difference ?? 0;
   return `
     <html><head><title>Corte ${s.id}</title><style>
-      body { font-family: ui-monospace, monospace; width: 58mm; margin: 0; padding: 8px; font-size: 11px; color: #000 }
+      body { font-family: ui-monospace, monospace; width: 58mm; margin: 0; padding: 8px; font-size: 11px; font-weight: 700; color: #000 }
       h2 { font-size: 14px; text-align: center; margin: 0 0 4px }
       .sub { text-align: center; color: #000; font-size: 9px; margin-bottom: 8px }
       .row { display: flex; justify-content: space-between; padding: 2px 0 }

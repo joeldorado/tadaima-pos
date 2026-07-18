@@ -31,7 +31,18 @@ class SuppliesController extends Controller
     /** GET /supplies — catálogo (activos por default; ?all=1 incluye inactivos). */
     public function index(Request $request): JsonResponse
     {
+        // Scoping por empresa (fix 2026-07-16): el catálogo es compartido entre
+        // las tiendas de UNA empresa, nunca entre empresas distintas.
+        // Scoping por tienda (2026-07-16): un insumo con store_id solo lo ve esa
+        // tienda; store_id NULL = toda la empresa. Admin ve todo (etiquetado).
+        $user = $request->user();
+        $isAdmin = $user->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
+
         $supplies = Supply::query()
+            ->where('company_id', $user->company_id)
+            ->when(! $isAdmin, fn ($q) => $q->where(fn ($qq) =>
+                $qq->whereNull('store_id')->orWhere('store_id', $user->store_id)
+            ))
             ->when(! $request->boolean('all'), fn ($q) => $q->active())
             ->orderBy('category')
             ->orderBy('name')
@@ -47,10 +58,19 @@ class SuppliesController extends Controller
             return $resp;
         }
 
+        // Tienda del insumo con RBAC: admin manda lo que quiera (null = toda la
+        // empresa); gerente queda forzado a SU tienda.
+        $user = $request->user();
+        $isAdmin = $user->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
+        $storeId = $isAdmin
+            ? ($request->filled('store_id') ? (int) $request->input('store_id') : null)
+            : ($user->store_id ? (int) $user->store_id : null);
+
         $supply = Supply::create(array_merge(
             $request->only(['name', 'category', 'unit']),
             [
-                'company_id' => $request->user()->company_id,
+                'company_id' => $user->company_id,
+                'store_id'   => $storeId,
                 'is_active'  => $request->boolean('is_active', true),
             ],
         ));
@@ -63,6 +83,12 @@ class SuppliesController extends Controller
     {
         if ($resp = $this->adminOrManagerGateError()) {
             return $resp;
+        }
+
+        // Pertenencia por empresa (fix 2026-07-16): el route-model-binding trae
+        // cualquier id — sin este check un gerente podía editar insumos ajenos.
+        if ((int) $supply->company_id !== (int) $request->user()->company_id) {
+            return $this->error('Este insumo no pertenece a tu empresa.', 403);
         }
 
         $supply->update(array_merge(
@@ -80,17 +106,26 @@ class SuppliesController extends Controller
     public function storeMovement(StoreSupplyMovementRequest $request): JsonResponse
     {
         $supply = Supply::findOrFail((int) $request->input('supply_id'));
+
+        // Pertenencia por empresa (fix 2026-07-16): sin esto cualquier usuario
+        // autenticado podía registrar compras contra insumos de otra empresa.
+        if ((int) $supply->company_id !== (int) $request->user()->company_id) {
+            return $this->error('Este insumo no pertenece a tu empresa.', 403);
+        }
+
         $type   = (string) $request->input('type', SupplyMovement::TYPE_PURCHASE);
         $userId = $request->user()->id;
 
         try {
             $movement = $type === SupplyMovement::TYPE_PURCHASE
                 ? $this->service->registerPurchase(
-                    supply:   $supply,
-                    quantity: (float) $request->input('quantity'),
-                    amount:   (float) $request->input('amount'),
-                    note:     $request->input('note'),
-                    userId:   $userId,
+                    supply:      $supply,
+                    quantity:    (float) $request->input('quantity'),
+                    amount:      (float) $request->input('amount'),
+                    note:        $request->input('note'),
+                    userId:      $userId,
+                    moneySource: (string) $request->input('money_source', SupplyMovement::SOURCE_CAJA),
+                    payerName:   $request->input('payer_name') ? trim((string) $request->input('payer_name')) : null,
                 )
                 : $this->service->registerNonCashMovement(
                     supply:   $supply,
@@ -114,9 +149,22 @@ class SuppliesController extends Controller
         $isAdmin   = $user->isAdminRole();
         $isCashier = $user->hasRole(['cajero']) && ! $isAdmin;
 
-        $movements = SupplyMovement::with(['supply:id,name,category,unit', 'user:id,name'])
+        // Rango de fechas opcional (día-negocio), MISMO helper que /reports/supplies
+        // para que la lista detallada del Reporte cuadre con el agregado.
+        $fromUtc = $request->input('from') ? DateRange::fromUtc((string) $request->input('from')) : null;
+        $toUtc   = $request->input('to')   ? DateRange::toUtc((string) $request->input('to'))     : null;
+
+        $movements = SupplyMovement::with(['supply:id,name,category,unit,store_id', 'user:id,name'])
+            // Scoping por empresa (fix 2026-07-18): sin esto el historial
+            // mezclaba movimientos de insumos de otras empresas.
+            ->whereHas('supply', fn ($q) => $q->where('company_id', $user->company_id))
             ->when($request->integer('supply_id'), fn ($q, $id) => $q->where('supply_id', $id))
             ->when($request->input('type'), fn ($q, $t) => $q->where('type', $t))
+            ->when($fromUtc, fn ($q) => $q->where('supply_movements.created_at', '>=', $fromUtc))
+            ->when($toUtc,   fn ($q) => $q->where('supply_movements.created_at', '<=', $toUtc))
+            // Filtro por tienda DUEÑA del insumo (supplies.store_id); NULL = toda la
+            // empresa. Reportes por tienda (2026-07). Solo aplica si se envía store_id.
+            ->when($request->filled('store_id'), fn ($q) => $q->whereHas('supply', fn ($qq) => $qq->where('store_id', $request->integer('store_id'))))
             ->when($isCashier, fn ($q) => $q->where('user_id', $user->id))
             ->orderByDesc('created_at')
             ->limit(200)
@@ -139,6 +187,8 @@ class SuppliesController extends Controller
 
         $base = DB::table('supply_movements')
             ->join('supplies', 'supplies.id', '=', 'supply_movements.supply_id')
+            // Scoping por empresa (fix 2026-07-18): el gasto es de UNA empresa.
+            ->where('supplies.company_id', $request->user()->company_id)
             ->where('supply_movements.type', SupplyMovement::TYPE_PURCHASE)
             ->when($fromUtc, fn ($q) => $q->where('supply_movements.created_at', '>=', $fromUtc))
             ->when($toUtc,   fn ($q) => $q->where('supply_movements.created_at', '<=', $toUtc));
@@ -169,10 +219,25 @@ class SuppliesController extends Controller
                 'total'     => round((float) $r->total, 2),
             ]);
 
+        // Desglose por ORIGEN del dinero (caja / caja_chica / propio). Solo las
+        // compras con origen 'caja' descuentan del corte; las demás son gasto
+        // registrado fuera del cajón.
+        $bySource = (clone $base)
+            ->selectRaw("COALESCE(supply_movements.money_source, 'caja') as source, COUNT(*) as purchases, COALESCE(SUM(supply_movements.amount), 0) as total")
+            ->groupBy('source')
+            ->orderByDesc('total')
+            ->get()
+            ->map(fn ($r) => [
+                'source'    => $r->source,
+                'purchases' => (int) $r->purchases,
+                'total'     => round((float) $r->total, 2),
+            ]);
+
         return $this->success([
             'period'       => ['from' => $from, 'to' => $to],
             'total'        => round((float) (clone $base)->sum('supply_movements.amount'), 2),
             'by_category'  => $byCategory,
+            'by_source'    => $bySource,
             'top_supplies' => $topSupplies,
         ]);
     }

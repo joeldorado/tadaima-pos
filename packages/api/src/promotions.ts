@@ -9,12 +9,18 @@ import type { ProductPromotion } from './types'
 
 export interface ProductPromotionInput {
   name: string
-  buy_n: number
-  pay_m: number
+  /** 'nxm' (default) usa buy_n/pay_m; 'qty_discount' usa tiers. */
+  type?: 'nxm' | 'qty_discount'
+  buy_n?: number
+  pay_m?: number
+  /** Solo qty_discount: escalones [{qty, amount}]. */
+  tiers?: Array<{ qty: number; amount: number }>
   starts_at?: string | null
   ends_at?: string | null
   status?: 'active' | 'paused' | 'expired'
   priority?: number
+  /** null/omitido = todas las tiendas (admin); gerente queda forzado a la suya. */
+  store_id?: number | null
 }
 
 export async function getProductPromotions(productId: number): Promise<ProductPromotion[]> {

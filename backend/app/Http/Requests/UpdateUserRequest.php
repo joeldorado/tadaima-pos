@@ -23,6 +23,7 @@ class UpdateUserRequest extends FormRequest
             'active'           => ['nullable', 'boolean'],
             'can_view_cost'    => ['nullable', 'boolean'],
             'can_edit_catalog' => ['nullable', 'boolean'],
+            'can_manage_promos' => ['nullable', 'boolean'],
         ];
     }
 }

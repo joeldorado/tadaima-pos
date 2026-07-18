@@ -19,12 +19,15 @@ import { PreSaleDifusionPanel } from "@/components/presales/PreSaleDifusionPanel
 import { CameraScannerModal } from "@/components/CameraScannerModal";
 import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
 import { useViewportMaxHeight } from "@/hooks/useViewportMaxHeight";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { PaymentRestrictionBadge, getPayRestriction } from "@/components/ui/PaymentRestrictionBadge";
+import { SingleDatePicker } from "@/components/ui/SingleDatePicker";
 import { toast } from "sonner";
-import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, closeSession, forceCloseSession, getActiveSession, createLayaway, getCustomers, createCustomer, refreshMember, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getPreSaleOrders, getSales, getProductsLight, storageUrl, getCashReport, sendPreSaleAssignAlert, getCatalogCustomerUsage } from "@tadaima/api";
+import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, forceCloseSession, getActiveSession, createLayaway, getCustomers, createCustomer, refreshMember, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getPreSaleOrders, getSales, getProductsLight, storageUrl, sendPreSaleAssignAlert, getCatalogCustomerUsage } from "@tadaima/api";
 import type { OpenSessionConflict } from "@tadaima/api";
 import type { CashSessionReport } from "@tadaima/api";
 import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
+import { CloseCashModal } from "@/components/cash/CloseCashModal";
 import { CortesModal } from "@/components/cash/CortesModal";
 import { OpenSessionConflictModal } from "@/components/cash/OpenSessionConflictModal";
 import { useQueryClient } from "@tanstack/react-query";
@@ -38,6 +41,7 @@ import { useExchangeRateQuery } from "@/hooks/queries/useSystemSettings";
 import { usePreSaleCatalogsQuery, usePreSaleOrdersQuery } from "@/hooks/queries/usePreSales";
 import { useCustomersAllQuery } from "@/hooks/queries/useCustomers";
 import { useTodayHistorialQuery } from "@/hooks/queries/useHistorial";
+import { promoShortLabel, promoTiersLabel } from "@/lib/promoLabel";
 import { queryKeys } from "@/lib/queryKeys";
 import { prependSaleToSalesCaches, prependPreSaleOrderToCaches, patchPreSaleOrderInCaches, decrementProductStockInCaches, invalidateAfterSale } from "@/lib/optimisticSale";
 import { getTodayLocal, toLocalYmd, BUSINESS_TZ } from "@/lib/date";
@@ -117,7 +121,7 @@ interface Product {
   // agrega stock; no se puede cobrar hasta que tenga stock). Default true.
   is_assigned?: boolean;
   /** Promos NxM VIGENTES (Fase 3) — el motor elige la mejor por línea. */
-  active_promotions?: Array<{ id: number; name: string; buy_n: number; pay_m: number; priority: number }>;
+  active_promotions?: Array<{ id: number; name: string; type?: 'nxm' | 'qty_discount'; buy_n: number | null; pay_m: number | null; tiers?: Array<{ qty: number; amount: number }> | null; priority: number; store_id?: number | null }>;
 }
 
 interface Customer {
@@ -493,6 +497,12 @@ export function SellPage() {
   // proactivo arriba de la barra de Caja para que haga el corte.
   const openedYmd = cashSession?.opened_at ? toLocalYmd(new Date(cashSession.opened_at)) : null;
   const isStaleSession = !!openedYmd && openedYmd < getTodayLocal();
+  // Bloqueo de venta (espejo del guard backend CASH_SESSION_STALE): día-negocio
+  // anterior Y 12h+ desde apertura. La doble regla deja vivir turnos que cruzan
+  // medianoche (abrió 8pm, cobra 1am → "ayer" pero solo 5h → NO bloquea).
+  const STALE_BLOCK_HOURS = 12;
+  const isBlockedStaleSession = isStaleSession && !!cashSession?.opened_at &&
+    (Date.now() - new Date(cashSession.opened_at).getTime()) >= STALE_BLOCK_HOURS * 3600_000;
   const cashRegistersQuery  = useCashRegistersQuery(activeStore?.id, { enabled: !cashSession });
   const cashRegisters: CashRegisterInfo[] = cashRegistersQuery.data ?? [];
   // Sesiones abiertas en la tienda activa — solo el admin las muestra en la
@@ -596,8 +606,6 @@ export function SellPage() {
   const [openSessionConflict, setOpenSessionConflict] = useState<OpenSessionConflict | null>(null);
   const [resolvingConflict, setResolvingConflict] = useState(false);
   const [showCloseCashModal, setShowCloseCashModal] = useState(false);
-  const [closeCashAmount, setCloseCashAmount] = useState("");
-  const [closingCashLoading, setClosingCashLoading] = useState(false);
   // Cuando se cierra caja exitosamente, se llena con el reporte de corte y
   // se muestra el modal de resumen. null = cerrado.
   const [cashCloseSummary, setCashCloseSummary] = useState<CashSessionReport | null>(null);
@@ -644,6 +652,12 @@ export function SellPage() {
 
   const [tc, setTc]           = useState(15.50);
   const [showTc, setShowTc]   = useState(false);
+  // Caja responsiva: bajo 768px el panel de cobro pasa a hoja completa que se
+  // abre desde una barra inferior fija (TOTAL + COBRAR nunca se ocultan).
+  const isNarrow = useMediaQuery("(max-width: 767px)");
+  const [payOpen, setPayOpen] = useState(false);
+  // Guard $0: confirmación cuando un descuento deja el cobro en $0 (cortesía).
+  const [zeroConfirmOpen, setZeroConfirmOpen] = useState(false);
   const [showTerminalModal, setShowTerminalModal] = useState(false);
   const [tcDraft, setTcDraft] = useState("15.50");
 
@@ -2094,9 +2108,13 @@ export function SellPage() {
           id: ap.id,
           productId: i.product.id,
           name: ap.name,
-          buyN: ap.buy_n,
-          payM: ap.pay_m,
+          type: ap.type ?? ("nxm" as const),
+          buyN: ap.buy_n ?? 0,
+          payM: ap.pay_m ?? 0,
+          ...(ap.tiers ? { tiers: ap.tiers } : {}),
           priority: ap.priority,
+          // Override local: la promo de la tienda apaga la global (motor).
+          storeId: ap.store_id ?? null,
         }))
       ),
     }),
@@ -2202,7 +2220,8 @@ export function SellPage() {
       // de lo que se cobra (review Fase 0 2026-07-14). Paridad exacta con el
       // math previo: subtotal crudo − descuento.
       const rawSubtotal = activeMesa.items.reduce((s, i) => s + getItemPrice(i) * i.quantity, 0);
-      return rawSubtotal - discountAmt;
+      // Clamp ≥0: un descuento ≥ subtotal no debe mostrar/gatear un total negativo.
+      return Math.max(0, rawSubtotal - discountAmt);
     }
     if (activeMesa.isPreventa) {
       // Modo preventa explícito: solo se cobran los anticipos.
@@ -2466,13 +2485,24 @@ export function SellPage() {
     // Distribute balance proportionally across PENDING items; delivered show at $0
     const pendingTotal = itemsWithStock.reduce((s, i) => s + (i.product.price_a || 0) * i.quantity, 0);
     const ratio = pendingTotal > 0 ? balance / pendingTotal : 1;
-    const balancedItems: CartItem[] = preSaleItems.map(i => ({
-      ...i,
-      product: {
-        ...i.product,
-        price_a: i.preSaleItemDelivered ? 0 : (i.product.price_a || 0) * ratio,
-      },
-    }));
+    const round2 = (n: number) => Math.round(n * 100) / 100;
+    const balancedItems: CartItem[] = preSaleItems.map(i => {
+      const origLineTotal = (i.product.price_a || 0) * i.quantity;
+      const delivered = i.preSaleItemDelivered;
+      const saldoShare = delivered ? 0 : origLineTotal * ratio;
+      // Anticipo ya pagado (share por línea): total original − saldo restante.
+      // Invariante: depositAmount + lineTotal(escalado) = total original.
+      // Es SOLO display; el cobro de liquidación usa activeMesa.depositAmount.
+      const paidShare = round2(Math.max(0, origLineTotal - saldoShare));
+      return {
+        ...i,
+        depositAmount: paidShare,
+        product: {
+          ...i.product,
+          price_a: delivered ? 0 : (i.product.price_a || 0) * ratio,
+        },
+      };
+    });
 
     // Política: liquidación de preventa no se cobra con Tarjeta. Si la mesa
     // estaba en Tarjeta, forzar Efectivo + avisar.
@@ -2837,47 +2867,14 @@ export function SellPage() {
     }
   };
 
-  const handleCloseCash = async () => {
-    const amount = parseFloat(closeCashAmount) || 0;
-    setClosingCashLoading(true);
-    try {
-      // Manda el día local del corte — el timestamp UTC del backend ya cae
-      // en "mañana" después de las 11pm Tijuana (el corte se iba al día 12).
-      const closedSession = await closeSession(amount, getTodayLocal());
-      // Limpiar la caché de sesión activa SINCRÓNICAMENTE antes de cualquier
-      // setState. El efecto de auto-asignación (línea ~553) lee `cashSession`
-      // de la caché — si dejamos la versión vieja "open" y solo invalidamos,
-      // el re-render entre setActiveStore(null) y el refetch reasigna la tienda
-      // y el admin nunca ve el selector (síntoma: solo Tienda 1 sin hard reload).
-      queryClient.setQueryData(['cash', 'activeSession'], null);
-      void queryClient.invalidateQueries({ queryKey: ['cash'] });
-      setShowCloseCashModal(false);
-      setCloseCashAmount("");
-      toast.success("Caja cerrada — corte registrado");
-
-      // Trae el corte detallado del endpoint /reports/cash y abre el modal
-      // de Corte de Caja con resumen + opción de imprimir.
-      const today = new Date();
-      const localDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-      try {
-        const report = await getCashReport({
-          register_id: closedSession.register_id,
-          from: localDate,
-          to: localDate,
-        });
-        const match = report.sessions.find(x => x.id === closedSession.id);
-        if (match) setCashCloseSummary(match);
-      } catch {
-        // Si el fetch falla, no rompemos el flujo de cierre — solo no abre el modal
-      }
-
-      if (isAdmin) {
-        setActiveStore(null);
-      }
-    } catch {
-      toast.error("Error al cerrar la caja");
-    } finally {
-      setClosingCashLoading(false);
+  // Cierre de caja: la captura + POST /cash/close viven en CloseCashModal
+  // (compartido con el guard de logout en Layout). Aquí solo decidimos qué
+  // pasa después: abrir el resumen del corte y, si es admin, soltar la tienda.
+  const handleCashClosed = (report: CashSessionReport | null) => {
+    setShowCloseCashModal(false);
+    if (report) setCashCloseSummary(report);
+    if (isAdmin) {
+      setActiveStore(null);
     }
   };
 
@@ -2969,7 +2966,7 @@ export function SellPage() {
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Ticket</title>
     <style>*{margin:0;padding:0;box-sizing:border-box}
     html{background:#e5e7eb}
-    body{font-family:'Courier New',monospace;font-size:11px;width:58mm;margin:0 auto;background:#fff;padding:56px 1.5mm 2mm;overflow-wrap:anywhere;word-break:break-word}
+    body{font-family:'Courier New',monospace;font-size:11px;font-weight:700;width:58mm;margin:0 auto;background:#fff;padding:56px 1.5mm 2mm;overflow-wrap:anywhere;word-break:break-word}
     h2{font-size:15px;text-align:center;font-weight:900;margin-bottom:2px}.sub{font-size:9px;text-align:center;color:#000;margin-bottom:2px}
     .divider{border-top:1px dashed #000;margin:6px 0}table{width:100%;border-collapse:collapse;table-layout:fixed}
     td{word-break:break-word}
@@ -3134,6 +3131,23 @@ export function SellPage() {
    * Para otros errores, muestra toast.error genérico.
    */
   const handleCheckoutError = (msg: string) => {
+    // Guard backend de caja stale/cerrada (CASH_SESSION_STALE/CLOSED): el
+    // server rechazó cobrar sobre esta sesión. Refrescamos el estado de caja
+    // y abrimos el flujo de corte — cubre PWA con cache viejo donde el guard
+    // local no alcanzó a ver la sesión como stale.
+    if (/haz el corte antes de vender/i.test(msg)) {
+      void queryClient.invalidateQueries({ queryKey: ['cash'] });
+      toast.warning(msg, { duration: 8000 });
+      setShowCloseCashModal(true);
+      return;
+    }
+    if (/caja de esta venta ya está cerrada/i.test(msg)) {
+      // Nada que cerrar: la sesión ya no existe abierta. Refrescar hace que
+      // la UI pida abrir caja nueva.
+      void queryClient.invalidateQueries({ queryKey: ['cash'] });
+      toast.warning(msg, { duration: 8000 });
+      return;
+    }
     // Total desincronizado (ej. una promo venció con el cache aún "fresco"):
     // el server recomputó distinto al cliente. Refrescar productos/promos y
     // pedir re-cobro con mensaje claro — sin esto el cajero ve un 422 críptico.
@@ -3219,8 +3233,31 @@ export function SellPage() {
     toast.error(msg);
   };
 
-  const handleCheckout = async () => {
+  const handleCheckout = async (opts?: { allowZero?: boolean }) => {
     if (!activeMesa.items.length) return;
+
+    // Guard de caja de días anteriores: no se cobra sobre una sesión vieja —
+    // primero el corte (espejo del 422 CASH_SESSION_STALE del backend, corta
+    // antes para no perder el carrito en un roundtrip fallido).
+    if (isBlockedStaleSession) {
+      toast.warning(
+        `Tu caja quedó abierta desde el ${openedYmd}. Haz el corte y abre una caja nueva para cobrar.`,
+        { duration: 8000 },
+      );
+      setShowCloseCashModal(true);
+      return;
+    }
+
+    // Guard $0 (Descuentos v2): un descuento que deja el cobro en $0 con
+    // productos que SÍ tienen precio suele ser un descuento atorado/accidental
+    // (p.ej. rehidratado de localStorage). Pedimos confirmación explícita
+    // (cortesía real) antes de cobrar $0. No aplica a preventa (anticipos $0
+    // válidos) ni a carritos legítimamente sin subtotal.
+    if (!opts?.allowZero && !activeMesa.isPreventa && !activeMesa.loadedPreSaleOrderId
+        && subtotal > 0 && currentPayAmount <= 0.005) {
+      setZeroConfirmOpen(true);
+      return;
+    }
 
     // Guard de método incompatible — también cubre los atajos de Enter que
     // llaman handleCheckout directo sin pasar por el disabled del botón.
@@ -4332,7 +4369,7 @@ export function SellPage() {
             . Haz el corte para cerrar el día.
           </span>
           <button
-            onClick={() => { setCloseCashAmount(""); setShowCloseCashModal(true); }}
+            onClick={() => setShowCloseCashModal(true)}
             className="ml-auto shrink-0 flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-transform active:scale-95"
             style={{ background: "linear-gradient(135deg, #7A3800, #F59E0B)", color: "#fff" }}
           >
@@ -4437,7 +4474,7 @@ export function SellPage() {
           {/* Cancelar Venta movido a la barra de buscadores (junto a Catálogo,
               Preventas, Cliente, Escanear) y solo visible cuando hay productos. */}
           <button
-            onClick={() => { setCloseCashAmount(""); setShowCloseCashModal(true); }}
+            onClick={() => setShowCloseCashModal(true)}
             className="h-full px-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-colors"
             style={{ background: "rgba(245,158,11,0.18)", color: "#F59E0B", borderLeft: "1px solid rgba(245,158,11,0.4)" }}
             title={`Cerrar sesión y hacer el corte del día: ${cashSession?.register?.name ?? "Caja"} · Abierta ${cashSession?.opened_at ? new Date(cashSession.opened_at).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }) : ""}`}
@@ -4448,70 +4485,13 @@ export function SellPage() {
         </div>
       </div>
 
-      {/* ── Modal: Cerrar caja / Corte ────────────────────────────────────── */}
-      {showCloseCashModal && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-          <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.82)", backdropFilter: "blur(8px)" }} onClick={() => setShowCloseCashModal(false)} />
-          <div style={{ position: "relative", background: "var(--td-popup-bg)", border: "1px solid var(--td-popup-border)", borderRadius: 28, padding: 32, minWidth: 380, maxWidth: 460, width: "100%" }}>
-
-            {/* Header */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
-              <div>
-                <h3 style={{ color: "var(--td-text-hi)", fontSize: 17, fontWeight: 900, margin: 0 }}>Corte de Caja</h3>
-                <p style={{ color: "var(--td-text-ghost)", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.15em", margin: "4px 0 0" }}>
-                  {cashSession?.register?.name ?? "Caja"} · Apertura {cashSession?.opened_at ? new Date(cashSession.opened_at).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" }) : "—"}
-                </p>
-              </div>
-              <button onClick={() => setShowCloseCashModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--td-text-ghost)", padding: 4 }}>
-                <X size={18} />
-              </button>
-            </div>
-
-            {/* Session info */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 }}>
-              {[
-                { label: "Cajero",          value: cashSession?.user?.name ?? "—" },
-                { label: "Efectivo inicial", value: `$${(cashSession?.opening_cash ?? 0).toLocaleString("es-MX")}` },
-              ].map(({ label, value }) => (
-                <div key={label} style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", borderRadius: 14, padding: "12px 16px" }}>
-                  <p style={{ margin: 0, fontSize: 9, fontWeight: 900, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.12em" }}>{label}</p>
-                  <p style={{ margin: "4px 0 0", fontSize: 14, fontWeight: 900, color: "var(--td-text-hi)" }}>{value}</p>
-                </div>
-              ))}
-            </div>
-
-            {/* Closing cash input */}
-            <div style={{ marginBottom: 24 }}>
-              <label style={{ display: "block", fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "var(--td-text-ghost)", marginBottom: 8 }}>
-                Efectivo en Caja al Cierre ($MXN)
-              </label>
-              <input
-                type="number" min={0} step={1} value={closeCashAmount}
-                onChange={e => setCloseCashAmount(e.target.value)}
-                placeholder="0" autoFocus
-                style={{ width: "100%", background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 14, color: "var(--td-input-text)", padding: "12px 16px", fontSize: 22, fontWeight: 900, outline: "none", boxSizing: "border-box" as const }}
-              />
-              <p style={{ margin: "8px 0 0", fontSize: 10, color: "var(--td-text-ghost)", fontWeight: 600 }}>
-                Este valor se compara contra el dinero físico esperado en caja. Las ventas con tarjeta sí salen en reportes y tickets, pero no cuentan para el faltante o sobrante del cajón.
-              </p>
-            </div>
-
-            {/* Actions */}
-            <div style={{ display: "flex", gap: 10 }}>
-              <button onClick={() => setShowCloseCashModal(false)} style={{ flex: 1, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 14, color: "var(--td-text-lo)", padding: "12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-                Cancelar
-              </button>
-              <button
-                onClick={() => { void handleCloseCash(); }}
-                disabled={closingCashLoading}
-                style={{ flex: 2, background: "linear-gradient(135deg, #7A3800, #F59E0B)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 14, color: "#fff", padding: "12px", fontSize: 12, fontWeight: 900, cursor: closingCashLoading ? "not-allowed" : "pointer", opacity: closingCashLoading ? 0.6 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
-              >
-                {closingCashLoading ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-                {closingCashLoading ? "Cerrando..." : "Confirmar Corte"}
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* ── Modal: Cerrar caja / Corte (componente compartido con Layout) ─── */}
+      {showCloseCashModal && cashSession && (
+        <CloseCashModal
+          session={cashSession}
+          onClosed={handleCashClosed}
+          onCancel={() => setShowCloseCashModal(false)}
+        />
       )}
 
       <div className="flex-1 flex overflow-hidden">
@@ -5087,6 +5067,22 @@ export function SellPage() {
                                   Tomo {p.volume_number}
                                 </span>
                               )}
+                              {/* Promo NxM vigente — el cajero la ve ANTES de agregar (QA Joel 2026-07-16) */}
+                              {(p.active_promotions?.length ?? 0) > 0 && (() => {
+                                const pool = (p.active_promotions ?? []);
+                                // Override local: si hay promo de la tienda, la global no aplica aquí.
+                                const cands = pool.some(pr => pr.store_id != null) ? pool.filter(pr => pr.store_id != null) : pool;
+                                const promo = [...cands].sort((a, b) => b.priority - a.priority || a.id - b.id)[0]!;
+                                return (
+                                  <span title={`${promo.name} · ${promoTiersLabel(promo)}`} style={{
+                                    marginLeft: 8, padding: "1px 7px", borderRadius: 6, verticalAlign: "middle",
+                                    fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em",
+                                    color: "#34d399", background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.35)",
+                                  }}>
+                                    Promo {promoShortLabel(promo)}
+                                  </span>
+                                );
+                              })()}
                             </p>
                             <p className="text-[11px] uppercase tracking-[0.15em] mt-0.5" style={{ color: "var(--td-text-ghost)" }}>{p.sku}</p>
 
@@ -5382,9 +5378,15 @@ export function SellPage() {
 
                       {/* ── Anticipo individual (solo items de preventa: catálogo o ya cargados de orden) ── */}
                       {(item.sellingCatalogId != null || item.isFromPreSale) && (() => {
-                        const itemTotal = lineTotal;
                         const dep = item.depositAmount ?? 0;
-                        const full = dep >= itemTotal && itemTotal > 0;
+                        // Preventa cargada (liquidación): el precio de línea ya viene
+                        // escalado al SALDO; el total original = anticipo + saldo.
+                        const itemTotal = item.isFromPreSale
+                          ? Math.round((dep + lineTotal) * 100) / 100
+                          : lineTotal;
+                        const full = item.isFromPreSale
+                          ? lineTotal <= 0.005
+                          : dep >= itemTotal && itemTotal > 0;
                         return (
                           <div className="flex items-center gap-2 mt-2.5 flex-wrap">
                             <span className="text-[9px] font-black uppercase tracking-widest" style={{ color: TLO }}>
@@ -5532,26 +5534,28 @@ export function SellPage() {
                           <p className="mt-1 text-center text-[14px] font-black" style={{ color: TMD }}>
                             {item.quantity} × {fmt(unitPrice)}
                           </p>
-                          {/* Badge del descuento por línea: monto + motivo + quitar */}
-                          {lineDiscAmt > 0 && item.discount && (
+                          {/* Badge del descuento MANUAL: solo la parte manual (stacking
+                              2026-07-17 — se acumula sobre el resultado de la promo). */}
+                          {item.discount && (lineCalc?.manualPart ?? 0) > 0 && (
                             <button
                               onClick={() => removeLineDiscount(item.lineId)}
                               title={`Quitar descuento${item.discount.note ? ` · ${item.discount.note}` : ""}`}
                               className="mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-black"
                               style={{ background: "rgba(224,34,26,0.14)", color: "var(--td-red)", border: "1px solid rgba(224,34,26,0.4)" }}
                             >
-                              −{fmt(lineDiscAmt)} · {DISCOUNT_REASON_LABELS[item.discount.reason]} <X size={10} />
+                              −{fmt(lineCalc?.manualPart ?? 0)} · {DISCOUNT_REASON_LABELS[item.discount.reason]} <X size={10} />
                             </button>
                           )}
-                          {/* Badge de promo NxM automática (Fase 3): verde, no removible —
-                              se quita sola si baja la cantidad o si aplican descuento manual. */}
-                          {lineDiscAmt > 0 && !item.discount && lineBenefit?.type === "promo" && (
+                          {/* Badge de promo NxM automática: verde, no removible — ahora
+                              convive con el descuento manual (stacking). */}
+                          {(lineCalc?.promoPart?.amount ?? 0) > 0 && (
                             <span
                               className="mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-black"
                               style={{ background: "rgba(16,185,129,0.12)", color: "#34d399", border: "1px solid rgba(16,185,129,0.4)" }}
-                              title={`Promoción automática: ${lineBenefit.promoLabel ?? ""}`}
+                              title={`Promoción automática: ${lineCalc?.promoPart?.promoLabel ?? ""}`}
                             >
-                              {lineBenefit.promoLabel ?? "Promo"} · {lineBenefit.freeQty ?? 0} gratis −{fmt(lineDiscAmt)}
+                              {/* qty_discount no regala piezas (freeQty 0) — solo monto */}
+                              {lineCalc?.promoPart?.promoLabel ?? "Promo"} ·{(lineCalc?.promoPart?.freeQty ?? 0) > 0 ? ` ${lineCalc?.promoPart?.freeQty} gratis` : ""} −{fmt(lineCalc?.promoPart?.amount ?? 0)}
                             </span>
                           )}
                           {!item.isFromPreSale && item.isDamaged && (
@@ -5657,10 +5661,19 @@ export function SellPage() {
             asegura que el botón Cobrar y el cambio queden siempre visibles. */}
         <aside
           ref={tcRef}
-          className="hidden md:flex shrink-0 w-[420px] xl:w-[460px] flex-col"
+          className={`flex-col ${isNarrow ? (payOpen ? "flex fixed inset-0 z-50 w-full" : "hidden") : "hidden md:flex md:shrink-0 md:w-[360px] lg:w-[420px] xl:w-[460px]"}`}
           style={{ background: "var(--td-panel-bg)", borderLeft: CARD_B }}
           aria-label="Panel de cobro"
         >
+          {/* Header de la hoja (solo móvil): título + cerrar */}
+          {isNarrow && payOpen && (
+            <div className="flex items-center justify-between px-5 py-3 shrink-0" style={{ borderBottom: CARD_B }}>
+              <span style={{ fontSize: 13, fontWeight: 900, color: "var(--td-text-hi)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Cobro</span>
+              <button onClick={() => setPayOpen(false)} className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: "var(--td-card-bg)", border: CARD_B, color: "var(--td-text-md)" }} aria-label="Cerrar cobro">
+                <X size={16} />
+              </button>
+            </div>
+          )}
           {/* Contenedor scrolleable: contenido alineado al FONDO (justify-end)
               para que crezca de abajo hacia arriba. Cuando solo hay TOTAL, el
               espacio sobrante queda arriba; cuando se agrega cash input + cambio,
@@ -6453,6 +6466,55 @@ export function SellPage() {
       </div>
       {/* ↑ cierra contenedor horizontal de 2 columnas (cart + sidebar) */}
 
+      {/* Barra de cobro fija (solo pantallas angostas <768px): el panel lateral
+          se oculta ahí, así que TOTAL + COBRAR viven aquí SIEMPRE visibles y
+          abren la hoja de cobro completa. Arregla "se ocultan datos y botones". */}
+      {isNarrow && !payOpen && (activeMesa?.items?.length ?? 0) > 0 && (
+        <div
+          className="fixed inset-x-0 bottom-0 z-40 flex items-center gap-3 px-4 py-3"
+          style={{ background: "var(--td-panel-bg)", borderTop: CARD_B, boxShadow: "0 -8px 24px rgba(0,0,0,0.28)" }}
+        >
+          <div className="flex flex-col min-w-0 flex-1">
+            <span style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--td-text-lo)" }}>Total a pagar</span>
+            <span style={{ fontSize: 22, fontWeight: 900, color: "var(--td-text-hi)", lineHeight: 1 }}>{fmt(currentPayAmount)}</span>
+          </div>
+          <button
+            onClick={() => setPayOpen(true)}
+            className="flex items-center gap-2 px-6 py-3 rounded-2xl shrink-0 active:scale-95 transition-transform"
+            style={{ background: "var(--td-red)", color: "#fff", fontWeight: 900, fontSize: 14 }}
+          >
+            <Zap size={16} /> Cobrar
+          </button>
+        </div>
+      )}
+
+      {/* Confirmación de cobro en $0 (descuento 100% / cortesía) — Fase D hardening */}
+      {zeroConfirmOpen && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setZeroConfirmOpen(false)} />
+          <div className="relative w-full max-w-sm rounded-3xl overflow-hidden" style={{ background: "var(--td-popup-bg)", border: "1px solid var(--td-popup-border)" }}>
+            <div className="p-6 flex flex-col gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0" style={{ background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.35)" }}>
+                  <AlertTriangle size={22} color="#F59E0B" />
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <p style={{ margin: 0, fontSize: 15, fontWeight: 900, color: "var(--td-text-hi)" }}>¿Cobrar $0?</p>
+                  <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: "var(--td-text-lo)" }}>El total quedó en $0 por un descuento.</p>
+                </div>
+              </div>
+              <p style={{ fontSize: 12.5, fontWeight: 600, color: "var(--td-text-md)", lineHeight: 1.5, margin: 0 }}>
+                Subtotal {fmt(subtotal)} · descuento {fmt(discountAmt)}. Si es una cortesía, confirma. Si no, cancela y revisa los descuentos por línea.
+              </p>
+            </div>
+            <div className="flex gap-2 p-4" style={{ borderTop: "1px solid var(--td-divider)" }}>
+              <button onClick={() => setZeroConfirmOpen(false)} className="flex-1 py-3 rounded-2xl font-black text-xs uppercase tracking-widest" style={{ background: "var(--td-card-bg)", border: CARD_B, color: "var(--td-text-md)" }}>Cancelar</button>
+              <button onClick={() => { setZeroConfirmOpen(false); void handleCheckout({ allowZero: true }); }} className="flex-1 py-3 rounded-2xl font-black text-xs uppercase tracking-widest" style={{ background: "#F59E0B", color: "#1a1204" }}>Sí, cobrar $0</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal Terminales de Pago */}
       <AnimatePresence>
         {showTerminalModal && (
@@ -6566,6 +6628,7 @@ export function SellPage() {
             productName={line.product.name}
             lineQty={line.quantity}
             unitPrice={getItemPrice(line)}
+            promoAmount={lineCalcById[line.lineId]?.promoPart?.amount ?? 0}
             existing={line.discount}
             onConfirm={(units, d) => applyLineDiscount(line.lineId, units, d)}
             onRemove={line.discount ? () => removeLineDiscount(line.lineId) : undefined}
@@ -7184,13 +7247,13 @@ export function SellPage() {
                     <Calendar size={10} />
                     Fecha límite de entrega <span className="normal-case font-bold" style={{ color: "var(--td-text-ghost)" }}>(opcional)</span>
                   </p>
-                  <input
-                    type="date"
+                  <SingleDatePicker
                     value={apartarExpiresAt}
-                    onChange={e => setApartarExpiresAt(e.target.value)}
-                    min={getTodayLocal()}
-                    className="w-full rounded-2xl px-4 py-2.5 text-sm font-bold outline-none focus:bg-amber-500/5 transition-all"
-                    style={{ background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", color: "var(--td-input-text)", colorScheme: "light" }}
+                    onChange={setApartarExpiresAt}
+                    onClear={() => setApartarExpiresAt("")}
+                    minValue={getTodayLocal()}
+                    placeholder="Sin fecha límite"
+                    ariaLabel="Fecha límite de entrega del apartado"
                   />
                 </div>
 
@@ -8101,7 +8164,18 @@ export function SellPage() {
                               items: (sale.items || []).map(i => ({
                                 name: i.product?.name || String(i.product_id), quantity: i.quantity, price: i.price,
                                 ...((i.discount_amount ?? 0) > 0
-                                  ? { discountAmount: i.discount_amount ?? 0, discountLabel: i.benefit_type === "promo" ? `Promo ${i.promo_name ?? ""}`.trim() : `Desc.${i.discount_reason ? ` ${DISCOUNT_REASON_LABELS[i.discount_reason as keyof typeof DISCOUNT_REASON_LABELS] ?? i.discount_reason}` : ""}` }
+                                  ? {
+                                      discountAmount: i.discount_amount ?? 0,
+                                      // Stacking: si promo y manual conviven, la etiqueta une ambos.
+                                      discountLabel: [
+                                        i.promo_name ? `Promo ${i.promo_name}`.trim() : "",
+                                        (() => {
+                                          const promoAmt = i.promo_name ? Math.min(i.discount_amount ?? 0, i.promo_amount ?? ((i.promo_free_qty ?? 0) * i.price)) : 0;
+                                          const manualAmt = (i.discount_amount ?? 0) - promoAmt;
+                                          return manualAmt > 0.005 ? `Desc.${i.discount_reason ? ` ${DISCOUNT_REASON_LABELS[i.discount_reason as keyof typeof DISCOUNT_REASON_LABELS] ?? i.discount_reason}` : ""}` : "";
+                                        })(),
+                                      ].filter(Boolean).join(" + "),
+                                    }
                                   : {}),
                               })),
                               soldAt: dateStr,
@@ -8137,15 +8211,16 @@ export function SellPage() {
                               {(sale.items || []).length === 0
                                 ? <p style={{ fontSize: 10, color: "var(--td-text-ghost)", textAlign: "center", padding: "8px 0" }}>Sin detalle</p>
                                 : (sale.items || []).map((item, idx) => {
-                                  // Descuentos v2: neto de la línea + etiqueta del beneficio.
+                                  // Descuentos v2 + stacking (2026-07-17): promo y descuento
+                                  // manual CONVIVEN — parte promo derivada del snapshot
+                                  // (free_qty × precio), el manual es el resto.
                                   const itemDisc = item.discount_amount ?? 0;
                                   const itemNet = item.price * item.quantity - itemDisc;
+                                  const promoPartAmt = item.promo_name ? Math.min(itemDisc, item.promo_amount ?? ((item.promo_free_qty ?? 0) * item.price)) : 0;
+                                  const manualPartAmt = Math.max(0, Math.round((itemDisc - promoPartAmt) * 100) / 100);
                                   const discReason = item.discount_reason
                                     ? (DISCOUNT_REASON_LABELS[item.discount_reason as keyof typeof DISCOUNT_REASON_LABELS] ?? item.discount_reason)
                                     : "";
-                                  const discLabel = item.benefit_type === "promo"
-                                    ? `Promo ${item.promo_name ?? ""}`.trim()
-                                    : `Desc.${discReason ? ` ${discReason}` : ""}`;
                                   return (
                                   <div key={idx} style={{ padding: "3px 0", borderBottom: idx < (sale.items || []).length - 1 ? "1px solid var(--td-divider)" : "none" }}>
                                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -8156,10 +8231,17 @@ export function SellPage() {
                                       <span style={{ fontSize: 11, fontWeight: 900, color: "var(--td-text-hi)", flexShrink: 0, width: 62, textAlign: "right", ...(itemDisc > 0 ? { textDecoration: "line-through", color: "var(--td-text-ghost)", fontWeight: 700 } : {}) }}>{fmt(item.price * item.quantity)}</span>
                                     </div>
                                     {itemDisc > 0 && (
-                                      <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, marginTop: 1 }}>
-                                        <span style={{ fontSize: 9, fontWeight: 900, color: "#E0221A", background: "rgba(224,34,26,0.10)", border: "1px solid rgba(224,34,26,0.30)", borderRadius: 999, padding: "1px 7px" }}>
-                                          {discLabel} −{fmt(itemDisc)}
-                                        </span>
+                                      <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, marginTop: 1, flexWrap: "wrap" }}>
+                                        {promoPartAmt > 0 && (
+                                          <span style={{ fontSize: 9, fontWeight: 900, color: "#34d399", background: "rgba(16,185,129,0.10)", border: "1px solid rgba(16,185,129,0.35)", borderRadius: 999, padding: "1px 7px" }}>
+                                            Promo {item.promo_name ?? ""} −{fmt(promoPartAmt)}
+                                          </span>
+                                        )}
+                                        {manualPartAmt > 0 && (
+                                          <span style={{ fontSize: 9, fontWeight: 900, color: "#E0221A", background: "rgba(224,34,26,0.10)", border: "1px solid rgba(224,34,26,0.30)", borderRadius: 999, padding: "1px 7px" }}>
+                                            Desc.{discReason ? ` ${discReason}` : ""} −{fmt(manualPartAmt)}
+                                          </span>
+                                        )}
                                         <span style={{ fontSize: 11, fontWeight: 900, color: "var(--td-text-hi)", flexShrink: 0, width: 62, textAlign: "right" }}>{fmt(itemNet)}</span>
                                       </div>
                                     )}

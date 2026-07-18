@@ -63,7 +63,7 @@ export function CartDrawer({
       >
         <header className="flex items-center justify-between p-5 border-b border-white/10">
           <div className="flex items-center gap-2">
-            <ShoppingBag size={18} className="text-amber-300" />
+            <ShoppingBag size={18} style={{ color: "var(--cat-price, #FCD34D)" }} />
             <h2 className="text-sm font-black uppercase tracking-widest text-white" style={{ fontFamily: DISPLAY }}>Tu pedido</h2>
           </div>
           <button onClick={onClose} className="text-white/40 hover:text-white transition-colors">
@@ -106,12 +106,13 @@ export function CartDrawer({
                   <Store size={14} className="text-emerald-300" />
                   <p className="text-xs font-black text-white uppercase tracking-widest">{group.storeName}</p>
                   {showPrice && (
-                    <span className="ml-auto text-xs font-black text-amber-300">{fmt(groupTotal(group))}</span>
+                    <span className="ml-auto text-xs font-black" style={{ color: "var(--cat-price, #FCD34D)" }}>{fmt(groupTotal(group))}</span>
                   )}
                 </div>
 
                 {group.items.map((it) => {
-                  const img = it.image ? storageUrl(it.image) : ""
+                  // it.image puede ser URL absoluta (GCS) o path legacy de carritos viejos.
+                  const img = it.image ? (it.image.startsWith("http") ? it.image : storageUrl(it.image)) : ""
                   return (
                     <div key={it.productId} className="flex gap-3">
                       <div className="w-14 h-14 rounded-xl bg-black/50 border border-white/10 overflow-hidden flex items-center justify-center shrink-0">
@@ -124,7 +125,7 @@ export function CartDrawer({
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-black text-white leading-tight">{it.name}</p>
                         {showPrice && typeof it.price === "number" && (
-                          <p className="text-[11px] font-bold text-amber-300 mt-0.5">{fmt(it.price)}</p>
+                          <p className="text-[11px] font-bold mt-0.5" style={{ color: "var(--cat-price, #FCD34D)" }}>{fmt(it.price)}</p>
                         )}
 
                         <div className="flex items-center gap-2 mt-1.5">
@@ -150,20 +151,33 @@ export function CartDrawer({
                           </button>
                         </div>
 
-                        {/* Selector de sucursal (si el producto está en más de una) */}
-                        {it.stores.length > 1 && (
-                          <select
-                            value={it.selectedStoreId ?? ""}
-                            onChange={(e) => onSetStore(it.productId, Number(e.target.value))}
-                            className="mt-1.5 w-full rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1.5 text-[11px] font-bold text-white/80 outline-none focus:border-white/20"
-                          >
-                            {it.stores.map((s) => (
-                              <option key={s.store_id} value={s.store_id}>
-                                {s.store_name} ({s.qty} disp.)
-                              </option>
-                            ))}
-                          </select>
-                        )}
+                        {/* Selector de sucursal PROMINENTE (v2.3): visible siempre
+                            que el producto esté en más de una tienda pedible.
+                            Solo tiendas CON WhatsApp (sin número no reciben
+                            pedidos); guard `?? []` para carritos legacy. */}
+                        {(() => {
+                          const stores = it.stores ?? []
+                          const orderable = stores.filter((s) => !!s.whatsapp)
+                          const options = orderable.length ? orderable : stores
+                          if (options.length <= 1) return null
+                          return (
+                            <label className="mt-2 flex items-center gap-1.5 rounded-xl border border-emerald-400/25 bg-emerald-500/[0.06] px-2.5 py-1.5">
+                              <Store size={12} className="shrink-0 text-emerald-300" />
+                              <span className="text-[9px] font-black uppercase tracking-widest text-emerald-200/80 shrink-0">Recoger en</span>
+                              <select
+                                value={it.selectedStoreId ?? ""}
+                                onChange={(e) => onSetStore(it.productId, Number(e.target.value))}
+                                className="flex-1 min-w-0 bg-transparent text-[11px] font-black text-white outline-none cursor-pointer"
+                              >
+                                {options.map((s) => (
+                                  <option key={s.store_id} value={s.store_id} style={{ background: "#16090c" }}>
+                                    {s.store_name} ({s.qty} disp.)
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          )
+                        })()}
                       </div>
                     </div>
                   )
@@ -174,13 +188,16 @@ export function CartDrawer({
                     Esta sucursal no tiene WhatsApp configurado; se abrirá sin destinatario.
                   </p>
                 )}
-                <button
-                  onClick={() => sendGroup(group)}
-                  className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-400/30 bg-emerald-500/15 px-4 py-2.5 text-[11px] font-black uppercase tracking-widest text-emerald-200 hover:bg-emerald-500/25 transition-colors"
-                >
-                  <MessageCircle size={14} />
-                  Enviar a {group.storeName}
-                </button>
+                {/* Con UNA sola sucursal, el envío vive en el footer sticky (v2.0). */}
+                {groups.length > 1 && (
+                  <button
+                    onClick={() => sendGroup(group)}
+                    className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-400/30 bg-emerald-500/15 px-4 py-2.5 text-[11px] font-black uppercase tracking-widest text-emerald-200 hover:bg-emerald-500/25 transition-colors"
+                  >
+                    <MessageCircle size={14} />
+                    Enviar a {group.storeName}
+                  </button>
+                )}
               </div>
             ))}
 
@@ -191,6 +208,26 @@ export function CartDrawer({
               Vaciar carrito
             </button>
           </div>
+        )}
+
+        {/* Footer sticky (v2.0): CTA siempre visible en móvil + safe-area. */}
+        {!empty && groups.length === 1 && (
+          <footer
+            className="p-4 border-t border-white/10"
+            style={{ paddingBottom: "max(16px, env(safe-area-inset-bottom))", background: "var(--td-popup-bg)" }}
+          >
+            <button
+              onClick={() => sendGroup(groups[0]!)}
+              className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-400/30 bg-emerald-500/15 px-4 py-3 text-[11px] font-black uppercase tracking-widest text-emerald-200 hover:bg-emerald-500/25 transition-colors"
+              style={{ minHeight: 48, fontFamily: DISPLAY }}
+            >
+              <MessageCircle size={15} />
+              Enviar a {groups[0]!.storeName}
+              {showPrice && groupTotal(groups[0]!) > 0 && (
+                <span style={{ color: "var(--cat-price, #FCD34D)" }}>· {fmt(groupTotal(groups[0]!))}</span>
+              )}
+            </button>
+          </footer>
         )}
       </aside>
     </div>

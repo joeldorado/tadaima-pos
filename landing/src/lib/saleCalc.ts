@@ -5,8 +5,10 @@
  * función pura del estado actual de las líneas — se recalcula completo en cada
  * cambio del carrito y NUNCA se acarrea un descuento acumulado en el header.
  *
- * No-stacking (regla de negocio cerrada con el cliente): a lo más UN beneficio
- * por unidad. Precedencia por línea: descuento manual > promo NxM > nada.
+ * STACKING (regla actualizada por Joel 2026-07-17; antes era no-stacking):
+ * la promo NxM aplica PRIMERO y el descuento manual se calcula sobre el
+ * resultado de la promo (percent sobre el neto-promo; fixed clampeado al
+ * neto-promo). neto de línea = gross − promo − manual, nunca negativo.
  * El cupón aplica a nivel venta pero SOLO sobre líneas sin beneficio.
  *
  * El gemelo server-side (backend/app/Services/SaleCalculator.php) implementa
@@ -27,14 +29,28 @@ export interface LineDiscount {
   authorizedByUserId?: number;
 }
 
+/** Escalón de una promo por cantidad: "llévate qty → −$amount". */
+export interface PromoTier {
+  qty: number;
+  amount: number;
+}
+
 export interface PromoDef {
   id: number;
   /** product.id del catálogo de Caja (string — así viaja en el carrito). */
   productId: string;
   name: string;
+  /** 'nxm' (default, usa buyN/payM) | 'qty_discount' (usa tiers). */
+  type?: "nxm" | "qty_discount";
   buyN: number;
   payM: number;
+  /** Solo qty_discount: escalones (greedy por grupos, se repite). */
+  tiers?: PromoTier[];
   priority: number;
+  /** null/undefined = promo GLOBAL; con valor = promo LOCAL de una tienda.
+   *  Override local (2026-07-20): si el producto tiene local, la global se
+   *  desactiva en esa tienda (el embed ya viene filtrado a global+tu tienda). */
+  storeId?: number | null;
 }
 
 export interface CouponDef {
@@ -67,7 +83,13 @@ export interface LineBenefit {
 export interface CalcLineResult {
   lineId: string;
   gross: number;
+  /** Beneficio COMBINADO de la línea (promo + manual). Con manual presente el
+   *  type es 'discount' (compat con consumidores previos); amount = suma. */
   benefit: LineBenefit | null;
+  /** Parte PROMO del beneficio (stacking 2026-07-17) — null si no aplicó. */
+  promoPart?: LineBenefit | null;
+  /** Monto de la parte MANUAL (calculada sobre el neto-promo). 0 si no hay. */
+  manualPart?: number;
   net: number;
 }
 
@@ -103,8 +125,11 @@ function round2(n: number): number {
 export function computeLineDiscountAmount(
   d: LineDiscount,
   line: { unitPrice: number; qty: number },
+  /** Base sobre la que aplica (stacking): el neto DESPUÉS de la promo.
+   *  Default = bruto de la línea (líneas sin promo). */
+  baseOverride?: number,
 ): number {
-  const base = line.unitPrice * line.qty;
+  const base = baseOverride ?? line.unitPrice * line.qty;
   if (!Number.isFinite(d.value) || d.value <= 0 || base <= 0) return 0;
   let raw = 0;
   if (d.kind === "percent") raw = base * (d.value / 100);
@@ -113,15 +138,47 @@ export function computeLineDiscountAmount(
 }
 
 /**
- * Beneficio de una promo NxM sobre una línea (evaluada POR LÍNEA, no pooled
- * entre líneas split del mismo producto — default pre-aprobado spec §8):
- * groups = floor(Q/N) · gratis = groups × (N−M) · resto a precio completo.
- * Devuelve null si la promo no alcanza a aplicar (Q < N) o es inválida.
+ * Descuento por cantidad con escalones, GREEDY: escalón mayor primero y SE
+ * REPITE por grupos (decisión Joel 2026-07-20): 5 pzas con [2→100, 3→400] =
+ * 1 grupo de 3 (−400) + 1 grupo de 2 (−100) = 500. Espejo de
+ * qtyDiscountAmount en SaleCalculator.php.
+ */
+export function qtyDiscountAmount(tiers: PromoTier[], qty: number): number {
+  const clean = tiers
+    .filter((t) => Number.isInteger(t.qty) && t.qty >= 2 && Number.isFinite(t.amount) && t.amount > 0)
+    .sort((a, b) => b.qty - a.qty);
+  if (clean.length === 0) return 0;
+  let remaining = Math.floor(qty);
+  let amount = 0;
+  for (const tier of clean) {
+    if (remaining < tier.qty) continue;
+    const groups = Math.floor(remaining / tier.qty);
+    amount += groups * tier.amount;
+    remaining -= groups * tier.qty;
+  }
+  return round2(amount);
+}
+
+/**
+ * Beneficio de una promo sobre una línea (evaluada POR LÍNEA, no pooled
+ * entre líneas split del mismo producto — default pre-aprobado spec §8).
+ * - 'nxm': groups = floor(Q/N) · gratis = groups × (N−M) · resto a precio
+ *   completo. freeQty > 0.
+ * - 'qty_discount': monto directo por escalones (freeQty = 0), clampeado al
+ *   bruto de la línea.
+ * Devuelve null si la promo no alcanza a aplicar o es inválida.
+ * Espejo de bestPromoBenefit en SaleCalculator.php.
  */
 export function computePromoBenefit(
   promo: PromoDef,
   line: { unitPrice: number; qty: number },
 ): LineBenefit | null {
+  if (promo.type === "qty_discount") {
+    const gross = round2(line.unitPrice * line.qty);
+    const amount = Math.min(qtyDiscountAmount(promo.tiers ?? [], line.qty), gross);
+    if (amount <= 0) return null;
+    return { type: "promo", amount, promoId: promo.id, promoLabel: promo.name, freeQty: 0 };
+  }
   const { buyN, payM } = promo;
   if (!Number.isInteger(buyN) || !Number.isInteger(payM)) return null;
   if (buyN < 1 || payM < 1 || payM >= buyN) return null;
@@ -133,14 +190,23 @@ export function computePromoBenefit(
   return { type: "promo", amount, promoId: promo.id, promoLabel: promo.name, freeQty };
 }
 
-/** Mejor promo para el cliente: mayor ahorro; empate → mayor priority, luego menor id. */
+/**
+ * Mejor promo para el cliente: mayor ahorro; empate → mayor priority, luego
+ * menor id. OVERRIDE LOCAL (2026-07-20, espejo de SaleCalculator.php): si el
+ * producto tiene promo LOCAL (storeId != null — el embed ya viene filtrado a
+ * global+tienda del usuario), las GLOBALES del producto se descartan; gana la
+ * local aunque ahorre menos, y si no alcanza por cantidad la global NO revive.
+ */
 function bestPromoBenefit(
   promos: PromoDef[],
   line: { productId: string; unitPrice: number; qty: number },
 ): LineBenefit | null {
+  let candidates = promos.filter((p) => p.productId === line.productId);
+  if (candidates.some((p) => p.storeId != null)) {
+    candidates = candidates.filter((p) => p.storeId != null);
+  }
   let best: { benefit: LineBenefit; promo: PromoDef } | null = null;
-  for (const promo of promos) {
-    if (promo.productId !== line.productId) continue;
+  for (const promo of candidates) {
     const benefit = computePromoBenefit(promo, line);
     if (!benefit) continue;
     if (
@@ -173,15 +239,32 @@ export function recalculateSale(input: {
 
   const lines: CalcLineResult[] = input.lines.map((l) => {
     const gross = round2(l.unitPrice * l.qty);
-    let benefit: LineBenefit | null = null;
+
+    // STACKING (Joel 2026-07-17): la promo aplica SIEMPRE que alcance; el
+    // descuento manual se calcula sobre el neto-promo (antes lo reemplazaba).
+    const promoPart = bestPromoBenefit(promotions, l);
+    const promoAmount = promoPart?.amount ?? 0;
+    const baseAfterPromo = round2(Math.max(0, gross - promoAmount));
+
+    let manualPart = 0;
     if (l.discount) {
-      const amount = computeLineDiscountAmount(l.discount, l);
-      if (amount > 0) benefit = { type: "discount", amount };
-    } else {
-      benefit = bestPromoBenefit(promotions, l);
+      manualPart = computeLineDiscountAmount(l.discount, l, baseAfterPromo);
     }
-    const net = round2(Math.max(0, gross - (benefit?.amount ?? 0)));
-    return { lineId: l.lineId, gross, benefit, net };
+
+    const totalBenefit = round2(promoAmount + manualPart);
+    let benefit: LineBenefit | null = null;
+    if (totalBenefit > 0) {
+      benefit = manualPart > 0
+        ? {
+            type: "discount",
+            amount: totalBenefit,
+            ...(promoPart ? { promoId: promoPart.promoId, promoLabel: promoPart.promoLabel, freeQty: promoPart.freeQty } : {}),
+          }
+        : promoPart;
+    }
+
+    const net = round2(Math.max(0, gross - totalBenefit));
+    return { lineId: l.lineId, gross, benefit, promoPart, manualPart, net };
   });
 
   const subtotal = round2(lines.reduce((s, l) => s + l.gross, 0));

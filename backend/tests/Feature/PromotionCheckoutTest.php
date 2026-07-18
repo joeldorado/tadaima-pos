@@ -121,25 +121,46 @@ class PromotionCheckoutTest extends TestCase
         $this->assertSame('2x1', SaleItem::first()->promo_name);
     }
 
-    public function test_manual_discount_excludes_promo_no_stacking(): void
+    public function test_manual_discount_stacks_on_promo_result(): void
     {
+        // STACKING (regla Joel 2026-07-17, antes no-stacking): promo primero,
+        // manual sobre el neto-promo. 2 uds @ $50 con 2x1 → neto $50; 10%
+        // manual sobre $50 = $5 → total $45; discount rollup = 50 + 5 = 55.
         $product = $this->makeProduct(50);
-        ProductPromotion::create(['product_id' => $product->id, 'name' => '2x1', 'buy_n' => 2, 'pay_m' => 1]);
+        $promo = ProductPromotion::create(['product_id' => $product->id, 'name' => '2x1', 'buy_n' => 2, 'pay_m' => 1]);
 
-        // Línea con descuento manual → la promo NO aplica sobre esa línea.
-        // 2 uds @ $50 − 10% línea = $90 (la promo habría dado $50 de beneficio,
-        // pero manual > promo por regla de negocio, aunque sea peor trato).
         $this->checkout([
             ['product_id' => $product->id, 'quantity' => 2, 'price' => 50.0,
              'line_discount' => ['kind' => 'percent', 'basis' => 'line', 'value' => 10, 'reason' => 'danado']],
-        ], 90.0)
+        ], 45.0)
             ->assertStatus(201)
-            ->assertJsonPath('data.discount', 10)
-            ->assertJsonPath('data.total', 90);
+            ->assertJsonPath('data.discount', 55)
+            ->assertJsonPath('data.total', 45);
 
         $item = SaleItem::first();
+        // Con manual presente el type queda 'discount', pero el snapshot de la
+        // promo se conserva (historial muestra ambos beneficios).
         $this->assertSame('discount', $item->benefit_type);
-        $this->assertNull($item->applied_promotion_id);
+        $this->assertSame($promo->id, (int) $item->applied_promotion_id);
+        $this->assertSame('2x1', $item->promo_name);
+        $this->assertSame(1, (int) $item->promo_free_qty);
+        $this->assertSame(55.0, (float) $item->discount_amount);
+    }
+
+    public function test_stacking_fixed_discount_case_joel(): void
+    {
+        // Caso QA Joel 2026-07-17: 2×$2,900 con 2x1 y −$100 fijo → $2,800
+        // (antes daba $5,700 porque el manual reemplazaba la promo).
+        $product = $this->makeProduct(2900);
+        ProductPromotion::create(['product_id' => $product->id, 'name' => '2x1', 'buy_n' => 2, 'pay_m' => 1]);
+
+        $this->checkout([
+            ['product_id' => $product->id, 'quantity' => 2, 'price' => 2900.0,
+             'line_discount' => ['kind' => 'fixed', 'basis' => 'line', 'value' => 100, 'reason' => 'otro']],
+        ], 2800.0)
+            ->assertStatus(201)
+            ->assertJsonPath('data.discount', 3000)
+            ->assertJsonPath('data.total', 2800);
     }
 
     public function test_paused_and_expired_promos_do_not_apply(): void
@@ -192,5 +213,111 @@ class PromotionCheckoutTest extends TestCase
         ], 150.0)->assertStatus(422);
 
         $this->assertSame(0, Sale::count());
+    }
+
+    // ── Tipo qty_discount: "compra N → −$X" con escalones (2026-07-20) ───────
+
+    private function makeQtyPromo(Product $product, array $tiers): ProductPromotion
+    {
+        return ProductPromotion::create([
+            'product_id' => $product->id, 'name' => 'Por cantidad',
+            'type' => ProductPromotion::TYPE_QTY_DISCOUNT, 'tiers' => $tiers,
+        ]);
+    }
+
+    public function test_qty_discount_greedy_por_grupos_con_snapshot(): void
+    {
+        // 5 pzas @ $200 con [2→100, 3→400] → grupo de 3 (−400) + grupo de 2
+        // (−100) = −500 (decisión Joel: se repite por grupos). Total 500.
+        $product = $this->makeProduct(200);
+        $promo = $this->makeQtyPromo($product, [
+            ['qty' => 2, 'amount' => 100],
+            ['qty' => 3, 'amount' => 400],
+        ]);
+
+        $this->checkout([
+            ['product_id' => $product->id, 'quantity' => 5, 'price' => 200.0],
+        ], 500.0)
+            ->assertStatus(201)
+            ->assertJsonPath('data.discount', 500)
+            ->assertJsonPath('data.total', 500);
+
+        $item = SaleItem::firstOrFail();
+        $this->assertSame('promo', $item->benefit_type);
+        $this->assertSame($promo->id, (int) $item->applied_promotion_id);
+        $this->assertSame('Por cantidad', $item->promo_name);
+        $this->assertSame(0, (int) $item->promo_free_qty);
+        $this->assertEqualsWithDelta(500.0, (float) $item->promo_amount, 0.001);
+    }
+
+    public function test_qty_discount_no_alcanza_el_escalon_minimo(): void
+    {
+        $product = $this->makeProduct(200);
+        $this->makeQtyPromo($product, [['qty' => 2, 'amount' => 100]]);
+
+        $this->checkout([
+            ['product_id' => $product->id, 'quantity' => 1, 'price' => 200.0],
+        ], 200.0)
+            ->assertStatus(201)
+            ->assertJsonPath('data.discount', 0)
+            ->assertJsonPath('data.total', 200);
+    }
+
+    public function test_qty_discount_clampeado_al_bruto_de_la_linea(): void
+    {
+        // Escalón absurdo (2 → −$500 con precio $100): el descuento no puede
+        // superar el bruto ($200) de SU línea — nunca vuelve negativa la venta.
+        // Segunda línea normal para que el total no sea $0 (pago mínimo).
+        $clamped = $this->makeProduct(100);
+        $this->makeQtyPromo($clamped, [['qty' => 2, 'amount' => 500]]);
+        $normal = $this->makeProduct(80);
+
+        $this->checkout([
+            ['product_id' => $clamped->id, 'quantity' => 2, 'price' => 100.0],
+            ['product_id' => $normal->id, 'quantity' => 1, 'price' => 80.0],
+        ], 80.0)
+            ->assertStatus(201)
+            ->assertJsonPath('data.discount', 200)
+            ->assertJsonPath('data.total', 80);
+    }
+
+    public function test_manual_stackea_sobre_qty_discount(): void
+    {
+        // 2 pzas @ $200 con 2→−100 = neto promo $300; manual $50 fixed line
+        // sobre ese neto → total $250; discount_amount = 150.
+        $product = $this->makeProduct(200);
+        $this->makeQtyPromo($product, [['qty' => 2, 'amount' => 100]]);
+
+        $this->actingAs($this->user)->postJson('/api/v1/sales', [
+            'store_id'            => $this->store->id,
+            'register_session_id' => $this->session->id,
+            'calc_version'        => 2,
+            'items'               => [[
+                'product_id' => $product->id, 'quantity' => 2, 'price' => 200.0,
+                'line_discount' => ['kind' => 'fixed', 'basis' => 'line', 'value' => 50, 'reason' => 'otro'],
+            ]],
+            'payments'            => [['payment_method_id' => $this->cashMethod->id, 'amount' => 250.0]],
+        ])
+            ->assertStatus(201)
+            ->assertJsonPath('data.total', 250);
+
+        $item = SaleItem::firstOrFail();
+        $this->assertSame('discount', $item->benefit_type);
+        $this->assertEqualsWithDelta(150.0, (float) $item->discount_amount, 0.001);
+        $this->assertEqualsWithDelta(100.0, (float) $item->promo_amount, 0.001);
+    }
+
+    public function test_nxm_sigue_llenando_promo_amount(): void
+    {
+        $product = $this->makeProduct(50);
+        ProductPromotion::create(['product_id' => $product->id, 'name' => '2x1', 'buy_n' => 2, 'pay_m' => 1]);
+
+        $this->checkout([
+            ['product_id' => $product->id, 'quantity' => 2, 'price' => 50.0],
+        ], 50.0)->assertStatus(201);
+
+        $item = SaleItem::firstOrFail();
+        $this->assertSame(1, (int) $item->promo_free_qty);
+        $this->assertEqualsWithDelta(50.0, (float) $item->promo_amount, 0.001);
     }
 }

@@ -128,6 +128,25 @@ function getPaymentMethodName(sale: SaleDetail): string {
 const fmt = (n: number) =>
   new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", minimumFractionDigits: 0 }).format(n);
 
+/**
+ * Partes del beneficio de una línea (stacking 2026-07-17): la promo NxM y el
+ * descuento manual CONVIVEN. discount_amount persiste el TOTAL; la parte promo
+ * se deriva del snapshot (promo_free_qty × precio) y el manual es el resto.
+ */
+function lineBenefitParts(item: { price: number; discount_amount?: number | null; promo_name?: string | null; promo_free_qty?: number | null; promo_amount?: number | null; discount_reason?: string | null }) {
+  const total = item.discount_amount ?? 0;
+  // promo_amount = snapshot directo (2026-07-20, cubre qty_discount); ventas
+  // anteriores no lo traen → fallback legacy promo_free_qty × price (NxM).
+  const promoAmount = item.promo_name
+    ? Math.min(total, item.promo_amount ?? ((item.promo_free_qty ?? 0) * item.price))
+    : 0;
+  const manualAmount = Math.max(0, Math.round((total - promoAmount) * 100) / 100);
+  const reasonLabel = item.discount_reason
+    ? (DISCOUNT_REASON_LABELS[item.discount_reason as keyof typeof DISCOUNT_REASON_LABELS] ?? item.discount_reason)
+    : "";
+  return { total, promoAmount, manualAmount, promoLabel: item.promo_name ?? null, freeQty: item.promo_free_qty ?? 0, reasonLabel };
+}
+
 // % de comisión efectivo (comisión/venta) — sin decimales de ruido: 6% se ve
 // "6%", 3.55% se ve "3.55%".
 const fmtPct = (p: number) => `${Number(p.toFixed(2))}%`;
@@ -170,24 +189,23 @@ function printTicket(sale: SaleDetail) {
   const items = (sale.items || [])
     .map(i => {
       const name = i.product?.name || String(i.product_id);
-      const discAmt = i.discount_amount ?? 0;
-      // Sub-línea del beneficio (Descuentos v2) — negro puro, jerarquía por
+      // Sub-líneas de beneficio (stacking 2026-07-17): promo y descuento manual
+      // CONVIVEN — cada uno con su propia sub-línea. Negro puro, jerarquía por
       // tamaño/sangría (regla térmica rev 00108, los grises no imprimen).
-      const reasonLabel = i.discount_reason
-        ? (DISCOUNT_REASON_LABELS[i.discount_reason as keyof typeof DISCOUNT_REASON_LABELS] ?? i.discount_reason)
-        : "";
-      const discLabel = i.benefit_type === "promo"
-        ? `Promo ${i.promo_name ?? ""}`.trim()
-        : `Desc.${reasonLabel ? ` ${reasonLabel}` : ""}`;
+      const parts = lineBenefitParts(i);
+      const subLines = [
+        parts.promoAmount > 0
+          ? `<tr><td style="padding:0 0 2px 8px;font-size:9px;font-weight:900">${esc(`Promo ${parts.promoLabel ?? ""}`.trim())}</td><td></td><td style="text-align:right;font-size:10px;font-weight:900">-${fmt(parts.promoAmount)}</td></tr>`
+          : "",
+        parts.manualAmount > 0
+          ? `<tr><td style="padding:0 0 2px 8px;font-size:9px;font-weight:900">${esc(`Desc.${parts.reasonLabel ? ` ${parts.reasonLabel}` : ""}`)}</td><td></td><td style="text-align:right;font-size:10px;font-weight:900">-${fmt(parts.manualAmount)}</td></tr>`
+          : "",
+      ].join("");
       return `<tr>
         <td style="padding:2px 0;font-size:11px;font-weight:700;">${esc(name)}</td>
         <td style="text-align:center;padding:2px 4px;font-size:10px;">×${i.quantity}</td>
         <td style="text-align:right;font-size:11px;font-weight:900;">${fmt(i.price * i.quantity)}</td>
-      </tr>${discAmt > 0 ? `<tr>
-        <td style="padding:0 0 2px 8px;font-size:9px;font-weight:900">${esc(discLabel)}</td>
-        <td></td>
-        <td style="text-align:right;font-size:10px;font-weight:900">-${fmt(discAmt)}</td>
-      </tr>` : ""}`;
+      </tr>${subLines}`;
     })
     .join("");
 
@@ -195,7 +213,7 @@ function printTicket(sale: SaleDetail) {
   <title>Ticket #${sale.id}</title>
   <style>
     *{margin:0;padding:0;box-sizing:border-box}
-    body{font-family:'Courier New',monospace;font-size:11px;width:280px;padding:12px 8px}
+    body{font-family:'Courier New',monospace;font-size:11px;font-weight:700;width:280px;padding:12px 8px}
     h2{font-size:16px;text-align:center;font-weight:900;margin-bottom:4px}
     .sub{font-size:9px;text-align:center;color:#000;margin-bottom:8px}
     .divider{border-top:1px dashed #000;margin:8px 0}
@@ -658,6 +676,11 @@ function SaleRow({
             const name = item.product?.name || info?.name || String(item.product_id);
             const sku  = item.product?.sku  || info?.sku  || "";
             const img  = info?.imagen;
+            // Beneficios de la línea (QA Joel 2026-07-17: "la promo no se ve en
+            // Ventas/Historial") — badges de promo/descuento + neto real.
+            const parts = lineBenefitParts(item);
+            const grossLine = item.price * item.quantity;
+            const netLine = Math.max(0, grossLine - parts.total);
             return (
               <div
                 key={idx}
@@ -669,6 +692,20 @@ function SaleRow({
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-bold truncate" style={{ color: "var(--td-text-hi)" }}>{name}</p>
                   {sku && <p className="text-[9px] uppercase tracking-widest mt-0.5 truncate" style={{ color: "var(--td-text-lo)" }}>{sku}</p>}
+                  {(parts.promoAmount > 0 || parts.manualAmount > 0) && (
+                    <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                      {parts.promoAmount > 0 && (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-black" style={{ color: "#34d399", background: "rgba(16,185,129,0.10)", border: "1px solid rgba(16,185,129,0.35)" }}>
+                          Promo {parts.promoLabel ?? ""} ·{parts.freeQty > 0 ? ` ${parts.freeQty} gratis` : ""} −{fmt(parts.promoAmount)}
+                        </span>
+                      )}
+                      {parts.manualAmount > 0 && (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-black" style={{ color: "var(--td-red)", background: "rgba(224,34,26,0.10)", border: "1px solid rgba(224,34,26,0.35)" }}>
+                          Desc.{parts.reasonLabel ? ` ${parts.reasonLabel}` : ""} −{fmt(parts.manualAmount)}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-5 flex-shrink-0 text-right">
@@ -681,8 +718,18 @@ function SaleRow({
                     <p className="text-[8px] uppercase" style={{ color: "var(--td-text-lo)" }}>unit.</p>
                   </div>
                   <div className="text-right w-[70px]">
-                    <p className="text-sm font-black" style={{ color: "var(--td-text-hi)" }}>{fmt(item.price * item.quantity)}</p>
-                    <p className="text-[8px] uppercase" style={{ color: "var(--td-text-lo)" }}>subtotal</p>
+                    {parts.total > 0 ? (
+                      <>
+                        <p className="text-sm font-black" style={{ color: "var(--td-text-hi)" }}>{fmt(netLine)}</p>
+                        <p className="text-[9px] font-bold line-through" style={{ color: "var(--td-text-lo)" }}>{fmt(grossLine)}</p>
+                        <p className="text-[8px] uppercase" style={{ color: "var(--td-text-lo)" }}>neto</p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-sm font-black" style={{ color: "var(--td-text-hi)" }}>{fmt(grossLine)}</p>
+                        <p className="text-[8px] uppercase" style={{ color: "var(--td-text-lo)" }}>subtotal</p>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1208,7 +1255,7 @@ function ReporteDelDia({
 
   const handlePrint = () => printDailyReport(report, fromDate, toDate, storeName, isAdmin);
   const handlePdf   = () => exportDailyReportPdf(report, fromDate, toDate, storeName, isAdmin);
-  const handleExcel = () => { void exportDailyReportXlsx(report, fromDate, toDate, storeName, isAdmin); };
+  const handleExcel = () => { void exportDailyReportXlsx(report, fromDate, toDate, storeName, isAdmin, ivaPct); };
 
   return (
     <div id="reporte-dia-print" className="space-y-4">
@@ -1912,7 +1959,7 @@ function exportDailyReportPdf(r: DailyReport, fromDate: string, toDate: string, 
 // Export a Excel (.xlsx) — las 5 tablas del corte del gerente, una debajo de
 // otra en una sola hoja, con columnas exactas y fila Total por tabla. Costo y
 // Utilidad solo si isAdmin. exceljs se carga con import dinámico (bundle).
-async function exportDailyReportXlsx(r: DailyReport, fromDate: string, toDate: string, storeName: string, isAdmin: boolean): Promise<void> {
+async function exportDailyReportXlsx(r: DailyReport, fromDate: string, toDate: string, storeName: string, isAdmin: boolean, ivaPct: number): Promise<void> {
   const mod = await import("exceljs");
   const ExcelJS = ((mod as unknown as { default?: typeof mod }).default ?? mod);
   const MONEY = '"$"#,##0.00';
@@ -1922,7 +1969,7 @@ async function exportDailyReportXlsx(r: DailyReport, fromDate: string, toDate: s
 
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Corte del Día");
-  ws.columns = [{ width: 40 }, { width: 14 }, { width: 16 }, { width: 16 }, { width: 16 }];
+  ws.columns = [{ width: 40 }, { width: 14 }, { width: 16 }, { width: 16 }, { width: 16 }, { width: 16 }, { width: 16 }];
 
   const t = ws.addRow([`Reporte del Día · ${storeName}`]);
   t.font = { bold: true, size: 14 };
@@ -1938,32 +1985,73 @@ async function exportDailyReportXlsx(r: DailyReport, fromDate: string, toDate: s
     row.font = { bold: true, size: 12, color: { argb: "FFCC2200" } };
   };
 
-  // Tabla por producto (Fecha | Producto | Cantidad | Venta [| Costo | Utilidad]).
-  const prodTable = (title: string, rows: CorteProdRow[], total: CorteTotal): void => {
+  // Tabla por producto (Ajustada según tipo efectivo/tarjeta u otros)
+  const prodTable = (title: string, rows: CorteProdRow[], total: CorteTotal, isCard: boolean = false): void => {
     sectionTitle(title);
-    const headCells = isAdmin
-      ? ["Fecha", "Producto", "Cantidad", "Venta", "Costo", "Utilidad"]
-      : ["Fecha", "Producto", "Cantidad", "Venta"];
+    
+    let headCells: string[] = [];
+    if (isCard) {
+      headCells = isAdmin 
+        ? ["Producto", "Costo", "Venta", "Comisión Terminal", `IVA ${ivaPct}%`, "Venta Neta", "Utilidad"]
+        : ["Producto", "Venta", "Comisión Terminal", `IVA ${ivaPct}%`, "Venta Neta"];
+    } else {
+      headCells = isAdmin
+        ? ["Nombre Producto", "Costo", "Venta", "Utilidad"]
+        : ["Nombre Producto", "Venta"];
+    }
     const headRow = ws.addRow(headCells);
     headRow.font = { bold: true };
+
     rows.forEach(row => {
-      const util = row.venta - row.costo;
-      const xr = isAdmin
-        ? ws.addRow([fmtDate(row.fecha), row.name, row.cantidad, row.venta, row.tieneCosto ? row.costo : 0, row.tieneCosto ? util : 0])
-        : ws.addRow([fmtDate(row.fecha), row.name, row.cantidad, row.venta]);
-      if (isAdmin) money(xr, 4, 5, 6); else money(xr, 4);
+      let xr;
+      if (isCard) {
+        const comision = row.comision || 0;
+        const iva = comision * (ivaPct / 100);
+        const ventaNeta = row.venta - comision - iva;
+        const utilidad = ventaNeta - (row.tieneCosto ? row.costo : 0);
+        
+        xr = isAdmin
+          ? ws.addRow([row.name, row.tieneCosto ? row.costo : 0, row.venta, comision, iva, ventaNeta, row.tieneCosto ? utilidad : 0])
+          : ws.addRow([row.name, row.venta, comision, iva, ventaNeta]);
+          
+        if (isAdmin) money(xr, 2, 3, 4, 5, 6, 7); else money(xr, 2, 3, 4, 5);
+      } else {
+        const util = row.venta - row.costo;
+        xr = isAdmin
+          ? ws.addRow([row.name, row.tieneCosto ? row.costo : 0, row.venta, row.tieneCosto ? util : 0])
+          : ws.addRow([row.name, row.venta]);
+          
+        if (isAdmin) money(xr, 2, 3, 4); else money(xr, 2);
+      }
     });
-    const utilidad = total.venta - total.costo;
-    const totalRow = isAdmin
-      ? ws.addRow(["", "Total", total.cantidad, total.venta, total.costo, utilidad])
-      : ws.addRow(["", "Total", total.cantidad, total.venta]);
-    totalRow.font = { bold: true };
-    if (isAdmin) money(totalRow, 4, 5, 6); else money(totalRow, 4);
+
+    let totalRow;
+    if (isCard) {
+      const totalComision = total.comision || 0;
+      const totalIva = totalComision * (ivaPct / 100);
+      const totalVentaNeta = total.venta - totalComision - totalIva;
+      const totalUtilidad = totalVentaNeta - total.costo;
+      
+      totalRow = isAdmin
+        ? ws.addRow(["Total", total.costo, total.venta, totalComision, totalIva, totalVentaNeta, totalUtilidad])
+        : ws.addRow(["Total", total.venta, totalComision, totalIva, totalVentaNeta]);
+        
+      totalRow.font = { bold: true };
+      if (isAdmin) money(totalRow, 2, 3, 4, 5, 6, 7); else money(totalRow, 2, 3, 4, 5);
+    } else {
+      const utilidad = total.venta - total.costo;
+      totalRow = isAdmin
+        ? ws.addRow(["Total", total.costo, total.venta, utilidad])
+        : ws.addRow(["Total", total.venta]);
+        
+      totalRow.font = { bold: true };
+      if (isAdmin) money(totalRow, 2, 3, 4); else money(totalRow, 2);
+    }
     ws.addRow([]);
   };
 
-  prodTable("Ventas normales", c.ventasNormales.rows, c.ventasNormales.total);
-  prodTable("Ventas con tarjeta", c.ventasTarjeta.rows, c.ventasTarjeta.total);
+  prodTable("Ventas normales", c.ventasNormales.rows, c.ventasNormales.total, false);
+  prodTable("Ventas con tarjeta", c.ventasTarjeta.rows, c.ventasTarjeta.total, true);
 
   // Tabla de abonos (Fecha | Producto | Cantidad | Venta | Abono | Resta
   // [| Costo | Utilidad]) — fórmulas del Excel: Resta = Venta − Abono,
@@ -1988,8 +2076,8 @@ async function exportDailyReportXlsx(r: DailyReport, fromDate: string, toDate: s
   if (isAdmin) money(abonoTotal, 4, 5, 6, 7, 8); else money(abonoTotal, 4, 5, 6);
   ws.addRow([]);
 
-  prodTable("Preventa liquidación", c.liquidacion.rows, c.liquidacion.total);
-  prodTable("Preventa vencidas", c.vencidas.rows, c.vencidas.total);
+  prodTable("Preventa liquidación", c.liquidacion.rows, c.liquidacion.total, false);
+  prodTable("Preventa vencidas", c.vencidas.rows, c.vencidas.total, false);
 
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf as BlobPart], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });

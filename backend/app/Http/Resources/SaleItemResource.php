@@ -32,6 +32,7 @@ class SaleItemResource extends JsonResource
             'discount_note'   => $this->discount_note,
             'promo_name'      => $this->promo_name,
             'promo_free_qty'  => $this->promo_free_qty,
+            'promo_amount'    => $this->promo_amount !== null ? (float) $this->promo_amount : null,
 
             // `cost` snapshot al momento del INSERT (lo que se vendió a ese costo).
             // Solo se expone a admins — gerente/cajero no ven margen. Esta es la

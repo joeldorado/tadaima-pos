@@ -13,7 +13,7 @@ import {
   Popover,
 } from "react-aria-components";
 import { parseDate, type DateValue } from "@internationalized/date";
-import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, X } from "lucide-react";
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
@@ -44,6 +44,8 @@ interface Props {
   placeholder?: string;
   ariaLabel: string;
   disabled?: boolean;
+  /** Si viene, la fecha es OPCIONAL: aparece un × para limpiarla (llama esto). */
+  onClear?: () => void;
 }
 
 /**
@@ -59,6 +61,7 @@ export function SingleDatePicker({
   placeholder = "Elegir fecha",
   ariaLabel,
   disabled,
+  onClear,
 }: Props) {
   const selected = useMemo(() => safeParse(value), [value]);
   const min = useMemo(() => safeParse(minValue) ?? undefined, [minValue]);
@@ -71,28 +74,57 @@ export function SingleDatePicker({
       })
     : placeholder;
 
+  const showClear = !!onClear && !!value && !disabled;
+
+  /* Button de react-aria (no <button> nativo): DialogTrigger pasa el press
+     por PressResponder y un botón nativo nunca lo recibe (popover muerto). */
+  const trigger = (
+    <AriaButton
+      isDisabled={disabled}
+      aria-label={ariaLabel}
+      className="flex w-full items-center gap-2 rounded-2xl px-3.5 py-[11px] outline-none transition-all"
+      style={{
+        background: "var(--td-input-bg)",
+        border: "1px solid var(--td-input-border)",
+        color: value ? "var(--td-text-hi)" : "var(--td-text-lo)",
+        fontSize: 13,
+        fontWeight: 700,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.45 : 1,
+        boxSizing: "border-box",
+        ...(showClear ? { paddingRight: 34 } : {}),
+      }}
+    >
+      <CalendarDays size={14} style={{ color: "var(--td-text-lo)", flexShrink: 0 }} />
+      <span className="text-left whitespace-nowrap overflow-hidden text-ellipsis">{label}</span>
+    </AriaButton>
+  );
+
   return (
     <DialogTrigger>
-      {/* Button de react-aria (no <button> nativo): DialogTrigger pasa el press
-          por PressResponder y un botón nativo nunca lo recibe (popover muerto). */}
-      <AriaButton
-        isDisabled={disabled}
-        aria-label={ariaLabel}
-        className="flex w-full items-center gap-2 rounded-2xl px-3.5 py-[11px] outline-none transition-all"
-        style={{
-          background: "var(--td-input-bg)",
-          border: "1px solid var(--td-input-border)",
-          color: value ? "var(--td-text-hi)" : "var(--td-text-lo)",
-          fontSize: 13,
-          fontWeight: 700,
-          cursor: disabled ? "not-allowed" : "pointer",
-          opacity: disabled ? 0.45 : 1,
-          boxSizing: "border-box",
-        }}
-      >
-        <CalendarDays size={14} style={{ color: "var(--td-text-lo)", flexShrink: 0 }} />
-        <span className="text-left whitespace-nowrap overflow-hidden text-ellipsis">{label}</span>
-      </AriaButton>
+      {/* Con onClear el trigger se envuelve en un div relativo y el × va como
+          HERMANO del AriaButton (botón dentro de botón es HTML inválido y
+          react-aria se come el press). El PressResponder de DialogTrigger llega
+          por contexto, así que el div intermedio no lo corta. Sin onClear, el
+          trigger queda EXACTAMENTE como siempre (Preventas/Cortes intactos). */}
+      {onClear ? (
+        <div style={{ position: "relative", width: "100%" }}>
+          {trigger}
+          {showClear && (
+            <button
+              type="button"
+              aria-label="Limpiar fecha"
+              onClick={(e) => { e.stopPropagation(); onClear(); }}
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1 transition-colors hover:bg-white/10"
+              style={{ color: "var(--td-text-lo)", border: "none", background: "transparent", cursor: "pointer" }}
+            >
+              <X size={13} />
+            </button>
+          )}
+        </div>
+      ) : (
+        trigger
+      )}
 
       <Popover
         placement="bottom start"
