@@ -303,8 +303,8 @@ class PromoStoreScopeTest extends TestCase
         $managerB = $this->makeManager($this->storeB);
         $this->actingAs($managerB)
             ->postJson("/api/v1/products/{$this->product->id}/promotions", [
-                'name' => 'Cantidad B', 'type' => 'qty_discount',
-                'tiers' => [['qty' => 2, 'amount' => 50]],
+                'name' => 'Mayoreo B', 'type' => 'qty_discount',
+                'min_qty' => 2, 'discount_per_unit' => 50,
             ])->assertStatus(201);
     }
 
@@ -325,8 +325,8 @@ class PromoStoreScopeTest extends TestCase
         // Y de tipo distinto en la misma tienda también choca (exclusividad).
         $this->actingAs($manager)
             ->postJson("/api/v1/products/{$this->product->id}/promotions", [
-                'name' => 'Cantidad A', 'type' => 'qty_discount',
-                'tiers' => [['qty' => 2, 'amount' => 50]],
+                'name' => 'Mayoreo A', 'type' => 'qty_discount',
+                'min_qty' => 2, 'discount_per_unit' => 50,
             ])->assertStatus(422);
     }
 }

@@ -78,22 +78,27 @@ export interface Product {
   updated_at: string
 }
 
-/** Escalón de una promo por cantidad: "llévate qty → −$amount". */
-export interface PromoTierDef {
-  qty: number
-  amount: number
+/**
+ * Campos del MAYOREO (2026-07-23): "desde min_qty piezas, −discount_per_unit a
+ * CADA una". El slug del tipo sigue siendo 'qty_discount' — lo que cambió es la
+ * matemática, que antes era por grupos con escalones (`tiers`, ya retirado del
+ * payload).
+ */
+export interface MayoreoFields {
+  /** Desde cuántas piezas aplica (>= 2). */
+  min_qty?: number | null
+  /** Cuánto se le descuenta a cada pieza. */
+  discount_per_unit?: number | null
 }
 
 /** Promo vigente tal como viaja en el payload de producto (Caja). */
-export interface ActiveProductPromotion {
+export interface ActiveProductPromotion extends MayoreoFields {
   id: number
   name: string
-  /** 'nxm' (2x1, usa buy_n/pay_m) | 'qty_discount' (usa tiers). */
+  /** 'nxm' (2x1, usa buy_n/pay_m) | 'qty_discount' = mayoreo. */
   type?: 'nxm' | 'qty_discount'
   buy_n: number | null
   pay_m: number | null
-  /** Solo qty_discount: escalones (greedy por grupos, se repite). */
-  tiers?: PromoTierDef[] | null
   priority: number
   /** null = todas las tiendas; con valor = solo esa sucursal (scoping 2026-07-16). */
   store_id?: number | null
@@ -102,7 +107,7 @@ export interface ActiveProductPromotion {
 }
 
 /** Promo completa (CRUD del editor de producto — incluye pausadas/vencidas). */
-export interface ProductPromotion {
+export interface ProductPromotion extends MayoreoFields {
   id: number
   product_id: number
   /** null = todas las tiendas; con valor = solo esa sucursal. */
@@ -111,7 +116,6 @@ export interface ProductPromotion {
   type?: 'nxm' | 'qty_discount'
   buy_n: number | null
   pay_m: number | null
-  tiers?: PromoTierDef[] | null
   starts_at: string | null
   ends_at: string | null
   status: 'active' | 'paused' | 'expired'

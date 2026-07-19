@@ -9,12 +9,6 @@ import type { LucideIcon } from "lucide-react"
  * El renderer (`components/docs/DocBlocks.tsx`) pinta cada `kind` de bloque.
  */
 
-/** Un escalón de "descuento por cantidad" (espejo de PromoTier del motor). */
-export interface DocTier {
-  qty: number
-  amount: number
-}
-
 /** Un campo de formulario recreado como mini-mock (con su label real de la UI). */
 export interface DocField {
   label: string
@@ -27,7 +21,6 @@ export type DocBlock =
   | { kind: "prose"; text: string }
   | { kind: "steps"; items: { title: string; detail?: string }[] }
   | { kind: "callout"; tone: "info" | "warn" | "gold"; title: string; text: string }
-  | { kind: "tiers"; tiers: DocTier[]; example: number }
   | { kind: "chips"; chips: { label: string; tone: "amber" | "blue" | "green" }[] }
   | { kind: "fields"; fields: DocField[] }
   | { kind: "table"; head: string[]; rows: string[][] }

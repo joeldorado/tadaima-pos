@@ -175,48 +175,54 @@ describe("computePromoBenefit — motor NxM", () => {
   });
 });
 
-describe("computePromoBenefit — tipo qty_discount (escalones, greedy por grupos)", () => {
-  const qtyPromo = (tiers: { qty: number; amount: number }[]): PromoDef => ({
+describe("computePromoBenefit — tipo qty_discount = MAYOREO (por pieza desde N)", () => {
+  const mayoreoPromo = (minQty: number, discountPerUnit: number): PromoDef => ({
     id: 9,
     productId: "1",
-    name: "Por cantidad",
+    name: "Mayoreo",
     type: "qty_discount",
     buyN: 0,
     payM: 0,
-    tiers,
+    minQty,
+    discountPerUnit,
     priority: 0,
   });
-  const TIERS = [
-    { qty: 2, amount: 100 },
-    { qty: 3, amount: 400 },
-  ];
 
-  it("caso Joel: 5 pzas con [2→100, 3→400] = 400 + 100 = 500 (se repite por grupos)", () => {
-    expect(computePromoBenefit(qtyPromo(TIERS), { unitPrice: 200, qty: 5 })).toEqual(
+  it("caso Joel: desde 5 pzas, −$100 c/u → 5 pzas = 500 y 10 pzas = 1000", () => {
+    expect(computePromoBenefit(mayoreoPromo(5, 100), { unitPrice: 500, qty: 5 })).toEqual(
       expect.objectContaining({ type: "promo", amount: 500, freeQty: 0 }),
     );
+    expect(computePromoBenefit(mayoreoPromo(5, 100), { unitPrice: 500, qty: 10 })?.amount).toBe(1000);
   });
 
-  it("2 pzas → 100; 3 pzas → 400 (mejor escalón); 6 pzas → 2 grupos de 3 = 800", () => {
-    expect(computePromoBenefit(qtyPromo(TIERS), { unitPrice: 200, qty: 2 })?.amount).toBe(100);
-    expect(computePromoBenefit(qtyPromo(TIERS), { unitPrice: 200, qty: 3 })?.amount).toBe(400);
-    expect(computePromoBenefit(qtyPromo(TIERS), { unitPrice: 200, qty: 6 })?.amount).toBe(800);
+  it("la cantidad intermedia SÍ cuenta (7 pzas = 700) — es lo que lo separa del modelo por grupos", () => {
+    expect(computePromoBenefit(mayoreoPromo(5, 100), { unitPrice: 500, qty: 7 })?.amount).toBe(700);
   });
 
-  it("no alcanza el escalón mínimo → null", () => {
-    expect(computePromoBenefit(qtyPromo(TIERS), { unitPrice: 200, qty: 1 })).toBeNull();
+  it("exactamente en el umbral aplica; una pieza abajo no", () => {
+    expect(computePromoBenefit(mayoreoPromo(5, 100), { unitPrice: 500, qty: 5 })?.amount).toBe(500);
+    expect(computePromoBenefit(mayoreoPromo(5, 100), { unitPrice: 500, qty: 4 })).toBeNull();
   });
 
   it("clampeado al bruto de la línea (nunca deja la línea negativa)", () => {
+    // −$500 c/u sobre piezas de $100: 2 pzas = bruto 200, no 1000.
     expect(
-      computePromoBenefit(qtyPromo([{ qty: 2, amount: 500 }]), { unitPrice: 100, qty: 2 })?.amount,
+      computePromoBenefit(mayoreoPromo(2, 500), { unitPrice: 100, qty: 2 })?.amount,
     ).toBe(200);
   });
 
-  it("escalones inválidos se ignoran; sin escalones válidos → null", () => {
-    expect(
-      computePromoBenefit(qtyPromo([{ qty: 1, amount: 50 }, { qty: 0, amount: 10 }]), { unitPrice: 100, qty: 5 }),
-    ).toBeNull();
+  it("cantidad fraccionaria: la media pieza no gana descuento (floor)", () => {
+    expect(computePromoBenefit(mayoreoPromo(2, 100), { unitPrice: 500, qty: 2.9 })?.amount).toBe(200);
+  });
+
+  it("sin configurar (min_qty o descuento faltantes/inválidos) → null", () => {
+    expect(computePromoBenefit(mayoreoPromo(1, 50), { unitPrice: 100, qty: 5 })).toBeNull();
+    expect(computePromoBenefit(mayoreoPromo(5, 0), { unitPrice: 100, qty: 5 })).toBeNull();
+    const sinDatos: PromoDef = {
+      id: 9, productId: "1", name: "Mayoreo", type: "qty_discount",
+      buyN: 0, payM: 0, priority: 0,
+    };
+    expect(computePromoBenefit(sinDatos, { unitPrice: 100, qty: 50 })).toBeNull();
   });
 
   it("override local: la promo de tienda apaga la global (aunque ahorre menos)", () => {
@@ -242,7 +248,7 @@ describe("computePromoBenefit — tipo qty_discount (escalones, greedy por grupo
     expect(r.lines[0]?.promoPart ?? null).toBeNull();
   });
 
-  it("stacking: manual sobre el neto de la qty_discount (espejo del test PHP)", () => {
+  it("stacking: manual sobre el neto del mayoreo (espejo del test PHP)", () => {
     const result = recalculateSale({
       lines: [
         {
@@ -253,7 +259,8 @@ describe("computePromoBenefit — tipo qty_discount (escalones, greedy por grupo
           discount: { kind: "fixed", basis: "line", value: 50, reason: "otro" },
         },
       ],
-      promotions: [qtyPromo([{ qty: 2, amount: 100 }])],
+      // desde 2 pzas, −$50 c/u → 2 × 50 = 100 de promo
+      promotions: [mayoreoPromo(2, 50)],
     });
     // gross 400 − promo 100 − manual 50 = 250
     expect(result.total).toBe(250);

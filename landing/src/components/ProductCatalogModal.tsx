@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { X, Search, Package, ChevronLeft, ChevronRight, LayoutGrid, Zap, RefreshCw, TicketPercent } from "lucide-react";
 import { ImageWithFallback } from "@/components/figma/ImageWithFallback";
 import { PRICE_LEVEL_LABELS, PRICE_LEVEL_COLORS, PRICE_LEVEL_RGB } from "@/lib/priceLevels";
-import { promoShortLabel, promoTiersLabel } from "@/lib/promoLabel";
+import { promoDetailLabel, promoShortLabel } from "@/lib/promoLabel";
 import { BUSINESS_TZ } from "@/lib/date";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -26,7 +26,7 @@ interface CatalogProduct {
   /** false = sin inventario en esta tienda ("No asignado"). Default tratado como true. */
   is_assigned?: boolean;
   /** Promos vigentes (embed del backend, ya filtradas por tienda). */
-  active_promotions?: Array<{ id: number; name: string; type?: string; buy_n: number | null; pay_m: number | null; tiers?: Array<{ qty: number; amount: number }> | null; priority: number; store_id?: number | null; ends_at?: string | null }>;
+  active_promotions?: Array<{ id: number; name: string; type?: string; buy_n: number | null; pay_m: number | null; min_qty?: number | null; discount_per_unit?: number | null; priority: number; store_id?: number | null; ends_at?: string | null }>;
 }
 
 type Level = "a" | "b" | "c" | "d" | "e";
@@ -262,7 +262,7 @@ function PromoPills({ promos }: { promos?: CatalogProduct["active_promotions"] }
         return (
           <span
             key={pr.id}
-            title={`${pr.name} · ${promoTiersLabel(pr)}${ends ? ` · hasta ${ends}` : " · sin vencimiento"}`}
+            title={`${pr.name} · ${promoDetailLabel(pr)}${ends ? ` · hasta ${ends}` : " · sin vencimiento"}`}
             style={{
               display: "inline-flex", alignItems: "center", gap: 3,
               padding: "2px 7px", borderRadius: 7, flexShrink: 0,

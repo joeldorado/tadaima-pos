@@ -19,23 +19,34 @@ class StoreProductPromotionRequest extends FormRequest
     public function rules(): array
     {
         $type = $this->promoType();
+        $esMayoreo = $type === ProductPromotion::TYPE_QTY_DISCOUNT;
+
+        // En PUT los campos van 'sometimes': `toggleStatus` (pausar/reanudar)
+        // reenvía la promo por este mismo FormRequest, y un bundle rezagado no
+        // manda los campos nuevos. El only() del controller ignora las claves
+        // ausentes, así que un PUT parcial preserva la fila.
+        $presence = in_array($this->method(), ['PUT', 'PATCH'], true) ? 'sometimes' : 'required';
 
         return [
             'name'      => ['required', 'string', 'max:100'],
             'type'      => ['nullable', Rule::in(ProductPromotion::TYPES)],
-            // NxM: buy_n/pay_m obligatorios. qty_discount: prohibidos.
+            // NxM: buy_n/pay_m obligatorios. Mayoreo: prohibidos.
             'buy_n'     => $type === ProductPromotion::TYPE_NXM
                 ? ['required', 'integer', 'min:2', 'max:100']
                 : ['prohibited'],
             'pay_m'     => $type === ProductPromotion::TYPE_NXM
                 ? ['required', 'integer', 'min:1']
                 : ['prohibited'],
-            // qty_discount: escalones [{qty, amount}] — qty ≥2 única, amount > 0.
-            'tiers'            => $type === ProductPromotion::TYPE_QTY_DISCOUNT
-                ? ['required', 'array', 'min:1', 'max:10']
+            // Mayoreo: "desde min_qty piezas, −discount_per_unit a CADA una".
+            'min_qty'           => $esMayoreo
+                ? [$presence, 'integer', 'min:2', 'max:1000']
                 : ['prohibited'],
-            'tiers.*.qty'      => ['integer', 'min:2', 'max:100', 'distinct'],
-            'tiers.*.amount'   => ['numeric', 'gt:0', 'max:999999'],
+            'discount_per_unit' => $esMayoreo
+                ? [$presence, 'numeric', 'gt:0', 'max:999999']
+                : ['prohibited'],
+            // Legacy: los bundles viejos lo siguen mandando al pausar. Se acepta
+            // y se IGNORA — no está en el only() del controller ni en $fillable.
+            'tiers'     => ['nullable', 'array'],
             'starts_at' => ['nullable', 'date'],
             'ends_at'   => ['nullable', 'date', 'after_or_equal:starts_at'],
             'status'    => ['nullable', Rule::in(ProductPromotion::STATUSES)],
@@ -71,14 +82,18 @@ class StoreProductPromotionRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'buy_n.min'            => 'Una promo NxM necesita al menos 2 piezas (ej. 2x1).',
-            'buy_n.prohibited'     => 'buy_n solo aplica a promos NxM.',
-            'pay_m.prohibited'     => 'pay_m solo aplica a promos NxM.',
-            'tiers.required'       => 'Agrega al menos un escalón (ej. 2 piezas → $100 de descuento).',
-            'tiers.prohibited'     => 'Los escalones solo aplican a promos de descuento por cantidad.',
-            'tiers.*.qty.min'      => 'Cada escalón necesita al menos 2 piezas.',
-            'tiers.*.qty.distinct' => 'Hay dos escalones con la misma cantidad de piezas.',
-            'tiers.*.amount.gt'    => 'El descuento de cada escalón debe ser mayor a $0.',
+            'buy_n.min'        => 'Una promo NxM necesita al menos 2 piezas (ej. 2x1).',
+            'buy_n.prohibited' => 'buy_n solo aplica a promos NxM.',
+            'pay_m.prohibited' => 'pay_m solo aplica a promos NxM.',
+
+            // Si el campo falta en un ALTA, casi siempre es un bundle viejo que
+            // todavía pinta el formulario de escalones. Decírselo directo.
+            'min_qty.required'           => 'Falta "a partir de cuántas piezas". Si no ves ese campo, recarga la app (Ctrl+Shift+R): traes una versión vieja.',
+            'min_qty.min'                => 'El mayoreo arranca desde 2 piezas en adelante.',
+            'min_qty.prohibited'         => 'La cantidad mínima solo aplica a promos de mayoreo.',
+            'discount_per_unit.required' => 'Falta el descuento por pieza. Si no ves ese campo, recarga la app (Ctrl+Shift+R): traes una versión vieja.',
+            'discount_per_unit.gt'       => 'El descuento por pieza debe ser mayor a $0.',
+            'discount_per_unit.prohibited' => 'El descuento por pieza solo aplica a promos de mayoreo.',
         ];
     }
 }

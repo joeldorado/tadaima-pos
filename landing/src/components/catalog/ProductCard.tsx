@@ -5,7 +5,7 @@ import type { GlobalCatalogItem } from "@tadaima/api"
 import { HoverCard } from "@/components/aceternity/HoverCard"
 import { ImageWithFallback } from "@/components/figma/ImageWithFallback"
 import { buildOrderMessage, buildWhatsAppLink } from "@/lib/catalogWhatsApp"
-import { promoShortLabel, promoTiersLabel } from "@/lib/promoLabel"
+import { promoDetailLabel, promoShortLabel } from "@/lib/promoLabel"
 
 const DISPLAY = "'Space Grotesk', system-ui, sans-serif"
 
@@ -161,7 +161,7 @@ export function ProductCard({
       {promo && (
         <div className="mt-1.5">
           <span
-            title={`${promo.name} · ${promoTiersLabel(promo)}${promoEnds ? ` · hasta ${promoEnds}` : ""}${promoStoreName ? ` · en ${promoStoreName}` : ""}`}
+            title={`${promo.name} · ${promoDetailLabel(promo)}${promoEnds ? ` · hasta ${promoEnds}` : ""}${promoStoreName ? ` · en ${promoStoreName}` : ""}`}
             className="inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md"
             style={{ background: "rgba(16,185,129,0.14)", border: "1px solid rgba(16,185,129,0.35)", color: "var(--cat-good, #34D399)" }}
           >

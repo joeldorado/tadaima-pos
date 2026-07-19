@@ -335,7 +335,9 @@ class CatalogController extends Controller
                     'type'     => $pr->type ?? \App\Models\ProductPromotion::TYPE_NXM,
                     'buy_n'    => $pr->buy_n !== null ? (int) $pr->buy_n : null,
                     'pay_m'    => $pr->pay_m !== null ? (int) $pr->pay_m : null,
-                    'tiers'    => $pr->tiers,
+                    // Mayoreo (2026-07-23) — `tiers` ya no viaja (ver ProductLightResource).
+                    'min_qty'           => $pr->min_qty !== null ? (int) $pr->min_qty : null,
+                    'discount_per_unit' => $pr->discount_per_unit !== null ? (float) $pr->discount_per_unit : null,
                     'ends_at'  => $pr->ends_at?->toIso8601String(),
                     'store_id' => $pr->store_id !== null ? (int) $pr->store_id : null,
                 ])->values(),

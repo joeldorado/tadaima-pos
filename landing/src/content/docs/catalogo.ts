@@ -96,29 +96,28 @@ const promosNxm: DocTopic = {
 
 const descuentoCantidad: DocTopic = {
   slug: "descuento-cantidad",
-  title: "Descuento por cantidad",
+  title: "Mayoreo",
   category: CAT,
   icon: Layers,
-  summary: "Escalones tipo “2 pzas −$100, 3 pzas −$400”. El descuento se repite por grupos.",
+  summary: "“De 5 piezas en adelante, −$100 a cada una”. Precio especial por llevar volumen.",
   sections: [
     {
       heading: "Qué es",
       blocks: [
-        { kind: "prose", text: "En lugar de dar producto gratis (como el 2x1), este tipo baja dinero según cuántas piezas lleve el cliente. Defines “escalones”: a X piezas, tanto de descuento." },
+        { kind: "prose", text: "En lugar de dar producto gratis (como el 2x1), el mayoreo le baja dinero a CADA pieza cuando el cliente lleva suficientes. Defines dos números: a partir de cuántas piezas arranca, y cuánto se le descuenta a cada una." },
         { kind: "steps", items: [
-          { title: "Nueva promo → tipo “Descuento por cantidad”", detail: "Descripción: “Ej. 2 pzas → −$100”." },
-          { title: "Arma los escalones", detail: "Cada renglón es “[cantidad] pzas → −$[monto]”. Botón “Agregar escalón” (hasta 5); la basura quita uno." },
+          { title: "Nueva promo → tipo “Mayoreo”", detail: "Descripción: “Desde N pzas, −$X a cada una”." },
+          { title: "A partir de (pzas)", detail: "Desde cuántas piezas arranca el precio de mayoreo. Mínimo 2." },
+          { title: "Descuento c/pieza", detail: "Cuánto se le baja a CADA pieza, no al total." },
           { title: "Fechas / prioridad / tienda igual que la NxM", detail: "" },
-          { title: "Crear promo", detail: "" },
         ] },
       ],
     },
     {
-      heading: "La regla clave: se repite por grupos",
+      heading: "La regla clave: aplica a TODAS las piezas",
       blocks: [
-        { kind: "prose", text: "El sistema aplica el escalón MÁS grande que quepa, y sigue con lo que sobra. Con 2→$100 y 3→$400, llevar 5 piezas descuenta $500 (un grupo de 3 = $400, más un grupo de 2 = $100)." },
-        { kind: "tiers", tiers: [ { qty: 2, amount: 100 }, { qty: 3, amount: 400 } ], example: 5 },
-        { kind: "callout", tone: "gold", title: "Nunca descuenta de más", text: "El descuento total jamás pasa del precio de esas piezas. Si el cálculo diera más que el bruto, se recorta automáticamente." },
+        { kind: "prose", text: "Al llegar al mínimo, el descuento se le aplica a cada pieza que lleve — no solo a las que pasan del mínimo. Con “desde 5, −$100 c/u”: 4 piezas no llevan nada, 5 piezas descuentan $500, 7 piezas descuentan $700 y 10 piezas descuentan $1,000." },
+        { kind: "callout", tone: "gold", title: "Nunca descuenta de más", text: "El descuento total jamás pasa del precio de esas piezas. Si el cálculo diera más que el bruto, se recorta automáticamente y la línea queda en $0, nunca en negativo." },
       ],
     },
   ],
@@ -135,7 +134,7 @@ const reglasPromos: DocTopic = {
       heading: "Lo que el sistema cuida solo",
       blocks: [
         { kind: "steps", items: [
-          { title: "Un producto no mezcla los dos tipos a la vez", detail: "No puede tener un 2x1 y un “descuento por cantidad” vigentes al mismo tiempo con fechas encimadas. Es uno o el otro. Si lo intentas, el sistema te dice cuál promo estorba." },
+          { title: "Un producto no mezcla los dos tipos a la vez", detail: "No puede tener un 2x1 y un “mayoreo” vigentes al mismo tiempo con fechas encimadas. Es uno o el otro. Si lo intentas, el sistema te dice cuál promo estorba." },
           { title: "Tope de promos por ámbito", detail: "Hay un máximo de promos activas por producto (globales y locales por tienda). El mensaje de error indica cuando llegas al tope." },
           { title: "Vigencias que no se enciman sí se permiten", detail: "Puedes programar una promo para después de que termine otra; el choque solo ocurre cuando las fechas se traslapan." },
         ] },

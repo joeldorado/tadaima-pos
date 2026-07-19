@@ -203,45 +203,94 @@ class PromotionCrudTest extends TestCase
             ])->assertStatus(404);
     }
 
-    // ── Tipo qty_discount + exclusividad de tipos (2026-07-20) ───────────────
+    // ── Tipo qty_discount = MAYOREO + exclusividad de tipos (2026-07-23) ─────
 
-    public function test_crea_promo_qty_discount_con_escalones(): void
+    /** Mayoreo listo para usar: desde 2 pzas, −$50 c/u. */
+    private function mayoreoFields(int $minQty = 2, float $perUnit = 50.0): array
+    {
+        return ['type' => 'qty_discount', 'min_qty' => $minQty, 'discount_per_unit' => $perUnit];
+    }
+
+    public function test_crea_promo_mayoreo(): void
     {
         $this->actingAs($this->admin)
-            ->postJson("/api/v1/products/{$this->product->id}/promotions", [
-                'name' => 'Por cantidad', 'type' => 'qty_discount',
-                'tiers' => [['qty' => 2, 'amount' => 100], ['qty' => 3, 'amount' => 400]],
-            ])
+            ->postJson("/api/v1/products/{$this->product->id}/promotions", array_merge(
+                ['name' => 'Mayoreo'],
+                $this->mayoreoFields(5, 100.0),
+            ))
             ->assertStatus(201)
             ->assertJsonPath('data.type', 'qty_discount')
-            ->assertJsonPath('data.tiers.1.amount', 400);
+            ->assertJsonPath('data.min_qty', 5);
 
-        // Viaja en el payload del producto con type y tiers.
+        // Viaja en el payload del producto con los campos del mayoreo.
         $this->actingAs($this->admin)
             ->getJson("/api/v1/products/{$this->product->id}")
             ->assertJsonPath('data.active_promotions.0.type', 'qty_discount')
-            ->assertJsonPath('data.active_promotions.0.tiers.0.qty', 2);
+            ->assertJsonPath('data.active_promotions.0.min_qty', 5)
+            ->assertJsonPath('data.active_promotions.0.discount_per_unit', 100);
     }
 
-    public function test_qty_discount_valida_escalones(): void
+    public function test_mayoreo_valida_sus_campos(): void
     {
-        // Sin tiers → 422; escalón con qty duplicada → 422; amount 0 → 422.
+        // Sin los campos → 422 (bundle viejo mandando escalones).
         $this->actingAs($this->admin)
             ->postJson("/api/v1/products/{$this->product->id}/promotions", [
                 'name' => 'Mal', 'type' => 'qty_discount',
             ])->assertStatus(422);
 
+        // min_qty < 2 → 422 (un "mayoreo" de 1 pieza no es mayoreo).
         $this->actingAs($this->admin)
             ->postJson("/api/v1/products/{$this->product->id}/promotions", [
-                'name' => 'Mal', 'type' => 'qty_discount',
-                'tiers' => [['qty' => 2, 'amount' => 100], ['qty' => 2, 'amount' => 200]],
+                'name' => 'Mal', 'type' => 'qty_discount', 'min_qty' => 1, 'discount_per_unit' => 50,
+            ])->assertStatus(422);
+
+        // Descuento en 0 → 422.
+        $this->actingAs($this->admin)
+            ->postJson("/api/v1/products/{$this->product->id}/promotions", [
+                'name' => 'Mal', 'type' => 'qty_discount', 'min_qty' => 2, 'discount_per_unit' => 0,
+            ])->assertStatus(422);
+    }
+
+    public function test_mayoreo_rechaza_los_campos_de_nxm_y_viceversa(): void
+    {
+        $this->actingAs($this->admin)
+            ->postJson("/api/v1/products/{$this->product->id}/promotions", [
+                'name' => 'Mezcla', 'type' => 'qty_discount',
+                'min_qty' => 2, 'discount_per_unit' => 50, 'buy_n' => 2, 'pay_m' => 1,
             ])->assertStatus(422);
 
         $this->actingAs($this->admin)
             ->postJson("/api/v1/products/{$this->product->id}/promotions", [
-                'name' => 'Mal', 'type' => 'qty_discount',
-                'tiers' => [['qty' => 2, 'amount' => 0]],
+                'name' => 'Mezcla', 'type' => 'nxm',
+                'buy_n' => 2, 'pay_m' => 1, 'min_qty' => 5,
             ])->assertStatus(422);
+    }
+
+    /**
+     * Pausar/reanudar desde un bundle VIEJO: manda `tiers` (que ya no existe) y
+     * NO manda los campos del mayoreo. Debe funcionar igual y preservar la fila
+     * — si esto truena, el cajero no puede pausar una promo tras el deploy.
+     */
+    public function test_put_parcial_de_bundle_viejo_preserva_la_promo(): void
+    {
+        $promo = ProductPromotion::create(array_merge(
+            ['product_id' => $this->product->id, 'name' => 'Mayoreo'],
+            ['type' => ProductPromotion::TYPE_QTY_DISCOUNT, 'min_qty' => 5, 'discount_per_unit' => 100],
+        ));
+
+        $this->actingAs($this->admin)
+            ->putJson("/api/v1/products/{$this->product->id}/promotions/{$promo->id}", [
+                'name'   => 'Mayoreo',
+                'type'   => 'qty_discount',
+                'tiers'  => [['qty' => 2, 'amount' => 100]], // legacy: se ignora
+                'status' => 'paused',
+            ])
+            ->assertOk();
+
+        $fresh = $promo->fresh();
+        $this->assertSame('paused', $fresh->status);
+        $this->assertSame(5, (int) $fresh->min_qty, 'El PUT parcial no debe borrar el mayoreo.');
+        $this->assertEqualsWithDelta(100.0, (float) $fresh->discount_per_unit, 0.001);
     }
 
     public function test_exclusividad_nxm_y_qty_discount_no_conviven(): void
@@ -253,8 +302,8 @@ class PromotionCrudTest extends TestCase
 
         $resp = $this->actingAs($this->admin)
             ->postJson("/api/v1/products/{$this->product->id}/promotions", [
-                'name' => 'Por cantidad', 'type' => 'qty_discount',
-                'tiers' => [['qty' => 2, 'amount' => 100]],
+                'name' => 'Mayoreo',
+                ...$this->mayoreoFields(),
             ]);
         $resp->assertStatus(422);
         $this->assertStringContainsString('2x1 Verano', (string) $resp->json('error'));
@@ -262,8 +311,8 @@ class PromotionCrudTest extends TestCase
         // …y al revés: con qty_discount vigente, un NxM encimado se rechaza.
         ProductPromotion::query()->delete();
         ProductPromotion::create([
-            'product_id' => $this->product->id, 'name' => 'Por cantidad',
-            'type' => ProductPromotion::TYPE_QTY_DISCOUNT, 'tiers' => [['qty' => 2, 'amount' => 100]],
+            'product_id' => $this->product->id, 'name' => 'Mayoreo',
+            'type' => ProductPromotion::TYPE_QTY_DISCOUNT, 'min_qty' => 2, 'discount_per_unit' => 50,
         ]);
 
         $resp2 = $this->actingAs($this->admin)
@@ -271,7 +320,7 @@ class PromotionCrudTest extends TestCase
                 'name' => '2x1 Invierno', 'buy_n' => 2, 'pay_m' => 1,
             ]);
         $resp2->assertStatus(422);
-        $this->assertStringContainsString('Por cantidad', (string) $resp2->json('error'));
+        $this->assertStringContainsString('Mayoreo', (string) $resp2->json('error'));
     }
 
     public function test_exclusividad_no_choca_si_ventanas_no_se_enciman(): void
@@ -284,8 +333,8 @@ class PromotionCrudTest extends TestCase
         // qty_discount para diciembre (no encimada) → permitida.
         $this->actingAs($this->admin)
             ->postJson("/api/v1/products/{$this->product->id}/promotions", [
-                'name' => 'Navidad', 'type' => 'qty_discount',
-                'tiers' => [['qty' => 2, 'amount' => 100]],
+                'name' => 'Navidad',
+                ...$this->mayoreoFields(),
                 'starts_at' => now()->addMonths(4)->format('Y-m-d'),
                 'ends_at'   => now()->addMonths(5)->format('Y-m-d'),
             ])->assertStatus(201);
@@ -294,14 +343,14 @@ class PromotionCrudTest extends TestCase
     public function test_dup_qty_discount_encimada_rechazada(): void
     {
         ProductPromotion::create([
-            'product_id' => $this->product->id, 'name' => 'Por cantidad',
-            'type' => ProductPromotion::TYPE_QTY_DISCOUNT, 'tiers' => [['qty' => 2, 'amount' => 100]],
+            'product_id' => $this->product->id, 'name' => 'Mayoreo',
+            'type' => ProductPromotion::TYPE_QTY_DISCOUNT, 'min_qty' => 2, 'discount_per_unit' => 50,
         ]);
 
         $this->actingAs($this->admin)
             ->postJson("/api/v1/products/{$this->product->id}/promotions", [
-                'name' => 'Otra por cantidad', 'type' => 'qty_discount',
-                'tiers' => [['qty' => 4, 'amount' => 300]],
+                'name' => 'Otro mayoreo',
+                ...$this->mayoreoFields(4, 300.0),
             ])->assertStatus(422);
     }
 }

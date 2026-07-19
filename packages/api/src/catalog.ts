@@ -145,11 +145,12 @@ export interface GlobalCatalogItem {
   active_promotions?: Array<{
     id: number
     name: string
-    /** 'nxm' (2x1) | 'qty_discount' (escalones por cantidad). */
+    /** 'nxm' (2x1) | 'qty_discount' = mayoreo (desde N pzas, −$X c/u). */
     type?: 'nxm' | 'qty_discount'
     buy_n: number | null
     pay_m: number | null
-    tiers?: Array<{ qty: number; amount: number }> | null
+    min_qty?: number | null
+    discount_per_unit?: number | null
     ends_at: string | null
     store_id: number | null
   }>

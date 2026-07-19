@@ -1,19 +1,11 @@
 import { Info, TriangleAlert, Sparkles } from "lucide-react"
-import type { DocBlock, DocField, DocTier } from "@/content/docs/types"
+import type { DocBlock, DocField } from "@/content/docs/types"
 
 /**
  * Renderers presentacionales del Centro de Documentación.
  * Un componente por `kind` de bloque; `DocBlockView` despacha por tipo.
  * Todo el color sale de los tokens `--td-*` (tema oscuro/claro nativo).
  */
-
-const fmtMXN = (n: number): string =>
-  new Intl.NumberFormat("es-MX", {
-    style: "currency",
-    currency: "MXN",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(n || 0)
 
 function Prose({ text }: { text: string }) {
   return (
@@ -82,62 +74,6 @@ function Callout({ tone, title, text }: { tone: "info" | "warn" | "gold"; title:
  * greedy que arma el motor (escalón mayor primero) y muestra la suma total.
  * Espejo visual de `qtyDiscountAmount` (saleCalc.ts / SaleCalculator.php).
  */
-function TierVisual({ tiers, example }: { tiers: DocTier[]; example: number }) {
-  const sorted = [...tiers].sort((a, b) => b.qty - a.qty)
-  const groups: { qty: number; amount: number }[] = []
-  let remaining = example
-  for (const t of sorted) {
-    while (remaining >= t.qty) {
-      groups.push({ qty: t.qty, amount: t.amount })
-      remaining -= t.qty
-    }
-  }
-  const total = groups.reduce((s, g) => s + g.amount, 0)
-
-  return (
-    <div
-      className="rounded-2xl p-4 space-y-3"
-      style={{ background: "var(--td-surface-soft)", border: "1px solid var(--td-card-border)" }}
-    >
-      <div className="flex flex-wrap gap-2">
-        {tiers.map((t, i) => (
-          <span
-            key={i}
-            className="text-[12px] font-bold px-2.5 py-1 rounded-lg"
-            style={{ background: "var(--td-surface-muted)", border: "1px solid var(--td-divider)", color: "var(--td-text-md)" }}
-          >
-            {t.qty} pzas → <span style={{ color: "#FBBF24", fontWeight: 900 }}>−{fmtMXN(t.amount)}</span>
-          </span>
-        ))}
-      </div>
-
-      <div className="text-[13px] font-bold" style={{ color: "var(--td-text-lo)" }}>
-        Ejemplo: el cliente lleva <span style={{ color: "var(--td-text-hi)" }}>{example} pzas</span>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2">
-        {groups.map((g, i) => (
-          <span key={i} className="flex items-center gap-2">
-            {i > 0 && <span className="text-lg font-black" style={{ color: "var(--td-text-ghost)" }}>+</span>}
-            <span
-              className="text-[13px] font-black px-3 py-1.5 rounded-xl"
-              style={{ background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.32)", color: "#34D399" }}
-            >
-              grupo de {g.qty} → −{fmtMXN(g.amount)}
-            </span>
-          </span>
-        ))}
-        <span className="text-lg font-black" style={{ color: "var(--td-text-ghost)" }}>=</span>
-        <span
-          className="text-base font-black px-3 py-1.5 rounded-xl tabular-nums"
-          style={{ background: "var(--td-red-dim)", border: "1px solid var(--td-red-brd)", color: "#FF8A80" }}
-        >
-          −{fmtMXN(total)}
-        </span>
-      </div>
-    </div>
-  )
-}
 
 const CHIP_STYLES = {
   amber: { bg: "rgba(245,158,11,0.14)", brd: "rgba(245,158,11,0.4)", fg: "#FBBF24" },
@@ -244,8 +180,6 @@ export function DocBlockView({ block }: { block: DocBlock }) {
       return <Steps items={block.items} />
     case "callout":
       return <Callout tone={block.tone} title={block.title} text={block.text} />
-    case "tiers":
-      return <TierVisual tiers={block.tiers} example={block.example} />
     case "chips":
       return <Chips chips={block.chips} />
     case "fields":

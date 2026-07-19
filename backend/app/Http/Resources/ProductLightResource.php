@@ -97,7 +97,11 @@ class ProductLightResource extends JsonResource
                     'type'     => $p->type ?? \App\Models\ProductPromotion::TYPE_NXM,
                     'buy_n'    => $p->buy_n !== null ? (int) $p->buy_n : null,
                     'pay_m'    => $p->pay_m !== null ? (int) $p->pay_m : null,
-                    'tiers'    => $p->tiers,
+                    // Mayoreo (2026-07-23). `tiers` ya NO viaja: quedó como
+                    // rastro en DB, y mandarlo haría que un cliente rezagado
+                    // pinte un descuento con la matemática vieja.
+                    'min_qty'           => $p->min_qty !== null ? (int) $p->min_qty : null,
+                    'discount_per_unit' => $p->discount_per_unit !== null ? (float) $p->discount_per_unit : null,
                     'priority' => (int) $p->priority,
                     'store_id' => $p->store_id !== null ? (int) $p->store_id : null,
                     'ends_at'  => $p->ends_at?->toIso8601String(),

@@ -12,6 +12,7 @@ import {
 } from "@tadaima/api";
 import { useAuth } from "@tadaima/auth";
 import { isAdmin as isAdminRole } from "@/lib/permisos";
+import { promoBadge, promoBannerCopy, promoShortLabel } from "@/lib/promoLabel";
 
 // ─── Tokens visuales (convención de páginas glass) ────────────────────────────
 const PANEL  = "var(--td-panel-bg)";
@@ -29,30 +30,25 @@ const fmt = (n: number) =>
 type LightPromo = NonNullable<ProductLight["active_promotions"]>[number];
 
 /**
- * Piezas de display por TIPO de promo (banner/TV/grid, 2026-07-20):
- * - nxm: badge "2×1" + "1 gratis" + "Llévate N, paga M · $".
- * - qty_discount: badge "−$100" + escalones + "Llévate N y ahorra $X".
- * badgeScale achica el badge gigante cuando el texto es largo ("−$1,000").
+ * Piezas de display por TIPO de promo (banner/TV/grid). El badge y el CTA salen
+ * de `promoLabel` (fuente única compartida con Caja, el catálogo público y el
+ * tab de promos); aquí solo se arma el subtítulo, que sí es propio de esta
+ * página porque mezcla el nombre de la promo con el precio ya calculado.
  */
 function promoDisplay(promo: LightPromo, price: number) {
+  const { text: badge, scale: badgeScale } = promoBadge(promo);
+  const cta = promoBannerCopy(promo);
+
   if (promo.type === "qty_discount") {
-    const tiers = [...(promo.tiers ?? [])].filter(t => t.qty >= 2 && t.amount > 0).sort((a, b) => a.qty - b.qty);
-    const first = tiers[0];
-    return {
-      badge: first ? `−${fmt(first.amount)}` : "Promo",
-      badgeScale: 0.55,
-      sub: `${tiers.map(t => `${t.qty} pzas −${fmt(t.amount)}`).join(" · ") || "Por cantidad"} · ${promo.name}`,
-      cta: first ? `Llévate ${first.qty} y ahorra ${fmt(first.amount)}` : "Descuento por cantidad",
-    };
+    return { badge, badgeScale, sub: `${promoShortLabel(promo)} · ${promo.name}`, cta };
   }
-  const buyN = promo.buy_n ?? 0;
-  const payM = promo.pay_m ?? 0;
-  const free = buyN - payM;
+
+  const free = (promo.buy_n ?? 0) - (promo.pay_m ?? 0);
   return {
-    badge: `${buyN}×${payM}`,
-    badgeScale: 1,
+    badge,
+    badgeScale,
     sub: `${free === 1 ? "1 gratis" : `${free} gratis`} · ${promo.name}`,
-    cta: `Llévate ${buyN}, paga ${payM} · ${fmt(price * payM)}`,
+    cta: `${cta} · ${fmt(price * (promo.pay_m ?? 0))}`,
   };
 }
 
@@ -202,7 +198,10 @@ function ShareBannerModal({ product, promo, onClose }: {
         toast.error("No se pudo generar la imagen");
         return null;
       }
-      return new File([blob], `promo-${promo.buy_n}x${promo.pay_m}-${product.sku || product.id}.png`, { type: "image/png" });
+      // slug del tipo de promo, no `buy_n x pay_m`: en mayoreo ambos son null
+      // y el archivo salía "promo-nullxnull-…".
+      const slug = promoShortLabel(promo).replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "");
+      return new File([blob], `promo-${slug}-${product.sku || product.id}.png`, { type: "image/png" });
     } catch {
       toast.error("No se pudo generar la imagen");
       return null;
@@ -227,7 +226,7 @@ function ShareBannerModal({ product, promo, onClose }: {
     try {
       if (navigator.canShare?.({ files: [file] })) {
         // Abre el share sheet del dispositivo → WhatsApp → lista de contactos.
-        await navigator.share({ files: [file], title: `Promo ${promo.buy_n}x${promo.pay_m} — ${product.name}` });
+        await navigator.share({ files: [file], title: `Promo ${promoShortLabel(promo)} — ${product.name}` });
       } else {
         toast.info("Este navegador no comparte imágenes — usa Descargar y mándala por WhatsApp.");
       }
@@ -258,7 +257,7 @@ function ShareBannerModal({ product, promo, onClose }: {
           <div>
             <h3 style={{ margin: 0, fontSize: 16, fontWeight: 900, color: THI }}>Compartir promo</h3>
             <p style={{ margin: "3px 0 0", fontSize: 10, fontWeight: 700, color: TLO, textTransform: "uppercase", letterSpacing: "0.12em" }}>
-              {promo.buy_n}x{promo.pay_m} · {product.name}
+              {promoShortLabel(promo)} · {product.name}
             </p>
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: TLO, padding: 4 }}><X size={18} /></button>

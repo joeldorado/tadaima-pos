@@ -41,7 +41,7 @@ import { useExchangeRateQuery } from "@/hooks/queries/useSystemSettings";
 import { usePreSaleCatalogsQuery, usePreSaleOrdersQuery } from "@/hooks/queries/usePreSales";
 import { useCustomersAllQuery } from "@/hooks/queries/useCustomers";
 import { useTodayHistorialQuery } from "@/hooks/queries/useHistorial";
-import { promoShortLabel, promoTiersLabel } from "@/lib/promoLabel";
+import { promoDetailLabel, promoShortLabel } from "@/lib/promoLabel";
 import { queryKeys } from "@/lib/queryKeys";
 import { prependSaleToSalesCaches, prependPreSaleOrderToCaches, patchPreSaleOrderInCaches, decrementProductStockInCaches, invalidateAfterSale } from "@/lib/optimisticSale";
 import { getTodayLocal, toLocalYmd, BUSINESS_TZ } from "@/lib/date";
@@ -121,7 +121,7 @@ interface Product {
   // agrega stock; no se puede cobrar hasta que tenga stock). Default true.
   is_assigned?: boolean;
   /** Promos NxM VIGENTES (Fase 3) — el motor elige la mejor por línea. */
-  active_promotions?: Array<{ id: number; name: string; type?: 'nxm' | 'qty_discount'; buy_n: number | null; pay_m: number | null; tiers?: Array<{ qty: number; amount: number }> | null; priority: number; store_id?: number | null }>;
+  active_promotions?: Array<{ id: number; name: string; type?: 'nxm' | 'qty_discount'; buy_n: number | null; pay_m: number | null; min_qty?: number | null; discount_per_unit?: number | null; priority: number; store_id?: number | null }>;
 }
 
 interface Customer {
@@ -2111,7 +2111,9 @@ export function SellPage() {
           type: ap.type ?? ("nxm" as const),
           buyN: ap.buy_n ?? 0,
           payM: ap.pay_m ?? 0,
-          ...(ap.tiers ? { tiers: ap.tiers } : {}),
+          // Mayoreo: "desde minQty pzas, −discountPerUnit a cada una".
+          minQty: ap.min_qty ?? null,
+          discountPerUnit: ap.discount_per_unit ?? null,
           priority: ap.priority,
           // Override local: la promo de la tienda apaga la global (motor).
           storeId: ap.store_id ?? null,
@@ -5074,7 +5076,7 @@ export function SellPage() {
                                 const cands = pool.some(pr => pr.store_id != null) ? pool.filter(pr => pr.store_id != null) : pool;
                                 const promo = [...cands].sort((a, b) => b.priority - a.priority || a.id - b.id)[0]!;
                                 return (
-                                  <span title={`${promo.name} · ${promoTiersLabel(promo)}`} style={{
+                                  <span title={`${promo.name} · ${promoDetailLabel(promo)}`} style={{
                                     marginLeft: 8, padding: "1px 7px", borderRadius: 6, verticalAlign: "middle",
                                     fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em",
                                     color: "#34d399", background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.35)",
