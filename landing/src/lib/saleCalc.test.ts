@@ -215,6 +215,17 @@ describe("computePromoBenefit — tipo qty_discount = MAYOREO (por pieza desde N
     expect(computePromoBenefit(mayoreoPromo(2, 100), { unitPrice: 500, qty: 2.9 })?.amount).toBe(200);
   });
 
+  it("skipPromo: el cajero renunció a la promo → se cobra a precio normal", () => {
+    // Es la salida cuando la promo restringe el método de pago: sin esto ese
+    // producto simplemente no se le puede vender al cliente.
+    const r = recalculateSale({
+      lines: [{ lineId: "a", productId: "1", unitPrice: 200, qty: 5, skipPromo: true }],
+      promotions: [mayoreoPromo(5, 100)],
+    });
+    expect(r.total).toBe(1000);
+    expect(r.lines[0]?.promoPart ?? null).toBeNull();
+  });
+
   it("sin configurar (min_qty o descuento faltantes/inválidos) → null", () => {
     expect(computePromoBenefit(mayoreoPromo(1, 50), { unitPrice: 100, qty: 5 })).toBeNull();
     expect(computePromoBenefit(mayoreoPromo(5, 0), { unitPrice: 100, qty: 5 })).toBeNull();

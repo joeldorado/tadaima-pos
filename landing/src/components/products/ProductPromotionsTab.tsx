@@ -66,6 +66,10 @@ export function ProductPromotionsTab({ productId }: Props) {
   // Mayoreo (strings para inputs controlados).
   const [minQty, setMinQty] = useState("5");
   const [perUnit, setPerUnit] = useState("");
+  // Restricción de método de pago de la promo (2026-07-24). Si el método no le
+  // sirve, BLOQUEA el cobro igual que la restricción del producto.
+  const [allowCash, setAllowCash] = useState(true);
+  const [allowCard, setAllowCard] = useState(true);
   const [startsAt, setStartsAt] = useState("");
   const [endsAt, setEndsAt] = useState("");
   const [priority, setPriority] = useState("0");
@@ -95,6 +99,8 @@ export function ProductPromotionsTab({ productId }: Props) {
     setPayM(String(promo.pay_m ?? 1));
     setMinQty(String(promo.min_qty ?? 5));
     setPerUnit(promo.discount_per_unit != null ? String(promo.discount_per_unit) : "");
+    setAllowCash(promo.allow_cash !== false);
+    setAllowCard(promo.allow_card !== false);
     // Inicio en el pasado no se puede re-elegir en el picker (minValue hoy):
     // vacío = empieza ya. El vencimiento sí se conserva.
     const today = getTodayLocal();
@@ -157,11 +163,18 @@ export function ProductPromotionsTab({ productId }: Props) {
       successLabel = `Mayoreo creado: desde ${q} pzas, −$${d} c/u`;
     }
 
+    if (!allowCash && !allowCard) {
+      toast.error("Marca al menos un método de pago para la promoción.");
+      return;
+    }
+
     setSaving(true);
     try {
       const input: ProductPromotionInput = {
         name: name.trim(),
         ...typedFields,
+        allow_cash: allowCash,
+        allow_card: allowCard,
         // Fechas PLANAS (YYYY-MM-DD): el backend las ancla al día completo en
         // la zona del negocio (inicio/fin de día Tijuana) — nunca mandar hora.
         ...(startsAt ? { starts_at: startsAt } : {}),
@@ -173,6 +186,7 @@ export function ProductPromotionsTab({ productId }: Props) {
       await createProductPromotion(productId, input);
       toast.success(successLabel);
       setName(""); setBuyN("2"); setPayM("1"); setMinQty("5"); setPerUnit("");
+      setAllowCash(true); setAllowCard(true);
       setStartsAt(""); setEndsAt(""); setPriority("0");
       setShowForm(false);
       await reload(productId);
@@ -199,6 +213,8 @@ export function ProductPromotionsTab({ productId }: Props) {
               ...(promo.discount_per_unit != null ? { discount_per_unit: promo.discount_per_unit } : {}),
             }
           : { type: "nxm" as const, buy_n: promo.buy_n ?? 2, pay_m: promo.pay_m ?? 1 }),
+        allow_cash: promo.allow_cash !== false,
+        allow_card: promo.allow_card !== false,
         starts_at: promo.starts_at, ends_at: promo.ends_at,
         priority: promo.priority, status: next,
         store_id: promo.store_id ?? null, // preservar la tienda al pausar/reanudar
@@ -325,6 +341,38 @@ export function ProductPromotionsTab({ productId }: Props) {
                 </p>
               </>
             )}
+
+            {/* Restricción de pago de la promo. Si el método de cobro no le
+                sirve, BLOQUEA la venta (igual que la restricción del producto) —
+                por eso el aviso de abajo es explícito. */}
+            <div className="col-span-2">
+              <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>
+                Se puede pagar con
+              </label>
+              <div className="mt-1.5 flex flex-wrap gap-4">
+                {([
+                  { key: "cash" as const, label: "Efectivo", val: allowCash, set: setAllowCash },
+                  { key: "card" as const, label: "Tarjeta", val: allowCard, set: setAllowCard },
+                ]).map(o => (
+                  <label key={o.key} className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={o.val}
+                      onChange={e => o.set(e.target.checked)}
+                      style={{ width: 15, height: 15, accentColor: "#34d399", cursor: "pointer" }}
+                    />
+                    <span className="text-[11px] font-black" style={{ color: o.val ? THI : TLO }}>{o.label}</span>
+                  </label>
+                ))}
+              </div>
+              {(!allowCash || !allowCard) && (
+                <p className="mt-1 text-[9px] font-bold" style={{ color: "#fbbf24" }}>
+                  Ojo: con esta promo aplicada, la venta <b>no se podrá cobrar</b> con{" "}
+                  {!allowCash ? "efectivo" : "tarjeta"}. El cajero verá el aviso y podrá cobrar sin la promo.
+                </p>
+              )}
+            </div>
+
             <div>
               <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>Inicia (opcional)</label>
               <div className="mt-1">

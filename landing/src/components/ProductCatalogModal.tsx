@@ -26,7 +26,7 @@ interface CatalogProduct {
   /** false = sin inventario en esta tienda ("No asignado"). Default tratado como true. */
   is_assigned?: boolean;
   /** Promos vigentes (embed del backend, ya filtradas por tienda). */
-  active_promotions?: Array<{ id: number; name: string; type?: string; buy_n: number | null; pay_m: number | null; min_qty?: number | null; discount_per_unit?: number | null; priority: number; store_id?: number | null; ends_at?: string | null }>;
+  active_promotions?: Array<{ id: number; name: string; type?: string; buy_n: number | null; pay_m: number | null; min_qty?: number | null; discount_per_unit?: number | null; allow_cash?: boolean; allow_card?: boolean; priority: number; store_id?: number | null; ends_at?: string | null }>;
 }
 
 type Level = "a" | "b" | "c" | "d" | "e";

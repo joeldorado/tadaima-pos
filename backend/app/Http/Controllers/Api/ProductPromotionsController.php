@@ -49,6 +49,9 @@ class ProductPromotionsController extends Controller
         if ($resp = $this->promoManageError()) {
             return $resp;
         }
+        if ($resp = $this->promoPaymentConflictError($product, $request)) {
+            return $resp;
+        }
         if ($request->input('status', ProductPromotion::STATUS_ACTIVE) === ProductPromotion::STATUS_ACTIVE) {
             if ($resp = $this->promoTypeConflictError($product, $request)) {
                 return $resp;
@@ -62,7 +65,7 @@ class ProductPromotionsController extends Controller
         }
 
         $promotion = $product->promotions()->create(array_merge(
-            $request->only(['name', 'buy_n', 'pay_m', 'min_qty', 'discount_per_unit', 'priority']),
+            $request->only(['name', 'buy_n', 'pay_m', 'min_qty', 'discount_per_unit', 'allow_cash', 'allow_card', 'priority']),
             $this->vigencyDates($request->input('starts_at'), $request->input('ends_at')),
             [
                 'type'     => $request->promoType(),
@@ -89,6 +92,11 @@ class ProductPromotionsController extends Controller
         if ($resp = $this->promoMutationGateError($request, $promotion)) {
             return $resp;
         }
+        // Se revalida en CADA update, no solo al reactivar: los flags de pago
+        // del PRODUCTO pueden haber cambiado desde que se creó la promo.
+        if ($resp = $this->promoPaymentConflictError($product, $request, $promotion)) {
+            return $resp;
+        }
         // Duplicado y tope solo al REACTIVAR (pausada/vencida → activa); editar
         // una que ya está activa no se bloquea aunque exista un excedente legacy.
         if ($request->has('status')
@@ -113,7 +121,7 @@ class ProductPromotionsController extends Controller
         $promotion->update(array_merge(
             // `tiers` fuera (mayoreo 2026-07-23): los bundles viejos lo siguen
             // mandando al pausar y aquí se descarta en silencio.
-            $request->only(['name', 'buy_n', 'pay_m', 'min_qty', 'discount_per_unit', 'priority']),
+            $request->only(['name', 'buy_n', 'pay_m', 'min_qty', 'discount_per_unit', 'allow_cash', 'allow_card', 'priority']),
             $this->vigencyDates($request->input('starts_at'), $request->input('ends_at')),
             $request->has('status') ? ['status' => $request->input('status')] : [],
             $request->has('store_id') ? ['store_id' => $this->scopedStoreId($request)] : [],
@@ -184,6 +192,53 @@ class ProductPromotionsController extends Controller
             "Ya existe {$label} para este producto que se encima en fechas (\"{$existing->name}\"). Pausa o elimina esa, o usa un rango de fechas que no se encime.",
             422
         );
+    }
+
+    /**
+     * Restricción de pago de la promo vs la del PRODUCTO (2026-07-24).
+     *
+     * Como la promo BLOQUEA el cobro cuando el método no le sirve, una promo
+     * solo-efectivo sobre un producto que no acepta efectivo vuelve al producto
+     * invendible. Se ataja al guardar en vez de descubrirlo en el mostrador.
+     *
+     * Vive en el controller y no en el FormRequest a propósito: tiene que
+     * re-correr en cada update porque los flags del producto pueden cambiar
+     * DESPUÉS de crear la promo.
+     */
+    private function promoPaymentConflictError(
+        Product $product,
+        StoreProductPromotionRequest $request,
+        ?ProductPromotion $current = null,
+    ): ?JsonResponse {
+        // Ausente en un PUT parcial = conserva lo que ya tenía la promo.
+        $promoCash = $request->has('allow_cash')
+            ? $request->boolean('allow_cash')
+            : (bool) ($current->allow_cash ?? true);
+        $promoCard = $request->has('allow_card')
+            ? $request->boolean('allow_card')
+            : (bool) ($current->allow_card ?? true);
+
+        if (!$promoCash && !$promoCard) {
+            return $this->error('Marca al menos un método de pago para la promoción.', 422);
+        }
+
+        $prodCash = (bool) ($product->paymentMethod?->allow_cash ?? true);
+        $prodCard = (bool) ($product->paymentMethod?->allow_card ?? true);
+
+        // Los métodos que servirían para cobrar CON la promo aplicada.
+        $sirveEfectivo = $promoCash && $prodCash;
+        $sirveTarjeta  = $promoCard && $prodCard;
+
+        if (!$sirveEfectivo && !$sirveTarjeta) {
+            $falta = !$promoCash ? 'efectivo' : 'tarjeta';
+
+            return $this->error(
+                "El producto \"{$product->name}\" no acepta {$falta}, así que esta promo nunca se podría cobrar. Ajusta primero la restricción de pago del producto.",
+                422
+            );
+        }
+
+        return null;
     }
 
     /**

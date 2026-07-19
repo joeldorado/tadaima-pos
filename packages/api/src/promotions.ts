@@ -17,6 +17,9 @@ export interface ProductPromotionInput {
   min_qty?: number
   /** Mayoreo: cuánto se le descuenta a CADA pieza. */
   discount_per_unit?: number
+  /** Restricción de pago de la promo: si el método no sirve, bloquea el cobro. */
+  allow_cash?: boolean
+  allow_card?: boolean
   starts_at?: string | null
   ends_at?: string | null
   status?: 'active' | 'paused' | 'expired'

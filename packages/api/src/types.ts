@@ -91,8 +91,18 @@ export interface MayoreoFields {
   discount_per_unit?: number | null
 }
 
+/**
+ * Restricción de método de pago de la PROMO (2026-07-24). Si el método de cobro
+ * no le sirve, BLOQUEA el cobro igual que la restricción del producto — no
+ * "se cae el descuento". Default true en ambos.
+ */
+export interface PromoPaymentFlags {
+  allow_cash?: boolean
+  allow_card?: boolean
+}
+
 /** Promo vigente tal como viaja en el payload de producto (Caja). */
-export interface ActiveProductPromotion extends MayoreoFields {
+export interface ActiveProductPromotion extends MayoreoFields, PromoPaymentFlags {
   id: number
   name: string
   /** 'nxm' (2x1, usa buy_n/pay_m) | 'qty_discount' = mayoreo. */
@@ -107,7 +117,7 @@ export interface ActiveProductPromotion extends MayoreoFields {
 }
 
 /** Promo completa (CRUD del editor de producto — incluye pausadas/vencidas). */
-export interface ProductPromotion extends MayoreoFields {
+export interface ProductPromotion extends MayoreoFields, PromoPaymentFlags {
   id: number
   product_id: number
   /** null = todas las tiendas; con valor = solo esa sucursal. */

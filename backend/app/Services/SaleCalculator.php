@@ -35,6 +35,7 @@ final class SaleCalculator
      *   unit_price: float,
      *   qty: float,
      *   line_discount?: array{kind: string, basis: string, value: float, reason?: ?string, note?: ?string}|null,
+     *   skip_promotion?: bool,
      * }> $lines Líneas en el MISMO orden en que se persistirán (zip posicional).
      * @param iterable<\App\Models\ProductPromotion> $promotions Promos VIGENTES
      *   de los productos del carrito (el caller filtra con currentlyActive()).
@@ -100,11 +101,18 @@ final class SaleCalculator
             // STACKING (Joel 2026-07-17): la promo aplica SIEMPRE que alcance;
             // el descuento manual se calcula sobre el neto-promo (antes lo
             // reemplazaba). Espejo exacto de recalculateSale en saleCalc.ts.
-            $best = $this->bestPromoBenefit(
-                $promosByProduct[(int) $line['product_id']] ?? [],
-                (float) $line['unit_price'],
-                (float) $line['qty'],
-            );
+            //
+            // `skip_promotion` (2026-07-24): el cajero renunció a la promo a
+            // propósito desde Caja. Es la salida cuando la promo restringe el
+            // método de pago y el cliente no puede pagar de esa forma — sin
+            // esto, el producto simplemente no se le puede vender.
+            $best = ($line['skip_promotion'] ?? false)
+                ? null
+                : $this->bestPromoBenefit(
+                    $promosByProduct[(int) $line['product_id']] ?? [],
+                    (float) $line['unit_price'],
+                    (float) $line['qty'],
+                );
             $promoAmount = 0.0;
             if ($best !== null) {
                 $benefitType    = 'promo';

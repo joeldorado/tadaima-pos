@@ -49,6 +49,8 @@ class ProductPromotion extends Model
         'pay_m',
         'min_qty',
         'discount_per_unit',
+        'allow_cash',
+        'allow_card',
         'starts_at',
         'ends_at',
         'status',
@@ -61,6 +63,9 @@ class ProductPromotion extends Model
         'pay_m'             => 'integer',
         'min_qty'           => 'integer',
         'discount_per_unit' => 'float',
+        // Restricción de método de pago de la promo (espejo del producto).
+        'allow_cash'        => 'boolean',
+        'allow_card'        => 'boolean',
         'tiers'             => 'array',
         'priority'          => 'integer',
         'starts_at'         => 'datetime',

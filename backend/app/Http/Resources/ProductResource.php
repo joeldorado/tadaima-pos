@@ -136,6 +136,10 @@ class ProductResource extends JsonResource
                     // Mayoreo (2026-07-23) — `tiers` ya no viaja (ver ProductLightResource).
                     'min_qty'           => $p->min_qty !== null ? (int) $p->min_qty : null,
                     'discount_per_unit' => $p->discount_per_unit !== null ? (float) $p->discount_per_unit : null,
+                    // Restricción de pago de la promo (2026-07-24): si el método
+                    // no le sirve, bloquea el cobro igual que la del producto.
+                    'allow_cash'        => (bool) ($p->allow_cash ?? true),
+                    'allow_card'        => (bool) ($p->allow_card ?? true),
                     'priority' => (int) $p->priority,
                     'store_id' => $p->store_id !== null ? (int) $p->store_id : null,
                     'ends_at'  => $p->ends_at?->toIso8601String(),

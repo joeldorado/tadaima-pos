@@ -352,4 +352,108 @@ class PromotionCheckoutTest extends TestCase
         $this->assertSame(1, (int) $item->promo_free_qty);
         $this->assertEqualsWithDelta(50.0, (float) $item->promo_amount, 0.001);
     }
+
+    // ── Restricción de método de pago POR PROMOCIÓN (2026-07-24) ────────────
+
+    /** Cobra con TARJETA (el helper `checkout` usa efectivo). */
+    private function checkoutConTarjeta(array $items, float $amount)
+    {
+        $card = PaymentMethod::firstOrCreate(['name' => 'Tarjeta Débito'], ['active' => true]);
+
+        return $this->actingAs($this->user)->postJson('/api/v1/sales', [
+            'store_id'            => $this->store->id,
+            'register_session_id' => $this->session->id,
+            'calc_version'        => 2,
+            'items'               => $items,
+            'payments'            => [['payment_method_id' => $card->id, 'amount' => $amount]],
+        ]);
+    }
+
+    public function test_promo_solo_efectivo_bloquea_el_cobro_con_tarjeta(): void
+    {
+        $product = $this->makeProduct(200);
+        ProductPromotion::create([
+            'product_id' => $product->id, 'name' => 'Mayoreo de contado',
+            'type' => ProductPromotion::TYPE_QTY_DISCOUNT, 'min_qty' => 3, 'discount_per_unit' => 50,
+            'allow_cash' => true, 'allow_card' => false,
+        ]);
+
+        // 3 pzas → la promo aplica (−$150) → con tarjeta se bloquea.
+        $resp = $this->checkoutConTarjeta([
+            ['product_id' => $product->id, 'quantity' => 3, 'price' => 200.0],
+        ], 450.0);
+
+        $resp->assertStatus(422);
+        $this->assertStringContainsString('Mayoreo de contado', (string) $resp->json('error'));
+        $this->assertSame(0, SaleItem::count(), 'No debe quedar ninguna venta a medias.');
+    }
+
+    public function test_promo_restringida_NO_bloquea_si_no_alcanzo_a_aplicar(): void
+    {
+        // La restricción es del BENEFICIO, no del producto: con 2 pzas el
+        // mayoreo (mínimo 3) no dispara, así que no hay nada que restringir.
+        $product = $this->makeProduct(200);
+        ProductPromotion::create([
+            'product_id' => $product->id, 'name' => 'Mayoreo de contado',
+            'type' => ProductPromotion::TYPE_QTY_DISCOUNT, 'min_qty' => 3, 'discount_per_unit' => 50,
+            'allow_cash' => true, 'allow_card' => false,
+        ]);
+
+        $this->checkoutConTarjeta([
+            ['product_id' => $product->id, 'quantity' => 2, 'price' => 200.0],
+        ], 400.0)
+            ->assertStatus(201)
+            ->assertJsonPath('data.discount', 0)
+            ->assertJsonPath('data.total', 400);
+    }
+
+    public function test_skip_promotion_desbloquea_y_cobra_a_precio_normal(): void
+    {
+        // La salida del cajero: renuncia a la promo a propósito y la venta pasa.
+        $product = $this->makeProduct(200);
+        ProductPromotion::create([
+            'product_id' => $product->id, 'name' => 'Mayoreo de contado',
+            'type' => ProductPromotion::TYPE_QTY_DISCOUNT, 'min_qty' => 3, 'discount_per_unit' => 50,
+            'allow_cash' => true, 'allow_card' => false,
+        ]);
+
+        $this->checkoutConTarjeta([
+            ['product_id' => $product->id, 'quantity' => 3, 'price' => 200.0, 'skip_promotion' => true],
+        ], 600.0)
+            ->assertStatus(201)
+            ->assertJsonPath('data.discount', 0)
+            ->assertJsonPath('data.total', 600);
+
+        $item = SaleItem::firstOrFail();
+        $this->assertNull($item->applied_promotion_id, 'Renunciar a la promo no debe dejar snapshot.');
+    }
+
+    public function test_promo_solo_tarjeta_bloquea_el_cobro_en_efectivo(): void
+    {
+        $product = $this->makeProduct(50);
+        ProductPromotion::create([
+            'product_id' => $product->id, 'name' => '2x1 con tarjeta',
+            'buy_n' => 2, 'pay_m' => 1, 'allow_cash' => false, 'allow_card' => true,
+        ]);
+
+        $resp = $this->checkout([
+            ['product_id' => $product->id, 'quantity' => 2, 'price' => 50.0],
+        ], 50.0);
+
+        $resp->assertStatus(422);
+        $this->assertStringContainsString('2x1 con tarjeta', (string) $resp->json('error'));
+    }
+
+    public function test_promo_sin_restriccion_sigue_cobrandose_con_cualquier_metodo(): void
+    {
+        // Regresión: el default (ambos true) no debe estorbar a nada existente.
+        $product = $this->makeProduct(50);
+        ProductPromotion::create([
+            'product_id' => $product->id, 'name' => '2x1 Verano', 'buy_n' => 2, 'pay_m' => 1,
+        ]);
+
+        $this->checkoutConTarjeta([
+            ['product_id' => $product->id, 'quantity' => 2, 'price' => 50.0],
+        ], 50.0)->assertStatus(201)->assertJsonPath('data.discount', 50);
+    }
 }

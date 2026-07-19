@@ -42,6 +42,14 @@ export interface PromoDef {
   minQty?: number | null;
   /** Mayoreo: cuánto se descuenta a CADA pieza. */
   discountPerUnit?: number | null;
+  /**
+   * Restricción de método de pago de la promo (2026-07-24). No entra al
+   * cálculo: la promo se aplica igual y el BLOQUEO del cobro lo hace Caja
+   * (`itemAcceptsMethod`) y el guard del server. Viaja aquí para que Caja
+   * pueda leer los flags de la promo que realmente ganó la línea.
+   */
+  allowCash?: boolean;
+  allowCard?: boolean;
   priority: number;
   /** null/undefined = promo GLOBAL; con valor = promo LOCAL de una tienda.
    *  Override local (2026-07-20): si el producto tiene local, la global se
@@ -66,6 +74,13 @@ export interface CalcLine {
   unitPrice: number;
   qty: number;
   discount?: LineDiscount;
+  /**
+   * El cajero renunció a la promo de esta línea a propósito (2026-07-24). Es la
+   * salida cuando la promo restringe el método de pago y el cliente no puede
+   * pagar así — sin esto, ese producto simplemente no se le puede vender.
+   * Espejo de `skip_promotion` en SaleCalculator.php.
+   */
+  skipPromo?: boolean;
 }
 
 export interface LineBenefit {
@@ -241,7 +256,8 @@ export function recalculateSale(input: {
 
     // STACKING (Joel 2026-07-17): la promo aplica SIEMPRE que alcance; el
     // descuento manual se calcula sobre el neto-promo (antes lo reemplazaba).
-    const promoPart = bestPromoBenefit(promotions, l);
+    // `skipPromo` = el cajero renunció a ella a propósito (ver CalcLine).
+    const promoPart = l.skipPromo ? null : bestPromoBenefit(promotions, l);
     const promoAmount = promoPart?.amount ?? 0;
     const baseAfterPromo = round2(Math.max(0, gross - promoAmount));
 

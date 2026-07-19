@@ -53,32 +53,34 @@ class MayoreoBackfillTest extends TestCase
         (require database_path('migrations/2026_07_23_000002_backfill_mayoreo_from_tiers.php'))->up();
     }
 
-    public function test_un_solo_escalon_se_convierte_cobrando_igual_en_esa_cantidad(): void
+    public function test_un_solo_escalon_toma_el_monto_como_descuento_por_pieza(): void
     {
-        // "Buen Fin 2026" de prod: −$100 por cada par → desde 2 pzas, −$50 c/u.
-        // A 2 piezas el descuento es IDÉNTICO (2 × 50 = 100).
+        // "Buen Fin 2026" de prod: el "2 → −$100" se lee como −$100 a CADA
+        // pieza (decisión de Joel), así que 2 pzas descuentan $200 — más que
+        // el modelo por grupos, y eso es lo buscado.
         $id = $this->legacyPromo('Buen Fin 2026', [['qty' => 2, 'amount' => 100]]);
 
         $this->runBackfill();
 
         $promo = ProductPromotion::findOrFail($id);
         $this->assertSame(2, $promo->min_qty);
-        $this->assertEqualsWithDelta(50.0, (float) $promo->discount_per_unit, 0.001);
+        $this->assertEqualsWithDelta(100.0, (float) $promo->discount_per_unit, 0.001);
         $this->assertSame('active', $promo->status, 'Una promo de un solo escalón no debe pausarse.');
-        $this->assertEqualsWithDelta(100.0, $promo->min_qty * (float) $promo->discount_per_unit, 0.001);
+        $this->assertEqualsWithDelta(200.0, $promo->min_qty * (float) $promo->discount_per_unit, 0.001);
     }
 
-    public function test_escalon_no_divisible_redondea_a_centavos(): void
+    public function test_el_monto_no_se_divide_entre_las_piezas(): void
     {
-        // "Promo 3 x 2" de prod: $100 ÷ 3 = 33.333… → 33.33 (un centavo abajo
-        // en el escalón). Documentado: conviene rehacerla con número redondo.
+        // "Promo 3 x 2" de prod. Con la conversión descartada (amount/qty) esto
+        // habría quedado en 33.33 y 3 pzas darían $99.99 — ni siquiera
+        // conservaba el total que decía conservar.
         $id = $this->legacyPromo('Promo 3 x 2', [['qty' => 3, 'amount' => 100]]);
 
         $this->runBackfill();
 
         $promo = ProductPromotion::findOrFail($id);
         $this->assertSame(3, $promo->min_qty);
-        $this->assertEqualsWithDelta(33.33, (float) $promo->discount_per_unit, 0.001);
+        $this->assertEqualsWithDelta(100.0, (float) $promo->discount_per_unit, 0.001);
     }
 
     public function test_multi_escalon_se_pausa_en_vez_de_convertirse_mal(): void

@@ -353,4 +353,63 @@ class PromotionCrudTest extends TestCase
                 ...$this->mayoreoFields(4, 300.0),
             ])->assertStatus(422);
     }
+
+    // ── Restricción de pago de la promo vs la del producto (2026-07-24) ─────
+
+    public function test_promo_necesita_al_menos_un_metodo_de_pago(): void
+    {
+        $this->actingAs($this->admin)
+            ->postJson("/api/v1/products/{$this->product->id}/promotions", [
+                'name' => 'Imposible', 'buy_n' => 2, 'pay_m' => 1,
+                'allow_cash' => false, 'allow_card' => false,
+            ])->assertStatus(422);
+    }
+
+    public function test_promo_solo_efectivo_sobre_producto_solo_tarjeta_se_rechaza(): void
+    {
+        // El producto no acepta efectivo y la promo solo se cobra en efectivo:
+        // con la promo aplicada el producto quedaría invendible.
+        $this->product->paymentMethod()->create(['allow_cash' => false, 'allow_card' => true]);
+
+        $resp = $this->actingAs($this->admin)
+            ->postJson("/api/v1/products/{$this->product->id}/promotions", [
+                'name' => 'Contado', 'buy_n' => 2, 'pay_m' => 1,
+                'allow_cash' => true, 'allow_card' => false,
+            ]);
+
+        $resp->assertStatus(422);
+        $this->assertStringContainsString('nunca se podría cobrar', (string) $resp->json('error'));
+    }
+
+    public function test_promo_con_restriccion_compatible_se_acepta(): void
+    {
+        $this->product->paymentMethod()->create(['allow_cash' => true, 'allow_card' => false]);
+
+        $this->actingAs($this->admin)
+            ->postJson("/api/v1/products/{$this->product->id}/promotions", [
+                'name' => 'Contado', 'buy_n' => 2, 'pay_m' => 1,
+                'allow_cash' => true, 'allow_card' => false,
+            ])
+            ->assertStatus(201)
+            ->assertJsonPath('data.allow_cash', true)
+            ->assertJsonPath('data.allow_card', false);
+    }
+
+    /**
+     * La regla `boolean` del FormRequest no es cosmética: sin ella un "false"
+     * string llegaría a Eloquent y (bool)"false" === true guardaría la
+     * restricción AL REVÉS, en silencio.
+     */
+    public function test_los_flags_llegan_como_booleanos_de_verdad(): void
+    {
+        $this->actingAs($this->admin)
+            ->postJson("/api/v1/products/{$this->product->id}/promotions", [
+                'name' => 'Contado', 'buy_n' => 2, 'pay_m' => 1,
+                'allow_cash' => true, 'allow_card' => false,
+            ])->assertStatus(201);
+
+        $promo = ProductPromotion::firstOrFail();
+        $this->assertTrue($promo->allow_cash);
+        $this->assertFalse($promo->allow_card);
+    }
 }

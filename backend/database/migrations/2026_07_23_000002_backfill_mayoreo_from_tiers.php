@@ -9,9 +9,14 @@ use Illuminate\Support\Facades\Log;
  * (por pieza desde N). Gemela de _000001, separada a propósito: si esto truena
  * con datos raros, el esquema ya aterrizó y solo se reintenta el backfill.
  *
- * La conversión `per_unit = amount / qty` deja el descuento IDÉNTICO en la
- * cantidad exacta del escalón (2 pzas de "−$100 por par" siguen siendo −$100)
- * y más generoso arriba de eso, que es justo el punto del mayoreo.
+ * El `amount` viejo se toma TAL CUAL como el descuento por pieza (decisión de
+ * Joel 2026-07-23): así es como él lee sus promos — "2 → −$100" siempre quiso
+ * decir −$100 a CADA una, $200 en total. En consecuencia las promas vivas
+ * descuentan MÁS que con el modelo por grupos, y eso es lo buscado.
+ *
+ * (La alternativa era dividir, `per_unit = amount / qty`, para conservar el
+ * total. Se descartó: además de no ser lo que Joel quería, ni siquiera
+ * conservaba el total — 100 ÷ 3 = 33.33, y 3 pzas daban $99.99.)
  *
  * Idempotente por `whereNull('min_qty')`, no solo por la tabla `migrations`.
  */
@@ -54,7 +59,7 @@ return new class extends Migration
                 ->where('id', $row->id)
                 ->update([
                     'min_qty'           => $tier['qty'],
-                    'discount_per_unit' => round($tier['amount'] / $tier['qty'], 2),
+                    'discount_per_unit' => $tier['amount'],
                 ]);
         }
     }

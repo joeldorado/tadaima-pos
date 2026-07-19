@@ -44,6 +44,14 @@ class StoreProductPromotionRequest extends FormRequest
             'discount_per_unit' => $esMayoreo
                 ? [$presence, 'numeric', 'gt:0', 'max:999999']
                 : ['prohibited'],
+            // Restricción de método de pago de la PROMO (espejo del producto).
+            // Sin presencia condicional: el default de la columna cubre la
+            // ausencia, así un bundle rezagado que solo pausa no truena.
+            // `boolean` NO es opcional: sin esa regla un "false" string llega a
+            // Eloquent, (bool)"false" === true, y la restricción se guardaría
+            // AL REVÉS en silencio.
+            'allow_cash' => ['sometimes', 'boolean'],
+            'allow_card' => ['sometimes', 'boolean'],
             // Legacy: los bundles viejos lo siguen mandando al pausar. Se acepta
             // y se IGNORA — no está en el only() del controller ni en $fillable.
             'tiers'     => ['nullable', 'array'],
