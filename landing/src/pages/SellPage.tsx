@@ -11,6 +11,8 @@ import {
   Truck, CheckCircle2, Printer, History, Receipt, RefreshCw,
   ShoppingCart, Crown, Circle, Trash2, XCircle, Clock, Bell, Scissors,
 } from "lucide-react";
+import type { Product, PriceLevel } from "@/types/pos";
+import { toCartProduct } from "@/lib/productAdapter";
 import { ImageWithFallback } from "@/components/figma/ImageWithFallback";
 import { UserAvatar } from "@/components/UserAvatar";
 import { ProductCatalogModal } from "@/components/ProductCatalogModal";
@@ -31,7 +33,8 @@ import { CloseCashModal } from "@/components/cash/CloseCashModal";
 import { CortesModal } from "@/components/cash/CortesModal";
 import { OpenSessionConflictModal } from "@/components/cash/OpenSessionConflictModal";
 import { useQueryClient } from "@tanstack/react-query";
-import { useProductsLightQuery, useProductsSearchQuery } from "@/hooks/queries/useProducts";
+import { useProductsLightQuery, useProductsSearchQuery, useCartProductsPolicyQuery } from "@/hooks/queries/useProducts";
+import { buildPolicyIndex, syncCartWithCatalog } from "@/lib/cartSync";
 // ADR-014: useReservedStockQuery removido — carrito client-side, sin polling.
 import { usePaymentMethodsQuery } from "@/hooks/queries/usePaymentMethods";
 import { useTerminalsQuery } from "@/hooks/queries/useTerminals";
@@ -88,40 +91,9 @@ async function loadTicketLogo(): Promise<string | null> {
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type PriceLevel = "a" | "b" | "c" | "d" | "e";
+// `Product` y `PriceLevel` viven en @/types/pos para que el adaptador y el
+// sincronizador del carrito (lib puro, testeable) los puedan importar.
 type PaymentMethod = "Efectivo" | "Dólares" | "Tarjeta" | "Transferencia";
-
-interface Product {
-  id: string;
-  name: string;
-  sku: string;
-  barcode?: string;
-  category: string;
-  image?: string;
-  price_a: number;
-  price_b?: number;
-  price_c?: number;
-  price_d?: number;
-  price_e?: number;
-  stock?: number;
-  stock_damaged?: number;
-  stock_details?: {
-    tienda: number;
-    bodega: number;
-    preventa: number;
-    dañado: number;
-  };
-  allow_cash?: boolean;
-  allow_card?: boolean;
-  active?: boolean;
-  product_type?: string;
-  volume_number?: number | null;
-  // false = sin inventario en la tienda activa ("No asignado" → el cajero le
-  // agrega stock; no se puede cobrar hasta que tenga stock). Default true.
-  is_assigned?: boolean;
-  /** Promos NxM VIGENTES (Fase 3) — el motor elige la mejor por línea. */
-  active_promotions?: Array<{ id: number; name: string; type?: 'nxm' | 'qty_discount'; buy_n: number | null; pay_m: number | null; min_qty?: number | null; discount_per_unit?: number | null; allow_cash?: boolean; allow_card?: boolean; priority: number; store_id?: number | null }>;
-}
 
 interface Customer {
   id: string;
@@ -211,6 +183,14 @@ const fmt = (n: number) =>
 // Pesos con sufijo "MXN" — para el panel de cobro, donde conviven con US$ y el
 // cajero necesita distinguir la moneda de un vistazo (Joel 2026-06-29).
 const fmtMXN = (n: number) => `${fmt(n)} MXN`;
+
+/** Toast ámbar de "algo cambió, revísalo" — no es un error, es un aviso. */
+const AMBER_TOAST = {
+  background: '#1a1400',
+  color: '#fbbf24',
+  border: '1px solid #78350f',
+  borderRadius: '16px',
+} as const;
 
 const fmtUSD = (n: number) =>
   new Intl.NumberFormat("en-US", {
@@ -565,43 +545,10 @@ export function SellPage() {
   const paymentMethods: ApiPaymentMethod[] = paymentMethodsQuery.data ?? [];
   const terminals: Terminal[] = terminalsQuery.data ?? [];
 
-  const topProducts: Product[] = useMemo(() => {
-    const list = productsQuery.data?.data ?? [];
-    const priceAt = (p: typeof list[number], level: 1 | 2 | 3 | 4 | 5): number =>
-      Number(p.prices?.[`price_${level}` as keyof typeof p.prices] ?? 0) || 0;
-    return list
-      .filter(p => p.active)
-      .map(p => {
-        return {
-          id: String(p.id),
-          name: p.name,
-          sku: p.sku,
-          barcode: p.barcode ?? undefined,
-          category: String(p.category_id ?? ""),
-          image: p.image ?? "",
-          price_a: priceAt(p, 1),
-          price_b: priceAt(p, 2) > 0 ? priceAt(p, 2) : undefined,
-          price_c: priceAt(p, 3) > 0 ? priceAt(p, 3) : undefined,
-          price_d: priceAt(p, 4) > 0 ? priceAt(p, 4) : undefined,
-          price_e: priceAt(p, 5) > 0 ? priceAt(p, 5) : undefined,
-          stock: typeof p.stock_total === "number" ? p.stock_total : undefined,
-          // stock_total = Exhibición (vendible en Caja); stock_bodega = backstock
-          // atrás (no vendible, solo para avisar "N en bodega" al cajero).
-          stock_details: typeof p.stock_total === "number"
-            ? { tienda: p.stock_total, bodega: p.stock_bodega ?? 0, preventa: 0, dañado: 0 }
-            : undefined,
-          active: p.active,
-          // QA crítico 2026-06-08: sin estos flags, itemAcceptsMethod/payBlocked
-          // siempre pasaban y un producto solo-efectivo se cobraba con tarjeta.
-          allow_cash: p.allow_cash ?? true,
-          allow_card: p.allow_card ?? true,
-          product_type: p.product_type ?? "product",
-          volume_number: p.volume_number ?? null,
-          is_assigned: p.is_assigned ?? true,
-          active_promotions: p.active_promotions ?? [],
-        } as Product;
-      });
-  }, [productsQuery.data]);
+  const topProducts: Product[] = useMemo(
+    () => (productsQuery.data?.data ?? []).filter(p => p.active).map(toCartProduct),
+    [productsQuery.data]
+  );
 
   const [showOpenCashModal, setShowOpenCashModal] = useState(false);
   const [openCashRegisterId, setOpenCashRegisterId] = useState<number | "">("");
@@ -684,36 +631,76 @@ export function SellPage() {
   // `filteredProds` along with the cached ones.
   const products: Product[] = useMemo(() => {
     const seen = new Set(topProducts.map(p => p.id));
-    const searchData = productsSearchQuery.data?.data ?? [];
-    const priceAt = (p: typeof searchData[number], level: 1 | 2 | 3 | 4 | 5): number =>
-      Number(p.prices?.[`price_${level}` as keyof typeof p.prices] ?? 0) || 0;
-    const extra: Product[] = searchData
+    const extra: Product[] = (productsSearchQuery.data?.data ?? [])
       .filter(p => p.active && !seen.has(String(p.id)))
-      .map(p => ({
-        id: String(p.id),
-        name: p.name,
-        sku: p.sku,
-        barcode: p.barcode ?? undefined,
-        category: String(p.category_id ?? ""),
-        image: p.image ?? "",
-        price_a: priceAt(p, 1),
-        price_b: priceAt(p, 2) > 0 ? priceAt(p, 2) : undefined,
-        price_c: priceAt(p, 3) > 0 ? priceAt(p, 3) : undefined,
-        price_d: priceAt(p, 4) > 0 ? priceAt(p, 4) : undefined,
-        price_e: priceAt(p, 5) > 0 ? priceAt(p, 5) : undefined,
-        stock: typeof p.stock_total === "number" ? p.stock_total : undefined,
-        stock_details: typeof p.stock_total === "number"
-          ? { tienda: p.stock_total, bodega: p.stock_bodega ?? 0, preventa: 0, dañado: 0 }
-          : undefined,
-        active: p.active,
-        allow_cash: p.allow_cash ?? true,
-        allow_card: p.allow_card ?? true,
-        product_type: p.product_type ?? "product",
-        volume_number: p.volume_number ?? null,
-        is_assigned: p.is_assigned ?? true,
-      }) as Product);
+      .map(toCartProduct);
     return extra.length > 0 ? [...topProducts, ...extra] : topProducts;
   }, [topProducts, productsSearchQuery.data]);
+
+  // ── Sincronización del carrito con el catálogo ────────────────────────────
+  // Cada línea guarda una COPIA del producto (persistida a localStorage) y
+  // hasta 2026-07-19 nada la refrescaba: si el dueño borraba una promo, la
+  // línea seguía calculando con la promo muerta, el server la rechazaba al
+  // cobrar y el cajero quedaba atorado en bucle. Esto la mantiene al día.
+  const cartProductIds = useMemo(
+    () => [...new Set(mesas.flatMap(m => m.items.map(i => i.product.id)))].sort(),
+    [mesas]
+  );
+  const cartPolicyQuery = useCartProductsPolicyQuery(cartProductIds, activeStore?.id);
+
+  const freshPolicyById = useMemo(
+    () => buildPolicyIndex([
+      productsQuery.data?.data ?? [],
+      productsSearchQuery.data?.data ?? [],
+      // Última = gana: es la consulta por id, la más específica y la única que
+      // cubre productos fuera del top 200.
+      cartPolicyQuery.data?.data ?? [],
+    ]),
+    [productsQuery.data, productsSearchQuery.data, cartPolicyQuery.data]
+  );
+
+  useEffect(() => {
+    if (freshPolicyById.size === 0) return;
+    // Depende de `mesas` (el estado real), NO de mesasRef: el ref se actualiza
+    // en su propio efecto, un commit más tarde, y las 3 queries que alimentan
+    // freshPolicyById resuelven en momentos distintos — leyendo el ref, las
+    // corridas 2 y 3 veían el carrito viejo y volvían a avisar (QA: 3 toasts
+    // idénticos). No hay bucle: escribir `mesas` re-dispara el efecto una vez
+    // más, pero esa corrida ya no encuentra nada que cambiar y sale temprano.
+    const preview = syncCartWithCatalog(mesas, freshPolicyById);
+    if (!preview.changed) return;
+
+    setMesas(preview.mesas as Mesa[]);
+
+    const conPromo  = preview.changes.filter(c => c.promosChanged);
+    const conFlags  = preview.changes.filter(c => c.flagsChanged);
+    const conPrecio = preview.changes.filter(c => c.priceChanged);
+
+    // Los ids fijos evitan que se apilen copias si el efecto alcanza a correr
+    // dos veces: sonner reemplaza el toast en vez de agregar otro.
+    if (conPromo.length > 0) {
+      toast.info(
+        conPromo.length === 1
+          ? `Cambiaron las promociones de "${conPromo[0]!.productName}" — revisa el total.`
+          : `Actualicé las promociones de ${conPromo.length} productos — revisa el total.`,
+        { id: "cart-sync-promos", duration: 6000 }
+      );
+    }
+    if (conFlags.length > 0) {
+      // Puede des/bloquear el botón COBRAR bajo los dedos del cajero.
+      toast.warning(
+        `Cambiaron las restricciones de pago de "${conFlags[0]!.productName}"${conFlags.length > 1 ? ` y ${conFlags.length - 1} más` : ""}.`,
+        { id: "cart-sync-flags", duration: 7000, style: AMBER_TOAST }
+      );
+    }
+    for (const c of conPrecio.slice(0, 2)) {
+      // El dinero que se mueve solo SIEMPRE se anuncia, línea por línea.
+      toast.warning(
+        `El precio de "${c.productName}" cambió de ${fmtMXN(c.priceChanged!.from)} a ${fmtMXN(c.priceChanged!.to)}.`,
+        { id: `cart-sync-price-${c.lineId}`, duration: 8000, style: AMBER_TOAST }
+      );
+    }
+  }, [freshPolicyById, mesas]);
 
   // showCatalog se declara arriba (junto a las queries) para condicionar el polling.
   const [selectedCat, setSelectedCat] = useState("Todo");
@@ -2468,25 +2455,7 @@ export function SellPage() {
         || (p.barcode ?? '').toLowerCase() === code.toLowerCase()
       );
       if (exact) {
-        const adapted: Product = {
-          id: String(exact.id),
-          name: exact.name,
-          sku: exact.sku,
-          barcode: exact.barcode ?? undefined,
-          category: String(exact.category_id ?? ""),
-          image: exact.image ?? "",
-          price_a: Number(exact.prices?.price_1 ?? 0) || 0,
-          price_b: Number(exact.prices?.price_2 ?? 0) > 0 ? Number(exact.prices.price_2) : undefined,
-          price_c: Number(exact.prices?.price_3 ?? 0) > 0 ? Number(exact.prices.price_3) : undefined,
-          price_d: Number(exact.prices?.price_4 ?? 0) > 0 ? Number(exact.prices.price_4) : undefined,
-          price_e: Number(exact.prices?.price_5 ?? 0) > 0 ? Number(exact.prices.price_5) : undefined,
-          stock: typeof exact.stock_total === "number" ? exact.stock_total : undefined,
-          stock_details: typeof exact.stock_total === "number"
-            ? { tienda: exact.stock_total, bodega: exact.stock_bodega ?? 0, preventa: 0, dañado: 0 }
-            : undefined,
-          active: exact.active,
-          is_assigned: exact.is_assigned ?? true,
-        } as Product;
+        const adapted: Product = toCartProduct(exact);
         // No asignado → abre "Agregar stock" en vez de intentar vender.
         if (adapted.is_assigned === false) { openStockFor(adapted); return; }
         // Scanner usa addScanToCart (nunca suma). Si ya está en venta, toast info.
@@ -3242,7 +3211,19 @@ export function SellPage() {
       void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
       toast.warning(
         "Los precios o promociones cambiaron desde que armaste la venta. Actualizamos el catálogo — revisa el total y cobra de nuevo.",
-        { duration: 8000, style: { background: '#1a1400', color: '#fbbf24', border: '1px solid #78350f', borderRadius: '16px' } },
+        { duration: 8000, style: AMBER_TOAST },
+      );
+      return;
+    }
+    // Guard de precios del server (assertPricesMatchCatalog): el precio de una
+    // línea ya no existe en el catálogo. El sync del carrito normalmente lo
+    // evita, pero queda como red de seguridad — antes caía al toast.error
+    // genérico, sin refetch ni explicación, y el cajero no tenía salida.
+    if (/fuera del catálogo/i.test(msg)) {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+      toast.warning(
+        `${msg} Actualizamos el catálogo — revisa el precio de la línea y cobra de nuevo.`,
+        { duration: 10000, style: AMBER_TOAST },
       );
       return;
     }
@@ -3268,7 +3249,7 @@ export function SellPage() {
           `Stock de "${productName}" se actualizó a ${availableNum}. Ajustamos la venta — revisa y cobra de nuevo.`,
           {
             duration: 7000,
-            style: { background: '#1a1400', color: '#fbbf24', border: '1px solid #78350f', borderRadius: '16px' },
+            style: AMBER_TOAST,
           },
         );
       } else {
@@ -3306,7 +3287,7 @@ export function SellPage() {
       if (availableNum > 0) {
         toast.warning(
           `"${productName}" — quedan ${availableNum} unidades. Ajustamos la venta — revisa y cobra de nuevo.`,
-          { duration: 7000, style: { background: '#1a1400', color: '#fbbf24', border: '1px solid #78350f', borderRadius: '16px' } },
+          { duration: 7000, style: AMBER_TOAST },
         );
       } else {
         toast.error(

@@ -19,12 +19,16 @@ use Illuminate\Support\Facades\Storage;
 
 class ProductController extends Controller
 {
+    /** Tope de ids en ?ids= — un carrito real trae unidades, no cientos. */
+    private const MAX_IDS_FILTER = 100;
+
     /**
      * GET /products
      *
      * Query params opcionales:
      *   ?search=    filtro por name / sku / barcode
      *   ?active=1   solo productos activos
+     *   ?ids=1,2,3  solo esos productos (la Caja refresca su carrito)
      *   ?per_page=N paginación (default 100, 0 = todos)
      */
     public function index(Request $request): JsonResponse
@@ -83,6 +87,19 @@ class ProductController extends Controller
 
         if ($request->filled('search')) {
             $query->search($request->search);
+        }
+
+        // ?ids=1,2,3 — la Caja refresca promos/precios/flags de las líneas que YA
+        // tiene en el carrito. Sin esto solo podía compararlas contra el pool
+        // ?sort=top (200 filas), así que un producto de poca venta quedaba fuera
+        // y su snapshot congelado nunca se actualizaba (promo borrada que seguía
+        // aplicando → el checkout la rechazaba y el cajero se atoraba).
+        // Hereda el scoping por tienda del embed activePromotions de arriba.
+        if ($request->filled('ids')) {
+            $ids = array_values(array_unique(array_filter(
+                array_map('intval', explode(',', (string) $request->input('ids'))),
+            )));
+            $query->whereIn('products.id', array_slice($ids, 0, self::MAX_IDS_FILTER));
         }
 
         if ($request->boolean('active')) {

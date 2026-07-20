@@ -7,10 +7,12 @@ import {
   TicketPercent, Tv, Share2, Download, MessageCircle, X, Loader2, ImageOff,
 } from "lucide-react";
 import {
-  getProductsLight, getLightPrice, getProductImageBase64, getProductPromotions, getStores,
+  getProductsLight, getLightPrice, getProductImageBase64, getProductPromotions,
   type ProductLight, type Store,
 } from "@tadaima/api";
 import { useAuth } from "@tadaima/auth";
+import { queryKeys } from "@/lib/queryKeys";
+import { useStoresQuery } from "@/hooks/queries/useStores";
 import { isAdmin as isAdminRole } from "@/lib/permisos";
 import { promoBadge, promoBannerCopy, promoShortLabel } from "@/lib/promoLabel";
 
@@ -434,20 +436,25 @@ export function PromosPage() {
 
   // Sin endpoint global de promos: se enumeran desde los productos light
   // (active_promotions viene embebido). Refetch 60s → la TV se actualiza sola.
+  //
+  // La key cuelga de queryKeys.products.all para que la invalidación del tab de
+  // Promos la alcance (antes era ["promos-products"], que NO hace match con
+  // ['products'] y solo se refrescaba por el interval de 60s).
+  // El sufijo 'global' NO es decorativo: aquí se pide sin store_id, así que el
+  // embed de promos viene SIN filtrar por tienda y esta página hace su propio
+  // scoping abajo. Colisionar con las keys store-scoped de Caja le daría a la
+  // Caja promos de otras sucursales.
   const productsQuery = useQuery({
-    queryKey: ["promos-products"],
+    queryKey: [...queryKeys.products.all, 'light', 'promos', 'global'],
     queryFn: () => getProductsLight(),
     staleTime: 30_000,
     refetchInterval: 60_000,
   });
 
   // Nombres de tienda para las etiquetas (solo admin las necesita todas).
-  const storesQuery = useQuery({
-    queryKey: ["promos-stores"],
-    queryFn: () => getStores(),
-    enabled: isAdmin,
-    staleTime: 5 * 60_000,
-  });
+  // Reusa el hook compartido: misma key que el resto de la app, así que la
+  // alcanza la invalidación de tiendas y no duplica el fetcher.
+  const storesQuery = useStoresQuery({ enabled: isAdmin });
   const storeName = (id: number | null | undefined): string | null => {
     if (id == null) return null;
     return (storesQuery.data as Store[] | undefined)?.find(s => s.id === id)?.name ?? `Tienda #${id}`;

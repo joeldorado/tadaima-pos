@@ -19,6 +19,12 @@ export interface GetProductsParams {
    * agregue stock. Sin esta bandera el listado solo trae los asignados.
    */
   include_unassigned?: boolean
+  /**
+   * Lista de ids separados por coma ("12,45,7"). La Caja la usa para refrescar
+   * promos/precios de los productos que ya tiene en el carrito, incluso si
+   * caen fuera del pool ?sort=top. Tope de 100 ids en el backend.
+   */
+  ids?: string
 }
 
 /**
