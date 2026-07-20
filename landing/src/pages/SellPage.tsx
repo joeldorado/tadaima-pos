@@ -3099,18 +3099,30 @@ export function SellPage() {
   };
 
   const triggerPrintFlow = (sale: CompletedSaleData) => {
-    const pref = localStorage.getItem(PRINT_PREF_KEY) ?? "ask";
-    if (pref === "auto") {
-      doPrintTicket(sale);
-      // Auto-print abre una ventana nueva; cerramos la mesa secundaria
-      // un instante después para que setTimeout(print, 300) ya haya disparado.
-      window.setTimeout(closePendingMesa, 500);
-      return;
-    }
-    if (pref === "never") { closePendingMesa(); return; }
+    // 2026-07-20 (pedido del cliente vía Joel): el ticket sale DIRECTO. Queda
+    // desactivado el modal "¿Imprimir ticket?" junto con la preferencia
+    // tadaima_print_pref. TEMPORAL — para revivirlo, descomentar el bloque de
+    // abajo. El JSX del modal sigue en su lugar (~L7500), solo inalcanzable.
+    //
+    // Se ignora la preferencia guardada A PROPÓSITO: un cajero que alguna vez
+    // marcó "no preguntar de nuevo" + OMITIR tiene 'never' en su navegador y
+    // no imprimiría nada, justo lo contrario de lo que pidieron.
+    //
+    // const pref = localStorage.getItem(PRINT_PREF_KEY) ?? "ask";
+    // if (pref === "never") { closePendingMesa(); return; }
+    // if (pref !== "auto") {
+    //   setLastCompletedSale(sale);
+    //   setPrintNeverAsk(false);
+    //   setShowPrintModal(true);
+    //   return;
+    // }
     setLastCompletedSale(sale);
-    setPrintNeverAsk(false);
-    setShowPrintModal(true);
+    doPrintTicket(sale);
+    // La impresión va diferida (setTimeout interno); cerramos la mesa
+    // secundaria un instante después para no dejarla colgada. OJO: este
+    // cierre vivía en los botones del modal — sin esta línea, comentar el
+    // modal dejaría las Ventas 2..5 abiertas para siempre al cobrar.
+    window.setTimeout(closePendingMesa, 500);
   };
 
   /**
