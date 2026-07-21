@@ -24,6 +24,14 @@ export interface GroupedProduct {
   pre_sale_costo_real?: number;
   commission_amount?: number;
   product_type?: 'product' | 'manga';
+  /** Descuentos v2: total descontado por PROMO (NxM/mayoreo) del producto en el rango. */
+  promo_total?: number;
+  /** Descuentos v2: total descontado por DESCUENTO MANUAL del producto en el rango. */
+  manual_total?: number;
+  /** Monto descontado POR CADA promo (nombre → monto). */
+  promo_breakdown?: Record<string, number>;
+  /** Monto descontado POR CADA motivo de descuento manual. */
+  discount_breakdown?: Record<string, number>;
 }
 
 export interface ReportPaymentBreakdown {

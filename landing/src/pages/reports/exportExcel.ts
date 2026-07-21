@@ -17,6 +17,10 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
     caja_chica: "Caja chica",
     propio: "Dinero propio",
   };
+  // Motivo legible de un descuento manual.
+  const DISCOUNT_REASON_LABEL: Record<string, string> = {
+    danado: "dañado", caducidad: "caducidad", exhibicion: "exhibición", cortesia: "cortesía", otro: "otro",
+  };
     try {
       toast.info("Generando archivo de Excel...");
       const ExcelJS = await import("exceljs");
@@ -156,6 +160,20 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
         const totalQtyOpts = { font: { name: "Arial", size: 9, bold: true, color: { argb: "FF111111" } }, fill: TOTAL_FILL, alignment: { horizontal: "center", vertical: "middle" } };
         const totalMoneyOpts = (argb: string) => ({ numFmt: "$#,##0.00", font: { name: "Arial", size: 9, bold: true, color: { argb } }, fill: TOTAL_FILL, alignment: { horizontal: "right", vertical: "middle" } });
 
+        // Renglón resaltado (fosforescente) del beneficio bajo un producto:
+        // verde = promo, amarillo = descuento manual. Muestra cuánto se descontó.
+        const PROMO_FLUO = "FFB9FBC0";  // verde fosforescente
+        const DESC_FLUO = "FFFFF176";   // amarillo fosforescente
+        const benefitRow = (row: number, colStart: number, colEnd: number, ventaCol: number, label: string, amount: number, fillArgb: string) => {
+            const fill = { type: "pattern", pattern: "solid", fgColor: { argb: fillArgb } };
+            for (let c = colStart; c <= colEnd; c++) {
+                setCell(row, c, "", { fill, alignment: { horizontal: "left", vertical: "middle" } });
+            }
+            setCell(row, colStart, label, { fill, font: { name: "Arial", size: 8.5, bold: true, italic: true, color: { argb: "FF222222" } }, alignment: { horizontal: "left", vertical: "middle" } });
+            setCell(row, ventaCol, -amount, { fill, numFmt: "$#,##0.00", font: { name: "Arial", size: 9, bold: true, color: { argb: "FF222222" } }, alignment: { horizontal: "right", vertical: "middle" } });
+            sheet.getRow(row).height = 16;
+        };
+
         // TABLE 2: EFECTIVO  →  Producto · Cant · [Costo] · Venta · [Utilidad]
         // Columnas de Costo (T2_COL+2) y Utilidad (T2_COL+4) solo si canViewCost.
         const cashVentaCol = canViewCost ? T2_COL + 3 : T2_COL + 2;
@@ -186,6 +204,16 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
             }
             sheet.getRow(r2).height = 20;
             r2++;
+            // Renglones de beneficio (prorrateados a efectivo): un renglón por CADA
+            // promo (verde) y por CADA motivo de descuento (amarillo).
+            Object.entries(prod.promo_breakdown ?? {}).forEach(([name, amt]) => {
+                const cashAmt = amt * ratio;
+                if (cashAmt > 0.005) { benefitRow(r2, T2_COL, T2_COL + T2_COLS - 1, cashVentaCol, `   🎁 ${name}`, cashAmt, PROMO_FLUO); r2++; }
+            });
+            Object.entries(prod.discount_breakdown ?? {}).forEach(([reason, amt]) => {
+                const cashAmt = amt * ratio;
+                if (cashAmt > 0.005) { benefitRow(r2, T2_COL, T2_COL + T2_COLS - 1, cashVentaCol, `   🏷️ Descuento (${DISCOUNT_REASON_LABEL[reason] ?? reason})`, cashAmt, DESC_FLUO); r2++; }
+            });
         });
         if (cashProducts.length > 0) {
             setCell(r2, T2_COL, "TOTAL EFECTIVO", totalLabelOpts);
@@ -241,6 +269,15 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
             }
             sheet.getRow(r3).height = 20;
             r3++;
+            // Renglones de beneficio (prorrateados a tarjeta): uno por CADA promo y motivo.
+            Object.entries(prod.promo_breakdown ?? {}).forEach(([name, amt]) => {
+                const cardAmt = amt * ratio;
+                if (cardAmt > 0.005) { benefitRow(r3, T3_COL, T3_COL + T3_COLS - 1, T3_COL + 2, `   🎁 ${name}`, cardAmt, PROMO_FLUO); r3++; }
+            });
+            Object.entries(prod.discount_breakdown ?? {}).forEach(([reason, amt]) => {
+                const cardAmt = amt * ratio;
+                if (cardAmt > 0.005) { benefitRow(r3, T3_COL, T3_COL + T3_COLS - 1, T3_COL + 2, `   🏷️ Descuento (${DISCOUNT_REASON_LABEL[reason] ?? reason})`, cardAmt, DESC_FLUO); r3++; }
+            });
         });
         if (cardProducts.length > 0) {
             setCell(r3, T3_COL, "TOTAL TARJETA", totalLabelOpts);
