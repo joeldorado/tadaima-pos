@@ -28,10 +28,10 @@ export interface GroupedProduct {
   promo_total?: number;
   /** Descuentos v2: total descontado por DESCUENTO MANUAL del producto en el rango. */
   manual_total?: number;
-  /** Monto descontado POR CADA promo (nombre → monto). */
-  promo_breakdown?: Record<string, number>;
-  /** Monto descontado POR CADA motivo de descuento manual. */
-  discount_breakdown?: Record<string, number>;
+  /** Monto descontado POR CADA promo, separado por método real ({ efectivo, tarjeta }). */
+  promo_breakdown?: Record<string, { cash: number; card: number }>;
+  /** Ídem descuento manual por motivo. */
+  discount_breakdown?: Record<string, { cash: number; card: number }>;
 }
 
 export interface ReportPaymentBreakdown {

@@ -129,10 +129,11 @@ interface GroupedProduct {
   promo_total?: number;
   /** Descuentos v2: parte de DESCUENTO MANUAL acumulada del producto en el rango. */
   manual_total?: number;
-  /** Monto descontado POR CADA promo (nombre → monto), para un renglón por promo. */
-  promo_breakdown?: Record<string, number>;
-  /** Monto descontado POR CADA motivo de descuento manual (motivo → monto). */
-  discount_breakdown?: Record<string, number>;
+  /** Monto descontado POR CADA promo, separado por método de pago REAL de la venta
+   *  (nombre → { efectivo, tarjeta }). Sin prorrateo: se atribuye donde se dio. */
+  promo_breakdown?: Record<string, { cash: number; card: number }>;
+  /** Ídem para descuento manual (motivo → { efectivo, tarjeta }). */
+  discount_breakdown?: Record<string, { cash: number; card: number }>;
 }
 
 const REPORT_TABS: { id: TabId; label: string; icon: React.ElementType }[] = [
@@ -527,15 +528,19 @@ export function ReportsPage() {
           const manualPart = Math.max(0, lineDisc - promoPart);
           pGroup.promo_total = (pGroup.promo_total ?? 0) + promoPart;
           pGroup.manual_total = (pGroup.manual_total ?? 0) + manualPart;
+          // El descuento/promo se atribuye al MÉTODO real de la venta (no se prorratea).
+          const benefitBucket: "cash" | "card" = isCardMethod(payMethodName.toLowerCase()) ? "card" : "cash";
           if (promoPart > 0) {
             const key = item.promo_name || "Promo aplicada";
             pGroup.promo_breakdown = pGroup.promo_breakdown ?? {};
-            pGroup.promo_breakdown[key] = (pGroup.promo_breakdown[key] ?? 0) + promoPart;
+            pGroup.promo_breakdown[key] = pGroup.promo_breakdown[key] ?? { cash: 0, card: 0 };
+            pGroup.promo_breakdown[key][benefitBucket] += promoPart;
           }
           if (manualPart > 0) {
             const key = item.discount_reason || "otro";
             pGroup.discount_breakdown = pGroup.discount_breakdown ?? {};
-            pGroup.discount_breakdown[key] = (pGroup.discount_breakdown[key] ?? 0) + manualPart;
+            pGroup.discount_breakdown[key] = pGroup.discount_breakdown[key] ?? { cash: 0, card: 0 };
+            pGroup.discount_breakdown[key][benefitBucket] += manualPart;
           }
         }
 
