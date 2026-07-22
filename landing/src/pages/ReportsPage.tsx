@@ -341,8 +341,8 @@ export function ReportsPage() {
   // quién las registró. Solo compras (type=purchase). Todo el desglose se deriva
   // de aquí para que cuadre con el filtro de tienda.
   const supplyMovementsQuery = useQuery({
-    queryKey: ["reports-supply-movements", from, to, effectiveStoreId],
-    queryFn: () => getSupplyMovements({ from, to, type: "purchase", ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}) }),
+    queryKey: ["reports-supply-movements", from, to, effectiveStoreId, selectedUserId],
+    queryFn: () => getSupplyMovements({ from, to, type: "purchase", ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}), ...(selectedUserId ? { user_id: selectedUserId } : {}) }),
     enabled: activeTab === "ventas",
     staleTime: REPORTS_STALE,
     refetchInterval: LIVE_POLL_MS,

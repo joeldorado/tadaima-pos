@@ -165,6 +165,9 @@ class SuppliesController extends Controller
             // Filtro por tienda DUEÑA del insumo (supplies.store_id); NULL = toda la
             // empresa. Reportes por tienda (2026-07). Solo aplica si se envía store_id.
             ->when($request->filled('store_id'), fn ($q) => $q->whereHas('supply', fn ($qq) => $qq->where('store_id', $request->integer('store_id'))))
+            // Filtro por usuario que REGISTRÓ la compra (para el filtro de usuario del
+            // Reporte). El cajero de todos modos ya queda scoped a lo suyo abajo.
+            ->when($request->integer('user_id'), fn ($q, $id) => $q->where('user_id', $id))
             ->when($isCashier, fn ($q) => $q->where('user_id', $user->id))
             ->orderByDesc('created_at')
             ->limit(200)
