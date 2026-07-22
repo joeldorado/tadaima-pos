@@ -94,3 +94,83 @@ La pantalla cuenta con dos potentes motores de exportación que se adaptan diná
 *   Genera un documento tamaño A4 horizontal de alta calidad con cabeceras de color rojo Tadaima (`rgb(204, 34, 0)`).
 *   **Tabla 1**: Muestra el desglose de productos con columnas explícitas de **Comisión TPV**, **IVA s/Comisión (16%)** y **Neto Real**. Los tomos de **Manga Nacional** están segregados en la parte inferior tras un divisor gris de fondo.
 *   **Tablas 2, 3, 4 y 5**: Espejos detallados para tarjetas, efectivo, preventas y devoluciones respectivamente, asegurando que todos los reportes impresos sean 100% consistentes con los datos en pantalla y la hoja de cálculo de Excel.
+
+---
+
+## 6. ESTADO ACTUAL (2026-07) — MANDA SOBRE LO DE ARRIBA
+
+> Las secciones 1–5 describen la versión previa. Donde haya conflicto, **manda esta
+> sección**. Guía para IA/dev que retome Reportes.
+
+### 6.1 Arquitectura de exportación (refactor)
+Los generadores de Excel y PDF **se sacaron** de `ReportsPage.tsx` a módulos propios en
+`landing/src/pages/reports/`:
+- `exportExcel.ts` → `exportReportExcel(params)` (ExcelJS, import dinámico).
+- `exportPdf.ts` → `exportReportPdf(params)` (jsPDF + autoTable).
+- `reportTypes.ts` → `GroupedProduct`, `ReportExportParams` (todo lo que el export necesita).
+- `reportFormat.ts` → `fmt`, `fmtDate` (copias, para no importar la página y evitar ciclos).
+
+`ReportsPage` arma `buildExportParams()` y delega. **Para agregar un dato al Excel/PDF:
+pásalo por `ReportExportParams` y léelo en el generador.**
+
+### 6.2 Orden y columnas de las tablas (Excel/PDF empatados)
+Se **eliminó** la vieja tabla "Detalle General". El orden actual es:
+1. **Ventas en Efectivo** — Producto · Cant · **Costo** · Venta · Utilidad
+2. **Tarjeta** — Producto · Cant · Bruto · **Costo** · Comisión TPV · IVA · Neto · Utilidad
+3. **Apartados y Preventas** — Producto · Cant · Abonado · Pendiente · Pactado · **Costo** · **Utilidad**
+4. **Devoluciones y Cancelaciones** — Producto · Cant Devuelta · Monto Devuelto
+5. **Egresos — Insumos** — Insumo · Descripción · Origen · Registró · Tienda · Monto
+
+Costo/Utilidad se gatean por `canViewCost`. **IVA es dinámico** (`readIvaRate()`, lee
+`localStorage` `tadaima:iva-comision-pct`, default 16% — compartido con SalesPage). Ya NO
+está hardcodeado a 0.16.
+
+### 6.3 Prorrateo: Costo/Utilidad por PIEZAS (no por ingresos)
+En las tablas Efectivo/Tarjeta, cuando un producto se vende en varios métodos, el **costo
+y la utilidad se reparten por CANTIDAD de piezas**, no por ingresos:
+`costo = (total_cost / total_quantity) × piezas_del_método`. Utilidad = Venta − Costo
+(efectivo) / Neto − Costo (tarjeta). (Antes se prorrateaba por ingresos y descuadraba.)
+
+### 6.4 Cancelaciones — netean a 0
+Una venta **totalmente cancelada** se cuenta en POSITIVO **y** en negativo (se anula), en
+vez de solo restarse. El costo del item cancelado sale de `cancelled_items[].cost`
+(expuesto en backend `SaleResource`, ver nota NO QUITAR en `backend/AGENTS.md`), con
+fallback a los `sale.items` originales.
+
+### 6.5 Promos y Descuentos (Descuentos v2) — cómo se identifican y muestran
+- **Identificación:** por LÍNEA en `sale_items`: `benefit_type` = `'promo'` | `'discount'`
+  | null; `promo_name` (nombre de la promo NxM/mayoreo), `discount_reason`
+  (danado/caducidad/exhibicion/cortesia/otro), `discount_amount` (beneficio total de la
+  línea; neto = `total − discount_amount`). Stacking: la promo aplica primero, el manual
+  sobre el neto-promo. Ver `CLAUDE.md` raíz (sección Descuentos v2).
+- **Agregado por producto** (en `groupedProducts`): `promo_total`, `manual_total`, y
+  `promo_breakdown` / `discount_breakdown` = `Record<nombre|motivo, { cash, card }>`
+  **atribuidos al método REAL de la venta (sin prorrateo)** — por eso el monto sale exacto,
+  no fraccionado.
+- **Pantalla:** badge `🎁 PROMO` / `🏷️ DESC.` junto al producto; al expandir, bloque
+  **"Beneficios aplicados"** (Bruto → −Promo → −Descuento = Neto).
+- **Excel:** bajo cada producto, **un renglón por cada promo (verde) y por cada motivo
+  (amarillo)** con su monto, en Efectivo y Tarjeta.
+- **PDF:** igual, pero **sin emoji** (la fuente helvetica no los soporta) → texto
+  **`Promo: {nombre}`** / **`Descuento ({motivo})`** en negritas + fondo verde/amarillo.
+
+### 6.6 Insumos / Egresos (feature nueva)
+- **Datos:** `getSupplyMovements({ from, to, store_id, type:'purchase' })` (trae `user` =
+  quién registró, `note`, `money_source`, `payer_name`, `supply.store_id`) y
+  `getSupplyReport` (agregado). Filtros `from/to/store_id` agregados al backend
+  (ver nota NO QUITAR en `AGENTS.md`).
+- **money_source:** `caja` (crea `cash_movements salida`, **pega al corte**), `caja_chica`
+  y `propio` (**NO tocan la caja**, solo registro).
+- **Pantalla:** sección "Egresos — Insumos de operación" con desglose por origen + cada
+  compra (quién la registró + tienda). La tarjeta KPI "Pago en efectivo" muestra en su
+  subtítulo `− insumos de caja $X`.
+- **Excel/PDF:** tabla 5 "Egresos" con la columna **Descripción** (el `note`). En Excel va
+  en la misma hoja de Ventas, con la Descripción ANCHA vía **merge de celdas** (para no
+  deformar "Cant. Efectivo", que comparte ancho por el layout lado-a-lado).
+
+### 6.7 Otros
+- **Pestañas:** solo **"Ventas"** visible. Inventario/Top Productos/Top Clientes están
+  **comentadas** en `REPORT_TABS` (y el chevron del selector, oculto). Descomentar para
+  reactivar.
+- **Pendiente del dueño:** tarjeta de "efectivo disponible del día/rango − insumos" —
+  documentada en `docs/PENDIENTE-reportes-efectivo-disponible.md` (requiere pauta de negocio).
