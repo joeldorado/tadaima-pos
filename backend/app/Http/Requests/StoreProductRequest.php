@@ -45,4 +45,20 @@ class StoreProductRequest extends FormRequest
             'genre'         => ['nullable', 'string', 'max:255'],
         ];
     }
+
+    /**
+     * Al menos un método de pago (2026-07-24). Con ambos en false el producto
+     * queda incobrable por cualquier método, y `getPayRestriction` del front
+     * devuelve null → ni siquiera saca badge: se vuelve invendible en silencio.
+     */
+    public function withValidator(\Illuminate\Validation\Validator $validator): void
+    {
+        $validator->after(function (\Illuminate\Validation\Validator $v): void {
+            if ($this->has('allow_cash') && $this->has('allow_card')
+                && ! $this->boolean('allow_cash') && ! $this->boolean('allow_card')) {
+                $v->errors()->add('allow_cash', 'El producto necesita aceptar al menos un método de pago (efectivo o tarjeta).');
+            }
+        });
+    }
+
 }

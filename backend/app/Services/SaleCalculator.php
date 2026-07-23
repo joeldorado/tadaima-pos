@@ -35,6 +35,7 @@ final class SaleCalculator
      *   unit_price: float,
      *   qty: float,
      *   line_discount?: array{kind: string, basis: string, value: float, reason?: ?string, note?: ?string}|null,
+     *   skip_promotion?: bool,
      * }> $lines Líneas en el MISMO orden en que se persistirán (zip posicional).
      * @param iterable<\App\Models\ProductPromotion> $promotions Promos VIGENTES
      *   de los productos del carrito (el caller filtra con currentlyActive()).
@@ -100,11 +101,18 @@ final class SaleCalculator
             // STACKING (Joel 2026-07-17): la promo aplica SIEMPRE que alcance;
             // el descuento manual se calcula sobre el neto-promo (antes lo
             // reemplazaba). Espejo exacto de recalculateSale en saleCalc.ts.
-            $best = $this->bestPromoBenefit(
-                $promosByProduct[(int) $line['product_id']] ?? [],
-                (float) $line['unit_price'],
-                (float) $line['qty'],
-            );
+            //
+            // `skip_promotion` (2026-07-24): el cajero renunció a la promo a
+            // propósito desde Caja. Es la salida cuando la promo restringe el
+            // método de pago y el cliente no puede pagar de esa forma — sin
+            // esto, el producto simplemente no se le puede vender.
+            $best = ($line['skip_promotion'] ?? false)
+                ? null
+                : $this->bestPromoBenefit(
+                    $promosByProduct[(int) $line['product_id']] ?? [],
+                    (float) $line['unit_price'],
+                    (float) $line['qty'],
+                );
             $promoAmount = 0.0;
             if ($best !== null) {
                 $benefitType    = 'promo';
@@ -172,9 +180,9 @@ final class SaleCalculator
      *
      * - 'nxm': groups = floor(Q/N), gratis = groups × (N−M), resto a precio
      *   completo. free_qty > 0.
-     * - 'qty_discount' (2026-07-20): escalones [{qty, amount}], GREEDY por
-     *   grupos del escalón mayor al menor y SE REPITE (5 pzas con 2→100/3→400
-     *   = 400 + 100). free_qty = 0 (no hay piezas gratis, es monto directo).
+     * - 'qty_discount' = MAYOREO (2026-07-23): desde `min_qty` piezas, TODAS
+     *   las de la línea llevan −`discount_per_unit` c/u (7 pzas con min 5 y
+     *   −$100 = −$700). free_qty = 0 (no hay piezas gratis, es monto directo).
      *   Monto clampeado al bruto de la línea.
      *
      * @param array<int, \App\Models\ProductPromotion> $promos
@@ -186,7 +194,13 @@ final class SaleCalculator
 
         foreach ($promos as $promo) {
             if (($promo->type ?? ProductPromotion::TYPE_NXM) === ProductPromotion::TYPE_QTY_DISCOUNT) {
-                $amount = $this->qtyDiscountAmount((array) ($promo->tiers ?? []), $qty);
+                $amount = $this->mayoreoAmount(
+                    $promo->min_qty !== null ? (int) $promo->min_qty : null,
+                    $promo->discount_per_unit !== null ? (float) $promo->discount_per_unit : null,
+                    $qty
+                );
+                // Clamp con la cantidad REAL (no floor): en líneas fraccionarias
+                // el bruto es mayor y clampear con floor recortaría de más.
                 $amount = min($amount, self::round2($unitPrice * $qty));
                 if ($amount <= 0) {
                     continue;
@@ -237,40 +251,29 @@ final class SaleCalculator
     }
 
     /**
-     * Descuento por cantidad con escalones, GREEDY: ordena escalones de mayor
-     * a menor qty y consume la cantidad en grupos repetibles. 5 pzas con
-     * [{2,100},{3,400}] → 1 grupo de 3 (−400) + 1 grupo de 2 (−100) = 500.
-     * Espejo de qtyDiscountAmount en saleCalc.ts.
+     * MAYOREO (2026-07-23): al alcanzar `minQty` piezas, TODAS las piezas de la
+     * línea reciben `perUnit` de descuento. 5 pzas con (min 5, −$100) = −$500;
+     * 7 pzas = −$700; 4 pzas = $0.
      *
-     * @param array<int, array{qty?: int|string, amount?: int|float|string}> $tiers
+     * `floor` para el umbral Y para el multiplicador: media pieza no gana
+     * descuento (la API acepta cantidades fraccionarias). El clamp al bruto lo
+     * aplica el llamador. Espejo exacto de `mayoreoAmount` en saleCalc.ts.
+     *
+     * Reemplazó al modelo por grupos con escalones (`tiers`), que daba −$X por
+     * cada grupo completo de N y nada al remanente.
      */
-    private function qtyDiscountAmount(array $tiers, float $qty): float
+    private function mayoreoAmount(?int $minQty, ?float $perUnit, float $qty): float
     {
-        $clean = [];
-        foreach ($tiers as $tier) {
-            $tQty    = (int) ($tier['qty'] ?? 0);
-            $tAmount = (float) ($tier['amount'] ?? 0);
-            if ($tQty >= 2 && $tAmount > 0) {
-                $clean[] = ['qty' => $tQty, 'amount' => $tAmount];
-            }
-        }
-        if ($clean === []) {
+        if ($minQty === null || $minQty < 2 || $perUnit === null || $perUnit <= 0) {
             return 0.0;
         }
-        usort($clean, fn ($a, $b) => $b['qty'] <=> $a['qty']);
 
-        $remaining = (int) floor($qty);
-        $amount    = 0.0;
-        foreach ($clean as $tier) {
-            if ($remaining < $tier['qty']) {
-                continue;
-            }
-            $groups     = intdiv($remaining, $tier['qty']);
-            $amount    += $groups * $tier['amount'];
-            $remaining -= $groups * $tier['qty'];
+        $units = (int) floor($qty);
+        if ($units < $minQty) {
+            return 0.0;
         }
 
-        return self::round2($amount);
+        return self::round2($units * $perUnit);
     }
 
     /**

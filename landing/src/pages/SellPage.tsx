@@ -11,6 +11,8 @@ import {
   Truck, CheckCircle2, Printer, History, Receipt, RefreshCw,
   ShoppingCart, Crown, Circle, Trash2, XCircle, Clock, Bell, Scissors,
 } from "lucide-react";
+import type { Product, PriceLevel } from "@/types/pos";
+import { toCartProduct } from "@/lib/productAdapter";
 import { ImageWithFallback } from "@/components/figma/ImageWithFallback";
 import { UserAvatar } from "@/components/UserAvatar";
 import { ProductCatalogModal } from "@/components/ProductCatalogModal";
@@ -31,7 +33,8 @@ import { CloseCashModal } from "@/components/cash/CloseCashModal";
 import { CortesModal } from "@/components/cash/CortesModal";
 import { OpenSessionConflictModal } from "@/components/cash/OpenSessionConflictModal";
 import { useQueryClient } from "@tanstack/react-query";
-import { useProductsLightQuery, useProductsSearchQuery } from "@/hooks/queries/useProducts";
+import { useProductsLightQuery, useProductsSearchQuery, useCartProductsPolicyQuery } from "@/hooks/queries/useProducts";
+import { buildPolicyIndex, syncCartWithCatalog } from "@/lib/cartSync";
 // ADR-014: useReservedStockQuery removido — carrito client-side, sin polling.
 import { usePaymentMethodsQuery } from "@/hooks/queries/usePaymentMethods";
 import { useTerminalsQuery } from "@/hooks/queries/useTerminals";
@@ -41,7 +44,7 @@ import { useExchangeRateQuery } from "@/hooks/queries/useSystemSettings";
 import { usePreSaleCatalogsQuery, usePreSaleOrdersQuery } from "@/hooks/queries/usePreSales";
 import { useCustomersAllQuery } from "@/hooks/queries/useCustomers";
 import { useTodayHistorialQuery } from "@/hooks/queries/useHistorial";
-import { promoShortLabel, promoTiersLabel } from "@/lib/promoLabel";
+import { promoDetailLabel, promoShortLabel } from "@/lib/promoLabel";
 import { queryKeys } from "@/lib/queryKeys";
 import { prependSaleToSalesCaches, prependPreSaleOrderToCaches, patchPreSaleOrderInCaches, decrementProductStockInCaches, invalidateAfterSale } from "@/lib/optimisticSale";
 import { getTodayLocal, toLocalYmd, BUSINESS_TZ } from "@/lib/date";
@@ -88,41 +91,9 @@ async function loadTicketLogo(): Promise<string | null> {
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type PriceLevel = "a" | "b" | "c" | "d" | "e";
+// `Product` y `PriceLevel` viven en @/types/pos para que el adaptador y el
+// sincronizador del carrito (lib puro, testeable) los puedan importar.
 type PaymentMethod = "Efectivo" | "Dólares" | "Tarjeta" | "Transferencia";
-
-interface Product {
-  id: string;
-  name: string;
-  sku: string;
-  barcode?: string;
-  category: string;
-  image?: string;
-  price_a: number;
-  price_b?: number;
-  price_c?: number;
-  price_d?: number;
-  price_e?: number;
-  stock?: number;
-  stock_damaged?: number;
-  stock_details?: {
-    tienda: number;
-    bodega: number;
-    preventa: number;
-    dañado: number;
-  };
-  payment_restriction?: string;
-  allow_cash?: boolean;
-  allow_card?: boolean;
-  active?: boolean;
-  product_type?: string;
-  volume_number?: number | null;
-  // false = sin inventario en la tienda activa ("No asignado" → el cajero le
-  // agrega stock; no se puede cobrar hasta que tenga stock). Default true.
-  is_assigned?: boolean;
-  /** Promos NxM VIGENTES (Fase 3) — el motor elige la mejor por línea. */
-  active_promotions?: Array<{ id: number; name: string; type?: 'nxm' | 'qty_discount'; buy_n: number | null; pay_m: number | null; tiers?: Array<{ qty: number; amount: number }> | null; priority: number; store_id?: number | null }>;
-}
 
 interface Customer {
   id: string;
@@ -147,6 +118,10 @@ interface CartItem {
   /** Descuento manual de ESTA línea (Descuentos v2). El monto se recomputa
    *  siempre vía recalculateSale — aquí solo vive la captura del cajero. */
   discount?: LineDiscount;
+  /** El cajero renunció a la promo de esta línea a propósito (2026-07-24).
+   *  Es la salida cuando la promo restringe el método de pago: sin esto, ese
+   *  producto simplemente no se le puede vender al cliente. */
+  skipPromo?: boolean;
   /** lineId de la línea origen cuando esta línea nació de un split por
    *  descuento parcial. Solo carrito (permite merge-back); NO viaja al backend. */
   parentLineId?: string;
@@ -208,6 +183,14 @@ const fmt = (n: number) =>
 // Pesos con sufijo "MXN" — para el panel de cobro, donde conviven con US$ y el
 // cajero necesita distinguir la moneda de un vistazo (Joel 2026-06-29).
 const fmtMXN = (n: number) => `${fmt(n)} MXN`;
+
+/** Toast ámbar de "algo cambió, revísalo" — no es un error, es un aviso. */
+const AMBER_TOAST = {
+  background: '#1a1400',
+  color: '#fbbf24',
+  border: '1px solid #78350f',
+  borderRadius: '16px',
+} as const;
 
 const fmtUSD = (n: number) =>
   new Intl.NumberFormat("en-US", {
@@ -337,10 +320,13 @@ function normalizeProduct(raw: any): Product {
     stock_damaged:        stock_details.dañado,
     stock_details,
     active:               raw.desactivado  !== undefined ? !raw.desactivado : (raw.active ?? true),
-    payment_restriction:  (raw.soloEfectivo || raw.payment_restriction === "cash_only")
-                            ? "cash_only" : undefined,
+    // `soloEfectivo`/`payment_restriction` son la forma legacy de decir
+    // allow_card=false. Se normaliza AQUÍ, en la frontera, para que adentro
+    // exista una sola verdad: los dos flags (2026-07-24).
     allow_cash:           raw.allow_cash ?? raw.allowCash ?? true,
-    allow_card:           raw.allow_card ?? raw.allowCard ?? true,
+    allow_card:           (raw.soloEfectivo || raw.payment_restriction === "cash_only")
+                            ? false
+                            : (raw.allow_card ?? raw.allowCard ?? true),
   };
 }
 
@@ -559,44 +545,10 @@ export function SellPage() {
   const paymentMethods: ApiPaymentMethod[] = paymentMethodsQuery.data ?? [];
   const terminals: Terminal[] = terminalsQuery.data ?? [];
 
-  const topProducts: Product[] = useMemo(() => {
-    const list = productsQuery.data?.data ?? [];
-    const priceAt = (p: typeof list[number], level: 1 | 2 | 3 | 4 | 5): number =>
-      Number(p.prices?.[`price_${level}` as keyof typeof p.prices] ?? 0) || 0;
-    return list
-      .filter(p => p.active)
-      .map(p => {
-        return {
-          id: String(p.id),
-          name: p.name,
-          sku: p.sku,
-          barcode: p.barcode ?? undefined,
-          category: String(p.category_id ?? ""),
-          image: p.image ?? "",
-          price_a: priceAt(p, 1),
-          price_b: priceAt(p, 2) > 0 ? priceAt(p, 2) : undefined,
-          price_c: priceAt(p, 3) > 0 ? priceAt(p, 3) : undefined,
-          price_d: priceAt(p, 4) > 0 ? priceAt(p, 4) : undefined,
-          price_e: priceAt(p, 5) > 0 ? priceAt(p, 5) : undefined,
-          stock: typeof p.stock_total === "number" ? p.stock_total : undefined,
-          // stock_total = Exhibición (vendible en Caja); stock_bodega = backstock
-          // atrás (no vendible, solo para avisar "N en bodega" al cajero).
-          stock_details: typeof p.stock_total === "number"
-            ? { tienda: p.stock_total, bodega: p.stock_bodega ?? 0, preventa: 0, dañado: 0 }
-            : undefined,
-          active: p.active,
-          // QA crítico 2026-06-08: sin estos flags, itemAcceptsMethod/payBlocked
-          // siempre pasaban y un producto solo-efectivo se cobraba con tarjeta.
-          allow_cash: p.allow_cash ?? true,
-          allow_card: p.allow_card ?? true,
-          payment_restriction: p.allow_card === false && p.allow_cash !== false ? "cash_only" : undefined,
-          product_type: p.product_type ?? "product",
-          volume_number: p.volume_number ?? null,
-          is_assigned: p.is_assigned ?? true,
-          active_promotions: p.active_promotions ?? [],
-        } as Product;
-      });
-  }, [productsQuery.data]);
+  const topProducts: Product[] = useMemo(
+    () => (productsQuery.data?.data ?? []).filter(p => p.active).map(toCartProduct),
+    [productsQuery.data]
+  );
 
   const [showOpenCashModal, setShowOpenCashModal] = useState(false);
   const [openCashRegisterId, setOpenCashRegisterId] = useState<number | "">("");
@@ -679,37 +631,76 @@ export function SellPage() {
   // `filteredProds` along with the cached ones.
   const products: Product[] = useMemo(() => {
     const seen = new Set(topProducts.map(p => p.id));
-    const searchData = productsSearchQuery.data?.data ?? [];
-    const priceAt = (p: typeof searchData[number], level: 1 | 2 | 3 | 4 | 5): number =>
-      Number(p.prices?.[`price_${level}` as keyof typeof p.prices] ?? 0) || 0;
-    const extra: Product[] = searchData
+    const extra: Product[] = (productsSearchQuery.data?.data ?? [])
       .filter(p => p.active && !seen.has(String(p.id)))
-      .map(p => ({
-        id: String(p.id),
-        name: p.name,
-        sku: p.sku,
-        barcode: p.barcode ?? undefined,
-        category: String(p.category_id ?? ""),
-        image: p.image ?? "",
-        price_a: priceAt(p, 1),
-        price_b: priceAt(p, 2) > 0 ? priceAt(p, 2) : undefined,
-        price_c: priceAt(p, 3) > 0 ? priceAt(p, 3) : undefined,
-        price_d: priceAt(p, 4) > 0 ? priceAt(p, 4) : undefined,
-        price_e: priceAt(p, 5) > 0 ? priceAt(p, 5) : undefined,
-        stock: typeof p.stock_total === "number" ? p.stock_total : undefined,
-        stock_details: typeof p.stock_total === "number"
-          ? { tienda: p.stock_total, bodega: p.stock_bodega ?? 0, preventa: 0, dañado: 0 }
-          : undefined,
-        active: p.active,
-        allow_cash: p.allow_cash ?? true,
-        allow_card: p.allow_card ?? true,
-        payment_restriction: p.allow_card === false && p.allow_cash !== false ? "cash_only" : undefined,
-        product_type: p.product_type ?? "product",
-        volume_number: p.volume_number ?? null,
-        is_assigned: p.is_assigned ?? true,
-      }) as Product);
+      .map(toCartProduct);
     return extra.length > 0 ? [...topProducts, ...extra] : topProducts;
   }, [topProducts, productsSearchQuery.data]);
+
+  // ── Sincronización del carrito con el catálogo ────────────────────────────
+  // Cada línea guarda una COPIA del producto (persistida a localStorage) y
+  // hasta 2026-07-19 nada la refrescaba: si el dueño borraba una promo, la
+  // línea seguía calculando con la promo muerta, el server la rechazaba al
+  // cobrar y el cajero quedaba atorado en bucle. Esto la mantiene al día.
+  const cartProductIds = useMemo(
+    () => [...new Set(mesas.flatMap(m => m.items.map(i => i.product.id)))].sort(),
+    [mesas]
+  );
+  const cartPolicyQuery = useCartProductsPolicyQuery(cartProductIds, activeStore?.id);
+
+  const freshPolicyById = useMemo(
+    () => buildPolicyIndex([
+      productsQuery.data?.data ?? [],
+      productsSearchQuery.data?.data ?? [],
+      // Última = gana: es la consulta por id, la más específica y la única que
+      // cubre productos fuera del top 200.
+      cartPolicyQuery.data?.data ?? [],
+    ]),
+    [productsQuery.data, productsSearchQuery.data, cartPolicyQuery.data]
+  );
+
+  useEffect(() => {
+    if (freshPolicyById.size === 0) return;
+    // Depende de `mesas` (el estado real), NO de mesasRef: el ref se actualiza
+    // en su propio efecto, un commit más tarde, y las 3 queries que alimentan
+    // freshPolicyById resuelven en momentos distintos — leyendo el ref, las
+    // corridas 2 y 3 veían el carrito viejo y volvían a avisar (QA: 3 toasts
+    // idénticos). No hay bucle: escribir `mesas` re-dispara el efecto una vez
+    // más, pero esa corrida ya no encuentra nada que cambiar y sale temprano.
+    const preview = syncCartWithCatalog(mesas, freshPolicyById);
+    if (!preview.changed) return;
+
+    setMesas(preview.mesas as Mesa[]);
+
+    const conPromo  = preview.changes.filter(c => c.promosChanged);
+    const conFlags  = preview.changes.filter(c => c.flagsChanged);
+    const conPrecio = preview.changes.filter(c => c.priceChanged);
+
+    // Los ids fijos evitan que se apilen copias si el efecto alcanza a correr
+    // dos veces: sonner reemplaza el toast en vez de agregar otro.
+    if (conPromo.length > 0) {
+      toast.info(
+        conPromo.length === 1
+          ? `Cambiaron las promociones de "${conPromo[0]!.productName}" — revisa el total.`
+          : `Actualicé las promociones de ${conPromo.length} productos — revisa el total.`,
+        { id: "cart-sync-promos", duration: 6000 }
+      );
+    }
+    if (conFlags.length > 0) {
+      // Puede des/bloquear el botón COBRAR bajo los dedos del cajero.
+      toast.warning(
+        `Cambiaron las restricciones de pago de "${conFlags[0]!.productName}"${conFlags.length > 1 ? ` y ${conFlags.length - 1} más` : ""}.`,
+        { id: "cart-sync-flags", duration: 7000, style: AMBER_TOAST }
+      );
+    }
+    for (const c of conPrecio.slice(0, 2)) {
+      // El dinero que se mueve solo SIEMPRE se anuncia, línea por línea.
+      toast.warning(
+        `El precio de "${c.productName}" cambió de ${fmtMXN(c.priceChanged!.from)} a ${fmtMXN(c.priceChanged!.to)}.`,
+        { id: `cart-sync-price-${c.lineId}`, duration: 8000, style: AMBER_TOAST }
+      );
+    }
+  }, [freshPolicyById, mesas]);
 
   // showCatalog se declara arriba (junto a las queries) para condicionar el polling.
   const [selectedCat, setSelectedCat] = useState("Todo");
@@ -1543,13 +1534,53 @@ export function SellPage() {
         ...(m.isPreventa ? { depositAmount: unitPrice } : {}),
       };
       const newItems = [...m.items, newItem];
-      const willHaveCashOnly = newItems.some(i => i.product.payment_restriction === "cash_only");
-      const newPaymentMethod =
-        willHaveCashOnly && !["Efectivo", "Dólares"].includes(m.paymentMethod)
-          ? "Efectivo" : m.paymentMethod;
-      return { ...m, items: newItems, paymentMethod: newPaymentMethod };
+      // Auto-switch simétrico y CON aviso (2026-07-24): antes esta rama
+      // (escaneo) cambiaba el método en silencio, y solo-tarjeta no disparaba
+      // nada. Cambiar de método dispara repriceForSocio, o sea mueve precios:
+      // hacerlo callado es inaceptable.
+      const cambio = autoSwitchMethod(newItems, m.paymentMethod);
+      return { ...m, items: newItems, paymentMethod: cambio?.metodo ?? m.paymentMethod };
     });
     if (actuallyAdded) toast.success(`Agregado: ${product.name}`);
+  };
+
+  /**
+   * Si el carrito quedó con artículos que exigen un método distinto al actual,
+   * devuelve a cuál cambiar y avisa NOMBRANDO el producto.
+   *
+   * Es simétrico a propósito: antes solo miraba "cash_only", así que un
+   * producto solo-tarjeta no disparaba nada y el cajero se topaba con el
+   * botón gris. Y avisa siempre porque cambiar de método dispara
+   * `repriceForSocio` — o sea, mueve precios.
+   *
+   * Solo mira los flags del PRODUCTO, no los de la promo: la promo depende del
+   * cálculo (que aquí todavía no corre) y su bloqueo lo comunica el banner.
+   */
+  const autoSwitchMethod = (
+    items: CartItem[],
+    actual: PaymentMethod,
+  ): { metodo: PaymentMethod } | null => {
+    const esEfectivo = ["Efectivo", "Dólares", "Transferencia"].includes(actual);
+    const culpableEfectivo = items.find(i => i.product.allow_card === false || i.sellingCatalogId != null);
+    const culpableTarjeta  = items.find(i => i.product.allow_cash === false);
+
+    if (actual === "Tarjeta" && culpableEfectivo) {
+      const nombre = culpableEfectivo.product.name;
+      toast.info(`Cambié el método a Efectivo: "${nombre}" solo se cobra en efectivo.`, {
+        icon: <AlertTriangle className="text-amber-500" size={16} />,
+        style: { background: "#1a1400", color: "#fbbf24", border: "1px solid #78350f" },
+      });
+      return { metodo: "Efectivo" };
+    }
+    if (esEfectivo && culpableTarjeta && !culpableEfectivo) {
+      const nombre = culpableTarjeta.product.name;
+      toast.info(`Cambié el método a Tarjeta: "${nombre}" solo se cobra con tarjeta.`, {
+        icon: <AlertTriangle className="text-amber-500" size={16} />,
+        style: { background: "#1a1400", color: "#fbbf24", border: "1px solid #78350f" },
+      });
+      return { metodo: "Tarjeta" };
+    }
+    return null;
   };
 
   const addToCart = (product: Product, priceLevel: PriceLevel = "a", quantity: number = 1) => {
@@ -1618,17 +1649,8 @@ export function SellPage() {
             ...(m.isPreventa ? { depositAmount: unitPrice * quantity } : {}),
           }];
 
-      const willHaveCashOnly = newItems.some(i => i.product.payment_restriction === "cash_only");
-      let newPaymentMethod = m.paymentMethod;
-      if (willHaveCashOnly && !["Efectivo", "Dólares"].includes(m.paymentMethod)) {
-        newPaymentMethod = "Efectivo";
-        toast.info("Venta restringida a Efectivo/Dólares por artículos seleccionados", {
-          icon: <AlertTriangle className="text-amber-500" size={16} />,
-          style: { background: '#1a1400', color: '#fbbf24', border: '1px solid #78350f' }
-        });
-      }
-
-      return { ...m, items: newItems, paymentMethod: newPaymentMethod };
+      const cambio = autoSwitchMethod(newItems, m.paymentMethod);
+      return { ...m, items: newItems, paymentMethod: cambio?.metodo ?? m.paymentMethod };
     });
   };
 
@@ -1906,24 +1928,10 @@ export function SellPage() {
    * actualiza automáticamente vía el useEffect que escucha cambios de mesas[].
    */
   // ── Split por método de pago ──────────────────────────────────────────────
-  /** True si el item se puede cobrar con `method`. Considera preventa (no
-   * Tarjeta), cash_only y los flags allow_cash/allow_card del producto. */
-  const itemAcceptsMethod = useCallback((item: CartItem, method: PaymentMethod): boolean => {
-    const isCardMethod = method === "Tarjeta";
-    // Preventa (catálogo) → no Tarjeta.
-    if (item.sellingCatalogId != null) return !isCardMethod;
-    // Producto cash_only → solo efectivo/dólares/transferencia.
-    if (item.product.payment_restriction === "cash_only") return !isCardMethod;
-    // Flags explícitos del producto.
-    if (isCardMethod) return item.product.allow_card !== false;
-    return item.product.allow_cash !== false;
-  }, []);
-
   /** Método más razonable para cobrar un conjunto de items conflictivos. */
   const methodForItems = useCallback((items: CartItem[]): PaymentMethod => {
     const allCard = items.every(i =>
       i.sellingCatalogId == null &&
-      i.product.payment_restriction !== "cash_only" &&
       i.product.allow_card !== false &&
       i.product.allow_cash === false  // realmente solo Tarjeta
     );
@@ -1950,7 +1958,7 @@ export function SellPage() {
       return;
     }
     if (compatible.length === 0) {
-      toast.warning("Todos los artículos requieren otro método. Cámbialo arriba en lugar de mover.");
+      toast.warning("Todos los artículos del carrito piden otro método. Quítalos, o cóbralos sin la promo si el bloqueo viene de una promoción.");
       return;
     }
 
@@ -2100,6 +2108,8 @@ export function SellPage() {
         unitPrice: getItemPrice(i),
         qty: i.quantity,
         ...(i.discount ? { discount: i.discount } : {}),
+        // El cajero renunció a la promo de esta línea a propósito.
+        ...(i.skipPromo ? { skipPromo: true } : {}),
       })),
       // Promos NxM vigentes de los productos del carrito (Fase 3). El motor
       // elige la mejor por línea; el backend recomputa igual al cobrar.
@@ -2111,7 +2121,13 @@ export function SellPage() {
           type: ap.type ?? ("nxm" as const),
           buyN: ap.buy_n ?? 0,
           payM: ap.pay_m ?? 0,
-          ...(ap.tiers ? { tiers: ap.tiers } : {}),
+          // Mayoreo: "desde minQty pzas, −discountPerUnit a cada una".
+          minQty: ap.min_qty ?? null,
+          discountPerUnit: ap.discount_per_unit ?? null,
+          // Restricción de pago de la promo: no entra al cálculo, la usa el
+          // bloqueo de Caja sobre la promo que GANÓ la línea.
+          allowCash: ap.allow_cash !== false,
+          allowCard: ap.allow_card !== false,
           priority: ap.priority,
           // Override local: la promo de la tienda apaga la global (motor).
           storeId: ap.store_id ?? null,
@@ -2130,6 +2146,64 @@ export function SellPage() {
     for (const l of saleCalcResult.lines) map[l.lineId] = l;
     return map;
   }, [saleCalcResult]);
+
+  /** Flags de pago de cada promo del carrito, indexados por id de promo. */
+  const promoFlagsById = useMemo(() => {
+    const map: Record<number, { cash: boolean; card: boolean; name: string }> = {};
+    for (const i of activeMesa.items) {
+      for (const ap of i.product.active_promotions ?? []) {
+        map[ap.id] = { cash: ap.allow_cash !== false, card: ap.allow_card !== false, name: ap.name };
+      }
+    }
+    return map;
+  }, [activeMesa.items]);
+
+  /**
+   * True si el item se puede cobrar con `method`. Tres capas: preventa (no
+   * Tarjeta), flags del PRODUCTO, y flags de la PROMO que realmente ganó la
+   * línea.
+   *
+   * La promo solo bloquea si de verdad aplicó: la restricción es propiedad del
+   * beneficio otorgado, no del producto. Si el cliente lleva 1 pieza y el 2x1
+   * no disparó, no hay nada que restringir. Espejo de
+   * assertPaymentMethodsAllowed en CheckoutService.php.
+   */
+  const itemAcceptsMethod = useCallback((item: CartItem, method: PaymentMethod): boolean => {
+    const isCardMethod = method === "Tarjeta";
+    // Preventa (catálogo) → no Tarjeta.
+    if (item.sellingCatalogId != null) return !isCardMethod;
+    // Flags del producto.
+    if (isCardMethod ? item.product.allow_card === false : item.product.allow_cash === false) return false;
+    // Flags de la promo aplicada (si la hay).
+    const promoId = lineCalcById[item.lineId]?.promoPart?.promoId;
+    if (promoId == null) return true;
+    const f = promoFlagsById[promoId];
+    if (!f) return true;
+    return isCardMethod ? f.card : f.cash;
+  }, [lineCalcById, promoFlagsById]);
+
+  /**
+   * Por qué está bloqueado el cobro, en UN solo lugar. Antes el mismo
+   * `items.some(!itemAcceptsMethod)` se recalculaba en 4 sitios con 4 copys
+   * distintos; ahora el label del botón, el banner, el title del menú, el split
+   * y el toast leen todos de aquí.
+   */
+  const blockedItems = useMemo(() => {
+    const method = activeMesa.paymentMethod;
+    const isCard = method === "Tarjeta";
+    return activeMesa.items
+      .filter(i => !itemAcceptsMethod(i, method))
+      .map(i => {
+        const nombre = i.product.name;
+        if (i.sellingCatalogId != null) return { item: i, motivo: "preventa" as const, nombre, promo: null };
+        if (isCard ? i.product.allow_card === false : i.product.allow_cash === false) {
+          return { item: i, motivo: "producto" as const, nombre, promo: null };
+        }
+        const promoId = lineCalcById[i.lineId]?.promoPart?.promoId;
+        const promo = promoId != null ? promoFlagsById[promoId]?.name ?? null : null;
+        return { item: i, motivo: "promo" as const, nombre, promo };
+      });
+  }, [activeMesa.items, activeMesa.paymentMethod, itemAcceptsMethod, lineCalcById, promoFlagsById]);
   const totalDeposit   = useMemo(() => activeMesa.items.reduce((s, i) => s + (i.depositAmount ?? 0), 0), [activeMesa.items]);
   const totalItems     = activeMesa.items.reduce((s, i) => s + i.quantity, 0);
   // Subtotal de ítems nuevos (no de preventa cargada) — usado en carrito mixto
@@ -2245,7 +2319,7 @@ export function SellPage() {
   // del carrito no acepta el método actual (solo-efectivo con Tarjeta, o
   // solo-tarjeta con Efectivo/Transferencia), el cobro se bloquea. Antes esta
   // variable existía pero no se usaba en ningún lado.
-  const payBlocked = activeMesa.items.some(i => !itemAcceptsMethod(i, activeMesa.paymentMethod));
+  const payBlocked = blockedItems.length > 0;
 
   const hasCatalogItems = activeMesa.items.some(i => i.sellingCatalogId != null);
   const checkoutDisabled = activeMesa.items.length === 0 || isProcessing || payBlocked ||
@@ -2381,25 +2455,7 @@ export function SellPage() {
         || (p.barcode ?? '').toLowerCase() === code.toLowerCase()
       );
       if (exact) {
-        const adapted: Product = {
-          id: String(exact.id),
-          name: exact.name,
-          sku: exact.sku,
-          barcode: exact.barcode ?? undefined,
-          category: String(exact.category_id ?? ""),
-          image: exact.image ?? "",
-          price_a: Number(exact.prices?.price_1 ?? 0) || 0,
-          price_b: Number(exact.prices?.price_2 ?? 0) > 0 ? Number(exact.prices.price_2) : undefined,
-          price_c: Number(exact.prices?.price_3 ?? 0) > 0 ? Number(exact.prices.price_3) : undefined,
-          price_d: Number(exact.prices?.price_4 ?? 0) > 0 ? Number(exact.prices.price_4) : undefined,
-          price_e: Number(exact.prices?.price_5 ?? 0) > 0 ? Number(exact.prices.price_5) : undefined,
-          stock: typeof exact.stock_total === "number" ? exact.stock_total : undefined,
-          stock_details: typeof exact.stock_total === "number"
-            ? { tienda: exact.stock_total, bodega: exact.stock_bodega ?? 0, preventa: 0, dañado: 0 }
-            : undefined,
-          active: exact.active,
-          is_assigned: exact.is_assigned ?? true,
-        } as Product;
+        const adapted: Product = toCartProduct(exact);
         // No asignado → abre "Agregar stock" en vez de intentar vender.
         if (adapted.is_assigned === false) { openStockFor(adapted); return; }
         // Scanner usa addScanToCart (nunca suma). Si ya está en venta, toast info.
@@ -3043,18 +3099,30 @@ export function SellPage() {
   };
 
   const triggerPrintFlow = (sale: CompletedSaleData) => {
-    const pref = localStorage.getItem(PRINT_PREF_KEY) ?? "ask";
-    if (pref === "auto") {
-      doPrintTicket(sale);
-      // Auto-print abre una ventana nueva; cerramos la mesa secundaria
-      // un instante después para que setTimeout(print, 300) ya haya disparado.
-      window.setTimeout(closePendingMesa, 500);
-      return;
-    }
-    if (pref === "never") { closePendingMesa(); return; }
+    // 2026-07-20 (pedido del cliente vía Joel): el ticket sale DIRECTO. Queda
+    // desactivado el modal "¿Imprimir ticket?" junto con la preferencia
+    // tadaima_print_pref. TEMPORAL — para revivirlo, descomentar el bloque de
+    // abajo. El JSX del modal sigue en su lugar (~L7500), solo inalcanzable.
+    //
+    // Se ignora la preferencia guardada A PROPÓSITO: un cajero que alguna vez
+    // marcó "no preguntar de nuevo" + OMITIR tiene 'never' en su navegador y
+    // no imprimiría nada, justo lo contrario de lo que pidieron.
+    //
+    // const pref = localStorage.getItem(PRINT_PREF_KEY) ?? "ask";
+    // if (pref === "never") { closePendingMesa(); return; }
+    // if (pref !== "auto") {
+    //   setLastCompletedSale(sale);
+    //   setPrintNeverAsk(false);
+    //   setShowPrintModal(true);
+    //   return;
+    // }
     setLastCompletedSale(sale);
-    setPrintNeverAsk(false);
-    setShowPrintModal(true);
+    doPrintTicket(sale);
+    // La impresión va diferida (setTimeout interno); cerramos la mesa
+    // secundaria un instante después para no dejarla colgada. OJO: este
+    // cierre vivía en los botones del modal — sin esta línea, comentar el
+    // modal dejaría las Ventas 2..5 abiertas para siempre al cobrar.
+    window.setTimeout(closePendingMesa, 500);
   };
 
   /**
@@ -3155,7 +3223,19 @@ export function SellPage() {
       void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
       toast.warning(
         "Los precios o promociones cambiaron desde que armaste la venta. Actualizamos el catálogo — revisa el total y cobra de nuevo.",
-        { duration: 8000, style: { background: '#1a1400', color: '#fbbf24', border: '1px solid #78350f', borderRadius: '16px' } },
+        { duration: 8000, style: AMBER_TOAST },
+      );
+      return;
+    }
+    // Guard de precios del server (assertPricesMatchCatalog): el precio de una
+    // línea ya no existe en el catálogo. El sync del carrito normalmente lo
+    // evita, pero queda como red de seguridad — antes caía al toast.error
+    // genérico, sin refetch ni explicación, y el cajero no tenía salida.
+    if (/fuera del catálogo/i.test(msg)) {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+      toast.warning(
+        `${msg} Actualizamos el catálogo — revisa el precio de la línea y cobra de nuevo.`,
+        { duration: 10000, style: AMBER_TOAST },
       );
       return;
     }
@@ -3181,7 +3261,7 @@ export function SellPage() {
           `Stock de "${productName}" se actualizó a ${availableNum}. Ajustamos la venta — revisa y cobra de nuevo.`,
           {
             duration: 7000,
-            style: { background: '#1a1400', color: '#fbbf24', border: '1px solid #78350f', borderRadius: '16px' },
+            style: AMBER_TOAST,
           },
         );
       } else {
@@ -3219,7 +3299,7 @@ export function SellPage() {
       if (availableNum > 0) {
         toast.warning(
           `"${productName}" — quedan ${availableNum} unidades. Ajustamos la venta — revisa y cobra de nuevo.`,
-          { duration: 7000, style: { background: '#1a1400', color: '#fbbf24', border: '1px solid #78350f', borderRadius: '16px' } },
+          { duration: 7000, style: AMBER_TOAST },
         );
       } else {
         toast.error(
@@ -3322,6 +3402,7 @@ export function SellPage() {
               ...(ci.isDamaged ? { is_damaged: true } : {}),
               // Descuento por línea (v2): viaja la captura, el monto lo recomputa el server.
               ...(ci.discount ? { line_discount: { kind: ci.discount.kind, basis: ci.discount.basis, value: ci.discount.value, reason: ci.discount.reason, ...(ci.discount.note ? { note: ci.discount.note } : {}) } } : {}),
+              ...(ci.skipPromo ? { skip_promotion: true } : {}),
             }))
             .filter(i => !Number.isNaN(i.product_id));
           // Neto regular (con descuentos por línea) — el pago debe cuadrar con
@@ -3590,6 +3671,7 @@ export function SellPage() {
               ...(ci.isDamaged ? { is_damaged: true } : {}),
               // Descuento por línea (v2): viaja la captura, el monto lo recomputa el server.
               ...(ci.discount ? { line_discount: { kind: ci.discount.kind, basis: ci.discount.basis, value: ci.discount.value, reason: ci.discount.reason, ...(ci.discount.note ? { note: ci.discount.note } : {}) } } : {}),
+              ...(ci.skipPromo ? { skip_promotion: true } : {}),
             }))
             .filter(i => !Number.isNaN(i.product_id));
           // Neto regular (con descuentos por línea) — debe cuadrar con el
@@ -3812,6 +3894,7 @@ export function SellPage() {
           ...(ci.isDamaged ? { is_damaged: true } : {}),
           // Descuento por línea (v2): viaja la captura, el monto lo recomputa el server.
           ...(ci.discount ? { line_discount: { kind: ci.discount.kind, basis: ci.discount.basis, value: ci.discount.value, reason: ci.discount.reason, ...(ci.discount.note ? { note: ci.discount.note } : {}) } } : {}),
+              ...(ci.skipPromo ? { skip_promotion: true } : {}),
         }))
         .filter(i => !Number.isNaN(i.product_id));
 
@@ -5074,7 +5157,7 @@ export function SellPage() {
                                 const cands = pool.some(pr => pr.store_id != null) ? pool.filter(pr => pr.store_id != null) : pool;
                                 const promo = [...cands].sort((a, b) => b.priority - a.priority || a.id - b.id)[0]!;
                                 return (
-                                  <span title={`${promo.name} · ${promoTiersLabel(promo)}`} style={{
+                                  <span title={`${promo.name} · ${promoDetailLabel(promo)}`} style={{
                                     marginLeft: 8, padding: "1px 7px", borderRadius: 6, verticalAlign: "middle",
                                     fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em",
                                     color: "#34d399", background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.35)",
@@ -5338,18 +5421,53 @@ export function SellPage() {
                           </span>
                         )}
                         <PaymentRestrictionBadge restriction={getPayRestriction(item.product)} size="sm" />
-                        {activeMesa.paymentMethod === "Tarjeta" && item.product.allow_card === false && (
+                        {/* Un solo badge derivado de itemAcceptsMethod: los dos
+                            ad-hoc de antes divergían (el de efectivo ni
+                            siquiera cubría Transferencia) y no sabían de promos. */}
+                        {!itemAcceptsMethod(item, activeMesa.paymentMethod) && (
                           <span className="px-1.5 py-0.5 rounded bg-red-500/10 border border-red-500/30 text-[7px] font-black text-red-400 uppercase tracking-widest flex items-center gap-1">
                             <TriangleAlert size={8} />
-                            No acepta tarjeta
+                            {/* Distingue producto de promo: decir "no acepta
+                                tarjeta" de un producto que SÍ la acepta manda
+                                al cajero a revisar lo que no es. */}
+                            {blockedItems.find(x => x.item.lineId === item.lineId)?.motivo === "promo"
+                              ? `Promo solo ${activeMesa.paymentMethod === "Tarjeta" ? "efectivo" : "tarjeta"}`
+                              : `No acepta ${activeMesa.paymentMethod.toLowerCase()}`}
                           </span>
                         )}
-                        {(activeMesa.paymentMethod === "Efectivo" || activeMesa.paymentMethod === "Dólares") && item.product.allow_cash === false && (
-                          <span className="px-1.5 py-0.5 rounded bg-red-500/10 border border-red-500/30 text-[7px] font-black text-red-400 uppercase tracking-widest flex items-center gap-1">
-                            <TriangleAlert size={8} />
-                            No acepta efectivo
-                          </span>
-                        )}
+                        {/* Salida cuando el bloqueo viene de la PROMO: renunciar
+                            a ella a propósito desbloquea la venta. Sin esto un
+                            cajero sin permiso de promos no tiene qué hacer. */}
+                        {(() => {
+                          // Se muestra en cuanto la promo APLICADA tenga alguna
+                          // restricción de pago, no solo cuando ya bloquea: si
+                          // el menú deshabilita el método, el cajero nunca
+                          // llegaría al estado bloqueado y se quedaría sin ver
+                          // la salida.
+                          const promoId = lineCalcById[item.lineId]?.promoPart?.promoId;
+                          const f = promoId != null ? promoFlagsById[promoId] : undefined;
+                          const promoRestringe = !!f && (!f.cash || !f.card);
+                          if (!item.skipPromo && !promoRestringe) return null;
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => updMesa(activeMesa.id, m => ({
+                                ...m,
+                                items: m.items.map(i => i.lineId === item.lineId
+                                  ? { ...i, skipPromo: !i.skipPromo } : i),
+                              }))}
+                              className="px-1.5 py-0.5 rounded text-[7px] font-black uppercase tracking-widest flex items-center gap-1 cursor-pointer"
+                              style={item.skipPromo
+                                ? { background: "rgba(148,163,184,0.15)", border: "1px solid rgba(148,163,184,0.4)", color: "#cbd5e1" }
+                                : { background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.4)", color: "#fbbf24" }}
+                              title={item.skipPromo
+                                ? "Volver a aplicar la promoción a esta línea"
+                                : "Cobrar esta línea a precio normal, sin la promoción — desbloquea el método de pago"}
+                            >
+                              {item.skipPromo ? "Sin promo · deshacer" : "Cobrar sin promo"}
+                            </button>
+                          );
+                        })()}
                         {item.isDamaged && (
                           <span className="px-1.5 py-0.5 rounded bg-orange-500/15 border border-orange-500/30 text-[7px] font-black text-orange-400 uppercase tracking-widest flex items-center gap-1">
                             <PackageX size={8} />
@@ -5798,16 +5916,46 @@ export function SellPage() {
                   </div>
                 )} */}
 
-              {/* Botón split: cuando hay items que no aceptan el método actual
-                  Y hay items que sí lo aceptan, ofrece mover los conflictivos
-                  a otra caja libre con el método correcto. */}
+              {/* Banner de bloqueo: la pieza que mata la confusión. NO es
+                  descartable a propósito — el customerLimitWarning lleva X
+                  porque es un evento pasado; esto es una condición VIVA, y si
+                  el cajero la cierra vuelve el botón gris y mudo de antes. */}
+              {payBlocked && (() => {
+                const metodo = activeMesa.paymentMethod;
+                const b = blockedItems[0]!;
+                // Carrito mixto: ningún método sirve para todos. Es el caso en
+                // que la Caja quedaba completamente muerta y sin un mensaje.
+                const mixto = ["Efectivo", "Tarjeta"].every(m =>
+                  activeMesa.items.some(i => !itemAcceptsMethod(i, m as PaymentMethod))
+                );
+                const texto = mixto
+                  ? "Este carrito tiene artículos de solo efectivo y de solo tarjeta juntos. No hay un método que sirva para los dos — separa la venta en dos cajas."
+                  : b.motivo === "promo"
+                    ? `La promo "${b.promo ?? "de este artículo"}" de "${b.nombre}" es solo ${metodo === "Tarjeta" ? "en efectivo" : "con tarjeta"}. Cobra así, cobra sin la promo, o quita el artículo.`
+                    : `"${b.nombre}" no se cobra con ${metodo}. Cambia el método abajo, sepáralo a otra caja o quítalo.`;
+                const extra = blockedItems.length - 1;
+                return (
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 12px", marginBottom: 8,
+                      borderRadius: 12, background: "rgba(220,38,38,0.12)", border: "1px solid rgba(220,38,38,0.40)" }}>
+                    <AlertTriangle size={15} style={{ color: "#DC2626", flexShrink: 0, marginTop: 1 }} />
+                    <p style={{ margin: 0, fontSize: 11.5, fontWeight: 800, color: "#DC2626", lineHeight: 1.35 }}>
+                      {texto}
+                      {extra > 0 && !mixto ? ` (y ${extra} artículo${extra === 1 ? "" : "s"} más)` : ""}
+                    </p>
+                  </div>
+                );
+              })()}
+
+              {/* Botón split: mover los artículos conflictivos a otra caja.
+                  Se muestra SIEMPRE que haya bloqueo y algo movible — antes se
+                  escondía justo en el caso peor (carrito 100% incompatible),
+                  dejando al cajero sin salida visible. */}
               {(() => {
                 // Solo cuentan items movibles (no isFromPreSale — esos están
                 // atados al folio cargado y no se pueden mover sin romper el link).
                 const movable = activeMesa.items.filter(i => !i.isFromPreSale);
                 const incompatibleCount = movable.filter(i => !itemAcceptsMethod(i, activeMesa.paymentMethod)).length;
-                const compatibleCount   = movable.length - incompatibleCount;
-                if (incompatibleCount === 0 || compatibleCount === 0) return null;
+                if (incompatibleCount === 0) return null;
                 return (
                   <button
                     type="button"
@@ -6328,13 +6476,34 @@ export function SellPage() {
                                   // no Efectivo). Mismo criterio que payBlocked y el guard del
                                   // backend. Antes referenciaba `hasCashOnly`, variable que
                                   // nunca existió → ReferenceError al abrir el menú (QA 06-12).
-                                  const isBlocked = activeMesa.items.some(i => !itemAcceptsMethod(i, pm));
+                                  const bloqueados = activeMesa.items.filter(i => !itemAcceptsMethod(i, pm));
+                                  const isBlocked = bloqueados.length > 0;
+                                  // Antes la única pista era un triángulo de
+                                  // 11px sin tooltip. Y distingue producto de
+                                  // promo: decir "el producto no acepta
+                                  // tarjeta" cuando el que estorba es un 2x1
+                                  // manda al cajero a revisar lo que no es.
+                                  const blockedTitle = (() => {
+                                    const primero = bloqueados[0];
+                                    if (!primero) return undefined;
+                                    const esCard = pm === "Tarjeta";
+                                    const culpaProducto = primero.sellingCatalogId != null
+                                      || (esCard ? primero.product.allow_card === false : primero.product.allow_cash === false);
+                                    const resto = bloqueados.length > 1 ? ` (y ${bloqueados.length - 1} más)` : "";
+                                    if (culpaProducto) {
+                                      return `No disponible: "${primero.product.name}" no acepta ${pm}.${resto}`;
+                                    }
+                                    const promoId = lineCalcById[primero.lineId]?.promoPart?.promoId;
+                                    const promoNombre = promoId != null ? promoFlagsById[promoId]?.name : null;
+                                    return `No disponible: la promo "${promoNombre ?? "aplicada"}" de "${primero.product.name}" no se cobra con ${pm}. Puedes cobrar esa línea sin la promo.${resto}`;
+                                  })();
                                   const isHovered = hoveredPayPm === pm && !isBlocked;
                                   return (
                                     <button
                                       key={pm}
                                       onClick={() => { if (!isBlocked) { setPayment(pm); setPaymentMenuOpen(false); setHoveredPayPm(null); } }}
                                       disabled={isBlocked}
+                                      {...(blockedTitle ? { title: blockedTitle } : {})}
                                       className={`w-full px-3 flex items-center justify-center border-b last:border-b-0 transition-all duration-150 ${
                                         isBlocked ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'
                                       }`}
@@ -6438,7 +6607,12 @@ export function SellPage() {
                       const hasAnyCash    = receivedMxn > 0 || receivedUsd > 0;
                       const isInsufficient = activeMesa.paymentMethod === "Efectivo"
                         && hasAnyCash && totalReceived < currentPayAmount;
+                      // El bloqueo por método va PRIMERO: antes el botón se
+                      // quedaba gris diciendo "Cobrar", sin decir por qué, y el
+                      // único mensaje que lo explicaba vivía en el onClick —
+                      // inalcanzable, porque un botón disabled no dispara clic.
                       const label = isProcessing ? "Procesando..."
+                        : payBlocked ? `No se puede con ${activeMesa.paymentMethod}`
                         : isInsufficient ? `Faltan ${fmt(currentPayAmount - totalReceived)}`
                         : activeMesa.loadedPreSaleOrderId
                           ? (newItemsSubtotal > 0 ? "Cobrar" : "Liquidar")
@@ -6448,6 +6622,7 @@ export function SellPage() {
                       return (
                         <button
                           disabled={checkoutDisabled || isInsufficient}
+                          {...(payBlocked ? { title: blockedItems.map(b => b.nombre).join(", ") + `: no se pueden cobrar con ${activeMesa.paymentMethod}.` } : {})}
                           onClick={() => { void handleCheckout(); }}
                           className="w-full h-[52px] group relative flex items-center justify-center gap-2 rounded-2xl overflow-hidden transition-all disabled:opacity-30 disabled:grayscale"
                         >

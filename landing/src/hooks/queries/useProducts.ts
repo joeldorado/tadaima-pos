@@ -100,6 +100,37 @@ export function useProductsSearchQuery(search: string, storeId?: number | null, 
 }
 
 /**
+ * Política VIGENTE (promos, precios, flags de pago) de los productos que ya
+ * están en el carrito.
+ *
+ * El pool de Caja es `?sort=top` paginado a 200 — un ORDER BY, no un filtro.
+ * Un producto de poca venta cae fuera, y ahí el snapshot congelado de la línea
+ * no tenía contra qué compararse: seguía calculando con una promo borrada y el
+ * checkout lo rechazaba sin salida (bug de Joel, 2026-07-19). Con ?ids= se
+ * piden exactamente los del carrito.
+ *
+ * La key cuelga de `queryKeys.products.all`, así que toda invalidación de
+ * productos que ya existe (incluida la del tab de Promos) la alcanza.
+ */
+export function useCartProductsPolicyQuery(productIds: readonly string[], storeId?: number | null) {
+  const ids = [...productIds].sort().join(',')
+  return useQuery({
+    queryKey: [...queryKeys.products.all, 'light', 'cart', ids, storeId ?? null],
+    queryFn: () => getProductsLight({
+      ids,
+      active: true,
+      ...(storeId ? { store_id: storeId, include_unassigned: true } : {}),
+    } as Parameters<typeof getProductsLight>[0]),
+    enabled: ids.length > 0,
+    // Más fresco que el pool (5 min): estos son los productos que el cajero
+    // está a punto de cobrar, y un dato viejo aquí lo atora en el checkout.
+    staleTime: 60_000,
+    gcTime: 5 * 60_000,
+    refetchOnWindowFocus: true,
+  })
+}
+
+/**
  * Infinite scroll query — para el modal de catálogo completo. Useful cuando
  * el cajero quiere ver más productos sin escribir búsqueda. Cada página
  * trae 120 productos. fetchNextPage se llama cuando el scroll llega al

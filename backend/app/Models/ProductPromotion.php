@@ -22,7 +22,14 @@ class ProductPromotion extends Model
 
     /** "Compra N, paga M" (2x1). Usa buy_n/pay_m. */
     public const TYPE_NXM = 'nxm';
-    /** "Compra N piezas → −$X" con escalones. Usa tiers (greedy por grupos). */
+    /**
+     * MAYOREO: "desde N piezas, −$X a CADA UNA". Usa min_qty/discount_per_unit.
+     *
+     * El slug conserva el nombre viejo a propósito (no se renombra a 'mayoreo'):
+     * evita migrar el `type` de las filas vivas y tocar las uniones TS que están
+     * duplicadas en 4 archivos. Lo que cambió es la matemática, no el slug — la
+     * semántica anterior era "−$X por cada grupo de N" con `tiers`.
+     */
     public const TYPE_QTY_DISCOUNT = 'qty_discount';
 
     public const TYPES = [
@@ -30,6 +37,9 @@ class ProductPromotion extends Model
         self::TYPE_QTY_DISCOUNT,
     ];
 
+    // `tiers` NO está en fillable a propósito (mayoreo, 2026-07-23): quedó como
+    // rastro histórico de lo que la promo era antes del cambio de semántica y no
+    // se vuelve a escribir. Que lo garantice el modelo, no la disciplina.
     protected $fillable = [
         'product_id',
         'store_id',
@@ -37,7 +47,10 @@ class ProductPromotion extends Model
         'type',
         'buy_n',
         'pay_m',
-        'tiers',
+        'min_qty',
+        'discount_per_unit',
+        'allow_cash',
+        'allow_card',
         'starts_at',
         'ends_at',
         'status',
@@ -45,13 +58,18 @@ class ProductPromotion extends Model
     ];
 
     protected $casts = [
-        'store_id'  => 'integer',
-        'buy_n'     => 'integer',
-        'pay_m'     => 'integer',
-        'tiers'     => 'array',
-        'priority'  => 'integer',
-        'starts_at' => 'datetime',
-        'ends_at'   => 'datetime',
+        'store_id'          => 'integer',
+        'buy_n'             => 'integer',
+        'pay_m'             => 'integer',
+        'min_qty'           => 'integer',
+        'discount_per_unit' => 'float',
+        // Restricción de método de pago de la promo (espejo del producto).
+        'allow_cash'        => 'boolean',
+        'allow_card'        => 'boolean',
+        'tiers'             => 'array',
+        'priority'          => 'integer',
+        'starts_at'         => 'datetime',
+        'ends_at'           => 'datetime',
     ];
 
     public function product(): BelongsTo

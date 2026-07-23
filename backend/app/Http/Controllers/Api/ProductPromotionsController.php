@@ -49,6 +49,9 @@ class ProductPromotionsController extends Controller
         if ($resp = $this->promoManageError()) {
             return $resp;
         }
+        if ($resp = $this->promoPaymentConflictError($product, $request)) {
+            return $resp;
+        }
         if ($request->input('status', ProductPromotion::STATUS_ACTIVE) === ProductPromotion::STATUS_ACTIVE) {
             if ($resp = $this->promoTypeConflictError($product, $request)) {
                 return $resp;
@@ -62,7 +65,7 @@ class ProductPromotionsController extends Controller
         }
 
         $promotion = $product->promotions()->create(array_merge(
-            $request->only(['name', 'buy_n', 'pay_m', 'tiers', 'priority']),
+            $request->only(['name', 'buy_n', 'pay_m', 'min_qty', 'discount_per_unit', 'allow_cash', 'allow_card', 'priority']),
             $this->vigencyDates($request->input('starts_at'), $request->input('ends_at')),
             [
                 'type'     => $request->promoType(),
@@ -89,15 +92,25 @@ class ProductPromotionsController extends Controller
         if ($resp = $this->promoMutationGateError($request, $promotion)) {
             return $resp;
         }
+        // Se revalida en CADA update, no solo al reactivar: los flags de pago
+        // del PRODUCTO pueden haber cambiado desde que se creó la promo.
+        if ($resp = $this->promoPaymentConflictError($product, $request, $promotion)) {
+            return $resp;
+        }
         // Duplicado y tope solo al REACTIVAR (pausada/vencida → activa); editar
         // una que ya está activa no se bloquea aunque exista un excedente legacy.
         if ($request->has('status')
             && $request->input('status') === ProductPromotion::STATUS_ACTIVE
             && $promotion->status !== ProductPromotion::STATUS_ACTIVE) {
-            if ($resp = $this->promoTypeConflictError($product, $request, $promotion->id)) {
+            // Tipo EFECTIVO: `promoType()` cae a 'nxm' cuando el request no trae
+            // `type`, y desde el mayoreo los PUT pueden ser parciales (pausar /
+            // reanudar). Sin esto se compararía contra el tipo equivocado.
+            $type = $request->has('type') ? $request->promoType() : (string) $promotion->type;
+
+            if ($resp = $this->promoTypeConflictError($product, $request, $promotion->id, $type)) {
                 return $resp;
             }
-            if ($resp = $this->duplicatePromoError($product, $request, $promotion->id)) {
+            if ($resp = $this->duplicatePromoError($product, $request, $promotion->id, $type)) {
                 return $resp;
             }
             if ($resp = $this->activePromoCapError($product, $this->scopedStoreId($request), $promotion->id)) {
@@ -106,7 +119,9 @@ class ProductPromotionsController extends Controller
         }
 
         $promotion->update(array_merge(
-            $request->only(['name', 'buy_n', 'pay_m', 'tiers', 'priority']),
+            // `tiers` fuera (mayoreo 2026-07-23): los bundles viejos lo siguen
+            // mandando al pausar y aquí se descarta en silencio.
+            $request->only(['name', 'buy_n', 'pay_m', 'min_qty', 'discount_per_unit', 'allow_cash', 'allow_card', 'priority']),
             $this->vigencyDates($request->input('starts_at'), $request->input('ends_at')),
             $request->has('status') ? ['status' => $request->input('status')] : [],
             $request->has('store_id') ? ['store_id' => $this->scopedStoreId($request)] : [],
@@ -151,13 +166,14 @@ class ProductPromotionsController extends Controller
         Product $product,
         StoreProductPromotionRequest $request,
         ?int $ignoreId = null,
+        ?string $type = null,
     ): ?JsonResponse {
-        $type  = $request->promoType();
+        $type  = $type ?? $request->promoType();
         $query = $this->overlappingActivePromos($product, $request, $ignoreId)
             ->where('type', $type);
 
-        // NxM: duplicado = mismo N y M. qty_discount: cualquier otra del mismo
-        // tipo encimada es duplicado (los escalones competirían entre sí).
+        // NxM: duplicado = mismo N y M. Mayoreo: cualquier otra del mismo tipo
+        // encimada es duplicado (competirían entre sí por la misma línea).
         if ($type === ProductPromotion::TYPE_NXM) {
             $query->where('buy_n', (int) $request->input('buy_n'))
                 ->where('pay_m', (int) $request->input('pay_m'));
@@ -170,7 +186,7 @@ class ProductPromotionsController extends Controller
 
         $label = $type === ProductPromotion::TYPE_NXM
             ? "una promo {$request->input('buy_n')}x{$request->input('pay_m')}"
-            : 'una promo de descuento por cantidad';
+            : 'una promo de mayoreo';
 
         return $this->error(
             "Ya existe {$label} para este producto que se encima en fechas (\"{$existing->name}\"). Pausa o elimina esa, o usa un rango de fechas que no se encime.",
@@ -179,16 +195,64 @@ class ProductPromotionsController extends Controller
     }
 
     /**
+     * Restricción de pago de la promo vs la del PRODUCTO (2026-07-24).
+     *
+     * Como la promo BLOQUEA el cobro cuando el método no le sirve, una promo
+     * solo-efectivo sobre un producto que no acepta efectivo vuelve al producto
+     * invendible. Se ataja al guardar en vez de descubrirlo en el mostrador.
+     *
+     * Vive en el controller y no en el FormRequest a propósito: tiene que
+     * re-correr en cada update porque los flags del producto pueden cambiar
+     * DESPUÉS de crear la promo.
+     */
+    private function promoPaymentConflictError(
+        Product $product,
+        StoreProductPromotionRequest $request,
+        ?ProductPromotion $current = null,
+    ): ?JsonResponse {
+        // Ausente en un PUT parcial = conserva lo que ya tenía la promo.
+        $promoCash = $request->has('allow_cash')
+            ? $request->boolean('allow_cash')
+            : (bool) ($current->allow_cash ?? true);
+        $promoCard = $request->has('allow_card')
+            ? $request->boolean('allow_card')
+            : (bool) ($current->allow_card ?? true);
+
+        if (!$promoCash && !$promoCard) {
+            return $this->error('Marca al menos un método de pago para la promoción.', 422);
+        }
+
+        $prodCash = (bool) ($product->paymentMethod?->allow_cash ?? true);
+        $prodCard = (bool) ($product->paymentMethod?->allow_card ?? true);
+
+        // Los métodos que servirían para cobrar CON la promo aplicada.
+        $sirveEfectivo = $promoCash && $prodCash;
+        $sirveTarjeta  = $promoCard && $prodCard;
+
+        if (!$sirveEfectivo && !$sirveTarjeta) {
+            $falta = !$promoCash ? 'efectivo' : 'tarjeta';
+
+            return $this->error(
+                "El producto \"{$product->name}\" no acepta {$falta}, así que esta promo nunca se podría cobrar. Ajusta primero la restricción de pago del producto.",
+                422
+            );
+        }
+
+        return null;
+    }
+
+    /**
      * Exclusividad de TIPOS (pedido Joel 2026-07-20): un producto no puede
-     * tener a la vez una promo NxM y una de descuento por cantidad vigentes
-     * con ventana y ámbito de tienda encimados — una u otra.
+     * tener a la vez una promo NxM y una de mayoreo vigentes con ventana y
+     * ámbito de tienda encimados — una u otra.
      */
     private function promoTypeConflictError(
         Product $product,
         StoreProductPromotionRequest $request,
         ?int $ignoreId = null,
+        ?string $type = null,
     ): ?JsonResponse {
-        $type = $request->promoType();
+        $type = $type ?? $request->promoType();
 
         $existing = $this->overlappingActivePromos($product, $request, $ignoreId)
             ->where('type', '!=', $type)
@@ -200,10 +264,10 @@ class ProductPromotionsController extends Controller
 
         $existingLabel = $existing->type === ProductPromotion::TYPE_NXM
             ? "{$existing->buy_n}x{$existing->pay_m}"
-            : 'de descuento por cantidad';
+            : 'de mayoreo';
 
         return $this->error(
-            "Este producto ya tiene la promo \"{$existing->name}\" ({$existingLabel}) vigente en esas fechas. No pueden convivir una NxM y una de descuento por cantidad — pausa o elimina esa primero.",
+            "Este producto ya tiene la promo \"{$existing->name}\" ({$existingLabel}) vigente en esas fechas. No pueden convivir una NxM y una de mayoreo — pausa o elimina esa primero.",
             422
         );
     }

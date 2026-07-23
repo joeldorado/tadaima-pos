@@ -11,7 +11,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/queryKeys";
 import { BUSINESS_TZ, getTodayLocal } from "@/lib/date";
 import { isAdmin as isAdminRole } from "@/lib/permisos";
-import { promoShortLabel, promoTiersLabel } from "@/lib/promoLabel";
+import { isPromoSinConfigurar, promoDetailLabel, promoShortLabel } from "@/lib/promoLabel";
 import { SingleDatePicker } from "@/components/ui/SingleDatePicker";
 
 interface Props {
@@ -59,12 +59,17 @@ export function ProductPromotionsTab({ productId }: Props) {
 
   // Form de alta
   const [name, setName] = useState("");
-  // Tipo de promo (2026-07-20): 'nxm' (2x1) | 'qty_discount' ("2 pzas → −$100").
+  // Tipo de promo: 'nxm' (2x1) | 'qty_discount' = MAYOREO ("desde 5 pzas, −$100 c/u").
   const [promoType, setPromoType] = useState<"nxm" | "qty_discount">("nxm");
   const [buyN, setBuyN] = useState("2");
   const [payM, setPayM] = useState("1");
-  // Escalones del tipo qty_discount (strings para inputs controlados).
-  const [tiers, setTiers] = useState<Array<{ qty: string; amount: string }>>([{ qty: "2", amount: "" }]);
+  // Mayoreo (strings para inputs controlados).
+  const [minQty, setMinQty] = useState("5");
+  const [perUnit, setPerUnit] = useState("");
+  // Restricción de método de pago de la promo (2026-07-24). Si el método no le
+  // sirve, BLOQUEA el cobro igual que la restricción del producto.
+  const [allowCash, setAllowCash] = useState(true);
+  const [allowCard, setAllowCard] = useState(true);
   const [startsAt, setStartsAt] = useState("");
   const [endsAt, setEndsAt] = useState("");
   const [priority, setPriority] = useState("0");
@@ -92,9 +97,10 @@ export function ProductPromotionsTab({ productId }: Props) {
     setName(`${promo.name} · local`.slice(0, 100));
     setBuyN(String(promo.buy_n ?? 2));
     setPayM(String(promo.pay_m ?? 1));
-    setTiers(promo.tiers?.length
-      ? promo.tiers.map(t => ({ qty: String(t.qty), amount: String(t.amount) }))
-      : [{ qty: "2", amount: "" }]);
+    setMinQty(String(promo.min_qty ?? 5));
+    setPerUnit(promo.discount_per_unit != null ? String(promo.discount_per_unit) : "");
+    setAllowCash(promo.allow_cash !== false);
+    setAllowCard(promo.allow_card !== false);
     // Inicio en el pasado no se puede re-elegir en el picker (minValue hoy):
     // vacío = empieza ya. El vencimiento sí se conserva.
     const today = getTodayLocal();
@@ -124,10 +130,16 @@ export function ProductPromotionsTab({ productId }: Props) {
   const invalidateProducts = () =>
     void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
 
-  const parsedTiers = (): Array<{ qty: number; amount: number }> =>
-    tiers
-      .map(t => ({ qty: parseInt(t.qty, 10) || 0, amount: parseFloat(t.amount) || 0 }))
-      .filter(t => t.qty > 0 || t.amount > 0);
+  /** Ejemplo en vivo bajo los inputs del mayoreo — que se vea la cuenta hecha. */
+  const mayoreoHint = ((): string => {
+    const q = parseInt(minQty, 10) || 0;
+    const d = parseFloat(perUnit) || 0;
+    if (q < 2 || d <= 0) {
+      return "Desde N piezas, CADA pieza baja $X. Abajo de N no aplica nada.";
+    }
+    const ejemplo = q + 2;
+    return `Llevar ${q} pzas descuenta $${(q * d).toLocaleString("es-MX")}; ${ejemplo} pzas descuenta $${(ejemplo * d).toLocaleString("es-MX")}. Con ${q - 1} o menos no aplica.`;
+  })();
 
   const submit = async () => {
     if (productId == null) return;
@@ -143,13 +155,17 @@ export function ProductPromotionsTab({ productId }: Props) {
       typedFields = { type: "nxm", buy_n: n, pay_m: m };
       successLabel = `Promo ${n}x${m} creada`;
     } else {
-      const clean = parsedTiers();
-      if (clean.length === 0) { toast.error("Agrega al menos un escalón (ej. 2 piezas → $100)."); return; }
-      if (clean.some(t => t.qty < 2)) { toast.error("Cada escalón necesita al menos 2 piezas."); return; }
-      if (clean.some(t => t.amount <= 0)) { toast.error("El descuento de cada escalón debe ser mayor a $0."); return; }
-      if (new Set(clean.map(t => t.qty)).size !== clean.length) { toast.error("Hay dos escalones con la misma cantidad de piezas."); return; }
-      typedFields = { type: "qty_discount", tiers: clean };
-      successLabel = "Promo por cantidad creada";
+      const q = parseInt(minQty, 10) || 0;
+      const d = parseFloat(perUnit) || 0;
+      if (q < 2) { toast.error("El mayoreo arranca desde 2 piezas en adelante."); return; }
+      if (d <= 0) { toast.error("Pon cuánto se le descuenta a cada pieza (ej. $100)."); return; }
+      typedFields = { type: "qty_discount", min_qty: q, discount_per_unit: d };
+      successLabel = `Mayoreo creado: desde ${q} pzas, −$${d} c/u`;
+    }
+
+    if (!allowCash && !allowCard) {
+      toast.error("Marca al menos un método de pago para la promoción.");
+      return;
     }
 
     setSaving(true);
@@ -157,6 +173,8 @@ export function ProductPromotionsTab({ productId }: Props) {
       const input: ProductPromotionInput = {
         name: name.trim(),
         ...typedFields,
+        allow_cash: allowCash,
+        allow_card: allowCard,
         // Fechas PLANAS (YYYY-MM-DD): el backend las ancla al día completo en
         // la zona del negocio (inicio/fin de día Tijuana) — nunca mandar hora.
         ...(startsAt ? { starts_at: startsAt } : {}),
@@ -167,7 +185,8 @@ export function ProductPromotionsTab({ productId }: Props) {
       };
       await createProductPromotion(productId, input);
       toast.success(successLabel);
-      setName(""); setBuyN("2"); setPayM("1"); setTiers([{ qty: "2", amount: "" }]);
+      setName(""); setBuyN("2"); setPayM("1"); setMinQty("5"); setPerUnit("");
+      setAllowCash(true); setAllowCard(true);
       setStartsAt(""); setEndsAt(""); setPriority("0");
       setShowForm(false);
       await reload(productId);
@@ -187,8 +206,15 @@ export function ProductPromotionsTab({ productId }: Props) {
         name: promo.name,
         // Mandar los campos de SU tipo (el backend prohíbe los del otro).
         ...(promo.type === "qty_discount"
-          ? { type: "qty_discount" as const, tiers: (promo.tiers ?? []).map(t => ({ qty: t.qty, amount: t.amount })) }
+          ? {
+              type: "qty_discount" as const,
+              // Reenviar los MISMOS valores: pausar no debe reconfigurar nada.
+              ...(promo.min_qty != null ? { min_qty: promo.min_qty } : {}),
+              ...(promo.discount_per_unit != null ? { discount_per_unit: promo.discount_per_unit } : {}),
+            }
           : { type: "nxm" as const, buy_n: promo.buy_n ?? 2, pay_m: promo.pay_m ?? 1 }),
+        allow_cash: promo.allow_cash !== false,
+        allow_card: promo.allow_card !== false,
         starts_at: promo.starts_at, ends_at: promo.ends_at,
         priority: promo.priority, status: next,
         store_id: promo.store_id ?? null, // preservar la tienda al pausar/reanudar
@@ -249,12 +275,12 @@ export function ProductPromotionsTab({ productId }: Props) {
 
       {showForm && (
         <div className="rounded-2xl p-4 space-y-3" style={{ background: "var(--td-surface-soft)", border: "1px solid var(--td-card-border)" }}>
-          {/* Tipo de promo (2026-07-20): NxM o descuento por cantidad — un
-              producto NO puede tener ambas vigentes a la vez (valida el server). */}
+          {/* Tipo de promo: NxM o mayoreo — un producto NO puede tener ambas
+              vigentes a la vez (lo valida el server). */}
           <div className="grid grid-cols-2 gap-2">
             {([
               { key: "nxm" as const, title: "NxM (2x1, 3x2…)", desc: "Se lleva N y paga M" },
-              { key: "qty_discount" as const, title: "Descuento por cantidad", desc: "Ej. 2 pzas → −$100" },
+              { key: "qty_discount" as const, title: "Mayoreo", desc: "Desde N pzas, −$X a cada una" },
             ]).map(t => {
               const active = promoType === t.key;
               return (
@@ -291,41 +317,62 @@ export function ProductPromotionsTab({ productId }: Props) {
                 </div>
               </>
             ) : (
-              <div className="col-span-2 space-y-2">
-                <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>Escalones</label>
-                {tiers.map((tier, idx) => (
-                  <div key={idx} className="flex items-center gap-2">
-                    <input
-                      type="number" min={2} step={1} value={tier.qty}
-                      onChange={e => setTiers(prev => prev.map((t, i) => i === idx ? { ...t, qty: e.target.value } : t))}
-                      placeholder="Pzas" style={{ ...inputStyle, width: 90 }} aria-label={`Piezas del escalón ${idx + 1}`}
-                    />
-                    <span className="text-[11px] font-black shrink-0" style={{ color: TMD }}>pzas → −$</span>
-                    <input
-                      type="number" min={1} step={1} value={tier.amount}
-                      onChange={e => setTiers(prev => prev.map((t, i) => i === idx ? { ...t, amount: e.target.value } : t))}
-                      placeholder="100" style={{ ...inputStyle }} aria-label={`Descuento del escalón ${idx + 1}`}
-                    />
-                    {tiers.length > 1 && (
-                      <button type="button" onClick={() => setTiers(prev => prev.filter((_, i) => i !== idx))}
-                        className="rounded-lg p-1.5 hover:bg-white/10 shrink-0" title="Quitar escalón">
-                        <Trash2 size={13} style={{ color: "var(--td-red)" }} />
-                      </button>
-                    )}
-                  </div>
-                ))}
-                {tiers.length < 5 && (
-                  <button type="button" onClick={() => setTiers(prev => [...prev, { qty: "", amount: "" }])}
-                    className="flex items-center gap-1 text-[10px] font-black uppercase tracking-widest"
-                    style={{ color: "#34d399" }}>
-                    <Plus size={12} /> Agregar escalón
-                  </button>
-                )}
-                <p className="text-[9px] font-bold" style={{ color: TLO }}>
-                  El descuento se repite por grupos y gana el escalón mayor: con 2→$100 y 3→$400, llevar 5 pzas descuenta $500 (400 + 100).
+              <>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>A partir de (pzas)</label>
+                  <input
+                    type="number" min={2} step={1} value={minQty}
+                    onChange={e => setMinQty(e.target.value)}
+                    placeholder="5" style={{ ...inputStyle, marginTop: 4 }}
+                    aria-label="A partir de cuántas piezas aplica el mayoreo"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>Descuento c/pieza</label>
+                  <input
+                    type="number" min={1} step={1} value={perUnit}
+                    onChange={e => setPerUnit(e.target.value)}
+                    placeholder="100" style={{ ...inputStyle, marginTop: 4 }}
+                    aria-label="Cuánto se le descuenta a cada pieza"
+                  />
+                </div>
+                <p className="col-span-2 text-[9px] font-bold" style={{ color: TLO }}>
+                  {mayoreoHint}
                 </p>
-              </div>
+              </>
             )}
+
+            {/* Restricción de pago de la promo. Si el método de cobro no le
+                sirve, BLOQUEA la venta (igual que la restricción del producto) —
+                por eso el aviso de abajo es explícito. */}
+            <div className="col-span-2">
+              <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>
+                Se puede pagar con
+              </label>
+              <div className="mt-1.5 flex flex-wrap gap-4">
+                {([
+                  { key: "cash" as const, label: "Efectivo", val: allowCash, set: setAllowCash },
+                  { key: "card" as const, label: "Tarjeta", val: allowCard, set: setAllowCard },
+                ]).map(o => (
+                  <label key={o.key} className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={o.val}
+                      onChange={e => o.set(e.target.checked)}
+                      style={{ width: 15, height: 15, accentColor: "#34d399", cursor: "pointer" }}
+                    />
+                    <span className="text-[11px] font-black" style={{ color: o.val ? THI : TLO }}>{o.label}</span>
+                  </label>
+                ))}
+              </div>
+              {(!allowCash || !allowCard) && (
+                <p className="mt-1 text-[9px] font-bold" style={{ color: "#fbbf24" }}>
+                  Ojo: con esta promo aplicada, la venta <b>no se podrá cobrar</b> con{" "}
+                  {!allowCash ? "efectivo" : "tarjeta"}. El cajero verá el aviso y podrá cobrar sin la promo.
+                </p>
+              )}
+            </div>
+
             <div>
               <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>Inicia (opcional)</label>
               <div className="mt-1">
@@ -384,10 +431,11 @@ export function ProductPromotionsTab({ productId }: Props) {
             </p>
           ) : (
             <p className="text-[10px] font-bold" style={{ color: TLO }}>
-              Vista rápida: {parsedTiers().filter(t => t.qty >= 2 && t.amount > 0).length > 0
-                ? parsedTiers().filter(t => t.qty >= 2 && t.amount > 0).sort((a, b) => a.qty - b.qty)
-                    .map(t => `${t.qty} pzas → −$${t.amount}`).join(" · ")
-                : "agrega escalones (ej. 2 pzas → −$100)."}
+              Vista rápida: {promoDetailLabel({
+                type: "qty_discount",
+                min_qty: parseInt(minQty, 10) || null,
+                discount_per_unit: parseFloat(perUnit) || null,
+              })}
             </p>
           )}
           <div className="flex gap-2">
@@ -416,16 +464,24 @@ export function ProductPromotionsTab({ productId }: Props) {
             // "Activa" con fecha de inicio FUTURA aún no aplica en Caja ni sale
             // en Promos → mostrar "Programada" para no confundir (QA 2026-07-16).
             const isScheduled = promo.status === "active" && !!promo.starts_at && new Date(promo.starts_at) > new Date();
-            const meta = isScheduled
-              ? { label: `Programada · inicia ${toDateInput(promo.starts_at)}`, color: "#60A5FA" }
-              : STATUS_META[promo.status];
+            // Mayoreo al que le faltan los números: son las que pausó la
+            // migración de escalones. Nunca descontarían nada — hay que
+            // borrarlas y rehacerlas (no hay pantalla de edición).
+            const sinConfigurar = isPromoSinConfigurar(promo);
+            const meta = sinConfigurar
+              ? { label: "Sin configurar · bórrala y créala de nuevo", color: "#FF8A80" }
+              : isScheduled
+                ? { label: `Programada · inicia ${toDateInput(promo.starts_at)}`, color: "#60A5FA" }
+                : STATUS_META[promo.status];
             return (
               <div key={promo.id} className="flex items-center gap-3 rounded-2xl px-4 py-3"
                 style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", opacity: promo.status === "expired" ? 0.55 : 1 }}>
                 <span
                   className="rounded-xl px-2.5 py-1.5 text-[13px] font-black whitespace-nowrap"
-                  style={{ background: "rgba(16,185,129,0.12)", color: "#34d399" }}
-                  title={promoTiersLabel(promo)}
+                  style={sinConfigurar
+                    ? { background: "rgba(224,34,26,0.12)", color: "#FF8A80" }
+                    : { background: "rgba(16,185,129,0.12)", color: "#34d399" }}
+                  title={promoDetailLabel(promo)}
                 >
                   {promoShortLabel(promo)}
                 </span>
@@ -483,8 +539,11 @@ export function ProductPromotionsTab({ productId }: Props) {
                 {canManagePromos && (isAdmin || promo.store_id === (user?.store_id ?? null)) && (
                   <>
                     {promo.status !== "expired" && (
-                      <button onClick={() => void toggleStatus(promo)} className="rounded-lg p-1.5 hover:bg-white/10"
-                        title={promo.status === "active" ? "Pausar" : "Reanudar"}>
+                      <button onClick={() => void toggleStatus(promo)} className="rounded-lg p-1.5 hover:bg-white/10 disabled:opacity-30"
+                        disabled={sinConfigurar}
+                        title={sinConfigurar
+                          ? "Le faltan los datos del mayoreo: bórrala y créala de nuevo"
+                          : promo.status === "active" ? "Pausar" : "Reanudar"}>
                         {promo.status === "active" ? <Pause size={14} style={{ color: "#F59E0B" }} /> : <Play size={14} style={{ color: "#34d399" }} />}
                       </button>
                     )}

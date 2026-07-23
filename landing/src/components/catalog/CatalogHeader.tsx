@@ -1,5 +1,6 @@
 import { ChevronDown, Search, X } from "lucide-react"
-import { PILL_CLASS, pillStyle, type SortMode, type TypeFilter } from "./catalogUi"
+import { CategoryList } from "./CategoryList"
+import { CATALOG_CONTAINER, CATALOG_CONTAINER_WIDE, PILL_CLASS, pillStyle, type SortMode, type TypeFilter } from "./catalogUi"
 
 const DISPLAY = "'Space Grotesk', system-ui, sans-serif"
 
@@ -37,6 +38,10 @@ interface CatalogHeaderProps {
   hasAnyPromo: boolean
   promoOnly: boolean
   onPromoOnly: () => void
+  /** Layout menú lateral: las categorías viven en el aside a partir de lg. */
+  hideCategoriesOnDesktop?: boolean
+  /** Layout menú lateral: contenedor ancho para alinear con el cuerpo. */
+  wide?: boolean
 }
 
 export function CatalogHeader({
@@ -56,6 +61,8 @@ export function CatalogHeader({
   hasAnyPromo,
   promoOnly,
   onPromoOnly,
+  hideCategoriesOnDesktop = false,
+  wide = false,
 }: CatalogHeaderProps) {
   const sortOptions: { key: SortMode; label: string }[] = [
     ...(hasFeatured ? [{ key: "featured" as const, label: "Destacados" }] : []),
@@ -75,7 +82,7 @@ export function CatalogHeader({
         borderBottom: "1px solid var(--td-panel-border)",
       }}
     >
-      <div className="max-w-5xl mx-auto px-4 py-2.5">
+      <div className={`${wide ? CATALOG_CONTAINER_WIDE : CATALOG_CONTAINER} py-2.5`}>
         {/* Fila 1: logo compacto + título + buscador inline (flex-1) */}
         <div className="flex items-center gap-3">
           <div
@@ -130,29 +137,20 @@ export function CatalogHeader({
             </button>
           ))}
 
-          {tabs.length > 1 && categories.length > 1 && (
-            <span aria-hidden className="shrink-0 w-px h-5 mx-0.5" style={{ background: "var(--td-divider)" }} />
-          )}
-
+          {/* Con menú lateral las categorías se ocultan SOLO en lg+: en móvil el
+              aside no existe, así que aquí siguen siendo la única forma de
+              filtrar. Es CSS puro, sin media query en JS. */}
           {categories.length > 1 && (
-            <>
-              <button onClick={() => onCategoryFilter(null)} className={PILL_CLASS} style={pillStyle(categoryFilter === null)}>
-                Todas
-              </button>
-              {categories.map((c) => {
-                const active = categoryFilter === c.name
-                return (
-                  <button
-                    key={c.name}
-                    onClick={() => onCategoryFilter(active ? null : c.name)}
-                    className={PILL_CLASS}
-                    style={pillStyle(active)}
-                  >
-                    {c.name} <span style={{ opacity: 0.6 }}>· {c.count}</span>
-                  </button>
-                )
-              })}
-            </>
+            <div className={`contents ${hideCategoriesOnDesktop ? "lg:hidden" : ""}`}>
+              {tabs.length > 1 && (
+                <span aria-hidden className="shrink-0 w-px h-5 mx-0.5" style={{ background: "var(--td-divider)" }} />
+              )}
+              <CategoryList
+                categories={categories}
+                categoryFilter={categoryFilter}
+                onCategoryFilter={onCategoryFilter}
+              />
+            </div>
           )}
 
           <span aria-hidden className="shrink-0 w-px h-5 mx-0.5" style={{ background: "var(--td-divider)" }} />

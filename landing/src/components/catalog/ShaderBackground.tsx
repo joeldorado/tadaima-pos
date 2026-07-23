@@ -80,9 +80,17 @@ void main(void) {
 interface ShaderBackgroundProps {
   /** Tinte [r,g,b] de la nebulosa — de CATALOG_THEMES[slug].shaderTint. */
   tint?: [number, number, number]
+  /**
+   * Renderiza dentro del contenedor padre (`absolute inset-0`) en vez de a
+   * pantalla completa. Lo usa la tira de preview del admin; el padre necesita
+   * `position: relative` y `overflow: hidden`.
+   */
+  contained?: boolean
+  /** Multiplicador del devicePixelRatio. 0.5 (default) es barato en móvil. */
+  dprScale?: number
 }
 
-export function ShaderBackground({ tint = DEFAULT_TINT }: ShaderBackgroundProps) {
+export function ShaderBackground({ tint = DEFAULT_TINT, contained = false, dprScale = 0.5 }: ShaderBackgroundProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
@@ -127,14 +135,21 @@ export function ShaderBackground({ tint = DEFAULT_TINT }: ShaderBackgroundProps)
     gl.useProgram(program)
     gl.uniform3f(uTint, tint[0], tint[1], tint[2])
 
+    // Se mide el CANVAS, no la ventana: a pantalla completa es lo mismo
+    // (fixed inset-0 w-full h-full), y contenido es lo único correcto. El `||`
+    // cubre el frame previo al primer layout, cuando clientWidth aún es 0.
     const resize = () => {
-      const dpr = Math.max(1, 0.5 * window.devicePixelRatio)
-      canvas.width = Math.round(window.innerWidth * dpr)
-      canvas.height = Math.round(window.innerHeight * dpr)
+      const dpr = Math.max(1, dprScale * window.devicePixelRatio)
+      const w = canvas.clientWidth || window.innerWidth
+      const h = canvas.clientHeight || window.innerHeight
+      canvas.width = Math.round(w * dpr)
+      canvas.height = Math.round(h * dpr)
       gl.viewport(0, 0, canvas.width, canvas.height)
     }
     resize()
-    window.addEventListener("resize", resize)
+    // ResizeObserver cubre también el resize de ventana (el canvas es 100%).
+    const ro = new ResizeObserver(resize)
+    ro.observe(canvas)
 
     let raf = 0
     const loop = (now: number) => {
@@ -150,20 +165,20 @@ export function ShaderBackground({ tint = DEFAULT_TINT }: ShaderBackgroundProps)
 
     return () => {
       cancelAnimationFrame(raf)
-      window.removeEventListener("resize", resize)
+      ro.disconnect()
       gl.deleteProgram(program)
       gl.deleteShader(vs)
       gl.deleteShader(fs)
       gl.deleteBuffer(buffer)
     }
     // tint entra por deps: si cambia el tema sin remount, recompila limpio.
-  }, [tint])
+  }, [tint, dprScale])
 
   return (
     <canvas
       ref={canvasRef}
       aria-hidden
-      className="fixed inset-0 w-full h-full pointer-events-none"
+      className={`${contained ? "absolute" : "fixed"} inset-0 w-full h-full pointer-events-none`}
       style={{ zIndex: 0, opacity: 0.55 }}
     />
   )

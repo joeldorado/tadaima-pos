@@ -92,17 +92,26 @@ class CheckoutService
 
                 $calc = $this->calculator->calculate(array_map(
                     static fn (array $i) => [
-                        'product_id'    => (int) $i['product_id'],
-                        'unit_price'    => (float) $i['price'],
-                        'qty'           => (float) $i['quantity'],
-                        'line_discount' => $i['line_discount'] ?? null,
+                        'product_id'     => (int) $i['product_id'],
+                        'unit_price'     => (float) $i['price'],
+                        'qty'            => (float) $i['quantity'],
+                        'line_discount'  => $i['line_discount'] ?? null,
+                        // El cajero renunció a la promo de esta línea (2026-07-24).
+                        'skip_promotion' => (bool) ($i['skip_promotion'] ?? false),
                     ],
                     array_values($items),
                 ), $activePromos);
 
+                // Flags de pago de cada promo, para el guard de restricciones.
+                // Se arman AQUÍ porque `$activePromos` ya está en memoria: el
+                // guard corre en checkout(), otro método, y solo recibe $v2Lines.
+                $promoPayFlags = $activePromos->keyBy('id');
+
                 $v2Lines = [];
                 foreach (array_values($items) as $idx => $item) {
                     $d = $item['line_discount'] ?? null;
+                    $promoId = $calc['lines'][$idx]['applied_promotion_id'] ?? null;
+                    $promo   = $promoId !== null ? $promoPayFlags->get($promoId) : null;
                     $v2Lines[] = array_merge($calc['lines'][$idx], [
                         'discount_kind'          => is_array($d) ? $d['kind'] : null,
                         'discount_basis'         => is_array($d) ? $d['basis'] : null,
@@ -110,6 +119,10 @@ class CheckoutService
                         'discount_reason'        => is_array($d) ? ($d['reason'] ?? null) : null,
                         'discount_note'          => is_array($d) ? ($d['note'] ?? null) : null,
                         'discount_authorized_by' => is_array($d) ? $userId : null,
+                        // Llaves extra inertes: los SaleItem::create enumeran
+                        // sus columnas explícitamente y las ignoran.
+                        'promo_allow_cash'       => $promo !== null ? (bool) $promo->allow_cash : true,
+                        'promo_allow_card'       => $promo !== null ? (bool) $promo->allow_card : true,
                     ]);
                 }
 
@@ -199,8 +212,8 @@ class CheckoutService
                 throw new \DomainException('Inconsistencia interna en el cálculo de descuentos (v2Lines != items).');
             }
 
-            // ── 2b. Restricciones de pago por producto (solo-efectivo, etc.) ──
-            $this->assertPaymentMethodsAllowed($draftItems, $paymentsData);
+            // ── 2b. Restricciones de pago: del producto y de la promo aplicada ──
+            $this->assertPaymentMethodsAllowed($draftItems, $paymentsData, $v2Lines);
 
             // ── 3. Calcular montos ────────────────────────────────────────────
             $subtotal        = round($draftItems->sum('total'), 2);
@@ -540,10 +553,24 @@ class CheckoutService
      * aceptaba cualquier combinación. La clasificación tarjeta/efectivo es
      * por nombre del método ("Tarjeta Débito"/"Tarjeta Crédito" del seeder).
      *
+     * Desde 2026-07-24 valida también la restricción de la PROMO aplicada a esa
+     * línea, con la misma consecuencia (bloquea el cobro). Solo bloquea si la
+     * promo REALMENTE aplicó: la restricción es propiedad del beneficio
+     * otorgado, no del producto — si el cliente lleva 1 pieza y el 2x1 no
+     * disparó, no hay nada que restringir.
+     *
+     * @param array<int, array<string, mixed>>|null $v2Lines Líneas ya calculadas,
+     *        en el MISMO orden que $draftItems (invariante verificado por el
+     *        caller). Null en la ruta clásica (calc_version != 2), donde no se
+     *        aplica ninguna promo y por tanto no hay nada que restringir.
+     *
      * @throws \DomainException con mensaje legible
      */
-    private function assertPaymentMethodsAllowed(Collection $draftItems, array $paymentsData): void
-    {
+    private function assertPaymentMethodsAllowed(
+        Collection $draftItems,
+        array $paymentsData,
+        ?array $v2Lines = null,
+    ): void {
         $methodIds = array_values(array_unique(array_column($paymentsData, 'payment_method_id')));
         $methods   = PaymentMethod::whereIn('id', $methodIds)->get()->keyBy('id');
 
@@ -557,7 +584,8 @@ class CheckoutService
             }
         }
 
-        foreach ($draftItems as $item) {
+        // ->values() para que el índice case posicionalmente con $v2Lines.
+        foreach ($draftItems->values() as $idx => $item) {
             $restriction = $item->product?->paymentMethod;
             $allowCash   = $restriction?->allow_cash ?? true;
             $allowCard   = $restriction?->allow_card ?? true;
@@ -568,6 +596,20 @@ class CheckoutService
             }
             if ($usesCash && ! $allowCash) {
                 throw new \DomainException("\"{$name}\" solo acepta tarjeta — no se puede cobrar en efectivo/transferencia.");
+            }
+
+            // Promo APLICADA a esta línea (null si no alcanzó a disparar).
+            $line = $v2Lines[$idx] ?? null;
+            if (($line['applied_promotion_id'] ?? null) === null) {
+                continue;
+            }
+            $promoName = $line['promo_name'] ?? 'la promoción';
+
+            if ($usesCard && ($line['promo_allow_card'] ?? true) === false) {
+                throw new \DomainException("La promo \"{$promoName}\" de \"{$name}\" es solo en efectivo. Cobra en efectivo, cobra sin la promo, o quita el artículo.");
+            }
+            if ($usesCash && ($line['promo_allow_cash'] ?? true) === false) {
+                throw new \DomainException("La promo \"{$promoName}\" de \"{$name}\" es solo con tarjeta. Cobra con tarjeta, cobra sin la promo, o quita el artículo.");
             }
         }
     }

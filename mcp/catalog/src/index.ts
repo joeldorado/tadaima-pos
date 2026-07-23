@@ -2,7 +2,18 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
 import { getProductFlags, getSettings, putProductFlags, putSettings } from "./api.js"
-import { SOCIAL_KEYS, SORTS, THEME_SLUGS, THEMES, TOGGLES, type SocialKey } from "./themes.js"
+import {
+  BACKGROUND_SLUGS,
+  BACKGROUNDS,
+  LAYOUT_SLUGS,
+  LAYOUTS,
+  SOCIAL_KEYS,
+  SORTS,
+  THEME_SLUGS,
+  THEMES,
+  TOGGLES,
+  type SocialKey,
+} from "./themes.js"
 
 /**
  * MCP del Catálogo Online de Tadaima POS.
@@ -27,15 +38,21 @@ const boolStr = (v: boolean) => (v ? "true" : "false")
 // ── 1. list_options — descubrimiento ("¿qué puedo hacer?") ───────────────────
 server.tool(
   "list_options",
-  "Lista TODO lo configurable del Catálogo Online de Tadaima: temas de color disponibles, toggles de visibilidad, órdenes de entrada y redes sociales soportadas. Úsalo primero para saber qué se puede cambiar.",
+  "Lista TODO lo configurable del Catálogo Online de Tadaima: temas de color, fondos animados, diseños de acomodo, toggles de visibilidad, órdenes de entrada y redes sociales. Úsalo primero para saber qué se puede cambiar.",
   {},
   async () => {
     const themes = THEME_SLUGS.map((s) => `  · ${s} — ${THEMES[s].label}: ${THEMES[s].description}`).join("\n")
+    const backgrounds = BACKGROUND_SLUGS.map((s) => `  · ${s} — ${BACKGROUNDS[s].label}: ${BACKGROUNDS[s].description}`).join("\n")
+    const layouts = LAYOUT_SLUGS.map((s) => `  · ${s} — ${LAYOUTS[s].label}: ${LAYOUTS[s].description}`).join("\n")
     const toggles = Object.entries(TOGGLES).map(([k, d]) => `  · ${k} — ${d}`).join("\n")
     const sorts = Object.entries(SORTS).map(([k, d]) => `  · ${k} — ${d}`).join("\n")
     return ok(
       `OPCIONES DEL CATÁLOGO ONLINE (tienda pública /catalogo)\n\n` +
-        `TEMAS (set_theme):\n${themes}\n\n` +
+        `La apariencia son TRES ejes independientes que se combinan libremente:\n` +
+        `color (set_theme) × fondo (set_background) × diseño (set_layout).\n\n` +
+        `TEMAS de color (set_theme):\n${themes}\n\n` +
+        `FONDOS (set_background) — toman el color del tema activo:\n${backgrounds}\n\n` +
+        `DISEÑOS (set_layout):\n${layouts}\n\n` +
         `TOGGLES de visibilidad (set_toggles):\n${toggles}\n\n` +
         `ORDEN de entrada (set_default_sort):\n${sorts}\n\n` +
         `REDES del footer (set_socials): ${SOCIAL_KEYS.join(", ")} — URL https, "" para quitar.\n` +
@@ -48,7 +65,7 @@ server.tool(
 // ── 2. get_config — lectura completa ─────────────────────────────────────────
 server.tool(
   "get_config",
-  "Lee la configuración ACTUAL del Catálogo Online: tema activo, toggles de visibilidad, orden de entrada, descripción, redes sociales y conteo de productos destacados/ocultos.",
+  "Lee la configuración ACTUAL del Catálogo Online: tema de color, fondo, diseño, toggles de visibilidad, orden de entrada, descripción, redes sociales y conteo de productos destacados/ocultos.",
   {},
   async () => {
     try {
@@ -56,6 +73,8 @@ server.tool(
       const get = (k: string) => settings[`catalog_${k}`] ?? null
 
       const theme = get("theme") ?? "tadaima (default)"
+      const background = get("background") ?? "(sin elegir — hereda del tema)"
+      const layout = get("layout") ?? "classic (default)"
       const sort = get("default_sort") ?? "new (default)"
       const description = get("description") ?? "(sin descripción)"
 
@@ -82,7 +101,8 @@ server.tool(
 
       return ok(
         `CONFIGURACIÓN ACTUAL DEL CATÁLOGO\n\n` +
-          `Tema: ${theme}\nOrden de entrada: ${sort}\nDescripción: ${description}\n\n` +
+          `Color: ${theme}\nFondo: ${background}\nDiseño: ${layout}\n` +
+          `Orden de entrada: ${sort}\nDescripción: ${description}\n\n` +
           `Redes:\n${socials}\n\nToggles:\n${toggleLines}\n\n` +
           `Productos destacados: ${featured.pagination.total} · ocultos: ${hidden.pagination.total}`
       )
@@ -101,6 +121,38 @@ server.tool(
     try {
       await putSettings({ catalog_theme: theme })
       return ok(`✅ Tema "${THEMES[theme].label}" activado. ${THEMES[theme].description} Recarga /catalogo para verlo.`)
+    } catch (e) {
+      return fail(e)
+    }
+  }
+)
+
+// ── 3b. set_background ───────────────────────────────────────────────────────
+server.tool(
+  "set_background",
+  "Cambia el FONDO animado del Catálogo Online. Es independiente del color: el fondo elegido se pinta con el tono del tema activo. Opciones: shader (nebulosa), gradient (degradado quieto), galaxy (galaxia de estrellas en 3D).",
+  { background: z.enum(BACKGROUND_SLUGS).describe("Slug del fondo a activar") },
+  async ({ background }) => {
+    try {
+      await putSettings({ catalog_background: background })
+      return ok(
+        `✅ Fondo "${BACKGROUNDS[background].label}" activado. ${BACKGROUNDS[background].description} Recarga /catalogo para verlo.`
+      )
+    } catch (e) {
+      return fail(e)
+    }
+  }
+)
+
+// ── 3c. set_layout ───────────────────────────────────────────────────────────
+server.tool(
+  "set_layout",
+  "Cambia el DISEÑO de acomodo del Catálogo Online: classic (filtros arriba + cuadrícula pareja), sidebar (menú de categorías a la izquierda, en celular se ve como el clásico) o masonry (mosaico tipo revista donde cada tarjeta respeta la forma de su foto).",
+  { layout: z.enum(LAYOUT_SLUGS).describe("Slug del diseño a activar") },
+  async ({ layout }) => {
+    try {
+      await putSettings({ catalog_layout: layout })
+      return ok(`✅ Diseño "${LAYOUTS[layout].label}" activado. ${LAYOUTS[layout].description} Recarga /catalogo para verlo.`)
     } catch (e) {
       return fail(e)
     }

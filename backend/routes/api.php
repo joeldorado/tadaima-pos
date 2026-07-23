@@ -288,6 +288,10 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
         // Catálogo v3 — flags globales por producto (destacado / oculto).
         Route::get('product-flags',           [CatalogController::class, 'productFlags']);
         Route::put('product-flags/{product}', [CatalogController::class, 'updateProductFlags']);
+        // Catálogo v5 — "top" manual arrastrable. Ruta APARTE de product-flags/
+        // a propósito: colgando de ahí, `product-flags/reorder` chocaría con el
+        // binding implícito de `{product}`.
+        Route::put('featured-order',          [CatalogController::class, 'reorderFeatured']);
     });
 
     // ── System Settings ───────────────────────────────────────────────────────

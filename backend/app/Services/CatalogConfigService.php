@@ -15,13 +15,23 @@ use Illuminate\Support\Facades\DB;
  *
  * Bloques que produce:
  *  - flags():      visibilidad clásica (7 toggles) + default_sort
- *  - appearance(): theme (whitelist), socials (JSON), description
+ *  - appearance(): theme + background + layout (whitelists), socials (JSON), description
  *  - footer():     show_stores/show_address/show_contact + lista de tiendas
  */
 class CatalogConfigService
 {
     /** Temas soportados — mantener en sync con landing/src/lib/catalogThemes.ts y mcp/catalog. */
     public const THEMES = ['tadaima', 'gradient', 'navidad', 'halloween', 'patrio', 'muertos'];
+
+    /**
+     * Fondos animados (Catálogo v4). Eje INDEPENDIENTE del tema: el tema pone el
+     * color, el fondo pone el efecto. `null` (sin configurar) = lo que dicte el
+     * tema, para que lo ya publicado no cambie de aspecto solo.
+     */
+    public const BACKGROUNDS = ['shader', 'gradient', 'galaxy'];
+
+    /** Acomodo de la tienda pública (Catálogo v4). */
+    public const LAYOUTS = ['classic', 'sidebar', 'masonry'];
 
     public const SORTS = ['new', 'featured'];
 
@@ -96,6 +106,18 @@ class CatalogConfigService
             $theme = 'tadaima';
         }
 
+        // Sin configurar queda null a propósito: el front deriva el fondo del
+        // tema (compat con lo publicado antes de Catálogo v4).
+        $background = $stored['catalog_background'] ?? null;
+        if (!in_array($background, self::BACKGROUNDS, true)) {
+            $background = null;
+        }
+
+        $layout = $stored['catalog_layout'] ?? null;
+        if (!in_array($layout, self::LAYOUTS, true)) {
+            $layout = 'classic';
+        }
+
         $socials = [];
         $rawSocials = $stored['catalog_socials'] ?? null;
         if (is_string($rawSocials) && $rawSocials !== '') {
@@ -115,6 +137,8 @@ class CatalogConfigService
 
         return [
             'theme'       => $theme,
+            'background'  => $background,
+            'layout'      => $layout,
             'socials'     => (object) $socials, // {} en JSON aunque esté vacío
             'description' => $description,
         ];

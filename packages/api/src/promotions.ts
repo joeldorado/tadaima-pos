@@ -9,12 +9,17 @@ import type { ProductPromotion } from './types'
 
 export interface ProductPromotionInput {
   name: string
-  /** 'nxm' (default) usa buy_n/pay_m; 'qty_discount' usa tiers. */
+  /** 'nxm' (default) usa buy_n/pay_m; 'qty_discount' = mayoreo, usa min_qty/discount_per_unit. */
   type?: 'nxm' | 'qty_discount'
   buy_n?: number
   pay_m?: number
-  /** Solo qty_discount: escalones [{qty, amount}]. */
-  tiers?: Array<{ qty: number; amount: number }>
+  /** Mayoreo: desde cuántas piezas aplica (>= 2). */
+  min_qty?: number
+  /** Mayoreo: cuánto se le descuenta a CADA pieza. */
+  discount_per_unit?: number
+  /** Restricción de pago de la promo: si el método no sirve, bloquea el cobro. */
+  allow_cash?: boolean
+  allow_card?: boolean
   starts_at?: string | null
   ends_at?: string | null
   status?: 'active' | 'paused' | 'expired'

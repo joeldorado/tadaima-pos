@@ -64,6 +64,9 @@ class CheckoutRequest extends FormRequest
             // Descuento por línea (Descuentos v2). El cajero manda tipo/base/valor
             // + motivo; el MONTO lo recomputa el backend (SaleCalculator) — nunca
             // se acepta un monto pre-calculado del cliente.
+            // El cajero renunció a la promo de esta línea (2026-07-24): es la
+            // salida cuando la promo restringe el método de pago.
+            'items.*.skip_promotion'        => ['sometimes', 'boolean'],
             'items.*.line_discount'         => ['nullable', 'array'],
             'items.*.line_discount.kind'    => ['required_with:items.*.line_discount', 'string', 'in:fixed,percent'],
             'items.*.line_discount.basis'   => ['required_with:items.*.line_discount', 'string', 'in:unit,line'],

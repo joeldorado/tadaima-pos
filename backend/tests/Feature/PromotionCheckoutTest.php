@@ -215,25 +215,22 @@ class PromotionCheckoutTest extends TestCase
         $this->assertSame(0, Sale::count());
     }
 
-    // ── Tipo qty_discount: "compra N → −$X" con escalones (2026-07-20) ───────
+    // ── Tipo qty_discount = MAYOREO: "desde N pzas, −$X c/u" (2026-07-23) ────
 
-    private function makeQtyPromo(Product $product, array $tiers): ProductPromotion
+    private function makeQtyPromo(Product $product, int $minQty, float $perUnit): ProductPromotion
     {
         return ProductPromotion::create([
-            'product_id' => $product->id, 'name' => 'Por cantidad',
-            'type' => ProductPromotion::TYPE_QTY_DISCOUNT, 'tiers' => $tiers,
+            'product_id' => $product->id, 'name' => 'Mayoreo',
+            'type' => ProductPromotion::TYPE_QTY_DISCOUNT,
+            'min_qty' => $minQty, 'discount_per_unit' => $perUnit,
         ]);
     }
 
-    public function test_qty_discount_greedy_por_grupos_con_snapshot(): void
+    public function test_mayoreo_descuenta_cada_pieza_con_snapshot(): void
     {
-        // 5 pzas @ $200 con [2→100, 3→400] → grupo de 3 (−400) + grupo de 2
-        // (−100) = −500 (decisión Joel: se repite por grupos). Total 500.
+        // Caso Joel: 5 pzas @ $200 desde 5 con −$100 c/u → −$500. Total 500.
         $product = $this->makeProduct(200);
-        $promo = $this->makeQtyPromo($product, [
-            ['qty' => 2, 'amount' => 100],
-            ['qty' => 3, 'amount' => 400],
-        ]);
+        $promo = $this->makeQtyPromo($product, 5, 100.0);
 
         $this->checkout([
             ['product_id' => $product->id, 'quantity' => 5, 'price' => 200.0],
@@ -245,31 +242,65 @@ class PromotionCheckoutTest extends TestCase
         $item = SaleItem::firstOrFail();
         $this->assertSame('promo', $item->benefit_type);
         $this->assertSame($promo->id, (int) $item->applied_promotion_id);
-        $this->assertSame('Por cantidad', $item->promo_name);
+        $this->assertSame('Mayoreo', $item->promo_name);
         $this->assertSame(0, (int) $item->promo_free_qty);
         $this->assertEqualsWithDelta(500.0, (float) $item->promo_amount, 0.001);
     }
 
-    public function test_qty_discount_no_alcanza_el_escalon_minimo(): void
+    public function test_mayoreo_cuenta_las_piezas_intermedias(): void
     {
+        // 7 pzas con (min 5, −$100 c/u) = −$700. Es LO QUE LO SEPARA del modelo
+        // por grupos que había antes, que solo habría descontado $500.
         $product = $this->makeProduct(200);
-        $this->makeQtyPromo($product, [['qty' => 2, 'amount' => 100]]);
+        $this->makeQtyPromo($product, 5, 100.0);
 
         $this->checkout([
-            ['product_id' => $product->id, 'quantity' => 1, 'price' => 200.0],
-        ], 200.0)
+            ['product_id' => $product->id, 'quantity' => 7, 'price' => 200.0],
+        ], 700.0)
+            ->assertStatus(201)
+            ->assertJsonPath('data.discount', 700)
+            ->assertJsonPath('data.total', 700);
+    }
+
+    public function test_mayoreo_no_alcanza_el_minimo(): void
+    {
+        $product = $this->makeProduct(200);
+        $this->makeQtyPromo($product, 5, 100.0);
+
+        // 4 pzas: una abajo del umbral → sin descuento.
+        $this->checkout([
+            ['product_id' => $product->id, 'quantity' => 4, 'price' => 200.0],
+        ], 800.0)
             ->assertStatus(201)
             ->assertJsonPath('data.discount', 0)
-            ->assertJsonPath('data.total', 200);
+            ->assertJsonPath('data.total', 800);
+    }
+
+    public function test_mayoreo_sin_configurar_no_aplica(): void
+    {
+        // Las promos que la migración de escalones dejó pausadas quedan con
+        // min_qty NULL: existen, pero nunca deben descontar.
+        $product = $this->makeProduct(200);
+        ProductPromotion::create([
+            'product_id' => $product->id, 'name' => 'Sin configurar',
+            'type' => ProductPromotion::TYPE_QTY_DISCOUNT,
+        ]);
+
+        $this->checkout([
+            ['product_id' => $product->id, 'quantity' => 10, 'price' => 200.0],
+        ], 2000.0)
+            ->assertStatus(201)
+            ->assertJsonPath('data.discount', 0)
+            ->assertJsonPath('data.total', 2000);
     }
 
     public function test_qty_discount_clampeado_al_bruto_de_la_linea(): void
     {
-        // Escalón absurdo (2 → −$500 con precio $100): el descuento no puede
-        // superar el bruto ($200) de SU línea — nunca vuelve negativa la venta.
-        // Segunda línea normal para que el total no sea $0 (pago mínimo).
+        // Descuento absurdo (−$500 c/u con precio $100): no puede superar el
+        // bruto ($200) de SU línea — nunca vuelve negativa la venta. Segunda
+        // línea normal para que el total no sea $0 (pago mínimo).
         $clamped = $this->makeProduct(100);
-        $this->makeQtyPromo($clamped, [['qty' => 2, 'amount' => 500]]);
+        $this->makeQtyPromo($clamped, 2, 500.0);
         $normal = $this->makeProduct(80);
 
         $this->checkout([
@@ -283,10 +314,11 @@ class PromotionCheckoutTest extends TestCase
 
     public function test_manual_stackea_sobre_qty_discount(): void
     {
-        // 2 pzas @ $200 con 2→−100 = neto promo $300; manual $50 fixed line
-        // sobre ese neto → total $250; discount_amount = 150.
+        // 2 pzas @ $200 con mayoreo (min 2, −$50 c/u) = −$100 → neto promo
+        // $300; manual $50 fixed line sobre ese neto → total $250;
+        // discount_amount = 150.
         $product = $this->makeProduct(200);
-        $this->makeQtyPromo($product, [['qty' => 2, 'amount' => 100]]);
+        $this->makeQtyPromo($product, 2, 50.0);
 
         $this->actingAs($this->user)->postJson('/api/v1/sales', [
             'store_id'            => $this->store->id,
@@ -319,5 +351,109 @@ class PromotionCheckoutTest extends TestCase
         $item = SaleItem::firstOrFail();
         $this->assertSame(1, (int) $item->promo_free_qty);
         $this->assertEqualsWithDelta(50.0, (float) $item->promo_amount, 0.001);
+    }
+
+    // ── Restricción de método de pago POR PROMOCIÓN (2026-07-24) ────────────
+
+    /** Cobra con TARJETA (el helper `checkout` usa efectivo). */
+    private function checkoutConTarjeta(array $items, float $amount)
+    {
+        $card = PaymentMethod::firstOrCreate(['name' => 'Tarjeta Débito'], ['active' => true]);
+
+        return $this->actingAs($this->user)->postJson('/api/v1/sales', [
+            'store_id'            => $this->store->id,
+            'register_session_id' => $this->session->id,
+            'calc_version'        => 2,
+            'items'               => $items,
+            'payments'            => [['payment_method_id' => $card->id, 'amount' => $amount]],
+        ]);
+    }
+
+    public function test_promo_solo_efectivo_bloquea_el_cobro_con_tarjeta(): void
+    {
+        $product = $this->makeProduct(200);
+        ProductPromotion::create([
+            'product_id' => $product->id, 'name' => 'Mayoreo de contado',
+            'type' => ProductPromotion::TYPE_QTY_DISCOUNT, 'min_qty' => 3, 'discount_per_unit' => 50,
+            'allow_cash' => true, 'allow_card' => false,
+        ]);
+
+        // 3 pzas → la promo aplica (−$150) → con tarjeta se bloquea.
+        $resp = $this->checkoutConTarjeta([
+            ['product_id' => $product->id, 'quantity' => 3, 'price' => 200.0],
+        ], 450.0);
+
+        $resp->assertStatus(422);
+        $this->assertStringContainsString('Mayoreo de contado', (string) $resp->json('error'));
+        $this->assertSame(0, SaleItem::count(), 'No debe quedar ninguna venta a medias.');
+    }
+
+    public function test_promo_restringida_NO_bloquea_si_no_alcanzo_a_aplicar(): void
+    {
+        // La restricción es del BENEFICIO, no del producto: con 2 pzas el
+        // mayoreo (mínimo 3) no dispara, así que no hay nada que restringir.
+        $product = $this->makeProduct(200);
+        ProductPromotion::create([
+            'product_id' => $product->id, 'name' => 'Mayoreo de contado',
+            'type' => ProductPromotion::TYPE_QTY_DISCOUNT, 'min_qty' => 3, 'discount_per_unit' => 50,
+            'allow_cash' => true, 'allow_card' => false,
+        ]);
+
+        $this->checkoutConTarjeta([
+            ['product_id' => $product->id, 'quantity' => 2, 'price' => 200.0],
+        ], 400.0)
+            ->assertStatus(201)
+            ->assertJsonPath('data.discount', 0)
+            ->assertJsonPath('data.total', 400);
+    }
+
+    public function test_skip_promotion_desbloquea_y_cobra_a_precio_normal(): void
+    {
+        // La salida del cajero: renuncia a la promo a propósito y la venta pasa.
+        $product = $this->makeProduct(200);
+        ProductPromotion::create([
+            'product_id' => $product->id, 'name' => 'Mayoreo de contado',
+            'type' => ProductPromotion::TYPE_QTY_DISCOUNT, 'min_qty' => 3, 'discount_per_unit' => 50,
+            'allow_cash' => true, 'allow_card' => false,
+        ]);
+
+        $this->checkoutConTarjeta([
+            ['product_id' => $product->id, 'quantity' => 3, 'price' => 200.0, 'skip_promotion' => true],
+        ], 600.0)
+            ->assertStatus(201)
+            ->assertJsonPath('data.discount', 0)
+            ->assertJsonPath('data.total', 600);
+
+        $item = SaleItem::firstOrFail();
+        $this->assertNull($item->applied_promotion_id, 'Renunciar a la promo no debe dejar snapshot.');
+    }
+
+    public function test_promo_solo_tarjeta_bloquea_el_cobro_en_efectivo(): void
+    {
+        $product = $this->makeProduct(50);
+        ProductPromotion::create([
+            'product_id' => $product->id, 'name' => '2x1 con tarjeta',
+            'buy_n' => 2, 'pay_m' => 1, 'allow_cash' => false, 'allow_card' => true,
+        ]);
+
+        $resp = $this->checkout([
+            ['product_id' => $product->id, 'quantity' => 2, 'price' => 50.0],
+        ], 50.0);
+
+        $resp->assertStatus(422);
+        $this->assertStringContainsString('2x1 con tarjeta', (string) $resp->json('error'));
+    }
+
+    public function test_promo_sin_restriccion_sigue_cobrandose_con_cualquier_metodo(): void
+    {
+        // Regresión: el default (ambos true) no debe estorbar a nada existente.
+        $product = $this->makeProduct(50);
+        ProductPromotion::create([
+            'product_id' => $product->id, 'name' => '2x1 Verano', 'buy_n' => 2, 'pay_m' => 1,
+        ]);
+
+        $this->checkoutConTarjeta([
+            ['product_id' => $product->id, 'quantity' => 2, 'price' => 50.0],
+        ], 50.0)->assertStatus(201)->assertJsonPath('data.discount', 50);
     }
 }

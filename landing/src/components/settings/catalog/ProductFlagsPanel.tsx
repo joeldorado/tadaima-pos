@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Eye, EyeOff, Loader2, Package, Search as SearchIcon, Star } from "lucide-react";
+import { ArrowUpDown, Check, Eye, EyeOff, Loader2, Package, Search as SearchIcon, Star } from "lucide-react";
 import { toast } from "sonner";
-import { getCatalogProductFlags, updateProductFlags } from "@tadaima/api";
+import { getCatalogProductFlags, reorderFeaturedProducts, updateProductFlags } from "@tadaima/api";
 import type { ProductFlagRow } from "@tadaima/api";
+import { FeaturedOrderList } from "./FeaturedOrderList";
 import { PanelCard, PanelLoader } from "./shared";
 
 const PER_PAGE = 100;
@@ -41,6 +42,14 @@ export function ProductFlagsPanel({ canEdit }: Props) {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const savingIds = useRef<Set<number>>(new Set());
+
+  // ── Modo ordenar (Catálogo v5) ──────────────────────────────────────────────
+  const [sorting, setSorting] = useState(false);
+  const [orderRows, setOrderRows] = useState<ProductFlagRow[]>([]);
+  const [orderLoading, setOrderLoading] = useState(false);
+  const [savingOrder, setSavingOrder] = useState(false);
+  /** Último orden confirmado por el server — es el rollback si un guardado falla. */
+  const serverOrder = useRef<ProductFlagRow[]>([]);
 
   // Debounce del buscador (300ms) — la búsqueda es server-side.
   useEffect(() => {
@@ -99,6 +108,121 @@ export function ProductFlagsPanel({ canEdit }: Props) {
       .finally(() => savingIds.current.delete(row.id));
   };
 
+  /**
+   * Entra al modo ordenar. Trae TODAS las páginas de destacados antes de dejar
+   * arrastrar: el guardado manda la lista completa y desacomoda lo que no venga,
+   * así que ordenar con media lista cargada borraría posiciones en silencio.
+   */
+  const enterSortMode = async () => {
+    setSorting(true);
+    setOrderLoading(true);
+    try {
+      const all: ProductFlagRow[] = [];
+      let targetPage = 1;
+      let lastKnownPage = 1;
+      do {
+        const resp = await getCatalogProductFlags({ per_page: PER_PAGE, page: targetPage, filter: "featured" });
+        all.push(...resp.data);
+        lastKnownPage = resp.pagination.last_page;
+        targetPage++;
+      } while (targetPage <= lastKnownPage);
+
+      serverOrder.current = all;
+      setOrderRows(all);
+    } catch {
+      toast.error("Error al cargar los destacados");
+      setSorting(false);
+    } finally {
+      setOrderLoading(false);
+    }
+  };
+
+  const exitSortMode = () => {
+    setSorting(false);
+    // El orden cambió: la lista normal también va ordenada por posición.
+    setLoading(true);
+    void load(1, false).finally(() => setLoading(false));
+  };
+
+  /** Persiste al soltar. Mismo patrón optimista que `toggle`. */
+  const commitOrder = () => {
+    if (!canEdit || savingOrder) return;
+
+    const ids = orderRows.map((r) => r.id);
+    const unchanged = ids.every((id, i) => serverOrder.current[i]?.id === id);
+    if (unchanged) return;
+
+    setSavingOrder(true);
+    reorderFeaturedProducts(ids)
+      .then((resp) => {
+        // El server descarta ids que perdieron la ★ desde otra pestaña: nos
+        // quedamos con SU lista, no con la nuestra.
+        const byId = new Map(orderRows.map((r) => [r.id, r]));
+        const canonical = resp.order
+          .map((id) => byId.get(id))
+          .filter((r): r is ProductFlagRow => !!r);
+        serverOrder.current = canonical;
+        setOrderRows(canonical);
+      })
+      .catch(() => {
+        setOrderRows(serverOrder.current);
+        toast.error("No se pudo guardar el orden");
+      })
+      .finally(() => setSavingOrder(false));
+  };
+
+  if (sorting) {
+    return (
+      <PanelCard
+        icon={<ArrowUpDown size={20} />}
+        iconColor="#FFB020"
+        title="Ordenar el Top"
+        subtitle="Arrastra para decidir qué ve primero el cliente"
+      >
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-[10px] font-bold text-white/35 max-w-md leading-relaxed">
+              Este es el orden exacto con el que abre la tienda. Solo aparecen los destacados (★);
+              quitarle la estrella a un producto lo saca del top.
+            </p>
+            <div className="flex items-center gap-3">
+              {savingOrder && <Loader2 size={14} className="animate-spin text-white/30" />}
+              <button
+                onClick={exitSortMode}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest text-white transition-all cursor-pointer"
+                style={{ background: "linear-gradient(135deg, #047857 0%, #10B981 100%)" }}
+              >
+                <Check size={13} />
+                Listo
+              </button>
+            </div>
+          </div>
+
+          {orderLoading ? (
+            <PanelLoader />
+          ) : orderRows.length === 0 ? (
+            <div className="text-center py-10 space-y-3">
+              <p className="text-xs font-bold text-white/25">Aún no has destacado productos.</p>
+              <button
+                onClick={exitSortMode}
+                className="text-[10px] font-black uppercase tracking-widest text-white/40 hover:text-white/70 cursor-pointer"
+              >
+                Volver y marcar algunos con ★
+              </button>
+            </div>
+          ) : (
+            <FeaturedOrderList
+              rows={orderRows}
+              onReorder={setOrderRows}
+              onCommit={commitOrder}
+              canEdit={canEdit}
+            />
+          )}
+        </div>
+      </PanelCard>
+    );
+  }
+
   return (
     <PanelCard
       icon={<Package size={20} />}
@@ -133,6 +257,18 @@ export function ProductFlagsPanel({ canEdit }: Props) {
               </button>
             );
           })}
+
+          {/* Catálogo v5 — acomodar a mano el top que ve el cliente. */}
+          <button
+            disabled={!canEdit}
+            onClick={() => void enterSortMode()}
+            title="Arrastrar los destacados para decidir el orden de la tienda"
+            className="flex items-center gap-2 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all disabled:opacity-40 cursor-pointer"
+            style={{ background: "rgba(255,176,32,0.12)", border: "1px solid rgba(255,176,32,0.35)", color: "#FFB020" }}
+          >
+            <ArrowUpDown size={13} />
+            Ordenar
+          </button>
         </div>
 
         {loading ? (

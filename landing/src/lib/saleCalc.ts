@@ -29,23 +29,27 @@ export interface LineDiscount {
   authorizedByUserId?: number;
 }
 
-/** Escalón de una promo por cantidad: "llévate qty → −$amount". */
-export interface PromoTier {
-  qty: number;
-  amount: number;
-}
-
 export interface PromoDef {
   id: number;
   /** product.id del catálogo de Caja (string — así viaja en el carrito). */
   productId: string;
   name: string;
-  /** 'nxm' (default, usa buyN/payM) | 'qty_discount' (usa tiers). */
+  /** 'nxm' (default, usa buyN/payM) | 'qty_discount' = MAYOREO (usa minQty/discountPerUnit). */
   type?: "nxm" | "qty_discount";
   buyN: number;
   payM: number;
-  /** Solo qty_discount: escalones (greedy por grupos, se repite). */
-  tiers?: PromoTier[];
+  /** Mayoreo: desde cuántas piezas aplica. */
+  minQty?: number | null;
+  /** Mayoreo: cuánto se descuenta a CADA pieza. */
+  discountPerUnit?: number | null;
+  /**
+   * Restricción de método de pago de la promo (2026-07-24). No entra al
+   * cálculo: la promo se aplica igual y el BLOQUEO del cobro lo hace Caja
+   * (`itemAcceptsMethod`) y el guard del server. Viaja aquí para que Caja
+   * pueda leer los flags de la promo que realmente ganó la línea.
+   */
+  allowCash?: boolean;
+  allowCard?: boolean;
   priority: number;
   /** null/undefined = promo GLOBAL; con valor = promo LOCAL de una tienda.
    *  Override local (2026-07-20): si el producto tiene local, la global se
@@ -70,6 +74,13 @@ export interface CalcLine {
   unitPrice: number;
   qty: number;
   discount?: LineDiscount;
+  /**
+   * El cajero renunció a la promo de esta línea a propósito (2026-07-24). Es la
+   * salida cuando la promo restringe el método de pago y el cliente no puede
+   * pagar así — sin esto, ese producto simplemente no se le puede vender.
+   * Espejo de `skip_promotion` en SaleCalculator.php.
+   */
+  skipPromo?: boolean;
 }
 
 export interface LineBenefit {
@@ -138,25 +149,26 @@ export function computeLineDiscountAmount(
 }
 
 /**
- * Descuento por cantidad con escalones, GREEDY: escalón mayor primero y SE
- * REPITE por grupos (decisión Joel 2026-07-20): 5 pzas con [2→100, 3→400] =
- * 1 grupo de 3 (−400) + 1 grupo de 2 (−100) = 500. Espejo de
- * qtyDiscountAmount en SaleCalculator.php.
+ * MAYOREO (decisión Joel 2026-07-23): al alcanzar `minQty` piezas, TODAS las de
+ * la línea llevan `perUnit` de descuento. 5 pzas con (min 5, −$100) = −$500;
+ * 7 pzas = −$700; 4 pzas = $0.
+ *
+ * `Math.floor` para el umbral Y para el multiplicador: media pieza no gana
+ * descuento. Espejo exacto de `mayoreoAmount` en SaleCalculator.php.
+ *
+ * Reemplazó al modelo por grupos con escalones, que daba −$X por cada grupo
+ * completo de N y nada al remanente.
  */
-export function qtyDiscountAmount(tiers: PromoTier[], qty: number): number {
-  const clean = tiers
-    .filter((t) => Number.isInteger(t.qty) && t.qty >= 2 && Number.isFinite(t.amount) && t.amount > 0)
-    .sort((a, b) => b.qty - a.qty);
-  if (clean.length === 0) return 0;
-  let remaining = Math.floor(qty);
-  let amount = 0;
-  for (const tier of clean) {
-    if (remaining < tier.qty) continue;
-    const groups = Math.floor(remaining / tier.qty);
-    amount += groups * tier.amount;
-    remaining -= groups * tier.qty;
-  }
-  return round2(amount);
+export function mayoreoAmount(
+  minQty: number | null | undefined,
+  perUnit: number | null | undefined,
+  qty: number,
+): number {
+  if (!Number.isFinite(minQty) || (minQty as number) < 2) return 0;
+  if (!Number.isFinite(perUnit) || (perUnit as number) <= 0) return 0;
+  const units = Math.floor(qty);
+  if (units < (minQty as number)) return 0;
+  return round2(units * (perUnit as number));
 }
 
 /**
@@ -164,8 +176,8 @@ export function qtyDiscountAmount(tiers: PromoTier[], qty: number): number {
  * entre líneas split del mismo producto — default pre-aprobado spec §8).
  * - 'nxm': groups = floor(Q/N) · gratis = groups × (N−M) · resto a precio
  *   completo. freeQty > 0.
- * - 'qty_discount': monto directo por escalones (freeQty = 0), clampeado al
- *   bruto de la línea.
+ * - 'qty_discount' = MAYOREO: desde minQty piezas, −discountPerUnit a CADA una
+ *   (freeQty = 0), clampeado al bruto de la línea.
  * Devuelve null si la promo no alcanza a aplicar o es inválida.
  * Espejo de bestPromoBenefit en SaleCalculator.php.
  */
@@ -174,8 +186,10 @@ export function computePromoBenefit(
   line: { unitPrice: number; qty: number },
 ): LineBenefit | null {
   if (promo.type === "qty_discount") {
+    // Clamp con la cantidad REAL (no floor): en líneas fraccionarias el bruto
+    // es mayor y clampear con floor recortaría de más.
     const gross = round2(line.unitPrice * line.qty);
-    const amount = Math.min(qtyDiscountAmount(promo.tiers ?? [], line.qty), gross);
+    const amount = Math.min(mayoreoAmount(promo.minQty, promo.discountPerUnit, line.qty), gross);
     if (amount <= 0) return null;
     return { type: "promo", amount, promoId: promo.id, promoLabel: promo.name, freeQty: 0 };
   }
@@ -242,7 +256,8 @@ export function recalculateSale(input: {
 
     // STACKING (Joel 2026-07-17): la promo aplica SIEMPRE que alcance; el
     // descuento manual se calcula sobre el neto-promo (antes lo reemplazaba).
-    const promoPart = bestPromoBenefit(promotions, l);
+    // `skipPromo` = el cajero renunció a ella a propósito (ver CalcLine).
+    const promoPart = l.skipPromo ? null : bestPromoBenefit(promotions, l);
     const promoAmount = promoPart?.amount ?? 0;
     const baseAfterPromo = round2(Math.max(0, gross - promoAmount));
 

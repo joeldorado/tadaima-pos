@@ -5,7 +5,7 @@ import type { GlobalCatalogItem } from "@tadaima/api"
 import { HoverCard } from "@/components/aceternity/HoverCard"
 import { ImageWithFallback } from "@/components/figma/ImageWithFallback"
 import { buildOrderMessage, buildWhatsAppLink } from "@/lib/catalogWhatsApp"
-import { promoShortLabel, promoTiersLabel } from "@/lib/promoLabel"
+import { promoDetailLabel, promoShortLabel } from "@/lib/promoLabel"
 
 const DISPLAY = "'Space Grotesk', system-ui, sans-serif"
 
@@ -30,6 +30,12 @@ interface ProductCardProps {
   cartEnabled: boolean
   onAdd: (item: GlobalCatalogItem) => void
   onWhatsAppClick?: ((item: GlobalCatalogItem) => void) | undefined
+  /**
+   * "square" fija 1:1 (evita CLS, es lo que quieren las cuadrículas parejas).
+   * "natural" deja mandar a la foto — lo usa el layout Revista, donde las
+   * alturas dispares SON el efecto (Catálogo v4).
+   */
+  imageAspect?: "square" | "natural"
 }
 
 export function ProductCard({
@@ -40,10 +46,14 @@ export function ProductCard({
   cartEnabled,
   onAdd,
   onWhatsAppClick,
+  imageAspect = "square",
 }: ProductCardProps) {
   // `url` viene resuelta del backend (GCS en prod); `path` es fallback legacy.
   const firstImg = item.images?.[0]
   const img = firstImg?.url || (firstImg?.path ? storageUrl(firstImg.path) : null)
+  // El alto libre solo tiene sentido con foto real: el placeholder de marca no
+  // tiene forma propia y, sin cuadro, se le encimarían los badges.
+  const naturalAspect = imageAspect === "natural" && !!img
   const hasPrice = showPrice && typeof item.price === "number"
   const isManga = item.product_type === "manga"
   const isOut = (item.total ?? 0) <= 0
@@ -89,16 +99,21 @@ export function ProductCard({
         boxShadow: "0 8px 28px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05)",
       }}
     >
-      {/* Imagen: aspect-ratio fijo (CLS) + placeholder de marca cuando no hay foto */}
+      {/* Imagen: aspect-ratio fijo (CLS) + placeholder de marca cuando no hay foto.
+          En "natural" manda la foto: sin alto forzado y sin recorte. */}
       <div
         className="relative rounded-2xl overflow-hidden"
-        style={{ aspectRatio: "1 / 1", background: "var(--td-surface-strong)", filter: isOut ? "grayscale(1)" : undefined }}
+        style={{
+          ...(naturalAspect ? {} : { aspectRatio: "1 / 1" }),
+          background: "var(--td-surface-strong)",
+          filter: isOut ? "grayscale(1)" : undefined,
+        }}
       >
         <ImageWithFallback
           src={img}
           alt={item.name}
-          className="w-full h-full object-cover"
-          style={{ width: "100%", height: "100%" }}
+          className={naturalAspect ? "w-full h-auto object-contain" : "w-full h-full object-cover"}
+          style={naturalAspect ? { width: "100%", height: "auto" } : { width: "100%", height: "100%" }}
         />
         <span
           className="absolute top-2 left-2 text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md"
@@ -146,7 +161,7 @@ export function ProductCard({
       {promo && (
         <div className="mt-1.5">
           <span
-            title={`${promo.name} · ${promoTiersLabel(promo)}${promoEnds ? ` · hasta ${promoEnds}` : ""}${promoStoreName ? ` · en ${promoStoreName}` : ""}`}
+            title={`${promo.name} · ${promoDetailLabel(promo)}${promoEnds ? ` · hasta ${promoEnds}` : ""}${promoStoreName ? ` · en ${promoStoreName}` : ""}`}
             className="inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md"
             style={{ background: "rgba(16,185,129,0.14)", border: "1px solid rgba(16,185,129,0.35)", color: "var(--cat-good, #34D399)" }}
           >

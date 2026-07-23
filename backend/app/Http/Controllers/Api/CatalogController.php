@@ -285,15 +285,7 @@ class CatalogController extends Controller
             // etiqueta "en {sucursal}" cuando la promo es de una sola tienda.
             ->with(['price', 'images', 'category', 'activePromotions'])
             // Solo productos con stock vendible (>0) en alguna tienda ("salga si está en inventario").
-            ->whereExists(function ($q) {
-                $q->selectRaw('1')
-                    ->from('inventory')
-                    ->join('warehouses', 'warehouses.id', '=', 'inventory.warehouse_id')
-                    ->whereColumn('inventory.product_id', 'products.id')
-                    ->where('warehouses.type', 'store')
-                    ->groupBy('inventory.product_id')
-                    ->havingRaw('SUM(inventory.quantity) > 0');
-            });
+            ->whereExists($this->sellableStockExists());
 
         if ($request->filled('search')) {
             $term = $request->search;
@@ -304,13 +296,8 @@ class CatalogController extends Controller
         }
 
         $perPage = min((int) ($request->per_page ?? 40), 100);
-        // Orden: id desc = proxy de novedad, estable para "Cargar más".
-        // ?sort=featured antepone los destacados (v3) manteniendo novedad dentro
-        // de cada grupo.
-        if ($request->input('sort') === 'featured') {
-            $query->orderByDesc('featured');
-        }
-        $results = $query->orderByDesc('products.id')->paginate($perPage);
+        $this->applyCatalogOrder($query, $request->input('sort') === 'featured');
+        $results = $query->paginate($perPage);
 
         $productIds = collect($results->items())->pluck('id')->all();
         $stockByProduct = $this->stockBreakdownByStore($productIds);
@@ -332,6 +319,10 @@ class CatalogController extends Controller
                 'product_type' => $p->product_type, // 'manga' | 'product' → secciones en el catálogo
                 'description'  => $p->description,
                 'featured'     => (bool) $p->featured, // Catálogo v3 — pill + orden "Destacados"
+                // Catálogo v5 — puesto en el top manual (null = sin acomodar).
+                // El front lo usa para entrar en orden "Destacados" aunque el
+                // orden de entrada configurado sea "Más nuevos".
+                'catalog_position' => $p->catalog_position,
                 'category'     => $p->category ? ['id' => $p->category->id, 'name' => $p->category->name] : null,
                 'images'       => $p->images->map(fn ($img) => ['id' => $img->id, 'path' => $img->image_path, 'url' => $img->url, 'sort_order' => $img->sort_order]),
                 'stores'       => $stores,
@@ -344,7 +335,9 @@ class CatalogController extends Controller
                     'type'     => $pr->type ?? \App\Models\ProductPromotion::TYPE_NXM,
                     'buy_n'    => $pr->buy_n !== null ? (int) $pr->buy_n : null,
                     'pay_m'    => $pr->pay_m !== null ? (int) $pr->pay_m : null,
-                    'tiers'    => $pr->tiers,
+                    // Mayoreo (2026-07-23) — `tiers` ya no viaja (ver ProductLightResource).
+                    'min_qty'           => $pr->min_qty !== null ? (int) $pr->min_qty : null,
+                    'discount_per_unit' => $pr->discount_per_unit !== null ? (float) $pr->discount_per_unit : null,
                     'ends_at'  => $pr->ends_at?->toIso8601String(),
                     'store_id' => $pr->store_id !== null ? (int) $pr->store_id : null,
                 ])->values(),
@@ -391,24 +384,32 @@ class CatalogController extends Controller
                 $q->where(fn ($qq) => $qq->where('name', 'like', "%{$term}%")->orWhere('sku', 'like', "%{$term}%"));
             })
             ->when($request->input('filter') === 'featured', fn ($q) => $q->where('featured', true))
-            ->when($request->input('filter') === 'hidden', fn ($q) => $q->where('catalog_visible', false))
-            ->orderByDesc('featured')
-            ->orderByDesc('id');
+            ->when($request->input('filter') === 'hidden', fn ($q) => $q->where('catalog_visible', false));
+
+        // Mismo orden que ve el cliente: el admin acomoda lo que va a pasar.
+        $this->applyCatalogOrder($query, true);
 
         $perPage = min((int) ($request->per_page ?? 100), 200);
         $results = $query->paginate($perPage);
 
+        // Esta lista NO filtra por active/catalog_visible/stock, así que un
+        // destacado sin stock aparece aquí pero no en la tienda. Se marca por
+        // fila para que el panel pueda avisarlo y contar bien el "top 20".
+        $publicIds = $this->publicIdsAmong(collect($results->items())->pluck('id')->all());
+
         return $this->success([
             'data' => collect($results->items())->map(fn ($p) => [
-                'id'              => $p->id,
-                'name'            => $p->name,
-                'sku'             => $p->sku,
-                'active'          => (bool) $p->active,
-                'featured'        => (bool) $p->featured,
-                'catalog_visible' => (bool) $p->catalog_visible,
-                'price_1'         => $p->price?->price_1,
-                'category'        => $p->category ? ['id' => $p->category->id, 'name' => $p->category->name] : null,
-                'image'           => $p->images->first()?->url,
+                'id'                => $p->id,
+                'name'              => $p->name,
+                'sku'               => $p->sku,
+                'active'            => (bool) $p->active,
+                'featured'          => (bool) $p->featured,
+                'catalog_visible'   => (bool) $p->catalog_visible,
+                'catalog_position'  => $p->catalog_position,
+                'in_public_catalog' => isset($publicIds[$p->id]),
+                'price_1'           => $p->price?->price_1,
+                'category'          => $p->category ? ['id' => $p->category->id, 'name' => $p->category->name] : null,
+                'image'             => $p->images->first()?->url,
             ]),
             'pagination' => [
                 'total'        => $results->total(),
@@ -430,6 +431,13 @@ class CatalogController extends Controller
 
         $product->update($request->validated());
 
+        // Catálogo v5: quitar la ★ saca al producto del top acomodado. Si no,
+        // quedaría fijado arriba sin ser destacado (fantasma imposible de
+        // desacomodar desde el panel, que solo lista destacados).
+        if ($product->wasChanged('featured') && !$product->featured) {
+            $product->forceFill(['catalog_position' => null])->save();
+        }
+
         return $this->success([
             'id'              => $product->id,
             'name'            => $product->name,
@@ -438,7 +446,109 @@ class CatalogController extends Controller
         ], 'Producto actualizado.');
     }
 
+    /**
+     * PUT /catalog/featured-order   Body: { "order": [12, 7, 40, …] }
+     *
+     * Guarda el "top" manual del catálogo público (Catálogo v5): la posición de
+     * cada producto es su índice en el arreglo. El cliente manda la lista
+     * COMPLETA de destacados; lo que no venga se desacomoda.
+     *
+     * Vive en su propia ruta y no colgando de `product-flags/` a propósito:
+     * `product-flags/reorder` chocaría con el binding implícito de
+     * `product-flags/{product}` (Laravel intentaría Product::find('reorder')).
+     */
+    public function reorderFeatured(Request $request): JsonResponse
+    {
+        if ($resp = $this->catalogEditError()) return $resp;
+
+        $validated = $request->validate([
+            'order'   => ['present', 'array', 'max:500'],
+            'order.*' => ['required', 'integer', 'distinct'],
+        ]);
+
+        // Si otra pestaña (o el MCP) le quitó la ★ entre que el panel cargó y
+        // el admin soltó la fila, ese id se ignora en vez de reinstalarlo.
+        $wanted  = array_values($validated['order']);
+        $valid   = Product::whereIn('id', $wanted)->where('featured', true)->pluck('id')->all();
+        $ordered = array_values(array_filter($wanted, fn ($id) => in_array($id, $valid, true)));
+
+        DB::transaction(function () use ($ordered) {
+            // 1) Limpia el top anterior completo (incluye huérfanos sin ★).
+            Product::whereNotNull('catalog_position')
+                ->when($ordered, fn ($q) => $q->whereNotIn('id', $ordered))
+                ->update(['catalog_position' => null]);
+
+            // 2) Re-densifica 0..n-1 sobre los sobrevivientes.
+            foreach ($ordered as $i => $id) {
+                Product::where('id', $id)->update(['catalog_position' => $i]);
+            }
+        });
+
+        // Devuelve la lista canónica: el front reemplaza su estado con esto en
+        // vez de asumir que su optimista quedó.
+        return $this->success(['order' => $ordered], 'Orden guardado.');
+    }
+
     // ─── Helpers ─────────────────────────────────────────────────────────────
+
+    /**
+     * Criterio de "vendible": stock > 0 en alguna bodega de tienda. Un solo
+     * lugar para que el catálogo público y el panel del admin nunca discrepen.
+     */
+    private function sellableStockExists(): \Closure
+    {
+        return function ($q) {
+            $q->selectRaw('1')
+                ->from('inventory')
+                ->join('warehouses', 'warehouses.id', '=', 'inventory.warehouse_id')
+                ->whereColumn('inventory.product_id', 'products.id')
+                ->where('warehouses.type', 'store')
+                ->groupBy('inventory.product_id')
+                ->havingRaw('SUM(inventory.quantity) > 0');
+        };
+    }
+
+    /**
+     * Orden del catálogo con "top" manual (Catálogo v5).
+     *
+     * - `(catalog_position IS NULL)` da 0 a los acomodados y 1 al resto, así los
+     *   NULL quedan al final. Es el truco portable: `NULLS LAST` no existe en
+     *   MySQL 8, y ambos motores evalúan `IS NULL` como entero.
+     * - `products.id DESC` cierra SIEMPRE → el orden es TOTAL y estable, que es
+     *   lo que necesita el "Cargar más" acumulativo para no duplicar ni perder
+     *   items entre páginas.
+     * - Se califica con `products.` porque la query pública trae join a
+     *   inventory/warehouses.
+     */
+    private function applyCatalogOrder($query, bool $featuredFirst): void
+    {
+        $query->orderByRaw('(products.catalog_position is null) asc')
+            ->orderBy('products.catalog_position');
+
+        if ($featuredFirst) {
+            $query->orderByDesc('products.featured');
+        }
+
+        $query->orderByDesc('products.id');
+    }
+
+    /**
+     * De un set de ids, cuáles SÍ se ven hoy en el catálogo público (mismos tres
+     * filtros que publicCatalogGlobal). Devuelve un mapa id => true para lookup
+     * directo. 1 query.
+     */
+    private function publicIdsAmong(array $productIds): array
+    {
+        if (!$productIds) return [];
+
+        return Product::whereIn('id', $productIds)
+            ->where('active', true)
+            ->where('catalog_visible', true)
+            ->whereExists($this->sellableStockExists())
+            ->pluck('id')
+            ->flip()
+            ->all();
+    }
 
     /** Desglose de stock vendible (exhibición) por tienda para varios productos. 1 query. */
     private function stockBreakdownByStore(array $productIds): array

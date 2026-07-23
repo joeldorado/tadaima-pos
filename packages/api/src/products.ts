@@ -19,6 +19,12 @@ export interface GetProductsParams {
    * agregue stock. Sin esta bandera el listado solo trae los asignados.
    */
   include_unassigned?: boolean
+  /**
+   * Lista de ids separados por coma ("12,45,7"). La Caja la usa para refrescar
+   * promos/precios de los productos que ya tiene en el carrito, incluso si
+   * caen fuera del pool ?sort=top. Tope de 100 ids en el backend.
+   */
+  ids?: string
 }
 
 /**
@@ -57,7 +63,7 @@ export interface ProductLight {
   volume_number?: number | null
   /** Promos NxM vigentes (Descuentos v2 Fase 3) — el backend ya las embebe.
    *  Con ?store_id el embed viene FILTRADO a esa tienda (o globales). */
-  active_promotions?: { id: number; name: string; type?: 'nxm' | 'qty_discount'; buy_n: number | null; pay_m: number | null; tiers?: { qty: number; amount: number }[] | null; priority: number; store_id?: number | null }[]
+  active_promotions?: { id: number; name: string; type?: 'nxm' | 'qty_discount'; buy_n: number | null; pay_m: number | null; min_qty?: number | null; discount_per_unit?: number | null; allow_cash?: boolean; allow_card?: boolean; priority: number; store_id?: number | null }[]
 }
 
 /**
