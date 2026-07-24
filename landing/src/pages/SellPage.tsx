@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   Search, ShoppingBag, X, Plus, Minus, Check, SlidersHorizontal,
   ScanLine, Zap, Loader2, Settings2, Smartphone,
-  AlertTriangle, ArrowLeftRight, Maximize2, LayoutGrid,
+  AlertTriangle, ArrowLeftRight, Maximize2, Minimize2, Rows3, LayoutGrid,
   Tag, ChevronDown, ChevronUp, ChevronRight, ChevronLeft, ArrowLeft, CreditCard, DollarSign,
   Users, UserPlus, User, Phone, AlertCircle,
   Mail,
@@ -30,6 +30,8 @@ import type { OpenSessionConflict } from "@tadaima/api";
 import type { CashSessionReport } from "@tadaima/api";
 import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
 import { CloseCashModal } from "@/components/cash/CloseCashModal";
+import { UsdCalculatorModal } from "@/components/sell/UsdCalculatorModal";
+import { useLayoutChrome } from "@/contexts/LayoutChromeContext";
 import { CortesModal } from "@/components/cash/CortesModal";
 import { OpenSessionConflictModal } from "@/components/cash/OpenSessionConflictModal";
 import { useQueryClient } from "@tanstack/react-query";
@@ -884,12 +886,6 @@ export function SellPage() {
   // se rechaza y antes solo quedaba el toast). Se limpia en cada nuevo intento
   // y al cambiar de cliente.
   const [customerLimitWarning, setCustomerLimitWarning] = useState<string | null>(null);
-  // Toggle del input de dólares dentro de Efectivo. Por default oculto — se
-  // muestra cuando el cajero hace click en "+ Dólares" o cuando ya hay valor.
-  // showUsdInput se deriva de la mesa activa — cada caja inicia en PESOS por
-  // default, y USD solo cuando el cajero lo activa con "+ Dólares" (decisión
-  // Joel 2026-05-28). Antes era useState global → la siguiente venta heredaba
-  // el modo USD de la anterior aunque clearCart limpiara los inputs.
   const customerSearchRef  = useRef<HTMLInputElement>(null);
   const prodInputRef       = useRef<HTMLInputElement>(null);
   const cashInputRef       = useRef<HTMLInputElement>(null);
@@ -998,12 +994,18 @@ export function SellPage() {
     }));
   }, [activeMesa.id, updMesa]);
 
-  // Modo USD primario (cajero activó "+ Dólares"). Por mesa — cada venta nueva
-  // inicia en pesos (default false en makeMesa + clearCart lo resetea).
-  const showUsdInput = !!activeMesa.usdPrimaryMode;
-  const setShowUsdInput = useCallback((v: boolean) => {
-    updMesa(activeMesa.id, m => ({ ...m, usdPrimaryMode: v }));
-  }, [activeMesa.id, updMesa]);
+  // (usdPrimaryMode quedó legacy 2026-07-24: el flujo USD vive en la
+  //  CALCULADORA — UsdCalculatorModal — y ya no hay vista de moneda que
+  //  alternar. El campo de la mesa muere en silencio, como otros legacy.)
+  const [usdCalcOpen, setUsdCalcOpen] = useState(false);
+
+  // Modo Full Caja: el sidebar se oculta vía context del Layout (persistido
+  // por dispositivo). Vista compacta del carrito: preferencia local, mismo
+  // patrón que tadaima-products-view.
+  const { cajaFullscreen, setCajaFullscreen } = useLayoutChrome();
+  const [compactCart, setCompactCart] = useState(
+    () => localStorage.getItem("tadaima-caja-densidad") === "compacta",
+  );
 
   // ¿Los dólares tecleados ya se RECIBIERON? false = simulación (no cuentan).
   // El ref existe porque "Enter aplica y cobra" ocurre en el MISMO evento: el
@@ -4564,6 +4566,37 @@ export function SellPage() {
         </button>
 
         <div className="ml-auto flex items-center h-full gap-0" style={{ borderLeft: CARD_B }}>
+          {/* Modo Full Caja (Joel 2026-07-24): oculta el menú lateral — el
+              botón queda SIEMPRE visible aquí, así la salida es obvia. En
+              pantallas angostas el menú ya se oculta solo (overlayMode). */}
+          {!isNarrow && (
+            <button
+              onClick={() => setCajaFullscreen(!cajaFullscreen)}
+              data-testid="caja-fullscreen-btn"
+              className="h-full px-5 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-colors"
+              style={{ color: cajaFullscreen ? "#34d399" : TLO, borderRight: CARD_B }}
+              title={cajaFullscreen ? "Volver a mostrar el menú lateral" : "Ocultar el menú lateral — Caja a pantalla completa"}
+            >
+              {cajaFullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+              {cajaFullscreen ? "Salir de pantalla" : "Pantalla completa"}
+            </button>
+          )}
+          {/* Vista compacta del carrito: filas más bajas con letra de dinero
+              más grande — para pantallas chicas o carritos largos. */}
+          <button
+            onClick={() => {
+              const next = compactCart ? "detallada" : "compacta";
+              setCompactCart(!compactCart);
+              localStorage.setItem("tadaima-caja-densidad", next);
+            }}
+            data-testid="caja-density-btn"
+            className="h-full px-5 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-colors"
+            style={{ color: compactCart ? "#34d399" : TLO, borderRight: CARD_B }}
+            title={compactCart ? "Volver a la vista detallada del carrito" : "Vista compacta: filas más bajas, números más grandes"}
+          >
+            <Rows3 size={13} />
+            {compactCart ? "Vista normal" : "Compactar"}
+          </button>
           <button
             onClick={() => { void openHistorial(); }}
             className="h-full px-5 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-colors"
@@ -5425,7 +5458,7 @@ export function SellPage() {
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
                     key={item.lineId}
-                    className={`group rounded-2xl p-4 flex items-center gap-4 transition-all border ${
+                    className={`group rounded-2xl ${compactCart ? "p-2.5 gap-3" : "p-4 gap-4"} flex items-center transition-all border ${
                       item.preSaleItemDelivered
                         ? "bg-emerald-500/[0.04] border-emerald-500/15 opacity-50"
                         : item.isDamaged
@@ -5437,7 +5470,7 @@ export function SellPage() {
                     {/* Las preventas nuevas suelen no tener imagen; si no existe, no reservamos ese espacio */}
                     {!shouldHideImageSlot && (
                       <div className="relative shrink-0">
-                        <ImageWithFallback src={item.product.image || ""} className="w-14 h-14 rounded-xl object-cover" style={{ background: MUTED }} />
+                        <ImageWithFallback src={item.product.image || ""} className={`${compactCart ? "w-11 h-11" : "w-14 h-14"} rounded-xl object-cover`} style={{ background: MUTED }} />
                         {item.isDamaged && (
                           <div className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-orange-500 flex items-center justify-center shadow-lg">
                             <TriangleAlert size={10} className="text-white" strokeWidth={3} />
@@ -5447,7 +5480,9 @@ export function SellPage() {
                     )}
 
                     <div className="flex-1 min-w-0">
-                      <h3 className="text-base font-black truncate leading-tight" style={{ color: THI }}>{item.product.name}</h3>
+                      {/* Compacto = nombre MÁS grande (Joel: letras grandes para
+                          quien le entiende poco a la tecnología), menos chrome. */}
+                      <h3 className={`${compactCart ? "text-lg" : "text-base"} font-black truncate leading-tight`} style={{ color: THI }}>{item.product.name}</h3>
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
                         <p className="text-[11px] font-bold uppercase tracking-widest" style={{ color: TLO }}>{item.product.sku}</p>
                         {item.isFromPreSale && !item.preSaleItemDelivered && (
@@ -5623,12 +5658,12 @@ export function SellPage() {
 
                     <div className="ml-auto flex shrink-0 items-center gap-3 self-stretch">
                       {!item.isFromPreSale && priceLevels.length > 0 && (
-                        <div className="w-[188px] self-center">
+                        <div className={`${compactCart ? "w-[128px]" : "w-[188px]"} self-center`}>
                           <div className="relative">
                             <select
                               value={item.priceLevel}
                               onChange={e => changeLevel(item.lineId, e.target.value as PriceLevel)}
-                              className="w-full appearance-none rounded-2xl px-4 py-3 pr-10 text-[11px] font-black uppercase tracking-[0.14em] outline-none transition-colors"
+                              className={`w-full appearance-none rounded-2xl ${compactCart ? "px-2.5 py-2 pr-8" : "px-4 py-3 pr-10"} text-[11px] font-black uppercase tracking-[0.14em] outline-none transition-colors`}
                               style={{
                                 color: activePriceColor,
                                 border: `1px solid rgba(${activePriceRgb},0.32)`,
@@ -5651,11 +5686,11 @@ export function SellPage() {
                       )}
 
                       {item.isFromPreSale ? (
-                        <div className="flex h-[54px] w-[84px] items-center justify-center rounded-2xl border border-amber-500/20 bg-amber-500/5">
+                        <div className={`flex ${compactCart ? "h-10 w-[64px]" : "h-[54px] w-[84px]"} items-center justify-center rounded-2xl border border-amber-500/20 bg-amber-500/5`}>
                           <span className="text-lg font-black text-amber-300">{item.quantity}</span>
                         </div>
                       ) : (
-                        <div className="flex h-[54px] items-center gap-3 rounded-2xl px-3" style={{ border: CARD_B, background: MUTED }}>
+                        <div className={`flex ${compactCart ? "h-10 gap-1.5 px-1.5" : "h-[54px] gap-3 px-3"} items-center rounded-2xl`} style={{ border: CARD_B, background: MUTED }}>
                           <button
                             onClick={() => { void changeQty(item.lineId, -1); }}
                             className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors"
@@ -5674,7 +5709,7 @@ export function SellPage() {
                         </div>
                       )}
 
-                      <div className="min-w-[118px] text-center">
+                      <div className={`${compactCart ? "min-w-[92px]" : "min-w-[118px]"} text-center`}>
                       {item.sellingCatalogId != null ? (() => {
                         const anticipo = item.depositAmount ?? 0;
                         return (
@@ -5695,9 +5730,12 @@ export function SellPage() {
                         );
                       })() : (
                         <>
-                          <p className="text-[10px] font-black uppercase tracking-[0.16em]" style={{ color: TMD }}>
-                            Subtotal
-                          </p>
+                          {/* Compacto: fuera la etiqueta — el número grande habla solo. */}
+                          {!compactCart && (
+                            <p className="text-[10px] font-black uppercase tracking-[0.16em]" style={{ color: TMD }}>
+                              Subtotal
+                            </p>
+                          )}
                           <p className={`text-[30px] leading-none font-black ${item.isDamaged ? "text-orange-400" : item.isFromPreSale ? "text-amber-400/70" : "text-white"}`}>
                             {fmt(lineNet)}
                           </p>
@@ -5810,23 +5848,24 @@ export function SellPage() {
                         <button
                           onClick={() => setDiscountModalLineId(item.lineId)}
                           title={item.discount ? "Editar descuento de esta línea" : "Descuento en esta línea (ej. unidades dañadas)"}
-                          className="inline-flex h-[54px] items-center justify-center gap-1.5 self-center rounded-2xl px-4 text-[12px] font-black transition-colors"
+                          className={`inline-flex ${compactCart ? "h-10 px-2.5" : "h-[54px] px-4"} items-center justify-center gap-1.5 self-center rounded-2xl text-[12px] font-black transition-colors`}
                           style={item.discount
                             ? { border: "1px solid rgba(224,34,26,0.45)", background: "rgba(224,34,26,0.16)", color: "var(--td-red)" }
                             : { border: CARD_B, background: MUTED, color: TMD }}
                         >
                           <Tag size={13} />
-                          {item.discount ? "Desc. ✓" : "Desc."}
+                          {!compactCart && (item.discount ? "Desc. ✓" : "Desc.")}
                         </button>
                       )}
 
                       {!item.preSaleItemDelivered && (
                         <button
                           onClick={() => { void removeFromCart(item.lineId); }}
-                          className="inline-flex h-[54px] min-w-[118px] items-center justify-center gap-1.5 self-center rounded-2xl border border-[#E0221A]/25 bg-[#E0221A]/10 px-4 text-[12px] font-black text-[#FF8A80] transition-colors hover:bg-[#E0221A]/16 hover:text-white"
+                          className={`inline-flex ${compactCart ? "h-10 min-w-0 px-2.5" : "h-[54px] min-w-[118px] px-4"} items-center justify-center gap-1.5 self-center rounded-2xl border border-[#E0221A]/25 bg-[#E0221A]/10 text-[12px] font-black text-[#FF8A80] transition-colors hover:bg-[#E0221A]/16 hover:text-white`}
+                          title="Quitar esta línea de la venta"
                         >
                           <Trash2 size={13} />
-                          Borrar
+                          {!compactCart && "Borrar"}
                         </button>
                       )}
                     </div>
@@ -6208,157 +6247,41 @@ export function SellPage() {
                       cajero puede declarar USD físicos recibidos → suma como MXN al
                       total (vía TC) para calcular el faltante o cambio. */}
                   {activeMesa.paymentMethod === "Efectivo" && (() => {
+                    // Los dólares viven en la CALCULADORA (UsdCalculatorModal,
+                    // pedido Joel 2026-07-24): aquí solo se escriben APLICADOS
+                    // (el modal es la simulación). Se acabaron el toggle de
+                    // moneda, los presets USD y el panel ámbar inline — el panel
+                    // de cobro amontonaba letra chica que confundía al cajero.
                     const receivedMxn   = parseFloat(cashReceived)    || 0;
-                    // typedUsd = lo tecleado (puede ser simulación); receivedUsd =
-                    // lo que CUENTA como recibido (solo si el cajero confirmó).
-                    const typedUsd      = parseFloat(cashReceivedUsd) || 0;
-                    const receivedUsd   = usdApplied ? typedUsd : 0;
-                    const usdAsMxn      = typedUsd * tc;
-                    const totalReceived = receivedMxn + receivedUsd * tc;
+                    const appliedUsd    = usdApplied ? (parseFloat(cashReceivedUsd) || 0) : 0;
+                    const usdAsMxn      = appliedUsd * tc;
+                    const totalReceived = receivedMxn + usdAsMxn;
                     const cambio        = totalReceived - currentPayAmount;
-                    // Simulación viva: hay dólares tecleados sin confirmar.
-                    const usdSimulating = typedUsd > 0 && !usdApplied;
-                    // "Si los recibiera": total hipotético con los USD contando.
-                    const simTotal      = receivedMxn + usdAsMxn;
-                    const simRestante   = Math.max(0, currentPayAmount - simTotal);
-                    const simCambio     = Math.max(0, simTotal - currentPayAmount);
-                    // Modo USD primario: al click "+ Dólares" se esconde pesos.
-                    // Pesos reaparece SOLO si USD no alcanza a cubrir el total
-                    // (cajero completa con pesos el faltante).
-                    // Toggle PURO de moneda: la vista (pesos/dólares) la decide
-                    // solo el toggle, no si ya hay USD ingresado. Ambos montos
-                    // (cashReceived + cashReceivedUsd) se conservan al alternar,
-                    // así el pago mixto sigue: ingresas USD, cambias a pesos y
-                    // completas. Un solo grid a la vez (antes se apilaban dos).
-                    const usdPrimary    = showUsdInput;
-                    const showPesos     = !usdPrimary;
-                    // ¿Falta cubrir el total? (para el aviso "completa con…").
                     const faltaCubrir   = Math.max(0, currentPayAmount - totalReceived);
-
-                    // Equivalentes en USD del cambio y del faltante. El número
-                    // grande de abajo sigue la moneda activa del toggle (usdPrimary):
-                    // en dólares lo muestra en USD, en pesos en MXN, con el otro chiquito.
+                    // Equivalente en USD (chiquito, bajo el número MXN grande).
                     const cambioUsd = tc > 0 && cambio > 0      ? cambio / tc      : 0;
                     const faltaUsd  = tc > 0 && faltaCubrir > 0 ? faltaCubrir / tc : 0;
 
                     return (
                       <div className="flex flex-col gap-2 flex-1 min-w-0">
 
-                        {/* ── USD primario (bloque verde, input dominante) ─────── */}
-                        {usdPrimary && (
-                          <div className="flex flex-col gap-2 rounded-2xl p-3" style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.28)' }}>
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="flex items-center gap-2 text-[11px] font-black uppercase tracking-widest text-emerald-400">
-                                Dólares recibidos
-                                <span className="px-2 py-0.5 rounded-lg text-[10px] tabular-nums" style={{ background: 'rgba(16,185,129,0.16)', color: '#34d399', border: '1px solid rgba(16,185,129,0.30)' }} title="Tipo de cambio USD/MXN">TC ${tc.toFixed(2)}</span>
-                              </span>
-                              {/* Toggle a pesos — siempre visible (conserva el USD ingresado). */}
-                              <button
-                                type="button"
-                                onClick={() => setShowUsdInput(false)}
-                                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors"
-                                style={{ background: 'var(--td-card-bg)', border: '1px solid var(--td-card-border)', color: 'var(--td-text-hi)' }}
-                                title="Cambiar a pesos"
-                              >⇄ A pesos</button>
-                            </div>
-                            {/* (El desglose pesos+dólares y el faltante viven en el
-                                resumen de cobro de abajo — una sola fuente clara.) */}
-                            <div className="relative">
-                              <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-xl text-emerald-500/80 pointer-events-none">US$</span>
-                              <input
-                                autoFocus
-                                type="number" min="0" step="0.01"
-                                value={cashReceivedUsd}
-                                onChange={e => setCashReceivedUsd(e.target.value)}
-                                onKeyDown={e => {
-                                  // Enter = confirmar los dólares y, si cubren, cobrar —
-                                  // mismas teclas que antes de la simulación (el setter
-                                  // actualiza usdAppliedRef en el acto, el checkout lo ve).
-                                  if (e.key === "Enter") {
-                                    if (typedUsd > 0 && !usdApplied) setUsdApplied(true);
-                                    if (receivedMxn + usdAsMxn >= currentPayAmount) void handleCheckout();
-                                  }
-                                }}
-                                placeholder="0.00"
-                                className="w-full text-center rounded-xl py-3 pl-14 pr-4 text-4xl font-black placeholder-emerald-500/15 focus:outline-none transition-all tabular-nums"
-                                style={{ background: "var(--td-input-bg)", border: "2px solid rgba(16,185,129,0.40)", color: "var(--td-input-text)" }}
-                              />
-                              {typedUsd > 0 && (
-                                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-base font-black text-emerald-400 pointer-events-none tabular-nums">
-                                  ≈ {fmt(usdAsMxn)}
-                                </span>
-                              )}
-                            </div>
-                            {/* Presets USD cuadrados — todas las denominaciones
-                                de billetes US (1, 5, 10, 20, 50, 100). 3×2 grid
-                                con aspect-square para que los números respiren
-                                y el cajero no se equivoque al tap (Joel 2026-05-28). */}
-                            <div className="grid grid-cols-3 gap-2">
-                              {[1, 5, 10, 20, 50, 100].map(amt => (
-                                <button
-                                  key={amt}
-                                  onClick={() => setCashReceivedUsd(prev => ((parseFloat(prev) || 0) + amt).toString())}
-                                  className="aspect-square rounded-2xl font-black text-2xl transition-colors tabular-nums flex flex-col items-center justify-center gap-0.5"
-                                  style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.28)', color: '#34d399' }}
-                                  onMouseEnter={e => { e.currentTarget.style.background = 'rgba(16,185,129,0.24)'; }}
-                                  onMouseLeave={e => { e.currentTarget.style.background = 'rgba(16,185,129,0.12)'; }}
-                                >
-                                  <span className="text-[10px] font-bold text-emerald-500/60 uppercase tracking-wider leading-none">US$</span>
-                                  <span className="leading-none">{amt}</span>
-                                </button>
-                              ))}
-                            </div>
-
-                            {/* ── SIMULACIÓN — el cliente preguntó "¿cuánto sería en
-                                dólares?" y aún no decide. Lo tecleado NO cuenta como
-                                recibido ni viaja al cobro hasta confirmar. "No" limpia
-                                y regresa a pesos, como si nunca se hubiera tecleado. */}
-                            {usdSimulating && (
-                              <div className="flex flex-col gap-2 rounded-xl p-3" style={{ background: 'rgba(245,158,11,0.10)', border: '1px solid rgba(245,158,11,0.35)' }}>
-                                <span className="text-[10px] font-black uppercase tracking-widest text-amber-400">
-                                  Simulación — aún no cuenta
-                                </span>
-                                <p className="m-0 text-[11px] font-bold leading-snug" style={{ color: 'var(--td-text-md)' }}>
-                                  Si da US${typedUsd.toFixed(2)} ≈ {fmtMXN(usdAsMxn)}
-                                  {simRestante > 0
-                                    ? <> — quedarían por pagar <span className="text-red-400">{fmtMXN(simRestante)}</span></>
-                                    : <> — cubre todo{simCambio > 0 ? <> y el cambio sería <span className="text-emerald-400">{fmtMXN(simCambio)}</span></> : null}</>}
-                                </p>
-                                <div className="grid grid-cols-2 gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => setUsdApplied(true)}
-                                    className="py-2 rounded-xl text-[11px] font-black uppercase tracking-wider"
-                                    style={{ background: 'rgba(16,185,129,0.16)', border: '1px solid rgba(16,185,129,0.4)', color: '#34d399' }}
-                                  >✓ Sí los recibí</button>
-                                  <button
-                                    type="button"
-                                    onClick={() => { setCashReceivedUsd(""); setUsdApplied(false); setShowUsdInput(false); }}
-                                    className="py-2 rounded-xl text-[11px] font-black uppercase tracking-wider"
-                                    style={{ background: 'var(--td-card-bg)', border: '1px solid var(--td-card-border)', color: 'var(--td-text-hi)' }}
-                                  >✗ No — a pesos</button>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-                        {/* ── PESOS (vista por toggle) ─────────────────────────── */}
-                        {showPesos && (
-                          <div className="flex flex-col gap-2">
+                        {/* ── PESOS — el único input inline. Los dólares se
+                            atienden en la CALCULADORA (botón de al lado). */}
+                        <div className="flex flex-col gap-2">
                             <div className="flex items-center justify-between gap-2">
                               <span className="flex items-center gap-2 text-[11px] font-black uppercase tracking-widest" style={{ color: TLO }}>
                                 Pesos recibidos
-                                <span className="px-2 py-0.5 rounded-lg text-[10px] tabular-nums" style={{ background: 'rgba(16,185,129,0.16)', color: '#34d399', border: '1px solid rgba(16,185,129,0.30)' }} title="Tipo de cambio USD/MXN">TC ${tc.toFixed(2)}</span>
                               </span>
-                              {/* Toggle a dólares — siempre visible (conserva los pesos ingresados). */}
+                              {/* Abre la calculadora de dólares — grande y notorio:
+                                  es LA puerta al flujo USD (no hay más toggles). */}
                               <button
                                 type="button"
-                                onClick={() => setShowUsdInput(true)}
-                                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors"
-                                style={{ background: 'rgba(16,185,129,0.10)', border: '1px solid rgba(16,185,129,0.30)', color: '#34d399' }}
-                                title={`Cambiar a dólares (TC ${tc.toFixed(2)})`}
-                              >⇄ A dólares</button>
+                                onClick={() => setUsdCalcOpen(true)}
+                                data-testid="usd-calc-open"
+                                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[12px] font-black uppercase tracking-wider transition-colors"
+                                style={{ background: 'rgba(16,185,129,0.14)', border: '1px solid rgba(16,185,129,0.45)', color: '#34d399' }}
+                                title={`Calculadora de dólares (TC $${tc.toFixed(2)})`}
+                              >$ Dólares</button>
                             </div>
                             {/* (Los dólares ya ingresados y el faltante se ven en el
                                 resumen de cobro de abajo — evita mostrar "faltan" 2 veces.) */}
@@ -6366,13 +6289,13 @@ export function SellPage() {
                               <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-2xl pointer-events-none" style={{ color: "var(--td-placeholder)" }}>$</span>
                               <input
                                 ref={cashInputRef}
-                                autoFocus={typedUsd > 0}
+                                autoFocus
                                 type="number" min="0" step="0.01"
                                 value={cashReceived}
                                 onChange={e => setCashReceived(e.target.value)}
                                 onKeyDown={e => {
                                   if (e.key === "Enter") {
-                                    if (totalReceived >= currentPayAmount || (cashReceived === "" && cashReceivedUsd === "")) void handleCheckout();
+                                    if (totalReceived >= currentPayAmount || (cashReceived === "" && appliedUsd === 0)) void handleCheckout();
                                   }
                                 }}
                                 placeholder="0.00"
@@ -6401,12 +6324,36 @@ export function SellPage() {
                                 </button>
                               ))}
                             </div>
+                        </div>
+
+                        {/* ── DÓLARES APLICADOS — chip claro y grande. Editar
+                            reabre la calculadora; Quitar deja la venta en pesos. */}
+                        {appliedUsd > 0 && (
+                          <div className="flex items-center justify-between gap-2 rounded-2xl px-4 py-3" style={{ background: 'rgba(16,185,129,0.10)', border: '2px solid rgba(16,185,129,0.4)' }} data-testid="usd-applied-chip">
+                            <span className="min-w-0">
+                              <span className="block text-[15px] font-black text-emerald-400 tabular-nums">
+                                US${appliedUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })} recibidos
+                              </span>
+                              <span className="block text-[12px] font-bold text-emerald-400/70 tabular-nums">
+                                ≈ {fmt(usdAsMxn)} MXN (TC ${tc.toFixed(2)})
+                              </span>
+                            </span>
+                            <span className="flex gap-2 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => setUsdCalcOpen(true)}
+                                className="px-3 py-2 rounded-xl text-[11px] font-black uppercase tracking-wider"
+                                style={{ background: 'var(--td-card-bg)', border: '1px solid var(--td-card-border)', color: 'var(--td-text-hi)', cursor: 'pointer' }}
+                              >Editar</button>
+                              <button
+                                type="button"
+                                onClick={() => { setCashReceivedUsd(""); setUsdApplied(false); }}
+                                className="px-3 py-2 rounded-xl text-[11px] font-black uppercase tracking-wider"
+                                style={{ background: 'rgba(224,34,26,0.10)', border: '1px solid rgba(224,34,26,0.4)', color: 'var(--td-red)', cursor: 'pointer' }}
+                              >Quitar</button>
+                            </span>
                           </div>
                         )}
-
-                        {/* (El toggle dólar⇄pesos vive en el header de cada vista,
-                            mismo lugar y mismo grid — ya no hay botón "+ Dólares"
-                            aparte ni grids apilados.) */}
 
                         {/* ── RESUMEN DE COBRO — siempre visible mientras haya algo
                             que cobrar. El cajero ve de un vistazo cuánto es el
@@ -6424,73 +6371,35 @@ export function SellPage() {
                               <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: TLO }}>Recibido</span>
                               <span className="text-base font-black tabular-nums" style={{ color: "var(--td-text-hi)" }}>{fmtMXN(totalReceived)}</span>
                             </div>
-                            {receivedUsd > 0 && (
+                            {appliedUsd > 0 && (
                               <div className="flex flex-col gap-0.5 pl-1 -mt-1">
                                 {receivedMxn > 0 && (
                                   <div className="flex items-center justify-between text-[10px] font-bold" style={{ color: TLO }}>
                                     <span>· Pesos</span><span className="tabular-nums">{fmtMXN(receivedMxn)}</span>
                                   </div>
                                 )}
-                                <div className="flex items-center justify-between text-[10px] font-bold text-amber-400">
-                                  <span>· Dólares US${receivedUsd.toFixed(2)}</span><span className="tabular-nums">≈ {fmt(usdAsMxn)}</span>
+                                <div className="flex items-center justify-between text-[10px] font-bold text-emerald-400">
+                                  <span>· Dólares US${appliedUsd.toFixed(2)}</span><span className="tabular-nums">≈ {fmt(usdAsMxn)}</span>
                                 </div>
                               </div>
                             )}
-                            {/* Chip de simulación pendiente — visible también desde la
-                                vista de pesos, para que el "¿sí o no?" nunca se pierda. */}
-                            {usdSimulating && (
-                              <div className="flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5" style={{ background: 'rgba(245,158,11,0.10)', border: '1px dashed rgba(245,158,11,0.45)' }}>
-                                <span className="text-[10px] font-bold text-amber-400 min-w-0 truncate">
-                                  US${typedUsd.toFixed(2)} en simulación — no contado
-                                </span>
-                                <span className="flex gap-1 shrink-0">
-                                  <button
-                                    type="button"
-                                    onClick={() => setUsdApplied(true)}
-                                    className="px-2 py-0.5 rounded-md text-[10px] font-black"
-                                    style={{ background: 'rgba(16,185,129,0.16)', border: '1px solid rgba(16,185,129,0.4)', color: '#34d399' }}
-                                    title="Sí recibí los dólares — contarlos"
-                                  >✓</button>
-                                  <button
-                                    type="button"
-                                    onClick={() => { setCashReceivedUsd(""); setUsdApplied(false); }}
-                                    className="px-2 py-0.5 rounded-md text-[10px] font-black"
-                                    style={{ background: 'var(--td-card-bg)', border: '1px solid var(--td-card-border)', color: 'var(--td-text-hi)' }}
-                                    title="No — quitar la simulación"
-                                  >✗</button>
-                                </span>
-                              </div>
-                            )}
 
-                            {/* FALTA / CAMBIO — renglón grande, separado por una línea */}
+                            {/* FALTA / CAMBIO — renglón grande, SIEMPRE en MXN (se
+                                acabó el número que cambiaba de moneda según un toggle
+                                que el cajero no recordaba haber tocado); el
+                                equivalente USD va chiquito debajo cuando hay dólares. */}
                             <div className="flex items-center justify-between pt-2 mt-0.5" style={{ borderTop: "1px solid var(--td-card-border)" }}>
                               <span className={`text-xs font-black uppercase tracking-widest ${cambio >= 0 ? "text-emerald-400/90" : "text-red-400/90"}`}>
                                 {cambio >= 0 ? "Cambio" : "Falta"}
                               </span>
                               <div className="text-right">
-                                {/* El número grande sigue la moneda activa del toggle: en
-                                    modo dólares sale el Cambio/Falta en USD; en pesos, en MXN.
-                                    Debajo, chiquito, el equivalente en la otra moneda. */}
-                                {usdPrimary ? (
-                                  <>
-                                    <p className={`text-3xl font-black leading-none tabular-nums ${cambio >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                                      US${(cambio >= 0 ? cambioUsd : faltaUsd).toFixed(2)}
-                                    </p>
-                                    <p className={`text-[11px] font-bold mt-1 tabular-nums ${cambio >= 0 ? "text-emerald-400/70" : "text-red-400/70"}`}>
-                                      ≈ {fmtMXN(cambio >= 0 ? cambio : faltaCubrir)}
-                                    </p>
-                                  </>
-                                ) : (
-                                  <>
-                                    <p className={`text-3xl font-black leading-none tabular-nums ${cambio >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                                      {fmtMXN(cambio >= 0 ? cambio : faltaCubrir)}
-                                    </p>
-                                    {(cambio >= 0 ? cambioUsd : faltaUsd) > 0 && (
-                                      <p className={`text-[11px] font-bold mt-1 tabular-nums ${cambio >= 0 ? "text-emerald-400/70" : "text-red-400/70"}`}>
-                                        ≈ US${(cambio >= 0 ? cambioUsd : faltaUsd).toFixed(2)}
-                                      </p>
-                                    )}
-                                  </>
+                                <p className={`text-3xl font-black leading-none tabular-nums ${cambio >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                                  {fmtMXN(cambio >= 0 ? cambio : faltaCubrir)}
+                                </p>
+                                {appliedUsd > 0 && (cambio >= 0 ? cambioUsd : faltaUsd) > 0 && (
+                                  <p className={`text-[11px] font-bold mt-1 tabular-nums ${cambio >= 0 ? "text-emerald-400/70" : "text-red-400/70"}`}>
+                                    ≈ US${(cambio >= 0 ? cambioUsd : faltaUsd).toFixed(2)}
+                                  </p>
                                 )}
                               </div>
                             </div>
@@ -6805,6 +6714,18 @@ export function SellPage() {
           </button>
         </div>
       )}
+
+      {/* Calculadora de dólares — nada se aplica hasta "Sí paga con dólares"
+          (el modal ES la simulación; setUsdApplied actualiza el ref en el acto). */}
+      <UsdCalculatorModal
+        open={usdCalcOpen}
+        tc={tc}
+        totalAPagar={currentPayAmount}
+        pesosRecibidos={parseFloat(cashReceived) || 0}
+        usdInicial={usdApplied ? cashReceivedUsd : ""}
+        onApply={usd => { setCashReceivedUsd(usd); setUsdApplied(true); setUsdCalcOpen(false); }}
+        onClose={() => setUsdCalcOpen(false)}
+      />
 
       {/* Confirmación de cobro en $0 (descuento 100% / cortesía) — Fase D hardening */}
       {zeroConfirmOpen && (

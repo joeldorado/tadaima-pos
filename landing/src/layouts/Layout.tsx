@@ -2,6 +2,7 @@
 import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@tadaima/auth";
 import { useTheme } from "@/contexts/ThemeContext";
+import { LayoutChromeProvider, useLayoutChrome } from "@/contexts/LayoutChromeContext";
 import {
   ShoppingCart, Package, LogOut, Home, Store,
   Users, Receipt, UserCircle2, ClipboardList, ArrowLeftRight, ShoppingBasket, BarChart2,
@@ -214,6 +215,16 @@ function WideGroup({ group, isOpen, onToggle, pathname }: { group: NavGroup; isO
 }
 
 export function Layout() {
+  // El provider vive AQUÍ (no en el router) para que tanto LayoutInner como
+  // las páginas del <Outlet/> consuman el mismo canal (Modo Full Caja).
+  return (
+    <LayoutChromeProvider>
+      <LayoutInner />
+    </LayoutChromeProvider>
+  );
+}
+
+function LayoutInner() {
   const navigate  = useNavigate();
   const location  = useLocation();
   const { user, logout }  = useAuth();
@@ -334,8 +345,15 @@ export function Layout() {
   const isCajaRoute = location.pathname === "/caja" || location.pathname.startsWith("/caja/");
   const narrowViewport = useMediaQuery("(max-width: 1023px)");
   const overlayMode = isCajaRoute && narrowViewport;
+  // ── Modo Full Caja (Joel 2026-07-24): la Caja pidió TODO el ancho ─────────
+  // Mismo mecanismo que overlayMode (aside fuera del flujo + botón flotante
+  // que abre el drawer encima), pero disparado por la página vía context.
+  // Solo aplica en /caja — salir de Caja siempre devuelve el menú normal.
+  const { cajaFullscreen } = useLayoutChrome();
+  const fullCajaMode = isCajaRoute && cajaFullscreen;
+  const asideHidden = overlayMode || fullCajaMode;
   const [drawerOpen, setDrawerOpen] = useState(false);
-  useEffect(() => { setDrawerOpen(false); }, [location.pathname, overlayMode]);
+  useEffect(() => { setDrawerOpen(false); }, [location.pathname, asideHidden]);
 
   // ── Aviso global de caja de días anteriores (visible en TODAS las páginas) ──
   const staleOpenedLabel = cashSession?.opened_at
@@ -395,8 +413,8 @@ export function Layout() {
       className="flex h-screen overflow-hidden app-bg"
       onClick={() => setShowUserMenu(false)}
     >
-      {/* ── Backdrop del drawer (solo Caja angosta con menú abierto) ─────────── */}
-      {overlayMode && drawerOpen && (
+      {/* ── Backdrop del drawer (Caja angosta o Full Caja con menú abierto) ─── */}
+      {asideHidden && drawerOpen && (
         <div
           className="fixed inset-0 z-40"
           style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(2px)" }}
@@ -413,11 +431,11 @@ export function Layout() {
         // En overlayMode (Caja < 1024px) la sidebar sale del flow: oculta por
         // default, y como drawer fixed encima del contenido cuando drawerOpen.
         className={`glass-dark flex-col shrink-0 animate-in fade-in slide-in-from-left duration-300 ${railCollapsed ? "items-center px-0" : "px-3"} py-5 ${
-          overlayMode
+          asideHidden
             ? (drawerOpen ? "flex fixed inset-y-0 left-0 z-50" : "hidden")
             : "flex relative z-20"
         }`}
-        style={{ width: railWidth, transition: "width 0.2s ease", ...(overlayMode && drawerOpen ? { boxShadow: "8px 0 32px rgba(0,0,0,0.45)" } : {}) }}
+        style={{ width: railWidth, transition: "width 0.2s ease", ...(asideHidden && drawerOpen ? { boxShadow: "8px 0 32px rgba(0,0,0,0.45)" } : {}) }}
       >
 
         {/* Header: logo + (modo ancho) wordmark + toggle */}
@@ -654,8 +672,8 @@ export function Layout() {
         </div>
       </aside>
 
-      {/* ── Botón flotante para abrir el menú (Caja angosta) ─────────────────── */}
-      {overlayMode && !drawerOpen && (
+      {/* ── Botón flotante para abrir el menú (Caja angosta o Full Caja) ─────── */}
+      {asideHidden && !drawerOpen && (
         <button
           onClick={() => setDrawerOpen(true)}
           title="Abrir menú"
