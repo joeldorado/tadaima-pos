@@ -537,52 +537,66 @@ export function PromosPage() {
           </p>
         </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {promoItems.map(({ product, promo }) => (
-            <Motion.div
-              key={`${product.id}-${promo.id}`}
-              initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-              className="rounded-3xl overflow-hidden flex flex-col"
-              style={{ background: PANEL, border: BORDER }}
-            >
-              {/* Foto + badge */}
-              <div style={{ position: "relative", height: 170, background: SOFT, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
-                {product.image
-                  ? <img src={product.image} alt={product.name} loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                  : <span style={{ fontSize: 34, fontWeight: 900, color: "rgba(255,255,255,0.12)" }}>Tadaima</span>}
-                <span style={{ position: "absolute", top: 10, left: 10, padding: "4px 12px", borderRadius: 10, fontSize: 15, fontWeight: 900, color: "#fff", background: "linear-gradient(135deg, #BB1100, #FF3322)", boxShadow: "0 4px 14px rgba(224,34,26,0.5)" }}>
-                  {promoDisplay(promo, getLightPrice(product, 1)).badge}
-                </span>
-              </div>
+        /* Tabla compacta de vigentes por producto (pedido Joel 2026-07-24: las
+           tarjetas gigantes hacían la página tosca — mucho scroll teniendo la
+           Gestión arriba). Una fila por producto con su promo; Compartir por
+           fila abre el mismo banner de siempre; el Modo TV no cambia. */
+        <div className="rounded-3xl overflow-hidden" style={{ background: PANEL, border: BORDER }}>
+          <div className="px-4 py-3" style={{ borderBottom: CARD_B }}>
+            <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: TLO }}>
+              Vigentes por producto ({promoItems.length})
+            </p>
+          </div>
+          {promoItems.map(({ product, promo }, i) => {
+            const disp = promoDisplay(promo, getLightPrice(product, 1));
+            return (
+              <div
+                key={`${product.id}-${promo.id}`}
+                className="flex items-center gap-3 px-4 py-2.5 flex-wrap"
+                style={i > 0 ? { borderTop: CARD_B } : undefined}
+              >
+                {/* Miniatura chica — no un banner */}
+                <div className="shrink-0 rounded-lg overflow-hidden flex items-center justify-center" style={{ width: 40, height: 40, background: SOFT }}>
+                  {product.image
+                    ? <img src={product.image} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    : <span style={{ fontSize: 9, fontWeight: 900, color: "rgba(255,255,255,0.18)" }}>TDM</span>}
+                </div>
 
-              {/* Info */}
-              <div className="p-4 flex-1 flex flex-col">
-                <p className="text-[13px] font-black leading-tight" style={{ color: THI }}>{product.name}</p>
-                <p className="text-[10px] font-bold uppercase tracking-widest mt-1" style={{ color: TLO }}>
-                  {promo.name}
-                  {promo.store_id != null && (
-                    <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 6, fontSize: 8, fontWeight: 900, color: "#60A5FA", background: "rgba(96,165,250,0.12)", border: "1px solid rgba(96,165,250,0.3)" }}>
-                      {isAdmin ? (storeName(promo.store_id) ?? "Solo una tienda") : "Solo tu tienda"}
-                    </span>
-                  )}
+                {/* Badge de la promo (2x1 / −$100 c/u) */}
+                <span className="shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-black text-white tabular-nums" style={{ background: "linear-gradient(135deg, #BB1100, #FF3322)" }}>
+                  {disp.badge}
+                </span>
+
+                {/* Producto + promo */}
+                <div className="flex-1 min-w-[180px]">
+                  <p className="text-[12px] font-black leading-tight truncate" style={{ color: THI }}>{product.name}</p>
+                  <p className="text-[9px] font-bold uppercase tracking-widest mt-0.5" style={{ color: TLO }}>
+                    {promo.name}
+                    {promo.store_id != null && (
+                      <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 6, fontSize: 8, fontWeight: 900, color: "#60A5FA", background: "rgba(96,165,250,0.12)", border: "1px solid rgba(96,165,250,0.3)" }}>
+                        {isAdmin ? (storeName(promo.store_id) ?? "Solo una tienda") : "Solo tu tienda"}
+                      </span>
+                    )}
+                    {promo.priority > 0 && <span style={{ marginLeft: 6 }}>· Prioridad {promo.priority}</span>}
+                  </p>
+                </div>
+
+                {/* CTA (qué gana el cliente) — se oculta en pantallas chicas */}
+                <p className="hidden md:block text-[11px] font-black shrink-0" style={{ color: GREEN }}>
+                  {disp.cta}
                 </p>
-                <p className="text-[12px] font-black mt-2" style={{ color: GREEN }}>
-                  {promoDisplay(promo, getLightPrice(product, 1)).cta}
-                </p>
-                {promo.priority > 0 && (
-                  <p className="text-[9px] font-bold mt-1" style={{ color: TLO }}>Prioridad {promo.priority}</p>
-                )}
+
                 <button
                   onClick={() => setShareItem({ product, promo })}
                   data-testid={`share-promo-${product.id}`}
-                  className="mt-3 flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-[11px] font-black uppercase tracking-widest"
+                  className="shrink-0 flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-[10px] font-black uppercase tracking-widest"
                   style={{ background: "rgba(37,211,102,0.08)", border: "1px solid rgba(37,211,102,0.35)", color: "#25D366", cursor: "pointer" }}
                 >
-                  <Share2 size={12} /> Compartir
+                  <Share2 size={11} /> Compartir
                 </button>
               </div>
-            </Motion.div>
-          ))}
+            );
+          })}
         </div>
       )}
 
