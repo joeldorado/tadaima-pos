@@ -116,6 +116,10 @@ function CorteDetail({ session: s }: { session: CashSessionReport }) {
         <SummaryCell label="Abrió con" value={fmt(s.opening_cash)} />
         <SummaryCell label={`Ventas totales (${s.sales_count})`} value={fmt(s.total_sales)} />
         <SummaryCell label="Cobrado en caja" value={`+${fmt(s.cash_collected)}`} color="#10b981" />
+        {/* Tarjeta + transferencia: informativo, NO entra al esperado del cajón. */}
+        {((s.total_card ?? 0) + (s.total_transfer ?? 0)) > 0 && (
+          <SummaryCell label="Fuera de caja (tarj./transf.)" value={fmt((s.total_card ?? 0) + (s.total_transfer ?? 0))} color="#3B82F6" />
+        )}
         <SummaryCell label="Preventas cobradas" value={fmt(s.total_pre_sale_payments)} color={s.total_pre_sale_payments > 0 ? "#F59E0B" : undefined} />
         <SummaryCell label="Entradas" value={`+${fmt(s.total_entradas)}`} color={s.total_entradas > 0 ? "#10b981" : undefined} />
         <SummaryCell label="Salidas de caja" value={`-${fmt(s.total_salidas)}`} color={s.total_salidas > 0 ? "#DC2626" : undefined} />

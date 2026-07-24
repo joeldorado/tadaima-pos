@@ -116,8 +116,12 @@ export interface CashSessionReport {
   supplies_count?: number
   /** Ventas del turno sin filtrar por método: efectivo, tarjeta, etc. */
   total_sales: number
-  /** Parte de las ventas que sí entró físicamente a caja (no tarjeta). */
+  /** Parte de las ventas que sí entró físicamente a caja (solo efectivo/dólares). */
   total_cash_sales: number
+  /** Cobrado con tarjeta (ventas + preventas) — fuera del cajón, informativo. */
+  total_card?: number
+  /** Cobrado por transferencia u otros métodos no-efectivo no-tarjeta — fuera del cajón. */
+  total_transfer?: number
   /** Dólares físicos recibidos en el turno (informativo; el MXN ya va en las ventas). */
   total_usd_received: number
   /** Anticipos/liquidaciones de preventa cobrados en la ventana del corte. */
@@ -138,6 +142,8 @@ export interface CashReport {
     total_sessions: number
     total_sales: number
     total_cash_collected: number
+    total_card?: number
+    total_transfer?: number
     total_pre_sale_payments: number
     total_usd_received: number
     total_entradas: number

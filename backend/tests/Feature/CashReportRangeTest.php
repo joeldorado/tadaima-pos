@@ -291,4 +291,139 @@ class CashReportRangeTest extends TestCase
         $this->assertEquals(180.0, (float) $row['cash_collected']);
         $this->assertEquals(650.0, (float) $row['expected_cash']);
     }
+
+    /**
+     * Joel 2026-07-23: el corte debe ser SOLO efectivo. El CASE viejo excluía
+     * únicamente '%tarjeta%', así que una Transferencia (método sembrado por
+     * default) contaba como dinero físico en el cajón → "faltante" fantasma.
+     */
+    public function test_transferencia_no_entra_al_esperado_del_cajon(): void
+    {
+        $cash     = PaymentMethod::create(['name' => 'Efectivo', 'active' => true]);
+        $card     = PaymentMethod::create(['name' => 'Tarjeta Crédito', 'active' => true]);
+        $transfer = PaymentMethod::create(['name' => 'Transferencia', 'active' => true]);
+        $customer = Customer::create(['name' => 'Cliente Transferencia']);
+
+        $session = CashRegisterSession::create([
+            'register_id'  => $this->register->id,
+            'user_id'      => $this->admin->id,
+            'opening_cash' => 500,
+            'status'       => CashRegisterSession::STATUS_OPEN,
+            'opened_at'    => now()->subHour(),
+        ]);
+
+        foreach ([[$cash, 100], [$transfer, 300], [$card, 250]] as [$method, $amount]) {
+            $sale = Sale::create([
+                'store_id'            => $this->store->id,
+                'register_session_id' => $session->id,
+                'user_id'             => $this->admin->id,
+                'customer_id'         => $customer->id,
+                'subtotal'            => $amount,
+                'discount'            => 0,
+                'total'               => $amount,
+                'status'              => Sale::STATUS_COMPLETED,
+            ]);
+            Payment::create([
+                'sale_id'           => $sale->id,
+                'payment_method_id' => $method->id,
+                'amount'            => $amount,
+                'commission_amount' => 0,
+            ]);
+        }
+
+        $order = PreSaleOrder::create([
+            'code'        => 'PREV-TRANSFER-001',
+            'store_id'    => $this->store->id,
+            'user_id'     => $this->admin->id,
+            'customer_id' => $customer->id,
+            'status'      => PreSaleOrder::STATUS_PENDING,
+        ]);
+        PreSaleOrderPayment::create([
+            'pre_sale_order_id' => $order->id,
+            'amount'            => 80,
+            'payment_method_id' => $cash->id,
+            'cashier_id'        => $this->admin->id,
+        ]);
+        PreSaleOrderPayment::create([
+            'pre_sale_order_id' => $order->id,
+            'amount'            => 90,
+            'payment_method_id' => $transfer->id,
+            'cashier_id'        => $this->admin->id,
+        ]);
+
+        DB::table('cash_movements')->insert([
+            'register_session_id' => $session->id,
+            'type'                => 'salida',
+            'amount'              => 30,
+            'description'         => 'Retiro parcial',
+            'created_at'          => now(),
+        ]);
+
+        $row = collect($this->actingAs($this->admin)
+            ->getJson('/api/v1/reports/cash?from=' . now()->toDateString() . '&to=' . now()->toDateString())
+            ->assertOk()
+            ->json('data.sessions'))->firstWhere('id', $session->id);
+
+        $this->assertNotNull($row);
+        $this->assertEquals(650.0, (float) $row['total_sales']);
+        $this->assertEquals(170.0, (float) $row['total_pre_sale_payments']);
+        // Al cajón solo entraron 100 (venta) + 80 (anticipo) en efectivo.
+        $this->assertEquals(180.0, (float) $row['cash_collected']);
+        $this->assertEquals(650.0, (float) $row['expected_cash']);
+        // Desglose informativo de lo que quedó FUERA del cajón.
+        $this->assertEquals(250.0, (float) $row['total_card']);
+        $this->assertEquals(390.0, (float) $row['total_transfer']);
+    }
+
+    /**
+     * La clasificación es de INCLUSIÓN (efectivo/dólares), no de exclusión:
+     * un método futuro ("Depósito bancario") queda fuera del cajón solo, y el
+     * legacy "Dólares" (retirado del dropdown 2026-05-28, con datos vivos)
+     * sigue contando como dinero físico.
+     */
+    public function test_metodo_desconocido_fuera_del_cajon_y_dolares_dentro(): void
+    {
+        $usd     = PaymentMethod::create(['name' => 'Dólares', 'active' => true]);
+        $deposit = PaymentMethod::create(['name' => 'Depósito bancario', 'active' => true]);
+        $customer = Customer::create(['name' => 'Cliente Métodos']);
+
+        $session = CashRegisterSession::create([
+            'register_id'  => $this->register->id,
+            'user_id'      => $this->admin->id,
+            'opening_cash' => 0,
+            'status'       => CashRegisterSession::STATUS_OPEN,
+            'opened_at'    => now()->subHour(),
+        ]);
+
+        foreach ([[$usd, 200], [$deposit, 150]] as [$method, $amount]) {
+            $sale = Sale::create([
+                'store_id'            => $this->store->id,
+                'register_session_id' => $session->id,
+                'user_id'             => $this->admin->id,
+                'customer_id'         => $customer->id,
+                'subtotal'            => $amount,
+                'discount'            => 0,
+                'total'               => $amount,
+                'status'              => Sale::STATUS_COMPLETED,
+            ]);
+            Payment::create([
+                'sale_id'           => $sale->id,
+                'payment_method_id' => $method->id,
+                'amount'            => $amount,
+                'commission_amount' => 0,
+            ]);
+        }
+
+        $row = collect($this->actingAs($this->admin)
+            ->getJson('/api/v1/reports/cash?from=' . now()->toDateString() . '&to=' . now()->toDateString())
+            ->assertOk()
+            ->json('data.sessions'))->firstWhere('id', $session->id);
+
+        $this->assertNotNull($row);
+        $this->assertEquals(200.0, (float) $row['cash_collected']);
+        $this->assertEquals(200.0, (float) $row['expected_cash']);
+        $this->assertEquals(0.0, (float) $row['total_card']);
+        // El desconocido cae al resto no-efectivo no-tarjeta.
+        $this->assertEquals(150.0, (float) $row['total_transfer']);
+    }
 }

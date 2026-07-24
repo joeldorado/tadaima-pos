@@ -118,7 +118,8 @@ export function CloseCashModal({ session, title, reason, onClosed, onCancel }: C
             style={{ width: "100%", background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 14, color: "var(--td-input-text)", padding: "12px 16px", fontSize: 22, fontWeight: 900, outline: "none", boxSizing: "border-box" as const }}
           />
           <p style={{ margin: "8px 0 0", fontSize: 10, color: "var(--td-text-ghost)", fontWeight: 600 }}>
-            Este valor se compara contra el dinero físico esperado en caja. Las ventas con tarjeta sí salen en reportes y tickets, pero no cuentan para el faltante o sobrante del cajón.
+            Cuenta SOLO el efectivo del cajón (pesos y dólares). Tarjetas y transferencias sí
+            salen en reportes y tickets, pero no entran al esperado ni al faltante/sobrante.
           </p>
         </div>
 

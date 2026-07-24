@@ -264,12 +264,17 @@ class ReportsController extends Controller
 
         // Para cada sesión calculamos:
         //  - ventas totales (referencia operativa, incluye tarjeta)
-        //  - cobros que SÍ entraron físicamente a caja (no tarjeta)
+        //  - cobros que SÍ entraron físicamente a caja (solo efectivo/dólares)
         //  - anticipos/liquidaciones de preventa en la ventana del corte
         // El descuadre se basa solo en dinero físico. Antes `expected_cash`
-        // sumaba `sales.total` completo y por eso una venta con tarjeta
-        // inflaba el "faltante" aunque el cajón estuviera correcto.
+        // sumaba `sales.total` completo (una tarjeta inflaba el "faltante"),
+        // y hasta 2026-07-23 el filtro era de EXCLUSIÓN (solo quitaba
+        // '%tarjeta%'): una Transferencia contaba como billetes en el cajón.
+        // Ahora la clasificación es de INCLUSIÓN (PaymentMethod::isCashLike).
         $sessionIds = $sessions->pluck('id');
+
+        $cashCond = \App\Models\PaymentMethod::cashLikeSqlCondition('pm.name');
+        $cardCond = "LOWER(COALESCE(pm.name, '')) LIKE '%tarjeta%'";
 
         $movementTotals = DB::table('cash_movements')
             ->whereIn('register_session_id', $sessionIds)
@@ -294,10 +299,9 @@ class ReportsController extends Controller
             ->selectRaw("
                 sales.register_session_id,
                 COALESCE(SUM(payments.amount), 0) as total_paid,
-                COALESCE(SUM(CASE
-                    WHEN LOWER(COALESCE(pm.name, '')) LIKE '%tarjeta%' THEN 0
-                    ELSE payments.amount
-                END), 0) as cash_paid
+                COALESCE(SUM(CASE WHEN {$cashCond} THEN payments.amount ELSE 0 END), 0) as cash_paid,
+                COALESCE(SUM(CASE WHEN {$cardCond} THEN payments.amount ELSE 0 END), 0) as card_paid,
+                COALESCE(SUM(CASE WHEN {$cashCond} OR {$cardCond} THEN 0 ELSE payments.amount END), 0) as other_paid
             ")
             ->groupBy('sales.register_session_id')
             ->get()
@@ -313,10 +317,9 @@ class ReportsController extends Controller
             ->selectRaw("
                 sessions.id as register_session_id,
                 COALESCE(SUM(psop.amount), 0) as total_paid,
-                COALESCE(SUM(CASE
-                    WHEN LOWER(COALESCE(pm.name, '')) LIKE '%tarjeta%' THEN 0
-                    ELSE psop.amount
-                END), 0) as cash_paid
+                COALESCE(SUM(CASE WHEN {$cashCond} THEN psop.amount ELSE 0 END), 0) as cash_paid,
+                COALESCE(SUM(CASE WHEN {$cardCond} THEN psop.amount ELSE 0 END), 0) as card_paid,
+                COALESCE(SUM(CASE WHEN {$cashCond} OR {$cardCond} THEN 0 ELSE psop.amount END), 0) as other_paid
             ")
             ->groupBy('sessions.id')
             ->get()
@@ -347,6 +350,11 @@ class ReportsController extends Controller
             $preSaleAmt = (float) ($preSales?->total_paid ?? 0);
             $cashPreSales = (float) ($preSales?->cash_paid ?? 0);
             $cashCollected = round($cashSales + $cashPreSales, 2);
+            // Fuera del cajón (informativo, ventas + anticipos). `transfer`
+            // agrupa TODO lo no-efectivo no-tarjeta: hoy en la práctica son
+            // transferencias; un método futuro cae aquí (nunca al esperado).
+            $cardTotal = round((float) ($salePay?->card_paid ?? 0) + (float) ($preSales?->card_paid ?? 0), 2);
+            $transferTotal = round((float) ($salePay?->other_paid ?? 0) + (float) ($preSales?->other_paid ?? 0), 2);
 
             $expected = round($s->opening_cash + $entradas - $salidas + $ajustes + $cashCollected, 2);
 
@@ -365,6 +373,8 @@ class ReportsController extends Controller
                 'total_ajustes'   => $ajustes,
                 'total_sales'     => $salesAmt,
                 'total_cash_sales' => round($cashSales, 2),
+                'total_card'      => $cardTotal,
+                'total_transfer'  => $transferTotal,
                 'total_usd_received' => round((float) ($sales?->usd_received ?? 0), 2),
                 'total_pre_sale_payments' => round($preSaleAmt, 2),
                 'total_cash_pre_sale_payments' => round($cashPreSales, 2),
@@ -383,6 +393,8 @@ class ReportsController extends Controller
             'total_sessions'  => $data->count(),
             'total_sales'     => round($data->sum('total_sales'), 2),
             'total_cash_collected' => round($data->sum('cash_collected'), 2),
+            'total_card'      => round($data->sum('total_card'), 2),
+            'total_transfer'  => round($data->sum('total_transfer'), 2),
             'total_usd_received' => round($data->sum('total_usd_received'), 2),
             'total_pre_sale_payments' => round($data->sum('total_pre_sale_payments'), 2),
             'total_entradas'  => round($data->sum('total_entradas'), 2),

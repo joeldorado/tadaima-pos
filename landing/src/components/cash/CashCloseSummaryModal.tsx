@@ -64,6 +64,9 @@ function buildTicketsHtml(detail: CashSessionDetail | null): string {
 
 function buildPrintHtml(s: CashSessionReport, detail: CashSessionDetail | null = null): string {
   const diff = s.difference ?? 0;
+  // Fuera del cajón (tarjeta/transferencia) — informativo, NO suma al esperado.
+  const cardOut = s.total_card ?? 0;
+  const transferOut = s.total_transfer ?? 0;
   return `
     <html><head><title>Corte ${s.id}</title><style>
       body { font-family: ui-monospace, monospace; width: 58mm; margin: 0; padding: 8px; font-size: 11px; font-weight: 700; color: #000 }
@@ -86,6 +89,8 @@ function buildPrintHtml(s: CashSessionReport, detail: CashSessionDetail | null =
       ${(s.total_usd_received ?? 0) > 0 ? `<div class="row"><span>Dólares recibidos</span><span>${s.total_usd_received} USD</span></div>` : ""}
       ${s.total_pre_sale_payments > 0 ? `<div class="row"><span>Preventas cobradas</span><span>${fmt(s.total_pre_sale_payments)}</span></div>` : ""}
       <div class="row"><span>Cobrado en caja</span><span>+${fmt(s.cash_collected)}</span></div>
+      ${cardOut > 0 ? `<div class="row"><span>Tarjeta (fuera de caja)</span><span>${fmt(cardOut)}</span></div>` : ""}
+      ${transferOut > 0 ? `<div class="row"><span>Transfer. (fuera de caja)</span><span>${fmt(transferOut)}</span></div>` : ""}
       ${s.total_entradas > 0 ? `<div class="row"><span>Entradas</span><span>+${fmt(s.total_entradas)}</span></div>` : ""}
       ${s.total_salidas > 0 ? `<div class="row"><span>Salidas de caja</span><span>-${fmt(s.total_salidas)}</span></div>` : ""}
       ${(s.total_supplies ?? 0) > 0 ? `<div class="row"><span>&nbsp;&nbsp;De salidas, insumos (${s.supplies_count ?? 0})</span><span>-${fmt(s.total_supplies ?? 0)}</span></div>` : ""}
@@ -124,7 +129,14 @@ export function CashCloseSummaryModal({ session: s, open, onClose }: CashCloseSu
   const diff = s.difference ?? 0;
   const isMatch = s.closing_cash != null && Math.abs(diff) < 0.01;
   const isShort = s.closing_cash != null && diff < -0.01;
-  const outsideDrawer = Math.max(0, (s.total_sales + s.total_pre_sale_payments) - s.cash_collected);
+  // Desglose de lo que se cobró SIN entrar al cajón. Los campos llegan desde
+  // 2026-07-23; un payload viejo cacheado cae al agregado calculado.
+  const cardOutside = s.total_card;
+  const transferOutside = s.total_transfer;
+  const hasBreakdown = cardOutside != null && transferOutside != null;
+  const outsideDrawer = hasBreakdown
+    ? cardOutside + transferOutside
+    : Math.max(0, (s.total_sales + s.total_pre_sale_payments) - s.cash_collected);
 
   return (
     <div style={{
@@ -195,10 +207,16 @@ export function CashCloseSummaryModal({ session: s, open, onClose }: CashCloseSu
 
         <div style={{ marginBottom: 16, padding: "10px 12px", background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.22)", borderRadius: 14 }}>
           <p style={{ margin: 0, fontSize: 10, color: "var(--td-text-md)", lineHeight: 1.45 }}>
-            El faltante o sobrante se calcula con el dinero que sí debía quedar en caja.
-            Tarjeta no entra al esperado.
-            {outsideDrawer > 0 ? ` Fuera de caja: ${fmt(outsideDrawer)}.` : ""}
+            El faltante o sobrante se calcula SOLO con el efectivo del cajón (pesos y
+            dólares). Tarjetas y transferencias no entran al esperado.
+            {!hasBreakdown && outsideDrawer > 0 ? ` Fuera de caja: ${fmt(outsideDrawer)}.` : ""}
           </p>
+          {hasBreakdown && outsideDrawer > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 8, paddingTop: 8, borderTop: "1px dashed rgba(59,130,246,0.25)" }}>
+              {cardOutside > 0 && <Row label="Fuera de caja · Tarjeta" value={fmt(cardOutside)} />}
+              {transferOutside > 0 && <Row label="Fuera de caja · Transferencia" value={fmt(transferOutside)} />}
+            </div>
+          )}
         </div>
 
         {/* Esperado / Cerrado / Diferencia */}
