@@ -13,6 +13,10 @@ corrieron DONE en el arranque (pivote + nullable + backfill); 0 errores en la re
 + rev `tadaima-00143-qmx` (mismo día): las tarjetas de vigentes de PromosPage → tabla
 compacta "Vigentes por producto" (pedido Joel: mucho scroll con la Gestión arriba);
 Compartir por fila y Modo TV intactos. Bundle `index-C1RTIZ_L.js` verificado.
++ rev `tadaima-00144-xhq` (mismo día): PromosPage con TABS ("Gestión de promos" ·
+"Asignadas a productos") + scroll propio en la lista de gestión (56vh); el tab Promos del
+editor de producto pierde "Nueva promo" — solo "Asignar promo" (las promos nacen únicamente
+en Promos → Gestión; "Personalizar para mi tienda" intacto). Bundle `index-IYMf6t8A.js`.
 
 Tres pedidos de Joel en una sesión. Tests: backend **367/367** (+30), vitest **126/126** (+12), build OK, type-check en baseline (470).
 
