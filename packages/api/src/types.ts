@@ -134,6 +134,33 @@ export interface ProductPromotion extends MayoreoFields, PromoPaymentFlags {
   updated_at?: string
 }
 
+/**
+ * Promo GENERAL (2026-07-25): la promoción es entidad propia — nace en el menú
+ * Promos (con 0 productos es legal) y se ASIGNA a 1..N productos. Misma forma
+ * que ProductPromotion pero SIN product_id requerido (quedó como puntero
+ * legacy del shim anidado).
+ */
+export interface Promotion extends MayoreoFields, PromoPaymentFlags {
+  id: number
+  /** Puntero legacy del shim /products/{id}/promotions — null en promos nuevas. */
+  product_id?: number | null
+  /** null = todas las tiendas; con valor = solo esa sucursal. */
+  store_id?: number | null
+  name: string
+  type?: 'nxm' | 'qty_discount'
+  buy_n: number | null
+  pay_m: number | null
+  starts_at: string | null
+  ends_at: string | null
+  status: 'active' | 'paused' | 'expired'
+  priority: number
+  /** Productos asignados — solo cuando el endpoint los embebe (lista/detalle). */
+  products?: { id: number; name: string }[]
+  products_count?: number
+  created_at?: string
+  updated_at?: string
+}
+
 export interface CreateProductInput {
   name: string
   sku: string

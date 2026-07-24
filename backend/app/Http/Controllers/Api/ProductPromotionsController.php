@@ -8,39 +8,53 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreProductPromotionRequest;
 use App\Models\Product;
 use App\Models\ProductPromotion;
-use App\Support\DateRange;
-use Carbon\Carbon;
+use App\Services\PromotionService;
 use Illuminate\Http\JsonResponse;
 
 /**
- * Promociones NxM por producto (Fase 3). Viven en el editor de producto
- * (4ª tab "Promociones"); el motor de caja solo consume las VIGENTES vía
- * `active_promotions` en el payload de productos.
+ * SHIM de compatibilidad (promos generales, 2026-07-25).
  *
- * RBAC: mutaciones gated a admin/gerente (mismo gate que editar catálogo de
- * productos). Cualquier usuario autenticado puede listar (Caja las necesita).
+ * Este era el CRUD real cuando las promos vivían bajo un producto. Hoy la
+ * entidad es general (PromotionsController + PromotionService) y estos
+ * endpoints anidados quedan vivos porque hay bundles PWA rezagados cacheados
+ * por service worker que los siguen llamando:
+ *
+ *   GET    → promos ASIGNADAS al producto (vía pivote)
+ *   POST   → crea promo general + la asigna a este producto (y escribe el
+ *            product_id legacy para que una revisión vieja la siga viendo)
+ *   PUT    → edita la promo general (delegado al controller top-level)
+ *   DELETE → des-asigna de este producto; si queda sin productos, la borra
+ *            (preserva la semántica vieja sin destruir una multi-asignada)
  */
 class ProductPromotionsController extends Controller
 {
-    /** GET /products/{product}/promotions — todas (el admin ve pausadas/vencidas). */
+    public function __construct(private readonly PromotionService $promotions)
+    {
+    }
+
+    /** GET /products/{product}/promotions — asignadas (el admin ve pausadas/vencidas). */
     public function index(Product $product): JsonResponse
     {
-        // Honestidad lazy: marca expired las que ya pasaron su ventana para que
-        // el admin vea el estado real (el motor de caja NO depende de esto —
-        // currentlyActive() filtra por ventana en SQL).
+        // Honestidad lazy sobre las asignadas a ESTE producto.
         ProductPromotion::query()
-            ->where('product_id', $product->id)
+            ->whereHas('products', fn ($q) => $q->where('products.id', $product->id))
             ->where('status', ProductPromotion::STATUS_ACTIVE)
             ->whereNotNull('ends_at')
             ->where('ends_at', '<', now())
             ->update(['status' => ProductPromotion::STATUS_EXPIRED]);
 
-        return $this->success(
-            $product->promotions()->orderByDesc('priority')->orderBy('id')->get()
-        );
+        // El bundle viejo espera `product_id` = el producto de la ruta; una
+        // promo general asignada puede traerlo null o de otro producto.
+        $promos = $product->promotions()
+            ->orderByDesc('priority')
+            ->orderBy('product_promotions.id')
+            ->get()
+            ->map(fn (ProductPromotion $p) => tap($p)->setAttribute('product_id', (int) $product->id));
+
+        return $this->success($promos);
     }
 
-    /** POST /products/{product}/promotions */
+    /** POST /products/{product}/promotions — crear + asignar a este producto. */
     public function store(StoreProductPromotionRequest $request, Product $product): JsonResponse
     {
         if ($resp = $this->adminOrManagerGateError()) {
@@ -49,28 +63,51 @@ class ProductPromotionsController extends Controller
         if ($resp = $this->promoManageError()) {
             return $resp;
         }
-        if ($resp = $this->promoPaymentConflictError($product, $request)) {
-            return $resp;
+        if ($msg = $this->promotions->noPaymentMethodMessage(
+            $request->has('allow_cash') ? $request->boolean('allow_cash') : true,
+            $request->has('allow_card') ? $request->boolean('allow_card') : true,
+        )) {
+            return $this->error($msg, 422);
         }
+        if ($msg = $this->promotions->paymentConflictMessage(
+            $product,
+            $request->has('allow_cash') ? $request->boolean('allow_cash') : true,
+            $request->has('allow_card') ? $request->boolean('allow_card') : true,
+        )) {
+            return $this->error($msg, 422);
+        }
+
+        $dates   = $this->promotions->vigencyDates($request->input('starts_at'), $request->input('ends_at'));
+        $storeId = $this->promotions->scopedStoreId($request);
+
         if ($request->input('status', ProductPromotion::STATUS_ACTIVE) === ProductPromotion::STATUS_ACTIVE) {
-            if ($resp = $this->promoTypeConflictError($product, $request)) {
-                return $resp;
-            }
-            if ($resp = $this->duplicatePromoError($product, $request)) {
-                return $resp;
-            }
-            if ($resp = $this->activePromoCapError($product, $this->scopedStoreId($request))) {
-                return $resp;
+            $type = $request->promoType();
+            $msg = $this->promotions->typeConflictMessage($product, $type, $dates['starts_at'], $dates['ends_at'], $storeId)
+                ?? $this->promotions->duplicateMessage(
+                    $product,
+                    $type,
+                    $request->input('buy_n') !== null ? (int) $request->input('buy_n') : null,
+                    $request->input('pay_m') !== null ? (int) $request->input('pay_m') : null,
+                    $dates['starts_at'],
+                    $dates['ends_at'],
+                    $storeId,
+                )
+                ?? $this->promotions->capMessage($product, $storeId);
+            if ($msg) {
+                return $this->error($msg, 422);
             }
         }
 
-        $promotion = $product->promotions()->create(array_merge(
+        // `product_id` legacy A PROPÓSITO: el hook created() del modelo lo
+        // asigna al pivote, y una revisión vieja (rollout) lo sigue viendo.
+        $promotion = ProductPromotion::create(array_merge(
             $request->only(['name', 'buy_n', 'pay_m', 'min_qty', 'discount_per_unit', 'allow_cash', 'allow_card', 'priority']),
-            $this->vigencyDates($request->input('starts_at'), $request->input('ends_at')),
+            $dates,
             [
-                'type'     => $request->promoType(),
-                'status'   => $request->input('status', ProductPromotion::STATUS_ACTIVE),
-                'store_id' => $this->scopedStoreId($request),
+                'type'       => $request->promoType(),
+                'status'     => $request->input('status', ProductPromotion::STATUS_ACTIVE),
+                'store_id'   => $storeId,
+                'product_id' => $product->id,
             ],
         ));
 
@@ -80,58 +117,25 @@ class ProductPromotionsController extends Controller
     /** PUT /products/{product}/promotions/{promotion} — editar / pausar / reanudar. */
     public function update(StoreProductPromotionRequest $request, Product $product, ProductPromotion $promotion): JsonResponse
     {
+        // Mismo orden de gates que el controller viejo (rol → permiso → 404);
+        // el delegado los repite, lo cual es inofensivo.
         if ($resp = $this->adminOrManagerGateError()) {
             return $resp;
         }
         if ($resp = $this->promoManageError()) {
             return $resp;
         }
-        if ((int) $promotion->product_id !== (int) $product->id) {
-            return $this->error('La promoción no pertenece a este producto.', 404);
-        }
-        if ($resp = $this->promoMutationGateError($request, $promotion)) {
+        if ($resp = $this->assignmentMissingError($product, $promotion)) {
             return $resp;
         }
-        // Se revalida en CADA update, no solo al reactivar: los flags de pago
-        // del PRODUCTO pueden haber cambiado desde que se creó la promo.
-        if ($resp = $this->promoPaymentConflictError($product, $request, $promotion)) {
-            return $resp;
-        }
-        // Duplicado y tope solo al REACTIVAR (pausada/vencida → activa); editar
-        // una que ya está activa no se bloquea aunque exista un excedente legacy.
-        if ($request->has('status')
-            && $request->input('status') === ProductPromotion::STATUS_ACTIVE
-            && $promotion->status !== ProductPromotion::STATUS_ACTIVE) {
-            // Tipo EFECTIVO: `promoType()` cae a 'nxm' cuando el request no trae
-            // `type`, y desde el mayoreo los PUT pueden ser parciales (pausar /
-            // reanudar). Sin esto se compararía contra el tipo equivocado.
-            $type = $request->has('type') ? $request->promoType() : (string) $promotion->type;
 
-            if ($resp = $this->promoTypeConflictError($product, $request, $promotion->id, $type)) {
-                return $resp;
-            }
-            if ($resp = $this->duplicatePromoError($product, $request, $promotion->id, $type)) {
-                return $resp;
-            }
-            if ($resp = $this->activePromoCapError($product, $this->scopedStoreId($request), $promotion->id)) {
-                return $resp;
-            }
-        }
-
-        $promotion->update(array_merge(
-            // `tiers` fuera (mayoreo 2026-07-23): los bundles viejos lo siguen
-            // mandando al pausar y aquí se descarta en silencio.
-            $request->only(['name', 'buy_n', 'pay_m', 'min_qty', 'discount_per_unit', 'allow_cash', 'allow_card', 'priority']),
-            $this->vigencyDates($request->input('starts_at'), $request->input('ends_at')),
-            $request->has('status') ? ['status' => $request->input('status')] : [],
-            $request->has('store_id') ? ['store_id' => $this->scopedStoreId($request)] : [],
-        ));
-
-        return $this->success($promotion->fresh(), 'Promoción actualizada.');
+        // Una sola implementación: el update real vive en el controller
+        // top-level (valida contra TODOS los productos asignados — para las
+        // shim-creadas hay uno solo, así que el comportamiento es idéntico).
+        return app(PromotionsController::class)->update($request, $promotion);
     }
 
-    /** DELETE /products/{product}/promotions/{promotion} — el ticket histórico
-     *  no se afecta: sale_items guarda snapshot (promo_name/promo_free_qty). */
+    /** DELETE /products/{product}/promotions/{promotion} — des-asignar o borrar. */
     public function destroy(Product $product, ProductPromotion $promotion): JsonResponse
     {
         if ($resp = $this->adminOrManagerGateError()) {
@@ -140,210 +144,40 @@ class ProductPromotionsController extends Controller
         if ($resp = $this->promoManageError()) {
             return $resp;
         }
-        if ((int) $promotion->product_id !== (int) $product->id) {
-            return $this->error('La promoción no pertenece a este producto.', 404);
+        if ($resp = $this->assignmentMissingError($product, $promotion)) {
+            return $resp;
         }
-        if ($resp = $this->promoMutationGateError(request(), $promotion)) {
+        if ($resp = $this->promoMutationGateError($promotion)) {
             return $resp;
         }
 
-        $promotion->delete();
+        $promotion->products()->detach($product->id);
+        if ((int) $promotion->product_id === (int) $product->id) {
+            // Sin esto una revisión vieja seguiría aplicando la promo aquí.
+            $promotion->update(['product_id' => null]);
+        }
+
+        // Semántica vieja preservada: si ya no aplica a NINGÚN producto, la
+        // promo desaparece — pero una multi-asignada sobrevive para los demás.
+        if ($promotion->products()->count() === 0) {
+            $promotion->delete();
+        }
 
         return $this->success(null, 'Promoción eliminada.');
     }
 
-    /** Máximo de promos ACTIVAS a la vez por producto (pedido Joel 2026-07-18). */
-    private const MAX_ACTIVE_PROMOS = 2;
-
-    /**
-     * Anti-duplicados (pedido Joel 2026-07-18): otra promo con el MISMO NxM se
-     * permite SOLO si su vigencia NO se encima con una activa existente (2x1 de
-     * julio + 2x1 de diciembre = OK). Ventana null = infinita (se encima con
-     * todo). Tiendas: ámbito EXACTO desde el override local (2026-07-20) —
-     * una local sobre la global es un REEMPLAZO deliberado y se permite.
-     */
-    private function duplicatePromoError(
-        Product $product,
-        StoreProductPromotionRequest $request,
-        ?int $ignoreId = null,
-        ?string $type = null,
-    ): ?JsonResponse {
-        $type  = $type ?? $request->promoType();
-        $query = $this->overlappingActivePromos($product, $request, $ignoreId)
-            ->where('type', $type);
-
-        // NxM: duplicado = mismo N y M. Mayoreo: cualquier otra del mismo tipo
-        // encimada es duplicado (competirían entre sí por la misma línea).
-        if ($type === ProductPromotion::TYPE_NXM) {
-            $query->where('buy_n', (int) $request->input('buy_n'))
-                ->where('pay_m', (int) $request->input('pay_m'));
-        }
-
-        $existing = $query->first();
-        if (! $existing) {
-            return null;
-        }
-
-        $label = $type === ProductPromotion::TYPE_NXM
-            ? "una promo {$request->input('buy_n')}x{$request->input('pay_m')}"
-            : 'una promo de mayoreo';
-
-        return $this->error(
-            "Ya existe {$label} para este producto que se encima en fechas (\"{$existing->name}\"). Pausa o elimina esa, o usa un rango de fechas que no se encime.",
-            422
-        );
-    }
-
-    /**
-     * Restricción de pago de la promo vs la del PRODUCTO (2026-07-24).
-     *
-     * Como la promo BLOQUEA el cobro cuando el método no le sirve, una promo
-     * solo-efectivo sobre un producto que no acepta efectivo vuelve al producto
-     * invendible. Se ataja al guardar en vez de descubrirlo en el mostrador.
-     *
-     * Vive en el controller y no en el FormRequest a propósito: tiene que
-     * re-correr en cada update porque los flags del producto pueden cambiar
-     * DESPUÉS de crear la promo.
-     */
-    private function promoPaymentConflictError(
-        Product $product,
-        StoreProductPromotionRequest $request,
-        ?ProductPromotion $current = null,
-    ): ?JsonResponse {
-        // Ausente en un PUT parcial = conserva lo que ya tenía la promo.
-        $promoCash = $request->has('allow_cash')
-            ? $request->boolean('allow_cash')
-            : (bool) ($current->allow_cash ?? true);
-        $promoCard = $request->has('allow_card')
-            ? $request->boolean('allow_card')
-            : (bool) ($current->allow_card ?? true);
-
-        if (!$promoCash && !$promoCard) {
-            return $this->error('Marca al menos un método de pago para la promoción.', 422);
-        }
-
-        $prodCash = (bool) ($product->paymentMethod?->allow_cash ?? true);
-        $prodCard = (bool) ($product->paymentMethod?->allow_card ?? true);
-
-        // Los métodos que servirían para cobrar CON la promo aplicada.
-        $sirveEfectivo = $promoCash && $prodCash;
-        $sirveTarjeta  = $promoCard && $prodCard;
-
-        if (!$sirveEfectivo && !$sirveTarjeta) {
-            $falta = !$promoCash ? 'efectivo' : 'tarjeta';
-
-            return $this->error(
-                "El producto \"{$product->name}\" no acepta {$falta}, así que esta promo nunca se podría cobrar. Ajusta primero la restricción de pago del producto.",
-                422
-            );
-        }
-
-        return null;
-    }
-
-    /**
-     * Exclusividad de TIPOS (pedido Joel 2026-07-20): un producto no puede
-     * tener a la vez una promo NxM y una de mayoreo vigentes con ventana y
-     * ámbito de tienda encimados — una u otra.
-     */
-    private function promoTypeConflictError(
-        Product $product,
-        StoreProductPromotionRequest $request,
-        ?int $ignoreId = null,
-        ?string $type = null,
-    ): ?JsonResponse {
-        $type = $type ?? $request->promoType();
-
-        $existing = $this->overlappingActivePromos($product, $request, $ignoreId)
-            ->where('type', '!=', $type)
-            ->first();
-
-        if (! $existing) {
-            return null;
-        }
-
-        $existingLabel = $existing->type === ProductPromotion::TYPE_NXM
-            ? "{$existing->buy_n}x{$existing->pay_m}"
-            : 'de mayoreo';
-
-        return $this->error(
-            "Este producto ya tiene la promo \"{$existing->name}\" ({$existingLabel}) vigente en esas fechas. No pueden convivir una NxM y una de mayoreo — pausa o elimina esa primero.",
-            422
-        );
-    }
-
-    /**
-     * Query base compartida: promos ACTIVAS vivas del producto cuya VENTANA se
-     * encima con lo que se está creando/reactivando, EN EL MISMO ÁMBITO EXACTO
-     * de tienda. Ventana null = infinita (se encima con todo).
-     *
-     * ÁMBITO EXACTO (override local, Joel 2026-07-20): una LOCAL ya NO choca
-     * con la GLOBAL — la local REEMPLAZA a la global en su tienda (el motor la
-     * apaga ahí), así que crearla encima es deliberado y permitido. Local solo
-     * choca con locales de SU tienda; global solo con globales.
-     */
-    private function overlappingActivePromos(
-        Product $product,
-        StoreProductPromotionRequest $request,
-        ?int $ignoreId = null,
-    ): \Illuminate\Database\Eloquent\Builder {
-        $dates = $this->vigencyDates($request->input('starts_at'), $request->input('ends_at'));
-        $newStart = $dates['starts_at'];
-        $newEnd   = $dates['ends_at'];
-        $storeId  = $this->scopedStoreId($request);
-
-        return ProductPromotion::query()
-            ->where('product_id', $product->id)
-            ->where('status', ProductPromotion::STATUS_ACTIVE)
-            ->when($ignoreId !== null, fn ($q) => $q->where('id', '!=', $ignoreId))
-            // Solo vivas (no vencidas).
-            ->where(fn ($q) => $q->whereNull('ends_at')->orWhere('ends_at', '>=', now()))
-            // Mismo ámbito exacto de tienda (ver docblock).
-            ->when($storeId === null, fn ($q) => $q->whereNull('store_id'))
-            ->when($storeId !== null, fn ($q) => $q->where('store_id', $storeId))
-            // Ventana que se encima (condición omitida si el lado nuevo es infinito).
-            ->when($newEnd !== null, fn ($q) => $q->where(fn ($qq) =>
-                $qq->whereNull('starts_at')->orWhere('starts_at', '<=', $newEnd)
-            ))
-            ->when($newStart !== null, fn ($q) => $q->where(fn ($qq) =>
-                $qq->whereNull('ends_at')->orWhere('ends_at', '>=', $newStart)
-            ));
-    }
-
-    /**
-     * Tope de promos activas por producto EN EL MISMO ÁMBITO EXACTO de tienda
-     * (override local 2026-07-20): máx 2 globales y máx 2 locales por sucursal.
-     * La global "opacada" por una local ya no bloquea el tope de esa tienda.
-     */
-    private function activePromoCapError(Product $product, ?int $storeId, ?int $ignoreId = null): ?JsonResponse
+    /** 404 si la promo no está asignada a este producto (antes: product_id !=). */
+    private function assignmentMissingError(Product $product, ProductPromotion $promotion): ?JsonResponse
     {
-        $activeCount = ProductPromotion::query()
-            ->where('product_id', $product->id)
-            ->where('status', ProductPromotion::STATUS_ACTIVE)
-            ->where(fn ($q) => $q->whereNull('ends_at')->orWhere('ends_at', '>=', now()))
-            ->when($ignoreId !== null, fn ($q) => $q->where('id', '!=', $ignoreId))
-            ->when($storeId === null, fn ($q) => $q->whereNull('store_id'))
-            ->when($storeId !== null, fn ($q) => $q->where('store_id', $storeId))
-            ->count();
+        $assigned = $promotion->products()->where('products.id', $product->id)->exists();
 
-        if ($activeCount < self::MAX_ACTIVE_PROMOS) {
-            return null;
-        }
-
-        return $this->error(
-            'Este producto ya tiene 2 promociones activas — pausa o elimina una antes de activar otra.',
-            422
-        );
+        return $assigned ? null : $this->error('La promoción no pertenece a este producto.', 404);
     }
 
-    /**
-     * Un gerente solo puede EDITAR/PAUSAR/BORRAR promos de SU tienda. Las
-     * globales (store_id null) y las de otras tiendas son solo-lectura para él
-     * (se listan para que no las duplique en el mismo producto). Admin: todo.
-     */
-    private function promoMutationGateError(\Illuminate\Http\Request $request, ProductPromotion $promotion): ?JsonResponse
+    /** Gerente solo muta promos de su tienda (espejo del top-level). */
+    private function promoMutationGateError(ProductPromotion $promotion): ?JsonResponse
     {
-        $user = $request->user();
+        $user = request()->user();
         $isAdmin = $user && $user->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
         if ($isAdmin) {
             return null;
@@ -356,54 +190,5 @@ class ProductPromotionsController extends Controller
             'Solo puedes modificar promociones de tu tienda. Las globales o de otras sucursales las gestiona el admin.',
             403
         );
-    }
-
-    /**
-     * Fechas de vigencia en la ZONA DEL NEGOCIO (America/Tijuana) → UTC.
-     *
-     * El admin manda 'YYYY-MM-DD' plano: starts_at = inicio del día local,
-     * ends_at = fin del día local (23:59:59 Tijuana). Sin esta conversión una
-     * promo "vence el 20" moría a las ~5pm locales (23:59 UTC) — misma clase
-     * de bug que DateRange ya resolvió en cortes (TODO #117).
-     * Un ISO con hora (round-trip de update) se parsea tal cual (ya es UTC).
-     *
-     * @return array{starts_at: ?\Carbon\Carbon, ends_at: ?\Carbon\Carbon}
-     */
-    /**
-     * Tienda de la promo con RBAC: admin manda lo que quiera (null = todas las
-     * tiendas); gerente queda FORZADO a su propia tienda — no puede crear promos
-     * globales ni de otras sucursales.
-     */
-    private function scopedStoreId(\Illuminate\Http\Request $request): ?int
-    {
-        $user = $request->user();
-        $isAdmin = $user && $user->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
-        if ($isAdmin) {
-            return $request->filled('store_id') ? (int) $request->input('store_id') : null;
-        }
-
-        return $user?->store_id ? (int) $user->store_id : null;
-    }
-
-    private function vigencyDates(?string $startsAt, ?string $endsAt): array
-    {
-        $parse = static function (?string $value, bool $endOfDay): ?Carbon {
-            if (! $value) {
-                return null;
-            }
-            if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
-                return $endOfDay ? DateRange::toUtc($value) : DateRange::fromUtc($value);
-            }
-            try {
-                return Carbon::parse($value)->utc();
-            } catch (\Throwable) {
-                return null;
-            }
-        };
-
-        return [
-            'starts_at' => $parse($startsAt, false),
-            'ends_at'   => $parse($endsAt, true),
-        ];
     }
 }

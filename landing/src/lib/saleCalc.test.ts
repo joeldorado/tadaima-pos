@@ -455,3 +455,177 @@ describe("newLineId", () => {
     expect(ids.size).toBe(200);
   });
 });
+
+// ─── PARIDAD MIX & MATCH (Joel 2026-07-23) ────────────────────────────────────
+// Los escenarios S1..S12 son la TABLA DE PARIDAD con el gemelo PHP — los
+// MISMOS números viven en backend/tests/Feature/MixMatchCheckoutTest.php.
+// Si tocas un caso aquí, tócalo allá o los motores divergen y el checkout
+// devuelve 422 en el mostrador.
+describe("mix & match — paridad S1..S12 con MixMatchCheckoutTest.php", () => {
+  const mm = (id: number, productId: string, over: Partial<PromoDef> = {}): PromoDef => ({
+    id,
+    productId,
+    name: `Promo ${id}`,
+    buyN: 2,
+    payM: 1,
+    priority: 0,
+    ...over,
+  });
+
+  it("S1: 2x1 cruzado — 1 de A ($200) + 1 de B ($150) dispara; gratis la más barata", () => {
+    const promos = [mm(10, "1", { name: "2x1 Cruzado" }), mm(10, "2", { name: "2x1 Cruzado" })];
+    const r = recalculateSale({
+      lines: [line({ productId: "1", unitPrice: 200 }), line({ productId: "2", unitPrice: 150 })],
+      promotions: promos,
+    });
+    expect(r.lines[0]!.benefit).toBeNull();
+    expect(r.lines[0]!.poolPromoId).toBe(10); // contribuyente, para el tag de Caja
+    expect(r.lines[1]!.benefit?.amount).toBe(150);
+    expect(r.lines[1]!.benefit?.freeQty).toBe(1);
+    expect(r.total).toBe(200);
+  });
+
+  it("S2: 3x2 con tres productos — gratis la más barata ($80)", () => {
+    const promos = ["1", "2", "3"].map((p) => mm(11, p, { name: "3x2 Trío", buyN: 3, payM: 2 }));
+    const r = recalculateSale({
+      lines: [
+        line({ productId: "1", unitPrice: 100 }),
+        line({ productId: "2", unitPrice: 80 }),
+        line({ productId: "3", unitPrice: 120 }),
+      ],
+      promotions: promos,
+    });
+    expect(r.lines[1]!.benefit?.amount).toBe(80);
+    expect(r.lines[0]!.benefit).toBeNull();
+    expect(r.lines[2]!.benefit).toBeNull();
+    expect(r.total).toBe(220);
+  });
+
+  it("S3: empates deterministas — precio igual desempata productId NUMÉRICO, luego índice", () => {
+    // productId '5' vs '3' al mismo precio → gana el 3 (numérico asc).
+    const promos = [mm(12, "5", { name: "2x1 Empate" }), mm(12, "3", { name: "2x1 Empate" })];
+    const r = recalculateSale({
+      lines: [line({ productId: "5", unitPrice: 100 }), line({ productId: "3", unitPrice: 100 })],
+      promotions: promos,
+    });
+    expect(r.lines[0]!.benefit).toBeNull();
+    expect(r.lines[1]!.benefit?.amount).toBe(100);
+
+    // Splits del mismo producto al mismo precio → índice posicional asc.
+    const r2 = recalculateSale({
+      lines: [line({ productId: "7", unitPrice: 100 }), line({ productId: "7", unitPrice: 100 })],
+      promotions: [mm(13, "7", { name: "2x1 Split" })],
+    });
+    expect(r2.lines[0]!.benefit?.amount).toBe(100);
+    expect(r2.lines[1]!.benefit).toBeNull();
+  });
+
+  it("S4: mayoreo combinado — 3 de A + 2 de B alcanzan min 5; −$20 a CADA pieza", () => {
+    const mayoreo = { type: "qty_discount" as const, minQty: 5, discountPerUnit: 20, buyN: 0, payM: 0 };
+    const promos = [mm(14, "1", { name: "Mayoreo Combo", ...mayoreo }), mm(14, "2", { name: "Mayoreo Combo", ...mayoreo })];
+    const r = recalculateSale({
+      lines: [line({ productId: "1", unitPrice: 100, qty: 3 }), line({ productId: "2", unitPrice: 90, qty: 2 })],
+      promotions: promos,
+    });
+    expect(r.lines[0]!.benefit?.amount).toBe(60);
+    expect(r.lines[1]!.benefit?.amount).toBe(40);
+    expect(r.total).toBe(380);
+  });
+
+  it("S5: mayoreo combinado que NO alcanza el mínimo — sin beneficio", () => {
+    const mayoreo = { type: "qty_discount" as const, minQty: 5, discountPerUnit: 20, buyN: 0, payM: 0 };
+    const promos = [mm(15, "1", { name: "Mayoreo Lejos", ...mayoreo }), mm(15, "2", { name: "Mayoreo Lejos", ...mayoreo })];
+    const r = recalculateSale({
+      lines: [line({ productId: "1", unitPrice: 100, qty: 2 }), line({ productId: "2", unitPrice: 90, qty: 2 })],
+      promotions: promos,
+    });
+    expect(r.lineBenefitTotal).toBe(0);
+    expect(r.total).toBe(380);
+  });
+
+  it("S6: mayoreo — clamp por línea al bruto real", () => {
+    const mayoreo = { type: "qty_discount" as const, minQty: 2, discountPerUnit: 100, buyN: 0, payM: 0 };
+    const promos = [mm(16, "1", { name: "Mayoreo Fuerte", ...mayoreo }), mm(16, "2", { name: "Mayoreo Fuerte", ...mayoreo })];
+    const r = recalculateSale({
+      lines: [line({ productId: "1", unitPrice: 30, qty: 2 }), line({ productId: "2", unitPrice: 500, qty: 1 })],
+      promotions: promos,
+    });
+    expect(r.lines[0]!.benefit?.amount).toBe(60); // 2×$100 teórico → clamp a $60
+    expect(r.lines[1]!.benefit?.amount).toBe(100);
+    expect(r.total).toBe(400);
+  });
+
+  it("S7: greedy — línea consumida no entra al segundo pool", () => {
+    const promos = [
+      mm(20, "1", { name: "2x1 Gana" }),
+      mm(21, "1", { name: "Mayoreo Pierde", type: "qty_discount", minQty: 2, discountPerUnit: 10 }),
+    ];
+    const r = recalculateSale({
+      lines: [line({ productId: "1", unitPrice: 100, qty: 2 })],
+      promotions: promos,
+    });
+    expect(r.lines[0]!.benefit?.promoId).toBe(20);
+    expect(r.lines[0]!.benefit?.amount).toBe(100);
+  });
+
+  it("S8: override local separa pools — A sale del pool global", () => {
+    const promos = [
+      mm(30, "1", { name: "Global 2x1", storeId: null }),
+      mm(30, "2", { name: "Global 2x1", storeId: null }),
+      mm(31, "1", { name: "Local A", type: "qty_discount", minQty: 2, discountPerUnit: 5, storeId: 1 }),
+    ];
+    const r = recalculateSale({
+      lines: [line({ productId: "1", unitPrice: 100 }), line({ productId: "2", unitPrice: 100 })],
+      promotions: promos,
+    });
+    expect(r.lineBenefitTotal).toBe(0);
+  });
+
+  it("S9: splits del mismo producto se combinan (cambio de spec §8)", () => {
+    const r = recalculateSale({
+      lines: [line({ productId: "1", unitPrice: 100 }), line({ productId: "1", unitPrice: 100 })],
+      promotions: [mm(40, "1", { name: "2x1 Split" })],
+    });
+    expect(r.lineBenefitTotal).toBe(100);
+    expect(r.total).toBe(100);
+  });
+
+  it("S10: pool de una línea degenera exacto al motor anterior", () => {
+    const r = recalculateSale({
+      lines: [line({ productId: "1", unitPrice: 100, qty: 5 })],
+      promotions: [mm(50, "1", { name: "2x1 Solo" })],
+    });
+    expect(r.lines[0]!.benefit?.amount).toBe(200);
+    expect(r.lines[0]!.benefit?.freeQty).toBe(2);
+    expect(r.total).toBe(300);
+  });
+
+  it("S11: qty fraccionaria no aporta unidades al pool", () => {
+    const promos = [mm(60, "1", { name: "2x1 Frac" }), mm(60, "2", { name: "2x1 Frac" })];
+    const r = recalculateSale({
+      lines: [line({ productId: "1", unitPrice: 100, qty: 0.5 }), line({ productId: "2", unitPrice: 100 })],
+      promotions: promos,
+    });
+    expect(r.lineBenefitTotal).toBe(0);
+  });
+
+  it("S12: stacking manual sobre el pool — rollup cuadra", () => {
+    const promos = [mm(70, "1", { name: "2x1 Stack" }), mm(70, "2", { name: "2x1 Stack" })];
+    const r = recalculateSale({
+      lines: [
+        line({
+          productId: "1", unitPrice: 200,
+          discount: { kind: "percent", basis: "line", value: 10, reason: "otro" },
+        }),
+        line({ productId: "2", unitPrice: 150 }),
+      ],
+      promotions: promos,
+    });
+    expect(r.lines[0]!.benefit?.amount).toBe(20);
+    expect(r.lines[0]!.benefit?.type).toBe("discount");
+    expect(r.lines[1]!.benefit?.amount).toBe(150);
+    expect(r.lines[1]!.benefit?.type).toBe("promo");
+    expect(r.lineBenefitTotal).toBe(170);
+    expect(r.total).toBe(180);
+  });
+});

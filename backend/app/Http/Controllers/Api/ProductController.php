@@ -370,6 +370,15 @@ class ProductController extends Controller
             // Manually handle tables without cascade
             DB::table('layaways')->where('product_id', $product->id)->delete();
 
+            // Promos generales (2026-07-25): el FK legacy product_id sigue
+            // siendo cascadeOnDelete — sin este null-out, borrar el producto
+            // original MATARÍA una promo asignada a otros 19 productos. Las
+            // asignaciones de ESTE producto sí caen (pivote cascade); la promo
+            // sobrevive para los demás (con 0 asignaciones es estado legal).
+            DB::table('product_promotions')
+                ->where('product_id', $product->id)
+                ->update(['product_id' => null]);
+
             $product->delete();
         });
 

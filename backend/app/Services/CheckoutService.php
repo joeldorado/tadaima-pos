@@ -82,12 +82,19 @@ class CheckoutService
                     static fn (array $i) => (int) $i['product_id'],
                     $items,
                 )));
+                // Promos generales (2026-07-25): se cargan por el pivote de
+                // asignaciones, expandidas por producto — una promo asignada a
+                // 2 productos del carrito llega como 2 filas hidratadas, cada
+                // una con su product_id (el alias PISA la columna legacy), que
+                // es exactamente el shape que el agrupador del motor espera.
                 $activePromos = \App\Models\ProductPromotion::query()
-                    ->whereIn('product_id', $cartProductIds)
+                    ->join('product_promotion_assignments as ppa', 'ppa.promotion_id', '=', 'product_promotions.id')
+                    ->whereIn('ppa.product_id', $cartProductIds)
                     ->currentlyActive()
                     // Scoping por tienda (2026-07-16): solo promos de la tienda
                     // de la venta o globales (store_id null).
                     ->forStore($storeId)
+                    ->select('product_promotions.*', 'ppa.product_id as product_id')
                     ->get();
 
                 $calc = $this->calculator->calculate(array_map(

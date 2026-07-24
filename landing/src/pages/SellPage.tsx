@@ -171,6 +171,12 @@ interface Mesa {
   // true cuando el cajero activó "+ Dólares" en esta mesa. Default false → cada
   // venta nueva inicia en pesos (decisión Joel 2026-05-28).
   usdPrimaryMode?: boolean;
+  // true cuando los dólares tecleados YA se recibieron físicamente. Mientras es
+  // false, cashReceivedUsd es una SIMULACIÓN ("¿cuánto sería en dólares?"): se
+  // muestra la conversión pero NO cuenta como recibido ni viaja al checkout.
+  // Antes no existía este estado y el monto quedaba vivo desde que se tecleaba —
+  // sin forma de deshacer si el cliente decía "mejor no" (Joel 2026-07-23).
+  usdApplied?: boolean;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -347,6 +353,7 @@ const makeMesa = (n?: number): Mesa => {
     cashReceived: "",
     cashReceivedUsd: "",
     usdPrimaryMode: false,
+    usdApplied: false,
   };
 };
 
@@ -997,6 +1004,20 @@ export function SellPage() {
   const setShowUsdInput = useCallback((v: boolean) => {
     updMesa(activeMesa.id, m => ({ ...m, usdPrimaryMode: v }));
   }, [activeMesa.id, updMesa]);
+
+  // ¿Los dólares tecleados ya se RECIBIERON? false = simulación (no cuentan).
+  // El ref existe porque "Enter aplica y cobra" ocurre en el MISMO evento: el
+  // updMesa no re-renderiza a tiempo y handleCheckout leería el valor viejo —
+  // los snapshots del checkout leen usdAppliedRef, nunca el estado directo.
+  const usdApplied = !!activeMesa?.usdApplied;
+  const activeMesaIdForUsd = activeMesa?.id;
+  const usdAppliedRef = useRef(usdApplied);
+  usdAppliedRef.current = usdApplied;
+  const setUsdApplied = useCallback((v: boolean) => {
+    usdAppliedRef.current = v;
+    if (activeMesaIdForUsd == null) return;
+    updMesa(activeMesaIdForUsd, m => ({ ...m, usdApplied: v }));
+  }, [activeMesaIdForUsd, updMesa]);
 
   // Una sola vez al hidratar: si la mesa viene con paymentMethod="Dólares"
   // de un snapshot anterior, normaliza a "Efectivo" (Dólares se eliminó del
@@ -2022,6 +2043,7 @@ export function SellPage() {
       cashReceived: "",
       cashReceivedUsd: "",
       usdPrimaryMode: false,
+      usdApplied: false,
       // Tras cada cobro el método vuelve SIEMPRE a Efectivo (pedido Joel):
       // si la venta anterior fue con Tarjeta, la siguiente no debe arrancar en
       // Tarjeta por inercia.
@@ -2145,6 +2167,21 @@ export function SellPage() {
     const map: Record<string, (typeof saleCalcResult.lines)[number]> = {};
     for (const l of saleCalcResult.lines) map[l.lineId] = l;
     return map;
+  }, [saleCalcResult]);
+
+  /**
+   * Mix & match (2026-07-23): cuántas líneas participan en el pool de cada
+   * promo (beneficiadas + contribuyentes). >1 = promo combinada entre líneas —
+   * el badge lo dice para que el cajero entienda por qué la gratis cayó en
+   * otra línea.
+   */
+  const promoPoolCounts = useMemo(() => {
+    const counts: Record<number, number> = {};
+    for (const l of saleCalcResult.lines) {
+      const id = l.promoPart?.promoId ?? l.poolPromoId;
+      if (id != null) counts[id] = (counts[id] ?? 0) + 1;
+    }
+    return counts;
   }, [saleCalcResult]);
 
   /** Flags de pago de cada promo del carrito, indexados por id de promo. */
@@ -3413,7 +3450,7 @@ export function SellPage() {
           if (directItems.length > 0) {
             // Efectivo del ticket (liquidación + regular + anticipo nuevo) en MXN
             // incluyendo USD convertido + cambio, para el detalle/ticket.
-            const ticketReceivedUsd = parseFloat(cashReceivedUsd) || 0;
+            const ticketReceivedUsd = usdAppliedRef.current ? (parseFloat(cashReceivedUsd) || 0) : 0;
             const ticketReceived    = (parseFloat(cashReceived) || 0) + ticketReceivedUsd * tc;
             const ticketTotalForCash = liquidationAmount + regularNet + newPreventaDeposit;
             const ticketChange = ticketReceived > ticketTotalForCash ? ticketReceived - ticketTotalForCash : 0;
@@ -3430,7 +3467,8 @@ export function SellPage() {
                   ? { terminal_id: activeMesa.selectedTerminalId } : {}),
               }],
               // Dólares físicos recibidos + TC usado (para Historial/Corte/Reporte).
-              ...((parseFloat(cashReceivedUsd) || 0) > 0 ? { cash_received_usd: parseFloat(cashReceivedUsd), exchange_rate: tc } : {}),
+              // ticketReceivedUsd ya viene gateado por usdApplied (simulación no viaja).
+              ...(ticketReceivedUsd > 0 ? { cash_received_usd: ticketReceivedUsd, exchange_rate: tc } : {}),
               ...(ticketReceived > 0 ? { cash_received: ticketReceived, change_amount: ticketChange } : {}),
             });
             regularSaleId = saleResult?.id;
@@ -3491,7 +3529,7 @@ export function SellPage() {
         const customerEmailSnap  = activeMesa.customerEmail;
         const payMethodSnap      = activeMesa.paymentMethod;
         const liquidatedCodeSnap = activeMesa.loadedPreSaleOrderCode;
-        const cashReceivedUsdSnap = parseFloat(cashReceivedUsd) || 0;
+        const cashReceivedUsdSnap = usdAppliedRef.current ? (parseFloat(cashReceivedUsd) || 0) : 0;
         const cashReceivedSnap    = (parseFloat(cashReceived) || 0) + cashReceivedUsdSnap * tc;
 
         setCashReceived("");
@@ -3613,8 +3651,10 @@ export function SellPage() {
       }
 
       const needsCash = activeMesa.paymentMethod === "Efectivo";
-      // Efectivo híbrido: MXN + USD*tc, todo evaluado en pesos.
-      const receivedInMxn = (parseFloat(cashReceived) || 0) + (parseFloat(cashReceivedUsd) || 0) * tc;
+      // Efectivo híbrido: MXN + USD*tc, todo evaluado en pesos. USD en
+      // simulación no cuenta — el anticipo debe cubrirse con dinero real.
+      const receivedInMxn = (parseFloat(cashReceived) || 0)
+        + (usdAppliedRef.current ? (parseFloat(cashReceivedUsd) || 0) : 0) * tc;
       if (needsCash && totalDeposit > 0 && receivedInMxn < totalDeposit) {
         blocked = true;
         toast("Ingresa el anticipo recibido", {
@@ -3683,7 +3723,7 @@ export function SellPage() {
             // Efectivo del ticket (incluye USD convertido a TC) + cambio, para el
             // detalle/ticket. Se adjunta a la venta regular (única fila Sale del
             // ticket; el anticipo de preventa vive en pre_sale_orders).
-            const ticketReceivedUsd = parseFloat(cashReceivedUsd) || 0;
+            const ticketReceivedUsd = usdAppliedRef.current ? (parseFloat(cashReceivedUsd) || 0) : 0;
             const ticketReceived    = (parseFloat(cashReceived) || 0) + ticketReceivedUsd * tc;
             const ticketTotalForCash = catalogDeposit + regularNet;
             const ticketChange = ticketReceived > ticketTotalForCash ? ticketReceived - ticketTotalForCash : 0;
@@ -3700,7 +3740,8 @@ export function SellPage() {
                   ? { terminal_id: activeMesa.selectedTerminalId } : {}),
               }],
               // Dólares físicos recibidos + TC usado (para Historial/Corte/Reporte).
-              ...((parseFloat(cashReceivedUsd) || 0) > 0 ? { cash_received_usd: parseFloat(cashReceivedUsd), exchange_rate: tc } : {}),
+              // ticketReceivedUsd ya viene gateado por usdApplied (simulación no viaja).
+              ...(ticketReceivedUsd > 0 ? { cash_received_usd: ticketReceivedUsd, exchange_rate: tc } : {}),
               ...(ticketReceived > 0 ? { cash_received: ticketReceived, change_amount: ticketChange } : {}),
             });
             regularSaleId = saleResult?.id;
@@ -3757,7 +3798,7 @@ export function SellPage() {
         );
 
         void queryClient.invalidateQueries({ queryKey: queryKeys.historial.all });
-        const mixedReceivedUsd = parseFloat(cashReceivedUsd) || 0;
+        const mixedReceivedUsd = usdAppliedRef.current ? (parseFloat(cashReceivedUsd) || 0) : 0;
         const mixedReceived    = (parseFloat(cashReceived) || 0) + mixedReceivedUsd * tc;
         const mixedTotal = catalogDeposit + regularSubtotalFinal;
         const mixedTicket: CompletedSaleData = {
@@ -3874,7 +3915,7 @@ export function SellPage() {
       // Solo Efectivo usa campo recibido (incluye USD híbrido convertido a MXN).
       // Tarjeta/Transferencia siempre 0 (defensa por si quedó algo).
       const isCashPay = activeMesa.paymentMethod === "Efectivo";
-      const receivedUsdSnapshot = isCashPay ? (parseFloat(cashReceivedUsd) || 0) : 0;
+      const receivedUsdSnapshot = isCashPay && usdAppliedRef.current ? (parseFloat(cashReceivedUsd) || 0) : 0;
       const receivedSnapshot    = isCashPay
         ? (parseFloat(cashReceived) || 0) + receivedUsdSnapshot * tc
         : 0;
@@ -3916,7 +3957,8 @@ export function SellPage() {
             ? { terminal_id: activeMesa.selectedTerminalId } : {}),
         }],
         // Dólares físicos recibidos + TC usado (para Historial/Corte/Reporte).
-        ...((parseFloat(cashReceivedUsd) || 0) > 0 ? { cash_received_usd: parseFloat(cashReceivedUsd), exchange_rate: tc } : {}),
+        // receivedUsdSnapshot ya viene gateado por usdApplied (simulación no viaja).
+        ...(receivedUsdSnapshot > 0 ? { cash_received_usd: receivedUsdSnapshot, exchange_rate: tc } : {}),
         // Efectivo entregado (MXN, incluye USD) + cambio — para el ticket y el
         // detalle del Historial (antes solo vivían en memoria y se perdían).
         ...(receivedSnapshot > 0 ? { cash_received: receivedSnapshot, change_amount: changeSnapshot } : {}),
@@ -5443,18 +5485,31 @@ export function SellPage() {
                           // restricción de pago, no solo cuando ya bloquea: si
                           // el menú deshabilita el método, el cajero nunca
                           // llegaría al estado bloqueado y se quedaría sin ver
-                          // la salida.
-                          const promoId = lineCalcById[item.lineId]?.promoPart?.promoId;
+                          // la salida. Con mix & match también en CONTRIBUYENTES
+                          // (poolPromoId): su pieza arma la promo aunque el
+                          // descuento caiga en otra línea.
+                          const promoId = lineCalcById[item.lineId]?.promoPart?.promoId
+                            ?? lineCalcById[item.lineId]?.poolPromoId;
                           const f = promoId != null ? promoFlagsById[promoId] : undefined;
                           const promoRestringe = !!f && (!f.cash || !f.card);
                           if (!item.skipPromo && !promoRestringe) return null;
+                          // QUITAR = a nivel GRUPO (mix & match): se congela el
+                          // pool al momento del click y se skipea completo — si
+                          // solo saliera esta línea, el beneficio "saltaría" a
+                          // la siguiente más barata y perseguiría al cajero.
+                          // DESHACER = por línea (cada skipeada trae su botón).
+                          const poolLineIds = !item.skipPromo && promoId != null
+                            ? new Set(saleCalcResult.lines
+                                .filter(l => (l.promoPart?.promoId ?? l.poolPromoId) === promoId)
+                                .map(l => l.lineId))
+                            : new Set([item.lineId]);
                           return (
                             <button
                               type="button"
                               onClick={() => updMesa(activeMesa.id, m => ({
                                 ...m,
-                                items: m.items.map(i => i.lineId === item.lineId
-                                  ? { ...i, skipPromo: !i.skipPromo } : i),
+                                items: m.items.map(i => poolLineIds.has(i.lineId)
+                                  ? { ...i, skipPromo: !item.skipPromo } : i),
                               }))}
                               className="px-1.5 py-0.5 rounded text-[7px] font-black uppercase tracking-widest flex items-center gap-1 cursor-pointer"
                               style={item.skipPromo
@@ -5664,8 +5719,10 @@ export function SellPage() {
                               −{fmt(lineCalc?.manualPart ?? 0)} · {DISCOUNT_REASON_LABELS[item.discount.reason]} <X size={10} />
                             </button>
                           )}
-                          {/* Badge de promo NxM automática: verde, no removible — ahora
-                              convive con el descuento manual (stacking). */}
+                          {/* Badge de promo automática: verde, no removible — ahora
+                              convive con el descuento manual (stacking). Con
+                              mix & match dice "(combinada)" cuando el pool tuvo
+                              más de una línea. */}
                           {(lineCalc?.promoPart?.amount ?? 0) > 0 && (
                             <span
                               className="mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-black"
@@ -5673,7 +5730,20 @@ export function SellPage() {
                               title={`Promoción automática: ${lineCalc?.promoPart?.promoLabel ?? ""}`}
                             >
                               {/* qty_discount no regala piezas (freeQty 0) — solo monto */}
-                              {lineCalc?.promoPart?.promoLabel ?? "Promo"} ·{(lineCalc?.promoPart?.freeQty ?? 0) > 0 ? ` ${lineCalc?.promoPart?.freeQty} gratis` : ""} −{fmt(lineCalc?.promoPart?.amount ?? 0)}
+                              {lineCalc?.promoPart?.promoLabel ?? "Promo"}{(promoPoolCounts[lineCalc?.promoPart?.promoId ?? -1] ?? 0) > 1 ? " (combinada)" : ""} ·{(lineCalc?.promoPart?.freeQty ?? 0) > 0 ? ` ${lineCalc?.promoPart?.freeQty} gratis` : ""} −{fmt(lineCalc?.promoPart?.amount ?? 0)}
+                            </span>
+                          )}
+                          {/* Mix & match: esta línea CONTRIBUYE al pool de una
+                              promo sin recibir el descuento (la pieza gratis
+                              cayó en otra línea más barata). Sin este tag el
+                              cajero no entendería por qué "su" 2x1 no se ve. */}
+                          {lineCalc?.poolPromoId != null && (
+                            <span
+                              className="mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-black"
+                              style={{ background: "rgba(16,185,129,0.06)", color: "rgba(52,211,153,0.75)", border: "1px dashed rgba(16,185,129,0.35)" }}
+                              title="Esta pieza cuenta para armar la promoción; el descuento cayó en otra línea del carrito"
+                            >
+                              Cuenta para {lineCalc.poolLabel ?? "la promo"}
                             </span>
                           )}
                           {!item.isFromPreSale && item.isDamaged && (
@@ -6139,10 +6209,19 @@ export function SellPage() {
                       total (vía TC) para calcular el faltante o cambio. */}
                   {activeMesa.paymentMethod === "Efectivo" && (() => {
                     const receivedMxn   = parseFloat(cashReceived)    || 0;
-                    const receivedUsd   = parseFloat(cashReceivedUsd) || 0;
-                    const usdAsMxn      = receivedUsd * tc;
-                    const totalReceived = receivedMxn + usdAsMxn;
+                    // typedUsd = lo tecleado (puede ser simulación); receivedUsd =
+                    // lo que CUENTA como recibido (solo si el cajero confirmó).
+                    const typedUsd      = parseFloat(cashReceivedUsd) || 0;
+                    const receivedUsd   = usdApplied ? typedUsd : 0;
+                    const usdAsMxn      = typedUsd * tc;
+                    const totalReceived = receivedMxn + receivedUsd * tc;
                     const cambio        = totalReceived - currentPayAmount;
+                    // Simulación viva: hay dólares tecleados sin confirmar.
+                    const usdSimulating = typedUsd > 0 && !usdApplied;
+                    // "Si los recibiera": total hipotético con los USD contando.
+                    const simTotal      = receivedMxn + usdAsMxn;
+                    const simRestante   = Math.max(0, currentPayAmount - simTotal);
+                    const simCambio     = Math.max(0, simTotal - currentPayAmount);
                     // Modo USD primario: al click "+ Dólares" se esconde pesos.
                     // Pesos reaparece SOLO si USD no alcanza a cubrir el total
                     // (cajero completa con pesos el faltante).
@@ -6192,13 +6271,19 @@ export function SellPage() {
                                 value={cashReceivedUsd}
                                 onChange={e => setCashReceivedUsd(e.target.value)}
                                 onKeyDown={e => {
-                                  if (e.key === "Enter" && totalReceived >= currentPayAmount) void handleCheckout();
+                                  // Enter = confirmar los dólares y, si cubren, cobrar —
+                                  // mismas teclas que antes de la simulación (el setter
+                                  // actualiza usdAppliedRef en el acto, el checkout lo ve).
+                                  if (e.key === "Enter") {
+                                    if (typedUsd > 0 && !usdApplied) setUsdApplied(true);
+                                    if (receivedMxn + usdAsMxn >= currentPayAmount) void handleCheckout();
+                                  }
                                 }}
                                 placeholder="0.00"
                                 className="w-full text-center rounded-xl py-3 pl-14 pr-4 text-4xl font-black placeholder-emerald-500/15 focus:outline-none transition-all tabular-nums"
                                 style={{ background: "var(--td-input-bg)", border: "2px solid rgba(16,185,129,0.40)", color: "var(--td-input-text)" }}
                               />
-                              {receivedUsd > 0 && (
+                              {typedUsd > 0 && (
                                 <span className="absolute right-4 top-1/2 -translate-y-1/2 text-base font-black text-emerald-400 pointer-events-none tabular-nums">
                                   ≈ {fmt(usdAsMxn)}
                                 </span>
@@ -6223,6 +6308,38 @@ export function SellPage() {
                                 </button>
                               ))}
                             </div>
+
+                            {/* ── SIMULACIÓN — el cliente preguntó "¿cuánto sería en
+                                dólares?" y aún no decide. Lo tecleado NO cuenta como
+                                recibido ni viaja al cobro hasta confirmar. "No" limpia
+                                y regresa a pesos, como si nunca se hubiera tecleado. */}
+                            {usdSimulating && (
+                              <div className="flex flex-col gap-2 rounded-xl p-3" style={{ background: 'rgba(245,158,11,0.10)', border: '1px solid rgba(245,158,11,0.35)' }}>
+                                <span className="text-[10px] font-black uppercase tracking-widest text-amber-400">
+                                  Simulación — aún no cuenta
+                                </span>
+                                <p className="m-0 text-[11px] font-bold leading-snug" style={{ color: 'var(--td-text-md)' }}>
+                                  Si da US${typedUsd.toFixed(2)} ≈ {fmtMXN(usdAsMxn)}
+                                  {simRestante > 0
+                                    ? <> — quedarían por pagar <span className="text-red-400">{fmtMXN(simRestante)}</span></>
+                                    : <> — cubre todo{simCambio > 0 ? <> y el cambio sería <span className="text-emerald-400">{fmtMXN(simCambio)}</span></> : null}</>}
+                                </p>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setUsdApplied(true)}
+                                    className="py-2 rounded-xl text-[11px] font-black uppercase tracking-wider"
+                                    style={{ background: 'rgba(16,185,129,0.16)', border: '1px solid rgba(16,185,129,0.4)', color: '#34d399' }}
+                                  >✓ Sí los recibí</button>
+                                  <button
+                                    type="button"
+                                    onClick={() => { setCashReceivedUsd(""); setUsdApplied(false); setShowUsdInput(false); }}
+                                    className="py-2 rounded-xl text-[11px] font-black uppercase tracking-wider"
+                                    style={{ background: 'var(--td-card-bg)', border: '1px solid var(--td-card-border)', color: 'var(--td-text-hi)' }}
+                                  >✗ No — a pesos</button>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         )}
 
@@ -6249,7 +6366,7 @@ export function SellPage() {
                               <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-2xl pointer-events-none" style={{ color: "var(--td-placeholder)" }}>$</span>
                               <input
                                 ref={cashInputRef}
-                                autoFocus={receivedUsd > 0}
+                                autoFocus={typedUsd > 0}
                                 type="number" min="0" step="0.01"
                                 value={cashReceived}
                                 onChange={e => setCashReceived(e.target.value)}
@@ -6317,6 +6434,31 @@ export function SellPage() {
                                 <div className="flex items-center justify-between text-[10px] font-bold text-amber-400">
                                   <span>· Dólares US${receivedUsd.toFixed(2)}</span><span className="tabular-nums">≈ {fmt(usdAsMxn)}</span>
                                 </div>
+                              </div>
+                            )}
+                            {/* Chip de simulación pendiente — visible también desde la
+                                vista de pesos, para que el "¿sí o no?" nunca se pierda. */}
+                            {usdSimulating && (
+                              <div className="flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5" style={{ background: 'rgba(245,158,11,0.10)', border: '1px dashed rgba(245,158,11,0.45)' }}>
+                                <span className="text-[10px] font-bold text-amber-400 min-w-0 truncate">
+                                  US${typedUsd.toFixed(2)} en simulación — no contado
+                                </span>
+                                <span className="flex gap-1 shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => setUsdApplied(true)}
+                                    className="px-2 py-0.5 rounded-md text-[10px] font-black"
+                                    style={{ background: 'rgba(16,185,129,0.16)', border: '1px solid rgba(16,185,129,0.4)', color: '#34d399' }}
+                                    title="Sí recibí los dólares — contarlos"
+                                  >✓</button>
+                                  <button
+                                    type="button"
+                                    onClick={() => { setCashReceivedUsd(""); setUsdApplied(false); }}
+                                    className="px-2 py-0.5 rounded-md text-[10px] font-black"
+                                    style={{ background: 'var(--td-card-bg)', border: '1px solid var(--td-card-border)', color: 'var(--td-text-hi)' }}
+                                    title="No — quitar la simulación"
+                                  >✗</button>
+                                </span>
                               </div>
                             )}
 
@@ -6602,7 +6744,8 @@ export function SellPage() {
                   <div className="col-span-8">
                     {(() => {
                       const receivedMxn   = parseFloat(cashReceived)    || 0;
-                      const receivedUsd   = parseFloat(cashReceivedUsd) || 0;
+                      // USD en simulación NO cuenta para el faltante del botón.
+                      const receivedUsd   = usdApplied ? (parseFloat(cashReceivedUsd) || 0) : 0;
                       const totalReceived = receivedMxn + receivedUsd * tc;
                       const hasAnyCash    = receivedMxn > 0 || receivedUsd > 0;
                       const isInsufficient = activeMesa.paymentMethod === "Efectivo"

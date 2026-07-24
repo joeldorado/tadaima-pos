@@ -1,6 +1,71 @@
 # MASTERLOG — Tadaima POS
 
 > Registro maestro del proyecto: arquitectura, evolución, decisiones clave y estado actual.
+
+---
+
+### Sesión 2026-07-23/24 — PROMOS GENERALES mix & match + Calculadora USD + Corte SOLO efectivo — pendiente de deploy
+
+Tres pedidos de Joel en una sesión. Tests: backend **367/367** (+30), vitest **126/126** (+12), build OK, type-check en baseline (470).
+
+**(1) PROMOS GENERALES (mix & match).** La promo deja de vivir bajo un producto: es entidad
+propia (menú Promos → "Gestión de promociones") asignable a 1..N productos, y es COMBINABLE
+entre productos (decisión Joel): 1 pieza de A + 1 de B disparan el 2x1 asignado a ambos.
+- **Datos:** pivote `product_promotion_assignments` (UNIQUE promo+producto); `product_id`
+  legacy pasa a nullable (rastro, como `tiers`); backfill idempotente (cada promo vieja → 1
+  asignación = caso degenerado idéntico al comportamiento anterior). Hook `created()` en el
+  modelo: crear con `product_id` auto-asigna al pivote (puente para shim/fixtures/rollback).
+- **API:** CRUD top-level `/promotions` + attach batch TODO-o-NADA (422 detalla qué producto
+  choca) + detach (anula el puntero legacy — una revisión vieja no debe seguir aplicándola).
+  Los anidados `/products/{id}/promotions` quedan como SHIM para PWA rezagada (POST = crear
+  + asignar + escribir legacy; DELETE = des-asignar, borra solo si queda sin productos).
+  Validaciones POR PRODUCTO sobre asignaciones (dup/tope 2/exclusividad/pago) extraídas a
+  `PromotionService`. Force-delete de producto anula punteros legacy ANTES de borrar (sin
+  eso el FK cascade mataría una promo multi-asignada).
+- **Motor mix & match** (`assignPoolBenefits`, gemelo exacto en `SaleCalculator.php` y
+  `saleCalc.ts`): pool por promo con unidades enteras combinadas; NxM regala las MÁS BARATAS
+  (desempate clavado: precio asc → product_id NUMÉRICO asc → índice posicional asc); mayoreo
+  combina qty para el mínimo y descuenta por pieza con clamp por línea; greedy por promo
+  (ahorro desc → priority desc → id asc), pool completo consumido al aplicar (una línea =
+  una promo); skip saca la línea y recalcula; override local sigue POR PRODUCTO (separa
+  pools). Snapshot por línea beneficiada; contribuyentes sin snapshot. CAMBIO DE SPEC §8:
+  líneas split del MISMO producto ahora SÍ combinan (si A+B combinan, A+A también).
+  Tabla de PARIDAD S1..S12 con los MISMOS números en `MixMatchCheckoutTest.php` y
+  `saleCalc.test.ts` — si tocas un caso en uno, tócalo en el otro.
+- **UI:** PromosPage gana Gestión (crear/editar/pausar/eliminar/asignar con buscador);
+  ProductPromotionsTab es PICKER (asignar/quitar de las existentes; con producto SIN guardar
+  bufferea `pendingPromoIds` y ProductsPage las asigna tras el create — muere el "guarda el
+  producto y regresa"); "Personalizar para mi tienda" = clonar a promo local + attach. Caja:
+  badge "(combinada)", tag "Cuenta para {promo}" en contribuyentes, "Cobrar sin promo" ahora
+  skipea el POOL completo (si no, el beneficio saltaría a la siguiente línea barata).
+- QA navegador: promo creada y asignada por UI a 2 productos; en Caja 1+1 disparó el 2x1
+  (badge combinada + tag + total $200 de $350) y el cobro pasó AL PRIMER intento; snapshot
+  por línea verificado en DB (applied_promotion_id/promo_amount solo en la beneficiada).
+- RIESGO CONOCIDO (ventana de rollout): un bundle PWA viejo calcula por línea; con una promo
+  MULTI-producto el server (pool) puede diferir → 422 hasta recargar. Mitigación operativa:
+  crear las primeras promos multi-producto unas horas después del deploy.
+
+**(2) CALCULADORA USD en Caja (simulación).** El monto en dólares tecleado arranca como
+SIMULACIÓN (badge ámbar "aún no cuenta" + "si da US$X ≈ $Y, quedarían/cambio $Z"): NO cuenta
+como recibido ni viaja al checkout hasta confirmar. "✓ Sí los recibí" aplica (flujo de
+siempre); "✗ No — a pesos" limpia y regresa como si nada. Enter = confirmar y, si cubre,
+cobrar (mismas teclas que antes). Chip persistente en el resumen si regresa a pesos con la
+simulación viva. Nuevo `Mesa.usdApplied` + ref (`usdAppliedRef`) porque Enter aplica y cobra
+en el MISMO evento; TODOS los snapshots del checkout gateados por el ref (incluyendo el
+guard del anticipo de preventa). Backend intacto. QA: simulación no resta; "No" limpia;
+"Sí" + cobro → DB con `cash_received_usd=20, exchange_rate=15.5, cash_received=310,
+change_amount=110`.
+
+**(3) CORTE DE CAJA SOLO EFECTIVO.** El esperado del cajón excluía solo `%tarjeta%` — las
+TRANSFERENCIAS contaban como billetes (faltante fantasma). Ahora la clasificación es de
+INCLUSIÓN (`PaymentMethod::isCashLike()`: efectivo/dólares); un método futuro ("Depósito")
+queda fuera solo. Desglose nuevo `total_card`/`total_transfer` en `GET /reports/cash` (por
+sesión y summary), fila "Fuera de caja" en CashCloseSummaryModal + impresión 58mm + celda en
+CashCutsPage; copy del CloseCashModal ahora dice "SOLO el efectivo del cajón (pesos y
+dólares)". Test RED con Transferencia primero (fallaba: la incluía). OJO: `expected_cash` se
+recalcula al LEER → cortes históricos con transferencias cambian su Diferencia (hacia
+cuadrar; el faltante fantasma desaparece). QA: fondo 500 + venta efectivo 200 + venta
+transferencia 150 → esperado 700, transfer fuera como informativa, diferencia $0.
 > Actualizado: 2026-06-30 (**DEPLOY rev `tadaima-00110-9lg` — Caja: FIX descuento que NO se restaba del total (cobraba de más) + promo con % en ticket/historial + ticket legible en térmica + cierre de caja visible + etiquetas MXN.**) Bloque de la sesión (revs 00107→00110, deploys iterativos; commit `92bad87` en `main` consolida el código). Deploy `gcloud run deploy tadaima --source . --region us-central1` (Cloud Build, SIN flags de env, **desde la raíz**). rev 100%, bundle nuevo `index-Cs9YCb2H.js` vivo (verificado: "Promo ("×2, "Descuento (", "Cerrar caja ahora", " MXN"×5); `vitest` promo **13/13**, `vite build` OK, 0 errores tsc nuevos. **(1) FIX descuento (foto 4r.png):** el panel de cobro mostraba "TOTAL A PAGAR/COBRAR" SIN restar la promo (subtotal $360 con promo −$60 cobraba $360) → el cajero pedía de más al cliente, aunque el backend SÍ cobraba bien ($300 vía `total`/`totalBeforeComm`). Causa: `currentPayAmount` (alimenta el total grande + FALTA/CAMBIO) en la rama de venta regular/mixta sumaba `regularSubtotal + catalogDeposit` y **NO restaba `discountAmt`**. Fix: helper puro `computeRegularChargeAmount` en `landing/src/lib/promo.ts` (resta + clamp ≥0) consumido por `currentPayAmount`; tests en `promo.test.ts`. Solo display, backend intacto. **(2) Promo con % (pedido Joel):** el descuento se guarda como MONTO absoluto (`activeMesa.discount`/`sales.discount`); el % se DERIVA (`discountPct(discount, subtotal)`, redondeado) y se muestra en: ticket de venta ("Promo (17%) −$60"), reimpresión desde Historial (antes ni mostraba el descuento), fila del Historial (chip ámbar "−17%") y detalle expandido ("Descuento (17%)"). Si la promo fue por precio final, el % puede salir redondeado (16.7→17). **(3) Ticket legible en térmica (00107-00108):** los grises `#555/#888` salían lavados en la Xprinter → todos a NEGRO + jerarquía (nombre 11px bold) en los **3** puntos de impresión (`doPrintTicket`, `SalesPage::printTicket`, `CashCloseSummaryModal`). **(4) Cierre de caja visible (00108):** botón "Cerrar Caja" prominente (ámbar sólido + ícono Scissors, separado de "Cortes" que es solo historial) + **banner** cuando la caja quedó abierta de días anteriores (`isStaleSession` vía `toLocalYmd`/`getTodayLocal`, zona Tijuana) + indicador "Abierta {hora}". Contexto: la tienda dejó la caja abierta 4 días sin cortar y no hallaba cómo cerrarla; el botón existía pero se confundía con "Cortes". **(5) Panel USD/MXN (00109):** se quitó el "Total a cobrar" repetido de la caja verde y se etiquetaron los pesos con "MXN" (`fmtMXN`) para distinguir de US$. **Incluye** el módulo promo/descuento backend (discount en checkout, `SaleDiscountTest` 4 tests) + ajustes de reportes. **OJO deploy:** correr SIEMPRE desde la raíz del repo (usa Dockerfile); desde `landing/` cae a Buildpacks y FALLA. **CACHÉ PWA:** probar en incógnito/hard refresh. Ver [[project_promo_descuento]], [[project_ticket_print]], [[project_corte_caja_ux]].
 > Actualizado: 2026-06-29 (**DEPLOY rev `tadaima-00106-rgp` — Ticket: LOGO de Tadaima + ajuste 58 mm CSP-safe.**) Deploy `gcloud run deploy tadaima --source . --region us-central1` (Cloud Build, SIN flags de env). Commit `e859d69` en `main` (solo `landing/src/pages/SellPage.tsx`); **NO se tocó `dev/qa-handoff`**. rev sirviendo 100%, Home=200, bundle nuevo `index-DQEhjXK3.js` (con `img.logo`+`tadaima-logo.jpeg`) vivo; `vite build` OK, 0 errores tsc nuevos. **Contexto:** Joel mandó foto del ticket impreso con texto **cortado a la derecha**; resultó ser un **bundle VIEJO servido por el caché del PWA** (layout columnar "Artículo/Cant Total", título "Ticket #18"), NO el 00105 — verificado: el bundle vivo tenía `tadaima_ticket` y NO `Cant Total`, y el 00105 ya envolvía el nombre y cabía en 58 mm. **(1) Logo en el ticket:** se agregó `landing/public/tadaima-logo.jpeg` como **data URI** (patrón `fetch→blob→readAsDataURL` de `ReportsPage:1413`, cacheado a nivel módulo + `useEffect` al montar) en el encabezado de `doPrintTicket`, con `filter:grayscale(1) contrast(1.18)` → sale oscuro/nítido en térmica (no rojo desvaído). Fallback al `<h2>TADAIMA</h2>` de texto si el data URI no está listo. Se borró el placeholder muerto `const tadaimaLogo = null`. **(2) Impresión CSP-safe:** el CSP (`script-src 'self'`, sin unsafe-inline) bloquea scripts/`onclick` inline en la ventana `about:blank` (hereda el CSP del opener), así que `window.print()` y los botones Imprimir/Cerrar se disparan/cablean desde el PADRE con `addEventListener` (los `onclick` inline del 00105 estaban muertos por CSP; el data URI sí pasa por `img-src ... data:`). El print espera a que el logo pinte (`img.onload` + fallback 1200 ms). **Verificado** con `chrome --headless --print-to-pdf` a 58 mm: logo arriba, nombre largo envuelve a 2 líneas, importes alineados, "Efectivo"/"$180.00" completos (nada cortado). **CLAVE caché PWA:** Joel debe probar en **incógnito**/hard refresh (el SW sirve el bundle viejo); auto-update del PWA queda pendiente aparte. Ver [[project_ticket_print]].
 > Actualizado: 2026-06-29 (**DEPLOY rev `tadaima-00105-pkj` — Caja: Cambio/Falta en la MONEDA ACTIVA (USD/MXN) + Ticket imprime VERTICAL.**) Deploy `gcloud run deploy tadaima --source . --region us-central1` (Cloud Build, SIN flags de env). Commit `81b344b` en `main` (solo `landing/src/pages/SellPage.tsx`; backend sin cambios); **NO se tocó `dev/qa-handoff`** (pedido de Joel). rev sirviendo 100%, Home=200, bundle nuevo `index-B-AMFts6.js` vivo; `vite build` OK, 0 errores tsc nuevos (baseline ~447 pre-existentes). **(1) Caja — Cambio/Falta sigue el toggle de moneda:** el cálculo ya existía (`cambio`/`faltaCubrir`); ahora el número grande del resumen de cobro usa la moneda activa (`usdPrimary = showUsdInput`): en modo dólares sale en **US$** (con `≈ $MXN` chiquito), en pesos en **MXN** (con `≈ US$` chiquito). Se agregó `faltaUsd` y se quitó la condición `receivedUsd>0` de `cambioUsd` para que el USD aplique aunque aún no teclee. No cambia el cobro guardado (sigue en MXN: `cash_received`/`change_amount`). Pedido de Joel: que el cajero vea cuánto falta/sobra en la moneda que está usando (zona Tijuana, USD común). **(2) Ticket — impresión vertical:** el ticket de venta (`doPrintTicket` en `SellPage.tsx`) salía GIRADO 90° en la Xprinter porque imprimía con un **iframe oculto 0×0** → Chrome ignoraba el `@page 58mm` y rotaba. Se reemplazó por una **ventana real** `window.open("","tadaima_ticket")` (mismo método que el corte de caja `printCashCut`, que ya imprimía bien) con barra **Imprimir/Cerrar** (clase `.no-print`) para ver el detalle o reimprimir, y CSS 58 mm anclado en `@media print`. Nombre de ventana fijo → no se acumulan. Fallback al iframe anterior solo si el popup está bloqueado (para no perder el auto-print bajo `--kiosk-printing`). QZ Tray (RAW ESC/POS sin Chrome) queda como escalación futura si alguna caja siguiera girando. El sistema viejo imprimía bien porque no usaba Chrome.

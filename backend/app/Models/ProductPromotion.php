@@ -7,6 +7,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class ProductPromotion extends Model
 {
@@ -72,9 +73,42 @@ class ProductPromotion extends Model
         'ends_at'           => 'datetime',
     ];
 
+    /**
+     * @deprecated Promos generales (2026-07-25): la relación real es products()
+     *             vía el pivote. `product_id` quedó como rastro legacy — solo lo
+     *             escriben el shim anidado (compat con PWA rezagada) y lo lee
+     *             una revisión vieja de Cloud Run durante la ventana de rollout.
+     */
     public function product(): BelongsTo
     {
         return $this->belongsTo(Product::class);
+    }
+
+    /** Productos a los que esta promo está asignada (promos generales). */
+    public function products(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            Product::class,
+            'product_promotion_assignments',
+            'promotion_id',
+            'product_id',
+        )->withTimestamps();
+    }
+
+    /**
+     * Puente legacy→asignaciones: crear una promo CON `product_id` (shim
+     * anidado, fixtures de tests, cualquier código rezagado) la asigna sola al
+     * pivote. Garantiza el invariante "product_id puesto ⇒ asignación existe"
+     * sin depender de disciplina — es el espejo en vivo del backfill 000003.
+     * Se retira junto con la columna legacy.
+     */
+    protected static function booted(): void
+    {
+        static::created(function (self $promotion) {
+            if ($promotion->product_id !== null) {
+                $promotion->products()->syncWithoutDetaching([(int) $promotion->product_id]);
+            }
+        });
     }
 
     /**

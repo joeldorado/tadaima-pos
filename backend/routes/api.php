@@ -23,6 +23,7 @@ use App\Http\Controllers\Api\ProductCategoryController;
 use App\Http\Controllers\Api\SuppliersController;
 use App\Http\Controllers\Api\ProductController;
 use App\Http\Controllers\Api\ProductPromotionsController;
+use App\Http\Controllers\Api\PromotionsController;
 use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\SalesDraftController;
 use App\Http\Controllers\Api\SaleCancellationsController;
@@ -116,12 +117,23 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
         Route::get('store-prices',               [ProductController::class, 'storePrices']);
         Route::put('store-prices/{store}',       [ProductController::class, 'updateStorePrices']);
         Route::delete('store-prices/{store}',    [ProductController::class, 'removeStorePrices']);
-        // Promociones NxM (Descuentos v2 — Fase 3)
+        // Promociones anidadas — SHIM de compatibilidad (promos generales
+        // 2026-07-25): bundles PWA rezagados siguen pegando aquí. El CRUD real
+        // vive en /promotions (top-level, abajo).
         Route::get('promotions',                 [ProductPromotionsController::class, 'index']);
         Route::post('promotions',                [ProductPromotionsController::class, 'store']);
         Route::put('promotions/{promotion}',     [ProductPromotionsController::class, 'update']);
         Route::delete('promotions/{promotion}',  [ProductPromotionsController::class, 'destroy']);
     });
+
+    // ── Promociones GENERALES (entidad propia, asignable a N productos) ───────
+    Route::get('promotions',                                 [PromotionsController::class, 'index']);
+    Route::post('promotions',                                [PromotionsController::class, 'store']);
+    Route::get('promotions/{promotion}',                     [PromotionsController::class, 'show']);
+    Route::put('promotions/{promotion}',                     [PromotionsController::class, 'update']);
+    Route::delete('promotions/{promotion}',                  [PromotionsController::class, 'destroy']);
+    Route::post('promotions/{promotion}/products',           [PromotionsController::class, 'attachProducts']);
+    Route::delete('promotions/{promotion}/products/{product}', [PromotionsController::class, 'detachProduct']);
 
     // ── Customers ─────────────────────────────────────────────────────────────
     Route::apiResource('customers', CustomerController::class);

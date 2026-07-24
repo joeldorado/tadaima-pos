@@ -18,7 +18,7 @@ import { useAuth } from "@tadaima/auth";
 import { promoDetailLabel, promoShortLabel } from "@/lib/promoLabel";
 import { isAdmin as isAdminRole, isManager as isManagerRole } from "@/lib/permisos";
 import { toast } from "sonner";
-import { createProduct, updateProduct, deleteProduct, forceDeleteProduct, uploadProductImage, removeProductImage, getInventory, updateInventory, getPrice, sendStockAlert, getCategories, createCategory, getSuppliers, createSupplier } from "@tadaima/api";
+import { createProduct, updateProduct, deleteProduct, forceDeleteProduct, uploadProductImage, removeProductImage, getInventory, updateInventory, getPrice, sendStockAlert, getCategories, createCategory, getSuppliers, createSupplier, attachPromotionProducts } from "@tadaima/api";
 import type { ApiError } from "@tadaima/api";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useProductsQuery } from "@/hooks/queries/useProducts";
@@ -581,7 +581,7 @@ function ProductModal({
   locations = []
 }: {
   onClose: () => void;
-  onSave: (p: Producto, imageFile?: File) => void;
+  onSave: (p: Producto, imageFile?: File, pendingPromoIds?: number[]) => void;
   onDelete?: (p: Producto) => void;
   product?: Producto;
   isAdmin: boolean;
@@ -625,6 +625,9 @@ function ProductModal({
 
   const [activeTab, setActiveTab] = useState<"general" | "precios" | "inventario" | "promociones">("general");
   const [imageFile, setImageFile] = useState<File | null>(null);
+  // Producto NUEVO sin guardar: el tab de Promos bufferea aquí las promos
+  // elegidas y handleSaveProduct las asigna después del create (2026-07-25).
+  const [pendingPromoIds, setPendingPromoIds] = useState<number[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   // Aplica un archivo de imagen al formulario. Compartido por el <input file>
   // (click) y el drop (drag & drop) para no duplicar la lógica.
@@ -679,7 +682,7 @@ function ProductModal({
       setActiveTab("precios");
       return;
     }
-    onSave({ ...formData, id: formData.id || Date.now() } as Producto, imageFile ?? undefined);
+    onSave({ ...formData, id: formData.id || Date.now() } as Producto, imageFile ?? undefined, pendingPromoIds);
   };
 
   return (
@@ -1017,7 +1020,11 @@ function ProductModal({
           )}
 
           {activeTab === "promociones" && (
-            <ProductPromotionsTab productId={product?.id ?? null} />
+            <ProductPromotionsTab
+              productId={product?.id ?? null}
+              pendingPromoIds={pendingPromoIds}
+              onPendingPromosChange={setPendingPromoIds}
+            />
           )}
 
           {activeTab === "inventario" && (() => {
@@ -1430,7 +1437,7 @@ export function ProductsPage() {
     }
   };
 
-  const handleSaveProduct = async (p: Producto, imageFile?: File): Promise<void> => {
+  const handleSaveProduct = async (p: Producto, imageFile?: File, pendingPromoIds?: number[]): Promise<void> => {
     const isNew = !products.some(item => item.id === p.id);
 
     setIsModalOpen(false);
@@ -1481,6 +1488,18 @@ export function ProductsPage() {
             })
           )
         );
+        // Promos elegidas con el producto AÚN sin guardar (buffer del tab de
+        // Promos): asignarlas ahora que existe el id real. Error por promo como
+        // toast individual — el producto NO se revierte.
+        for (const promoId of pendingPromoIds ?? []) {
+          await attachPromotionProducts(promoId, [created.id]).catch((err: unknown) => {
+            const msg = (err as { message?: string }).message ?? 'conflicto con otra promo';
+            toast.error(`Producto creado, pero una promo no se pudo asignar: ${msg}`);
+          });
+        }
+        if (pendingPromoIds?.length) {
+          void queryClient.invalidateQueries({ queryKey: queryKeys.promotions.all });
+        }
         void refreshProductCount();
         // Esperar la invalidación (refetch de queries activas) antes del toast
         // de éxito: cuando sale el ✓ el registro ya está visible en la tabla

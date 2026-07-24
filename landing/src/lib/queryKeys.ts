@@ -4,6 +4,13 @@ export const queryKeys = {
     list: (params?: Record<string, unknown>) => ['products', 'list', params ?? {}] as const,
     detail: (id: number) => ['products', 'detail', id] as const,
   },
+  // Promos GENERALES (2026-07-25): lista de gestión (PromosPage / tab picker).
+  // OJO: al mutar promos invalida TAMBIÉN queryKeys.products.all — las promos
+  // vigentes viajan embebidas en los productos y Caja se entera por ahí.
+  promotions: {
+    all: ['promotions'] as const,
+    admin: () => ['promotions', 'admin'] as const,
+  },
   customers: {
     all: ['customers'] as const,
     list: (params?: Record<string, unknown>) => ['customers', 'list', params ?? {}] as const,

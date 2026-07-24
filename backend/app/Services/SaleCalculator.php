@@ -85,11 +85,17 @@ final class SaleCalculator
             }
         }
 
+        // MIX & MATCH (Joel 2026-07-23): las líneas de productos asignados a la
+        // misma promo forman un POOL — 1 pieza de A + 1 de B sí disparan el 2x1
+        // asignado a ambos. El reparto por línea sale de aquí; el loop de abajo
+        // (stacking, snapshot, rollups) queda casi intacto.
+        $poolBenefits = $this->assignPoolBenefits($lines, $promosByProduct);
+
         $resultLines = [];
         $subtotal    = 0.0;
         $netSum      = 0.0;
 
-        foreach ($lines as $line) {
+        foreach ($lines as $idx => $line) {
             $gross = self::round2((float) $line['unit_price'] * (float) $line['qty']);
 
             $benefitType    = null;
@@ -101,18 +107,9 @@ final class SaleCalculator
             // STACKING (Joel 2026-07-17): la promo aplica SIEMPRE que alcance;
             // el descuento manual se calcula sobre el neto-promo (antes lo
             // reemplazaba). Espejo exacto de recalculateSale en saleCalc.ts.
-            //
-            // `skip_promotion` (2026-07-24): el cajero renunció a la promo a
-            // propósito desde Caja. Es la salida cuando la promo restringe el
-            // método de pago y el cliente no puede pagar de esa forma — sin
-            // esto, el producto simplemente no se le puede vender.
-            $best = ($line['skip_promotion'] ?? false)
-                ? null
-                : $this->bestPromoBenefit(
-                    $promosByProduct[(int) $line['product_id']] ?? [],
-                    (float) $line['unit_price'],
-                    (float) $line['qty'],
-                );
+            // El beneficio por línea ahora viene del reparto de pools —
+            // `skip_promotion` ya quedó excluido del pool en el Paso 0.
+            $best = $poolBenefits[$idx] ?? null;
             $promoAmount = 0.0;
             if ($best !== null) {
                 $benefitType    = 'promo';
@@ -175,79 +172,225 @@ final class SaleCalculator
     }
 
     /**
-     * Mejor beneficio de promo sobre una línea. Espejo de computePromoBenefit
-     * en saleCalc.ts. Null si ninguna alcanza o son inválidas.
+     * MIX & MATCH (Joel 2026-07-23) — reparto de beneficios por POOL.
      *
-     * - 'nxm': groups = floor(Q/N), gratis = groups × (N−M), resto a precio
-     *   completo. free_qty > 0.
-     * - 'qty_discount' = MAYOREO (2026-07-23): desde `min_qty` piezas, TODAS
-     *   las de la línea llevan −`discount_per_unit` c/u (7 pzas con min 5 y
-     *   −$100 = −$700). free_qty = 0 (no hay piezas gratis, es monto directo).
-     *   Monto clampeado al bruto de la línea.
+     * Las líneas de productos asignados a la MISMA promo forman un pool y sus
+     * cantidades se combinan. Espejo EXACTO de assignPoolBenefits en
+     * saleCalc.ts — si tocas un paso aquí, tócalo allá o el checkout da 422.
      *
-     * @param array<int, \App\Models\ProductPromotion> $promos
-     * @return array{amount: float, promo_id: int, promo_name: string, free_qty: int}|null
+     * Paso 1 — unidades enteras: units = floor(qty) por línea; una línea sin
+     *   unidades enteras (qty fraccionaria pura) NO entra a ningún pool.
+     *   Con UNA sola línea el pool degenera exacto al comportamiento anterior:
+     *   floor((k+f)/N) === floor(floor(k+f)/N) para k,N enteros y 0≤f<1.
+     *
+     * Paso 2 — greedy por promo, repetir mientras alguna rinda > 0:
+     *   · NxM: U = Σ units del pool → free_total = floor(U/buy_n)×(buy_n−pay_m).
+     *     Las piezas GRATIS van a las unidades MÁS BARATAS del pool (convención
+     *     retail — protege a la tienda con precios distintos). Orden
+     *     determinista: precio efectivo asc → product_id asc → índice asc.
+     *   · Mayoreo: U ≥ min_qty → CADA línea del pool recibe
+     *     min(round2(units×per_unit), bruto real de la línea) — clamp como hoy.
+     *   · Gana el pool con: ahorro desc → priority desc → id asc (mismo
+     *     desempate que el bestPromoBenefit que este método reemplaza).
+     *   · Al aplicar, TODAS las líneas del pool quedan consumidas — también
+     *     las contribuyentes sin descuento (si reentraran, doble-contarían).
+     *     Una línea = una promo.
+     *
+     * @param array<int, array<string, mixed>> $lines Las líneas de calculate().
+     * @param array<int, array<int, ProductPromotion>> $promosByProduct Promos
+     *   por producto, ya con el override local aplicado.
+     * @return array<int, array{amount: float, promo_id: int, promo_name: string, free_qty: int}>
+     *   Mapa índice-de-línea → beneficio (solo líneas beneficiadas).
      */
-    private function bestPromoBenefit(array $promos, float $unitPrice, float $qty): ?array
+    private function assignPoolBenefits(array $lines, array $promosByProduct): array
     {
-        $best = null;
+        // Paso 0 — candidatas por línea (ids de promo) + catálogo por id.
+        // Copias del mismo id (promo asignada a varios productos) colapsan:
+        // los campos de la matemática son idénticos entre copias.
+        $candidateIdsByLine = [];
+        $promoById = [];
+        foreach ($lines as $idx => $line) {
+            $units = (int) floor((float) $line['qty']);
+            if (($line['skip_promotion'] ?? false) || $units < 1) {
+                $candidateIdsByLine[$idx] = [];
+                continue;
+            }
+            $ids = [];
+            foreach ($promosByProduct[(int) $line['product_id']] ?? [] as $promo) {
+                $ids[] = (int) $promo->id;
+                $promoById[(int) $promo->id] ??= $promo;
+            }
+            $candidateIdsByLine[$idx] = $ids;
+        }
 
-        foreach ($promos as $promo) {
-            if (($promo->type ?? ProductPromotion::TYPE_NXM) === ProductPromotion::TYPE_QTY_DISCOUNT) {
-                $amount = $this->mayoreoAmount(
-                    $promo->min_qty !== null ? (int) $promo->min_qty : null,
-                    $promo->discount_per_unit !== null ? (float) $promo->discount_per_unit : null,
-                    $qty
-                );
-                // Clamp con la cantidad REAL (no floor): en líneas fraccionarias
-                // el bruto es mayor y clampear con floor recortaría de más.
-                $amount = min($amount, self::round2($unitPrice * $qty));
-                if ($amount <= 0) {
+        $consumed = [];
+        $benefits = [];
+
+        while (true) {
+            // Promos con al menos una línea candidata viva, en orden de id
+            // (la iteración es determinista; el ganador lo decide el comparador).
+            $liveIds = [];
+            foreach ($candidateIdsByLine as $idx => $ids) {
+                if (isset($consumed[$idx])) {
                     continue;
                 }
-                $freeQty = 0;
-            } else {
-                $buyN = (int) $promo->buy_n;
-                $payM = (int) $promo->pay_m;
-                if ($buyN < 1 || $payM < 1 || $payM >= $buyN) {
+                foreach ($ids as $id) {
+                    $liveIds[$id] = true;
+                }
+            }
+            if ($liveIds === []) {
+                break;
+            }
+            $liveIds = array_keys($liveIds);
+            sort($liveIds);
+
+            $best = null;
+            foreach ($liveIds as $promoId) {
+                $promo = $promoById[$promoId];
+                $poolIdxs = [];
+                foreach ($candidateIdsByLine as $idx => $ids) {
+                    if (! isset($consumed[$idx]) && in_array($promoId, $ids, true)) {
+                        $poolIdxs[] = $idx;
+                    }
+                }
+                if ($poolIdxs === []) {
                     continue;
                 }
-                $groups  = (int) floor($qty / $buyN);
-                $freeQty = $groups * ($buyN - $payM);
-                if ($freeQty <= 0) {
+
+                $perLine = $this->poolBenefitPerLine($promo, $lines, $poolIdxs);
+                if ($perLine === null) {
                     continue;
                 }
-                $amount = self::round2($freeQty * $unitPrice);
-                if ($amount <= 0) {
+
+                $amountPool = 0.0;
+                foreach ($perLine as $entry) {
+                    $amountPool += $entry['amount'];
+                }
+                $amountPool = self::round2($amountPool);
+                if ($amountPool <= 0) {
                     continue;
+                }
+
+                $candidate = [
+                    'promo'    => $promo,
+                    'amount'   => $amountPool,
+                    'priority' => (int) $promo->priority,
+                    'id'       => $promoId,
+                    'per_line' => $perLine,
+                    'pool'     => $poolIdxs,
+                ];
+                if (
+                    $best === null
+                    || $candidate['amount'] > $best['amount']
+                    || ($candidate['amount'] === $best['amount']
+                        && ($candidate['priority'] > $best['priority']
+                            || ($candidate['priority'] === $best['priority'] && $candidate['id'] < $best['id'])))
+                ) {
+                    $best = $candidate;
                 }
             }
 
-            $candidate = [
-                'amount'     => $amount,
-                'promo_id'   => (int) $promo->id,
-                'promo_name' => (string) $promo->name,
-                'free_qty'   => $freeQty,
-                'priority'   => (int) $promo->priority,
-            ];
+            if ($best === null) {
+                break;
+            }
 
-            if (
-                $best === null
-                || $candidate['amount'] > $best['amount']
-                || ($candidate['amount'] === $best['amount']
-                    && ($candidate['priority'] > $best['priority']
-                        || ($candidate['priority'] === $best['priority'] && $candidate['promo_id'] < $best['promo_id'])))
-            ) {
-                $best = $candidate;
+            foreach ($best['per_line'] as $idx => $entry) {
+                if ($entry['amount'] > 0) {
+                    $benefits[$idx] = [
+                        'amount'     => $entry['amount'],
+                        'promo_id'   => (int) $best['promo']->id,
+                        'promo_name' => (string) $best['promo']->name,
+                        'free_qty'   => $entry['free_qty'],
+                    ];
+                }
+            }
+            foreach ($best['pool'] as $idx) {
+                $consumed[$idx] = true;
             }
         }
 
-        if ($best === null) {
+        return $benefits;
+    }
+
+    /**
+     * Beneficio de UNA promo sobre su pool, repartido por línea. Null si la
+     * promo no alcanza a disparar con las cantidades combinadas.
+     *
+     * @param array<int, int> $poolIdxs Índices de línea del pool.
+     * @return array<int, array{amount: float, free_qty: int}>|null
+     */
+    private function poolBenefitPerLine(ProductPromotion $promo, array $lines, array $poolIdxs): ?array
+    {
+        $totalUnits = 0;
+        foreach ($poolIdxs as $idx) {
+            $totalUnits += (int) floor((float) $lines[$idx]['qty']);
+        }
+        if ($totalUnits < 1) {
             return null;
         }
-        unset($best['priority']);
 
-        return $best;
+        if (($promo->type ?? ProductPromotion::TYPE_NXM) === ProductPromotion::TYPE_QTY_DISCOUNT) {
+            $minQty  = $promo->min_qty !== null ? (int) $promo->min_qty : null;
+            $perUnit = $promo->discount_per_unit !== null ? (float) $promo->discount_per_unit : null;
+            if ($minQty === null || $minQty < 2 || $perUnit === null || $perUnit <= 0) {
+                return null;
+            }
+            if ($totalUnits < $minQty) {
+                return null;
+            }
+
+            $perLine = [];
+            foreach ($poolIdxs as $idx) {
+                $units = (int) floor((float) $lines[$idx]['qty']);
+                // Clamp al bruto REAL (qty con fracción): igual que siempre.
+                $gross  = self::round2((float) $lines[$idx]['unit_price'] * (float) $lines[$idx]['qty']);
+                $amount = min(self::round2($units * $perUnit), $gross);
+                $perLine[$idx] = ['amount' => max(0.0, $amount), 'free_qty' => 0];
+            }
+
+            return $perLine;
+        }
+
+        $buyN = (int) $promo->buy_n;
+        $payM = (int) $promo->pay_m;
+        if ($buyN < 1 || $payM < 1 || $payM >= $buyN) {
+            return null;
+        }
+        $freeTotal = (int) floor($totalUnits / $buyN) * ($buyN - $payM);
+        if ($freeTotal < 1) {
+            return null;
+        }
+
+        // Las gratis caen en las unidades MÁS BARATAS. Desempates clavados
+        // (idénticos en saleCalc.ts o los motores divergen centavo a centavo):
+        // precio efectivo asc → product_id numérico asc → índice posicional asc.
+        $order = $poolIdxs;
+        usort($order, function (int $a, int $b) use ($lines): int {
+            $priceCmp = (float) $lines[$a]['unit_price'] <=> (float) $lines[$b]['unit_price'];
+            if ($priceCmp !== 0) {
+                return $priceCmp;
+            }
+            $productCmp = (int) $lines[$a]['product_id'] <=> (int) $lines[$b]['product_id'];
+            if ($productCmp !== 0) {
+                return $productCmp;
+            }
+
+            return $a <=> $b;
+        });
+
+        $perLine   = [];
+        $remaining = $freeTotal;
+        foreach ($order as $idx) {
+            $units = (int) floor((float) $lines[$idx]['qty']);
+            $take  = min($units, $remaining);
+            $remaining -= $take;
+            $perLine[$idx] = [
+                'amount'   => $take > 0 ? self::round2($take * (float) $lines[$idx]['unit_price']) : 0.0,
+                'free_qty' => $take,
+            ];
+        }
+
+        return $perLine;
     }
 
     /**

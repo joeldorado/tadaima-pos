@@ -15,6 +15,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import { useStoresQuery } from "@/hooks/queries/useStores";
 import { isAdmin as isAdminRole } from "@/lib/permisos";
 import { promoBadge, promoBannerCopy, promoShortLabel } from "@/lib/promoLabel";
+import { PromoAdminSection } from "@/components/promos/PromoAdminSection";
 
 // ─── Tokens visuales (convención de páginas glass) ────────────────────────────
 const PANEL  = "var(--td-panel-bg)";
@@ -514,9 +515,13 @@ export function PromosPage() {
         </button>
       </div>
 
+      {/* Gestión de promociones (solo admin/gerente con permiso) */}
+      <PromoAdminSection />
+
       {/* Nota de gestión */}
       <p className="text-[10px] font-bold mt-3 mb-5" style={{ color: TLO }}>
-        Las promos se crean/editan en <b>Productos → editar → tab Promos</b>. Aplican en todas las tiendas.
+        Las promos se crean aquí (<b>Gestión de promociones</b>) y se asignan a uno o varios productos.
+        También puedes asignarlas desde <b>Productos → editar → tab Promos</b>.
       </p>
 
       {/* Grid */}
@@ -526,7 +531,7 @@ export function PromosPage() {
         <div className="rounded-3xl p-12 text-center" style={{ background: PANEL, border: BORDER }}>
           <TicketPercent size={34} className="mx-auto mb-3" style={{ color: TLO, opacity: 0.5 }} />
           <p className="text-sm font-black uppercase tracking-widest" style={{ color: THI }}>Sin promos vigentes</p>
-          <p className="text-[11px] font-bold mt-1" style={{ color: TMD }}>Crea una en Productos → editar producto → tab Promos (2x1, 3x2…).</p>
+          <p className="text-[11px] font-bold mt-1" style={{ color: TMD }}>Crea una arriba en "Gestión de promociones" y asígnale productos (2x1, 3x2, mayoreo…).</p>
           <p className="text-[10px] font-bold mt-2" style={{ color: TLO }}>
             ¿Creaste una y no sale? Revisa que no esté <b>Programada</b> (fecha de inicio futura), <b>Pausada</b> o <b>Vencida</b>, que el producto esté activo, y que la promo sea de tu tienda (o de todas).
           </p>

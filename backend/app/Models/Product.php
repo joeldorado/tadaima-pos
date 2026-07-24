@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
@@ -70,13 +71,24 @@ class Product extends Model
         return $this->hasOne(ProductPaymentMethod::class);
     }
 
-    public function promotions(): HasMany
+    /**
+     * Promos ASIGNADAS a este producto (promos generales 2026-07-25): la
+     * relación pasa de HasMany por product_id al pivote de asignaciones. Los
+     * eager-loads y Resources existentes no cambian — la colección trae los
+     * mismos modelos con los mismos campos (el shape del embed queda intacto).
+     */
+    public function promotions(): BelongsToMany
     {
-        return $this->hasMany(ProductPromotion::class);
+        return $this->belongsToMany(
+            ProductPromotion::class,
+            'product_promotion_assignments',
+            'product_id',
+            'promotion_id',
+        )->withTimestamps();
     }
 
     /** Promos vigentes AHORA (para el payload de Caja / motor NxM). */
-    public function activePromotions(): HasMany
+    public function activePromotions(): BelongsToMany
     {
         return $this->promotions()->currentlyActive();
     }
