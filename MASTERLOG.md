@@ -10,6 +10,9 @@ Deploy 2026-07-24 (el intento de la noche anterior se cortó con la sesión y nu
 revisión — detectado porque Joel no veía el botón en prod). Bundle `index-Bf0rAh4a.js`
 verificado en vivo (6 marcadores de las 3 features); las 3 migraciones `2026_07_25_*`
 corrieron DONE en el arranque (pivote + nullable + backfill); 0 errores en la rev.
++ rev `tadaima-00143-qmx` (mismo día): las tarjetas de vigentes de PromosPage → tabla
+compacta "Vigentes por producto" (pedido Joel: mucho scroll con la Gestión arriba);
+Compartir por fila y Modo TV intactos. Bundle `index-C1RTIZ_L.js` verificado.
 
 Tres pedidos de Joel en una sesión. Tests: backend **367/367** (+30), vitest **126/126** (+12), build OK, type-check en baseline (470).
 
