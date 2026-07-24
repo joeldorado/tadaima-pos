@@ -17,6 +17,20 @@ Compartir por fila y Modo TV intactos. Bundle `index-C1RTIZ_L.js` verificado.
 "Asignadas a productos") + scroll propio en la lista de gestión (56vh); el tab Promos del
 editor de producto pierde "Nueva promo" — solo "Asignar promo" (las promos nacen únicamente
 en Promos → Gestión; "Personalizar para mi tienda" intacto). Bundle `index-IYMf6t8A.js`.
++ rev `tadaima-00145-jf9` (mismo día, commits `0b3cfcd`+`d994320`): paquete UX "manos
+grandes". (1) CALCULADORA USD en modal (UsdCalculatorModal): botón "$ Dólares" → modal
+gigante con TC visible, BORRAR fijo, respuesta en vivo "LE ALCANZA — CAMBIO $X"/"FALTAN
+$X"; nada aplica hasta "Sí paga con dólares"; chip Editar/Quitar; el flujo USD inline del
+panel de cobro (toggle+presets+simulación) SE FUE; Cambio/Falta siempre MXN;
+usdPrimaryMode legacy. (2) MODO FULL CAJA: LayoutChromeContext (primer canal
+página→Layout), botón "Pantalla completa" en el top bar, aside oculto reusando el patrón
+overlayMode, logo flotante abre drawer; `tadaima-caja-fullscreen`. (3) VISTA COMPACTA del
+carrito ("Compactar", `tadaima-caja-densidad`): filas ~54px, dinero más grande, íconos.
+(4) INVENTARIO con red: "guardado: N" fijo + delta "antes X → Y" + semáforo del total
+(mover vs agregar/quitar) + control Mover Bodega⇄Piso (total intacto) + Restablecer +
+BACKUP post-guardado ("Regresar a como estaba", `tadaima-inv-backup`). (5) Asignar
+productos a promos: tabla de UN click con buscador y filtros. Bundle `index-BbmcF8Z0.js`
+verificado (8 marcadores); 0 errores en la rev; type-check BAJÓ a 466.
 
 Tres pedidos de Joel en una sesión. Tests: backend **367/367** (+30), vitest **126/126** (+12), build OK, type-check en baseline (470).
 
