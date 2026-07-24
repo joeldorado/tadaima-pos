@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import type { CSSProperties } from "react";
 import {
   Search, Plus,
@@ -637,10 +637,24 @@ function ProductModal({
     const url = URL.createObjectURL(file);
     setFormData(prev => ({ ...prev, imagen: url }));
   };
+  // El inventario GUARDADO (lo que hay en el backend al abrir): referencia
+  // fija para los deltas "antes → ahora", el Restablecer y el backup — sin
+  // esto, mover un número por accidente y guardar perdía el valor original
+  // sin dejar rastro (pedido Joel 2026-07-24).
+  const originalQtyRef = useRef<Map<number, number>>(new Map());
+  // Tick para re-render cuando el original llega async (el ref no re-renderiza).
+  const [origLoaded, setOrigLoaded] = useState(false);
+  // Cantidad del control "Mover piezas" por tienda (key = storeId).
+  const [moveQty, setMoveQty] = useState<Record<string, string>>({});
+
   // Load real inventory quantities from backend when editing an existing product
   useEffect(() => {
     if (!product) return
     void getInventory({ product_id: product.id }).then(items => {
+      const orig = new Map<number, number>();
+      for (const i of items) orig.set(i.warehouse_id, i.quantity);
+      originalQtyRef.current = orig;
+      setOrigLoaded(true);
       setFormData(prev => ({
         ...prev,
         stockUbicaciones: (prev.stockUbicaciones ?? []).map(loc => {
@@ -681,6 +695,22 @@ function ProductModal({
       toast.error("El producto debe aceptar al menos un método de pago (efectivo o tarjeta)");
       setActiveTab("precios");
       return;
+    }
+    // BACKUP de inventario (Joel 2026-07-24): si este guardado CAMBIA
+    // existencias de un producto existente, se guarda cómo estaban ANTES —
+    // un solo slot, para poder "regresar como estaba" tras un accidente.
+    if (product && origLoaded) {
+      const changed = (formData.stockUbicaciones ?? []).some(loc =>
+        loc.warehouseId !== undefined
+        && (loc.quantity ?? 0) !== (originalQtyRef.current.get(loc.warehouseId) ?? 0));
+      if (changed) {
+        localStorage.setItem("tadaima-inv-backup", JSON.stringify({
+          productId: product.id,
+          productName: formData.nombre ?? "",
+          at: Date.now(),
+          values: [...originalQtyRef.current.entries()].map(([warehouseId, qty]) => ({ warehouseId, qty })),
+        }));
+      }
     }
     onSave({ ...formData, id: formData.id || Date.now() } as Producto, imageFile ?? undefined, pendingPromoIds);
   };
@@ -1030,6 +1060,28 @@ function ProductModal({
           {activeTab === "inventario" && (() => {
             const assigned = formData.stockUbicaciones ?? [];
 
+            // Lo GUARDADO en el backend (referencia fija para deltas/restaurar).
+            const origQty = (wid: number): number => originalQtyRef.current.get(wid) ?? 0;
+            const curQty = (wid: number): number => {
+              const e = assigned.find(u => u.warehouseId === wid);
+              return e ? (e.quantity ?? e.stock ?? 0) : 0;
+            };
+            // Los deltas/mover/restablecer solo tienen sentido editando un
+            // producto existente CON el original ya cargado.
+            const trackChanges = !!product && origLoaded;
+
+            // Backup del guardado anterior (un slot): permite "regresar como
+            // estaba" si el último guardado movió inventario por accidente.
+            interface InvBackup { productId: number; at: number; values: Array<{ warehouseId: number; qty: number }> }
+            let backup: InvBackup | null = null;
+            try {
+              const raw = localStorage.getItem("tadaima-inv-backup");
+              if (raw) {
+                const parsed = JSON.parse(raw) as InvBackup;
+                if (parsed && parsed.productId === product?.id) backup = parsed;
+              }
+            } catch { /* backup corrupto → se ignora */ }
+
             // Cantidad actual de un almacén ('' = sin asignar → placeholder 0).
             const qtyStr = (warehouseId: number): string => {
               const e = assigned.find(u => u.warehouseId === warehouseId);
@@ -1071,13 +1123,24 @@ function ProductModal({
               if (!byStore.has(key)) byStore.set(key, { storeName: l.store || `Tienda ${l.storeId}`, list: [] });
               byStore.get(key)!.list.push(l);
             }
-            const storeCards = Array.from(byStore.values());
+            const storeCards = Array.from(byStore.entries());
 
             const renderSlot = (loc: typeof locations[number]) => {
               const a = accentOf(loc.type);
+              const orig = origQty(loc.warehouseId);
+              const cur = curQty(loc.warehouseId);
+              const diff = cur - orig;
               return (
                 <div key={loc.warehouseId} style={{ flex: 1, minWidth: 120, display: "flex", flexDirection: "column", gap: 7, padding: "11px 13px", borderRadius: 14, background: a.bg, border: `1px solid ${a.br}` }}>
-                  <span style={{ fontSize: 11, fontWeight: 900, color: a.fg, textTransform: "uppercase", letterSpacing: "0.06em" }}>{slotLabel(loc.type)}</span>
+                  <div className="flex items-center justify-between gap-2">
+                    <span style={{ fontSize: 11, fontWeight: 900, color: a.fg, textTransform: "uppercase", letterSpacing: "0.06em" }}>{slotLabel(loc.type)}</span>
+                    {/* Lo guardado SIEMPRE visible — el ancla que no se pierde. */}
+                    {trackChanges && (
+                      <span style={{ fontSize: 9, fontWeight: 800, color: T.textMuted }} title="Existencia guardada en el sistema">
+                        guardado: {orig}
+                      </span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-2">
                     <input
                       type="number" min={0}
@@ -1089,6 +1152,12 @@ function ProductModal({
                     />
                     <span style={{ fontSize: 10, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>uds</span>
                   </div>
+                  {/* Delta en vivo: qué le hiciste a ESTE slot vs lo guardado. */}
+                  {trackChanges && diff !== 0 && (
+                    <span style={{ fontSize: 10, fontWeight: 900, color: diff > 0 ? "#34d399" : "#FBBF24" }}>
+                      antes {orig} → {cur} ({diff > 0 ? `+${diff}` : diff})
+                    </span>
+                  )}
                 </div>
               );
             };
@@ -1117,20 +1186,119 @@ function ProductModal({
                   </p>
                 )}
 
+                {/* Backup del guardado anterior: regresar como estaba (una vez). */}
+                {trackChanges && backup && (
+                  <div className="flex items-center justify-between gap-3 rounded-2xl px-4 py-3 flex-wrap"
+                    style={{ background: "rgba(96,165,250,0.08)", border: "1px solid rgba(96,165,250,0.3)" }}>
+                    <span className="text-[11px] font-bold min-w-0" style={{ color: "#93C5FD" }}>
+                      El guardado anterior cambió el inventario
+                      {" "}({new Date(backup.at).toLocaleString("es-MX", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}).
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        // Rellena los INPUTS con los valores previos — el cambio
+                        // solo se hace real al presionar "Guardar Cambios".
+                        const prev = new Map((backup?.values ?? []).map(v => [v.warehouseId, v.qty]));
+                        for (const loc of locations) setQty(loc, String(prev.get(loc.warehouseId) ?? 0));
+                        toast.success("Inventario anterior cargado — revisa y presiona Guardar Cambios");
+                      }}
+                      className="shrink-0 rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-wider"
+                      style={{ background: "rgba(96,165,250,0.14)", border: "1px solid rgba(96,165,250,0.45)", color: "#93C5FD", cursor: "pointer" }}
+                    >
+                      Regresar a como estaba
+                    </button>
+                  </div>
+                )}
+
                 {/* Una tarjeta por tienda: Piso | Bodega conectados */}
-                {storeCards.map((card, i) => {
+                {storeCards.map(([storeKey, card]) => {
                   const slots = card.list.slice().sort((a, b) => (TYPE_ORDER[a.type] ?? 9) - (TYPE_ORDER[b.type] ?? 9));
+                  const origTotal = slots.reduce((s, l) => s + origQty(l.warehouseId), 0);
+                  const curTotal  = slots.reduce((s, l) => s + curQty(l.warehouseId), 0);
+                  const totalDiff = curTotal - origTotal;
+                  const anyChanged = trackChanges && slots.some(l => curQty(l.warehouseId) !== origQty(l.warehouseId));
+                  const piso   = slots.find(l => l.type === "store");
+                  const bodega = slots.find(l => l.type === "bodega");
+                  const mQty = Math.max(0, parseInt(moveQty[storeKey] ?? "") || 0);
+                  // Mover = misma cantidad sale de un lado y entra al otro: el
+                  // TOTAL no cambia — la operación segura que no pierde piezas.
+                  const mover = (desde: typeof piso, hacia: typeof piso) => {
+                    if (!desde || !hacia || mQty <= 0) return;
+                    const disponible = curQty(desde.warehouseId);
+                    const n = Math.min(mQty, disponible);
+                    if (n <= 0) { toast.error(`No hay piezas en ${slotLabel(desde.type)} para mover`); return; }
+                    setQty(desde, String(disponible - n));
+                    setQty(hacia, String(curQty(hacia.warehouseId) + n));
+                  };
                   return (
-                    <div key={i} className="rounded-2xl p-3" style={{ background: PRODUCT_THEME.surfaceMuted, border: PRODUCT_THEME.borderSubtle }}>
-                      <div className="flex items-center gap-2 mb-2.5 px-1">
+                    <div key={storeKey} className="rounded-2xl p-3" style={{ background: PRODUCT_THEME.surfaceMuted, border: PRODUCT_THEME.borderSubtle }}>
+                      <div className="flex items-center gap-2 mb-2.5 px-1 flex-wrap">
                         <div className="w-6 h-6 rounded-lg flex items-center justify-center shrink-0" style={{ background: PRODUCT_THEME.surfaceSoft }}>
                           <Warehouse size={12} style={{ color: T.textSecondary }} />
                         </div>
                         <p className="text-sm font-black" style={{ color: T.textPrimary }}>{card.storeName}</p>
+                        {/* Semáforo del TOTAL: mover es seguro; cambiar el total
+                            (agregar/quitar piezas) se anuncia para que un dedazo
+                            no pase desapercibido al Guardar. */}
+                        {anyChanged && (
+                          <span className="ml-auto rounded-lg px-2 py-1 text-[9px] font-black uppercase tracking-wider"
+                            style={totalDiff === 0
+                              ? { background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.35)", color: "#34d399" }
+                              : { background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.4)", color: "#FBBF24" }}>
+                            {totalDiff === 0
+                              ? "Solo moviste piezas — total igual"
+                              : `Total ${origTotal} → ${curTotal} (${totalDiff > 0 ? "agregas" : "quitas"} ${Math.abs(totalDiff)})`}
+                          </span>
+                        )}
                       </div>
                       <div className="flex flex-wrap gap-2.5">
                         {slots.map(renderSlot)}
                       </div>
+                      {/* Mover entre Piso y Bodega sin tocar el total + Restablecer. */}
+                      {trackChanges && (piso && bodega ? (
+                        <div className="flex items-center gap-2 mt-2.5 px-1 flex-wrap">
+                          <span className="text-[9px] font-black uppercase tracking-wider" style={{ color: T.textMuted }}>Mover</span>
+                          <input
+                            type="number" min={1}
+                            value={moveQty[storeKey] ?? ""}
+                            onChange={e => setMoveQty(prev => ({ ...prev, [storeKey]: e.target.value }))}
+                            placeholder="0"
+                            className="w-16 px-2 py-1.5 rounded-lg text-center outline-none font-black text-sm"
+                            style={T.input}
+                          />
+                          <button type="button" onClick={() => mover(bodega, piso)}
+                            className="rounded-lg px-2.5 py-1.5 text-[9px] font-black uppercase tracking-wider"
+                            style={{ background: "rgba(16,185,129,0.10)", border: "1px solid rgba(16,185,129,0.3)", color: "#34d399", cursor: "pointer" }}
+                            title="Pasar piezas de Bodega a Piso (el total no cambia)">
+                            Bodega → Piso
+                          </button>
+                          <button type="button" onClick={() => mover(piso, bodega)}
+                            className="rounded-lg px-2.5 py-1.5 text-[9px] font-black uppercase tracking-wider"
+                            style={{ background: "rgba(245,158,11,0.10)", border: "1px solid rgba(245,158,11,0.3)", color: "#D97706", cursor: "pointer" }}
+                            title="Pasar piezas de Piso a Bodega (el total no cambia)">
+                            Piso → Bodega
+                          </button>
+                          {anyChanged && (
+                            <button type="button"
+                              onClick={() => { for (const l of slots) setQty(l, String(origQty(l.warehouseId))); }}
+                              className="ml-auto rounded-lg px-2.5 py-1.5 text-[9px] font-black uppercase tracking-wider"
+                              style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", color: T.textSecondary, cursor: "pointer" }}
+                              title="Volver a los números guardados (sin guardar todavía)">
+                              Restablecer
+                            </button>
+                          )}
+                        </div>
+                      ) : anyChanged && (
+                        <div className="flex justify-end mt-2.5 px-1">
+                          <button type="button"
+                            onClick={() => { for (const l of slots) setQty(l, String(origQty(l.warehouseId))); }}
+                            className="rounded-lg px-2.5 py-1.5 text-[9px] font-black uppercase tracking-wider"
+                            style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", color: T.textSecondary, cursor: "pointer" }}>
+                            Restablecer
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   );
                 })}
