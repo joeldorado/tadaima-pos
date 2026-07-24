@@ -4,7 +4,12 @@
 
 ---
 
-### Sesión 2026-07-23/24 — PROMOS GENERALES mix & match + Calculadora USD + Corte SOLO efectivo — pendiente de deploy
+### Sesión 2026-07-23/24 — PROMOS GENERALES mix & match + Calculadora USD + Corte SOLO efectivo — DEPLOYADO rev `tadaima-00142-822`
+
+Deploy 2026-07-24 (el intento de la noche anterior se cortó con la sesión y nunca creó
+revisión — detectado porque Joel no veía el botón en prod). Bundle `index-Bf0rAh4a.js`
+verificado en vivo (6 marcadores de las 3 features); las 3 migraciones `2026_07_25_*`
+corrieron DONE en el arranque (pivote + nullable + backfill); 0 errores en la rev.
 
 Tres pedidos de Joel en una sesión. Tests: backend **367/367** (+30), vitest **126/126** (+12), build OK, type-check en baseline (470).
 
