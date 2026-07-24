@@ -13,7 +13,7 @@ import {
 import { useAuth } from "@tadaima/auth";
 import { queryKeys } from "@/lib/queryKeys";
 import { useStoresQuery } from "@/hooks/queries/useStores";
-import { isAdmin as isAdminRole } from "@/lib/permisos";
+import { isAdmin as isAdminRole, isManager as isManagerRole } from "@/lib/permisos";
 import { promoBadge, promoBannerCopy, promoShortLabel } from "@/lib/promoLabel";
 import { PromoAdminSection } from "@/components/promos/PromoAdminSection";
 
@@ -434,6 +434,12 @@ function TvMode({ items, onExit }: {
 export function PromosPage() {
   const { user } = useAuth();
   const isAdmin = isAdminRole(user?.roles);
+  // Mismo gate que PromoAdminSection (que además se auto-oculta): decide si
+  // existe la pestaña Gestión. Cajero/sin permiso ven solo las asignadas.
+  const canSeeGestion = (isAdmin || isManagerRole(user?.roles))
+    && (isAdmin || user?.can_manage_promos !== false);
+  // Tabs (pedido Joel 2026-07-24): dos secciones apiladas eran mucho scroll.
+  const [tab, setTab] = useState<"gestion" | "asignadas">(canSeeGestion ? "gestion" : "asignadas");
 
   // Sin endpoint global de promos: se enumeran desde los productos light
   // (active_promotions viene embebido). Refetch 60s → la TV se actualiza sola.
@@ -515,23 +521,49 @@ export function PromosPage() {
         </button>
       </div>
 
-      {/* Gestión de promociones (solo admin/gerente con permiso) */}
-      <PromoAdminSection />
+      {/* Tabs: Gestión (CRUD de promos) · Asignadas a productos (vigentes).
+          Antes iban apiladas y la página se hacía eterna de scroll. */}
+      {canSeeGestion && (
+        <div className="flex gap-2 mt-4 mb-4">
+          {([
+            ["gestion", "Gestión de promos"],
+            ["asignadas", `Asignadas a productos${promoItems.length > 0 ? ` (${promoItems.length})` : ""}`],
+          ] as const).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setTab(key)}
+              data-testid={`promos-tab-${key}`}
+              className="rounded-xl px-4 py-2 text-[11px] font-black uppercase tracking-widest transition-colors"
+              style={tab === key
+                ? { background: "rgba(224,34,26,0.14)", border: "1px solid rgba(224,34,26,0.45)", color: "var(--td-red)" }
+                : { background: "var(--td-card-bg)", border: CARD_B, color: TLO, cursor: "pointer" }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
 
-      {/* Nota de gestión */}
-      <p className="text-[10px] font-bold mt-3 mb-5" style={{ color: TLO }}>
-        Las promos se crean aquí (<b>Gestión de promociones</b>) y se asignan a uno o varios productos.
-        También puedes asignarlas desde <b>Productos → editar → tab Promos</b>.
-      </p>
+      {/* Tab Gestión — el section se auto-oculta sin permiso */}
+      {tab === "gestion" && canSeeGestion && (
+        <>
+          <PromoAdminSection />
+          <p className="text-[10px] font-bold mt-3" style={{ color: TLO }}>
+            Las promos se crean aquí y se asignan a uno o varios productos.
+            También puedes asignarlas desde <b>Productos → editar → tab Promos</b>.
+          </p>
+        </>
+      )}
 
-      {/* Grid */}
+      {/* Tab Asignadas a productos (vigentes) */}
+      {(tab === "asignadas" || !canSeeGestion) && (<>
       {productsQuery.isLoading ? (
         <div className="flex items-center justify-center py-24"><Loader2 size={22} className="animate-spin" style={{ color: TLO }} /></div>
       ) : promoItems.length === 0 ? (
         <div className="rounded-3xl p-12 text-center" style={{ background: PANEL, border: BORDER }}>
           <TicketPercent size={34} className="mx-auto mb-3" style={{ color: TLO, opacity: 0.5 }} />
           <p className="text-sm font-black uppercase tracking-widest" style={{ color: THI }}>Sin promos vigentes</p>
-          <p className="text-[11px] font-bold mt-1" style={{ color: TMD }}>Crea una arriba en "Gestión de promociones" y asígnale productos (2x1, 3x2, mayoreo…).</p>
+          <p className="text-[11px] font-bold mt-1" style={{ color: TMD }}>Crea una en la pestaña "Gestión de promos" y asígnale productos (2x1, 3x2, mayoreo…).</p>
           <p className="text-[10px] font-bold mt-2" style={{ color: TLO }}>
             ¿Creaste una y no sale? Revisa que no esté <b>Programada</b> (fecha de inicio futura), <b>Pausada</b> o <b>Vencida</b>, que el producto esté activo, y que la promo sea de tu tienda (o de todas).
           </p>
@@ -599,6 +631,7 @@ export function PromosPage() {
           })}
         </div>
       )}
+      </>)}
 
       <AnimatePresence>
         {shareItem && (

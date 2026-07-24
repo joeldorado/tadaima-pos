@@ -156,7 +156,9 @@ export function PromoAdminSection() {
           Sin promociones — crea la primera con "Nueva promoción".
         </p>
       ) : (
-        <div className="space-y-2">
+        /* Scroll propio (pedido Joel 2026-07-24): con muchas promos la lista
+           crece dentro de su panel, no estira toda la página. */
+        <div className="space-y-2 overflow-y-auto pr-1" style={{ maxHeight: "56vh" }}>
           {promos.map(promo => {
             // "Activa" con inicio FUTURO aún no aplica en Caja → "Programada".
             const isScheduled = promo.status === "active" && !!promo.starts_at && new Date(promo.starts_at) > new Date();

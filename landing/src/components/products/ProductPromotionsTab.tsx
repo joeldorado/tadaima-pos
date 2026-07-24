@@ -238,24 +238,17 @@ export function ProductPromotionsTab({ productId, pendingPromoIds = [], onPendin
             : <>En caja aplica sola la <b>mejor</b> promo vigente. Las promos se crean, pausan y editan en el menú <b>Promos</b> — aquí solo se asignan a este producto.</>}
         </p>
         {canManagePromos && (
-          <div className="flex shrink-0 items-center gap-2">
-            <button
-              onClick={() => setShowPicker(v => !v)}
-              data-testid="assign-existing-promo-btn"
-              className="flex items-center gap-1.5 rounded-xl px-3 py-2 text-[11px] font-black uppercase tracking-widest"
-              style={{ background: "rgba(96,165,250,0.12)", border: "1px solid rgba(96,165,250,0.4)", color: "#60A5FA" }}
-            >
-              <TicketPercent size={13} /> Asignar promo existente <ChevronDown size={12} style={{ transform: showPicker ? "rotate(180deg)" : "none" }} />
-            </button>
-            <button
-              onClick={() => setFormState({ title: "Nueva promoción", subtitle: "Se crea como promo general y se asigna a este producto." })}
-              data-testid="create-promo-btn"
-              className="flex items-center gap-1.5 rounded-xl px-3 py-2 text-[11px] font-black uppercase tracking-widest"
-              style={{ background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.4)", color: "#34d399" }}
-            >
-              <Plus size={13} /> Nueva promo
-            </button>
-          </div>
+          /* Solo ASIGNAR (pedido Joel 2026-07-24): las promos se crean
+             únicamente en Promos → Gestión — un solo lugar donde nacen. El
+             botón "Nueva promo" que vivía aquí se quitó a propósito. */
+          <button
+            onClick={() => setShowPicker(v => !v)}
+            data-testid="assign-existing-promo-btn"
+            className="flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-[11px] font-black uppercase tracking-widest"
+            style={{ background: "rgba(96,165,250,0.12)", border: "1px solid rgba(96,165,250,0.4)", color: "#60A5FA" }}
+          >
+            <TicketPercent size={13} /> Asignar promo <ChevronDown size={12} style={{ transform: showPicker ? "rotate(180deg)" : "none" }} />
+          </button>
         )}
       </div>
 
@@ -273,7 +266,7 @@ export function ProductPromotionsTab({ productId, pendingPromoIds = [], onPendin
           ) : assignable.length === 0 ? (
             <p className="py-2 text-center text-[11px] font-bold" style={{ color: TLO }}>
               No hay promos disponibles para asignar
-              {!isAdmin ? " (las globales las asigna el admin)" : ""} — crea una con "Nueva promo".
+              {!isAdmin ? " (las globales las asigna el admin)" : ""} — créala en el menú <b>Promos</b>.
             </p>
           ) : (
             assignable.map(promo => (
