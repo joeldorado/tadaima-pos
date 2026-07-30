@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { X, Check, Loader2 } from "lucide-react";
@@ -28,6 +28,39 @@ export function CloseCashModal({ session, title, reason, onClosed, onCancel }: C
   const [closeCashAmount, setCloseCashAmount] = useState("");
   const [closeUsdAmount, setCloseUsdAmount] = useState("");
   const [closingCashLoading, setClosingCashLoading] = useState(false);
+
+  // "Debe haber" en vivo (Joel 2026-07-30): el cajero ve el objetivo de cada
+  // moneda ANTES de contar — mismo /reports/cash del resumen, pero sobre la
+  // sesión aún abierta. Solo lectura; si el fetch falla, el corte sigue igual.
+  const [preview, setPreview] = useState<CashSessionReport | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const today = getTodayLocal();
+        const r = await getCashReport({ register_id: session.register_id, from: today, to: today });
+        if (alive) setPreview(r.sessions.find(x => x.id === session.id) ?? null);
+      } catch {
+        // Sin preview no se bloquea el corte — el resumen final lo dirá igual.
+      } finally {
+        if (alive) setPreviewLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [session.id, session.register_id]);
+
+  const fmt = (v: number) => `${v < 0 ? "−" : ""}$${Math.abs(v).toLocaleString("es-MX", { maximumFractionDigits: 2 })}`;
+  const pv = preview;
+  // Parte en PESOS de lo cobrado (lo demás entró como billetes americanos).
+  const pesosCobrados = pv ? Math.round((Number(pv.cash_collected ?? 0) - Number(pv.usd_mxn_equiv ?? 0)) * 100) / 100 : 0;
+  const debeMxn = pv ? Number(pv.expected_cash_mxn ?? pv.expected_cash ?? 0) : 0;
+  const debeUsd = pv ? Number(pv.expected_usd ?? 0) : 0;
+  const entradas = pv ? Number(pv.total_entradas ?? 0) : 0;
+  const salidas = pv ? Number(pv.total_salidas ?? 0) : 0;
+  const ajustes = pv ? Number(pv.total_ajustes ?? 0) : 0;
+  const insumos = pv ? Number(pv.total_supplies ?? 0) : 0;
 
   const handleCloseCash = async () => {
     const amount = parseFloat(closeCashAmount) || 0;
@@ -108,6 +141,51 @@ export function CloseCashModal({ session, title, reason, onClosed, onCancel }: C
               <p style={{ margin: "4px 0 0", fontSize: 14, fontWeight: 900, color: "var(--td-text-hi)" }}>{value}</p>
             </div>
           ))}
+        </div>
+
+        {/* DEBE HABER — objetivo por moneda antes de contar (Joel 2026-07-30).
+            Solo texto: el detalle completo ya vive en el resumen del corte. */}
+        <div
+          data-testid="close-cash-expected"
+          style={{ background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.28)", borderRadius: 14, padding: "12px 16px", marginBottom: 20 }}
+        >
+          <p style={{ margin: 0, fontSize: 9, fontWeight: 900, color: "#34d399", textTransform: "uppercase", letterSpacing: "0.15em" }}>
+            Debe haber en el cajón
+          </p>
+          {previewLoading ? (
+            <p style={{ margin: "8px 0 0", fontSize: 11, fontWeight: 700, color: "var(--td-text-ghost)" }}>Calculando…</p>
+          ) : !pv ? (
+            <p style={{ margin: "8px 0 0", fontSize: 11, fontWeight: 700, color: "var(--td-text-ghost)" }}>
+              No se pudo calcular ahorita — al confirmar, el corte te dirá el esperado igual.
+            </p>
+          ) : (
+            <>
+              <div style={{ display: "flex", flexDirection: "column", gap: 3, margin: "8px 0 10px" }}>
+                {[
+                  { label: "Efectivo inicial", value: `+ ${fmt(Number(pv.opening_cash ?? 0))}`, show: true },
+                  { label: "Ventas en efectivo (pesos)", value: `+ ${fmt(pesosCobrados)}`, show: true },
+                  { label: "Entradas de caja", value: `+ ${fmt(entradas)}`, show: entradas > 0 },
+                  { label: insumos > 0 ? `Salidas (incluye insumos ${fmt(insumos)})` : "Salidas de caja", value: `− ${fmt(salidas)}`, show: salidas > 0 },
+                  { label: "Ajustes", value: `${ajustes >= 0 ? "+" : "−"} ${fmt(Math.abs(ajustes))}`, show: ajustes !== 0 },
+                ].filter(r => r.show).map(r => (
+                  <div key={r.label} style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: "var(--td-text-lo)" }}>{r.label}</span>
+                    <span style={{ fontSize: 11, fontWeight: 900, color: "var(--td-text-hi)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{r.value}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ borderTop: "1px dashed rgba(16,185,129,0.35)", paddingTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
+                  <span style={{ fontSize: 12, fontWeight: 900, color: "var(--td-text-hi)" }}>Pesos</span>
+                  <span style={{ fontSize: 20, fontWeight: 900, color: "var(--td-text-hi)", fontVariantNumeric: "tabular-nums" }}>{fmt(debeMxn)}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
+                  <span style={{ fontSize: 12, fontWeight: 900, color: "#34d399" }}>Dólares (billetes)</span>
+                  <span style={{ fontSize: 20, fontWeight: 900, color: "#34d399", fontVariantNumeric: "tabular-nums" }}>US${debeUsd.toLocaleString("es-MX", { maximumFractionDigits: 2 })}</span>
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
         {/* Closing cash inputs: pesos y dólares POR SEPARADO (2026-07-30) */}
