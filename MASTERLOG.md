@@ -6,6 +6,17 @@
 
 ### Sesión 2026-07-30 — Corte en PESOS Y DÓLARES + Log de pagos por mesa + Reportes de Ruben — DEPLOYADO rev `tadaima-00146-4st`
 
++ rev `tadaima-00147-8gz` (mismo día, commit `e802489`): iteración UX sobre la Caja tras
+verla Joel en prod. (a) **Menú ⋮ por línea del carrito**: Desc./Borrar dejan de ocupar
+ancho fijo — un botón de tres puntos abre el dropdown (Descuento/Eliminar), punto rojo
+cuando la línea ya trae descuento, click-fuera cierra; aplica en vista normal y compacta.
+(b) **Panel de cobro más ancho**: 380/450/510px (md/lg/xl, antes 360/420/460).
+(c) **El histórico de pagos DEJA DE FLOTAR**: PayLogPanel ahora vive PEGADO abajo del
+resumen Recibido/Falta como sección colapsable "Pagos de esta venta (N)" (mismo
+`tadaima-caja-paylog`; visible con cualquier método). Confirmado a Joel: el histórico es
+POR VENTA/mesa (se limpia al cobrar), NO global — lo global es Historial/corte. Bundle
+`index-BUBpPZe5.js` verificado (5 marcadores), 0 errores.
+
 Tres frentes en una sesión. Bundle `index-BFQQu6ES.js` verificado en vivo (7 marcadores);
 migración `2026_07_30_000001` corre sola en el arranque; 0 errores en la rev. Tests:
 backend **373/373** (+6), vitest **131/131** (+5), build OK, type-check en baseline (466).
