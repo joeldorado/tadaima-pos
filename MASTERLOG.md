@@ -6,6 +6,20 @@
 
 ### Sesión 2026-07-30 — Corte en PESOS Y DÓLARES + Log de pagos por mesa + Reportes de Ruben — DEPLOYADO rev `tadaima-00146-4st`
 
++ rev `tadaima-00148-mvm` (mismo día, commit `e3d1bd4`): panel de cobro SIN AMONTONAR
+(feedback Joel con screenshots — "no veo el total, se pierde; info repetitiva; para
+señores de 80 años"). Causa raíz: los presets `aspect-square` crecieron a ~155px c/u al
+ensanchar el sidebar y empujaban el Total fuera de vista. (a) **TOTAL A PAGAR fijo**
+arriba del sidebar, fuera del scroll (con Subtotal/Descuentos/Comisión). (b) **Presets
+h-12** sin microlabel MXN. (c) **Un solo recuadro de estado**: el chip verde "US$X
+recibidos" se fusionó al desglose del RECIBIDO — única mención USD con TC y
+Editar/Quitar inline. (d) **"Pagos de esta venta" COLAPSADO por default** (`=== "1"`),
+lista max 140px con scroll propio, header sin nombre de mesa. (e) **Fix flexbox**:
+`justify-end` desbordaba por ARRIBA (inalcanzable — por eso "no puedo abrir dólares de
+nuevo" con el log expandido) → `mt-auto` en el primer hijo. QA navegador: todo cabe sin
+scroll con log colapsado; expandido scrollea normal. Bundle `index-CjNuCZuK.js`
+verificado (4 marcadores).
+
 + rev `tadaima-00147-8gz` (mismo día, commit `e802489`): iteración UX sobre la Caja tras
 verla Joel en prod. (a) **Menú ⋮ por línea del carrito**: Desc./Borrar dejan de ocupar
 ancho fijo — un botón de tres puntos abre el dropdown (Descuento/Eliminar), punto rojo
