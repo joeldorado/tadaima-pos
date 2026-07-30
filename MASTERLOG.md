@@ -4,6 +4,68 @@
 
 ---
 
+### Sesión 2026-07-30 — Corte en PESOS Y DÓLARES + Log de pagos por mesa + Reportes de Ruben — DEPLOYADO rev `tadaima-00146-4st`
+
+Tres frentes en una sesión. Bundle `index-BFQQu6ES.js` verificado en vivo (7 marcadores);
+migración `2026_07_30_000001` corre sola en el arranque; 0 errores en la rev. Tests:
+backend **373/373** (+6), vitest **131/131** (+5), build OK, type-check en baseline (466).
+Commits `1853575` (corte USD) + `4dca0db` (log de pagos); PR #4 (Ruben) mergeado a main
+y main mergeado a la rama (sin conflictos).
+
+**(0) PR #4 — Reportes de Ruben (`develop` → `main`).** Desglose de promos/descuentos en
+el Reporte de Ventas + exports PDF/Excel, "Reporte Bonos" (docs/reporte.md) y filtro
+`?user_id` en `GET /supplies/movements` (quién registró la compra — aditivo, 3 líneas,
+⚠️ NO QUITAR documentado en backend/AGENTS.md). Viaja en este deploy.
+
+**(1) CORTE EN PESOS Y DÓLARES.** Pedido Joel: "el cliente ocupa ver cuánto dinero tiene
+que haber tanto en dólar como en pesos". Premisas corregidas en la exploración: los
+insumos de caja YA restaban del esperado (auto-balanceados vía cash_movement salida,
+Fase 2) y NO existe registro por denominación — el desglose USD es POR VENTA
+(`sales.cash_received_usd` + `exchange_rate`).
+- **Modelo:** los dólares recibidos se quedan ÍNTEGROS en el cajón (el cambio siempre se
+  da en pesos) → `expected_usd = Σ cash_received_usd` y
+  `expected_cash_mxn = expected_cash − Σ(usd × tc por venta)`.
+- **Datos:** `cash_register_sessions.closing_cash_usd` (nullable);
+  `closing_cash` pasa a ser SOLO pesos cuando se captura el campo nuevo.
+- **API:** `/cash/close` acepta `closing_cash_usd`; `/reports/cash` expone por sesión
+  `expected_cash_mxn / expected_usd / usd_mxn_equiv / closing_cash_usd / difference_mxn /
+  difference_usd`. COMPAT: cortes sin dólares capturados conservan la `difference` de
+  siempre; con captura, `difference = dif_mxn + dif_usd × tc_prom` (tc promedio de la
+  sesión, fallback settings). `cashDetail.tickets[]` ahora trae
+  `cash_received_usd/exchange_rate/cash_received/change_amount`.
+- **UI:** CloseCashModal con DOS campos (Pesos contados / Dólares contados);
+  CashCloseSummaryModal con desglose por moneda (Esperado·Pesos / Esperado·Dólares ≈MXN /
+  contados / 3 diferencias con tag Cuadra-Falta-Sobra) + **dropdown "ver entradas"**
+  (hora · Ticket #N · US$X @ TC, lazy del detail) + print 58mm desglosado;
+  CashCutsPage y CortesModal muestran USD e insumos (antes: nada de USD).
+- **Tests:** `CashCutUsdSplitTest` (6 casos RED→GREEN): split, cierre con USD, legacy sin
+  captura, insumo resta UNA vez y solo del lado MXN, validación, detail por ticket.
+- **QA real navegador (SQLite local):** venta $200 pagada $350 tecleados + US$10 → cajón
+  545+US$10; corte capturando 545/10 → **diferencias 0 / 0 / 0** contra /reports/cash.
+
+**(2) LOG DE PAGOS POR MESA (ventanita flotante).** Pedido Joel con screenshot del POS
+viejo: "quieren un log de cuánto pusieron para que no se confundan". Eligió ventanita
+flotante sobre el carrito (tapa items, decisión explícita).
+- `Mesa.payLog` (`lib/payLog.ts`: `pushPayEntry` inmutable, tope 20, captura tecleada
+  consecutiva REEMPLAZA — teclear no spamea; 5 tests). Persiste gratis vía
+  `mesasSnapshot`/`tadaima-cart-draft`; POR MESA; `clearCart` lo vacía al cobrar. Solo UI.
+- `PayLogPanel` (arriba-derecha del carrito, debajo de la barra de info): eventos con
+  hora ("Billete +$200", "Capturado $350", "Dólares US$10 ≈ $155", "Se quitaron los
+  dólares (eran US$10)", "Método → Tarjeta") + pie Recibido/Cambio-Faltan EN VIVO +
+  toggle Ocultar ⇄ pill "Pagos (N)" persistido (**`tadaima-caja-paylog`**, default
+  visible). Solo aparece con venta en curso.
+- Instrumentación: presets MXN, blur del input de pesos (ref anti-doble-log con presets),
+  onApply/Quitar de UsdCalculatorModal, setPayment. QA navegador: los 6 eventos en orden,
+  toggle persiste, cobro limpia panel y pill.
+
+**Pendiente detectado:** e2e `insumos.spec.ts` IN-03 está OBSOLETO (busca un `<select>`
+que ya no existe — la página Insumos usa autocompletado de texto desde un rediseño
+anterior); IN-01/IN-02 (API + esperado del corte) pasan. Chip de tarea creado.
+El diálogo de impresión de Chrome en las cajas se quita con `--kiosk-printing`
+(configuración por equipo, no es código — instrucciones dadas a Joel).
+
+---
+
 ### Sesión 2026-07-23/24 — PROMOS GENERALES mix & match + Calculadora USD + Corte SOLO efectivo — DEPLOYADO rev `tadaima-00142-822`
 
 Deploy 2026-07-24 (el intento de la noche anterior se cortó con la sesión y nunca creó
