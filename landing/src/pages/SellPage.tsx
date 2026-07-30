@@ -31,6 +31,8 @@ import type { CashSessionReport } from "@tadaima/api";
 import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
 import { CloseCashModal } from "@/components/cash/CloseCashModal";
 import { UsdCalculatorModal } from "@/components/sell/UsdCalculatorModal";
+import { PayLogPanel } from "@/components/sell/PayLogPanel";
+import { pushPayEntry, type PayLogEntry } from "@/lib/payLog";
 import { useLayoutChrome } from "@/contexts/LayoutChromeContext";
 import { CortesModal } from "@/components/cash/CortesModal";
 import { OpenSessionConflictModal } from "@/components/cash/OpenSessionConflictModal";
@@ -179,6 +181,10 @@ interface Mesa {
   // Antes no existía este estado y el monto quedaba vivo desde que se tecleaba —
   // sin forma de deshacer si el cliente decía "mejor no" (Joel 2026-07-23).
   usdApplied?: boolean;
+  // Log de pagos visible por mesa (ventanita flotante, Joel 2026-07-30): lo
+  // que el cliente fue entregando ("Billete +$200", "Dólares US$15"). Se
+  // limpia al cobrar. Solo UI — nada de esto viaja al backend.
+  payLog?: PayLogEntry[];
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1007,6 +1013,28 @@ export function SellPage() {
     () => localStorage.getItem("tadaima-caja-densidad") === "compacta",
   );
 
+  // Ventanita flotante "Pagos" (Joel 2026-07-30): visible por default; el
+  // toggle esconder/mostrar se recuerda por dispositivo (mismo patrón que la
+  // densidad). El CONTENIDO vive por mesa en activeMesa.payLog.
+  const [payLogVisible, setPayLogVisible] = useState(
+    () => localStorage.getItem("tadaima-caja-paylog") !== "0",
+  );
+  const togglePayLog = useCallback(() => {
+    setPayLogVisible(v => {
+      localStorage.setItem("tadaima-caja-paylog", v ? "0" : "1");
+      return !v;
+    });
+  }, []);
+  // Registra un evento en el log de pagos de la mesa activa.
+  const activeMesaIdForLog = activeMesa?.id;
+  const pushPayLog = useCallback((label: string, kind: PayLogEntry["kind"]) => {
+    if (activeMesaIdForLog == null) return;
+    updMesa(activeMesaIdForLog, m => ({ ...m, payLog: pushPayEntry(m.payLog, { label, kind }) }));
+  }, [activeMesaIdForLog, updMesa]);
+  // true solo cuando el monto del input de pesos se TECLEÓ (los presets no
+  // pasan por onChange) — así el blur no re-loguea lo que ya logueó el preset.
+  const cashTypedRef = useRef(false);
+
   // ¿Los dólares tecleados ya se RECIBIERON? false = simulación (no cuentan).
   // El ref existe porque "Enter aplica y cobra" ocurre en el MISMO evento: el
   // updMesa no re-renderiza a tiempo y handleCheckout leería el valor viejo —
@@ -1826,6 +1854,8 @@ export function SellPage() {
       );
       return;
     }
+    // Log de pagos: deja rastro del cambio de método en la ventanita.
+    if (pm !== activeMesa?.paymentMethod) pushPayLog(`Método → ${pm}`, "info");
     // Tarjeta y Transferencia no usan campo de efectivo recibido — limpiarlo para
     // evitar que un monto residual (escrito antes en Dólares/Efectivo) se cuele al
     // ticket como "Recibido $100" cuando realmente se cobró el total con tarjeta.
@@ -2046,6 +2076,7 @@ export function SellPage() {
       cashReceivedUsd: "",
       usdPrimaryMode: false,
       usdApplied: false,
+      payLog: [],
       // Tras cada cobro el método vuelve SIEMPRE a Efectivo (pedido Joel):
       // si la venta anterior fue con Tarjeta, la siguiente no debe arrancar en
       // Tarjeta por inercia.
@@ -4701,6 +4732,21 @@ export function SellPage() {
             />
           </div>
 
+          {/* Ventanita flotante de PAGOS de la mesa activa (Joel 2026-07-30):
+              registro de lo que el cliente va entregando. Tapa un poco los
+              items del carrito — decisión explícita de Joel; se esconde con
+              su toggle. Solo aparece con venta en curso. */}
+          {(activeMesa?.items.length ?? 0) > 0 && (
+            <PayLogPanel
+              entries={activeMesa?.payLog ?? []}
+              visible={payLogVisible}
+              onToggle={togglePayLog}
+              totalAPagar={currentPayAmount}
+              receivedMxn={(parseFloat(cashReceived) || 0) + (usdApplied ? (parseFloat(cashReceivedUsd) || 0) * tc : 0)}
+              mesaName={activeMesa?.name ?? ""}
+            />
+          )}
+
           {/* ── Barra de info de caja ─────────────────────────────────────────── */}
           <div className="shrink-0 flex items-center justify-between px-5 py-2" style={{ background: "var(--td-panel-bg)", borderBottom: CARD_B }}>
             <div className="flex items-center gap-5">
@@ -6292,7 +6338,7 @@ export function SellPage() {
                                 autoFocus
                                 type="number" min="0" step="0.01"
                                 value={cashReceived}
-                                onChange={e => setCashReceived(e.target.value)}
+                                onChange={e => { setCashReceived(e.target.value); cashTypedRef.current = true; }}
                                 onKeyDown={e => {
                                   if (e.key === "Enter") {
                                     if (totalReceived >= currentPayAmount || (cashReceived === "" && appliedUsd === 0)) void handleCheckout();
@@ -6302,7 +6348,17 @@ export function SellPage() {
                                 className="w-full text-center rounded-xl py-3 pl-10 pr-4 text-4xl font-black focus:outline-none transition-all tabular-nums"
                                 style={{ background: "var(--td-input-bg)", border: "2px solid var(--td-input-border)", color: "var(--td-input-text)" }}
                                 onFocus={e => { e.currentTarget.style.borderColor = "rgba(224,34,26,0.55)"; }}
-                                onBlur={e  => { e.currentTarget.style.borderColor = "var(--td-input-border)"; }}
+                                onBlur={e  => {
+                                  e.currentTarget.style.borderColor = "var(--td-input-border)";
+                                  // Log de pagos: registra lo TECLEADO al salir del campo
+                                  // (los presets se loguean solos). Capturas consecutivas
+                                  // se reemplazan — corregir el número no spamea.
+                                  if (cashTypedRef.current) {
+                                    cashTypedRef.current = false;
+                                    const v = parseFloat(e.currentTarget.value) || 0;
+                                    if (v > 0) pushPayLog(`Capturado $${v.toLocaleString("es-MX")}`, "mxn-input");
+                                  }
+                                }}
                               />
                             </div>
                             {/* Presets pesos cuadrados — billetes MX (20, 50,
@@ -6313,7 +6369,10 @@ export function SellPage() {
                               {[20, 50, 100, 200, 500, 1000].map(amt => (
                                 <button
                                   key={amt}
-                                  onClick={() => setCashReceived(prev => ((parseFloat(prev) || 0) + amt).toString())}
+                                  onClick={() => {
+                                    setCashReceived(prev => ((parseFloat(prev) || 0) + amt).toString());
+                                    pushPayLog(`Billete +$${amt}`, "mxn");
+                                  }}
                                   className="aspect-square rounded-2xl font-black text-2xl transition-all tabular-nums flex flex-col items-center justify-center gap-0.5"
                                   style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", color: "var(--td-text-hi)" }}
                                   onMouseEnter={e => { e.currentTarget.style.background = "var(--td-hover-bg)"; }}
@@ -6347,7 +6406,11 @@ export function SellPage() {
                               >Editar</button>
                               <button
                                 type="button"
-                                onClick={() => { setCashReceivedUsd(""); setUsdApplied(false); }}
+                                onClick={() => {
+                                  const prevUsd = parseFloat(cashReceivedUsd) || 0;
+                                  setCashReceivedUsd(""); setUsdApplied(false);
+                                  if (prevUsd > 0) pushPayLog(`Se quitaron los dólares (eran US$${prevUsd.toLocaleString("en-US")})`, "usd");
+                                }}
                                 className="px-3 py-2 rounded-xl text-[11px] font-black uppercase tracking-wider"
                                 style={{ background: 'rgba(224,34,26,0.10)', border: '1px solid rgba(224,34,26,0.4)', color: 'var(--td-red)', cursor: 'pointer' }}
                               >Quitar</button>
@@ -6723,7 +6786,11 @@ export function SellPage() {
         totalAPagar={currentPayAmount}
         pesosRecibidos={parseFloat(cashReceived) || 0}
         usdInicial={usdApplied ? cashReceivedUsd : ""}
-        onApply={usd => { setCashReceivedUsd(usd); setUsdApplied(true); setUsdCalcOpen(false); }}
+        onApply={usd => {
+          setCashReceivedUsd(usd); setUsdApplied(true); setUsdCalcOpen(false);
+          const n = parseFloat(usd) || 0;
+          if (n > 0) pushPayLog(`Dólares US$${n.toLocaleString("en-US")} ≈ ${fmt(n * tc)}`, "usd");
+        }}
         onClose={() => setUsdCalcOpen(false)}
       />
 
