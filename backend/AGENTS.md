@@ -146,12 +146,13 @@ para reportes.
 > $100 de menos). Es aditivo y respeta el gating; **no lo elimines** al refactorizar
 > el Resource ni al regenerar `cancelled_items`.
 
-> ⚠️ **NO QUITAR — filtros `from`/`to`/`store_id` en `GET /supplies/movements` (2026-07, Ruben/Reportes).**
+> ⚠️ **NO QUITAR — filtros `from`/`to`/`store_id`/`user_id` en `GET /supplies/movements` (2026-07, Ruben/Reportes).**
 > `SuppliesController::movements` acepta ahora `?from&to` (rango día-negocio, mismo
-> `DateRange::fromUtc/toUtc` que `/reports/supplies`) y `?store_id` (filtra por la
+> `DateRange::fromUtc/toUtc` que `/reports/supplies`), `?store_id` (filtra por la
 > tienda dueña del insumo, `supplies.store_id` vía `whereHas`; NULL = toda la
-> empresa). El eager-load ya trae `user:id,name` (**quién registró la compra**) y
-> el select del `supply` incluye `store_id`.
+> empresa) y `?user_id` (filtra por quién REGISTRÓ la compra — filtro de usuario del
+> Reporte; el cajero ya queda scoped a lo suyo). El eager-load ya trae `user:id,name`
+> (**quién registró la compra**) y el select del `supply` incluye `store_id`.
 > **Por qué:** el Reporte de Ventas lista los insumos (egresos) del MISMO rango y
 > tienda que el resto del reporte, y muestra **quién metió cada gasto** (es dinero
 > que sale de la tienda). Sin estos filtros la lista traía los últimos 200 de toda

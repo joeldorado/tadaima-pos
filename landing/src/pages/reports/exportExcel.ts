@@ -17,6 +17,10 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
     caja_chica: "Caja chica",
     propio: "Dinero propio",
   };
+  // Motivo legible de un descuento manual.
+  const DISCOUNT_REASON_LABEL: Record<string, string> = {
+    danado: "dañado", caducidad: "caducidad", exhibicion: "exhibición", cortesia: "cortesía", otro: "otro",
+  };
     try {
       toast.info("Generando archivo de Excel...");
       const ExcelJS = await import("exceljs");
@@ -156,6 +160,20 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
         const totalQtyOpts = { font: { name: "Arial", size: 9, bold: true, color: { argb: "FF111111" } }, fill: TOTAL_FILL, alignment: { horizontal: "center", vertical: "middle" } };
         const totalMoneyOpts = (argb: string) => ({ numFmt: "$#,##0.00", font: { name: "Arial", size: 9, bold: true, color: { argb } }, fill: TOTAL_FILL, alignment: { horizontal: "right", vertical: "middle" } });
 
+        // Renglón resaltado (fosforescente) del beneficio bajo un producto:
+        // verde = promo, amarillo = descuento manual. Muestra cuánto se descontó.
+        const PROMO_FLUO = "FFB9FBC0";  // verde fosforescente
+        const DESC_FLUO = "FFFFF176";   // amarillo fosforescente
+        const benefitRow = (row: number, colStart: number, colEnd: number, ventaCol: number, label: string, amount: number, fillArgb: string) => {
+            const fill = { type: "pattern", pattern: "solid", fgColor: { argb: fillArgb } };
+            for (let c = colStart; c <= colEnd; c++) {
+                setCell(row, c, "", { fill, alignment: { horizontal: "left", vertical: "middle" } });
+            }
+            setCell(row, colStart, label, { fill, font: { name: "Arial", size: 8.5, bold: true, italic: true, color: { argb: "FF222222" } }, alignment: { horizontal: "left", vertical: "middle" } });
+            setCell(row, ventaCol, -amount, { fill, numFmt: "$#,##0.00", font: { name: "Arial", size: 9, bold: true, color: { argb: "FF222222" } }, alignment: { horizontal: "right", vertical: "middle" } });
+            sheet.getRow(row).height = 16;
+        };
+
         // TABLE 2: EFECTIVO  →  Producto · Cant · [Costo] · Venta · [Utilidad]
         // Columnas de Costo (T2_COL+2) y Utilidad (T2_COL+4) solo si canViewCost.
         const cashVentaCol = canViewCost ? T2_COL + 3 : T2_COL + 2;
@@ -170,9 +188,12 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
                     cashRevenue += data.revenue;
                 }
             });
-            const ratio = prod.total_revenue > 0 ? (cashRevenue / prod.total_revenue) : 0;
-            const cashCost = (prod.total_cost || 0) * ratio;
-            const cashProfit = (prod.total_profit || 0) * ratio;
+            // Costo y utilidad por PIEZAS (no por ingresos): costo unitario × piezas
+            // vendidas en efectivo. Así 1 pieza en efectivo cuesta su costo real, sin
+            // desbalancearse por el precio/descuento de cada método.
+            const unitCost = (prod.total_quantity || 0) > 0 ? (prod.total_cost || 0) / prod.total_quantity : 0;
+            const cashCost = unitCost * cashQty;
+            const cashProfit = cashRevenue - cashCost;
             totCashQty += cashQty; totCashCost += cashCost; totCashRevenue += cashRevenue; totCashProfit += cashProfit;
 
             setCell(r2, T2_COL, prod.name, { alignment: { horizontal: "left", vertical: "middle", wrapText: true } });
@@ -186,6 +207,14 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
             }
             sheet.getRow(r2).height = 20;
             r2++;
+            // Renglones de beneficio (prorrateados a efectivo): un renglón por CADA
+            // promo (verde) y por CADA motivo de descuento (amarillo).
+            Object.entries(prod.promo_breakdown ?? {}).forEach(([name, amt]) => {
+                if (amt.cash > 0.005) { benefitRow(r2, T2_COL, T2_COL + T2_COLS - 1, cashVentaCol, `   🎁 ${name}`, amt.cash, PROMO_FLUO); r2++; }
+            });
+            Object.entries(prod.discount_breakdown ?? {}).forEach(([reason, amt]) => {
+                if (amt.cash > 0.005) { benefitRow(r2, T2_COL, T2_COL + T2_COLS - 1, cashVentaCol, `   🏷️ Descuento (${DISCOUNT_REASON_LABEL[reason] ?? reason})`, amt.cash, DESC_FLUO); r2++; }
+            });
         });
         if (cashProducts.length > 0) {
             setCell(r2, T2_COL, "TOTAL EFECTIVO", totalLabelOpts);
@@ -221,10 +250,10 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
             const prodComm = prod.commission_amount || 0;
             const prodIva = prodComm * ivaRate;
             const netCard = cardRevenue - prodComm - prodIva;
-            const ratio = prod.total_revenue > 0 ? (cardRevenue / prod.total_revenue) : 0;
-            const cardCost = (prod.total_cost || 0) * ratio;
-            const baseProfit = (prod.total_profit || 0) * ratio;
-            const cardProfit = baseProfit - prodComm - prodIva;
+            // Costo por PIEZAS (costo unitario × piezas en tarjeta). Utilidad = Neto − Costo.
+            const unitCost = (prod.total_quantity || 0) > 0 ? (prod.total_cost || 0) / prod.total_quantity : 0;
+            const cardCost = unitCost * cardQty;
+            const cardProfit = netCard - cardCost;
             totCardQty += cardQty; totCardRevenue += cardRevenue; totCardCost += cardCost; totCardComm += prodComm; totCardIva += prodIva; totCardNet += netCard; totCardProfit += cardProfit;
 
             setCell(r3, T3_COL, prod.name, { alignment: { horizontal: "left", vertical: "middle", wrapText: true } });
@@ -241,6 +270,13 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
             }
             sheet.getRow(r3).height = 20;
             r3++;
+            // Renglones de beneficio (prorrateados a tarjeta): uno por CADA promo y motivo.
+            Object.entries(prod.promo_breakdown ?? {}).forEach(([name, amt]) => {
+                if (amt.card > 0.005) { benefitRow(r3, T3_COL, T3_COL + T3_COLS - 1, T3_COL + 2, `   🎁 ${name}`, amt.card, PROMO_FLUO); r3++; }
+            });
+            Object.entries(prod.discount_breakdown ?? {}).forEach(([reason, amt]) => {
+                if (amt.card > 0.005) { benefitRow(r3, T3_COL, T3_COL + T3_COLS - 1, T3_COL + 2, `   🏷️ Descuento (${DISCOUNT_REASON_LABEL[reason] ?? reason})`, amt.card, DESC_FLUO); r3++; }
+            });
         });
         if (cardProducts.length > 0) {
             setCell(r3, T3_COL, "TOTAL TARJETA", totalLabelOpts);
@@ -325,13 +361,31 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
             column.width = width;
         });
 
-        // ─── Tabla 5. EGRESOS — Insumos de operación (compras del rango) ──────────
-        // Se llena con las compras reales (supplyMovements): insumo, origen del
-        // dinero, quién lo registró, tienda y monto. Igual que la sección en pantalla.
+        // ─── Tabla 5. EGRESOS (en la MISMA hoja de Ventas, abajo). ────────────────
+        // La Descripción va ANCHA combinando celdas (merge de 3 columnas) para no
+        // deformar la columna "Cant. Efectivo" de la tabla de arriba (comparten ancho).
+        // Columnas: Insumo · Descripción(merge) · Origen · Registró · Tienda · Monto.
+        const EG_INSUMO = T2_COL, EG_DESC = T2_COL + 1, EG_DESC_END = T2_COL + 3;
+        const EG_ORIGEN = T2_COL + 4, EG_REG = T2_COL + 5, EG_TIENDA = T2_COL + 6, EG_MONTO = T2_COL + 7;
+        const egMergeDesc = (r: number) => {
+            sheet.mergeCells(`${sheet.getColumn(EG_DESC).letter}${r}:${sheet.getColumn(EG_DESC_END).letter}${r}`);
+        };
+        const egSubOpts = { font: { name: "Arial", size: 9, bold: true, color: { argb: "FFFFFFFF" } }, fill: { type: "pattern", pattern: "solid", fgColor: { argb: "FFDD9944" } }, alignment: { vertical: "middle", horizontal: "center" } };
+        const egLeft = { alignment: { horizontal: "left", vertical: "top", wrapText: true } };
+
         const egresosRow = Math.max(r2, r3, r4, r5) + 2;
-        setHeader(egresosRow, T2_COL, T2_COL + 4, " 5. EGRESOS — INSUMOS DE OPERACIÓN", "FFCC7722");
-        setSubHeaderRow(egresosRow + 1, T2_COL, ["Insumo", "Origen", "Registró", "Tienda", "Monto"], "FFDD9944");
-        let egr = egresosRow + 2;
+        setHeader(egresosRow, EG_INSUMO, EG_MONTO, " 5. EGRESOS — INSUMOS DE OPERACIÓN", "FFCC7722");
+        const egHr = egresosRow + 1;
+        egMergeDesc(egHr);
+        setCell(egHr, EG_INSUMO, "Insumo", egSubOpts);
+        setCell(egHr, EG_DESC, "Descripción", egSubOpts);
+        setCell(egHr, EG_ORIGEN, "Origen", egSubOpts);
+        setCell(egHr, EG_REG, "Registró", egSubOpts);
+        setCell(egHr, EG_TIENDA, "Tienda", egSubOpts);
+        setCell(egHr, EG_MONTO, "Monto", egSubOpts);
+        sheet.getRow(egHr).height = 20;
+
+        let egr = egHr + 1;
         let totalEgresos = 0;
         supplyMovements.forEach((m) => {
             const origen = SUPPLY_SOURCE_LABEL[m.money_source ?? "caja"] ?? (m.money_source ?? "—");
@@ -340,25 +394,33 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
                 ? (stores.find((s) => s.id === m.supply?.store_id)?.name ?? `Tienda ${m.supply?.store_id}`)
                 : "Toda la empresa";
             totalEgresos += m.amount || 0;
-            setCell(egr, T2_COL, m.supply?.name ?? "Insumo", { alignment: { horizontal: "left", vertical: "middle", wrapText: true } });
-            setCell(egr, T2_COL + 1, origenTxt, { alignment: { horizontal: "left", vertical: "middle" } });
-            setCell(egr, T2_COL + 2, m.user?.name ?? "—", { alignment: { horizontal: "left", vertical: "middle" } });
-            setCell(egr, T2_COL + 3, tienda, { alignment: { horizontal: "left", vertical: "middle" } });
-            setCell(egr, T2_COL + 4, m.amount || 0, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, bold: true, color: { argb: "FFCC2200" } }, alignment: { horizontal: "right", vertical: "middle" } });
+            egMergeDesc(egr);
+            setCell(egr, EG_INSUMO, m.supply?.name ?? "Insumo", egLeft);
+            setCell(egr, EG_DESC, m.note ?? "", egLeft);
+            setCell(egr, EG_ORIGEN, origenTxt, egLeft);
+            setCell(egr, EG_REG, m.user?.name ?? "—", egLeft);
+            setCell(egr, EG_TIENDA, tienda, egLeft);
+            setCell(egr, EG_MONTO, m.amount || 0, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, bold: true, color: { argb: "FFCC2200" } }, alignment: { horizontal: "right", vertical: "top" } });
             sheet.getRow(egr).height = 18;
             egr++;
         });
         if (supplyMovements.length > 0) {
-            setCell(egr, T2_COL, "TOTAL EGRESOS", totalLabelOpts);
-            setCell(egr, T2_COL + 1, "", totalLabelOpts);
-            setCell(egr, T2_COL + 2, "", totalLabelOpts);
-            setCell(egr, T2_COL + 3, "", totalLabelOpts);
-            setCell(egr, T2_COL + 4, totalEgresos, totalMoneyOpts("FFCC2200"));
+            egMergeDesc(egr);
+            setCell(egr, EG_INSUMO, "TOTAL EGRESOS", totalLabelOpts);
+            setCell(egr, EG_DESC, "", totalLabelOpts);
+            setCell(egr, EG_ORIGEN, "", totalLabelOpts);
+            setCell(egr, EG_REG, "", totalLabelOpts);
+            setCell(egr, EG_TIENDA, "", totalLabelOpts);
+            setCell(egr, EG_MONTO, totalEgresos, totalMoneyOpts("FFCC2200"));
             sheet.getRow(egr).height = 20;
         } else {
-            setCell(egr, T2_COL, "Sin egresos de insumos en el periodo", { font: { name: "Arial", size: 9, italic: true, color: { argb: "FF999999" } }, alignment: { horizontal: "left", vertical: "middle" } });
+            setCell(egr, EG_INSUMO, "Sin egresos de insumos en el periodo", { font: { name: "Arial", size: 9, italic: true, color: { argb: "FF999999" } }, alignment: { horizontal: "left", vertical: "middle" } });
             sheet.getRow(egr).height = 18;
         }
+        // Anchos de las columnas propias de Egresos (las del "gap", no afectan ventas).
+        sheet.getColumn(EG_REG).width = 20;
+        sheet.getColumn(EG_TIENDA).width = 16;
+        sheet.getColumn(EG_MONTO).width = 15;
 
 } else if (activeTab === "inventario") {
         const sheet = workbook.addWorksheet("Inventario");

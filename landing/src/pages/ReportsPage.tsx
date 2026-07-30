@@ -125,6 +125,15 @@ interface GroupedProduct {
   pre_sale_costo_real?: number;
   commission_amount?: number;
   product_type?: 'product' | 'manga';
+  /** Descuentos v2: parte de PROMO (NxM/mayoreo) acumulada del producto en el rango. */
+  promo_total?: number;
+  /** Descuentos v2: parte de DESCUENTO MANUAL acumulada del producto en el rango. */
+  manual_total?: number;
+  /** Monto descontado POR CADA promo, separado por método de pago REAL de la venta
+   *  (nombre → { efectivo, tarjeta }). Sin prorrateo: se atribuye donde se dio. */
+  promo_breakdown?: Record<string, { cash: number; card: number }>;
+  /** Ídem para descuento manual (motivo → { efectivo, tarjeta }). */
+  discount_breakdown?: Record<string, { cash: number; card: number }>;
 }
 
 const REPORT_TABS: { id: TabId; label: string; icon: React.ElementType }[] = [
@@ -332,8 +341,8 @@ export function ReportsPage() {
   // quién las registró. Solo compras (type=purchase). Todo el desglose se deriva
   // de aquí para que cuadre con el filtro de tienda.
   const supplyMovementsQuery = useQuery({
-    queryKey: ["reports-supply-movements", from, to, effectiveStoreId],
-    queryFn: () => getSupplyMovements({ from, to, type: "purchase", ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}) }),
+    queryKey: ["reports-supply-movements", from, to, effectiveStoreId, selectedUserId],
+    queryFn: () => getSupplyMovements({ from, to, type: "purchase", ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}), ...(selectedUserId ? { user_id: selectedUserId } : {}) }),
     enabled: activeTab === "ventas",
     staleTime: REPORTS_STALE,
     refetchInterval: LIVE_POLL_MS,
@@ -507,6 +516,33 @@ export function ReportsPage() {
         pGroup.total_revenue += itemTotal;
         pGroup.total_cost += itemCostTotal;
         pGroup.total_profit += (itemTotal - itemCostTotal);
+
+        // Descuentos v2: separar la parte PROMO vs DESCUENTO MANUAL de la línea.
+        // Stacking: la promo aplica primero; el manual va sobre el neto-promo, así
+        // que promoPart = snapshot de promo y manualPart = lo que reste del beneficio.
+        const lineDisc = item.discount_amount ?? 0;
+        if (lineDisc > 0) {
+          const promoPart = item.benefit_type === "promo"
+            ? lineDisc
+            : Math.min(lineDisc, item.promo_amount ?? (item.promo_free_qty ? item.promo_free_qty * item.price : 0));
+          const manualPart = Math.max(0, lineDisc - promoPart);
+          pGroup.promo_total = (pGroup.promo_total ?? 0) + promoPart;
+          pGroup.manual_total = (pGroup.manual_total ?? 0) + manualPart;
+          // El descuento/promo se atribuye al MÉTODO real de la venta (no se prorratea).
+          const benefitBucket: "cash" | "card" = isCardMethod(payMethodName.toLowerCase()) ? "card" : "cash";
+          if (promoPart > 0) {
+            const key = item.promo_name || "Promo aplicada";
+            pGroup.promo_breakdown = pGroup.promo_breakdown ?? {};
+            pGroup.promo_breakdown[key] = pGroup.promo_breakdown[key] ?? { cash: 0, card: 0 };
+            pGroup.promo_breakdown[key][benefitBucket] += promoPart;
+          }
+          if (manualPart > 0) {
+            const key = item.discount_reason || "otro";
+            pGroup.discount_breakdown = pGroup.discount_breakdown ?? {};
+            pGroup.discount_breakdown[key] = pGroup.discount_breakdown[key] ?? { cash: 0, card: 0 };
+            pGroup.discount_breakdown[key][benefitBucket] += manualPart;
+          }
+        }
 
         if (!pGroup.payment_breakdown[payMethodName]) {
           pGroup.payment_breakdown[payMethodName] = { qty: 0, revenue: 0 };
@@ -966,7 +1002,7 @@ export function ReportsPage() {
             );
           }}>
           <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontSize: fontS, fontWeight: 900, color: TP }}>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 flex-wrap">
               {isExpanded ? <ChevronDown size={fontS + 1} style={{ color: TM }} /> : <ChevronRight size={fontS + 1} style={{ color: TM }} />}
               <div className="flex flex-col">
                 <span>{prod.name}</span>
@@ -974,6 +1010,12 @@ export function ReportsPage() {
                   <span style={{ fontSize: 9, color: TM, fontWeight: 600, letterSpacing: "0.04em" }}>SKU: {prod.sku}</span>
                 ) : null}
               </div>
+              {(prod.promo_total ?? 0) > 0 && (
+                <span title={`Con promo — ${fmt(prod.promo_total ?? 0)} en el periodo`} style={{ fontSize: 8.5, fontWeight: 900, color: "#00CC66", background: "rgba(0,204,102,0.12)", border: "1px solid rgba(0,204,102,0.3)", padding: "1px 6px", borderRadius: 6, letterSpacing: "0.03em" }}>🎁 PROMO</span>
+              )}
+              {(prod.manual_total ?? 0) > 0 && (
+                <span title={`Con descuento manual — ${fmt(prod.manual_total ?? 0)} en el periodo`} style={{ fontSize: 8.5, fontWeight: 900, color: "#F59E0B", background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.3)", padding: "1px 6px", borderRadius: 6, letterSpacing: "0.03em" }}>🏷️ DESC.</span>
+              )}
             </div>
           </td>
           <td style={{ ...tdStyle, padding: `${padY}px ${padX}px`, fontSize: fontS, fontWeight: 700, color: TP }}>
@@ -1013,7 +1055,7 @@ export function ReportsPage() {
         {isExpanded && (
           <tr key={`${prod.id}-detail`}>
             <td colSpan={6} style={{ padding: `0 ${padX}px ${padY}px`, borderBottom: DIV, background: "rgba(255,255,255,0.02)" }}>
-              <div className={`grid grid-cols-1 ${((prod.pre_sale_apartado && prod.pre_sale_apartado > 0) || (prod.pre_sale_deuda && prod.pre_sale_deuda > 0)) ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-6 pt-3 pb-2`}>
+              <div className={`grid grid-cols-1 ${(((prod.pre_sale_apartado && prod.pre_sale_apartado > 0) || (prod.pre_sale_deuda && prod.pre_sale_deuda > 0)) || (prod.promo_total ?? 0) > 0 || (prod.manual_total ?? 0) > 0) ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-6 pt-3 pb-2`}>
                 {/* Métodos de Pago */}
                 <div>
                   <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: TM, marginBottom: 8 }}>
@@ -1070,6 +1112,37 @@ export function ReportsPage() {
                     })}
                   </div>
                 </div>
+
+                {/* Beneficios aplicados: promo y descuento manual (Bruto → Neto) */}
+                {((prod.promo_total ?? 0) > 0 || (prod.manual_total ?? 0) > 0) && (
+                  <div>
+                    <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: TM, marginBottom: 8 }}>
+                      Beneficios aplicados
+                    </p>
+                    <div className="flex flex-col gap-1 py-1.5 px-3" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", borderRadius: 9 }}>
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span style={{ color: TM }}>Bruto (sin beneficio)</span>
+                        <span style={{ color: TS, fontWeight: 800 }}>{fmt(prod.total_revenue + (prod.promo_total ?? 0) + (prod.manual_total ?? 0))}</span>
+                      </div>
+                      {(prod.promo_total ?? 0) > 0 && (
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span style={{ color: TM }}>🎁 Promo</span>
+                          <span style={{ color: "#00CC66", fontWeight: 800 }}>-{fmt(prod.promo_total ?? 0)}</span>
+                        </div>
+                      )}
+                      {(prod.manual_total ?? 0) > 0 && (
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span style={{ color: TM }}>🏷️ Descuento manual</span>
+                          <span style={{ color: "#F59E0B", fontWeight: 800 }}>-{fmt(prod.manual_total ?? 0)}</span>
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between text-xs pt-0.5 mt-0.5 border-t border-dotted" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+                        <span style={{ color: TS, fontWeight: 700 }}>Neto (lo que entró)</span>
+                        <span style={{ color: "#00CC66", fontWeight: 900 }}>{fmt(prod.total_revenue)}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Control de Preventa: Apartado y Deuda */}
                 {((prod.pre_sale_apartado && prod.pre_sale_apartado > 0) || (prod.pre_sale_deuda && prod.pre_sale_deuda > 0)) && (
