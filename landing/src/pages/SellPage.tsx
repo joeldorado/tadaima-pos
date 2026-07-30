@@ -9,7 +9,7 @@ import {
   Mail,
   TriangleAlert, PackageX, Bookmark, Calendar, PackageCheck, ClipboardList, Banknote,
   Truck, CheckCircle2, Printer, History, Receipt, RefreshCw,
-  ShoppingCart, Crown, Circle, Trash2, XCircle, Clock, Bell, Scissors,
+  ShoppingCart, Crown, Circle, Trash2, XCircle, Clock, Bell, Scissors, MoreVertical,
 } from "lucide-react";
 import type { Product, PriceLevel } from "@/types/pos";
 import { toCartProduct } from "@/lib/productAdapter";
@@ -1034,6 +1034,18 @@ export function SellPage() {
   // true solo cuando el monto del input de pesos se TECLEÓ (los presets no
   // pasan por onChange) — así el blur no re-loguea lo que ya logueó el preset.
   const cashTypedRef = useRef(false);
+
+  // Menú ⋮ por línea del carrito (Joel 2026-07-30): Desc./Borrar se esconden
+  // en un dropdown para reducir el ancho de la fila. Uno abierto a la vez.
+  const [rowMenuLineId, setRowMenuLineId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!rowMenuLineId) return;
+    const close = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement).closest?.("[data-rowmenu]")) setRowMenuLineId(null);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [rowMenuLineId]);
 
   // ¿Los dólares tecleados ya se RECIBIERON? false = simulación (no cuentan).
   // El ref existe porque "Enter aplica y cobra" ocurre en el MISMO evento: el
@@ -4732,21 +4744,6 @@ export function SellPage() {
             />
           </div>
 
-          {/* Ventanita flotante de PAGOS de la mesa activa (Joel 2026-07-30):
-              registro de lo que el cliente va entregando. Tapa un poco los
-              items del carrito — decisión explícita de Joel; se esconde con
-              su toggle. Solo aparece con venta en curso. */}
-          {(activeMesa?.items.length ?? 0) > 0 && (
-            <PayLogPanel
-              entries={activeMesa?.payLog ?? []}
-              visible={payLogVisible}
-              onToggle={togglePayLog}
-              totalAPagar={currentPayAmount}
-              receivedMxn={(parseFloat(cashReceived) || 0) + (usdApplied ? (parseFloat(cashReceivedUsd) || 0) * tc : 0)}
-              mesaName={activeMesa?.name ?? ""}
-            />
-          )}
-
           {/* ── Barra de info de caja ─────────────────────────────────────────── */}
           <div className="shrink-0 flex items-center justify-between px-5 py-2" style={{ background: "var(--td-panel-bg)", borderBottom: CARD_B }}>
             <div className="flex items-center gap-5">
@@ -5890,29 +5887,51 @@ export function SellPage() {
                       )}
                       </div>
 
-                      {canLineDiscount && !item.preSaleItemDelivered && (
-                        <button
-                          onClick={() => setDiscountModalLineId(item.lineId)}
-                          title={item.discount ? "Editar descuento de esta línea" : "Descuento en esta línea (ej. unidades dañadas)"}
-                          className={`inline-flex ${compactCart ? "h-10 px-2.5" : "h-[54px] px-4"} items-center justify-center gap-1.5 self-center rounded-2xl text-[12px] font-black transition-colors`}
-                          style={item.discount
-                            ? { border: "1px solid rgba(224,34,26,0.45)", background: "rgba(224,34,26,0.16)", color: "var(--td-red)" }
-                            : { border: CARD_B, background: MUTED, color: TMD }}
-                        >
-                          <Tag size={13} />
-                          {!compactCart && (item.discount ? "Desc. ✓" : "Desc.")}
-                        </button>
-                      )}
-
+                      {/* Menú ⋮ de la línea (Joel 2026-07-30): Desc./Borrar dejan de
+                          ocupar ancho fijo — un solo botón abre el dropdown. El punto
+                          rojo avisa que la línea YA trae descuento sin abrir el menú. */}
                       {!item.preSaleItemDelivered && (
-                        <button
-                          onClick={() => { void removeFromCart(item.lineId); }}
-                          className={`inline-flex ${compactCart ? "h-10 min-w-0 px-2.5" : "h-[54px] min-w-[118px] px-4"} items-center justify-center gap-1.5 self-center rounded-2xl border border-[#E0221A]/25 bg-[#E0221A]/10 text-[12px] font-black text-[#FF8A80] transition-colors hover:bg-[#E0221A]/16 hover:text-white`}
-                          title="Quitar esta línea de la venta"
-                        >
-                          <Trash2 size={13} />
-                          {!compactCart && "Borrar"}
-                        </button>
+                        <div className="relative self-center shrink-0" data-rowmenu>
+                          <button
+                            onClick={() => setRowMenuLineId(prev => prev === item.lineId ? null : item.lineId)}
+                            title="Opciones de esta línea (descuento / eliminar)"
+                            data-testid={`row-menu-btn-${item.lineId}`}
+                            className={`relative inline-flex ${compactCart ? "h-10 w-10" : "h-[54px] w-12"} items-center justify-center rounded-2xl transition-colors`}
+                            style={rowMenuLineId === item.lineId
+                              ? { border: "1px solid rgba(224,34,26,0.45)", background: "rgba(224,34,26,0.14)", color: "var(--td-text-hi)" }
+                              : { border: CARD_B, background: MUTED, color: TMD }}
+                          >
+                            <MoreVertical size={16} />
+                            {item.discount && (
+                              <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full" style={{ background: "var(--td-red)" }} />
+                            )}
+                          </button>
+                          {rowMenuLineId === item.lineId && (
+                            <div
+                              className="absolute right-0 top-full mt-1.5 z-50 min-w-[190px] rounded-2xl p-1.5 flex flex-col gap-1"
+                              style={{ background: "var(--td-popup-bg)", border: "1px solid var(--td-popup-border)", boxShadow: "0 12px 32px rgba(0,0,0,0.45)" }}
+                              data-testid={`row-menu-${item.lineId}`}
+                            >
+                              {canLineDiscount && (
+                                <button
+                                  onClick={() => { setRowMenuLineId(null); setDiscountModalLineId(item.lineId); }}
+                                  className="flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-[12px] font-black text-left transition-colors hover:bg-white/8"
+                                  style={{ color: item.discount ? "var(--td-red)" : "var(--td-text-hi)" }}
+                                >
+                                  <Tag size={14} />
+                                  {item.discount ? "Editar descuento ✓" : "Descuento"}
+                                </button>
+                              )}
+                              <button
+                                onClick={() => { setRowMenuLineId(null); void removeFromCart(item.lineId); }}
+                                className="flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-[12px] font-black text-left text-[#FF8A80] transition-colors hover:bg-[#E0221A]/16 hover:text-white"
+                              >
+                                <Trash2 size={14} />
+                                Eliminar
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       )}
                     </div>
                   </Motion.div>
@@ -5934,7 +5953,7 @@ export function SellPage() {
             asegura que el botón Cobrar y el cambio queden siempre visibles. */}
         <aside
           ref={tcRef}
-          className={`flex-col ${isNarrow ? (payOpen ? "flex fixed inset-0 z-50 w-full" : "hidden") : "hidden md:flex md:shrink-0 md:w-[360px] lg:w-[420px] xl:w-[460px]"}`}
+          className={`flex-col ${isNarrow ? (payOpen ? "flex fixed inset-0 z-50 w-full" : "hidden") : "hidden md:flex md:shrink-0 md:w-[380px] lg:w-[450px] xl:w-[510px]"}`}
           style={{ background: "var(--td-panel-bg)", borderLeft: CARD_B }}
           aria-label="Panel de cobro"
         >
@@ -6481,6 +6500,19 @@ export function SellPage() {
                     <button onClick={() => { void searchByFolio(folioInput); }}>Buscar</button>
                   </div> */}
                 </div>
+
+                {/* Histórico de pagos de ESTA venta — pegado abajo del detalle
+                    del cobro (Joel 2026-07-30, 2ª iteración: dejó de flotar
+                    sobre el carrito al ensancharse el panel). Por mesa; se
+                    limpia al cobrar. Visible con cualquier método de pago. */}
+                {(activeMesa?.items.length ?? 0) > 0 && (
+                  <PayLogPanel
+                    entries={activeMesa?.payLog ?? []}
+                    visible={payLogVisible}
+                    onToggle={togglePayLog}
+                    mesaName={activeMesa?.name ?? ""}
+                  />
+                )}
 
               </div>
               {/* ↑ cierra Sección 3 interna (solo cash input + presets).
