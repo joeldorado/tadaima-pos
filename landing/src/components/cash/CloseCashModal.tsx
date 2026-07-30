@@ -26,15 +26,20 @@ interface CloseCashModalProps {
 export function CloseCashModal({ session, title, reason, onClosed, onCancel }: CloseCashModalProps) {
   const queryClient = useQueryClient();
   const [closeCashAmount, setCloseCashAmount] = useState("");
+  const [closeUsdAmount, setCloseUsdAmount] = useState("");
   const [closingCashLoading, setClosingCashLoading] = useState(false);
 
   const handleCloseCash = async () => {
     const amount = parseFloat(closeCashAmount) || 0;
+    // Dólares contados: el campo vacío también cuenta como capturado (0) —
+    // el cajero ya vio el campo; si de verdad no hay billetes americanos,
+    // el corte debe decir "esperabas US$X y contaste US$0".
+    const usdAmount = parseFloat(closeUsdAmount) || 0;
     setClosingCashLoading(true);
     try {
       // Manda el día local del corte — el timestamp UTC del backend ya cae
       // en "mañana" después de las 11pm Tijuana (el corte se iba al día 12).
-      const closedSession = await closeSession(amount, getTodayLocal());
+      const closedSession = await closeSession(amount, getTodayLocal(), usdAmount);
       // Limpiar la caché de sesión activa SINCRÓNICAMENTE antes de cualquier
       // setState. El efecto de auto-asignación de SellPage lee `cashSession`
       // de la caché — si dejamos la versión vieja "open" y solo invalidamos,
@@ -105,10 +110,10 @@ export function CloseCashModal({ session, title, reason, onClosed, onCancel }: C
           ))}
         </div>
 
-        {/* Closing cash input */}
+        {/* Closing cash inputs: pesos y dólares POR SEPARADO (2026-07-30) */}
         <div style={{ marginBottom: 24 }}>
           <label style={{ display: "block", fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "var(--td-text-ghost)", marginBottom: 8 }}>
-            Efectivo en Caja al Cierre ($MXN)
+            Pesos contados en el cajón ($MXN)
           </label>
           <input
             type="number" min={0} step={1} value={closeCashAmount}
@@ -117,9 +122,20 @@ export function CloseCashModal({ session, title, reason, onClosed, onCancel }: C
             data-testid="close-cash-input"
             style={{ width: "100%", background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 14, color: "var(--td-input-text)", padding: "12px 16px", fontSize: 22, fontWeight: 900, outline: "none", boxSizing: "border-box" as const }}
           />
+          <label style={{ display: "block", fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "#34d399", margin: "14px 0 8px" }}>
+            Dólares contados (US$) — billetes americanos
+          </label>
+          <input
+            type="number" min={0} step={1} value={closeUsdAmount}
+            onChange={e => setCloseUsdAmount(e.target.value)}
+            placeholder="0"
+            data-testid="close-cash-usd-input"
+            style={{ width: "100%", background: "var(--td-input-bg)", border: "1px solid rgba(16,185,129,0.45)", borderRadius: 14, color: "var(--td-input-text)", padding: "12px 16px", fontSize: 22, fontWeight: 900, outline: "none", boxSizing: "border-box" as const }}
+          />
           <p style={{ margin: "8px 0 0", fontSize: 10, color: "var(--td-text-ghost)", fontWeight: 600 }}>
-            Cuenta SOLO el efectivo del cajón (pesos y dólares). Tarjetas y transferencias sí
-            salen en reportes y tickets, pero no entran al esperado ni al faltante/sobrante.
+            Cuenta los PESOS en su campo y los DÓLARES en el suyo (sin convertir). El corte
+            te dirá cuánto debía haber de cada moneda. Tarjetas y transferencias salen en
+            reportes, pero no entran al esperado ni al faltante/sobrante.
           </p>
         </div>
 

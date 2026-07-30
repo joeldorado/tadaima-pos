@@ -286,7 +286,7 @@ class ReportsController extends Controller
         $saleTotals = DB::table('sales')
             ->whereIn('register_session_id', $sessionIds)
             ->where('status', Sale::STATUS_COMPLETED)
-            ->selectRaw('register_session_id, COUNT(*) as count, COALESCE(SUM(total), 0) as amount, COALESCE(SUM(cash_received_usd), 0) as usd_received')
+            ->selectRaw('register_session_id, COUNT(*) as count, COALESCE(SUM(total), 0) as amount, COALESCE(SUM(cash_received_usd), 0) as usd_received, COALESCE(SUM(cash_received_usd * exchange_rate), 0) as usd_mxn_equiv')
             ->groupBy('register_session_id')
             ->get()
             ->keyBy('register_session_id');
@@ -336,7 +336,11 @@ class ReportsController extends Controller
             ->get()
             ->keyBy('register_session_id');
 
-        $data = $sessions->map(function ($s) use ($movementTotals, $saleTotals, $salePaymentTotals, $preSaleTotals, $supplyTotals) {
+        // TC de respaldo para valorar dólares contados cuando la sesión no
+        // tuvo ventas en USD (raro: billetes contados sin venta que los meta).
+        $fallbackTc = (float) (\App\Models\SystemSetting::where('key', 'exchange_rate')->value('value') ?? 0);
+
+        $data = $sessions->map(function ($s) use ($movementTotals, $saleTotals, $salePaymentTotals, $preSaleTotals, $supplyTotals, $fallbackTc) {
             $movements = $movementTotals->get($s->id, collect());
             $entradas  = (float) ($movements->firstWhere('type', 'entrada')?->total ?? 0);
             $salidas   = (float) ($movements->firstWhere('type', 'salida')?->total ?? 0);
@@ -357,6 +361,36 @@ class ReportsController extends Controller
             $transferTotal = round((float) ($salePay?->other_paid ?? 0) + (float) ($preSales?->other_paid ?? 0), 2);
 
             $expected = round($s->opening_cash + $entradas - $salidas + $ajustes + $cashCollected, 2);
+
+            // Desglose por moneda (Joel 2026-07-30): los dólares recibidos se
+            // quedan ÍNTEGROS en el cajón (el cambio siempre se da en pesos),
+            // así que el lado USD del esperado es la suma de cash_received_usd
+            // y su equivalente en pesos (usd × tc snapshot de cada venta) se
+            // descuenta del lado MXN. Salidas/entradas/insumos son pesos.
+            $usdMxnEquiv = round((float) ($sales?->usd_mxn_equiv ?? 0), 2);
+            $expectedUsd = round((float) ($sales?->usd_received ?? 0), 2);
+            $expectedMxn = round($expected - $usdMxnEquiv, 2);
+            $closingUsd  = $s->closing_cash_usd !== null ? (float) $s->closing_cash_usd : null;
+
+            $differenceMxn = null;
+            $differenceUsd = null;
+            if ($s->closing_cash !== null && $closingUsd !== null) {
+                $differenceMxn = round((float) $s->closing_cash - $expectedMxn, 2);
+                $differenceUsd = round($closingUsd - $expectedUsd, 2);
+            }
+
+            // Compat: cortes sin dólares capturados (sesiones viejas o cajero
+            // que no llenó el campo) conservan la diferencia de siempre. Con
+            // dólares contados, el total se expresa en MXN usando el TC
+            // promedio de la sesión.
+            if ($s->closing_cash === null) {
+                $difference = null;
+            } elseif ($closingUsd === null) {
+                $difference = round((float) $s->closing_cash - $expected, 2);
+            } else {
+                $tcProm = $expectedUsd > 0 ? $usdMxnEquiv / $expectedUsd : $fallbackTc;
+                $difference = round($differenceMxn + $differenceUsd * $tcProm, 2);
+            }
 
             return [
                 'id'              => $s->id,
@@ -385,7 +419,14 @@ class ReportsController extends Controller
                 'total_supplies'  => round((float) ($supplyTotals->get($s->id)?->total ?? 0), 2),
                 'supplies_count'  => (int) ($supplyTotals->get($s->id)?->count ?? 0),
                 'expected_cash'   => $expected,
-                'difference'      => $s->closing_cash !== null ? round((float) $s->closing_cash - $expected, 2) : null,
+                // Desglose por moneda del esperado/contado (2026-07-30).
+                'usd_mxn_equiv'     => $usdMxnEquiv,
+                'expected_cash_mxn' => $expectedMxn,
+                'expected_usd'      => $expectedUsd,
+                'closing_cash_usd'  => $closingUsd,
+                'difference_mxn'    => $differenceMxn,
+                'difference_usd'    => $differenceUsd,
+                'difference'        => $difference,
             ];
         });
 
@@ -450,6 +491,11 @@ class ReportsController extends Controller
                 'subtotal'            => (float) $sale->subtotal,
                 'discount'            => (float) $sale->discount,
                 'total'               => (float) $sale->total,
+                // Dinero físico recibido (desglose USD del corte, 2026-07-30).
+                'cash_received'       => $sale->cash_received !== null ? (float) $sale->cash_received : null,
+                'change_amount'       => $sale->change_amount !== null ? (float) $sale->change_amount : null,
+                'cash_received_usd'   => $sale->cash_received_usd !== null ? (float) $sale->cash_received_usd : null,
+                'exchange_rate'       => $sale->exchange_rate !== null ? (float) $sale->exchange_rate : null,
                 'items'               => $sale->items->map(fn ($i) => [
                     'name'     => $i->product?->name ?? "#{$i->product_id}",
                     'sku'      => $i->product?->sku,

@@ -25,6 +25,8 @@ export interface CashSession {
   status: 'open' | 'closed'
   opening_cash: number
   closing_cash: number | null
+  /** Dólares físicos contados al cierre. null = no se capturaron. */
+  closing_cash_usd?: number | null
   opened_at: string
   closed_at: string | null
   /** Día de negocio del corte (YYYY-MM-DD, zona del dispositivo al cerrar) */
@@ -125,11 +127,14 @@ export async function forceCloseSession(sessionId: number, closingCash?: number)
  * POST /cash/close
  * `localDate` (YYYY-MM-DD, zona del dispositivo) fija a qué día de negocio
  * pertenece el corte — a las 11pm Tijuana el timestamp UTC ya es "mañana".
+ * `closingCashUsd` = dólares físicos contados (US$); si se omite, el corte
+ * se comporta como antes (un solo número en MXN).
  */
-export async function closeSession(closingCash: number, localDate?: string): Promise<CashSession> {
+export async function closeSession(closingCash: number, localDate?: string, closingCashUsd?: number): Promise<CashSession> {
   const response = await apiClient.post<CashSession>('/cash/close', {
     closing_cash: closingCash,
     ...(localDate ? { local_date: localDate } : {}),
+    ...(closingCashUsd !== undefined ? { closing_cash_usd: closingCashUsd } : {}),
   })
   return response.data
 }

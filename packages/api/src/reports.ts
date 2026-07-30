@@ -134,6 +134,19 @@ export interface CashSessionReport {
   expected_cash: number
   /** closing_cash - expected_cash. null si caja aún abierta. */
   difference: number | null
+  // ── Desglose por moneda (2026-07-30) ──────────────────────────────────────
+  /** Pesos equivalentes de los dólares recibidos (Σ usd × tc por venta), ya incluidos en expected_cash. */
+  usd_mxn_equiv?: number
+  /** Pesos físicos esperados en el cajón (expected_cash − usd_mxn_equiv). */
+  expected_cash_mxn?: number
+  /** Dólares físicos esperados en el cajón (Σ cash_received_usd). */
+  expected_usd?: number
+  /** Dólares contados al cierre. null = no se capturaron (corte legacy). */
+  closing_cash_usd?: number | null
+  /** closing_cash − expected_cash_mxn. Solo si se capturaron dólares. */
+  difference_mxn?: number | null
+  /** closing_cash_usd − expected_usd. Solo si se capturaron dólares. */
+  difference_usd?: number | null
 }
 
 export interface CashReport {
@@ -177,6 +190,13 @@ export interface CashTicket {
   subtotal: number
   discount: number
   total: number
+  /** Efectivo total recibido en MXN (incluye los USD ya convertidos). */
+  cash_received?: number | null
+  change_amount?: number | null
+  /** Dólares físicos recibidos en esta venta (desglose USD del corte). */
+  cash_received_usd?: number | null
+  /** TC snapshot de la venta. */
+  exchange_rate?: number | null
   items: CashTicketItem[]
   payments: { method: string; amount: number }[]
 }

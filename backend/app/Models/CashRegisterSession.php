@@ -17,15 +17,16 @@ class CashRegisterSession extends Model
 
     protected $fillable = [
         'register_id', 'user_id', 'opened_at', 'closed_at', 'local_date',
-        'opening_cash', 'closing_cash', 'status',
+        'opening_cash', 'closing_cash', 'closing_cash_usd', 'status',
     ];
 
     protected $casts = [
-        'opened_at'    => 'datetime',
-        'closed_at'    => 'datetime',
-        'local_date'   => 'date:Y-m-d',
-        'opening_cash' => 'float',
-        'closing_cash' => 'float',
+        'opened_at'        => 'datetime',
+        'closed_at'        => 'datetime',
+        'local_date'       => 'date:Y-m-d',
+        'opening_cash'     => 'float',
+        'closing_cash'     => 'float',
+        'closing_cash_usd' => 'float',
     ];
 
     public function register(): BelongsTo

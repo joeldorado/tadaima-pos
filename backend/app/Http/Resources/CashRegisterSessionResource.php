@@ -18,6 +18,7 @@ class CashRegisterSessionResource extends JsonResource
             'status'       => $this->status,
             'opening_cash' => $this->opening_cash,
             'closing_cash' => $this->closing_cash,
+            'closing_cash_usd' => $this->closing_cash_usd,
             'opened_at'    => $this->opened_at?->toISOString(),
             'closed_at'    => $this->closed_at?->toISOString(),
             'local_date'   => $this->local_date?->format('Y-m-d'),

@@ -105,9 +105,9 @@ class CashRegisterService
      *
      * @throws \DomainException
      */
-    public function close(CashRegisterSession $session, float $closingCash, ?string $localDate = null): CashRegisterSession
+    public function close(CashRegisterSession $session, float $closingCash, ?string $localDate = null, ?float $closingCashUsd = null): CashRegisterSession
     {
-        return DB::transaction(function () use ($session, $closingCash, $localDate) {
+        return DB::transaction(function () use ($session, $closingCash, $localDate, $closingCashUsd) {
             $session = CashRegisterSession::lockForUpdate()->find($session->id);
 
             if ($session->status !== CashRegisterSession::STATUS_OPEN) {
@@ -121,7 +121,10 @@ class CashRegisterService
                 // dispositivo del cajero). Fallback: zona del negocio
                 // (force-close y clientes viejos sin el campo).
                 'local_date'   => $localDate ?? now(\App\Support\DateRange::timezone())->toDateString(),
+                // closing_cash = SOLO pesos contados; los dólares físicos
+                // van aparte (null = no se capturaron, corte legacy).
                 'closing_cash' => $closingCash,
+                'closing_cash_usd' => $closingCashUsd,
             ]);
 
             return $session->load(['register', 'user', 'movements']);

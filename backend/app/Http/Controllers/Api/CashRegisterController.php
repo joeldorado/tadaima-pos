@@ -253,6 +253,9 @@ class CashRegisterController extends Controller
                 $session,
                 (float) $request->input('closing_cash', 0),
                 $request->input('local_date'),
+                $request->input('closing_cash_usd') !== null
+                    ? (float) $request->input('closing_cash_usd')
+                    : null,
             );
         } catch (\DomainException $e) {
             return $this->error($e->getMessage(), 422);

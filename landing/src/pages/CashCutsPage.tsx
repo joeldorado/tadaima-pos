@@ -52,6 +52,10 @@ function KpiInline({ label, value, color }: { label: string; value: string; colo
 }
 
 /** Celda de resumen monetario dentro del detalle expandido. */
+/** Color/etiqueta de una diferencia por moneda (verde cuadra, rojo falta, ámbar sobra). */
+const cellTone = (d: number): string => (Math.abs(d) < 0.01 ? "#10b981" : d < 0 ? "#DC2626" : "#f59e0b");
+const cellTag = (d: number): string => (Math.abs(d) < 0.01 ? "✓" : d < 0 ? "Falta" : "Sobra");
+
 function SummaryCell({ label, value, color, tag }: { label: string; value: string; color?: string | undefined; tag?: string | undefined }) {
   return (
     <div className="px-4 py-3 rounded-xl" style={{ background: SURFACE_MUTED, border: "1px solid var(--td-card-border)" }}>
@@ -90,6 +94,9 @@ function CorteDetail({ session: s }: { session: CashSessionReport }) {
   const isShort = isClosed && diff < -0.01;
   const diffColor = !isClosed ? "#FFAA00" : isMatch ? "#10b981" : isShort ? "#DC2626" : "#f59e0b";
   const diffTag = !isClosed ? "Abierta" : isMatch ? "✓ Cuadra" : isShort ? "Falta" : "Sobra";
+  // Desglose por moneda (2026-07-30): solo con payload nuevo Y dólares en juego.
+  const closingUsd = s.closing_cash_usd ?? null;
+  const hasUsdSplit = s.expected_cash_mxn != null && ((s.expected_usd ?? 0) > 0 || (closingUsd ?? 0) > 0);
 
   const thStyle: React.CSSProperties = { padding: "8px 12px", fontSize: 8, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: TM, textAlign: "left" };
   const tdStyle: React.CSSProperties = { padding: "8px 12px", fontSize: 11, color: TS, verticalAlign: "top" };
@@ -123,15 +130,55 @@ function CorteDetail({ session: s }: { session: CashSessionReport }) {
         <SummaryCell label="Preventas cobradas" value={fmt(s.total_pre_sale_payments)} color={s.total_pre_sale_payments > 0 ? "#F59E0B" : undefined} />
         <SummaryCell label="Entradas" value={`+${fmt(s.total_entradas)}`} color={s.total_entradas > 0 ? "#10b981" : undefined} />
         <SummaryCell label="Salidas de caja" value={`-${fmt(s.total_salidas)}`} color={s.total_salidas > 0 ? "#DC2626" : undefined} />
+        {/* Insumos: ya incluidos en Salidas (informativo, no se re-resta). */}
+        {(s.total_supplies ?? 0) > 0 && (
+          <SummaryCell label={`De salidas, insumos (${s.supplies_count ?? 0})`} value={`-${fmt(s.total_supplies ?? 0)}`} color="#F97316" />
+        )}
         <SummaryCell label="Ajustes" value={`${s.total_ajustes > 0 ? "+" : ""}${fmt(s.total_ajustes)}`} />
-        <SummaryCell label="Esperado en caja" value={fmt(s.expected_cash)} />
-        <SummaryCell label="Cerró con" value={isClosed ? fmt(s.closing_cash!) : "—"} />
-        <SummaryCell
-          label="Diferencia"
-          value={isClosed ? `${diff >= 0 ? "+" : ""}${fmt(diff)}` : "—"}
-          color={diffColor}
-          tag={diffTag}
-        />
+        {/* Desglose por moneda (2026-07-30) — solo si hubo dólares en el corte. */}
+        {hasUsdSplit ? (
+          <>
+            <SummaryCell label="Esperado · Pesos" value={fmt(s.expected_cash_mxn ?? 0)} />
+            <SummaryCell label="Esperado · Dólares" value={`US$${s.expected_usd ?? 0}`} color="#10b981" />
+            <SummaryCell label="Esperado total (MXN)" value={fmt(s.expected_cash)} />
+          </>
+        ) : (
+          <SummaryCell label="Esperado en caja" value={fmt(s.expected_cash)} />
+        )}
+        {hasUsdSplit && closingUsd != null ? (
+          <>
+            <SummaryCell label="Cerró · Pesos" value={isClosed ? fmt(s.closing_cash!) : "—"} />
+            <SummaryCell label="Cerró · Dólares" value={`US$${closingUsd}`} color="#10b981" />
+            <SummaryCell
+              label="Dif. Pesos"
+              value={`${(s.difference_mxn ?? 0) >= 0 ? "+" : ""}${fmt(s.difference_mxn ?? 0)}`}
+              color={cellTone(s.difference_mxn ?? 0)}
+              tag={cellTag(s.difference_mxn ?? 0)}
+            />
+            <SummaryCell
+              label="Dif. Dólares"
+              value={`${(s.difference_usd ?? 0) >= 0 ? "+" : ""}US$${s.difference_usd ?? 0}`}
+              color={cellTone(s.difference_usd ?? 0)}
+              tag={cellTag(s.difference_usd ?? 0)}
+            />
+            <SummaryCell
+              label="Diferencia total (MXN)"
+              value={`${diff >= 0 ? "+" : ""}${fmt(diff)}`}
+              color={diffColor}
+              tag={diffTag}
+            />
+          </>
+        ) : (
+          <>
+            <SummaryCell label="Cerró con" value={isClosed ? fmt(s.closing_cash!) : "—"} />
+            <SummaryCell
+              label="Diferencia"
+              value={isClosed ? `${diff >= 0 ? "+" : ""}${fmt(diff)}` : "—"}
+              color={diffColor}
+              tag={diffTag}
+            />
+          </>
+        )}
       </div>
 
       {/* ── Tickets detallados ────────────────────────────────────────────── */}

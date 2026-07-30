@@ -133,11 +133,24 @@ export function CortesModal({ open, onClose, storeId }: CortesModalProps) {
                           <span className="block text-[10px] font-normal" style={{ color: "var(--td-text-lo)" }}>
                             Caja {fmt(s.cash_collected)}
                           </span>
+                          {(s.total_usd_received ?? 0) > 0 && (
+                            <span className="block text-[10px] font-bold" style={{ color: "#10b981" }}>
+                              US${s.total_usd_received} en dólares
+                            </span>
+                          )}
                         </td>
                         <td className="py-2.5 px-3 text-right font-bold" style={{
                           color: s.status === "open" ? "var(--td-text-lo)" : (Math.abs(diff) < 0.01 ? "var(--td-text-lo)" : (diff < 0 ? "#DC2626" : "#10b981")),
                         }}>
                           {s.status === "open" ? "—" : (Math.abs(diff) < 0.01 ? "Cuadra" : `${diff >= 0 ? "+" : ""}${fmt(diff)}`)}
+                          {/* Desglose por moneda cuando el cierre capturó dólares. */}
+                          {s.status !== "open" && s.closing_cash_usd != null && s.difference_usd != null && (
+                            <span className="block text-[10px] font-bold" style={{
+                              color: Math.abs(s.difference_usd) < 0.01 ? "var(--td-text-lo)" : (s.difference_usd < 0 ? "#DC2626" : "#10b981"),
+                            }}>
+                              {Math.abs(s.difference_usd) < 0.01 ? "US$ cuadra" : `${s.difference_usd >= 0 ? "+" : ""}US$${s.difference_usd}`}
+                            </span>
+                          )}
                         </td>
                         <td className="py-2.5 px-4 text-right">
                           {s.status === "open" ? (

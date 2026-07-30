@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { X, Printer, CheckCircle2, AlertTriangle, Loader2 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { getCashSessionDetail } from "@tadaima/api";
@@ -22,6 +23,10 @@ interface CashCloseSummaryModalProps {
 const fmt = (n: number): string =>
   `$${n.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+/** Color/etiqueta de una diferencia: verde cuadra, rojo falta, ámbar sobra. */
+const diffTone = (d: number): string => (Math.abs(d) < 0.01 ? "#10b981" : d < 0 ? "#DC2626" : "#f59e0b");
+const diffTag = (d: number): string => (Math.abs(d) < 0.01 ? "✓ Cuadra" : d < 0 ? "Falta" : "Sobra");
+
 const fmtDate = (iso: string | null): string =>
   iso ? new Date(iso).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" }) : "—";
 
@@ -41,7 +46,10 @@ function buildTicketsHtml(detail: CashSessionDetail | null): string {
       `<div class="row"><span>${i.quantity} × ${esc(i.name)}</span><span>${fmt(i.total)}</span></div>`
     ).join("");
     const pays = t.payments.map(p => `${p.method} ${fmt(p.amount)}`).join(" + ");
-    return `<div class="row" style="font-weight:900; margin-top:4px"><span>#${t.id}${cancelled ? " CANCELADO" : ""}</span><span>${fmt(t.total)}</span></div>${items}<div class="row"><span>${pays}</span><span></span></div>`;
+    const usdLine = (t.cash_received_usd ?? 0) > 0
+      ? `<div class="row"><span>&nbsp;&nbsp;Dolares recibidos</span><span>US$${t.cash_received_usd}${t.exchange_rate ? ` @ ${t.exchange_rate}` : ""}</span></div>`
+      : "";
+    return `<div class="row" style="font-weight:900; margin-top:4px"><span>#${t.id}${cancelled ? " CANCELADO" : ""}</span><span>${fmt(t.total)}</span></div>${items}<div class="row"><span>${pays}</span><span></span></div>${usdLine}`;
   }).join("");
   const presale = detail.pre_sale_payments.map(p =>
     `<div class="row"><span>${esc(p.folio)} · ${esc(p.method)}</span><span>+${fmt(p.amount)}</span></div>`
@@ -67,6 +75,14 @@ function buildPrintHtml(s: CashSessionReport, detail: CashSessionDetail | null =
   // Fuera del cajón (tarjeta/transferencia) — informativo, NO suma al esperado.
   const cardOut = s.total_card ?? 0;
   const transferOut = s.total_transfer ?? 0;
+  // Desglose por moneda (2026-07-30): solo si el payload nuevo trae el split
+  // y hubo dólares (esperados o contados). Payload viejo cae al formato legacy.
+  const expMxn = s.expected_cash_mxn;
+  const expUsd = s.expected_usd ?? 0;
+  const cloUsd = s.closing_cash_usd;
+  const hasSplit = expMxn != null && (expUsd > 0 || (cloUsd ?? 0) > 0);
+  const dMxn = s.difference_mxn ?? 0;
+  const dUsd = s.difference_usd ?? 0;
   return `
     <html><head><title>Corte ${s.id}</title><style>
       body { font-family: ui-monospace, monospace; width: 58mm; margin: 0; padding: 8px; font-size: 11px; font-weight: 700; color: #000 }
@@ -95,9 +111,20 @@ function buildPrintHtml(s: CashSessionReport, detail: CashSessionDetail | null =
       ${s.total_salidas > 0 ? `<div class="row"><span>Salidas de caja</span><span>-${fmt(s.total_salidas)}</span></div>` : ""}
       ${(s.total_supplies ?? 0) > 0 ? `<div class="row"><span>&nbsp;&nbsp;De salidas, insumos (${s.supplies_count ?? 0})</span><span>-${fmt(s.total_supplies ?? 0)}</span></div>` : ""}
       ${s.total_ajustes !== 0 ? `<div class="row"><span>Ajustes</span><span>${s.total_ajustes > 0 ? "+" : ""}${fmt(s.total_ajustes)}</span></div>` : ""}
-      <div class="row total"><span>Esperado</span><span>${fmt(s.expected_cash)}</span></div>
-      <div class="row total"><span>Cerrado</span><span>${s.closing_cash != null ? fmt(s.closing_cash) : "—"}</span></div>
-      ${s.closing_cash != null ? `<div class="row total" style="color: ${Math.abs(diff) < 0.01 ? "green" : "red"}"><span>Diferencia</span><span>${diff >= 0 ? "+" : ""}${fmt(diff)}</span></div>` : ""}
+      ${hasSplit ? `
+      <div class="row total"><span>Esperado Pesos</span><span>${fmt(expMxn ?? 0)}</span></div>
+      <div class="row"><span>Esperado Dolares</span><span>US$${expUsd}</span></div>
+      <div class="row"><span>Esperado total (MXN)</span><span>${fmt(s.expected_cash)}</span></div>` : `
+      <div class="row total"><span>Esperado</span><span>${fmt(s.expected_cash)}</span></div>`}
+      ${s.closing_cash != null ? (hasSplit && cloUsd != null ? `
+      <div class="row total"><span>Contado Pesos</span><span>${fmt(s.closing_cash)}</span></div>
+      <div class="row"><span>Contado Dolares</span><span>US$${cloUsd}</span></div>
+      <div class="row"><span>Dif. Pesos</span><span>${dMxn >= 0 ? "+" : ""}${fmt(dMxn)}</span></div>
+      <div class="row"><span>Dif. Dolares</span><span>${dUsd >= 0 ? "+" : ""}US$${dUsd}</span></div>
+      <div class="row total"><span>Diferencia (MXN)</span><span>${diff >= 0 ? "+" : ""}${fmt(diff)}</span></div>` : `
+      <div class="row total"><span>Cerrado</span><span>${fmt(s.closing_cash)}</span></div>
+      <div class="row total" style="color: ${Math.abs(diff) < 0.01 ? "green" : "red"}"><span>Diferencia</span><span>${diff >= 0 ? "+" : ""}${fmt(diff)}</span></div>`) : `
+      <div class="row total"><span>Cerrado</span><span>—</span></div>`}
       ${buildTicketsHtml(detail)}
       <div class="sub" style="margin-top: 10px">Generado ${new Date().toLocaleString("es-MX")}</div>
     </body></html>
@@ -129,6 +156,12 @@ export function CashCloseSummaryModal({ session: s, open, onClose }: CashCloseSu
   const diff = s.difference ?? 0;
   const isMatch = s.closing_cash != null && Math.abs(diff) < 0.01;
   const isShort = s.closing_cash != null && diff < -0.01;
+  // Desglose por moneda (2026-07-30) — solo si el payload nuevo trae el split
+  // y hubo dólares. Payload viejo cacheado cae a la vista legacy de siempre.
+  const expectedMxn = s.expected_cash_mxn;
+  const expectedUsd = s.expected_usd ?? 0;
+  const closingUsd = s.closing_cash_usd ?? null;
+  const hasUsdSplit = expectedMxn != null && (expectedUsd > 0 || (closingUsd ?? 0) > 0);
   // Desglose de lo que se cobró SIN entrar al cajón. Los campos llegan desde
   // 2026-07-23; un payload viejo cacheado cae al agregado calculado.
   const cardOutside = s.total_card;
@@ -190,7 +223,7 @@ export function CashCloseSummaryModal({ session: s, open, onClose }: CashCloseSu
           <Row label="Efectivo inicial" value={fmt(s.opening_cash)} />
           <Row label={`Ventas totales (${s.sales_count})`} value={fmt(s.total_sales)} />
           {(s.total_usd_received ?? 0) > 0 && (
-            <Row label="Dólares recibidos" value={`${s.total_usd_received} USD`} valueColor="#10b981" />
+            <UsdEntriesRow session={s} detail={detail} />
           )}
           {s.total_pre_sale_payments > 0 && (
             <Row label="Preventas cobradas" value={fmt(s.total_pre_sale_payments)} valueColor="#F59E0B" />
@@ -219,19 +252,71 @@ export function CashCloseSummaryModal({ session: s, open, onClose }: CashCloseSu
           )}
         </div>
 
-        {/* Esperado / Cerrado / Diferencia */}
+        {/* Esperado / Cerrado / Diferencia — desglosado por moneda si hubo dólares */}
         <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "14px 16px", background: "rgba(0,0,0,0.2)", border: "1px solid var(--td-card-border)", borderRadius: 16, marginBottom: 18 }}>
-          <Row label="Esperado en caja" value={fmt(s.expected_cash)} bold />
-          {s.closing_cash != null && (
+          {hasUsdSplit ? (
             <>
-              <Row label="Cerrado real" value={fmt(s.closing_cash)} bold />
+              <Row label="Esperado · Pesos" value={fmt(expectedMxn ?? 0)} bold />
               <Row
-                label="Diferencia"
-                value={`${diff >= 0 ? "+" : ""}${fmt(diff)}`}
+                label="Esperado · Dólares"
+                value={`US$${expectedUsd}${(s.usd_mxn_equiv ?? 0) > 0 ? ` (≈${fmt(s.usd_mxn_equiv ?? 0)})` : ""}`}
                 bold
-                valueColor={isMatch ? "#10b981" : isShort ? "#DC2626" : "#f59e0b"}
-                tag={isMatch ? "✓ Cuadra" : isShort ? "Falta" : "Sobra"}
+                valueColor="#10b981"
               />
+              <Row label="Esperado total (MXN)" value={fmt(s.expected_cash)} />
+              {s.closing_cash != null && (closingUsd != null ? (
+                <>
+                  <div style={{ borderTop: "1px dashed var(--td-card-border)", margin: "4px 0" }} />
+                  <Row label="Contado · Pesos" value={fmt(s.closing_cash)} bold />
+                  <Row label="Contado · Dólares" value={`US$${closingUsd}`} bold valueColor="#10b981" />
+                  <Row
+                    label="Diferencia · Pesos"
+                    value={`${(s.difference_mxn ?? 0) >= 0 ? "+" : ""}${fmt(s.difference_mxn ?? 0)}`}
+                    valueColor={diffTone(s.difference_mxn ?? 0)}
+                    tag={diffTag(s.difference_mxn ?? 0)}
+                  />
+                  <Row
+                    label="Diferencia · Dólares"
+                    value={`${(s.difference_usd ?? 0) >= 0 ? "+" : ""}US$${s.difference_usd ?? 0}`}
+                    valueColor={diffTone(s.difference_usd ?? 0)}
+                    tag={diffTag(s.difference_usd ?? 0)}
+                  />
+                  <Row
+                    label="Diferencia total (MXN)"
+                    value={`${diff >= 0 ? "+" : ""}${fmt(diff)}`}
+                    bold
+                    valueColor={isMatch ? "#10b981" : isShort ? "#DC2626" : "#f59e0b"}
+                    tag={isMatch ? "✓ Cuadra" : isShort ? "Falta" : "Sobra"}
+                  />
+                </>
+              ) : (
+                <>
+                  <Row label="Cerrado real" value={fmt(s.closing_cash)} bold />
+                  <Row
+                    label="Diferencia"
+                    value={`${diff >= 0 ? "+" : ""}${fmt(diff)}`}
+                    bold
+                    valueColor={isMatch ? "#10b981" : isShort ? "#DC2626" : "#f59e0b"}
+                    tag={isMatch ? "✓ Cuadra" : isShort ? "Falta" : "Sobra"}
+                  />
+                </>
+              ))}
+            </>
+          ) : (
+            <>
+              <Row label="Esperado en caja" value={fmt(s.expected_cash)} bold />
+              {s.closing_cash != null && (
+                <>
+                  <Row label="Cerrado real" value={fmt(s.closing_cash)} bold />
+                  <Row
+                    label="Diferencia"
+                    value={`${diff >= 0 ? "+" : ""}${fmt(diff)}`}
+                    bold
+                    valueColor={isMatch ? "#10b981" : isShort ? "#DC2626" : "#f59e0b"}
+                    tag={isMatch ? "✓ Cuadra" : isShort ? "Falta" : "Sobra"}
+                  />
+                </>
+              )}
             </>
           )}
         </div>
@@ -320,6 +405,49 @@ export function CashCloseSummaryModal({ session: s, open, onClose }: CashCloseSu
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * "Dólares recibidos" expandible (Joel 2026-07-30): el total en verde + un
+ * dropdown con cada entrada USD por venta (hora · ticket · US$ @ TC). Las
+ * entradas salen del detalle del corte que el modal ya carga.
+ */
+function UsdEntriesRow({ session: s, detail }: { session: CashSessionReport; detail: CashSessionDetail | null }) {
+  const [expanded, setExpanded] = useState(false);
+  const entries = (detail?.tickets ?? []).filter(t => (t.cash_received_usd ?? 0) > 0);
+  return (
+    <div>
+      <button
+        onClick={() => setExpanded(e => !e)}
+        data-testid="usd-entries-toggle"
+        style={{ width: "100%", background: "none", border: "none", padding: 0, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}
+      >
+        <span style={{ fontSize: 11, fontWeight: 700, color: "var(--td-text-md)", display: "flex", alignItems: "center", gap: 6 }}>
+          Dólares recibidos
+          <span style={{ fontSize: 9, fontWeight: 900, color: "#10b981" }}>
+            {expanded ? "▲ ocultar" : `▼ ver entradas${entries.length > 0 ? ` (${entries.length})` : ""}`}
+          </span>
+        </span>
+        <span style={{ fontSize: 12, fontWeight: 800, color: "#10b981" }}>US${s.total_usd_received}</span>
+      </button>
+      {expanded && (
+        <div style={{ margin: "6px 0 4px", padding: "8px 10px", background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.25)", borderRadius: 10, display: "flex", flexDirection: "column", gap: 3 }}>
+          {entries.length === 0 ? (
+            <span style={{ fontSize: 10, color: "var(--td-text-lo)" }}>Cargando entradas…</span>
+          ) : entries.map(t => (
+            <div key={t.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 10, fontWeight: 700, color: "var(--td-text-md)" }}>
+              <span>
+                {t.sold_at ? new Date(t.sold_at).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }) : "—"} · Ticket #{t.id}
+              </span>
+              <span style={{ fontWeight: 900, color: "#10b981", flexShrink: 0 }}>
+                US${t.cash_received_usd}{t.exchange_rate ? ` @ ${t.exchange_rate}` : ""}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
