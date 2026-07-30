@@ -13,6 +13,12 @@ const SUPPLY_SOURCE_LABEL: Record<string, string> = {
   propio: "Dinero propio",
 };
 
+const DISCOUNT_REASON_LABEL: Record<string, string> = {
+  danado: "dañado", caducidad: "caducidad", exhibicion: "exhibición", cortesia: "cortesía", otro: "otro",
+};
+const PROMO_FILL: [number, number, number] = [185, 251, 192];  // verde
+const DESC_FILL: [number, number, number] = [255, 241, 118];   // amarillo
+
 export function exportReportPdf(params: ReportExportParams): void {
   const {
     groupedProducts, paymentBreakdown, from, to, today, canViewCost, ivaRate,
@@ -93,16 +99,35 @@ export function exportReportPdf(params: ReportExportParams): void {
       pageBreak();
       sectionTitle("1. VENTAS EN EFECTIVO");
       let tCant = 0, tCost = 0, tVenta = 0, tProfit = 0;
-      const body = cashProducts.map((prod) => {
+      const body: any[] = [];
+      const rowFill: Record<number, [number, number, number]> = {};
+      const cashTotalCols = canViewCost ? 5 : 3;
+      const cashVentaIdx = canViewCost ? 3 : 2;
+      cashProducts.forEach((prod) => {
         let qty = 0, revenue = 0;
         Object.entries(prod.payment_breakdown).forEach(([m, d]) => { if (isCash(m)) { qty += d.qty; revenue += d.revenue; } });
-        const ratio = prod.total_revenue > 0 ? revenue / prod.total_revenue : 0;
-        const cost = (prod.total_cost || 0) * ratio;
-        const profit = (prod.total_profit || 0) * ratio;
+        // Costo por PIEZAS (costo unitario × piezas en efectivo), no por ingresos.
+        const unitCost = (prod.total_quantity || 0) > 0 ? (prod.total_cost || 0) / prod.total_quantity : 0;
+        const cost = unitCost * qty;
+        const profit = revenue - cost;
         tCant += qty; tCost += cost; tVenta += revenue; tProfit += profit;
-        return [prod.name, qty, ...(canViewCost ? [fmt(cost)] : []), fmt(revenue), ...(canViewCost ? [fmt(profit)] : [])];
+        body.push([prod.name, qty, ...(canViewCost ? [fmt(cost)] : []), fmt(revenue), ...(canViewCost ? [fmt(profit)] : [])]);
+        // Renglones de beneficio (efectivo): uno por promo (verde) y por motivo (amarillo).
+        Object.entries(prod.promo_breakdown ?? {}).forEach(([name, amt]) => {
+          if (amt.cash > 0.005) {
+            const row = new Array(cashTotalCols).fill(""); row[0] = `   Promo: ${name}`; row[cashVentaIdx] = `-${fmt(amt.cash)}`;
+            rowFill[body.length] = PROMO_FILL; body.push(row);
+          }
+        });
+        Object.entries(prod.discount_breakdown ?? {}).forEach(([reason, amt]) => {
+          if (amt.cash > 0.005) {
+            const row = new Array(cashTotalCols).fill(""); row[0] = `   Descuento (${DISCOUNT_REASON_LABEL[reason] ?? reason})`; row[cashVentaIdx] = `-${fmt(amt.cash)}`;
+            rowFill[body.length] = DESC_FILL; body.push(row);
+          }
+        });
       });
       body.push(["TOTAL EFECTIVO", tCant, ...(canViewCost ? [fmt(tCost)] : []), fmt(tVenta), ...(canViewCost ? [fmt(tProfit)] : [])]);
+      const cashLastIdx = body.length - 1;
       autoTable(doc, {
         startY: currentY,
         head: [["Producto", "Cant. Efectivo", ...(canViewCost ? ["Costo"] : []), "Venta Efectivo", ...(canViewCost ? ["Utilidad"] : [])]],
@@ -111,7 +136,16 @@ export function exportReportPdf(params: ReportExportParams): void {
         headStyles: { fillColor: [0, 153, 68], fontSize: 8, fontStyle: "bold" },
         bodyStyles: { fontSize: 7.5 },
         columnStyles: { 0: { cellWidth: 90 }, 1: { halign: "center" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" } },
-        didParseCell: highlightLastRow(body.length, [230, 250, 235]),
+        didParseCell: (data) => {
+          const fill = rowFill[data.row.index];
+          if (data.section === "body" && fill) {
+            data.cell.styles.fillColor = fill;
+            data.cell.styles.fontStyle = "bold";
+          } else if (data.section === "body" && data.row.index === cashLastIdx) {
+            data.cell.styles.fontStyle = "bold";
+            data.cell.styles.fillColor = [230, 250, 235];
+          }
+        },
       });
       advanceY();
     }
@@ -122,19 +156,37 @@ export function exportReportPdf(params: ReportExportParams): void {
       pageBreak();
       sectionTitle("2. DESGLOSE DE COBROS CON TARJETA");
       let tCant = 0, tBruto = 0, tCost = 0, tCom = 0, tIva = 0, tNet = 0, tProfit = 0;
-      const body = cardProducts.map((prod) => {
+      const body: any[] = [];
+      const rowFill: Record<number, [number, number, number]> = {};
+      const cardTotalCols = canViewCost ? 8 : 6;
+      cardProducts.forEach((prod) => {
         let qty = 0, revenue = 0;
         Object.entries(prod.payment_breakdown).forEach(([m, d]) => { if (isCard(m)) { qty += d.qty; revenue += d.revenue; } });
         const comm = prod.commission_amount || 0;
         const iva = comm * ivaRate;
         const net = revenue - comm - iva;
-        const ratio = prod.total_revenue > 0 ? revenue / prod.total_revenue : 0;
-        const cost = (prod.total_cost || 0) * ratio;
-        const profit = (prod.total_profit || 0) * ratio - comm - iva;
+        // Costo por PIEZAS (costo unitario × piezas en tarjeta). Utilidad = Neto − Costo.
+        const unitCost = (prod.total_quantity || 0) > 0 ? (prod.total_cost || 0) / prod.total_quantity : 0;
+        const cost = unitCost * qty;
+        const profit = net - cost;
         tCant += qty; tBruto += revenue; tCost += cost; tCom += comm; tIva += iva; tNet += net; tProfit += profit;
-        return [prod.name, qty, fmt(revenue), ...(canViewCost ? [fmt(cost)] : []), fmt(comm), fmt(iva), fmt(net), ...(canViewCost ? [fmt(profit)] : [])];
+        body.push([prod.name, qty, fmt(revenue), ...(canViewCost ? [fmt(cost)] : []), fmt(comm), fmt(iva), fmt(net), ...(canViewCost ? [fmt(profit)] : [])]);
+        // Renglones de beneficio (tarjeta): monto en la columna Bruto (índice 2).
+        Object.entries(prod.promo_breakdown ?? {}).forEach(([name, amt]) => {
+          if (amt.card > 0.005) {
+            const row = new Array(cardTotalCols).fill(""); row[0] = `   Promo: ${name}`; row[2] = `-${fmt(amt.card)}`;
+            rowFill[body.length] = PROMO_FILL; body.push(row);
+          }
+        });
+        Object.entries(prod.discount_breakdown ?? {}).forEach(([reason, amt]) => {
+          if (amt.card > 0.005) {
+            const row = new Array(cardTotalCols).fill(""); row[0] = `   Descuento (${DISCOUNT_REASON_LABEL[reason] ?? reason})`; row[2] = `-${fmt(amt.card)}`;
+            rowFill[body.length] = DESC_FILL; body.push(row);
+          }
+        });
       });
       body.push(["TOTAL TARJETA", tCant, fmt(tBruto), ...(canViewCost ? [fmt(tCost)] : []), fmt(tCom), fmt(tIva), fmt(tNet), ...(canViewCost ? [fmt(tProfit)] : [])]);
+      const cardLastIdx = body.length - 1;
       autoTable(doc, {
         startY: currentY,
         head: [["Producto", "Cant.", "Bruto", ...(canViewCost ? ["Costo"] : []), "Comisión TPV", ivaLabel, "Neto", ...(canViewCost ? ["Utilidad"] : [])]],
@@ -143,7 +195,16 @@ export function exportReportPdf(params: ReportExportParams): void {
         headStyles: { fillColor: [34, 102, 187], fontSize: 8, fontStyle: "bold" },
         bodyStyles: { fontSize: 7.5 },
         columnStyles: { 0: { cellWidth: 55 }, 1: { halign: "center" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" }, 6: { halign: "right" }, 7: { halign: "right" } },
-        didParseCell: highlightLastRow(body.length, [230, 240, 255]),
+        didParseCell: (data) => {
+          const fill = rowFill[data.row.index];
+          if (data.section === "body" && fill) {
+            data.cell.styles.fillColor = fill;
+            data.cell.styles.fontStyle = "bold";
+          } else if (data.section === "body" && data.row.index === cardLastIdx) {
+            data.cell.styles.fontStyle = "bold";
+            data.cell.styles.fillColor = [230, 240, 255];
+          }
+        },
       });
       advanceY();
     }
@@ -201,7 +262,7 @@ export function exportReportPdf(params: ReportExportParams): void {
       advanceY();
     }
 
-    // ── 5. EGRESOS — INSUMOS — Insumo · Origen · Registró · Tienda · Monto ─────
+    // ── 5. EGRESOS — INSUMOS — Insumo · Descripción · Origen · Registró · Tienda · Monto ─
     if (supplyMovements.length > 0) {
       pageBreak();
       sectionTitle("5. EGRESOS — INSUMOS DE OPERACIÓN");
@@ -211,17 +272,17 @@ export function exportReportPdf(params: ReportExportParams): void {
         const origenTxt = m.money_source === "propio" && m.payer_name ? `${origen} · ${m.payer_name}` : origen;
         const tienda = m.supply?.store_id ? (stores.find((s) => s.id === m.supply?.store_id)?.name ?? `Tienda ${m.supply?.store_id}`) : "Toda la empresa";
         tMonto += m.amount || 0;
-        return [m.supply?.name ?? "Insumo", origenTxt, m.user?.name ?? "—", tienda, fmt(m.amount || 0)];
+        return [m.supply?.name ?? "Insumo", m.note ?? "", origenTxt, m.user?.name ?? "—", tienda, fmt(m.amount || 0)];
       });
-      body.push(["TOTAL EGRESOS", "", "", "", fmt(tMonto)]);
+      body.push(["TOTAL EGRESOS", "", "", "", "", fmt(tMonto)]);
       autoTable(doc, {
         startY: currentY,
-        head: [["Insumo", "Origen", "Registró", "Tienda", "Monto"]],
+        head: [["Insumo", "Descripción", "Origen", "Registró", "Tienda", "Monto"]],
         body,
         theme: "striped",
         headStyles: { fillColor: [204, 119, 34], fontSize: 8, fontStyle: "bold" },
         bodyStyles: { fontSize: 7.5 },
-        columnStyles: { 0: { cellWidth: 65 }, 1: { cellWidth: 50 }, 2: { cellWidth: 50 }, 3: { cellWidth: 50 }, 4: { halign: "right", fontStyle: "bold", textColor: [204, 34, 0] } },
+        columnStyles: { 0: { cellWidth: 40 }, 1: { cellWidth: 95 }, 2: { cellWidth: 28 }, 3: { cellWidth: 38 }, 4: { cellWidth: 32 }, 5: { halign: "right", fontStyle: "bold", textColor: [204, 34, 0] } },
         didParseCell: highlightLastRow(body.length, [250, 240, 225]),
       });
       advanceY();
