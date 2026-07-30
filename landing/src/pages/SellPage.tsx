@@ -1013,11 +1013,12 @@ export function SellPage() {
     () => localStorage.getItem("tadaima-caja-densidad") === "compacta",
   );
 
-  // Ventanita flotante "Pagos" (Joel 2026-07-30): visible por default; el
-  // toggle esconder/mostrar se recuerda por dispositivo (mismo patrón que la
-  // densidad). El CONTENIDO vive por mesa en activeMesa.payLog.
+  // Sección "Pagos de esta venta" (Joel 2026-07-30): COLAPSADA por default —
+  // solo expandida si el cajero la abrió explícitamente (3ª iteración: expandida
+  // por default amontonaba el panel). Se recuerda por dispositivo. El CONTENIDO
+  // vive por mesa en activeMesa.payLog.
   const [payLogVisible, setPayLogVisible] = useState(
-    () => localStorage.getItem("tadaima-caja-paylog") !== "0",
+    () => localStorage.getItem("tadaima-caja-paylog") === "1",
   );
   const togglePayLog = useCallback(() => {
     setPayLogVisible(v => {
@@ -5971,69 +5972,76 @@ export function SellPage() {
               espacio sobrante queda arriba; cuando se agrega cash input + cambio,
               el contenido empuja hacia arriba quedando siempre pegado al footer.
               Decisión Joel 2026-05-28: "que crezca de abajo para arriba". */}
-          <div className="flex-1 flex flex-col gap-4 overflow-y-auto no-scrollbar px-5 py-5 justify-end">
-
-              {/* ── Sección 1: Resumen monetario · Total centrado horizontal ── */}
-              <div className="flex flex-col gap-4">
-
-                {/* Subtotal + modifiers — only when they differ from total.
-                    El descuento ahora es POR LÍNEA (botón "Desc." en cada fila);
-                    aquí solo se muestra el Σ de beneficios (Descuentos v2). */}
-                {(discountAmt > 0 || (activeMesa.paymentMethod === "Tarjeta" && activeTerminal)) && (
-                  <div className="flex flex-col gap-0.5 pb-1" style={{ borderBottom: CARD_B }}>
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: TLO }}>Subtotal</p>
-                      <p className="text-sm font-black" style={{ color: TMD }}>{fmt(subtotal)}</p>
-                    </div>
-                    {discountAmt > 0 && (
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest" style={{ color: TLO }}>
-                          <Tag size={9} className="text-[#E0221A]" /> Descuentos
-                        </p>
-                        <p className="text-sm font-black text-emerald-500">-{fmt(discountAmt)}</p>
-                      </div>
-                    )}
-                    {activeMesa.paymentMethod === "Tarjeta" && activeTerminal && isAdmin && (
-                      <div className="flex items-center justify-between gap-3">
-                        <button
-                          onClick={() => setShowTerminalModal(true)}
-                          className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest transition-colors"
-                          style={{ color: TLO }}
-                          title="Comisión interna — la tienda absorbe, no se cobra al cliente"
-                        >
-                          <Smartphone size={9} className="text-emerald-500" />
-                          Comisión {activeTerminal.commission_percent}% <ChevronDown size={9} />
-                        </button>
-                        <p className="text-[10px] font-bold italic" style={{ color: TLO }}>
-                          {fmt(commissionAmt)} interna
-                        </p>
-                      </div>
-                    )}
+          {/* ── TOTAL FIJO (Joel 2026-07-30: "no veo el total, se pierde") —
+              vive FUERA del scroll: nada de lo de abajo lo puede empujar. ── */}
+          <div className="shrink-0 px-5 pt-4 pb-3 flex flex-col gap-2" style={{ borderBottom: "1px solid var(--td-panel-border)" }}>
+            {(discountAmt > 0 || (activeMesa.paymentMethod === "Tarjeta" && activeTerminal)) && (
+              <div className="flex flex-col gap-0.5 pb-1" style={{ borderBottom: CARD_B }}>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: TLO }}>Subtotal</p>
+                  <p className="text-sm font-black" style={{ color: TMD }}>{fmt(subtotal)}</p>
+                </div>
+                {discountAmt > 0 && (
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest" style={{ color: TLO }}>
+                      <Tag size={9} className="text-[#E0221A]" /> Descuentos
+                    </p>
+                    <p className="text-sm font-black text-emerald-500">-{fmt(discountAmt)}</p>
                   </div>
                 )}
-
-                {/* Total — always, prominent. Centrado horizontal (decisión
-                    Joel 2026-05-28). En Dólares muestra USD arriba y MXN debajo. */}
-                <div className="text-center">
-                  <p className="text-xs font-black uppercase tracking-widest" style={{ color: TMD }}>
-                    {activeMesa.loadedPreSaleOrderId ? "Total a Cobrar" : activeMesa.isPreventa ? "Total de la Venta" : "Total a Pagar"}
-                    {activeMesa.paymentMethod === "Dólares" && (
-                      <span className="ml-2 text-emerald-500/80">· en USD</span>
-                    )}
+                {activeMesa.paymentMethod === "Tarjeta" && activeTerminal && isAdmin && (
+                  <div className="flex items-center justify-between gap-3">
+                    <button
+                      onClick={() => setShowTerminalModal(true)}
+                      className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest transition-colors"
+                      style={{ color: TLO }}
+                      title="Comisión interna — la tienda absorbe, no se cobra al cliente"
+                    >
+                      <Smartphone size={9} className="text-emerald-500" />
+                      Comisión {activeTerminal.commission_percent}% <ChevronDown size={9} />
+                    </button>
+                    <p className="text-[10px] font-bold italic" style={{ color: TLO }}>
+                      {fmt(commissionAmt)} interna
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="text-center">
+              <p className="text-xs font-black uppercase tracking-widest" style={{ color: TMD }}>
+                {activeMesa.loadedPreSaleOrderId ? "Total a Cobrar" : activeMesa.isPreventa ? "Total de la Venta" : "Total a Pagar"}
+                {activeMesa.paymentMethod === "Dólares" && (
+                  <span className="ml-2 text-emerald-500/80">· en USD</span>
+                )}
+              </p>
+              {activeMesa.paymentMethod === "Dólares" ? (
+                <>
+                  <p className="text-4xl font-black text-emerald-400 leading-none mt-1 tabular-nums">
+                    ${totalUSD.toFixed(2)} <span className="text-base font-black text-emerald-500/70 ml-1">USD</span>
                   </p>
-                  {activeMesa.paymentMethod === "Dólares" ? (
-                    <>
-                      <p className="text-[2.5rem] font-black text-emerald-400 leading-none mt-1 tabular-nums">
-                        ${totalUSD.toFixed(2)} <span className="text-base font-black text-emerald-500/70 ml-1">USD</span>
-                      </p>
-                      <p className="text-xs font-black mt-1.5 tabular-nums" style={{ color: TLO }}>
-                        {fmt(currentPayAmount)} MXN · TC {tc.toFixed(2)}
-                      </p>
-                    </>
-                  ) : (
-                    <p className="text-[2.5rem] font-black leading-none mt-1 tabular-nums" style={{ color: THI }}>{fmt(currentPayAmount)}</p>
-                  )}
-                </div>
+                  <p className="text-xs font-black mt-1.5 tabular-nums" style={{ color: TLO }}>
+                    {fmt(currentPayAmount)} MXN · TC {tc.toFixed(2)}
+                  </p>
+                </>
+              ) : (
+                <p className="text-4xl font-black leading-none mt-1 tabular-nums" style={{ color: THI }}>{fmt(currentPayAmount)}</p>
+              )}
+            </div>
+          </div>
+
+          {/* OJO: NO usar justify-end aquí — con contenido más alto que el
+              contenedor, flexbox desborda por ARRIBA donde el scroll no llega
+              (la fila "Pesos recibidos" quedaba cortada e inalcanzable). El
+              alineado-al-fondo lo da el mt-auto del primer hijo. */}
+          <div className="flex-1 flex flex-col gap-3 overflow-y-auto no-scrollbar px-5 py-4">
+
+              {/* ── Sección 1: Resumen monetario (el Total vive en el header fijo) ──
+                  mt-auto = contenido alineado al fondo cuando sobra espacio,
+                  scrolleable normal cuando falta. */}
+              <div className="mt-auto flex flex-col gap-4">
+
+                {/* (Subtotal/Descuentos y el TOTAL viven ahora en el header FIJO
+                    del sidebar, fuera de este scroll — Joel 2026-07-30.) */}
 
                 {/* Bloque cliente movido a su propia columna del footer cuando hay
                     cliente asignado — más legible y deja espacio para el total. */}
@@ -6364,7 +6372,7 @@ export function SellPage() {
                                   }
                                 }}
                                 placeholder="0.00"
-                                className="w-full text-center rounded-xl py-3 pl-10 pr-4 text-4xl font-black focus:outline-none transition-all tabular-nums"
+                                className="w-full text-center rounded-xl py-2.5 pl-10 pr-4 text-4xl font-black focus:outline-none transition-all tabular-nums"
                                 style={{ background: "var(--td-input-bg)", border: "2px solid var(--td-input-border)", color: "var(--td-input-text)" }}
                                 onFocus={e => { e.currentTarget.style.borderColor = "rgba(224,34,26,0.55)"; }}
                                 onBlur={e  => {
@@ -6380,10 +6388,13 @@ export function SellPage() {
                                 }}
                               />
                             </div>
-                            {/* Presets pesos cuadrados — billetes MX (20, 50,
-                                100, 200, 500, 1000) + monedas grandes opcional.
-                                3×2 grid con aspect-square. Joel 2026-05-28:
-                                "cuadrado los numeros en espacio para que no se equivoque". */}
+                            {/* Presets pesos — billetes MX (20…1000), 3×2 COMPACTO
+                                (h-14). Eran aspect-square y al ensanchar el sidebar
+                                crecieron a ~155px c/u empujando el Total fuera de
+                                vista (Joel 2026-07-30: "se amontona, no veo el
+                                total"). 56px sigue siendo dedo-amigable y el número
+                                sigue grande; el "MXN" por botón era ruido (el título
+                                de la sección ya dice PESOS). */}
                             <div className="grid grid-cols-3 gap-2">
                               {[20, 50, 100, 200, 500, 1000].map(amt => (
                                 <button
@@ -6392,50 +6403,20 @@ export function SellPage() {
                                     setCashReceived(prev => ((parseFloat(prev) || 0) + amt).toString());
                                     pushPayLog(`Billete +$${amt}`, "mxn");
                                   }}
-                                  className="aspect-square rounded-2xl font-black text-2xl transition-all tabular-nums flex flex-col items-center justify-center gap-0.5"
+                                  className="h-12 rounded-2xl font-black text-2xl transition-all tabular-nums flex items-center justify-center"
                                   style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", color: "var(--td-text-hi)" }}
                                   onMouseEnter={e => { e.currentTarget.style.background = "var(--td-hover-bg)"; }}
                                   onMouseLeave={e => { e.currentTarget.style.background = "var(--td-card-bg)"; }}
                                 >
-                                  <span className="text-[10px] font-bold opacity-50 uppercase tracking-wider leading-none">MXN</span>
-                                  <span className="leading-none">${amt}</span>
+                                  ${amt}
                                 </button>
                               ))}
                             </div>
                         </div>
 
-                        {/* ── DÓLARES APLICADOS — chip claro y grande. Editar
-                            reabre la calculadora; Quitar deja la venta en pesos. */}
-                        {appliedUsd > 0 && (
-                          <div className="flex items-center justify-between gap-2 rounded-2xl px-4 py-3" style={{ background: 'rgba(16,185,129,0.10)', border: '2px solid rgba(16,185,129,0.4)' }} data-testid="usd-applied-chip">
-                            <span className="min-w-0">
-                              <span className="block text-[15px] font-black text-emerald-400 tabular-nums">
-                                US${appliedUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })} recibidos
-                              </span>
-                              <span className="block text-[12px] font-bold text-emerald-400/70 tabular-nums">
-                                ≈ {fmt(usdAsMxn)} MXN (TC ${tc.toFixed(2)})
-                              </span>
-                            </span>
-                            <span className="flex gap-2 shrink-0">
-                              <button
-                                type="button"
-                                onClick={() => setUsdCalcOpen(true)}
-                                className="px-3 py-2 rounded-xl text-[11px] font-black uppercase tracking-wider"
-                                style={{ background: 'var(--td-card-bg)', border: '1px solid var(--td-card-border)', color: 'var(--td-text-hi)', cursor: 'pointer' }}
-                              >Editar</button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const prevUsd = parseFloat(cashReceivedUsd) || 0;
-                                  setCashReceivedUsd(""); setUsdApplied(false);
-                                  if (prevUsd > 0) pushPayLog(`Se quitaron los dólares (eran US$${prevUsd.toLocaleString("en-US")})`, "usd");
-                                }}
-                                className="px-3 py-2 rounded-xl text-[11px] font-black uppercase tracking-wider"
-                                style={{ background: 'rgba(224,34,26,0.10)', border: '1px solid rgba(224,34,26,0.4)', color: 'var(--td-red)', cursor: 'pointer' }}
-                              >Quitar</button>
-                            </span>
-                          </div>
-                        )}
+                        {/* (El chip verde "US$X recibidos" se fusionó al desglose del
+                            RECIBIDO — Joel 2026-07-30: los dólares salían 3 veces.
+                            Editar/Quitar viven ahora en esa línea.) */}
 
                         {/* ── RESUMEN DE COBRO — siempre visible mientras haya algo
                             que cobrar. El cajero ve de un vistazo cuánto es el
@@ -6454,14 +6435,38 @@ export function SellPage() {
                               <span className="text-base font-black tabular-nums" style={{ color: "var(--td-text-hi)" }}>{fmtMXN(totalReceived)}</span>
                             </div>
                             {appliedUsd > 0 && (
-                              <div className="flex flex-col gap-0.5 pl-1 -mt-1">
+                              <div className="flex flex-col gap-1 pl-1 -mt-1">
                                 {receivedMxn > 0 && (
-                                  <div className="flex items-center justify-between text-[10px] font-bold" style={{ color: TLO }}>
+                                  <div className="flex items-center justify-between text-[11px] font-bold" style={{ color: TLO }}>
                                     <span>· Pesos</span><span className="tabular-nums">{fmtMXN(receivedMxn)}</span>
                                   </div>
                                 )}
-                                <div className="flex items-center justify-between text-[10px] font-bold text-emerald-400">
-                                  <span>· Dólares US${appliedUsd.toFixed(2)}</span><span className="tabular-nums">≈ {fmt(usdAsMxn)}</span>
+                                {/* ÚNICA mención de los dólares aplicados (el chip
+                                    verde se fusionó aquí): monto + TC + Editar/Quitar. */}
+                                <div className="flex items-center justify-between gap-2 text-[11px] font-bold text-emerald-400">
+                                  <span className="min-w-0 truncate">
+                                    · Dólares US${appliedUsd.toFixed(2)}
+                                    <span className="opacity-60"> (TC {tc.toFixed(2)})</span>
+                                  </span>
+                                  <span className="flex items-center gap-1.5 shrink-0">
+                                    <span className="tabular-nums">≈ {fmt(usdAsMxn)}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => setUsdCalcOpen(true)}
+                                      className="px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider"
+                                      style={{ background: 'var(--td-card-bg)', border: '1px solid var(--td-card-border)', color: 'var(--td-text-hi)', cursor: 'pointer' }}
+                                    >Editar</button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const prevUsd = parseFloat(cashReceivedUsd) || 0;
+                                        setCashReceivedUsd(""); setUsdApplied(false);
+                                        if (prevUsd > 0) pushPayLog(`Se quitaron los dólares (eran US$${prevUsd.toLocaleString("en-US")})`, "usd");
+                                      }}
+                                      className="px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider"
+                                      style={{ background: 'rgba(224,34,26,0.10)', border: '1px solid rgba(224,34,26,0.4)', color: 'var(--td-red)', cursor: 'pointer' }}
+                                    >Quitar</button>
+                                  </span>
                                 </div>
                               </div>
                             )}
@@ -6510,7 +6515,6 @@ export function SellPage() {
                     entries={activeMesa?.payLog ?? []}
                     visible={payLogVisible}
                     onToggle={togglePayLog}
-                    mesaName={activeMesa?.name ?? ""}
                   />
                 )}
 

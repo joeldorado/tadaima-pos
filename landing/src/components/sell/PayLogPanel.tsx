@@ -7,7 +7,6 @@ interface PayLogPanelProps {
   entries: PayLogEntry[];
   visible: boolean;
   onToggle: () => void;
-  mesaName: string;
 }
 
 /**
@@ -20,7 +19,7 @@ interface PayLogPanelProps {
  * colapsado se recuerda por dispositivo. Letra grande a propósito: el público
  * objetivo son cajeros con poca soltura tecnológica.
  */
-export function PayLogPanel({ entries, visible, onToggle, mesaName }: PayLogPanelProps) {
+export function PayLogPanel({ entries, visible, onToggle }: PayLogPanelProps) {
   const listRef = useRef<HTMLDivElement | null>(null);
 
   // Auto-scroll al fondo: la entrada más nueva siempre visible.
@@ -49,14 +48,11 @@ export function PayLogPanel({ entries, visible, onToggle, mesaName }: PayLogPane
             Pagos de esta venta{entries.length > 0 ? ` (${entries.length})` : ""}
           </span>
         </span>
-        <span className="flex items-center gap-1.5 shrink-0">
-          <span className="text-[8px] font-bold uppercase tracking-wider" style={{ color: "var(--td-text-ghost)" }}>
-            {mesaName}
-          </span>
-          {visible
-            ? <ChevronDown size={14} style={{ color: "var(--td-text-lo)" }} />
-            : <ChevronRight size={14} style={{ color: "var(--td-text-lo)" }} />}
-        </span>
+        {/* (El nombre de la mesa se quitó del header — ya está en el tab
+            activo; era información repetida, Joel 2026-07-30.) */}
+        {visible
+          ? <ChevronDown size={14} className="shrink-0" style={{ color: "var(--td-text-lo)" }} />
+          : <ChevronRight size={14} className="shrink-0" style={{ color: "var(--td-text-lo)" }} />}
       </button>
 
       {/* Entradas */}
@@ -64,7 +60,7 @@ export function PayLogPanel({ entries, visible, onToggle, mesaName }: PayLogPane
         <div
           ref={listRef}
           className="overflow-y-auto px-3.5 pb-2.5 flex flex-col gap-1.5"
-          style={{ maxHeight: 170, borderTop: "1px solid var(--td-card-border)", paddingTop: 8 }}
+          style={{ maxHeight: 140, borderTop: "1px solid var(--td-card-border)", paddingTop: 8 }}
         >
           {entries.length === 0 ? (
             <p className="py-2 text-center text-[11px] font-bold" style={{ color: "var(--td-text-lo)" }}>
