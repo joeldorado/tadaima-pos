@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Banknote, ChevronDown, ChevronRight } from "lucide-react";
+import { Banknote, ChevronDown, ChevronRight, X } from "lucide-react";
 import type { PayLogEntry } from "@/lib/payLog";
 
 interface PayLogPanelProps {
@@ -7,6 +7,12 @@ interface PayLogPanelProps {
   entries: PayLogEntry[];
   visible: boolean;
   onToggle: () => void;
+  /**
+   * Borrar una entrada (Joel 2026-07-30). El caller decide si además revierte
+   * el dinero (billete resta su monto, dólares se quitan). Sin handler no se
+   * pinta el botón ✕.
+   */
+  onDelete?: ((id: string) => void) | undefined;
 }
 
 /**
@@ -19,7 +25,7 @@ interface PayLogPanelProps {
  * colapsado se recuerda por dispositivo. Letra grande a propósito: el público
  * objetivo son cajeros con poca soltura tecnológica.
  */
-export function PayLogPanel({ entries, visible, onToggle }: PayLogPanelProps) {
+export function PayLogPanel({ entries, visible, onToggle, onDelete }: PayLogPanelProps) {
   const listRef = useRef<HTMLDivElement | null>(null);
 
   // Auto-scroll al fondo: la entrada más nueva siempre visible.
@@ -67,15 +73,28 @@ export function PayLogPanel({ entries, visible, onToggle }: PayLogPanelProps) {
               Aquí verás lo que el cliente va entregando (billetes, dólares).
             </p>
           ) : entries.map(e => (
-            <div key={e.id} className="flex items-baseline justify-between gap-2">
+            <div key={e.id} className="flex items-center justify-between gap-2">
               <span
                 className="text-[13px] font-black leading-tight"
                 style={{ color: e.kind === "usd" ? "#34d399" : e.kind === "info" ? "var(--td-text-lo)" : "var(--td-text-hi)" }}
               >
                 {e.label}
               </span>
-              <span className="shrink-0 text-[9px] font-bold tabular-nums" style={{ color: "var(--td-text-ghost)" }}>
-                {new Date(e.at).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}
+              <span className="shrink-0 flex items-center gap-1.5">
+                <span className="text-[9px] font-bold tabular-nums" style={{ color: "var(--td-text-ghost)" }}>
+                  {new Date(e.at).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}
+                </span>
+                {onDelete && (
+                  <button
+                    onClick={() => onDelete(e.id)}
+                    data-testid={`paylog-delete-${e.id}`}
+                    className="flex items-center justify-center h-6 w-6 rounded-lg transition-colors hover:bg-red-500/15"
+                    style={{ color: "var(--td-text-ghost)" }}
+                    title={e.amount != null ? "Borrar y descontar del recibido" : "Borrar del historial"}
+                  >
+                    <X size={12} />
+                  </button>
+                )}
               </span>
             </div>
           ))}

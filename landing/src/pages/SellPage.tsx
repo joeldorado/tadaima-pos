@@ -32,9 +32,11 @@ import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
 import { CloseCashModal } from "@/components/cash/CloseCashModal";
 import { UsdCalculatorModal } from "@/components/sell/UsdCalculatorModal";
 import { PayLogPanel } from "@/components/sell/PayLogPanel";
-import { pushPayEntry, type PayLogEntry } from "@/lib/payLog";
+import { pushPayEntry, removePayEntry, type PayLogEntry } from "@/lib/payLog";
+import { dispatchTicket } from "@/lib/ticketPrint";
 import { useLayoutChrome } from "@/contexts/LayoutChromeContext";
 import { CortesModal } from "@/components/cash/CortesModal";
+import { PrinterConfigModal } from "@/components/cash/PrinterConfigModal";
 import { OpenSessionConflictModal } from "@/components/cash/OpenSessionConflictModal";
 import { useQueryClient } from "@tanstack/react-query";
 import { useProductsLightQuery, useProductsSearchQuery, useCartProductsPolicyQuery } from "@/hooks/queries/useProducts";
@@ -768,6 +770,7 @@ export function SellPage() {
   const [printNeverAsk, setPrintNeverAsk]           = useState(false);
   const [showHistorialModal, setShowHistorialModal] = useState(false);
   const [showCortesModal, setShowCortesModal] = useState(false);
+  const [showPrinterModal, setShowPrinterModal] = useState(false);
   // Max-height de la lista de tickets del Historial basado en el alto REAL de
   // la pantalla (mide su top vs window.innerHeight) → scroll interno garantizado
   // sin depender de la cadena flex (Joel 2026-06-13).
@@ -1026,11 +1029,38 @@ export function SellPage() {
       return !v;
     });
   }, []);
-  // Registra un evento en el log de pagos de la mesa activa.
+  // Registra un evento en el log de pagos de la mesa activa. `amount` = monto
+  // reversible al borrar la entrada (billete en MXN, dólares en USD).
   const activeMesaIdForLog = activeMesa?.id;
-  const pushPayLog = useCallback((label: string, kind: PayLogEntry["kind"]) => {
+  const pushPayLog = useCallback((label: string, kind: PayLogEntry["kind"], amount?: number) => {
     if (activeMesaIdForLog == null) return;
-    updMesa(activeMesaIdForLog, m => ({ ...m, payLog: pushPayEntry(m.payLog, { label, kind }) }));
+    updMesa(activeMesaIdForLog, m => ({ ...m, payLog: pushPayEntry(m.payLog, { label, kind, ...(amount != null ? { amount } : {}) }) }));
+  }, [activeMesaIdForLog, updMesa]);
+
+  // Borrar entrada del log (Joel 2026-07-30): además de quitar el renglón,
+  // REVIERTE el dinero cuando la entrada es reversible — billete resta su
+  // monto del input de pesos; los dólares aplicados se quitan. Capturas
+  // absolutas ("Capturado $X") e informativas solo borran el renglón. No se
+  // loguea nada nuevo al borrar.
+  const handleDeletePayEntry = useCallback((entryId: string) => {
+    if (activeMesaIdForLog == null) return;
+    updMesa(activeMesaIdForLog, m => {
+      const entry = (m.payLog ?? []).find(e => e.id === entryId);
+      if (!entry) return m;
+      const next: Mesa = { ...m, payLog: removePayEntry(m.payLog, entryId) };
+      if (entry.kind === "mxn" && entry.amount != null) {
+        const current = parseFloat(m.cashReceived ?? "") || 0;
+        const rest = Math.max(0, Math.round((current - entry.amount) * 100) / 100);
+        next.cashReceived = rest > 0 ? rest.toString() : "";
+      } else if (entry.kind === "usd" && entry.amount != null && m.usdApplied) {
+        next.cashReceivedUsd = "";
+        next.usdApplied = false;
+        // El checkout lee el ref, no el estado — mantenerlo sincronizado igual
+        // que hace setUsdApplied.
+        usdAppliedRef.current = false;
+      }
+      return next;
+    });
   }, [activeMesaIdForLog, updMesa]);
   // true solo cuando el monto del input de pesos se TECLEÓ (los presets no
   // pasan por onChange) — así el blur no re-loguea lo que ya logueó el preset.
@@ -3135,50 +3165,14 @@ export function SellPage() {
     <table style="font-size:10px">${paymentRows}</table>
     <div class="divider"></div><div class="footer">¡Gracias por tu compra!</div></body></html>`;
 
-    // Ventana real de ticket — mismo método que el corte de caja, que ya imprime
-    // bien. El iframe oculto 0×0 anterior hacía que Chrome ignorara el @page 58mm y
-    // girara el ticket 90°; una ventana con viewport sí respeta el tamaño → sale
-    // vertical. Nombre fijo "tadaima_ticket": cada ticket reemplaza al anterior (no
-    // se acumulan ventanas). Trae barra Imprimir/Cerrar para ver el detalle o
-    // reimprimir. Bajo Chrome --kiosk-printing el print queda silencioso igual.
-    const w = window.open("", "tadaima_ticket", "width=360,height=600");
-    if (w) {
-      w.document.open();
-      w.document.write(html);
-      w.document.close();
-      // El CSP (script-src 'self') bloquea scripts/onclick inline en la ventana,
-      // así que el print y los botones se disparan/cablean desde AQUÍ (el padre).
-      // Esperamos a que el logo pinte antes de imprimir (con fallback por si la
-      // imagen no resuelve), para que el ticket salga con el logo.
-      let fired = false;
-      const fire = () => { if (fired) return; fired = true; try { w.focus(); w.print(); } catch { /* noop */ } };
-      const logoImg = w.document.querySelector("img.logo") as HTMLImageElement | null;
-      if (logoImg && !logoImg.complete) {
-        logoImg.addEventListener("load", fire, { once: true });
-        logoImg.addEventListener("error", fire, { once: true });
-        setTimeout(fire, 1200);
-      } else {
-        setTimeout(fire, 250);
-      }
-      w.document.querySelector(".print-btn")?.addEventListener("click", () => { try { w.print(); } catch { /* noop */ } });
-      w.document.querySelector(".close-btn")?.addEventListener("click", () => { try { w.close(); } catch { /* noop */ } });
-      return;
-    }
-    // Fallback si el navegador bloquea el popup: método iframe anterior (degradado,
-    // puede salir girado) para no perder la impresión automática.
-    const iframe = document.createElement("iframe");
-    iframe.setAttribute("aria-hidden", "true");
-    iframe.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
-    document.body.appendChild(iframe);
-    const idoc = iframe.contentWindow?.document;
-    if (!idoc) { iframe.remove(); return; }
-    idoc.open();
-    idoc.write(html);
-    idoc.close();
-    setTimeout(() => {
-      try { iframe.contentWindow?.focus(); iframe.contentWindow?.print(); } catch { /* noop */ }
-      setTimeout(() => iframe.remove(), 1500);
-    }, 250);
+    // Salida por el decisor único (2026-07-30): QZ Tray silencioso si esta
+    // máquina lo configuró, si no la ventana clásica de siempre (mecanismo
+    // completo — logo, botones, fallback iframe — vive en lib/ticketWindow).
+    // Nombre fijo "tadaima_ticket": cada ticket reemplaza al anterior.
+    void dispatchTicket(html, {
+      jobName: sale.id ? `Ticket #${sale.id}` : "Ticket",
+      windowName: "tadaima_ticket",
+    });
   };
 
   const triggerPrintFlow = (sale: CompletedSaleData) => {
@@ -4658,6 +4652,17 @@ export function SellPage() {
           >
             <Clock size={13} />
             Cortes
+          </button>
+          {/* Impresión silenciosa (QZ Tray) — config POR MÁQUINA, por eso vive
+              aquí en la Caja y no en Configuración del sistema. */}
+          <button
+            onClick={() => setShowPrinterModal(true)}
+            data-testid="printer-config-btn"
+            className="h-full px-4 flex items-center transition-colors"
+            style={{ color: TLO, borderRight: CARD_B }}
+            title="Impresora de tickets (impresión silenciosa de esta máquina)"
+          >
+            <Printer size={14} />
           </button>
           {/* Botón 'Clientes' del top header oculto — redundante con el
               botón 'Cliente' del toolbar al lado de Preventas que ya cubre
@@ -6401,7 +6406,7 @@ export function SellPage() {
                                   key={amt}
                                   onClick={() => {
                                     setCashReceived(prev => ((parseFloat(prev) || 0) + amt).toString());
-                                    pushPayLog(`Billete +$${amt}`, "mxn");
+                                    pushPayLog(`Billete +$${amt}`, "mxn", amt);
                                   }}
                                   className="h-12 rounded-2xl font-black text-2xl transition-all tabular-nums flex items-center justify-center"
                                   style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", color: "var(--td-text-hi)" }}
@@ -6515,6 +6520,7 @@ export function SellPage() {
                     entries={activeMesa?.payLog ?? []}
                     visible={payLogVisible}
                     onToggle={togglePayLog}
+                    onDelete={handleDeletePayEntry}
                   />
                 )}
 
@@ -6825,7 +6831,7 @@ export function SellPage() {
         onApply={usd => {
           setCashReceivedUsd(usd); setUsdApplied(true); setUsdCalcOpen(false);
           const n = parseFloat(usd) || 0;
-          if (n > 0) pushPayLog(`Dólares US$${n.toLocaleString("en-US")} ≈ ${fmt(n * tc)}`, "usd");
+          if (n > 0) pushPayLog(`Dólares US$${n.toLocaleString("en-US")} ≈ ${fmt(n * tc)}`, "usd", n);
         }}
         onClose={() => setUsdCalcOpen(false)}
       />
@@ -8229,6 +8235,12 @@ export function SellPage() {
         open={showCortesModal}
         onClose={() => setShowCortesModal(false)}
         storeId={activeStore?.id}
+      />
+
+      {/* Impresora de tickets (QZ Tray) — configuración de ESTA máquina */}
+      <PrinterConfigModal
+        open={showPrinterModal}
+        onClose={() => setShowPrinterModal(false)}
       />
 
       {/* ADR-016 Fase 3 — Modal de cancelación de ticket */}

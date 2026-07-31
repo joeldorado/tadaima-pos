@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { pushPayEntry, PAY_LOG_MAX, type PayLogEntry } from "./payLog";
+import { pushPayEntry, removePayEntry, PAY_LOG_MAX, type PayLogEntry } from "./payLog";
 
 describe("pushPayEntry", () => {
   it("agrega entradas en orden y arranca desde undefined", () => {
@@ -55,5 +55,46 @@ describe("pushPayEntry", () => {
     pushPayEntry(a, { label: "Capturado $80", kind: "mxn-input" });
 
     expect(a).toEqual(snapshot);
+  });
+});
+
+describe("removePayEntry", () => {
+  it("quita la entrada por id y conserva el resto en orden", () => {
+    // Arrange
+    const a = pushPayEntry(undefined, { label: "Billete +$200", kind: "mxn", amount: 200 });
+    const b = pushPayEntry(a, { label: "Dólares US$10", kind: "usd", amount: 10 });
+    const c = pushPayEntry(b, { label: "Método → Tarjeta", kind: "info" });
+    const targetId = c[1]!.id;
+
+    // Act
+    const result = removePayEntry(c, targetId);
+
+    // Assert
+    expect(result).toHaveLength(2);
+    expect(result.map(e => e.label)).toEqual(["Billete +$200", "Método → Tarjeta"]);
+  });
+
+  it("id inexistente devuelve contenido equivalente sin lanzar", () => {
+    const log = pushPayEntry(undefined, { label: "Billete +$50", kind: "mxn", amount: 50 });
+
+    const result = removePayEntry(log, "no-existe");
+
+    expect(result).toEqual(log);
+  });
+
+  it("es inmutable y tolera undefined", () => {
+    const log = pushPayEntry(undefined, { label: "Billete +$100", kind: "mxn", amount: 100 });
+    const snapshot = [...log];
+
+    removePayEntry(log, log[0]!.id);
+
+    expect(log).toEqual(snapshot);
+    expect(removePayEntry(undefined, "x")).toEqual([]);
+  });
+
+  it("pushPayEntry conserva el amount para poder revertir al borrar", () => {
+    const log = pushPayEntry(undefined, { label: "Billete +$500", kind: "mxn", amount: 500 });
+
+    expect(log[0]!.amount).toBe(500);
   });
 });

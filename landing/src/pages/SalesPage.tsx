@@ -25,6 +25,7 @@ import {
 } from "recharts";
 import { getCashReport, storageUrl } from "@tadaima/api";
 import { buildPaymentSummary } from "@/lib/paymentSummary";
+import { dispatchTicket } from "@/lib/ticketPrint";
 import { discountPct } from "@/lib/promo";
 import { DISCOUNT_REASON_LABELS } from "@/lib/discountReasons";
 import { CancelTicketModal } from "@/components/cancel/CancelTicketModal";
@@ -162,8 +163,6 @@ const fmtDateTime = (dateStr: string) =>
   dateStr ? new Date(dateStr).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short", timeZone: BUSINESS_TZ }) : "—";
 
 function printTicket(sale: SaleDetail) {
-  const win = window.open("", "_blank", "width=340,height=600");
-  if (!win) return;
   // Escape básico para strings interpolados en el HTML del ticket (nombres,
   // etiquetas promo/desc). El CSP no bloquea inyección de markup — escapar.
   const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -209,7 +208,7 @@ function printTicket(sale: SaleDetail) {
     })
     .join("");
 
-  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
   <title>Ticket #${sale.id}</title>
   <style>
     *{margin:0;padding:0;box-sizing:border-box}
@@ -280,9 +279,10 @@ function printTicket(sale: SaleDetail) {
   ${paymentBlock}
   <div class="divider"></div>
   <div class="footer">¡Gracias por tu compra!</div>
-  </body></html>`);
-  win.document.close();
-  setTimeout(() => { win.print(); }, 300);
+  </body></html>`;
+  // Decisor único (2026-07-30): QZ silencioso si la máquina lo configuró; si
+  // no, la ventana clásica (antes esto hacía window.open + print directo).
+  void dispatchTicket(html, { jobName: `Ticket #${sale.id}` });
 }
 
 // ─── Thumbnail de producto ────────────────────────────────────────────────────

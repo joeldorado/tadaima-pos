@@ -40,4 +40,11 @@ return [
         'service_key' => env('TADAIMA_SUPABASE_SERVICE_KEY'),
     ],
 
+    // Impresión silenciosa (QZ Tray): PEM en base64 UNA línea. La privada firma
+    // los requests de impresión; el certificado se instala en cada caja.
+    'qz' => [
+        'certificate' => env('QZ_CERTIFICATE_B64'),
+        'private_key' => env('QZ_PRIVATE_KEY_B64'),
+    ],
+
 ];

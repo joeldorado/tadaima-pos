@@ -22,6 +22,12 @@ export interface PayLogEntry {
   /** Texto que ve el cajero, ya formateado. */
   label: string;
   kind: PayLogKind;
+  /**
+   * Monto de la entrada cuando es REVERSIBLE al borrarla (Joel 2026-07-30):
+   * MXN en billetes ("mxn"), USD en dólares aplicados ("usd"). Sin monto, la
+   * entrada solo se borra del historial (capturas absolutas, informativas).
+   */
+  amount?: number | undefined;
 }
 
 /** Tope de entradas por mesa — las más viejas se van (una venta real no pasa de esto). */
@@ -39,7 +45,7 @@ const makeId = (): string =>
  */
 export function pushPayEntry(
   log: readonly PayLogEntry[] | undefined,
-  entry: { label: string; kind: PayLogKind; at?: string },
+  entry: { label: string; kind: PayLogKind; at?: string; amount?: number },
 ): PayLogEntry[] {
   const base = log ?? [];
   const next: PayLogEntry = {
@@ -47,6 +53,7 @@ export function pushPayEntry(
     at: entry.at ?? new Date().toISOString(),
     label: entry.label,
     kind: entry.kind,
+    amount: entry.amount,
   };
 
   const last = base[base.length - 1];
@@ -54,4 +61,16 @@ export function pushPayEntry(
   const kept = replacing ? base.slice(0, -1) : [...base];
 
   return [...kept, next].slice(-PAY_LOG_MAX);
+}
+
+/**
+ * Quita una entrada por id de forma INMUTABLE. Id inexistente devuelve un
+ * arreglo equivalente (sin lanzar) — el caller decide qué revertir con la
+ * entrada que encontró ANTES de llamar aquí.
+ */
+export function removePayEntry(
+  log: readonly PayLogEntry[] | undefined,
+  id: string,
+): PayLogEntry[] {
+  return (log ?? []).filter(e => e.id !== id);
 }

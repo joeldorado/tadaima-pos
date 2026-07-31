@@ -3,6 +3,7 @@ import { X, Printer, CheckCircle2, AlertTriangle, Loader2 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { getCashSessionDetail } from "@tadaima/api";
 import type { CashSessionReport, CashSessionDetail, CashTicket } from "@tadaima/api";
+import { dispatchTicket } from "@/lib/ticketPrint";
 
 interface CashCloseSummaryModalProps {
   session: CashSessionReport;
@@ -133,13 +134,9 @@ function buildPrintHtml(s: CashSessionReport, detail: CashSessionDetail | null =
 
 /** Impresión 58mm del corte (resumen + desglose). Reusada por la página Cortes. */
 export function printCashCut(s: CashSessionReport, detail: CashSessionDetail | null = null): void {
-  // OJO: NO usar "noopener" aquí — window.open devolvería null y no podríamos
-  // escribir el documento. La defensa contra inyección es esc() en el HTML.
-  const w = window.open("", "_blank", "width=340,height=600");
-  if (!w) return;
-  w.document.write(buildPrintHtml(s, detail));
-  w.document.close();
-  setTimeout(() => w.print(), 300);
+  // Decisor único (2026-07-30): QZ silencioso si la máquina lo configuró; si
+  // no, la ventana clásica (la defensa contra inyección sigue siendo esc()).
+  void dispatchTicket(buildPrintHtml(s, detail), { jobName: `Corte #${s.id}` });
 }
 
 export function CashCloseSummaryModal({ session: s, open, onClose }: CashCloseSummaryModalProps) {

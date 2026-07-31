@@ -24,6 +24,7 @@ use App\Http\Controllers\Api\SuppliersController;
 use App\Http\Controllers\Api\ProductController;
 use App\Http\Controllers\Api\ProductPromotionsController;
 use App\Http\Controllers\Api\PromotionsController;
+use App\Http\Controllers\Api\QzSigningController;
 use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\SalesDraftController;
 use App\Http\Controllers\Api\SaleCancellationsController;
@@ -304,6 +305,12 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
         // a propósito: colgando de ahí, `product-flags/reorder` chocaría con el
         // binding implícito de `{product}`.
         Route::put('featured-order',          [CatalogController::class, 'reorderFeatured']);
+    });
+
+    // ── QZ Tray (impresión silenciosa de tickets) ─────────────────────────────
+    Route::prefix('qz')->group(function () {
+        Route::get('cert',  [QzSigningController::class, 'certificate']);
+        Route::post('sign', [QzSigningController::class, 'sign']);
     });
 
     // ── System Settings ───────────────────────────────────────────────────────

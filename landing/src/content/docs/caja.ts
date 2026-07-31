@@ -1,4 +1,4 @@
-import { ShoppingCart, Wallet, ShoppingBasket } from "lucide-react"
+import { ShoppingCart, Wallet, ShoppingBasket, Printer } from "lucide-react"
 import type { DocTopic } from "./types"
 
 const CAT = "Caja y ventas"
@@ -97,4 +97,49 @@ const insumos: DocTopic = {
   ],
 }
 
-export const CAJA_TOPICS: DocTopic[] = [cobroCaja, cortesCaja, insumos]
+const impresionAutomatica: DocTopic = {
+  slug: "impresion-automatica",
+  title: "Impresión automática (QZ Tray)",
+  category: CAT,
+  icon: Printer,
+  summary: "Que el ticket salga solo, sin la ventana de impresión del navegador.",
+  sections: [
+    {
+      heading: "Qué es",
+      blocks: [
+        { kind: "prose", text: "Normalmente el navegador abre su ventana de impresión en cada ticket (por seguridad, ningún sitio web puede imprimir solo). Con QZ Tray — un programa gratuito instalado UNA vez en cada computadora de caja — el POS manda el ticket directo a la impresora térmica: sin ventana, sin clics." },
+        { kind: "callout", tone: "info", title: "Si no está instalado, no pasa nada", text: "Las cajas sin QZ Tray siguen imprimiendo con la ventana de siempre (o en silencio si Chrome está en modo kiosko con --kiosk-printing). La impresión silenciosa se activa caja por caja." },
+      ],
+    },
+    {
+      heading: "Instalación en cada caja (Windows, una sola vez)",
+      blocks: [
+        { kind: "steps", items: [
+          { title: "Descarga e instala QZ Tray", detail: "En qz.io/download (versión 2.2 o más nueva). Acepta las ventanas de instalación — incluye el certificado local que necesita el navegador. Al terminar debe verse su icono junto al reloj de Windows." },
+          { title: "Copia el certificado de Tadaima", detail: "Pide el archivo qz-certificate.crt al administrador y cópialo como C:\\Program Files\\QZ Tray\\override.crt — con eso QZ confía en el POS y no pregunta nada. Reinicia QZ Tray (clic derecho al icono → Exit, y ábrelo de nuevo)." },
+          { title: "Configura la impresora en el POS", detail: "En Caja, botón de impresora 🖨 (junto a Cortes): debe decir “Conectado a QZ Tray”. Elige la impresora térmica (Xprinter), deja 58 mm, enciende “Impresión silenciosa” e Imprime la prueba." },
+        ] },
+        { kind: "callout", tone: "warn", title: "Si no copiaste el certificado", text: "En la primera impresión QZ muestra un aviso amarillo: marca “Remember this decision” y presiona Allow — queda permitido para siempre en esa máquina." },
+        { kind: "chips", chips: [
+          { label: "Usar Chrome o Edge", tone: "blue" },
+          { label: "Reloj de la PC en hora (NTP)", tone: "amber" },
+          { label: "58 mm → 48 mm si recorta", tone: "green" },
+        ] },
+      ],
+    },
+    {
+      heading: "Problemas comunes",
+      blocks: [
+        { kind: "table", head: ["Síntoma", "Qué hacer"], rows: [
+          ["“Sin conexión con QZ Tray”", "Revisa que QZ Tray esté abierto (icono junto al reloj). Si no aparece, ábrelo desde el menú Inicio."],
+          ["El ticket se abre en ventana aunque QZ está activo", "Abre el botón de impresora en Caja y revisa que el switch esté encendido y la impresora elegida exista."],
+          ["Ticket recortado del lado derecho", "Cambia el ancho a 48 mm en la configuración de impresora."],
+          ["No salió el ticket y no hubo ventana", "La impresora no respondió: revisa cable/papel y reimprime desde Historial o Ventas."],
+        ] },
+        { kind: "callout", tone: "gold", title: "El respaldo siempre existe", text: "Cualquier falla de QZ regresa el ticket a la ventana de siempre — nunca se pierde una impresión por la impresión silenciosa." },
+      ],
+    },
+  ],
+}
+
+export const CAJA_TOPICS: DocTopic[] = [cobroCaja, cortesCaja, insumos, impresionAutomatica]
