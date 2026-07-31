@@ -6,6 +6,28 @@
 
 ### Sesión 2026-07-30 — Corte en PESOS Y DÓLARES + Log de pagos por mesa + Reportes de Ruben — DEPLOYADO rev `tadaima-00146-4st`
 
++ rev `tadaima-00151-zpk` (mismo día, commit `37eb5bd`): **IMPRESIÓN SILENCIOSA (QZ Tray)
++ borrar entradas del log de pagos.** (a) Decisor único
+`landing/src/lib/ticketPrint.ts::dispatchTicket` en los 3 sitios de impresión (venta
+`doPrintTicket`, reimpresión SalesPage, corte `printCashCut`): con QZ configurado imprime
+directo a la térmica SIN diálogo; si no/falla, cae al flujo clásico de ventana (extraído
+VERBATIM a `lib/ticketWindow.ts` — logo, botones, iframe fallback). `print-timeout` NO
+hace fallback (el job pudo encolar → evita ticket doble). (b) Firma backend:
+`QzSigningController` (`GET /qz/cert` + `POST /qz/sign`, SHA512withRSA, 7 tests) bajo
+auth:sanctum; llaves en env `QZ_CERTIFICATE_B64` + secret `qz-private-key` (agregadas con
+`services update` merge — 22→24 env; .pem/.crt FUERA del repo en
+`~/Documents/JOEL/tadaima-qz-keys/`, cert válido a 2036, se instala como `override.crt`
+en cada caja Windows). (c) `PrinterConfigModal` (botón 🖨 en header de Caja): estado de
+conexión, lista de impresoras, ancho 58/48mm, switch, imprimir prueba — config POR
+MÁQUINA (`tadaima_qz_printer`). (d) Guía Windows en Documentación → "Impresión
+automática". (e) **payLog:** botón ✕ por entrada — borrar un billete RESTA su monto del
+recibido (QA: $400→$300), borrar los dólares los quita (RECIBIDO $455→$300); capturas e
+informativas solo borran el renglón (`removePayEntry` + `amount` en PayLogEntry).
+`qz-tray` 2.2.6 npm en chunk lazy (~9kB gzip). Tests: vitest **150/150** (+19), backend
+**380/380** (+7), type-check baseline 466, build OK. Bundle `index-7v3o8WLG.js`
+verificado (4 marcadores) + `/qz/cert` sirviendo el PEM en prod. QA físico con la
+Xprinter pendiente del equipo (cajas Windows) siguiendo la guía in-app.
+
 + rev `tadaima-00149-l94` (mismo día, commit `bc94019`): bloque **"DEBE HABER EN EL
 CAJÓN"** en el modal de corte (pedido Joel: "el cajero ocupa ver cuánto debe haber, sin
 inputs, solo texto"). `CloseCashModal` consulta `/reports/cash` sobre la sesión ABIERTA
