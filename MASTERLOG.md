@@ -6,6 +6,17 @@
 
 ### Sesión 2026-07-30 — Corte en PESOS Y DÓLARES + Log de pagos por mesa + Reportes de Ruben — DEPLOYADO rev `tadaima-00146-4st`
 
++ rev `tadaima-00149-l94` (mismo día, commit `bc94019`): bloque **"DEBE HABER EN EL
+CAJÓN"** en el modal de corte (pedido Joel: "el cajero ocupa ver cuánto debe haber, sin
+inputs, solo texto"). `CloseCashModal` consulta `/reports/cash` sobre la sesión ABIERTA
+al montar (el endpoint ya las incluye — cero cambio de backend) y muestra el desglose
+`inicial + ventas efectivo en pesos (cash_collected − usd_mxn_equiv) + entradas −
+salidas (insumos señalados) ± ajustes` con los objetivos grandes por moneda: Pesos
+(`expected_cash_mxn`) y Dólares (`expected_usd`). Filas en cero se ocultan; si el fetch
+falla, el bloque se omite y el corte sigue. QA local con venta mixta ($200 = US$10 ≈$155
++ $100 pesos → "Ventas en efectivo (pesos) +$45", insumo restado). Bundle
+`index-BXxmn1T4.js` verificado (3 marcadores), 0 errores.
+
 + rev `tadaima-00148-mvm` (mismo día, commit `e3d1bd4`): panel de cobro SIN AMONTONAR
 (feedback Joel con screenshots — "no veo el total, se pierde; info repetitiva; para
 señores de 80 años"). Causa raíz: los presets `aspect-square` crecieron a ~155px c/u al
