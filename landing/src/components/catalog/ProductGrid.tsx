@@ -1,6 +1,6 @@
 import { ShoppingBag } from "lucide-react"
 import type { GlobalCatalogItem } from "@tadaima/api"
-import { ProductCard } from "./ProductCard"
+import { ProductCard, cardImageUrl } from "./ProductCard"
 import { secondaryBtnStyle } from "./catalogUi"
 
 const DISPLAY = "'Space Grotesk', system-ui, sans-serif"
@@ -31,6 +31,8 @@ interface ProductGridProps {
   heading: string
   emptyLabel: string
   variant?: "grid" | "masonry"
+  /** Columnas del grid — el layout "full" mete más en pantallas grandes (v5). */
+  gridClassName?: string | undefined
   hasMorePages: boolean
   loadingMore: boolean
   remaining: number
@@ -46,6 +48,7 @@ export function ProductGrid({
   heading,
   emptyLabel,
   variant = "grid",
+  gridClassName,
   hasMorePages,
   loadingMore,
   remaining,
@@ -73,11 +76,13 @@ export function ProductGrid({
           </p>
         </div>
       ) : (
-        <div className={isMasonry ? MASONRY_CLASS : GRID_CLASS}>
+        <div className={isMasonry ? MASONRY_CLASS : (gridClassName ?? GRID_CLASS)}>
           {items.map((item, i) => (
             <div
               key={item.id}
-              className={`td-fadeup${isMasonry ? " mb-3 break-inside-avoid" : ""}`}
+              // v5: las cards sin foto son compactas → `self-start` para que no
+              // se estiren a la altura de una card con foto en la misma fila.
+              className={`td-fadeup${isMasonry ? " mb-3 break-inside-avoid" : cardImageUrl(item) ? "" : " self-start"}`}
               style={{ animation: "tdFadeUp 0.35s ease-out both", animationDelay: `${Math.min(i, 12) * 30}ms` }}
             >
               <ProductCard

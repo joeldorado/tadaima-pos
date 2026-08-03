@@ -21,6 +21,13 @@ export type SortMode = "featured" | "new" | "price_asc" | "price_desc" | "name"
  */
 export const CATALOG_CONTAINER = "max-w-5xl mx-auto px-4"
 export const CATALOG_CONTAINER_WIDE = "max-w-7xl mx-auto px-4"
+/** Layout "full" (v5): sin max-width — header, cuerpo y footer a toda pantalla. */
+export const CATALOG_CONTAINER_FULL = "w-full px-3 sm:px-5"
+
+/** Ancho del contenido según layout — ÚNICO decisor (header/cuerpo/footer). */
+export type CatalogWidth = "normal" | "wide" | "full"
+export const containerClass = (width: CatalogWidth): string =>
+  width === "full" ? CATALOG_CONTAINER_FULL : width === "wide" ? CATALOG_CONTAINER_WIDE : CATALOG_CONTAINER
 
 /** Clases compartidas de toda pill (tabs de tipo, categorías, orden, toggles). */
 export const PILL_CLASS =
@@ -31,7 +38,11 @@ export function pillStyle(active: boolean, variant: "accent" | "good" = "accent"
     return { background: "var(--td-surface-muted)", border: "1px solid var(--td-divider)", color: "var(--td-text-lo)" }
   }
   if (variant === "good") {
-    return { background: "rgba(16,185,129,0.16)", border: "1px solid rgba(16,185,129,0.4)", color: "var(--cat-good, #34D399)" }
+    return {
+      background: "var(--cat-good-dim, rgba(16,185,129,0.16))",
+      border: "1px solid var(--cat-good-brd, rgba(16,185,129,0.4))",
+      color: "var(--cat-good, #34D399)",
+    }
   }
   return {
     background: "var(--cat-accent-dim, var(--td-red-dim))",

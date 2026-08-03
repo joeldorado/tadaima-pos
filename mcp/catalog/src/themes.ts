@@ -11,7 +11,7 @@
  * no rompe — solo deja de aplicar.
  */
 
-export const THEME_SLUGS = ["tadaima", "gradient", "navidad", "halloween", "patrio", "muertos"] as const
+export const THEME_SLUGS = ["tadaima", "gradient", "navidad", "halloween", "patrio", "muertos", "corporativo"] as const
 export type ThemeSlug = (typeof THEME_SLUGS)[number]
 
 export const THEMES: Record<ThemeSlug, { label: string; description: string }> = {
@@ -21,18 +21,24 @@ export const THEMES: Record<ThemeSlug, { label: string; description: string }> =
   halloween: { label: "Halloween", description: "Naranja calabaza sobre morado profundo." },
   patrio: { label: "Mes patrio", description: "Verde bandera con acentos cálidos para septiembre." },
   muertos: { label: "Día de Muertos", description: "Rosa mexicano con morado y cempasúchil." },
+  corporativo: {
+    label: "Corporativo",
+    description:
+      "Serio y limpio: fondo blanco, cards planas, rojo de marca, sin animaciones. Es un PAQUETE: activarlo pone fondo sólido + full pantalla.",
+  },
 }
 
-export const BACKGROUND_SLUGS = ["shader", "gradient", "galaxy"] as const
+export const BACKGROUND_SLUGS = ["shader", "gradient", "galaxy", "solid"] as const
 export type BackgroundSlug = (typeof BACKGROUND_SLUGS)[number]
 
 export const BACKGROUNDS: Record<BackgroundSlug, { label: string; description: string }> = {
   shader: { label: "Nebulosa", description: "Nube de color que respira lento con el tono del tema." },
   gradient: { label: "Degradado", description: "Degradado quieto en el color del tema. El más ligero y sobrio." },
   galaxy: { label: "Galaxia", description: "Galaxia espiral de estrellas girando en 3D. El más llamativo." },
+  solid: { label: "Sólido", description: "Color plano del tema, sin ningún efecto. El look corporativo." },
 }
 
-export const LAYOUT_SLUGS = ["classic", "sidebar", "masonry"] as const
+export const LAYOUT_SLUGS = ["classic", "sidebar", "masonry", "full"] as const
 export type LayoutSlug = (typeof LAYOUT_SLUGS)[number]
 
 export const LAYOUTS: Record<LayoutSlug, { label: string; description: string }> = {
@@ -44,6 +50,10 @@ export const LAYOUTS: Record<LayoutSlug, { label: string; description: string }>
   masonry: {
     label: "Revista",
     description: "Mosaico donde cada tarjeta respeta la forma real de su foto. Luce con fotos buenas.",
+  },
+  full: {
+    label: "Full pantalla",
+    description: "Las cards toman todo el ancho de la pantalla, con más columnas entre más grande el monitor.",
   },
 }
 

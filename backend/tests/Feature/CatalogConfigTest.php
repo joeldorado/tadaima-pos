@@ -63,10 +63,11 @@ class CatalogConfigTest extends TestCase
         $resp = $this->getJson('/api/v1/public/catalog')->assertOk()->json('data');
 
         $this->assertSame('new', $resp['catalog']['default_sort']);
-        $this->assertSame('tadaima', $resp['appearance']['theme']);
+        // v5: el default de cadena es el paquete corporativo (full pantalla).
+        $this->assertSame('corporativo', $resp['appearance']['theme']);
         // Sin configurar, el fondo lo decide el tema en el front (v4).
         $this->assertNull($resp['appearance']['background']);
-        $this->assertSame('classic', $resp['appearance']['layout']);
+        $this->assertSame('full', $resp['appearance']['layout']);
         $this->assertSame([], (array) $resp['appearance']['socials']);
         $this->assertNull($resp['appearance']['description']);
         $this->assertTrue($resp['footer']['show_stores']);
@@ -77,13 +78,16 @@ class CatalogConfigTest extends TestCase
         $this->assertSame('6641112233', $resp['footer']['stores'][0]['phone']);
     }
 
-    public function test_theme_valido_se_respeta_e_invalido_degrada_a_tadaima(): void
+    public function test_theme_valido_se_respeta_e_invalido_degrada_a_corporativo(): void
     {
         $this->setKv('catalog_theme', 'navidad');
         $this->assertSame('navidad', $this->getJson('/api/v1/public/catalog')->json('data.appearance.theme'));
 
+        $this->setKv('catalog_theme', 'corporativo');
+        $this->assertSame('corporativo', $this->getJson('/api/v1/public/catalog')->json('data.appearance.theme'));
+
         $this->setKv('catalog_theme', 'tema-pirata');
-        $this->assertSame('tadaima', $this->getJson('/api/v1/public/catalog')->json('data.appearance.theme'));
+        $this->assertSame('corporativo', $this->getJson('/api/v1/public/catalog')->json('data.appearance.theme'));
     }
 
     public function test_background_valido_se_respeta_e_invalido_degrada_a_null(): void
@@ -91,18 +95,21 @@ class CatalogConfigTest extends TestCase
         $this->setKv('catalog_background', 'galaxy');
         $this->assertSame('galaxy', $this->getJson('/api/v1/public/catalog')->json('data.appearance.background'));
 
+        $this->setKv('catalog_background', 'solid');
+        $this->assertSame('solid', $this->getJson('/api/v1/public/catalog')->json('data.appearance.background'));
+
         // Basura → null, NO 'shader': null significa "que lo decida el tema".
         $this->setKv('catalog_background', 'agujero-negro');
         $this->assertNull($this->getJson('/api/v1/public/catalog')->json('data.appearance.background'));
     }
 
-    public function test_layout_valido_se_respeta_e_invalido_degrada_a_classic(): void
+    public function test_layout_valido_se_respeta_e_invalido_degrada_a_full(): void
     {
         $this->setKv('catalog_layout', 'masonry');
         $this->assertSame('masonry', $this->getJson('/api/v1/public/catalog')->json('data.appearance.layout'));
 
         $this->setKv('catalog_layout', 'acordeon-3d');
-        $this->assertSame('classic', $this->getJson('/api/v1/public/catalog')->json('data.appearance.layout'));
+        $this->assertSame('full', $this->getJson('/api/v1/public/catalog')->json('data.appearance.layout'));
     }
 
     public function test_socials_json_valido_decodifica_y_corrupto_degrada(): void

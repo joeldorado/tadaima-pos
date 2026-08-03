@@ -17,7 +17,12 @@ function readCart(catalogUrl: string): CartLine[] {
 
 export interface UseCart {
   items: CartLine[]
-  add: (line: Omit<CartLine, "qty" | "selectedStoreId">, qty?: number) => void
+  /**
+   * Agrega (o incrementa) una línea. `storeId` (v5) fija la sucursal elegida
+   * por el cliente desde el popup "¿Dónde lo recoges?"; sin él aplica el
+   * auto-assign clásico (más stock con WhatsApp).
+   */
+  add: (line: Omit<CartLine, "qty" | "selectedStoreId">, qty?: number, storeId?: number) => void
   remove: (productId: number) => void
   setQty: (productId: number, qty: number) => void
   /** Reasigna la sucursal destino de un producto (checkout). */
@@ -51,26 +56,31 @@ export function useCart(catalogUrl: string | undefined): UseCart {
     }
   }, [items, url])
 
-  const add = useCallback((line: Omit<CartLine, "qty" | "selectedStoreId">, qty = 1) => {
+  const add = useCallback((line: Omit<CartLine, "qty" | "selectedStoreId">, qty = 1, storeId?: number) => {
     const inc = Math.max(1, Math.floor(qty))
-    // Default: la sucursal con más stock de este producto QUE TENGA WhatsApp
-    // (una tienda sin número no puede recibir el pedido — Joel 2026-07-20).
-    // Si ninguna tiene número, cae a la de más stock (degradado wa.me sin
-    // destinatario, con aviso en el drawer).
     const stores = line.stores ?? []
+    // v5: si el cliente ELIGIÓ tienda en el popup, esa manda (validada contra
+    // las tiendas reales del producto). Si no, el auto-assign clásico: más
+    // stock QUE TENGA WhatsApp (una tienda sin número no puede recibir el
+    // pedido — Joel 2026-07-20); sin números, la de más stock (degradado
+    // wa.me sin destinatario, con aviso en el drawer).
+    const picked = storeId != null && stores.some((s) => s.store_id === storeId) ? storeId : null
     const orderable = stores.filter((s) => !!s.whatsapp)
     const pool = orderable.length ? orderable : stores
-    const defaultStore = pool.length
+    const targetStore = picked ?? (pool.length
       ? [...pool].sort((a, b) => b.qty - a.qty)[0]!.store_id
-      : null
+      : null)
     setItems((prev) => {
       const existing = prev.find((i) => i.productId === line.productId)
       if (existing) {
+        // La elección explícita también mueve la línea existente de sucursal.
         return prev.map((i) =>
-          i.productId === line.productId ? { ...i, qty: i.qty + inc } : i
+          i.productId === line.productId
+            ? { ...i, qty: i.qty + inc, ...(picked != null ? { selectedStoreId: picked } : {}) }
+            : i
         )
       }
-      return [...prev, { ...line, qty: inc, selectedStoreId: defaultStore }]
+      return [...prev, { ...line, qty: inc, selectedStoreId: targetStore }]
     })
   }, [])
 

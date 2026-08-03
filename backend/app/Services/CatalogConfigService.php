@@ -21,17 +21,17 @@ use Illuminate\Support\Facades\DB;
 class CatalogConfigService
 {
     /** Temas soportados — mantener en sync con landing/src/lib/catalogThemes.ts y mcp/catalog. */
-    public const THEMES = ['tadaima', 'gradient', 'navidad', 'halloween', 'patrio', 'muertos'];
+    public const THEMES = ['tadaima', 'gradient', 'navidad', 'halloween', 'patrio', 'muertos', 'corporativo'];
 
     /**
-     * Fondos animados (Catálogo v4). Eje INDEPENDIENTE del tema: el tema pone el
-     * color, el fondo pone el efecto. `null` (sin configurar) = lo que dicte el
-     * tema, para que lo ya publicado no cambie de aspecto solo.
+     * Fondos (Catálogo v4; 'solid' desde v5 = plano sin efecto). Eje
+     * INDEPENDIENTE del tema: el tema pone el color, el fondo pone el efecto.
+     * `null` (sin configurar) = lo que dicte el tema.
      */
-    public const BACKGROUNDS = ['shader', 'gradient', 'galaxy'];
+    public const BACKGROUNDS = ['shader', 'gradient', 'galaxy', 'solid'];
 
-    /** Acomodo de la tienda pública (Catálogo v4). */
-    public const LAYOUTS = ['classic', 'sidebar', 'masonry'];
+    /** Acomodo de la tienda pública (v4; 'full' = todo el ancho, v5). */
+    public const LAYOUTS = ['classic', 'sidebar', 'masonry', 'full'];
 
     public const SORTS = ['new', 'featured'];
 
@@ -101,13 +101,14 @@ class CatalogConfigService
     {
         $stored = $this->stored();
 
+        // v5: el default de cadena es el paquete corporativo (Joel 2026-08-03).
         $theme = $stored['catalog_theme'] ?? null;
         if (!in_array($theme, self::THEMES, true)) {
-            $theme = 'tadaima';
+            $theme = 'corporativo';
         }
 
         // Sin configurar queda null a propósito: el front deriva el fondo del
-        // tema (compat con lo publicado antes de Catálogo v4).
+        // tema (corporativo → solid; los clásicos → su fondo animado).
         $background = $stored['catalog_background'] ?? null;
         if (!in_array($background, self::BACKGROUNDS, true)) {
             $background = null;
@@ -115,7 +116,7 @@ class CatalogConfigService
 
         $layout = $stored['catalog_layout'] ?? null;
         if (!in_array($layout, self::LAYOUTS, true)) {
-            $layout = 'classic';
+            $layout = 'full';
         }
 
         $socials = [];

@@ -115,12 +115,22 @@ server.tool(
 // ── 3. set_theme ─────────────────────────────────────────────────────────────
 server.tool(
   "set_theme",
-  "Cambia el TEMA de color del Catálogo Online (aplica de inmediato a la tienda pública). Temas: tadaima, gradient, navidad, halloween, patrio, muertos.",
+  "Cambia el TEMA de color del Catálogo Online (aplica de inmediato a la tienda pública). Temas: tadaima, gradient, navidad, halloween, patrio, muertos, corporativo. OJO: corporativo es un PAQUETE — activa también fondo sólido + full pantalla; regresar a un tema dinámico restaura fondo del tema + acomodo clásico.",
   { theme: z.enum(THEME_SLUGS).describe("Slug del tema a activar") },
   async ({ theme }) => {
     try {
-      await putSettings({ catalog_theme: theme })
-      return ok(`✅ Tema "${THEMES[theme].label}" activado. ${THEMES[theme].description} Recarga /catalogo para verlo.`)
+      // v5: "corporativo" es paquete (solid + full); un tema dinámico restaura
+      // el look animado (fondo heredado del tema + acomodo clásico).
+      const extras =
+        theme === "corporativo"
+          ? { catalog_background: "solid", catalog_layout: "full" }
+          : { catalog_background: "", catalog_layout: "classic" }
+      await putSettings({ catalog_theme: theme, ...extras })
+      const pkg =
+        theme === "corporativo"
+          ? " Paquete aplicado: fondo sólido + full pantalla."
+          : " Fondo y acomodo restaurados al look dinámico (fondo del tema + clásico)."
+      return ok(`✅ Tema "${THEMES[theme].label}" activado. ${THEMES[theme].description}${pkg} Recarga /catalogo para verlo.`)
     } catch (e) {
       return fail(e)
     }
@@ -130,7 +140,7 @@ server.tool(
 // ── 3b. set_background ───────────────────────────────────────────────────────
 server.tool(
   "set_background",
-  "Cambia el FONDO animado del Catálogo Online. Es independiente del color: el fondo elegido se pinta con el tono del tema activo. Opciones: shader (nebulosa), gradient (degradado quieto), galaxy (galaxia de estrellas en 3D).",
+  "Cambia el FONDO animado del Catálogo Online. Es independiente del color: el fondo elegido se pinta con el tono del tema activo. Opciones: shader (nebulosa), gradient (degradado quieto), galaxy (galaxia de estrellas en 3D), solid (plano sin efecto — el corporativo).",
   { background: z.enum(BACKGROUND_SLUGS).describe("Slug del fondo a activar") },
   async ({ background }) => {
     try {
@@ -147,7 +157,7 @@ server.tool(
 // ── 3c. set_layout ───────────────────────────────────────────────────────────
 server.tool(
   "set_layout",
-  "Cambia el DISEÑO de acomodo del Catálogo Online: classic (filtros arriba + cuadrícula pareja), sidebar (menú de categorías a la izquierda, en celular se ve como el clásico) o masonry (mosaico tipo revista donde cada tarjeta respeta la forma de su foto).",
+  "Cambia el DISEÑO de acomodo del Catálogo Online: classic (filtros arriba + cuadrícula pareja), sidebar (menú de categorías a la izquierda, en celular se ve como el clásico) o masonry (mosaico tipo revista donde cada tarjeta respeta la forma de su foto) o full (las cards toman todo el ancho de la pantalla).",
   { layout: z.enum(LAYOUT_SLUGS).describe("Slug del diseño a activar") },
   async ({ layout }) => {
     try {

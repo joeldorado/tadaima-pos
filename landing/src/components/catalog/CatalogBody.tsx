@@ -17,7 +17,13 @@ const DISPLAY = "'Space Grotesk', system-ui, sans-serif"
  *               categoría solo en lg+, así que EN CELULAR queda exactamente el
  *               layout clásico, sin una segunda rama de render.
  *  - masonry  → mismo cuerpo centrado, tarjetas de alto libre
+ *  - full     → SIN max-width: las cards toman todo el body y las columnas
+ *               crecen con el monitor (2→8). El look corporativo (v5).
  */
+
+const FULL_CONTAINER = "w-full px-3 sm:px-5"
+const FULL_GRID =
+  "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 gap-3"
 
 interface CatalogBodyProps {
   layout: CatalogLayoutSlug
@@ -55,12 +61,17 @@ export function CatalogBody({
       heading={heading}
       emptyLabel={emptyLabel}
       variant={layout === "masonry" ? "masonry" : "grid"}
+      gridClassName={layout === "full" ? FULL_GRID : undefined}
       hasMorePages={hasMorePages}
       loadingMore={loadingMore}
       remaining={remaining}
       onLoadMore={onLoadMore}
     />
   )
+
+  if (layout === "full") {
+    return <div className={`relative z-10 ${FULL_CONTAINER} pt-4 pb-10`}>{grid}</div>
+  }
 
   if (layout === "sidebar") {
     return (

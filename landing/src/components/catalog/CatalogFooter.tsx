@@ -1,7 +1,7 @@
 import { MapPin, MessageCircle, Phone } from "lucide-react"
 import type { CatalogAppearance, CatalogFooterData } from "@tadaima/api"
 import { buildWhatsAppLink } from "@/lib/catalogWhatsApp"
-import { CATALOG_CONTAINER, CATALOG_CONTAINER_WIDE } from "./catalogUi"
+import { containerClass, type CatalogWidth } from "./catalogUi"
 
 const DISPLAY = "'Space Grotesk', system-ui, sans-serif"
 
@@ -18,12 +18,12 @@ interface CatalogFooterProps {
   /** Slot de redes (SocialLinks) — inyectado para mantener este archivo chico. */
   socialsSlot: React.ReactNode
   hasSocials: boolean
-  /** Layout menú lateral: mismo ancho que el cuerpo para no desalinear. */
-  wide?: boolean
+  /** Ancho del contenedor según layout — mismo que el cuerpo para no desalinear. */
+  width?: CatalogWidth
 }
 
-export function CatalogFooter({ appearance, footer, socialsSlot, hasSocials, wide = false }: CatalogFooterProps) {
-  const container = wide ? CATALOG_CONTAINER_WIDE : CATALOG_CONTAINER
+export function CatalogFooter({ appearance, footer, socialsSlot, hasSocials, width = "normal" }: CatalogFooterProps) {
+  const container = containerClass(width)
   const showStores = footer.show_stores && footer.stores.length > 0
   const showBrand = !!appearance.description
   // Sin contenido configurado no pintamos secciones vacías — solo la barra ©.
@@ -82,7 +82,7 @@ export function CatalogFooter({ appearance, footer, socialsSlot, hasSocials, wid
                           target="_blank"
                           rel="noopener noreferrer"
                           className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wide px-2 py-0.5 rounded-lg transition-all hover:brightness-125"
-                          style={{ background: "rgba(16,185,129,0.14)", border: "1px solid rgba(16,185,129,0.35)", color: "var(--cat-good, #34D399)" }}
+                          style={{ background: "var(--cat-good-dim, rgba(16,185,129,0.14))", border: "1px solid var(--cat-good-brd, rgba(16,185,129,0.35))", color: "var(--cat-good, #34D399)" }}
                         >
                           <MessageCircle size={11} /> WhatsApp
                         </a>

@@ -36,5 +36,9 @@ export function CatalogBackground({ background, theme }: CatalogBackgroundProps)
       // No monta nada: el degradado del tema ya viaja en --cat-page-bg
       // (ver catalogSurfaceVars).
       return null
+
+    case "solid":
+      // v5: color plano del tema, cero efecto (look corporativo).
+      return null
   }
 }

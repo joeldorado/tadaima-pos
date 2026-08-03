@@ -47,6 +47,9 @@ function backgroundPreview(theme: CatalogTheme, slug: CatalogBackgroundSlug): st
       return theme.gradientBg;
     case "galaxy":
       return `radial-gradient(22% 30% at 50% 50%, ${theme.galaxyColors.core} 0%, ${theme.galaxyColors.core}00 60%), radial-gradient(75% 60% at 50% 50%, ${theme.galaxyColors.edge}77 0%, transparent 72%), ${base}`;
+    case "solid":
+      // v5: plano — exactamente el color de página del tema, sin efecto.
+      return base;
   }
 }
 
@@ -80,6 +83,20 @@ function LayoutDiagram({ slug }: { slug: CatalogLayoutSlug }) {
         <div className="flex-1 grid grid-cols-4 gap-1 items-start">
           {heights.map((h, i) => (
             <div key={i} className="rounded-sm" style={{ background: tile, height: h, minHeight: 4 }} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (slug === "full") {
+    // v5: sin márgenes — las cards pegadas a los bordes y más columnas.
+    return (
+      <div className="h-14 py-1.5 flex flex-col gap-1">
+        <div className="h-2 rounded-sm mx-1.5" style={{ background: bar }} />
+        <div className="flex-1 grid grid-cols-6 grid-rows-2 gap-0.5 px-0.5">
+          {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((i) => (
+            <div key={i} className="rounded-sm" style={{ background: tile }} />
           ))}
         </div>
       </div>
@@ -184,6 +201,22 @@ export function AppearancePanel({ canEdit }: Props) {
   // selección refleje lo que el cliente realmente está viendo.
   const activeBackground = resolveCatalogBackground(background, activeTheme);
 
+  /**
+   * v5: "Corporativo" es un PAQUETE — elegirlo pone fondo sólido + full
+   * pantalla de un click; regresar a un tema dinámico restaura el look animado
+   * (fondo del tema + acomodo clásico).
+   */
+  const pickTheme = (slug: CatalogThemeSlug) => {
+    if (slug === "corporativo") {
+      setBackground("solid");
+      setLayout("full");
+    } else if (theme === "corporativo") {
+      setBackground(null);
+      setLayout("classic");
+    }
+    setTheme(slug);
+  };
+
   /** Lo que se está viendo AHORA en el panel — lo que abre el preview. */
   const selection: PreviewSelection = { theme, background: activeBackground, layout };
 
@@ -225,7 +258,7 @@ export function AppearancePanel({ canEdit }: Props) {
                   key={t.slug}
                   active={theme === t.slug}
                   disabled={!canEdit}
-                  onClick={() => setTheme(t.slug)}
+                  onClick={() => pickTheme(t.slug)}
                   label={t.label}
                   description={t.description}
                   preview={
@@ -243,7 +276,7 @@ export function AppearancePanel({ canEdit }: Props) {
 
           <div>
             <SectionLabel hint="(en el color que elegiste arriba)">Fondo</SectionLabel>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {Object.values(CATALOG_BACKGROUNDS).map((b) => (
                 <OptionCard
                   key={b.slug}
@@ -269,7 +302,7 @@ export function AppearancePanel({ canEdit }: Props) {
 
           <div>
             <SectionLabel hint="(cómo se acomodan los productos)">Diseño</SectionLabel>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {Object.values(CATALOG_LAYOUTS).map((l) => (
                 <OptionCard
                   key={l.slug}

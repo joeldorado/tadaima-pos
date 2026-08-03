@@ -10,7 +10,8 @@ import { CatalogBody } from "@/components/catalog/CatalogBody";
 import { CatalogHeader, type CatalogTab } from "@/components/catalog/CatalogHeader";
 import { CatalogFooter } from "@/components/catalog/CatalogFooter";
 import { SocialLinks } from "@/components/catalog/SocialLinks";
-import { CATALOG_CONTAINER, ctaStyle, type SortMode, type TypeFilter } from "@/components/catalog/catalogUi";
+import { CATALOG_CONTAINER, ctaStyle, type CatalogWidth, type SortMode, type TypeFilter } from "@/components/catalog/catalogUi";
+import { StorePickPopover, orderableStores, saveStorePref } from "@/components/catalog/StorePickPopover";
 import {
   catalogSurfaceVars,
   resolveCatalogBackground,
@@ -35,7 +36,7 @@ const PAGE_CSS = `
 .td-chiprow::-webkit-scrollbar { display: none; }
 `;
 
-const DEFAULT_APPEARANCE: CatalogAppearance = { theme: "tadaima", socials: {}, description: null };
+const DEFAULT_APPEARANCE: CatalogAppearance = { theme: "corporativo", socials: {}, description: null };
 const DEFAULT_FOOTER: CatalogFooterData = { show_stores: false, show_address: true, show_contact: true, stores: [] };
 
 /** Skeleton de card (misma silueta que ProductCard) para la carga inicial. */
@@ -71,7 +72,9 @@ export function OnlineCatalogPage() {
   const [cartOpen, setCartOpen] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>("new");
   const [promoOnly, setPromoOnly] = useState(false);
-  const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
+  const [toast, setToast] = useState<{ id: number; text: string; store?: string | undefined } | null>(null);
+  // v5: producto pendiente de elegir sucursal en el popup "¿Dónde lo recoges?".
+  const [storePick, setStorePick] = useState<GlobalCatalogItem | null>(null);
   const toastTimer = useRef<number | null>(null);
   const appliedDefaultSort = useRef(false);
 
@@ -192,19 +195,47 @@ export function OnlineCatalogPage() {
   // una tienda publicada antes de v4 se vea idéntica.
   const background = resolveCatalogBackground(previewParams.get("preview_bg") ?? appearance.background, theme);
   const layout = resolveCatalogLayout(previewParams.get("preview_layout") ?? appearance.layout);
+  // v5: ancho único para header/cuerpo/footer según layout (full = sin max-w).
+  const width: CatalogWidth = layout === "full" ? "full" : layout === "sidebar" ? "wide" : "normal";
   const hasSocials = Object.values(appearance.socials ?? {}).some((v) => !!v?.trim());
 
-  const handleAdd = (item: GlobalCatalogItem) => {
-    cart.add({
-      productId: item.id,
-      name: item.name,
-      price: item.price,
-      image: item.images?.[0]?.url ?? item.images?.[0]?.path ?? undefined,
-      stores: item.stores,
-    });
+  const doAdd = (item: GlobalCatalogItem, storeId?: number) => {
+    cart.add(
+      {
+        productId: item.id,
+        name: item.name,
+        price: item.price,
+        image: item.images?.[0]?.url ?? item.images?.[0]?.path ?? undefined,
+        stores: item.stores,
+      },
+      1,
+      storeId,
+    );
+    const storeName = storeId != null
+      ? item.stores.find((s) => s.store_id === storeId)?.store_name
+      : item.stores.length === 1 ? item.stores[0]?.store_name : undefined;
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
-    setToast({ id: Date.now(), text: item.name });
+    setToast({ id: Date.now(), text: item.name, store: storeName });
     toastTimer.current = window.setTimeout(() => setToast(null), 1600);
+  };
+
+  // v5: con el producto en VARIAS sucursales pedibles, el cliente elige tienda
+  // desde el inicio (popup) — así puede armar un pedido por tienda. Con una
+  // sola, se agrega directo como siempre.
+  const handleAdd = (item: GlobalCatalogItem) => {
+    const options = orderableStores(item);
+    if (options.length > 1) {
+      setStorePick(item);
+      return;
+    }
+    doAdd(item, options[0]?.store_id);
+  };
+
+  const handleStorePicked = (storeId: number) => {
+    if (!storePick) return;
+    saveStorePref(storeId);
+    doAdd(storePick, storeId);
+    setStorePick(null);
   };
 
   const loadMore = () => {
@@ -235,11 +266,12 @@ export function OnlineCatalogPage() {
     ...(mangaCount > 0 ? [{ key: "manga" as const, label: "Mangas", count: mangaCount }] : []),
   ];
 
-  // La tienda es OSCURA por diseño: fijar el scope de tokens a dark para que
-  // el tema claro del POS no la rompa. Las vars --cat-* del tema activo se
-  // inyectan aquí y re-pintan header/cards/footer/CTAs completos.
+  // El MODO lo decide el tema (v5): los clásicos son oscuros; "corporativo" es
+  // claro y voltea los tokens --td-* a sus valores light de glass.css. Se fija
+  // aquí para que el tema del POS del dispositivo no afecte la tienda. Las vars
+  // --cat-* del tema activo re-pintan header/cards/footer/CTAs completos.
   const rootProps = {
-    "data-theme": "dark",
+    "data-theme": theme.mode ?? "dark",
     className: "min-h-dvh",
     style: {
       ...catalogSurfaceVars(theme, background),
@@ -308,7 +340,7 @@ export function OnlineCatalogPage() {
         promoOnly={promoOnly}
         onPromoOnly={() => setPromoOnly((v) => !v)}
         hideCategoriesOnDesktop={layout === "sidebar"}
-        wide={layout === "sidebar"}
+        width={width}
       />
 
       <CatalogBody
@@ -342,7 +374,7 @@ export function OnlineCatalogPage() {
         footer={footerData}
         socialsSlot={<SocialLinks socials={appearance.socials} />}
         hasSocials={hasSocials}
-        wide={layout === "sidebar"}
+        width={width}
       />
 
       {/* Toast "agregado" (v2.0) */}
@@ -358,8 +390,20 @@ export function OnlineCatalogPage() {
           >
             <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: "var(--cat-good, #34D399)" }} />
             Agregado · <span className="font-black" style={{ maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{toast.text}</span>
+            {toast.store && (
+              <span style={{ color: "var(--td-text-md)" }}>· recoger en {toast.store}</span>
+            )}
           </div>
         </div>
+      )}
+
+      {/* Popup de sucursal al agregar (v5) */}
+      {storePick && (
+        <StorePickPopover
+          item={storePick}
+          onPick={handleStorePicked}
+          onClose={() => setStorePick(null)}
+        />
       )}
 
       {/* Carrito flotante + drawer */}

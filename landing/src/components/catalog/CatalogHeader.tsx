@@ -1,6 +1,6 @@
 import { ChevronDown, Search, X } from "lucide-react"
 import { CategoryList } from "./CategoryList"
-import { CATALOG_CONTAINER, CATALOG_CONTAINER_WIDE, PILL_CLASS, pillStyle, type SortMode, type TypeFilter } from "./catalogUi"
+import { containerClass, PILL_CLASS, pillStyle, type CatalogWidth, type SortMode, type TypeFilter } from "./catalogUi"
 
 const DISPLAY = "'Space Grotesk', system-ui, sans-serif"
 
@@ -40,8 +40,8 @@ interface CatalogHeaderProps {
   onPromoOnly: () => void
   /** Layout menú lateral: las categorías viven en el aside a partir de lg. */
   hideCategoriesOnDesktop?: boolean
-  /** Layout menú lateral: contenedor ancho para alinear con el cuerpo. */
-  wide?: boolean
+  /** Ancho del contenedor según layout (v5): normal · wide (sidebar) · full. */
+  width?: CatalogWidth
 }
 
 export function CatalogHeader({
@@ -62,7 +62,7 @@ export function CatalogHeader({
   promoOnly,
   onPromoOnly,
   hideCategoriesOnDesktop = false,
-  wide = false,
+  width = "normal",
 }: CatalogHeaderProps) {
   const sortOptions: { key: SortMode; label: string }[] = [
     ...(hasFeatured ? [{ key: "featured" as const, label: "Destacados" }] : []),
@@ -82,7 +82,7 @@ export function CatalogHeader({
         borderBottom: "1px solid var(--td-panel-border)",
       }}
     >
-      <div className={`${wide ? CATALOG_CONTAINER_WIDE : CATALOG_CONTAINER} py-2.5`}>
+      <div className={`${containerClass(width)} py-2.5`}>
         {/* Fila 1: logo compacto + título + buscador inline (flex-1) */}
         <div className="flex items-center gap-3">
           <div

@@ -41,6 +41,11 @@ export interface CatalogTheme {
   label: string
   /** Descripción corta para pickers (admin / MCP). */
   description: string
+  /**
+   * Modo de tokens `--td-*` de la página (v5): "light" voltea texto/superficies
+   * a los valores claros de glass.css. Ausente = "dark" (los 6 temas clásicos).
+   */
+  mode?: "light" | "dark"
   /** Fondo que usa este tema cuando el admin no eligió uno explícitamente. */
   defaultBackground: CatalogBackgroundSlug
   shaderTint: [number, number, number]
@@ -51,6 +56,17 @@ export interface CatalogTheme {
   vars: Record<string, string>
 }
 
+/*
+ * v5 agrega al contrato (defaults = los valores que antes vivían hardcodeados
+ * en los componentes → los 6 temas oscuros se ven IDÉNTICO):
+ *  --cat-card-bg      superficie de la card de producto
+ *  --cat-card-shadow  sombra de la card
+ *  --cat-badge-bg     fondo del badge neutro sobre la foto
+ *  --cat-hover        blob/spotlight del HoverCard
+ *  --cat-good         verde semántico (texto) — corporativo lo oscurece
+ *  --cat-good-dim     fondo verde (pills/CTAs WhatsApp)
+ *  --cat-good-brd     borde verde
+ */
 const baseVars = (v: {
   accent: string
   accentText: string
@@ -61,6 +77,13 @@ const baseVars = (v: {
   barBg: string
   pageBg: string
   price: string
+  cardBg?: string
+  cardShadow?: string
+  badgeBg?: string
+  hover?: string
+  good?: string
+  goodDim?: string
+  goodBrd?: string
 }): Record<string, string> => ({
   "--cat-accent": v.accent,
   "--cat-accent-text": v.accentText,
@@ -71,7 +94,15 @@ const baseVars = (v: {
   "--cat-bar-bg": v.barBg,
   "--cat-page-bg": v.pageBg,
   "--cat-price": v.price,
-  "--cat-good": GOOD_GREEN,
+  "--cat-good": v.good ?? GOOD_GREEN,
+  "--cat-good-dim": v.goodDim ?? "rgba(16,185,129,0.14)",
+  "--cat-good-brd": v.goodBrd ?? "rgba(16,185,129,0.35)",
+  "--cat-card-bg":
+    v.cardBg ?? "linear-gradient(160deg, rgba(28,18,24,0.92) 0%, rgba(15,10,16,0.94) 100%)",
+  "--cat-card-shadow":
+    v.cardShadow ?? "0 8px 28px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05)",
+  "--cat-badge-bg": v.badgeBg ?? "rgba(0,0,0,0.45)",
+  "--cat-hover": v.hover ?? "rgba(224,34,26,0.20)",
 })
 
 export const CATALOG_THEMES: Record<CatalogThemeSlug, CatalogTheme> = {
@@ -202,9 +233,40 @@ export const CATALOG_THEMES: Record<CatalogThemeSlug, CatalogTheme> = {
       price: "#FF9E1B",
     }),
   },
+  corporativo: {
+    slug: "corporativo",
+    label: "Corporativo",
+    description: "Serio y limpio: fondo blanco, cards planas, rojo de marca. Sin animaciones.",
+    mode: "light",
+    defaultBackground: "solid",
+    // Si alguien lo combina con nebulosa/galaxia, que al menos respete la marca.
+    shaderTint: [0.38, 0.34, 0.35],
+    gradientBg: "linear-gradient(165deg, #FFFFFF 0%, #F3F4F7 60%, #EDEFF3 100%)",
+    galaxyColors: { core: "#E0221A", edge: "#8A8F98" },
+    vars: baseVars({
+      accent: "#E0221A",
+      accentText: "#C41A13",
+      accentDim: "rgba(224,34,26,0.08)",
+      accentBrd: "rgba(224,34,26,0.28)",
+      accentG: "linear-gradient(135deg, #C81808, #E8352A)",
+      // El "glow" corporativo es una sombra neutra suave, no neón.
+      glow: "rgba(16,20,26,0.10)",
+      barBg: "rgba(255,255,255,0.92)",
+      pageBg: "#F4F5F7",
+      price: "#101418",
+      cardBg: "#FFFFFF",
+      cardShadow: "0 1px 2px rgba(16,20,26,0.05), 0 8px 24px rgba(16,20,26,0.06)",
+      badgeBg: "rgba(255,255,255,0.90)",
+      hover: "rgba(16,20,26,0.05)",
+      good: "#047857",
+      goodDim: "rgba(4,120,87,0.08)",
+      goodBrd: "rgba(4,120,87,0.30)",
+    }),
+  },
 }
 
-export const DEFAULT_CATALOG_THEME = CATALOG_THEMES.tadaima
+// v5: el look serio es el default de la cadena (decisión de Joel 2026-08-03).
+export const DEFAULT_CATALOG_THEME = CATALOG_THEMES.corporativo
 
 export function resolveCatalogTheme(slug: string | null | undefined): CatalogTheme {
   if (slug && slug in CATALOG_THEMES) {
@@ -236,6 +298,11 @@ export const CATALOG_BACKGROUNDS: Record<CatalogBackgroundSlug, CatalogBackgroun
     slug: "galaxy",
     label: "Galaxia",
     description: "Galaxia espiral de estrellas girando en 3D. El más llamativo.",
+  },
+  solid: {
+    slug: "solid",
+    label: "Sólido",
+    description: "Color plano del tema, sin ningún efecto. El look corporativo.",
   },
 }
 
@@ -293,11 +360,18 @@ export const CATALOG_LAYOUTS: Record<CatalogLayoutSlug, CatalogLayoutOption> = {
     description:
       "Mosaico donde cada tarjeta respeta la forma real de su foto. Luce con fotos buenas.",
   },
+  full: {
+    slug: "full",
+    label: "Full pantalla",
+    description:
+      "Las cards toman todo el ancho de la pantalla, con más columnas entre más grande el monitor.",
+  },
 }
 
 export function resolveCatalogLayout(slug: string | null | undefined): CatalogLayoutSlug {
   if (slug && slug in CATALOG_LAYOUTS) {
     return slug as CatalogLayoutSlug
   }
-  return "classic"
+  // v5: sin configurar, la tienda abre full pantalla (paquete corporativo default).
+  return "full"
 }
