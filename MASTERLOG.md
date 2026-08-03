@@ -4,6 +4,41 @@
 
 ---
 
+### Sesión 2026-08-03 (4) — TIENDA ONLINE v5: tema Corporativo claro (DEFAULT) + full pantalla + cards compactas + carrito por tienda — DEPLOYADO rev `tadaima-00155-2nb`
+
+Rediseño de la tienda pública tras el import Macro (~13.9k productos sin foto).
+Commit `3847355`. Decisiones de Joel: tema serio CLARO estilo GameStop/Best Buy ·
+paquete completo en un click · popup de tienda al agregar. Tras el deploy se
+activó el paquete en prod (`system_settings`: corporativo/solid/full) — la tienda
+real abre en claro full pantalla (verificado en vivo; appearance del API ✓).
+
+- **Tema `corporativo` (mode light) + fondo `solid` + layout `full`** — nuevos en
+  las whitelists de los 5 sitios (CatalogConfigService, catalogThemes.ts, tipos
+  packages/api, MCP themes+index+build). El modo claro sale de `data-theme` por
+  tema (los tokens `--td-*` light de glass.css ya existían); los hardcodes oscuros
+  de ProductCard/CartDrawer/pills/footer se movieron a vars nuevas del contrato
+  `--cat-*` (card-bg/card-shadow/badge-bg/hover/good-dim/good-brd) con defaults =
+  los valores viejos → los 6 temas oscuros pixel-perfect iguales (regresión
+  verificada en navegador).
+- **DEFAULTS de cadena → corporativo/full** (código + settings de prod). En admin
+  y MCP `set_theme` es PAQUETE: corporativo ⇒ solid+full; tema dinámico ⇒
+  background heredado + classic.
+- **Cards sin foto = COMPACTAS**: sin cuadro de imagen (chips + nombre + precio +
+  CTA, ~mitad de alto, `self-start` en el grid). Con foto → card clásica. Clave
+  con el catálogo Macro que vino sin imágenes.
+- **Layout `full`**: sin max-width, 2→8 columnas según monitor, header sticky con
+  todos los filtros arriba (ya existía), FAB del carrito donde mismo.
+- **Carrito por tienda (2 pedidos, 2 tiendas)**: popup "¿Dónde lo recoges?" al
+  agregar productos multi-sucursal (`StorePickPopover`, pref recordada en
+  localStorage `tadaima_store_pref` con chip "La usual"), `useCart.add(line, qty,
+  storeId)`, drawer numera "Pedido N · Recoger en X" con un botón de WhatsApp por
+  sucursal (el agrupado ya existía de v2). QA en navegador con mock multi-tienda:
+  popup → pref → 2 pedidos → móvil 375 ✓.
+- **QA:** vitest 155/155 (+7 de StorePickPopover), PHPUnit 388/388
+  (CatalogConfigTest con slugs/defaults nuevos), type-check = baseline 466 (cero
+  nuevos), vite build 1.28s con GalaxyBackground aún en chunk aparte.
+- OJO PWA: los QA deben ver la tienda en incógnito/hard refresh tras el deploy.
+
 ### Sesión 2026-08-03 (3) — ADIÓS MySQL: base `tadaimaposlite` BORRADA de Cloud SQL — rev `tadaima-00154-7dc`
 
 Joel pidió retirar la base vieja (la instancia `pos-lite-db` NO se borra: aloja
