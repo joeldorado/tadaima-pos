@@ -4,6 +4,40 @@
 
 ---
 
+### Sesión 2026-08-03 (2) — IMPORTACIÓN DEL CATÁLOGO MACRO (13,949 artículos del POS viejo) — EJECUTADA en Supabase
+
+`MAcro Productos SQL/TADAIMA-20260717.bak` (164 MB) resultó ser el backup SQL Server
+del POS viejo de la sucursal Macro (**"Esmeralda S.I"**, DB `MiBD`, SQL 2008 R2 —
+tabla `dbo.articulos`). Pipeline completo el mismo día:
+
+- **Extracción:** SQL Server 2022 en Docker (`--platform linux/amd64`, Rosetta),
+  RESTORE + export por pymssql a staging JSON (13,950 filas → 13,949 válidas, 1 dup
+  interno). El contenedor/imagen se borraron al terminar; el staging quedó junto al
+  .bak (carpeta de Joel, untracked — NUNCA commitearla).
+- **Mapeo validado contra ventas reales del origen (DetalleVtas):** lo cobrado
+  SIEMPRE fue `Preciovta4` → `price_1` Normal; `Preciovta3` (~10% abajo) → `price_2`
+  Socio; pv1/pv2 = niveles legacy 2022-2024, ignorados. `codigo` → sku Y barcode.
+  `Precio` (costo) venía en 0 en el 99.9% → `cost = NULL` (los cura el modal
+  "Productos sin Costo"). Categorías por nombre (73 nuevas); Manga/Manga
+  extranjero/kamite/SHONEN JUMP → `product_type='manga'` + details.
+- **Comando nuevo `tadaima:import-macro`** (`ImportMacroProductsCommand.php`):
+  upsert por sku idempotente, lotes por el pooler (fila-por-fila = 25 min; en lotes
+  = 80 s), guards estilo copy-to-pgsql, --dry-run, verificación integrada. En
+  UPDATE el costo capturado en Tadaima NO se pisa si el origen trae 0. Stock solo
+  con existencia>0 (absoluto + movimiento `entrada`/`ajuste`,
+  ref `import-macro-20260717`). Test: `ImportMacroProductsTest` (8 tests, fixture
+  de 8 filas) — suites **388/388** en SQLite Y en Postgres 17 local.
+- **Decisiones de Joel:** stock del .bak → Exhibición de Tadaima MACRO (7,657
+  piezas en 1,541 productos); SKUs existentes (16) se ACTUALIZAN; productos
+  VISIBLES en tienda online (default).
+- **Resultado en prod:** products 32 → **13,965** (3,028 mangas), 80 categorías,
+  stock cuadrado 7,657/7,657 ✓, búsqueda trigram "goku" instantánea, tienda online
+  200. Backup pre-import: `~/Documents/JOEL/supabase-catalogo-pre-import-2026-08-03.dump`
+  (pg_dump custom de las 8 tablas de catálogo/inventario).
+- **Pendiente operativo (Joel/equipo):** capturar costos reales (contador rojo
+  ~13.9k), fotos para la tienda online, y limpiar códigos basura del POS viejo
+  (skus `"."`, `"0"`, `@1582158@`).
+
 ### Sesión 2026-08-03 — CUTOVER A SUPABASE EJECUTADO (F5) — rev `tadaima-00153-lkf` — **PROD YA CORRE EN POSTGRES**
 
 Joel dio luz verde ("dale has el switch ya") y se ejecutó el runbook completo de día,
