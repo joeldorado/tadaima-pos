@@ -60,3 +60,4 @@ apps/mobile/
 backend/storage/app/gcs-key.json
 pos-app/
 backend/tadaimaposlite
+*.sql.gz

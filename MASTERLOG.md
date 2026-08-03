@@ -4,6 +4,28 @@
 
 ---
 
+### Sesión 2026-08-03 (3) — ADIÓS MySQL: base `tadaimaposlite` BORRADA de Cloud SQL — rev `tadaima-00154-7dc`
+
+Joel pidió retirar la base vieja (la instancia `pos-lite-db` NO se borra: aloja
+`punto_de_venta` de su otro proyecto — por eso su proxy vive en 3306 y el de
+Tadaima usaba 3307):
+
+- **Backup final** verificado (65 tablas, gzip OK) en
+  `docs/output/tadaimaposlite-final-backup-2026-08-03.sql.gz` — protegido con
+  `*.sql.gz` en `.gitignore` (data de prod NUNCA al repo). Copias adicionales del
+  pre-cutover: `~/Documents/JOEL/tadaima-backup-pre-supabase-2026-08-03.sql.gz` y
+  `gs://tadaima-media/backups/`.
+- **`gcloud sql databases delete tadaimaposlite`** ejecutado; `punto_de_venta`
+  intacta. OJO: esto NO baja el cobro de Google — la instancia sigue RUNNABLE por
+  la otra base; solo libera su storage. El rollback a MySQL ya solo existe vía
+  dumps (F6 burn-in quedó irrelevante: Supabase llevaba el día operando limpio).
+- **Cloud Run sin amarre a Cloud SQL**: `--clear-cloudsql-instances` → rev
+  `00154-7dc`, smoke 200, tráfico limpio.
+- **Queda (F7 código):** borrar `CopyToPgsqlCommand` + conexión `pgsql_target` +
+  bloque mysql del `.env` local (apuntar dev a Supabase o SQLite), retirar secret
+  `tadaima-db-password`, borrar el usuario MySQL `tadaima_app` de la instancia
+  (opcional, lo decide Joel), actualizar `backend/AGENTS.md`/docs.
+
 ### Sesión 2026-08-03 (2) — IMPORTACIÓN DEL CATÁLOGO MACRO (13,949 artículos del POS viejo) — EJECUTADA en Supabase
 
 `MAcro Productos SQL/TADAIMA-20260717.bak` (164 MB) resultó ser el backup SQL Server
