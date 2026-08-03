@@ -33,10 +33,28 @@ ref `yndrdteeuljxsovvgyue`, plan Pro). Plan completo de 8 fases en el plan file;
   Boot verificado en logs: "Esperando conexión (mysql)… DB conectada … Seed omitido
   (COUNT:13)". Smoke prod: login, products, search (whereLike), top-products (selectRaw
   fix), logout — todo 200. Suite backend **380/380**.
-- Quedan F3-F7 (esquema+hardening en Supabase, QA pgsql local brew, cutover ~15-20 min
-  nocturno con runbook y rollback por env, burn-in con instancia detenida, limpieza).
-  Bloqueadas hasta los 3 pendientes de Joel de F0. Cloud SQL intacta hasta el final;
-  el Supabase de loyalty (`tfbhysypjuoadgnwjaba`) NO se toca.
+- **F3 HECHA (2026-08-03):** 122 migraciones aplicadas a Supabase (65 tablas, Postgres
+  17.6 vía Session pooler `aws-0-us-east-1.pooler.supabase.com:5432`, user
+  `postgres.<ref>`); auditoría de los 19 CHECKs ✓ (pre_sale_catalogs CON
+  arrived/completed); hardening: REVOKE total a anon/authenticated + ALTER DEFAULT
+  PRIVILEGES (0 grants — verificado). Secret `supabase-db-password` creado con binding.
+- **F4 HECHA (2026-08-03):** (a) **Ensayo de copia REAL** `tadaima:copy-to-pgsql
+  --fresh` — 57 tablas, verificación fiel: $98,830.00 de ventas cuadrados, 31 tokens
+  Sanctum vivos, 56 secuencias ajustadas. OJO operativo: el cloud-sql-proxy de Tadaima
+  va en puerto **3307** (el 3306 lo ocupa otro proxy de Joel) y con `--token
+  "$(gcloud auth print-access-token)"` (las ADC están vencidas / invalid_rapt).
+  (b) **E2E contra Supabase**: artisan serve local apuntando al pooler — login con hash
+  copiado + 13 endpoints críticos en 200 (top-products incluido) + ILIKE verificado
+  (%man% = %MAN% = 3). (c) **Suite completa en Postgres 17 local (brew): 380/380** —
+  primera corrida de la historia sobre el motor destino; único hallazgo: el Postgres
+  local corre en TZ Tijuana y desfasa CURRENT_TIMESTAMP (falso rojo en 2 tests de
+  corte) → `ALTER DATABASE tadaima_test SET timezone 'UTC'` (Supabase ya es UTC — en
+  prod no aplica). `phpunit.pgsql.xml` commiteado (088cc7c).
+- **Queda F5-F7:** cutover (~15-20 min nocturno, Joel agenda la ventana; runbook en el
+  plan: aviso → mysqldump doble → copy --fresh → flip env → smoke → monitoreo; rollback
+  por env en minutos), burn-in (STOP de pos-lite-db ~1 semana), limpieza final (Joel
+  borra la instancia; retirar comando/conexión/secret viejo; docs). Cloud SQL intacta
+  hasta el final; el Supabase de loyalty (`tfbhysypjuoadgnwjaba`) NO se toca.
 
 ### Sesión 2026-07-30 — Corte en PESOS Y DÓLARES + Log de pagos por mesa + Reportes de Ruben — DEPLOYADO rev `tadaima-00146-4st`
 
