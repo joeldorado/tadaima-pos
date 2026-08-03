@@ -4,6 +4,41 @@
 
 ---
 
+### Sesión 2026-08-03 — CUTOVER A SUPABASE EJECUTADO (F5) — rev `tadaima-00153-lkf` — **PROD YA CORRE EN POSTGRES**
+
+Joel dio luz verde ("dale has el switch ya") y se ejecutó el runbook completo de día,
+con la tienda operando (ventana de copia ≈ 5 min; ninguna venta se registró en medio):
+
+- **Backup doble pre-corte:** `mysqldump --single-transaction --set-gtid-purged=OFF`
+  → `~/Documents/JOEL/tadaima-backup-pre-supabase-2026-08-03.sql.gz` (65 tablas,
+  verificado con gzip -t + tail del dump) **y** `gcloud sql export sql` →
+  `gs://tadaima-media/backups/pre-supabase-cutover-2026-08-03.sql.gz` (hubo que dar
+  `roles/storage.objectAdmin` al SA de Cloud SQL sobre el bucket). OJO: el mysqldump
+  moderno truena con "Access denied FLUSH_TABLES" por GTID → `--set-gtid-purged=OFF`.
+- **Copia final:** `tadaima:copy-to-pgsql --fresh` — verificación FIEL: conteos
+  idénticos en 57 tablas, $98,830.00 de ventas cuadrados, $98,830.00 de pagos,
+  33 tokens Sanctum, 56 secuencias ajustadas.
+- **Flip de env** (una sola revisión, sin rebuild): `gcloud run services update tadaima
+  --update-env-vars DB_CONNECTION=pgsql,DB_HOST=aws-0-us-east-1.pooler.supabase.com,
+  DB_PORT=5432,DB_DATABASE=postgres,DB_USERNAME=postgres.<ref>,DB_SSLMODE=require
+  --remove-env-vars DB_SOCKET --update-secrets DB_PASSWORD=supabase-db-password:latest`.
+  Boot limpio: "[entrypoint] DB conectada … Nothing to migrate … Seed omitido (COUNT:13)".
+- **Smoke en prod (Supabase):** tráfico REAL en 200 al minuto del flip (`/auth/me` de
+  un cajero logueado — los tokens sobrevivieron, nadie tuvo que re-loguearse). Smoke
+  propio con token temporal (creado y borrado en DB): 13 endpoints en 200 — auth/me,
+  products search (man=MAN=3, ILIKE ✓), reports/sales, **top-products** (selectRaw
+  fix ✓), reports/cash, cash/session, pre-sale-catalogs, supplies, customers,
+  notifications, stores, public/catalog (tienda online sin auth). Log sweep de la
+  revisión: cero errores salvo el 502 transitorio del primer segundo de boot
+  (race php-fpm/nginx, conocido).
+- **Rollback disponible:** Cloud SQL `pos-lite-db` sigue RUNNABLE e intacta —
+  regresar = flip de env inverso (mysql + DB_SOCKET + tadaima-db-password).
+  `--clear-cloudsql-instances` NO se tocó a propósito.
+- **Queda:** F6 burn-in (24-48h vigiladas → `gcloud sql instances patch pos-lite-db
+  --activation-policy NEVER` → ~1 semana de gracia) y F7 limpieza (Joel borra la
+  instancia manualmente; retirar `CopyToPgsqlCommand`/`pgsql_target`/secret viejo,
+  rotar password MySQL, actualizar AGENTS.md/CLAUDE.md/docs).
+
 ### Sesión 2026-07-30/31 — MIGRACIÓN A SUPABASE Fases 0-2 — DEPLOYADO rev `tadaima-00152-7s6` (neutro, aún MySQL)
 
 Arrancó la migración Cloud SQL MySQL → **Supabase Postgres** (proyecto `punto_de_venta`
