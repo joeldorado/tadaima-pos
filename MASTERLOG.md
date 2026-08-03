@@ -4,6 +4,40 @@
 
 ---
 
+### Sesión 2026-07-30/31 — MIGRACIÓN A SUPABASE Fases 0-2 — DEPLOYADO rev `tadaima-00152-7s6` (neutro, aún MySQL)
+
+Arrancó la migración Cloud SQL MySQL → **Supabase Postgres** (proyecto `punto_de_venta`
+ref `yndrdteeuljxsovvgyue`, plan Pro). Plan completo de 8 fases en el plan file; commit
+`824b470`. Hecho hoy:
+
+- **F0:** MCP de Supabase agregado a `.mcp.json` (junto a tadaima-catalog). PENDIENTE
+  Joel: autenticar (`claude /mcp` en terminal), DB password → secret
+  `supabase-db-password`, y host exacto del **Session pooler** (Dashboard → Connect).
+- **F1 (bi-driver):** Dockerfile con `pdo_pgsql` (conserva pdo_mysql → rollback = flip
+  de env); `docker/entrypoint.sh` reescrito con sonda agnóstica al driver y **seed
+  fail-closed** (`ALLOW_DB_SEED` — el viejo `catch → '0'` podía seedear sobre datos
+  reales); 4 migraciones enum con rama pgsql DROP/ADD CHECK (antes tronaban con
+  `MODIFY...ENUM` o dejaban `pre_sale_catalogs_status_check` sin
+  'arrived'/'completed'); migración `2026_07_31_000001` pgsql-only (índices pg_trgm en
+  products + UNIQUE parcial "una caja abierta por usuario" — repone los gap locks de
+  MySQL que Postgres no tiene, ADR-017); `whereLike(caseSensitive:false)` en TODAS las
+  búsquedas (en Postgres LIKE es case-sensitive; en MySQL no cambia nada);
+  `ReportsController` :623/:644 literales con comillas dobles → simples (escapadas
+  `\'product\'` dentro del selectRaw single-quoted); `SuppliesController` groupByRaw del
+  COALESCE; conexión `pgsql_target` (env `POS_PG_*`, solo local) + comando
+  **`tadaima:copy-to-pgsql`** (orden FK-safe 57 tablas, ciclo users↔companies↔stores
+  vía DEFERRABLE, cast de 31 booleans, TRUNCATE --fresh, setval de secuencias,
+  verificación counts+sumas de dinero; los tokens Sanctum se copian → sobreviven el
+  cutover). Tablas sessions/cache/jobs NO se copian (efímeras).
+- **F2 (deploy neutro):** rev `00152-7s6` — imagen bi-driver corriendo sobre MySQL.
+  Boot verificado en logs: "Esperando conexión (mysql)… DB conectada … Seed omitido
+  (COUNT:13)". Smoke prod: login, products, search (whereLike), top-products (selectRaw
+  fix), logout — todo 200. Suite backend **380/380**.
+- Quedan F3-F7 (esquema+hardening en Supabase, QA pgsql local brew, cutover ~15-20 min
+  nocturno con runbook y rollback por env, burn-in con instancia detenida, limpieza).
+  Bloqueadas hasta los 3 pendientes de Joel de F0. Cloud SQL intacta hasta el final;
+  el Supabase de loyalty (`tfbhysypjuoadgnwjaba`) NO se toca.
+
 ### Sesión 2026-07-30 — Corte en PESOS Y DÓLARES + Log de pagos por mesa + Reportes de Ruben — DEPLOYADO rev `tadaima-00146-4st`
 
 + rev `tadaima-00151-zpk` (mismo día, commit `37eb5bd`): **IMPRESIÓN SILENCIOSA (QZ Tray)
