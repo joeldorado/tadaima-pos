@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Variante Postgres de la suite (migración a Supabase 2026-07/08).
+     La suite normal corre en SQLite memoria y es CIEGA a los problemas de
+     Postgres (enums/CHECKs, LIKE case-sensitive, comillas dobles, groupBy).
+     Correr contra un Postgres 17 local (brew):
+       createdb tadaima_test && psql tadaima_test -c 'CREATE SCHEMA IF NOT EXISTS extensions'
+       vendor/bin/phpunit -c phpunit.pgsql.xml
+     NO apuntar nunca a Supabase: RefreshDatabase hace migrate:fresh. -->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+>
+    <testsuites>
+        <testsuite name="Unit">
+            <directory>tests/Unit</directory>
+        </testsuite>
+        <testsuite name="Feature">
+            <directory>tests/Feature</directory>
+        </testsuite>
+    </testsuites>
+    <source>
+        <include>
+            <directory>app</directory>
+        </include>
+    </source>
+    <php>
+        <env name="APP_ENV" value="testing"/>
+        <env name="APP_MAINTENANCE_DRIVER" value="file"/>
+        <env name="BCRYPT_ROUNDS" value="4"/>
+        <env name="BROADCAST_CONNECTION" value="null"/>
+        <env name="CACHE_STORE" value="array"/>
+        <env name="DB_CONNECTION" value="pgsql"/>
+        <env name="DB_HOST" value="127.0.0.1"/>
+        <env name="DB_PORT" value="5432"/>
+        <env name="DB_DATABASE" value="tadaima_test"/>
+        <env name="DB_USERNAME" value="joeldoradoaguilus"/>
+        <env name="DB_PASSWORD" value=""/>
+        <env name="DB_SSLMODE" value="prefer"/>
+        <env name="DB_URL" value=""/>
+        <env name="MAIL_MAILER" value="array"/>
+        <env name="QUEUE_CONNECTION" value="sync"/>
+        <env name="SESSION_DRIVER" value="array"/>
+        <env name="PULSE_ENABLED" value="false"/>
+        <env name="TELESCOPE_ENABLED" value="false"/>
+        <env name="NIGHTWATCH_ENABLED" value="false"/>
+    </php>
+</phpunit>
