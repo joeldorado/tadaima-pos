@@ -182,8 +182,8 @@ class CatalogController extends Controller
         // Search
         if ($request->filled('search')) {
             $term = $request->search;
-            $query->whereHas('product', fn ($q) => $q->where('name', 'like', "%{$term}%")
-                ->orWhere('sku', 'like', "%{$term}%")
+            $query->whereHas('product', fn ($q) => $q->whereLike('name', "%{$term}%", caseSensitive: false)
+                ->orWhereLike('sku', "%{$term}%", caseSensitive: false)
             );
         }
 
@@ -289,7 +289,7 @@ class CatalogController extends Controller
 
         if ($request->filled('search')) {
             $term = $request->search;
-            $query->where(fn ($q) => $q->where('name', 'like', "%{$term}%")->orWhere('sku', 'like', "%{$term}%"));
+            $query->where(fn ($q) => $q->whereLike('name', "%{$term}%", caseSensitive: false)->orWhereLike('sku', "%{$term}%", caseSensitive: false));
         }
         if ($request->filled('category_id')) {
             $query->where('category_id', $request->integer('category_id'));
@@ -381,7 +381,7 @@ class CatalogController extends Controller
             ->with(['price', 'images', 'category'])
             ->when($request->filled('search'), function ($q) use ($request) {
                 $term = $request->search;
-                $q->where(fn ($qq) => $qq->where('name', 'like', "%{$term}%")->orWhere('sku', 'like', "%{$term}%"));
+                $q->where(fn ($qq) => $qq->whereLike('name', "%{$term}%", caseSensitive: false)->orWhereLike('sku', "%{$term}%", caseSensitive: false));
             })
             ->when($request->input('filter') === 'featured', fn ($q) => $q->where('featured', true))
             ->when($request->input('filter') === 'hidden', fn ($q) => $q->where('catalog_visible', false));

@@ -154,10 +154,14 @@ class Product extends Model
             );
         }
 
+        // whereLike(caseSensitive: false) → ILIKE en Postgres (acelerado por los
+        // índices trigram de 2026_07_31_000001); en MySQL/SQLite queda LIKE de
+        // siempre. Sin esto, en Postgres "naruto" no encontraría "Naruto"
+        // (LIKE es case-sensitive ahí; el collation _ci de MySQL no).
         return $query->where(function (Builder $q) use ($term) {
-            $q->where('name', 'like', "%{$term}%")
-              ->orWhere('sku', 'like', "%{$term}%")
-              ->orWhere('barcode', 'like', "%{$term}%");
+            $q->whereLike('name', "%{$term}%", caseSensitive: false)
+              ->orWhereLike('sku', "%{$term}%", caseSensitive: false)
+              ->orWhereLike('barcode', "%{$term}%", caseSensitive: false);
         });
     }
 

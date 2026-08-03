@@ -58,16 +58,19 @@ RUN apk add --no-cache \
         libzip \
         icu-dev \
         icu-libs \
+        postgresql-dev \
+        libpq \
         ca-certificates \
         tzdata \
     && docker-php-ext-install -j$(nproc) \
         pdo_mysql \
+        pdo_pgsql \
         mbstring \
         bcmath \
         zip \
         intl \
         opcache \
-    && apk del --no-network oniguruma-dev libzip-dev icu-dev \
+    && apk del --no-network oniguruma-dev libzip-dev icu-dev postgresql-dev \
     && rm -rf /var/cache/apk/*
 
 # OPcache tuning

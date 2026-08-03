@@ -7,6 +7,10 @@
         "TADAIMA_API_URL": "https://tadaima.poslite.com.mx/api/v1",
         "TADAIMA_API_TOKEN": "${TADAIMA_API_TOKEN}"
       }
+    },
+    "supabase": {
+      "type": "http",
+      "url": "https://mcp.supabase.com/mcp?project_ref=yndrdteeuljxsovvgyue&features=docs%2Caccount%2Cdatabase%2Cdebugging%2Cdevelopment%2Cfunctions%2Cbranching"
     }
   }
 }

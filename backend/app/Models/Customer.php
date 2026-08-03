@@ -51,10 +51,10 @@ class Customer extends Model
     public function scopeSearch(Builder $query, string $term): Builder
     {
         return $query->where(function (Builder $q) use ($term) {
-            $q->where('name', 'like', "%{$term}%")
-              ->orWhere('email', 'like', "%{$term}%")
-              ->orWhere('phone', 'like', "%{$term}%")
-              ->orWhere('external_member_id', 'like', "%{$term}%");
+            $q->whereLike('name', "%{$term}%", caseSensitive: false)
+              ->orWhereLike('email', "%{$term}%", caseSensitive: false)
+              ->orWhereLike('phone', "%{$term}%", caseSensitive: false)
+              ->orWhereLike('external_member_id', "%{$term}%", caseSensitive: false);
         });
     }
 

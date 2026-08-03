@@ -83,8 +83,8 @@ class UserController extends Controller
             })
             ->when($request->filled('active'),     fn ($q) => $q->where('active',     (bool) $request->active))
             ->when($request->filled('search'), fn ($q) => $q->where(function ($q) use ($request) {
-                $q->where('name',  'like', "%{$request->search}%")
-                  ->orWhere('email', 'like', "%{$request->search}%");
+                $q->whereLike('name', "%{$request->search}%", caseSensitive: false)
+                  ->orWhereLike('email', "%{$request->search}%", caseSensitive: false);
             }))
             ->orderBy('name')
             ->get();

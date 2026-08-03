@@ -198,7 +198,10 @@ class SuppliesController extends Controller
 
         $byCategory = (clone $base)
             ->selectRaw("COALESCE(supplies.category, 'Sin categoría') as category, COUNT(*) as purchases, COALESCE(SUM(supply_movements.amount), 0) as total")
-            ->groupBy('category')
+            // groupByRaw del COALESCE: en Postgres `groupBy('category')` resuelve
+            // la columna cruda supplies.category (precedencia input-column), no el
+            // alias — un insumo NULL y otro 'Sin categoría' saldrían en 2 filas.
+            ->groupByRaw("COALESCE(supplies.category, 'Sin categoría')")
             ->orderByDesc('total')
             ->get()
             ->map(fn ($r) => [

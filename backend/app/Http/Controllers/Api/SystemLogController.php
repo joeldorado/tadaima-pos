@@ -22,8 +22,8 @@ class SystemLogController extends Controller
             ->when($request->filled('from'),    fn ($q) => $q->whereDate('created_at', '>=', $request->from))
             ->when($request->filled('to'),      fn ($q) => $q->whereDate('created_at', '<=', $request->to))
             ->when($request->filled('search'),  fn ($q) => $q->where(function ($q2) use ($request) {
-                $q2->where('description', 'like', "%{$request->search}%")
-                   ->orWhere('action', 'like', "%{$request->search}%");
+                $q2->whereLike('description', "%{$request->search}%", caseSensitive: false)
+                   ->orWhereLike('action', "%{$request->search}%", caseSensitive: false);
             }))
             ->latest('created_at');
 

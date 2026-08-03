@@ -10,8 +10,13 @@ return new class extends Migration
 
     public function up(): void
     {
-        if (DB::getDriverName() === 'sqlite') {
+        $driver = DB::getDriverName();
+        if ($driver === 'sqlite') {
             $this->recreateForSqlite(self::ALL_STATUSES, includeArrived: true);
+        } elseif ($driver === 'pgsql') {
+            // Postgres no tiene ENUM de Laravel: es varchar + CHECK con nombre
+            // determinístico <tabla>_<col>_check (migración a Supabase 2026-07-30).
+            $this->recreateCheckForPgsql(self::ALL_STATUSES);
         } else {
             $enum = implode(',', array_map(fn ($s) => "'$s'", self::ALL_STATUSES));
             DB::statement("ALTER TABLE pre_sale_catalogs MODIFY COLUMN status ENUM({$enum}) NOT NULL DEFAULT 'draft'");
@@ -20,12 +25,22 @@ return new class extends Migration
 
     public function down(): void
     {
-        if (DB::getDriverName() === 'sqlite') {
+        $driver = DB::getDriverName();
+        if ($driver === 'sqlite') {
             $this->recreateForSqlite(self::ORIGINAL_STATUSES, includeArrived: false);
+        } elseif ($driver === 'pgsql') {
+            $this->recreateCheckForPgsql(self::ORIGINAL_STATUSES);
         } else {
             $enum = implode(',', array_map(fn ($s) => "'$s'", self::ORIGINAL_STATUSES));
             DB::statement("ALTER TABLE pre_sale_catalogs MODIFY COLUMN status ENUM({$enum}) NOT NULL DEFAULT 'draft'");
         }
+    }
+
+    private function recreateCheckForPgsql(array $statuses): void
+    {
+        $list = implode(', ', array_map(fn ($s) => "'$s'::text", $statuses));
+        DB::statement('ALTER TABLE pre_sale_catalogs DROP CONSTRAINT IF EXISTS pre_sale_catalogs_status_check');
+        DB::statement("ALTER TABLE pre_sale_catalogs ADD CONSTRAINT pre_sale_catalogs_status_check CHECK (status::text = ANY (ARRAY[{$list}]))");
     }
 
     private function recreateForSqlite(array $statuses, bool $includeArrived): void

@@ -620,7 +620,7 @@ class ReportsController extends Controller
                 sale_items.product_id as id,
                 products.name,
                 products.sku,
-                "product" as type,
+                \'product\' as type,
                 COUNT(DISTINCT sale_items.sale_id) as times_sold,
                 COALESCE(SUM(sale_items.quantity), 0) as total_quantity,
                 COALESCE(SUM(sale_items.total * CASE WHEN sales.discount > 0 THEN sales.total * 1.0 / NULLIF(sales.subtotal, 0) ELSE 1 END), 0) as total_revenue
@@ -641,7 +641,7 @@ class ReportsController extends Controller
                 sale_items.manga_id as id,
                 mangas.name,
                 mangas.code as sku,
-                "manga" as type,
+                \'manga\' as type,
                 COUNT(DISTINCT sale_items.sale_id) as times_sold,
                 COALESCE(SUM(sale_items.quantity), 0) as total_quantity,
                 COALESCE(SUM(sale_items.total * CASE WHEN sales.discount > 0 THEN sales.total * 1.0 / NULLIF(sales.subtotal, 0) ELSE 1 END), 0) as total_revenue

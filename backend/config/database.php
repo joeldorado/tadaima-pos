@@ -99,6 +99,25 @@ return [
             'sslmode' => env('DB_SSLMODE', 'prefer'),
         ],
 
+        // Conexión TARGET de la migración a Supabase (tadaima:copy-to-pgsql y
+        // `migrate --database=pgsql_target` locales). Env POS_PG_* SOLO en el
+        // .env local — Cloud Run nunca las define; prefijo distinto a propósito
+        // para no chocar con TADAIMA_SUPABASE_* (loyalty, otro proyecto).
+        // Se elimina junto con el comando al terminar la migración (Fase 7).
+        'pgsql_target' => [
+            'driver' => 'pgsql',
+            'host' => env('POS_PG_HOST'),
+            'port' => env('POS_PG_PORT', '5432'),
+            'database' => env('POS_PG_DATABASE', 'postgres'),
+            'username' => env('POS_PG_USERNAME'),
+            'password' => env('POS_PG_PASSWORD', ''),
+            'charset' => 'utf8',
+            'prefix' => '',
+            'prefix_indexes' => true,
+            'search_path' => 'public',
+            'sslmode' => env('POS_PG_SSLMODE', 'require'),
+        ],
+
         'sqlsrv' => [
             'driver' => 'sqlsrv',
             'url' => env('DB_URL'),

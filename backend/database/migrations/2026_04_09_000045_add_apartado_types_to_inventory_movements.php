@@ -19,20 +19,31 @@ return new class extends Migration
 
     public function up(): void
     {
-        if (DB::getDriverName() === 'sqlite') {
-            $this->recreateForSqlite(self::ALL_TYPES);
-        } else {
-            $enumList = implode(',', array_map(fn ($t) => "'$t'", self::ALL_TYPES));
-            DB::statement("ALTER TABLE inventory_movements MODIFY COLUMN type ENUM({$enumList}) NOT NULL");
-        }
+        $this->applyEnum(self::ALL_TYPES);
     }
 
     public function down(): void
     {
-        if (DB::getDriverName() === 'sqlite') {
-            $this->recreateForSqlite(self::ORIGINAL_TYPES);
+        $this->applyEnum(self::ORIGINAL_TYPES);
+    }
+
+    /**
+     * Extiende el "enum" según el motor (migración a Supabase 2026-07-30):
+     * MySQL sí tiene ENUM nativo; en Postgres Laravel lo materializa como
+     * varchar + CHECK `<tabla>_<col>_check`, así que se re-crea el CHECK;
+     * SQLite (tests) no tiene ALTER de tipo → recrear tabla.
+     */
+    private function applyEnum(array $types): void
+    {
+        $driver = DB::getDriverName();
+        if ($driver === 'sqlite') {
+            $this->recreateForSqlite($types);
+        } elseif ($driver === 'pgsql') {
+            $list = implode(', ', array_map(fn ($t) => "'$t'::text", $types));
+            DB::statement('ALTER TABLE inventory_movements DROP CONSTRAINT IF EXISTS inventory_movements_type_check');
+            DB::statement("ALTER TABLE inventory_movements ADD CONSTRAINT inventory_movements_type_check CHECK (type::text = ANY (ARRAY[{$list}]))");
         } else {
-            $enumList = implode(',', array_map(fn ($t) => "'$t'", self::ORIGINAL_TYPES));
+            $enumList = implode(',', array_map(fn ($t) => "'$t'", $types));
             DB::statement("ALTER TABLE inventory_movements MODIFY COLUMN type ENUM({$enumList}) NOT NULL");
         }
     }

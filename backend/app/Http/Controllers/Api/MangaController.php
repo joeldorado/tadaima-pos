@@ -47,9 +47,9 @@ class MangaController extends Controller
                 ->whereHas('mangaDetails', fn ($d) => $d->where('editorial', $request->editorial)))
             ->when($request->filled('search'), fn ($q) => $q->where(function ($q2) use ($request) {
                 $term = $request->search;
-                $q2->where('name', 'like', "%{$term}%")
-                   ->orWhere('sku', 'like', "%{$term}%")
-                   ->orWhere('barcode', 'like', "%{$term}%");
+                $q2->whereLike('name', "%{$term}%", caseSensitive: false)
+                   ->orWhereLike('sku', "%{$term}%", caseSensitive: false)
+                   ->orWhereLike('barcode', "%{$term}%", caseSensitive: false);
             }))
             ->orderBy('name');
 
