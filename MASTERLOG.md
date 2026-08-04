@@ -4,6 +4,33 @@
 
 ---
 
+### Sesión 2026-08-03 (7) — RESET de operaciones (arranque post-producción) + chips de categoría con nombre en Caja
+
+**RESET a pedido de Joel** ("limpia todas las ventas históricas como si fuera
+nuevo… saca cajas abiertas e históricos de sesiones"): backup previo en
+`~/Documents/JOEL/supabase-operaciones-pre-reset-2026-08-03.dump` (pg_dump de
+las 9 tablas) → en UNA transacción se vaciaron: sales (72), sale_items (112),
+payments (72), sale_cancellations, cash_movements (8), cash_register_sessions
+(46, incluidas 2 abiertas), sales_drafts(+items), supply_movements (9) — y
+**secuencias reiniciadas** (la próxima venta/corte arranca en #1). SE CONSERVÓ:
+preventas (6 folios + 7 anticipos; su linked_sale_id quedó NULL por FK SET
+NULL), productos (13,963), inventario, tiendas, cajeros/usuarios,
+cash_registers, supplies (catálogo), clientes, promos y tokens de sesión (nadie
+se deslogueó). Smoke: sales vacío, session null, preventas intactas, todo 200.
+
+**Preventa "que no sale" (hermano de Joel):** verificado en DB — la preventa de
+hoy NUNCA llegó al servidor (último folio: #6 del 30-jul); coincide con la
+ventana del 500 de Caja (hotfix rev 00157). Aclaración de producto: las
+preventas NO aparecen en "Ventas" (módulo aparte); sus anticipos/liquidaciones
+sí cuentan en el corte y el Reporte del Día (`ReportsController::cash` suma
+`pre_sale_order_payments` por fecha+tienda). Con el reset, que la re-capture.
+
+**Chips numéricos en el catálogo de Caja** (pregunta de Joel): el payload light
+solo trae `category_id` y `productAdapter.toCartProduct` lo string-ificaba →
+los chips del `ProductCatalogModal` salían "1, 10, 11…". Fix: `toCartProduct(p,
+categoryNames?)` con mapa id→nombre (GET /categories, cache 24h) cableado en
+los 3 call sites de SellPage. Suites: 466 baseline, vitest 155/155.
+
 ### Sesión 2026-08-03 (6) — HOTFIX: Caja en 500 por memoria (catálogo 14k) — rev `tadaima-00157-l86`
 
 El equipo reportó "server error, no carga productos en Caja". Causa: la carga
