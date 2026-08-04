@@ -4,6 +4,24 @@
 
 ---
 
+### Sesión 2026-08-03 (5) — Búsqueda SERVER-SIDE en la tabla de Productos/Tomos — DEPLOYADO rev `tadaima-00156-dhg`
+
+Duda de Joel destapó el gap: con el catálogo Macro (~14k), la página de Productos
+solo cargaba/buscaba **los primeros 100** (default del backend + filtro
+client-side). Commit `3577daf`:
+- El término de búsqueda (2+ chars, debounce 300ms) viaja al backend
+  (`scopeSearch` trigram sobre nombre/sku/barcode del catálogo COMPLETO,
+  per_page 200) — `useProductsQuery`/`useMangasQuery` ganan opción `search`.
+- Enter del scanner hace flush del debounce; el toast "no se encontró" solo
+  dispara cuando el server ya respondió (antes daría falso negativo).
+- Contexto: **Caja NO tenía este problema** (carga todo en modo light,
+  per_page=0); la tienda online busca sobre páginas cargadas (por diseño).
+- QA con sesión real vía token temporal + localStorage `tadaima_token`:
+  producto Macro fuera de los 100 base aparece por nombre y por SKU exacto.
+- CAVEAT conocido: los contadores Agotados/Sin Costo/badges de la página siguen
+  calculando sobre lo cargado (~100) — mostrar totales reales requiere counts
+  del server (pendiente si el equipo lo pide).
+
 ### Sesión 2026-08-03 (4) — TIENDA ONLINE v5: tema Corporativo claro (DEFAULT) + full pantalla + cards compactas + carrito por tienda — DEPLOYADO rev `tadaima-00155-2nb`
 
 Rediseño de la tienda pública tras el import Macro (~13.9k productos sin foto).
