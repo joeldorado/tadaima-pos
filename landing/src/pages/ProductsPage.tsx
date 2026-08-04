@@ -1452,16 +1452,33 @@ export function ProductsPage() {
   // otra máquina aparecen solos, sin refrescar y sin señal visual (la lista
   // solo cambia si hay algo nuevo).
   const LIVE_POLL_MS = 20_000;
+  // Búsqueda SERVER-SIDE (2026-08-03): con el catálogo Macro (~14k) la página
+  // default de 100 ya no es "todos". El término viaja al backend con debounce
+  // (300ms) y busca sobre TODO el catálogo; el filtro client-side de abajo
+  // sigue aplicando sobre lo que regresa (categoría, etc.).
+  const [serverSearch, setServerSearch] = useState("");
+  useEffect(() => {
+    const t = window.setTimeout(() => setServerSearch(search), 300);
+    return () => window.clearTimeout(t);
+  }, [search]);
   const productsQuery = useProductsQuery(selectedStoreId, {
     refetchIntervalMs: pageSection === 'tomos' ? false : LIVE_POLL_MS,
+    search: serverSearch,
   });
   // Librerías: se cargan al entrar a su tab, PERO también en background una vez
   // que el catálogo de productos terminó de cargar → al dar clic en "Tomos" ya
   // están en cache (instantáneo). El spinner de tomos sigue gateado a su tab,
   // así que el prefetch no muestra "Cargando" en la vista de productos.
+  // Mismo patrón server-side para tomos (~3k tras el import Macro).
+  const [serverMangaSearch, setServerMangaSearch] = useState("");
+  useEffect(() => {
+    const t = window.setTimeout(() => setServerMangaSearch(mangaSearch), 300);
+    return () => window.clearTimeout(t);
+  }, [mangaSearch]);
   const mangasQuery = useMangasQuery(selectedStoreId, {
     enabled: pageSection === 'tomos' || productsQuery.isSuccess,
     refetchIntervalMs: pageSection === 'tomos' ? LIVE_POLL_MS : false,
+    search: serverMangaSearch,
   });
   const storesQuery = useStoresQuery({ active: true, enabled: isAdmin });
   const warehousesQuery = useWarehousesQuery({ active: true });
@@ -2577,12 +2594,15 @@ export function ProductsPage() {
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={e => {
               // Enter del scanner: NO borrar (antes se vaciaba el input y daba
-              // sensación de "regresa todos"). Si no hay match, avisar al
-              // usuario con toast claro mostrando el código que leyó.
+              // sensación de "regresa todos"). Flush inmediato del debounce (el
+              // scanner teclea + Enter en <300ms, no espera). El toast "no se
+              // encontró" solo cuando el SERVER ya respondió para este término
+              // — antes se disparaba en falso mientras llegaba el resultado.
               // Limpieza explícita: tecla Escape o botón ✕.
               if (e.key === "Enter") {
                 const term = search.trim();
-                if (term && filtered.length === 0) {
+                setServerSearch(term);
+                if (term && filtered.length === 0 && serverSearch === term && !productsQuery.isFetching) {
                   toast.warning(`No se encontró "${term}"`);
                 }
               }
@@ -3089,10 +3109,12 @@ export function ProductsPage() {
                 onChange={e => setMangaSearch(e.target.value)}
                 onKeyDown={e => {
                   // Enter NO borra (antes vaciaba y daba sensación de "regresa
-                  // todos"). Si no hay match avisar con el código que leyó.
+                  // todos"). Flush del debounce server-side; el toast solo
+                  // cuando el server ya respondió para este término.
                   if (e.key === "Enter") {
                     const term = mangaSearch.trim();
-                    if (term && filteredMangas.length === 0) {
+                    setServerMangaSearch(term);
+                    if (term && filteredMangas.length === 0 && serverMangaSearch === term && !mangasQuery.isFetching) {
                       toast.warning(`No se encontró "${term}"`);
                     }
                   }

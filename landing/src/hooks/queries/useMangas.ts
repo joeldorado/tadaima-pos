@@ -20,11 +20,20 @@ const CATALOG_STALE_MS = 5 * 60_000
  */
 export function useMangasQuery(
   storeId?: number | null,
-  options?: { enabled?: boolean; refetchIntervalMs?: number | false }
+  options?: { enabled?: boolean; refetchIntervalMs?: number | false; search?: string }
 ) {
+  // `search` server-side (2026-08-03): con ~3k tomos del import Macro, la
+  // página default (50) ya no es "todos" — mismo patrón que useProductsQuery.
+  const search = options?.search?.trim() ?? ''
+  const searching = search.length >= 2
   // include_unassigned: trae también tomos sin inventario en la tienda
   // ("No asignado") para que la sucursal les agregue stock.
-  const params = storeId ? { store_id: storeId, include_unassigned: true } : undefined
+  const params = storeId || searching
+    ? {
+        ...(storeId ? { store_id: storeId, include_unassigned: true } : {}),
+        ...(searching ? { search, per_page: 200 } : {}),
+      }
+    : undefined
   return useQuery({
     queryKey: queryKeys.mangas.list(params),
     queryFn: () => getMangas(params),

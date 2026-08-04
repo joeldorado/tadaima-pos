@@ -14,17 +14,34 @@ const CATALOG_STALE_MS = 5 * 60_000
 const TOP_PAGE_SIZE = 200
 const BACKGROUND_PAGES = 5 // 200 × 5 = 1000 productos extra en background
 
+/** Búsquedas de 2+ caracteres viajan al server; menos = solo la página base. */
+const SERVER_SEARCH_MIN_CHARS = 2
+const SERVER_SEARCH_PAGE = 200
+
 /**
  * Catálogo de productos completo. Para admin (ProductsPage) que necesita
  * todos los campos para editar. Fresh 5min, persistido 24h.
+ *
+ * `search` (2026-08-03): con el catálogo Macro (~14k) la página default de 100
+ * ya no es "todos" — el término de búsqueda viaja al BACKEND (scopeSearch:
+ * trigram/ILIKE sobre nombre/sku/barcode del catálogo completo) en lugar de
+ * filtrar solo lo cargado. Cada término es su propio queryKey (cacheado);
+ * keepPreviousData evita el parpadeo mientras llega el resultado.
  */
 export function useProductsQuery(
   storeId?: number | null,
-  options?: { refetchIntervalMs?: number | false }
+  options?: { refetchIntervalMs?: number | false; search?: string }
 ) {
+  const search = options?.search?.trim() ?? ''
+  const searching = search.length >= SERVER_SEARCH_MIN_CHARS
   // include_unassigned: trae también productos sin inventario en la tienda
   // ("No asignado") para que la sucursal les agregue stock ella misma.
-  const params = storeId ? { store_id: storeId, include_unassigned: true } : undefined
+  const params = storeId || searching
+    ? {
+        ...(storeId ? { store_id: storeId, include_unassigned: true } : {}),
+        ...(searching ? { search, per_page: SERVER_SEARCH_PAGE } : {}),
+      }
+    : undefined
   return useQuery({
     queryKey: queryKeys.products.list(params),
     queryFn: () => getProducts(params),
