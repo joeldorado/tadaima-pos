@@ -73,6 +73,11 @@ RUN apk add --no-cache \
     && apk del --no-network oniguruma-dev libzip-dev icu-dev postgresql-dev \
     && rm -rf /var/cache/apk/*
 
+# PHP runtime: la carga completa de Caja (products?light=1&per_page=0) serializa
+# ~14k productos con relaciones tras el import Macro — el default de 128M
+# revienta en JsonResponse (500 en Caja, 2026-08-04). El contenedor tiene 1Gi.
+RUN echo 'memory_limit=512M' > /usr/local/etc/php/conf.d/memory.ini
+
 # OPcache tuning
 RUN { \
         echo 'opcache.enable=1'; \
