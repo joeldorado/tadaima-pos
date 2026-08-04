@@ -4,6 +4,22 @@
 
 ---
 
+### Sesión 2026-08-03 (6) — HOTFIX: Caja en 500 por memoria (catálogo 14k) — rev `tadaima-00157-l86`
+
+El equipo reportó "server error, no carga productos en Caja". Causa: la carga
+completa de Caja (`/products?light=1&per_page=0&sort=top…`) serializa TODO el
+catálogo — con los ~14k del import Macro, PHP reventó su `memory_limit` default
+de 128M en `JsonResponse` ("Allowed memory size exhausted"). Primera Caja
+fresca post-import; no lo causó el deploy de búsqueda.
+- Fix: `memory_limit=512M` (`/usr/local/etc/php/conf.d/memory.ini` en el
+  Dockerfile; el contenedor tiene 1Gi). Commit `208375f`.
+- Verificado con el request exacto que fallaba: 200, ~439KB gzip, ~7.5s; los
+  cajeros reales ya cargan en 200.
+- **PENDIENTE estructural**: la carga de Caja es O(catálogo) — ~5MB raw y 7s
+  por sesión fresca. Hay que pasarla a chunks (top primero + resto en
+  background, la maquinaria de páginas ya existe en useProducts.ts) antes de
+  que el catálogo crezca más.
+
 ### Sesión 2026-08-03 (5) — Búsqueda SERVER-SIDE en la tabla de Productos/Tomos — DEPLOYADO rev `tadaima-00156-dhg`
 
 Duda de Joel destapó el gap: con el catálogo Macro (~14k), la página de Productos
