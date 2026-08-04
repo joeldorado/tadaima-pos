@@ -35,7 +35,16 @@ function optionalPrice<K extends "price_b" | "price_c" | "price_d" | "price_e">(
   return value === undefined ? {} : ({ [key]: value } as Record<K, number>);
 }
 
-export function toCartProduct(p: ProductLight): Product {
+export function toCartProduct(
+  p: ProductLight,
+  /**
+   * id → nombre de categoría (GET /categories). El payload light solo trae
+   * `category_id`; sin este mapa los chips de categoría de Caja salían como
+   * números ("1", "10", "11"… — reporte de Joel 2026-08-03). Sin mapa (o id
+   * sin match) degrada al número, que al menos filtra bien.
+   */
+  categoryNames?: ReadonlyMap<number, string>,
+): Product {
   const hasStock = typeof p.stock_total === "number";
   // `exactOptionalPropertyTypes` está activo: un campo opcional se OMITE, no se
   // pone en undefined. De ahí los spreads condicionales.
@@ -44,7 +53,9 @@ export function toCartProduct(p: ProductLight): Product {
     name: p.name,
     sku: p.sku,
     ...(p.barcode ? { barcode: p.barcode } : {}),
-    category: String(p.category_id ?? ""),
+    category:
+      (p.category_id != null ? categoryNames?.get(p.category_id) : undefined)
+        ?? String(p.category_id ?? ""),
     image: p.image ?? "",
     price_a: priceAt(p, 1),
     ...optionalPrice("price_b", optionalPriceAt(p, 2)),

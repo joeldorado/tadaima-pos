@@ -25,7 +25,7 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { PaymentRestrictionBadge, getPayRestriction } from "@/components/ui/PaymentRestrictionBadge";
 import { SingleDatePicker } from "@/components/ui/SingleDatePicker";
 import { toast } from "sonner";
-import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, forceCloseSession, getActiveSession, createLayaway, getCustomers, createCustomer, refreshMember, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getPreSaleOrders, getSales, getProductsLight, storageUrl, sendPreSaleAssignAlert, getCatalogCustomerUsage } from "@tadaima/api";
+import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, forceCloseSession, getActiveSession, createLayaway, getCustomers, createCustomer, refreshMember, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getPreSaleOrders, getSales, getProductsLight, getCategories, storageUrl, sendPreSaleAssignAlert, getCatalogCustomerUsage } from "@tadaima/api";
 import type { OpenSessionConflict } from "@tadaima/api";
 import type { CashSessionReport } from "@tadaima/api";
 import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
@@ -38,7 +38,7 @@ import { useLayoutChrome } from "@/contexts/LayoutChromeContext";
 import { CortesModal } from "@/components/cash/CortesModal";
 import { PrinterConfigModal } from "@/components/cash/PrinterConfigModal";
 import { OpenSessionConflictModal } from "@/components/cash/OpenSessionConflictModal";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useProductsLightQuery, useProductsSearchQuery, useCartProductsPolicyQuery } from "@/hooks/queries/useProducts";
 import { buildPolicyIndex, syncCartWithCatalog } from "@/lib/cartSync";
 // ADR-014: useReservedStockQuery removido — carrito client-side, sin polling.
@@ -562,9 +562,22 @@ export function SellPage() {
   const paymentMethods: ApiPaymentMethod[] = paymentMethodsQuery.data ?? [];
   const terminals: Terminal[] = terminalsQuery.data ?? [];
 
+  // id → nombre de categoría: el payload light solo trae category_id y los
+  // chips del catálogo salían como números (Joel 2026-08-03). 80 filas, cache 24h.
+  const categoriesQuery = useQuery({
+    queryKey: ["categories"],
+    queryFn: () => getCategories(),
+    staleTime: 5 * 60_000,
+    gcTime: 24 * 60 * 60_000,
+  });
+  const categoryNames = useMemo(
+    () => new Map((categoriesQuery.data ?? []).map(c => [c.id, c.name])),
+    [categoriesQuery.data]
+  );
+
   const topProducts: Product[] = useMemo(
-    () => (productsQuery.data?.data ?? []).filter(p => p.active).map(toCartProduct),
-    [productsQuery.data]
+    () => (productsQuery.data?.data ?? []).filter(p => p.active).map(p => toCartProduct(p, categoryNames)),
+    [productsQuery.data, categoryNames]
   );
 
   const [showOpenCashModal, setShowOpenCashModal] = useState(false);
@@ -650,9 +663,9 @@ export function SellPage() {
     const seen = new Set(topProducts.map(p => p.id));
     const extra: Product[] = (productsSearchQuery.data?.data ?? [])
       .filter(p => p.active && !seen.has(String(p.id)))
-      .map(toCartProduct);
+      .map(p => toCartProduct(p, categoryNames));
     return extra.length > 0 ? [...topProducts, ...extra] : topProducts;
-  }, [topProducts, productsSearchQuery.data]);
+  }, [topProducts, productsSearchQuery.data, categoryNames]);
 
   // ── Sincronización del carrito con el catálogo ────────────────────────────
   // Cada línea guarda una COPIA del producto (persistida a localStorage) y
@@ -2568,7 +2581,7 @@ export function SellPage() {
         || (p.barcode ?? '').toLowerCase() === code.toLowerCase()
       );
       if (exact) {
-        const adapted: Product = toCartProduct(exact);
+        const adapted: Product = toCartProduct(exact, categoryNames);
         // No asignado → abre "Agregar stock" en vez de intentar vender.
         if (adapted.is_assigned === false) { openStockFor(adapted); return; }
         // Scanner usa addScanToCart (nunca suma). Si ya está en venta, toast info.
