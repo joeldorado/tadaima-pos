@@ -3,6 +3,10 @@ export const queryKeys = {
     all: ['products'] as const,
     list: (params?: Record<string, unknown>) => ['products', 'list', params ?? {}] as const,
     detail: (id: number) => ['products', 'detail', id] as const,
+    // Contadores agregados (GET /products/stats). Bajo la raíz ['products']
+    // a propósito: toda invalidación de products.all (crear/editar/borrar,
+    // promos, costos) refresca también los contadores.
+    stats: (params?: Record<string, unknown>) => ['products', 'stats', params ?? {}] as const,
   },
   // Promos GENERALES (2026-07-25): lista de gestión (PromosPage / tab picker).
   // OJO: al mutar promos invalida TAMBIÉN queryKeys.products.all — las promos

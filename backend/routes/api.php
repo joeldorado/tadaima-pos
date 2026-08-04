@@ -100,6 +100,10 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     });
 
     // ── Products ──────────────────────────────────────────────────────────────
+    // stats ANTES del apiResource: si no, products/{product} captura "stats"
+    // como id y truena el model binding.
+    Route::get('products/stats', [ProductController::class, 'stats']);
+
     Route::apiResource('products', ProductController::class)->only([
         'index', 'show', 'store', 'update', 'destroy',
     ]);

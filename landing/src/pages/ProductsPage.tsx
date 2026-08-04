@@ -11,7 +11,8 @@ import {
   MessageCircle,
   Upload, Camera, Loader2,
   ArrowUp, ArrowDown, ArrowUpDown,
-  ChevronLeft, ChevronsLeft, ChevronsRight, Trash2, Pencil, RefreshCw, PackageX, TicketPercent
+  ChevronLeft, ChevronsLeft, ChevronsRight, Trash2, Pencil, RefreshCw, PackageX, TicketPercent,
+  ChevronDown, SlidersHorizontal
 } from "lucide-react";
 import { useActiveStore } from "@/contexts/StoreContext";
 import { useAuth } from "@tadaima/auth";
@@ -21,7 +22,7 @@ import { toast } from "sonner";
 import { createProduct, updateProduct, deleteProduct, forceDeleteProduct, uploadProductImage, removeProductImage, getInventory, updateInventory, getPrice, sendStockAlert, getCategories, createCategory, getSuppliers, createSupplier, attachPromotionProducts } from "@tadaima/api";
 import type { ApiError } from "@tadaima/api";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
-import { useProductsQuery } from "@/hooks/queries/useProducts";
+import { useProductsQuery, useProductStatsQuery, type ProductsCatalogFilter } from "@/hooks/queries/useProducts";
 import { useMangasQuery } from "@/hooks/queries/useMangas";
 import { ProductsSkeleton } from "@/components/products/ProductsSkeleton";
 import { useStoresQuery } from "@/hooks/queries/useStores";
@@ -1389,11 +1390,122 @@ function ProductModal({
   );
 }
 
+// ─── Dropdown de filtros del header ──────────────────────────────────────────
+// Reemplaza la fila de chips que se amontonaba (8 hijos sin wrap — reporte de
+// Joel 2026-08-04). "Productos sin Costo" queda FUERA, siempre visible; aquí
+// viven los demás. Los contadores vienen de /products/stats (catálogo REAL).
+const FILTER_META: Record<Exclude<ProductsCatalogFilter, null>, { label: string; color: string; icon: React.ComponentType<{ size?: number | string }> }> = {
+  low_stock:    { label: "Por agotarse", color: "#F59E0B", icon: AlertTriangle },
+  out_of_stock: { label: "Agotados",     color: "#EF4444", icon: PackageX },
+  promos:       { label: "Promos",       color: "#34d399", icon: TicketPercent },
+  top:          { label: "Más vendidos", color: "#AA66FF", icon: TrendingUp },
+};
+
+function FilterDropdown({ activeFilter, onSelect, isProductos, canViewCost, counts, storeName }: {
+  activeFilter: ProductsCatalogFilter;
+  onSelect: (f: ProductsCatalogFilter) => void;
+  isProductos: boolean;
+  canViewCost: boolean;
+  /** Contadores reales de stats (null = cargando). */
+  counts: { low: number | null; out: number | null; promos: number | null };
+  storeName?: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const active = activeFilter ? FILTER_META[activeFilter] : null;
+  const scopeHint = storeName
+    ? `en ${storeName}`
+    : "en todas las tiendas (elige una tienda para ver el detalle por sucursal)";
+
+  const items: { key: Exclude<ProductsCatalogFilter, null>; count: number | null; show: boolean; title: string }[] = [
+    { key: "low_stock", count: counts.low, show: true, title: `Con stock 1–10 ${scopeHint}` },
+    { key: "out_of_stock", count: counts.out, show: true, title: `Sin stock ${scopeHint}` },
+    { key: "promos", count: counts.promos, show: isProductos, title: "Productos con promoción vigente" },
+    { key: "top", count: null, show: isProductos && canViewCost, title: "Top 50 más vendidos (últimos 30 días)" },
+  ];
+
+  const pick = (f: ProductsCatalogFilter) => { onSelect(f); setOpen(false); };
+
+  return (
+    <div ref={rootRef} className="relative shrink-0">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all hover:scale-[1.02] active:scale-95"
+        data-testid="filter-dropdown"
+        style={active
+          ? { background: `${active.color}1f`, border: `1px solid ${active.color}80`, color: active.color }
+          : { background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", color: T.textSecondary }}
+        title="Filtros del catálogo"
+      >
+        {active ? <active.icon size={13} /> : <SlidersHorizontal size={13} />}
+        {active ? active.label : "Filtros"}
+        <ChevronDown size={13} style={{ transform: open ? "rotate(180deg)" : undefined, transition: "transform 150ms ease" }} />
+      </button>
+
+      {open && (
+        <div
+          className="absolute right-0 top-full mt-2 z-[120] min-w-[230px] rounded-2xl p-1.5 shadow-2xl"
+          style={{ background: "var(--td-popup-bg, var(--td-panel-bg))", border: "1px solid var(--td-card-border)" }}
+        >
+          <button
+            onClick={() => pick(null)}
+            disabled={!activeFilter}
+            data-testid="filter-clear"
+            className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-black transition-colors disabled:opacity-40 hover:bg-white/5"
+            style={{ color: T.textSecondary }}
+          >
+            <X size={13} />
+            Ver todos
+          </button>
+          <div className="my-1" style={{ borderTop: "1px solid var(--td-card-border)" }} />
+          {items.filter(i => i.show).map(({ key, count, title }) => {
+            const meta = FILTER_META[key];
+            const isActive = activeFilter === key;
+            const disabled = count === 0;
+            return (
+              <button
+                key={key}
+                onClick={() => pick(isActive ? null : key)}
+                disabled={disabled}
+                {...(key === "promos" ? { "data-testid": "filter-promos" } : {})}
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-black transition-colors disabled:opacity-40 hover:bg-white/5"
+                style={{ color: meta.color, background: isActive ? `${meta.color}1a` : undefined }}
+                title={title}
+              >
+                <meta.icon size={13} />
+                <span className="flex-1 text-left">{meta.label}</span>
+                {count !== null && (
+                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black text-white" style={{ background: meta.color }}>
+                    {count.toLocaleString("es-MX")}
+                  </span>
+                )}
+                {isActive && <CheckCircle2 size={13} />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── App Principal ────────────────────────────────────────────────────────────
 export function ProductsPage() {
   const [pageSection, setPageSection] = useState<'productos' | 'tomos'>('productos');
   const [search, setSearch] = useState("");
-  const [selectedCat] = useState("Todo");
+  // Nota: sin selector de categoría en esta página — el filtro server-side
+  // (?category_id) ya está soportado por el backend, listo para cuando exista
+  // esa UI.
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<"grid" | "list">(
     () => (localStorage.getItem('tadaima-products-view') ?? 'list') as "grid" | "list"
@@ -1436,11 +1548,15 @@ export function ProductsPage() {
   const [viewingManga, setViewingManga] = useState<Manga | null>(null);
   const [alertingKey, setAlertingKey] = useState<string | null>(null);
   const [notifiedKeys, setNotifiedKeys] = useState<Record<string, boolean>>({});
-  const [showTopSellers, setShowTopSellers] = useState(false);
-  const [showLowStock, setShowLowStock] = useState(false);
-  const [showOutStock, setShowOutStock] = useState(false);
-  // Filtro rápido "Promos" (QA Joel 2026-07-17): solo productos con promo vigente.
-  const [showPromos, setShowPromos] = useState(false);
+  // Chip de filtro activo — UNO a la vez (2026-08-04: server-side; antes eran
+  // 4 booleanos que se apagaban a mano entre sí y "Quitar Filtro" olvidaba
+  // apagar Promos). Las constantes derivadas conservan los nombres históricos
+  // para no tocar los ~20 sitios de lectura.
+  const [activeFilter, setActiveFilter] = useState<ProductsCatalogFilter>(null);
+  const showTopSellers = activeFilter === 'top';
+  const showLowStock = activeFilter === 'low_stock';
+  const showOutStock = activeFilter === 'out_of_stock';
+  const showPromos = activeFilter === 'promos';
   // Modal "Productos sin Costo": tabla editable para capturar el costo real
   // rápido (reemplaza el viejo filtro in-grid showNoCost).
   const [showMissingCost, setShowMissingCost] = useState(false);
@@ -1461,10 +1577,39 @@ export function ProductsPage() {
     const t = window.setTimeout(() => setServerSearch(search), 300);
     return () => window.clearTimeout(t);
   }, [search]);
+  // Modo admin (2026-08-04): paginación + filtros server-side. El backend
+  // devuelve { items, pagination } con el TOTAL real (~14k) — la tabla pide
+  // página por página en vez de cargar solo la primera y mentir en los
+  // contadores. El chip activo viaja como filtro SQL y combina por AND con
+  // búsqueda/tienda.
   const productsQuery = useProductsQuery(selectedStoreId, {
     refetchIntervalMs: pageSection === 'tomos' ? false : LIVE_POLL_MS,
     search: serverSearch,
+    withMeta: true,
+    type: 'product',
+    filter: activeFilter,
+    threshold: 10,
+    page: pagination.pageIndex + 1,
+    perPage: pagination.pageSize,
+    // categoryId: el backend ya soporta ?category_id, pero esta página no
+    // tiene selector de categoría (selectedCat es un useState sin setter,
+    // siempre "Todo") — se cablea cuando exista la UI.
   });
+  // Contadores REALES del catálogo completo (GET /products/stats) para los
+  // chips — independientes de la página cargada. En el tab Tomos cuentan
+  // mangas; en Productos, productos normales.
+  const statsQuery = useProductStatsQuery({
+    storeId: selectedStoreId,
+    type: pageSection === 'tomos' ? 'manga' : 'product',
+  });
+  const stats = statsQuery.data;
+  const totalProducts = productsQuery.data?.total ?? 0;
+  const serverLastPage = productsQuery.data?.last_page ?? 1;
+  // Cambiar búsqueda/filtro/tienda invalida la página actual (con
+  // manualPagination + autoResetPageIndex:false nadie más la regresa a 1).
+  useEffect(() => {
+    setPagination(p => (p.pageIndex === 0 ? p : { ...p, pageIndex: 0 }));
+  }, [serverSearch, activeFilter, selectedStoreId]);
   // Librerías: se cargan al entrar a su tab, PERO también en background una vez
   // que el catálogo de productos terminó de cargar → al dar clic en "Tomos" ya
   // están en cache (instantáneo). El spinner de tomos sigue gateado a su tab,
@@ -2104,26 +2249,28 @@ export function ProductsPage() {
 
   // Memoize filtered so the array reference is stable between renders that don't change
   // the filter state. Without this, every render creates a new array reference →
-  // TanStack's autoResetPageIndex fires → setPagination → infinite loop.
+  // TanStack table re-renders de más.
+  //
+  // 2026-08-04: los chips y la categoría filtran en el SERVER (el dataset ya
+  // llega filtrado y además COMBINA con la búsqueda — antes los early-returns
+  // ignoraban el texto). Aquí solo queda el refinamiento client-side de
+  // términos de 1 caracter, que no viajan al backend.
   const filtered = useMemo(() => {
-    if (showTopSellers) return [...products].sort((a, b) => b.ventasTotales - a.ventasTotales).slice(0, 50);
-    if (showOutStock)   return products.filter(p => !p.esUnico && getTotalStock(p.id) === 0);
-    if (showLowStock)   return products.filter(p => !p.esUnico && getTotalStock(p.id) > 0 && getTotalStock(p.id) <= 10);
-    if (showPromos)     return products.filter(p => (p.promos?.length ?? 0) > 0);
-    const q = search.toLowerCase();
-    return products.filter(p => {
+    const q = search.trim().toLowerCase();
+    if (!q || serverSearch.trim().length >= 2) return products;
+    return products.filter(p =>
       // Match por nombre, SKU o código de barras — el scanner USB teclea el
       // valor en este input y matcheamos contra los 3 campos.
-      const matchesSearch =
-        p.nombre.toLowerCase().includes(q) ||
-        p.sku.toLowerCase().includes(q) ||
-        (p.barcode ?? '').toLowerCase().includes(q);
-      const matchesCat = selectedCat === 'Todo' || p.categoria === selectedCat;
-      return matchesSearch && matchesCat;
-    });
-  }, [products, search, selectedCat, showTopSellers, showLowStock, showOutStock, showPromos, getTotalStock]);
+      p.nombre.toLowerCase().includes(q) ||
+      p.sku.toLowerCase().includes(q) ||
+      (p.barcode ?? '').toLowerCase().includes(q)
+    );
+  }, [products, search, serverSearch]);
 
   // ─── TanStack Table (lista mode) ─────────────────────────────────────────────
+  // manualPagination: la tabla muestra la página que mandó el server tal cual;
+  // pageCount viene del meta real (~14k / pageSize). El sort client-side sigue
+  // aplicando sobre la página visible.
   const table = useReactTable({
     data: filtered,
     columns,
@@ -2131,9 +2278,10 @@ export function ProductsPage() {
     onSortingChange: setSorting,
     onPaginationChange: setPagination,
     autoResetPageIndex: false,
+    manualPagination: true,
+    pageCount: showTopSellers ? 1 : serverLastPage,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
   });
 
   // ─── Manga / Tomos table ───────────────────────────────────────────────────
@@ -2347,6 +2495,98 @@ export function ProductsPage() {
     getPaginationRowModel: getPaginationRowModel(),
   });
 
+  // ── Footer de paginación SERVER-SIDE — compartido por Tabla y Cuadrícula.
+  // "Mostrando X–Y de N" usa el total real del meta (~14k), no lo cargado.
+  const paginationFooter = (() => {
+    const pageIdx = pagination.pageIndex;
+    const size = pagination.pageSize;
+    const from = filtered.length === 0 ? 0 : pageIdx * size + 1;
+    const to = pageIdx * size + filtered.length;
+    return (
+      <div
+        className="flex items-center justify-between px-6 py-4 gap-4 flex-wrap"
+        style={{ borderTop: PRODUCT_THEME.borderSubtle, background: PRODUCT_THEME.tableFoot }}
+      >
+        <span className="text-[11px] font-semibold inline-flex items-center gap-2" style={{ color: T.textMuted }}>
+          {showTopSellers
+            ? `Top ${filtered.length} más vendidos (últimos 30 días)`
+            : `Mostrando ${from.toLocaleString("es-MX")}–${to.toLocaleString("es-MX")} de ${totalProducts.toLocaleString("es-MX")} · página ${pageIdx + 1} de ${Math.max(1, table.getPageCount())}`}
+          {productsQuery.isFetching && <Loader2 size={11} className="animate-spin" />}
+        </span>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => table.setPageIndex(0)}
+            disabled={!table.getCanPreviousPage()}
+            className="p-2 rounded-xl transition-all disabled:opacity-30"
+            style={SECONDARY_BUTTON}
+            title="Primera página"
+          >
+            <ChevronsLeft size={15} />
+          </button>
+          <button
+            onClick={() => table.previousPage()}
+            disabled={!table.getCanPreviousPage()}
+            className="p-2 rounded-xl transition-all disabled:opacity-30"
+            style={SECONDARY_BUTTON}
+            title="Página anterior"
+          >
+            <ChevronLeft size={15} />
+          </button>
+
+          {/* Page numbers */}
+          {Array.from({ length: table.getPageCount() }, (_, i) => i)
+            .filter(i => Math.abs(i - pageIdx) <= 2)
+            .map(i => (
+              <button
+                key={i}
+                onClick={() => table.setPageIndex(i)}
+                className="w-8 h-8 rounded-xl text-xs font-bold transition-all"
+                style={
+                  i === pageIdx
+                    ? { background: T.redBright, color: '#fff' }
+                    : { color: T.textMuted, background: 'transparent' }
+                }
+              >
+                {i + 1}
+              </button>
+            ))}
+
+          <button
+            onClick={() => table.nextPage()}
+            disabled={!table.getCanNextPage()}
+            className="p-2 rounded-xl transition-all disabled:opacity-30"
+            style={SECONDARY_BUTTON}
+            title="Página siguiente"
+          >
+            <ChevronRight size={15} />
+          </button>
+          <button
+            onClick={() => table.setPageIndex(table.getPageCount() - 1)}
+            disabled={!table.getCanNextPage()}
+            className="p-2 rounded-xl transition-all disabled:opacity-30"
+            style={SECONDARY_BUTTON}
+            title="Última página"
+          >
+            <ChevronsRight size={15} />
+          </button>
+
+          <select
+            value={size}
+            // Cambiar el tamaño regresa a la página 1 — el índice viejo puede
+            // quedar fuera de rango con el tamaño nuevo (server-side).
+            onChange={e => setPagination({ pageIndex: 0, pageSize: Number(e.target.value) })}
+            className="ml-2 px-2 py-1 rounded-xl text-xs font-bold outline-none"
+            style={T.input}
+          >
+            {[10, 20, 50, 100].map(s => (
+              <option key={s} value={s}>{s} / página</option>
+            ))}
+          </select>
+        </div>
+      </div>
+    );
+  })();
+
   if (loading) {
     return <ProductsSkeleton viewMode={viewMode} bgGrad={T.bgGrad} />;
   }
@@ -2373,150 +2613,69 @@ export function ProductsPage() {
           </div>
           <p className="text-sm mt-1" style={{ color: T.textSecondary }}>Gestión multi-ubicación y catálogo avanzado</p>
         </div>
-        <div className="flex items-center gap-3">
-          {/* Chip "Ver todos" (QA Joel 2026-07-18): al activar un filtro no era
-              obvio cómo limpiarlo — este chip aparece solo con filtro activo. */}
-          {(showTopSellers || showLowStock || showOutStock || showPromos) && (
-            <button
-              onClick={() => { setShowTopSellers(false); setShowLowStock(false); setShowOutStock(false); setShowPromos(false); }}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all hover:scale-[1.02] active:scale-95"
-              data-testid="filter-clear"
-              style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", color: T.textSecondary }}
-              title="Quitar el filtro y mostrar todos los productos"
-            >
-              <X size={13} />
-              Ver todos
-            </button>
-          )}
-          {/* Tabs Por agotarse + Agotados — respetan el filtro de tienda activo
-              (selectedStoreId). Admin con "Todas las tiendas" ve totales globales;
-              al elegir una tienda específica el conteo y la tabla se filtran a ella. */}
-          {(() => {
-            const isProductos = pageSection === 'productos';
-            const lowStockCount = isProductos
-              ? products.filter(p => !p.esUnico && getTotalStock(p.id) > 0 && getTotalStock(p.id) <= 10).length
-              : mangas.filter(m => (m.stock ?? 0) > 0 && (m.stock ?? 0) <= 10).length;
-            const outStockCount = isProductos
-              ? products.filter(p => !p.esUnico && getTotalStock(p.id) === 0).length
-              : mangas.filter(m => (m.stock ?? 0) === 0).length;
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* "Productos sin Costo" SIEMPRE visible y FUERA del dropdown (Joel
+              2026-08-04): es la métrica que el equipo persigue mientras captura
+              los costos del import Macro. Contador REAL de /products/stats —
+              antes contaba solo los ~100 cargados (decía 84 y son ~13.9k). */}
+          {canViewCost && pageSection === 'productos' && (() => {
+            const noCostCount = stats?.sin_costo;
+            const statsLoading = noCostCount === undefined && statsQuery.isPending;
+            const hasMissingCost = (noCostCount ?? 0) > 0;
             return (
-              <>
-                {lowStockCount > 0 && (
-                  <button
-                    onClick={() => { setShowLowStock(v => !v); setShowOutStock(false); setShowTopSellers(false); setShowPromos(false); }}
-                    className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all hover:scale-[1.02] active:scale-95"
-                    style={{
-                      background: showLowStock ? "rgba(245,158,11,0.18)" : "rgba(245,158,11,0.08)",
-                      border: `1px solid ${showLowStock ? "rgba(245,158,11,0.6)" : "rgba(245,158,11,0.25)"}`,
-                      color: "#F59E0B",
-                    }}
-                    title={selectedStoreId
-                      ? `Productos con stock 1–10 en ${stores.find(s => s.id === selectedStoreId)?.name ?? "esta tienda"}`
-                      : "Productos con stock 1–10 (suma de todas las tiendas — selecciona una tienda específica para ver el detalle por tienda)"}
-                  >
-                    <AlertTriangle size={13} />
-                    Por agotarse
-                    <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-white">{lowStockCount}</span>
-                  </button>
-                )}
-                {outStockCount > 0 && (
-                  <button
-                    onClick={() => { setShowOutStock(v => !v); setShowLowStock(false); setShowTopSellers(false); setShowPromos(false); }}
-                    className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all hover:scale-[1.02] active:scale-95"
-                    style={{
-                      background: showOutStock ? "rgba(239,68,68,0.18)" : "rgba(239,68,68,0.08)",
-                      border: `1px solid ${showOutStock ? "rgba(239,68,68,0.6)" : "rgba(239,68,68,0.25)"}`,
-                      color: "#EF4444",
-                    }}
-                    title={selectedStoreId
-                      ? `Productos sin stock en ${stores.find(s => s.id === selectedStoreId)?.name ?? "esta tienda"}`
-                      : "Productos sin stock (en TODAS las tiendas — selecciona una tienda específica para ver agotados solo en ella)"}
-                  >
-                    <PackageX size={13} />
-                    Agotados
-                    <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-red-500 text-white">{outStockCount}</span>
-                  </button>
-                )}
-                {/* Filtro rápido "Promos" (QA Joel 2026-07-17): productos con promo vigente */}
-                {isProductos && (() => {
-                  const promosCount = products.filter(p => (p.promos?.length ?? 0) > 0).length;
-                  if (promosCount === 0) return null;
-                  return (
-                    <button
-                      onClick={() => { setShowPromos(v => !v); setShowLowStock(false); setShowOutStock(false); setShowTopSellers(false); }}
-                      className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all hover:scale-[1.02] active:scale-95"
-                      data-testid="filter-promos"
-                      style={{
-                        background: showPromos ? "rgba(16,185,129,0.18)" : "rgba(16,185,129,0.08)",
-                        border: `1px solid ${showPromos ? "rgba(16,185,129,0.6)" : "rgba(16,185,129,0.25)"}`,
-                        color: "#34d399",
-                      }}
-                      title="Productos con promoción NxM vigente"
-                    >
-                      <TicketPercent size={13} />
-                      Promos
-                      <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black text-white" style={{ background: "#10b981" }}>{promosCount}</span>
-                    </button>
-                  );
-                })()}
-              </>
+              <button
+                onClick={() => { if (hasMissingCost) setShowMissingCost(true); }}
+                disabled={!hasMissingCost}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all hover:scale-[1.02] active:scale-95 shrink-0"
+                style={{
+                  background: hasMissingCost ? "rgba(239,68,68,0.10)" : "var(--td-card-bg)",
+                  border: `1px solid ${hasMissingCost ? "rgba(239,68,68,0.4)" : "var(--td-card-border)"}`,
+                  color: hasMissingCost ? "#EF4444" : T.textMuted,
+                  cursor: hasMissingCost ? "pointer" : "default",
+                  opacity: hasMissingCost || statsLoading ? 1 : 0.55,
+                }}
+                title={hasMissingCost
+                  ? "Productos sin costo real registrado (catálogo completo) — clic para capturarlos"
+                  : "Todos los productos tienen costo real"}
+              >
+                <DollarSign size={13} />
+                Productos sin Costo
+                <span
+                  className="px-1.5 py-0.5 rounded-full text-[10px] font-black"
+                  style={{
+                    background: hasMissingCost ? "#EF4444" : "var(--td-input-bg)",
+                    color: hasMissingCost ? "#fff" : T.textMuted,
+                  }}
+                >{statsLoading ? "…" : (noCostCount ?? 0).toLocaleString("es-MX")}</span>
+              </button>
             );
           })()}
 
-          {/* Cost stats visible only to users with can_view_cost */}
-          {canViewCost && (() => {
-            const noCostCount = products.filter(p => !p.costo || p.costo <= 0).length;
-            const valorInvertido = products.reduce((acc, p) => acc + (p.costo || 0) * getTotalStock(p.id), 0);
-            const hasMissingCost = noCostCount > 0;
-            return (
-              <>
-                {/* Botón "Productos sin Costo": siempre visible. Deshabilitado y
-                    apagado cuando no falta ninguno; rojo con contador cuando hay
-                    ≥1 → abre el modal-tabla para capturar el costo real rápido. */}
-                <button
-                  onClick={() => { if (hasMissingCost) setShowMissingCost(true); }}
-                  disabled={!hasMissingCost}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all hover:scale-[1.02] active:scale-95"
-                  style={{
-                    background: hasMissingCost ? "rgba(239,68,68,0.10)" : "var(--td-card-bg)",
-                    border: `1px solid ${hasMissingCost ? "rgba(239,68,68,0.4)" : "var(--td-card-border)"}`,
-                    color: hasMissingCost ? "#EF4444" : T.textMuted,
-                    cursor: hasMissingCost ? "pointer" : "default",
-                    opacity: hasMissingCost ? 1 : 0.55,
-                  }}
-                  title={hasMissingCost
-                    ? "Productos sin costo real registrado — clic para capturarlos"
-                    : "Todos los productos tienen costo real"}
-                >
-                  <DollarSign size={13} />
-                  Productos sin Costo
-                  <span
-                    className="px-1.5 py-0.5 rounded-full text-[10px] font-black"
-                    style={{
-                      background: hasMissingCost ? "#EF4444" : "var(--td-input-bg)",
-                      color: hasMissingCost ? "#fff" : T.textMuted,
-                    }}
-                  >{noCostCount}</span>
-                </button>
-                <button
-                  onClick={() => { setShowTopSellers(v => !v); setShowLowStock(false); setShowOutStock(false); setShowPromos(false); }}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all hover:scale-[1.02] active:scale-95"
-                  style={{
-                    background: showTopSellers ? "rgba(170,102,255,0.15)" : "rgba(170,102,255,0.08)",
-                    border: `1px solid ${showTopSellers ? "rgba(170,102,255,0.5)" : "rgba(170,102,255,0.2)"}`,
-                    color: "#AA66FF",
-                  }}
-                >
-                  <TrendingUp size={13} />
-                  Más vendidos
-                </button>
-                <div className="flex flex-col items-end shrink-0">
-                  <p className="text-[9px] font-black uppercase tracking-wider" style={{ color: T.textMuted }}>Valor invertido</p>
-                  <p className="text-sm font-black" style={{ color: "#00CC66" }}>{fmt(valorInvertido)}</p>
-                </div>
-              </>
-            );
-          })()}
+          {/* Los demás filtros viven en el dropdown (la fila de 8 chips se
+              amontonaba). Contadores reales de stats; en el tab Tomos cuentan
+              tomos (stats con type=manga). */}
+          <FilterDropdown
+            activeFilter={activeFilter}
+            onSelect={f => { setActiveFilter(f); if (f !== 'low_stock') setSelectedForWhatsapp([]); }}
+            isProductos={pageSection === 'productos'}
+            canViewCost={canViewCost}
+            counts={{
+              low: stats?.por_agotarse ?? null,
+              out: stats?.agotados ?? null,
+              promos: stats?.con_promo ?? null,
+            }}
+            storeName={selectedStoreId ? (stores.find(s => s.id === selectedStoreId)?.name ?? null) : null}
+          />
+
+          {/* Valor invertido = Σ costo × stock del catálogo COMPLETO (stats). */}
+          {canViewCost && pageSection === 'productos' && (
+            <div className="flex flex-col items-end shrink-0">
+              <p className="text-[9px] font-black uppercase tracking-wider" style={{ color: T.textMuted }}>Valor invertido</p>
+              <p className="text-sm font-black" style={{ color: "#00CC66" }}>
+                {stats?.valor_invertido !== undefined ? fmt(stats.valor_invertido) : "…"}
+              </p>
+            </div>
+          )}
           {/* 'Buscar nuevos' comentado — React Query refetcha en background
               (refetchOnMount + refetchOnWindowFocus) y las mutaciones invalidan
               el cache. El cajero/gerente ve productos nuevos sin tener que
@@ -2630,17 +2789,22 @@ export function ProductsPage() {
       {/* Result label + active filter chip */}
       <div className="flex items-center gap-3 mb-4">
         <p className="text-[10px] font-black uppercase tracking-[0.2em]" style={{ color: T.textMuted }}>
-          {showTopSellers ? `Top 50 Más Vendidos` : showOutStock ? "Productos Agotados" : showLowStock ? "Por Agotarse" : showPromos ? "Productos con Promo" : `${filtered.length} Productos`}
+          {/* Total REAL del server para el filtro activo (meta.total) — ya no
+              el largo de la página cargada. */}
+          {showTopSellers
+            ? `Top 50 Más Vendidos`
+            : `${totalProducts.toLocaleString("es-MX")} ${showOutStock ? "Agotados" : showLowStock ? "Por Agotarse" : showPromos ? "Con Promo" : "Productos"}`}
         </p>
         {selectedStoreId && (
           <div className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider border" style={{ background: 'rgba(204,34,0,0.08)', border: '1px solid rgba(204,34,0,0.2)', color: T.redBright }}>
             {stores.find(s => s.id === selectedStoreId)?.name ?? 'Tienda'}
           </div>
         )}
-        {(showTopSellers || showLowStock || showOutStock) && (
+        {activeFilter !== null && (
           <div className="flex items-center gap-3">
             <button
-              onClick={() => { setShowTopSellers(false); setShowLowStock(false); setShowOutStock(false); setSelectedForWhatsapp([]); }}
+              // Un solo estado → apaga CUALQUIER filtro (el viejo botón olvidaba Promos).
+              onClick={() => { setActiveFilter(null); setSelectedForWhatsapp([]); }}
               className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider bg-red-500/10 text-red-500 hover:bg-red-500/20 transition-all border border-red-500/20"
             >
               <X size={10} /> Quitar Filtro
@@ -2657,7 +2821,7 @@ export function ProductsPage() {
         )}
       </div>
 
-      {viewMode === "grid" ? (
+      {viewMode === "grid" ? (<>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
           {filtered.map((p) => {
             const totalStock = getTotalStock(p.id);
@@ -2821,7 +2985,11 @@ export function ProductsPage() {
             );
           })}
         </div>
-      ) : (
+        {/* La Cuadrícula también pagina (server-side) — mismo footer que la tabla. */}
+        <div className="mt-4 rounded-[24px] overflow-hidden" style={T.glassMd}>
+          {paginationFooter}
+        </div>
+      </>) : (
         <div className="rounded-[32px] overflow-hidden shadow-2xl flex flex-col" style={T.glass}>
           {/* ── Table con sticky header. maxHeight calc para que el body
               scrollee dentro del card sin empujar paginación abajo. ── */}
@@ -2892,83 +3060,8 @@ export function ProductsPage() {
             </table>
           </div>
 
-          {/* ── Pagination ── */}
-          <div
-            className="flex items-center justify-between px-6 py-4 gap-4 flex-wrap"
-            style={{ borderTop: PRODUCT_THEME.borderSubtle, background: PRODUCT_THEME.tableFoot }}
-          >
-            <span className="text-[11px] font-semibold" style={{ color: T.textMuted }}>
-              {filtered.length} productos · página {table.getState().pagination.pageIndex + 1} de {Math.max(1, table.getPageCount())}
-            </span>
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => table.setPageIndex(0)}
-                disabled={!table.getCanPreviousPage()}
-                className="p-2 rounded-xl transition-all disabled:opacity-30"
-                style={SECONDARY_BUTTON}
-                title="Primera página"
-              >
-                <ChevronsLeft size={15} />
-              </button>
-              <button
-                onClick={() => table.previousPage()}
-                disabled={!table.getCanPreviousPage()}
-                className="p-2 rounded-xl transition-all disabled:opacity-30"
-                style={SECONDARY_BUTTON}
-                title="Página anterior"
-              >
-                <ChevronLeft size={15} />
-              </button>
-
-              {/* Page numbers */}
-              {Array.from({ length: table.getPageCount() }, (_, i) => i)
-                .filter(i => Math.abs(i - table.getState().pagination.pageIndex) <= 2)
-                .map(i => (
-                  <button
-                    key={i}
-                    onClick={() => table.setPageIndex(i)}
-                    className="w-8 h-8 rounded-xl text-xs font-bold transition-all"
-                    style={
-                      i === table.getState().pagination.pageIndex
-                        ? { background: T.redBright, color: '#fff' }
-                        : { color: T.textMuted, background: 'transparent' }
-                    }
-                  >
-                    {i + 1}
-                  </button>
-                ))}
-
-              <button
-                onClick={() => table.nextPage()}
-                disabled={!table.getCanNextPage()}
-                className="p-2 rounded-xl transition-all disabled:opacity-30"
-                style={SECONDARY_BUTTON}
-                title="Página siguiente"
-              >
-                <ChevronRight size={15} />
-              </button>
-              <button
-                onClick={() => table.setPageIndex(table.getPageCount() - 1)}
-                disabled={!table.getCanNextPage()}
-                className="p-2 rounded-xl transition-all disabled:opacity-30"
-                style={SECONDARY_BUTTON}
-                title="Última página"
-              >
-                <ChevronsRight size={15} />
-              </button>
-
-              <select
-                value={table.getState().pagination.pageSize}
-                onChange={e => table.setPageSize(Number(e.target.value))}
-                className="ml-2 px-2 py-1 rounded-xl text-xs font-bold outline-none"
-                style={T.input}
-              >
-                {[10, 20, 50, 100].map(size => (
-                  <option key={size} value={size}>{size} / página</option>
-                ))}
-              </select>
-            </div>
-          </div>
+          {/* ── Pagination (server-side, compartida con Cuadrícula) ── */}
+          {paginationFooter}
         </div>
       )}
 
@@ -3329,18 +3422,12 @@ export function ProductsPage() {
         />
       )}
 
+      {/* Server-fed (2026-08-04): el modal pide los sin-costo al backend por
+          lotes de 50 con su propia búsqueda — alcanza los ~13.9k del catálogo,
+          no solo la página cargada de la tabla. */}
       {showMissingCost && canViewCost && (
         <MissingCostModal
-          products={products
-            .filter(p => !p.costo || p.costo <= 0)
-            .map(p => ({
-              id: p.id,
-              nombre: p.nombre,
-              sku: p.sku,
-              categoria: p.categoria,
-              imagen: p.imagen,
-              precioA: p.precioA,
-            }))}
+          storeId={selectedStoreId}
           canEdit={canEdit}
           fmt={fmt}
           onClose={() => setShowMissingCost(false)}

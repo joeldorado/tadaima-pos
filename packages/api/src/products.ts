@@ -25,6 +25,60 @@ export interface GetProductsParams {
    * caen fuera del pool ?sort=top. Tope de 100 ids en el backend.
    */
   ids?: string
+  /** Filtra por tipo — la página Productos separa productos de tomos. */
+  type?: 'product' | 'manga'
+  /** Sin costo real (cost NULL o <= 0) — chip "Productos sin Costo". */
+  no_cost?: boolean
+  /** Stock 0 (con store_id: en esa tienda; sin él: global). */
+  out_of_stock?: boolean
+  /** Stock 1..threshold — chip "Por agotarse". */
+  low_stock?: boolean
+  /** Umbral de low_stock (default backend: 10). */
+  threshold?: number
+  /** Con promo vigente (scoped a store_id si viene). */
+  has_promo?: boolean
+  /**
+   * Respuesta { items, pagination } con el TOTAL real del catálogo — para
+   * paginación server-side. Opt-in: sin el flag el backend sigue devolviendo
+   * el array plano histórico (getProducts normaliza ambos shapes).
+   */
+  with_meta?: boolean
+}
+
+/**
+ * Contadores agregados de GET /products/stats — calculados por SQL sobre el
+ * catálogo COMPLETO (~14k), no sobre la página cargada.
+ * `sin_costo`/`valor_invertido` solo viajan si el usuario puede ver costos
+ * (can_view_cost) — por eso son opcionales.
+ */
+export interface ProductStats {
+  total: number
+  total_productos: number
+  total_mangas: number
+  agotados: number
+  por_agotarse: number
+  /** Umbral usado para por_agotarse (default 10). */
+  threshold: number
+  con_promo: number
+  /** Tienda a la que quedó anclado el cálculo (null = todas). */
+  store_id: number | null
+  sin_costo?: number
+  valor_invertido?: number
+}
+
+export interface ProductStatsParams {
+  store_id?: number
+  type?: 'product' | 'manga'
+  threshold?: number
+}
+
+/**
+ * Contadores reales del catálogo para la página Productos.
+ * GET /products/stats
+ */
+export async function getProductStats(params?: ProductStatsParams): Promise<ProductStats> {
+  const response = await apiClient.get<ProductStats>('/products/stats', { params })
+  return response.data
 }
 
 /**
@@ -120,7 +174,9 @@ export function getLightPrice(product: ProductLight, level: 1 | 2 | 3 | 4 | 5 = 
 export async function getProducts(
   params?: GetProductsParams
 ): Promise<PaginatedResponse<Product>> {
-  const response = await apiClient.get<PaginatedResponse<Product> | Product[]>('/products', { params })
+  const response = await apiClient.get<
+    PaginatedResponse<Product> | Product[] | { items: Product[]; pagination: { total: number; per_page: number; current_page: number; last_page: number } }
+  >('/products', { params })
   const raw = response.data
 
   // Backend returns a flat array — wrap it in a PaginatedResponse shape
@@ -134,7 +190,16 @@ export async function getProducts(
     }
   }
 
-  return raw
+  // ?with_meta=1 → { items, pagination } con el TOTAL real (paginación server
+  // de la página Productos). El resto de consumidores no manda el flag y sigue
+  // cayendo en la rama del array plano.
+  if ('items' in raw && Array.isArray(raw.items)) {
+    return { data: raw.items, ...raw.pagination }
+  }
+
+  // TS no reduce del todo el union tras los dos checks anteriores (interfaces
+  // planas sin index signature) — en este punto solo puede ser PaginatedResponse.
+  return raw as PaginatedResponse<Product>
 }
 
 /**

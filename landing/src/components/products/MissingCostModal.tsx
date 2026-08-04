@@ -1,28 +1,20 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { X, Loader2, Check, DollarSign, Search, PackageCheck } from "lucide-react";
 import { motion as Motion } from "motion/react";
 import { toast } from "sonner";
-import { useQueryClient } from "@tanstack/react-query";
-import { updateProduct } from "@tadaima/api";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { getProducts, updateProduct, type PaginatedResponse, type Product } from "@tadaima/api";
 import { queryKeys } from "@/lib/queryKeys";
 
 const TP = "var(--td-text-hi)";
 const TS = "var(--td-text-md)";
 const TM = "var(--td-text-lo)";
 
-/** Producto sin costo, como lo necesita esta tabla (subset del view-model). */
-export interface MissingCostProduct {
-  id: number;
-  nombre: string;
-  sku: string;
-  categoria: string;
-  imagen: string;
-  precioA: number;
-}
+const PAGE_SIZE = 50;
 
 interface Props {
-  /** Lista completa de productos sin costo (se congela al abrir el modal). */
-  products: MissingCostProduct[];
+  /** Tienda seleccionada en Productos (scope del stock; null = todas). */
+  storeId?: number | null;
   /** Solo admin/gerente puede guardar (el backend gatea igual). */
   canEdit: boolean;
   fmt: (n: number) => string;
@@ -31,7 +23,7 @@ interface Props {
 
 type RowStatus = "idle" | "saving" | "saved" | "error";
 
-interface Row extends MissingCostProduct {
+interface RowState {
   draft: string;
   status: RowStatus;
 }
@@ -47,54 +39,95 @@ const inputStyle: React.CSSProperties = {
  * Atajo dedicado para que el dueño/admin NOTE qué productos no tienen capturado
  * el costo real y lo llene rápido, sin abrir el editor completo del producto.
  *
- * La lista se congela al abrir (snapshot); cada fila guarda solo `{ cost }` con
- * un PUT /products/{id}. Al guardar la fila se marca verde y baja el contador
- * "faltan X"; se invalida el cache de productos para que el grid y el botón de
- * afuera se actualicen solos. El editor normal (pestaña Precios) no se toca.
+ * Server-fed (2026-08-04): con ~13.9k sin costo tras el import Macro, la lista
+ * viene del backend (`?no_cost=1`, lotes de 50 + búsqueda server-side) — antes
+ * recibía solo los ~100 cargados en la tabla de afuera. La queryKey vive FUERA
+ * de la raíz ['products'] a propósito + staleTime Infinity: cada costo guardado
+ * invalida products.all, y si este query colgara de ahí se refetchearía y las
+ * filas se reordenarían bajo los dedos del capturista. Al reabrir el modal la
+ * lista sale fresca (gcTime 0).
  */
-export function MissingCostModal({ products, canEdit, fmt, onClose }: Props) {
+export function MissingCostModal({ storeId, canEdit, fmt, onClose }: Props) {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
-  // Snapshot inmutable al montar: no queremos que la tabla se reordene sola
-  // mientras el usuario captura (el refetch de afuera no debe moverla).
-  const [rows, setRows] = useState<Row[]>(() =>
-    products.map(p => ({ ...p, draft: "", status: "idle" as RowStatus })),
+  const [serverSearch, setServerSearch] = useState("");
+  useEffect(() => {
+    const t = window.setTimeout(() => setServerSearch(search), 300);
+    return () => window.clearTimeout(t);
+  }, [search]);
+  const term = serverSearch.trim().length >= 2 ? serverSearch.trim() : "";
+
+  const query = useInfiniteQuery<PaginatedResponse<Product>, Error>({
+    queryKey: ["missing-cost", { storeId: storeId ?? null, term }],
+    queryFn: ({ pageParam = 1 }) => getProducts({
+      no_cost: true,
+      type: "product",
+      with_meta: true,
+      per_page: PAGE_SIZE,
+      page: pageParam as number,
+      ...(term ? { search: term } : {}),
+      ...(storeId ? { store_id: storeId, include_unassigned: true } : {}),
+    }),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) => {
+      const next = (lastPage.current_page ?? 1) + 1;
+      return next <= (lastPage.last_page ?? 1) ? next : undefined;
+    },
+    staleTime: Infinity,
+    gcTime: 0,
+    refetchOnWindowFocus: false,
+  });
+
+  // Estado de captura por fila, aparte de los datos del server (que están
+  // congelados): borrador + guardado/verde sobreviven a "Cargar 50 más".
+  const [rowState, setRowState] = useState<Record<number, RowState>>({});
+  const patchRow = (id: number, patch: Partial<RowState>) =>
+    setRowState(prev => ({ ...prev, [id]: { draft: "", status: "idle", ...prev[id], ...patch } }));
+
+  const rows = useMemo(
+    () => (query.data?.pages ?? []).flatMap(page => page.data).map(p => ({
+      id: p.id,
+      nombre: p.name,
+      sku: p.sku,
+      categoria: p.category?.name ?? "",
+      imagen: p.images?.[0]?.url ?? "",
+      precioA: Number(p.prices?.price_1 ?? 0) || 0,
+    })),
+    [query.data],
   );
+  /** Total REAL de sin-costo según el server (para la búsqueda activa). */
+  const total = query.data?.pages[0]?.total ?? 0;
+  const done = useMemo(
+    () => Object.values(rowState).filter(r => r.status === "saved").length,
+    [rowState],
+  );
+  const remaining = Math.max(0, total - done);
+  const loadedRemaining = Math.max(0, total - rows.length);
 
-  const pending = rows.filter(r => r.status !== "saved").length;
-  const done = rows.length - pending;
-
-  const visibleRows = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter(r =>
-      r.nombre.toLowerCase().includes(q) || r.sku.toLowerCase().includes(q),
-    );
-  }, [rows, search]);
-
-  const patchRow = (id: number, patch: Partial<Row>) =>
-    setRows(prev => prev.map(r => (r.id === id ? { ...r, ...patch } : r)));
-
-  const saveRow = async (row: Row) => {
-    if (!canEdit || row.status === "saving") return;
-    const value = parseFloat(row.draft);
+  const saveRow = async (id: number, nombre: string) => {
+    const state = rowState[id];
+    if (!canEdit || state?.status === "saving") return;
+    const value = parseFloat(state?.draft ?? "");
     if (!Number.isFinite(value) || value <= 0) {
-      toast.error(`Captura un costo válido para "${row.nombre}"`);
+      toast.error(`Captura un costo válido para "${nombre}"`);
       return;
     }
-    patchRow(row.id, { status: "saving" });
+    patchRow(id, { status: "saving" });
     try {
-      await updateProduct(row.id, { cost: value });
-      patchRow(row.id, { status: "saved" });
+      await updateProduct(id, { cost: value });
+      patchRow(id, { status: "saved" });
+      // El chip "Productos sin Costo", los stats y la tabla de afuera SÍ se
+      // refrescan (products.all); este modal no — su query vive aparte.
       void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
     } catch (err: unknown) {
-      patchRow(row.id, { status: "error" });
+      patchRow(id, { status: "error" });
       const msg = (err as { message?: string })?.message ?? "No se pudo guardar el costo";
       toast.error(msg);
     }
   };
 
-  const allDone = rows.length > 0 && pending === 0;
+  const isEmpty = !query.isPending && total === 0 && !term;
+  const allDone = total > 0 && remaining === 0;
 
   return (
     <div className="fixed inset-0 z-[300] flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -115,9 +148,11 @@ export function MissingCostModal({ products, canEdit, fmt, onClose }: Props) {
           <div style={{ flex: 1, minWidth: 0 }}>
             <p style={{ margin: 0, fontSize: 15, fontWeight: 900, color: TP }}>Productos sin Costo</p>
             <p style={{ margin: 0, fontSize: 11, color: TM, fontWeight: 700 }}>
-              {rows.length === 0
-                ? "Todo tu catálogo tiene costo real"
-                : `Captura el costo real · faltan ${pending}${done > 0 ? ` · ${done} listo${done === 1 ? "" : "s"}` : ""}`}
+              {query.isPending
+                ? "Cargando…"
+                : isEmpty
+                  ? "Todo tu catálogo tiene costo real"
+                  : `Captura el costo real · faltan ${remaining.toLocaleString("es-MX")}${term ? ` con "${term}"` : ""}${done > 0 ? ` · ${done} listo${done === 1 ? "" : "s"}` : ""}`}
             </p>
           </div>
           <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 9, background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: TM }}>
@@ -125,17 +160,17 @@ export function MissingCostModal({ products, canEdit, fmt, onClose }: Props) {
           </button>
         </div>
 
-        {/* Progreso */}
-        {rows.length > 0 && (
+        {/* Progreso — contra el total REAL del server */}
+        {total > 0 && (
           <div style={{ padding: "10px 22px 0" }}>
             <div style={{ height: 6, borderRadius: 999, background: "var(--td-input-bg)", overflow: "hidden" }}>
-              <div style={{ height: "100%", width: `${Math.round((done / rows.length) * 100)}%`, background: allDone ? "#10b981" : "#EF4444", borderRadius: 999, transition: "width 240ms ease" }} />
+              <div style={{ height: "100%", width: `${Math.min(100, Math.round((done / total) * 100))}%`, background: allDone ? "#10b981" : "#EF4444", borderRadius: 999, transition: "width 240ms ease" }} />
             </div>
           </div>
         )}
 
-        {/* Buscador */}
-        {rows.length > 4 && (
+        {/* Buscador — server-side sobre TODOS los sin-costo (nombre/SKU/código) */}
+        {!isEmpty && (
           <div style={{ padding: "12px 22px 0" }}>
             <div style={{ position: "relative" }}>
               <Search size={15} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: TM }} />
@@ -143,27 +178,38 @@ export function MissingCostModal({ products, canEdit, fmt, onClose }: Props) {
                 type="text"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                placeholder="Buscar por nombre o SKU"
+                placeholder="Buscar por nombre, SKU o código de barras"
                 style={{ ...inputStyle, textAlign: "left", paddingLeft: 34, fontSize: 13, fontWeight: 700 }}
               />
+              {query.isFetching && !query.isFetchingNextPage && (
+                <Loader2 size={14} className="animate-spin" style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: TM }} />
+              )}
             </div>
           </div>
         )}
 
         {/* Body */}
         <div style={{ flex: 1, overflowY: "auto", padding: "14px 22px 18px" }}>
-          {rows.length === 0 || allDone ? (
+          {query.isPending ? (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "48px 16px", color: TM, fontSize: 12, fontWeight: 700 }}>
+              <Loader2 size={16} className="animate-spin" /> Cargando productos sin costo…
+            </div>
+          ) : isEmpty || allDone ? (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, padding: "48px 16px", textAlign: "center" }}>
               <div style={{ width: 60, height: 60, borderRadius: 18, background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.3)", display: "flex", alignItems: "center", justifyContent: "center" }}>
                 <PackageCheck size={30} color="#10b981" />
               </div>
               <p style={{ margin: 0, fontSize: 15, fontWeight: 900, color: TP }}>
-                {rows.length === 0 ? "No hay productos sin costo 🎉" : "¡Listo! Todos con costo 🎉"}
+                {isEmpty ? "No hay productos sin costo 🎉" : "¡Listo! Todos con costo 🎉"}
               </p>
               <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: TM, maxWidth: 320 }}>
                 Un producto sin costo real queda bloqueado para venta. Aquí aparecen en cuanto detectemos alguno.
               </p>
             </div>
+          ) : rows.length === 0 ? (
+            <p style={{ margin: "24px 4px", fontSize: 12, fontWeight: 700, color: TM, textAlign: "center" }}>
+              Nada coincide con &quot;{term}&quot; entre los productos sin costo.
+            </p>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {/* Encabezado tabla (desktop) */}
@@ -173,9 +219,10 @@ export function MissingCostModal({ products, canEdit, fmt, onClose }: Props) {
                 <span style={{ textAlign: "right" }}>Costo real</span>
               </div>
 
-              {visibleRows.map(row => {
-                const saved = row.status === "saved";
-                const saving = row.status === "saving";
+              {rows.map(row => {
+                const state = rowState[row.id] ?? { draft: "", status: "idle" as RowStatus };
+                const saved = state.status === "saved";
+                const saving = state.status === "saving";
                 const accent = saved ? "#10b981" : "#EF4444";
                 return (
                   <div
@@ -213,7 +260,7 @@ export function MissingCostModal({ products, canEdit, fmt, onClose }: Props) {
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       {saved ? (
                         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, fontSize: 14, fontWeight: 900, color: accent }}>
-                          <Check size={15} /> {fmt(parseFloat(row.draft) || 0)}
+                          <Check size={15} /> {fmt(parseFloat(state.draft) || 0)}
                         </div>
                       ) : (
                         <>
@@ -223,23 +270,23 @@ export function MissingCostModal({ products, canEdit, fmt, onClose }: Props) {
                             min="0"
                             step="0.01"
                             inputMode="decimal"
-                            value={row.draft}
+                            value={state.draft}
                             disabled={!canEdit || saving}
                             onChange={e => patchRow(row.id, { draft: e.target.value, status: "idle" })}
-                            onKeyDown={e => { if (e.key === "Enter") void saveRow(row); }}
+                            onKeyDown={e => { if (e.key === "Enter") void saveRow(row.id, row.nombre); }}
                             placeholder="0.00"
-                            style={{ ...inputStyle, borderColor: row.status === "error" ? "rgba(239,68,68,0.6)" : "var(--td-input-border)" }}
+                            style={{ ...inputStyle, borderColor: state.status === "error" ? "rgba(239,68,68,0.6)" : "var(--td-input-border)" }}
                           />
                           {canEdit && (
                             <button
                               data-testid={`mc-save-${row.id}`}
-                              onClick={() => void saveRow(row)}
-                              disabled={saving || row.draft.trim() === ""}
+                              onClick={() => void saveRow(row.id, row.nombre)}
+                              disabled={saving || state.draft.trim() === ""}
                               style={{
                                 width: 38, height: 38, flexShrink: 0, borderRadius: 11, border: "none",
-                                background: row.draft.trim() === "" ? "var(--td-input-bg)" : "#10b981",
-                                color: row.draft.trim() === "" ? TM : "#fff",
-                                cursor: saving || row.draft.trim() === "" ? "default" : "pointer",
+                                background: state.draft.trim() === "" ? "var(--td-input-bg)" : "#10b981",
+                                color: state.draft.trim() === "" ? TM : "#fff",
+                                cursor: saving || state.draft.trim() === "" ? "default" : "pointer",
                                 display: "flex", alignItems: "center", justifyContent: "center",
                               }}
                               title="Guardar costo"
@@ -253,6 +300,24 @@ export function MissingCostModal({ products, canEdit, fmt, onClose }: Props) {
                   </div>
                 );
               })}
+
+              {/* Cargar más — el server manda de a 50 */}
+              {query.hasNextPage && (
+                <button
+                  onClick={() => void query.fetchNextPage()}
+                  disabled={query.isFetchingNextPage}
+                  style={{
+                    marginTop: 6, padding: "12px 14px", borderRadius: 12,
+                    background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)",
+                    color: TS, fontSize: 12, fontWeight: 900, cursor: query.isFetchingNextPage ? "default" : "pointer",
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                  }}
+                >
+                  {query.isFetchingNextPage
+                    ? <><Loader2 size={14} className="animate-spin" /> Cargando…</>
+                    : `Cargar ${Math.min(PAGE_SIZE, loadedRemaining).toLocaleString("es-MX")} más (quedan ${loadedRemaining.toLocaleString("es-MX")})`}
+                </button>
+              )}
 
               {!canEdit && (
                 <p style={{ margin: "8px 4px 0", fontSize: 11, fontWeight: 700, color: TM }}>

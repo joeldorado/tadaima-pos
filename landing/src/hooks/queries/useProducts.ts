@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient, useInfiniteQuery, keepPreviousData } from '@tanstack/react-query'
 import { useEffect } from 'react'
-import { getProducts, getProductsLight, type GetProductsParams, type ProductLight, type PaginatedResponse } from '@tadaima/api'
+import { getProducts, getProductsLight, getProductStats, type GetProductsParams, type ProductLight, type PaginatedResponse, type ProductStatsParams } from '@tadaima/api'
 import { queryKeys } from '@/lib/queryKeys'
 
 const ONE_DAY_MS = 24 * 60 * 60_000
@@ -17,6 +17,76 @@ const BACKGROUND_PAGES = 5 // 200 × 5 = 1000 productos extra en background
 /** Búsquedas de 2+ caracteres viajan al server; menos = solo la página base. */
 const SERVER_SEARCH_MIN_CHARS = 2
 const SERVER_SEARCH_PAGE = 200
+/** "Más vendidos" server-side: top 50 de los últimos 30 días (?sort=top). */
+const TOP_SELLERS_PAGE = 50
+
+/** Chip de filtro activo en la página Productos — uno a la vez. */
+export type ProductsCatalogFilter = 'low_stock' | 'out_of_stock' | 'promos' | 'top' | null
+
+export interface ProductsListParamsInput {
+  storeId?: number | null | undefined
+  search?: string | undefined
+  /**
+   * Modo admin (página Productos): paginación server-side real con
+   * { items, pagination } del backend. Sin esta bandera se reproduce el
+   * modo legacy BIT A BIT (mismo queryKey — SalesPage depende de eso).
+   */
+  withMeta?: boolean | undefined
+  type?: 'product' | 'manga' | undefined
+  filter?: ProductsCatalogFilter | undefined
+  threshold?: number | undefined
+  page?: number | undefined
+  perPage?: number | undefined
+  categoryId?: number | null | undefined
+}
+
+/**
+ * ÚNICA fuente de la matriz de params de la lista de productos (y por tanto
+ * del queryKey). Pura y exportada para fijarla con vitest: el modo legacy
+ * debe producir params idénticos a los históricos o SalesPage cambiaría de
+ * queryKey y perdería su cache persistido.
+ */
+export function buildProductsListParams(
+  input: ProductsListParamsInput,
+): (GetProductsParams & Record<string, unknown>) | undefined {
+  const search = input.search?.trim() ?? ''
+  const searching = search.length >= SERVER_SEARCH_MIN_CHARS
+  const storeId = input.storeId
+
+  if (!input.withMeta) {
+    // Modo legacy (Caja/SalesPage): sin tienda ni búsqueda → params undefined
+    // (página default 100 del backend); búsqueda → per_page 200.
+    // include_unassigned: trae también productos sin inventario en la tienda
+    // ("No asignado") para que la sucursal les agregue stock ella misma.
+    return storeId || searching
+      ? {
+          ...(storeId ? { store_id: storeId, include_unassigned: true } : {}),
+          ...(searching ? { search, per_page: SERVER_SEARCH_PAGE } : {}),
+        }
+      : undefined
+  }
+
+  // Modo admin (página Productos, 2026-08-04): todo server-side y COMBINABLE
+  // por AND — tienda + búsqueda + categoría + chip + paginación real.
+  const isTop = input.filter === 'top'
+  return {
+    with_meta: true,
+    ...(input.type ? { type: input.type } : {}),
+    ...(storeId ? { store_id: storeId, include_unassigned: true } : {}),
+    ...(searching ? { search } : {}),
+    ...(input.categoryId ? { category_id: input.categoryId } : {}),
+    ...(input.filter === 'low_stock'
+      ? { low_stock: true, ...(input.threshold ? { threshold: input.threshold } : {}) }
+      : {}),
+    ...(input.filter === 'out_of_stock' ? { out_of_stock: true } : {}),
+    ...(input.filter === 'promos' ? { has_promo: true } : {}),
+    // "Más vendidos" = top 50 fijo (ordenado por ventas de 30 días): pisa la
+    // paginación — una sola página de 50.
+    ...(isTop
+      ? { sort: 'top' as const, per_page: TOP_SELLERS_PAGE, page: 1 }
+      : { page: input.page ?? 1, per_page: input.perPage ?? 100 }),
+  }
+}
 
 /**
  * Catálogo de productos completo. Para admin (ProductsPage) que necesita
@@ -27,21 +97,36 @@ const SERVER_SEARCH_PAGE = 200
  * trigram/ILIKE sobre nombre/sku/barcode del catálogo completo) en lugar de
  * filtrar solo lo cargado. Cada término es su propio queryKey (cacheado);
  * keepPreviousData evita el parpadeo mientras llega el resultado.
+ *
+ * Opciones nuevas (2026-08-04, paginación server de ProductsPage): `withMeta`
+ * activa el modo admin con `filter/page/perPage/categoryId/type/threshold` —
+ * ver buildProductsListParams. Sin ellas el hook se comporta igual que siempre.
  */
 export function useProductsQuery(
   storeId?: number | null,
-  options?: { refetchIntervalMs?: number | false; search?: string }
+  options?: {
+    refetchIntervalMs?: number | false
+    search?: string
+    withMeta?: boolean
+    type?: 'product' | 'manga'
+    filter?: ProductsCatalogFilter
+    threshold?: number
+    page?: number
+    perPage?: number
+    categoryId?: number | null
+  }
 ) {
-  const search = options?.search?.trim() ?? ''
-  const searching = search.length >= SERVER_SEARCH_MIN_CHARS
-  // include_unassigned: trae también productos sin inventario en la tienda
-  // ("No asignado") para que la sucursal les agregue stock ella misma.
-  const params = storeId || searching
-    ? {
-        ...(storeId ? { store_id: storeId, include_unassigned: true } : {}),
-        ...(searching ? { search, per_page: SERVER_SEARCH_PAGE } : {}),
-      }
-    : undefined
+  const params = buildProductsListParams({
+    storeId,
+    search: options?.search,
+    withMeta: options?.withMeta,
+    type: options?.type,
+    filter: options?.filter,
+    threshold: options?.threshold,
+    page: options?.page,
+    perPage: options?.perPage,
+    categoryId: options?.categoryId,
+  })
   return useQuery({
     queryKey: queryKeys.products.list(params),
     queryFn: () => getProducts(params),
@@ -58,6 +143,36 @@ export function useProductsQuery(
     // mientras estamos en otra página, al volver a esta vista refetch para
     // ver el dato nuevo. Si el cache sigue fresh (<24h, sin invalidaciones)
     // no hay fetch — el staleTime largo evita ruido en navegación normal.
+    refetchOnReconnect: false,
+  })
+}
+
+/**
+ * Contadores REALES del catálogo (GET /products/stats) para los chips de la
+ * página Productos: total, agotados, por agotarse, con promo, y (solo con
+ * can_view_cost) sin_costo + valor invertido. Agregados por SQL en el backend
+ * — NO dependen de cuántos productos tenga cargados la tabla.
+ *
+ * La key cuelga de la raíz ['products'] → cualquier invalidación de productos
+ * (crear/editar, capturar costo, promos) refresca los contadores.
+ */
+export function useProductStatsQuery(options?: {
+  storeId?: number | null
+  type?: 'product' | 'manga'
+  enabled?: boolean
+}) {
+  const params: ProductStatsParams = {
+    ...(options?.storeId ? { store_id: options.storeId } : {}),
+    ...(options?.type ? { type: options.type } : {}),
+  }
+  return useQuery({
+    queryKey: queryKeys.products.stats(params as Record<string, unknown>),
+    queryFn: () => getProductStats(params),
+    enabled: options?.enabled ?? true,
+    staleTime: 60_000,
+    gcTime: ONE_DAY_MS,
+    placeholderData: keepPreviousData,
+    refetchOnWindowFocus: true,
     refetchOnReconnect: false,
   })
 }

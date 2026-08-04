@@ -26,10 +26,16 @@ class ProductController extends Controller
      * GET /products
      *
      * Query params opcionales:
-     *   ?search=    filtro por name / sku / barcode
-     *   ?active=1   solo productos activos
-     *   ?ids=1,2,3  solo esos productos (la Caja refresca su carrito)
-     *   ?per_page=N paginación (default 100, 0 = todos)
+     *   ?search=       filtro por name / sku / barcode
+     *   ?active=1      solo productos activos
+     *   ?ids=1,2,3     solo esos productos (la Caja refresca su carrito)
+     *   ?per_page=N    paginación (default 100, 0 = todos)
+     *   ?category_id=  solo esa categoría
+     *   ?no_cost=1     sin costo real (cost NULL o <= 0)
+     *   ?out_of_stock=1 / ?low_stock=1 (+?threshold=, default 10) por stock
+     *   ?has_promo=1   con promo vigente (scoped a ?store_id si viene)
+     *   ?with_meta=1   respuesta { items, pagination } — opt-in: sin el flag el
+     *                  shape histórico (array plano) queda intacto byte a byte
      */
     public function index(Request $request): JsonResponse
     {
@@ -106,6 +112,40 @@ class ProductController extends Controller
             $query->active();
         }
 
+        // Filtros de la página Productos (2026-08-04): con ~14k productos tras
+        // el import Macro los chips dejaron de poder filtrar client-side (solo
+        // veían la página cargada). Todos COMBINAN por AND con search/tienda/
+        // categoría. El SQL de stock es portable (pgsql prod / mysql dev /
+        // sqlite tests) y usa la misma semántica que stock_total del resource:
+        // con tienda = exhibición + bodega de esa tienda; sin tienda = todo.
+        $threshold = max(1, (int) $request->get('threshold', 10));
+
+        if ($request->boolean('no_cost')) {
+            // Paridad con el chip del front: NULL O <= 0 cuentan como "sin costo"
+            $query->where(fn ($q) => $q->whereNull('cost')->orWhere('cost', '<=', 0));
+        }
+
+        if ($request->boolean('out_of_stock') || $request->boolean('low_stock')) {
+            $stockSql = $storeId
+                ? 'COALESCE((SELECT SUM(i.quantity) FROM inventory i JOIN warehouses w ON w.id = i.warehouse_id WHERE i.product_id = products.id AND w.store_id = ?), 0)'
+                : 'COALESCE((SELECT SUM(i.quantity) FROM inventory i WHERE i.product_id = products.id), 0)';
+            $bind = $storeId ? [$storeId] : [];
+            if ($request->boolean('out_of_stock')) {
+                $query->whereRaw("{$stockSql} = 0", $bind);
+            } else {
+                $query->whereRaw("{$stockSql} > 0", $bind)
+                    ->whereRaw("{$stockSql} <= ?", [...$bind, $threshold]);
+            }
+        }
+
+        if ($request->boolean('has_promo')) {
+            $query->whereHas('activePromotions', fn ($q) => $q->forStore($storeId));
+        }
+
+        if ($request->filled('category_id')) {
+            $query->where('category_id', (int) $request->category_id);
+        }
+
         // Visibilidad por tienda. Por defecto solo se listan productos CON
         // inventario en la tienda (flujo histórico). Con ?include_unassigned=1
         // también se listan los "no asignados" (sin renglón de inventario en
@@ -151,7 +191,104 @@ class ProductController extends Controller
             ? ProductLightResource::collection($items)
             : ProductResource::collection($items);
 
+        // ?with_meta=1 (página Productos): expone el total real y last_page para
+        // paginación server-side. Opt-in estricto — 7 consumidores del array
+        // plano (Caja, Layout, StoreContext, permisos, apartados, traslados)
+        // siguen recibiendo el shape histórico sin cambios.
+        if ($request->boolean('with_meta')) {
+            return $this->success([
+                'items' => $collection,
+                'pagination' => $perPage > 0
+                    ? [
+                        'total' => $products->total(),
+                        'per_page' => $products->perPage(),
+                        'current_page' => $products->currentPage(),
+                        'last_page' => $products->lastPage(),
+                    ]
+                    : [
+                        'total' => $items->count(),
+                        'per_page' => $items->count(),
+                        'current_page' => 1,
+                        'last_page' => 1,
+                    ],
+            ]);
+        }
+
         return $this->success($collection);
+    }
+
+    /**
+     * GET /products/stats — contadores REALES sobre el catálogo completo.
+     *
+     * Con ~14k productos la página Productos ya no puede contar client-side
+     * (solo veía los ~100 cargados y decía "sin costo: 84" cuando son miles).
+     * Una pasada de agregados por SQL en vez de serializar 14k resources
+     * (la lección del 500 de Caja / memory_limit).
+     *
+     * Params: ?store_id (admin; gerente/cajero quedan anclados a su tienda),
+     * ?type=product|manga, ?threshold= (default 10, para "por agotarse").
+     *
+     * RBAC: sin_costo y valor_invertido son datos de costo — solo viajan si
+     * el usuario canViewCost(); el resto de contadores sirve a cualquiera.
+     */
+    public function stats(Request $request): JsonResponse
+    {
+        // Mismo scope fail-closed que ReportsController: admin filtra libre,
+        // gerente/cajero SIEMPRE su tienda; sin tienda asignada → -1 (nada).
+        $user = $request->user();
+        $storeId = ($user && ! $user->isAdminRole())
+            ? ($user->store_id ?? -1)
+            : ($request->integer('store_id') ?: null);
+
+        $type = $request->filled('type') ? (string) $request->get('type') : null;
+        $threshold = max(1, (int) $request->get('threshold', 10));
+
+        // Derivada de inventario agrupada por producto (un solo scan de la
+        // tabla, no una subquery correlacionada por cada uno de los 14k).
+        $inv = DB::table('inventory as i')
+            ->selectRaw('i.product_id, SUM(i.quantity) as qty')
+            ->groupBy('i.product_id');
+        if ($storeId) {
+            $inv->join('warehouses as w', 'w.id', '=', 'i.warehouse_id')
+                ->where('w.store_id', $storeId);
+        }
+
+        // SUM(CASE) y no FILTER(WHERE): MySQL (dev local) no soporta FILTER.
+        $row = DB::table('products as p')
+            ->leftJoinSub($inv, 'inv', 'inv.product_id', '=', 'p.id')
+            ->when($type, fn ($q) => $q->where('p.product_type', $type))
+            ->selectRaw(
+                'COUNT(*) as total,
+                 SUM(CASE WHEN p.product_type = ? THEN 1 ELSE 0 END) as total_mangas,
+                 SUM(CASE WHEN p.cost IS NULL OR p.cost <= 0 THEN 1 ELSE 0 END) as sin_costo,
+                 SUM(CASE WHEN COALESCE(inv.qty, 0) = 0 THEN 1 ELSE 0 END) as agotados,
+                 SUM(CASE WHEN COALESCE(inv.qty, 0) > 0 AND COALESCE(inv.qty, 0) <= ? THEN 1 ELSE 0 END) as por_agotarse,
+                 SUM(CASE WHEN p.cost > 0 THEN p.cost * COALESCE(inv.qty, 0) ELSE 0 END) as valor_invertido',
+                [Product::TYPE_MANGA, $threshold]
+            )
+            ->first();
+
+        $conPromo = Product::query()
+            ->when($type, fn ($q) => $q->ofType($type))
+            ->whereHas('activePromotions', fn ($q) => $q->forStore($storeId))
+            ->count();
+
+        $data = [
+            'total' => (int) $row->total,
+            'total_mangas' => (int) $row->total_mangas,
+            'total_productos' => (int) $row->total - (int) $row->total_mangas,
+            'agotados' => (int) $row->agotados,
+            'por_agotarse' => (int) $row->por_agotarse,
+            'threshold' => $threshold,
+            'con_promo' => $conPromo,
+            'store_id' => $storeId,
+        ];
+        if ($user && $user->canViewCost()) {
+            $data['sin_costo'] = (int) $row->sin_costo;
+            $data['valor_invertido'] = round((float) $row->valor_invertido, 2);
+        }
+
+        return $this->success($data);
     }
 
     /**
