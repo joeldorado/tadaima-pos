@@ -4,6 +4,73 @@
 
 ---
 
+### Sesión 2026-08-04 — Productos: contadores REALES + filtros y paginación server-side — DEPLOYADO rev `tadaima-00159-pnw`
+
+Joel reportó dos problemas de la página Productos tras el import Macro (~14k):
+los chips de arriba se amontonaban (8 hijos en una fila sin wrap) y sus
+contadores mentían — "Productos sin Costo 84" cuando en realidad son ~13.9k,
+porque **todos** los contadores (por agotarse/agotados/promos/sin costo/valor
+invertido/más vendidos) se calculaban client-side sobre la única página
+cargada (backend default 100 de 13,950). Pidió una "consulta inteligente"
+que cubriera el catálogo completo sin repetir el problema de memoria de Caja
+(rev 00157). Commit `f966420`.
+
+**Backend** (`ProductController.php`, `routes/api.php`):
+- Filtros server-side nuevos en `GET /products`: `no_cost`, `out_of_stock`,
+  `low_stock` (+`threshold`, default 10), `has_promo`, `category_id` —
+  COMBINAN por AND con `search`/`store_id` (antes los chips ignoraban la
+  búsqueda por completo con un early-return).
+- `?with_meta=1` (opt-in estricto): responde `{items, pagination:{total,
+  per_page, current_page, last_page}}` con el TOTAL real. Sin el flag el
+  shape histórico (array plano) queda intacto byte a byte — 7 consumidores
+  existentes (Caja, Layout, StoreContext, TabPermisos, AdminPage×2,
+  Layaways, Transfers) no se tocan.
+- Nuevo `GET /products/stats` (ruta ANTES del apiResource, si no
+  `products/{product}` capturaba "stats" como id): una pasada SQL
+  (`SUM(CASE WHEN…)`, portable pgsql/mysql/sqlite — nada de `FILTER(WHERE)`)
+  sobre `products LEFT JOIN` derivada agrupada de `inventory`. Scope de
+  tienda fail-closed igual que Reportes (gerente/cajero anclados a la suya).
+  `sin_costo`/`valor_invertido` solo viajan con `can_view_cost` (el resto
+  sirve a cualquiera).
+- Migración: índice en `inventory.warehouse_id` (Postgres no indexa FKs) +
+  compuesto `warehouses(store_id, type)` — el JOIN por tienda de stats/filtros
+  hacía scan completo sin esto.
+- 19 tests PHPUnit nuevos (`ProductStatsTest`, `ProductIndexFiltersTest`),
+  incluida regresión explícita del array plano sin `with_meta`.
+
+**Frontend** (`ProductsPage.tsx`, `useProducts.ts`, `MissingCostModal.tsx`):
+- Header de 8 elementos → 4: **"Productos sin Costo"** con contador REAL,
+  SIEMPRE visible fuera del dropdown (pedido explícito de Joel — es la
+  métrica que el equipo persigue mientras captura costos) · dropdown
+  **"Filtros"** (Por agotarse/Agotados/Promos/Más vendidos, contadores
+  reales de `/products/stats`) · Valor invertido · Alta de Producto.
+- `activeFilter` único reemplaza 4 booleanos sueltos — de paso corrige que
+  "Quitar Filtro" olvidaba apagar Promos.
+- Tabla y Cuadrícula pasan a paginación server real: "Mostrando 1–20 de
+  13,950" con página/tamaño reales (antes nunca pedía page=2, la Cuadrícula
+  no paginaba). "Más vendidos" ahora ordena de verdad (`sort=top`,
+  `recent_sales_count` 30 días) — antes `ventasTotales` estaba hardcodeado a
+  0 y el filtro era un placebo (primeros 50 por id).
+- `MissingCostModal` reescrito server-fed (`useInfiniteQuery`, lotes de 50 +
+  búsqueda server-side) para alcanzar los ~13.9k sin costo reales, no solo
+  los ~100 cargados en la tabla de afuera. Guardar un costo refresca en vivo
+  el chip/stats de la página (queryKey del modal vive fuera de
+  `['products']` + `staleTime: Infinity` para que la fila no se reordene
+  bajo el capturista mientras trabaja).
+- Tab Tomos: el bloque de chips de costo (Sin Costo/Más vendidos/Valor
+  invertido) ya no se filtra ahí (bug: mostraba números de Productos);
+  Por Agotarse/Agotados en Tomos leen stats con `type=manga`.
+
+**QA:** 407 PHPUnit (388 baseline + 19 nuevos), 166 vitest (155 + 11 nuevos),
+type-check en baseline exacto (466, sin regresiones), `npx vite build` limpio.
+Navegador contra backend real (SQLite local con 122 productos sembrados):
+dropdown, filtro+búsqueda combinados (AND confirmado), página 2, guardado de
+costo con reflejo en vivo del contador externo, Cuadrícula paginada, tab
+Tomos sin los chips de costo. Smoke en prod: `/products/stats` real (13,964
+total, 13,932 sin costo, 12,402 agotados, 1,453 por agotarse, 6 con promo,
+$167,207.80 invertido), filtro `no_cost` coincide exacto con stats, array
+plano sin `with_meta` intacto, Caja (`light=1`) sin regresión.
+
 ### Sesión 2026-08-03 (7) — RESET de operaciones (arranque post-producción) + chips de categoría con nombre en Caja
 
 **RESET a pedido de Joel** ("limpia todas las ventas históricas como si fuera
