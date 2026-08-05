@@ -13,3 +13,19 @@ export function generateBarcode(): string {
   const body = `${time}`.padStart(5, "0") + `${rand}`.padStart(5, "0");
   return `200${body}`; // 3 + 10 = 13 dígitos
 }
+
+/**
+ * SKU temporal para alta remota cuando el producto real aún no llega y no
+ * se conoce su código (2026-08-04, reporte de cliente: el sistema bloqueaba
+ * el guardado por falta de SKU). El campo sigue siendo obligatorio y único
+ * en la base de datos — esto solo evita que el usuario tenga que inventar
+ * un valor a mano. Prefijo `PEND-` distinto de `generateBarcode()` para no
+ * confundirse con un código de barras real; el equipo lo reemplaza por el
+ * SKU verdadero cuando el producto llega físicamente (la tabla de productos
+ * marca estos valores con un badge).
+ */
+export function generatePlaceholderSku(): string {
+  const time = Date.now().toString(36).toUpperCase();
+  const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
+  return `PEND-${time}-${rand}`;
+}

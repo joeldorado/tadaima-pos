@@ -28,7 +28,7 @@ import { ProductsSkeleton } from "@/components/products/ProductsSkeleton";
 import { useStoresQuery } from "@/hooks/queries/useStores";
 import { useWarehousesQuery } from "@/hooks/queries/useWarehouses";
 import { queryKeys } from "@/lib/queryKeys";
-import { generateBarcode } from "@/lib/barcode";
+import { generateBarcode, generatePlaceholderSku } from "@/lib/barcode";
 import { warehouseTypeLabel } from "@/lib/warehouse";
 import { PRICE_FORM_LABELS, PRICE_LEVEL_LABELS, PRICE_LEVEL_COLORS, PRICE_LEVEL_RGB } from "@/lib/priceLevels";
 
@@ -262,6 +262,22 @@ function DetailField({ label, value }: { label: string; value: React.ReactNode }
         {value}
       </div>
     </div>
+  );
+}
+
+/**
+ * SKU normal, o badge ámbar si es un placeholder (`PEND-...`, generado
+ * automáticamente cuando el alta se guardó sin SKU conocido — 2026-08-04).
+ * Recuerda al equipo reemplazarlo cuando llegue el producto físico.
+ */
+function SkuLabel({ sku, className, style }: { sku: string; className?: string; style?: React.CSSProperties }) {
+  if (!sku.startsWith("PEND-")) {
+    return <p className={className} style={style}>{sku}</p>;
+  }
+  return (
+    <p className={className} style={{ ...style, color: "#F59E0B" }} title="SKU temporal — actualízalo cuando llegue el producto">
+      ⏳ {sku}
+    </p>
   );
 }
 
@@ -582,7 +598,10 @@ function ProductModal({
   locations = []
 }: {
   onClose: () => void;
-  onSave: (p: Producto, imageFile?: File, pendingPromoIds?: number[]) => void;
+  // Promise<void> (2026-08-04): el modal espera la confirmación del padre
+  // antes de cerrarse — si el guardado falla (SKU duplicado, etc.) el modal
+  // se queda abierto con los datos intactos en vez de perderlos.
+  onSave: (p: Producto, imageFile?: File, pendingPromoIds?: number[]) => Promise<void>;
   onDelete?: (p: Producto) => void;
   product?: Producto;
   isAdmin: boolean;
@@ -630,6 +649,9 @@ function ProductModal({
   // elegidas y handleSaveProduct las asigna después del create (2026-07-25).
   const [pendingPromoIds, setPendingPromoIds] = useState<number[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  // Mientras el padre confirma con el backend — bloquea Guardar/Cancelar/X
+  // para que no se cierre el modal a medio guardar (2026-08-04).
+  const [saving, setSaving] = useState(false);
   // Aplica un archivo de imagen al formulario. Compartido por el <input file>
   // (click) y el drop (drag & drop) para no duplicar la lógica.
   const applyImageFile = (file: File | undefined | null): void => {
@@ -676,7 +698,7 @@ function ProductModal({
     }).catch(() => {})
   }, [product?.id])
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!formData.nombre?.trim()) {
       toast.error("El nombre del producto es requerido");
       setActiveTab("general");
@@ -713,7 +735,28 @@ function ProductModal({
         }));
       }
     }
-    onSave({ ...formData, id: formData.id || Date.now() } as Producto, imageFile ?? undefined, pendingPromoIds);
+
+    // Alta remota sin SKU conocido (reporte de cliente 2026-08-04): el
+    // campo sigue siendo obligatorio en el backend, pero nunca debe
+    // bloquear el guardado — se asigna un placeholder distinguible
+    // (badge ámbar en la tabla) y el equipo lo reemplaza cuando llegue el
+    // producto físico con su código real.
+    let sku = formData.sku?.trim() ?? "";
+    if (!sku) {
+      sku = generatePlaceholderSku();
+      toast.info("Se generó un SKU temporal — edítalo cuando conozcas el código real.");
+    }
+
+    setSaving(true);
+    try {
+      await onSave({ ...formData, sku, id: formData.id || Date.now() } as Producto, imageFile ?? undefined, pendingPromoIds);
+    } catch {
+      // El padre ya mostró el toast de error — no cerramos el modal ni
+      // limpiamos formData, así el usuario corrige y reintenta sin perder
+      // lo que capturó (antes el modal se cerraba de golpe y se perdía todo).
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -731,7 +774,7 @@ function ProductModal({
             </h2>
             <p className="text-xs" style={{ color: T.textSecondary }}>Configuración detallada de catálogo</p>
           </div>
-          <button onClick={onClose} className="p-2 rounded-xl transition-colors" style={SECONDARY_BUTTON}>
+          <button onClick={onClose} disabled={saving} className="p-2 rounded-xl transition-colors disabled:opacity-40 disabled:cursor-not-allowed" style={SECONDARY_BUTTON}>
             <X size={20} style={{ color: T.textSecondary }} />
           </button>
         </div>
@@ -1358,16 +1401,17 @@ function ProductModal({
              )}
              <button
               onClick={onClose}
-              className="px-6 py-2.5 rounded-full text-sm font-bold transition-all"
+              disabled={saving}
+              className="px-6 py-2.5 rounded-full text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
               style={SECONDARY_BUTTON}
             >
               Cancelar
             </button>
             {(() => {
-              const canSave = !!formData.nombre?.trim() && (formData.precioA ?? 0) > 0 && (!!product || (formData.stockUbicaciones ?? []).length > 0);
+              const canSave = !saving && !!formData.nombre?.trim() && (formData.precioA ?? 0) > 0 && (!!product || (formData.stockUbicaciones ?? []).length > 0);
               return (
                 <button
-                  onClick={handleSave}
+                  onClick={() => void handleSave()}
                   disabled={!canSave}
                   className="flex items-center gap-2 px-8 py-2.5 text-sm font-bold transition-all shadow-lg shadow-red-500/20"
                   style={{
@@ -1377,8 +1421,8 @@ function ProductModal({
                     transform: "none",
                   }}
                 >
-                  <Save size={16} />
-                  Guardar Cambios
+                  {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                  {saving ? "Guardando…" : "Guardar Cambios"}
                 </button>
               );
             })()}
@@ -1770,8 +1814,11 @@ export function ProductsPage() {
   const handleSaveProduct = async (p: Producto, imageFile?: File, pendingPromoIds?: number[]): Promise<void> => {
     const isNew = !products.some(item => item.id === p.id);
 
-    setIsModalOpen(false);
-    setEditingProduct(undefined);
+    // El modal SOLO se cierra tras confirmar con el backend (2026-08-04 —
+    // antes se cerraba aquí, síncrono, antes de saber si el guardado iba a
+    // funcionar; si el backend rechazaba (p.ej. SKU vacío/duplicado) el
+    // modal ya no existía y se perdía todo lo capturado). Cada rama hace
+    // throw en su catch para que ProductModal sepa que falló y no cierre.
 
     // Resuelve (o crea on-the-fly) los ids de categoría y proveedor desde el
     // nombre — robusto contra la carrera de timing del "+" recién tecleado.
@@ -1781,27 +1828,30 @@ export function ProductsPage() {
     ]);
 
     if (isNew) {
-      // Toast persistente mientras se crea: el modal se cierra al instante y sin
-      // esto la tabla se ve vacía/stale sin señal de que algo está pasando.
+      // Toast persistente mientras se crea.
       const creatingToastId = toast.loading(`Creando "${p.nombre}"…`);
-      createProduct({
-        name: p.nombre,
-        sku: p.sku,
-        cost: p.costo,
-        active: !p.desactivado,
-        allow_cash: p.allowCash,
-        allow_card: p.allowCard,
-        category_id: categoryId,
-        supplier_id: supplierId,
-        prices: {
-          price_1: p.precioA,
-          ...(p.precioB !== undefined && p.precioB > 0 ? { price_2: p.precioB } : {}),
-          ...(p.precioC !== undefined && p.precioC > 0 ? { price_3: p.precioC } : {}),
-          ...(p.precioD !== undefined && p.precioD > 0 ? { price_4: p.precioD } : {}),
-          ...(p.precioE !== undefined && p.precioE > 0 ? { price_5: p.precioE } : {}),
-        },
-      }).then(async (created) => {
-        // Upload image if provided
+      try {
+        const created = await createProduct({
+          name: p.nombre,
+          sku: p.sku,
+          cost: p.costo,
+          active: !p.desactivado,
+          allow_cash: p.allowCash,
+          allow_card: p.allowCard,
+          category_id: categoryId,
+          supplier_id: supplierId,
+          prices: {
+            price_1: p.precioA,
+            ...(p.precioB !== undefined && p.precioB > 0 ? { price_2: p.precioB } : {}),
+            ...(p.precioC !== undefined && p.precioC > 0 ? { price_3: p.precioC } : {}),
+            ...(p.precioD !== undefined && p.precioD > 0 ? { price_4: p.precioD } : {}),
+            ...(p.precioE !== undefined && p.precioE > 0 ? { price_5: p.precioE } : {}),
+          },
+        });
+        // El backend ya confirmó el producto — ahora sí se cierra el modal.
+        setIsModalOpen(false);
+        setEditingProduct(undefined);
+
         if (imageFile) {
           await uploadProductImage(created.id, imageFile).catch(() => {
             toast.error('Producto creado, pero no se pudo subir la imagen.');
@@ -1836,30 +1886,49 @@ export function ProductsPage() {
         // y en el catálogo de Caja (comparten el prefijo products.all).
         await invalidateProducts();
         toast.success(`Producto "${p.nombre}" creado`, { id: creatingToastId });
-      }).catch((err: unknown) => {
+      } catch (err: unknown) {
         const { title, detail } = formatApiError(err, 'No se pudo crear el producto');
         toast.error(title, { id: creatingToastId, description: detail || undefined, duration: 8000 });
         void invalidateProducts();
-      });
+        throw err;
+      }
     } else {
+      // Inventario por ubicación: fire-and-forget como siempre, independiente
+      // del resultado del guardado de los campos principales de abajo (cada
+      // falla ya tiene su propio toast por ubicación).
+      for (const loc of p.stockUbicaciones) {
+        if (loc.warehouseId !== undefined && loc.warehouseId > 0) {
+          void updateInventory(p.id, loc.warehouseId, {
+            quantity: loc.quantity ?? loc.stock ?? 0,
+          }).catch((err: unknown) => {
+            const msg = (err as { message?: string }).message ?? 'Error al actualizar stock';
+            toast.error(`Stock no actualizado en ${loc.ubicacion}: ${msg}`);
+          });
+        }
+      }
+
       // Persist product field changes to backend
-      void updateProduct(p.id, {
-        name: p.nombre,
-        sku: p.sku,
-        cost: p.costo,
-        active: !p.desactivado,
-        allow_cash: p.allowCash,
-        allow_card: p.allowCard,
-        category_id: categoryId,
-        supplier_id: supplierId,
-        prices: {
-          price_1: p.precioA,
-          ...(p.precioB !== undefined && p.precioB > 0 ? { price_2: p.precioB } : {}),
-          ...(p.precioC !== undefined && p.precioC > 0 ? { price_3: p.precioC } : {}),
-          ...(p.precioD !== undefined && p.precioD > 0 ? { price_4: p.precioD } : {}),
-          ...(p.precioE !== undefined && p.precioE > 0 ? { price_5: p.precioE } : {}),
-        },
-      }).then(async () => {
+      try {
+        await updateProduct(p.id, {
+          name: p.nombre,
+          sku: p.sku,
+          cost: p.costo,
+          active: !p.desactivado,
+          allow_cash: p.allowCash,
+          allow_card: p.allowCard,
+          category_id: categoryId,
+          supplier_id: supplierId,
+          prices: {
+            price_1: p.precioA,
+            ...(p.precioB !== undefined && p.precioB > 0 ? { price_2: p.precioB } : {}),
+            ...(p.precioC !== undefined && p.precioC > 0 ? { price_3: p.precioC } : {}),
+            ...(p.precioD !== undefined && p.precioD > 0 ? { price_4: p.precioD } : {}),
+            ...(p.precioE !== undefined && p.precioE > 0 ? { price_5: p.precioE } : {}),
+          },
+        });
+        setIsModalOpen(false);
+        setEditingProduct(undefined);
+
         if (imageFile) {
           // Delete existing images before uploading the new one
           await Promise.allSettled(p.imageIds.map(id => removeProductImage(p.id, id)));
@@ -1871,22 +1940,11 @@ export function ProductsPage() {
           void invalidateProducts();
           toast.success(`Producto "${p.nombre}" actualizado`);
         }
-      }).catch((err: unknown) => {
+      } catch (err: unknown) {
         const msg = (err as { message?: string }).message ?? 'Error al actualizar producto';
         toast.error(msg);
         void invalidateProducts();
-      });
-
-      // Persist inventory changes per warehouse to backend
-      for (const loc of p.stockUbicaciones) {
-        if (loc.warehouseId !== undefined && loc.warehouseId > 0) {
-          void updateInventory(p.id, loc.warehouseId, {
-            quantity: loc.quantity ?? loc.stock ?? 0,
-          }).catch((err: unknown) => {
-            const msg = (err as { message?: string }).message ?? 'Error al actualizar stock';
-            toast.error(`Stock no actualizado en ${loc.ubicacion}: ${msg}`);
-          });
-        }
+        throw err;
       }
     }
   };
@@ -2017,7 +2075,7 @@ export function ProductsPage() {
             {img && <ProductThumb src={img} alt={info.getValue()} />}
             <div className="min-w-0">
               <p className="text-sm font-bold truncate max-w-[200px]" style={{ color: T.textPrimary }}>{info.getValue()}</p>
-              <p className="text-[10px] font-mono" style={{ color: T.textMuted }}>{info.row.original.sku}</p>
+              <SkuLabel sku={info.row.original.sku} className="text-[10px] font-mono" style={{ color: T.textMuted }} />
               {/* Badge de promo vigente con fecha fin (QA Joel 2026-07-17) */}
               {promo && (
                 <span
@@ -2893,7 +2951,7 @@ export function ProductsPage() {
                       </div>
                     </div>
                     <div className="p-4 pt-3 flex flex-col gap-3">
-                      <p className="text-[10px] font-black uppercase tracking-widest mb-1" style={{ color: T.textMuted }}>{p.sku}</p>
+                      <SkuLabel sku={p.sku} className="text-[10px] font-black uppercase tracking-widest mb-1" style={{ color: T.textMuted }} />
                       <h3 className="font-black text-base leading-snug line-clamp-2 min-h-[2.75rem]" style={{ color: T.textPrimary }}>{p.nombre}</h3>
                       <div className="flex flex-col gap-2">
                         {priceRows.map(({ level, price }) => {
@@ -2934,7 +2992,7 @@ export function ProductsPage() {
                   <div className="p-4 flex flex-col gap-3">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="text-[10px] font-black uppercase tracking-widest mb-0.5" style={{ color: T.textMuted }}>{p.sku}</p>
+                        <SkuLabel sku={p.sku} className="text-[10px] font-black uppercase tracking-widest mb-0.5" style={{ color: T.textMuted }} />
                         <h3 className="font-black text-base leading-snug line-clamp-3" style={{ color: T.textPrimary }}>{p.nombre}</h3>
                       </div>
                       <div className="flex flex-col items-end gap-0.5 shrink-0">
