@@ -4,6 +4,47 @@
 
 ---
 
+### Sesión 2026-08-04 (2) — Alta de producto sin SKU: ya no bloquea ni pierde datos — DEPLOYADO rev `tadaima-00160-jhm`
+
+Reporte de cliente vía Joel: al dar de alta un producto sin llenar el SKU, el
+sistema marcaba error y el modal se cerraba sin dejar corregir ni reintentar
+— se perdía todo lo capturado. Necesitan registrar productos de forma
+remota, antes de que el producto llegue físicamente, cuando aún no conocen
+el SKU real. Instrucción de Joel: no quitar el SKU, sigue siendo obligatorio
+y único en la BD. Commit `72c9da0`.
+
+**Causa raíz** (`landing/src/pages/ProductsPage.tsx`): `handleSaveProduct`
+cerraba el modal de forma SÍNCRONA, antes de llamar al backend — para
+create Y update. Si el backend rechazaba por cualquier motivo (SKU vacío,
+duplicado, o cualquier otro 422), el modal ya no existía y se perdía el
+formulario completo. Bug genérico, no exclusivo de SKU.
+
+- **`generatePlaceholderSku()`** nueva en `landing/src/lib/barcode.ts`
+  (prefijo `PEND-`, distinto del `generateBarcode()` existente para no
+  confundirse con un código de barras real). Si el usuario deja el SKU
+  vacío al guardar, se autogenera y avisa con un toast — el backend sigue
+  exigiendo `required+unique` sin cambios, solo que ahora nunca se lo pide
+  directamente al usuario.
+- **`handleSaveProduct` reestructurado** a `try/await/catch`: el modal
+  SOLO se cierra tras confirmar éxito con el backend; si falla, se queda
+  abierto con los datos intactos para corregir y reintentar.
+- **`ProductModal` gana estado `saving`**: botón Guardar con spinner
+  ("Guardando…"), Cancelar/X deshabilitados mientras el POST/PUT está en
+  vuelo (evita cerrar a medio guardar).
+- **Badge ámbar `SkuLabel`** (⏳ + SKU) en tabla y tarjetas cuando el SKU
+  empieza con `PEND-`, para que el equipo recuerde reemplazarlo cuando
+  llega el producto físico.
+
+QA: 3 tests nuevos (`barcode.test.ts`), suites completas en verde (407
+PHPUnit + 169 vitest), type-check en baseline (466, sin regresiones).
+Navegador contra backend real (SQLite local): alta sin SKU → placeholder +
+badge, sin bloqueo; fallo forzado (SKU duplicado) → modal se queda abierto
+con nombre/SKU/categoría intactos, toast de error, reintento con SKU
+corregido cierra y actualiza normal; edición exitosa normal sigue cerrando
+al instante (sin regresión de velocidad). Smoke en prod: `/products/stats`
+sin cambios, `POST /products` sin sku sigue devolviendo 422 (el backend no
+se tocó — el auto-relleno es responsabilidad exclusiva del frontend).
+
 ### Sesión 2026-08-04 — Productos: contadores REALES + filtros y paginación server-side — DEPLOYADO rev `tadaima-00159-pnw`
 
 Joel reportó dos problemas de la página Productos tras el import Macro (~14k):
