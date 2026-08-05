@@ -48,13 +48,28 @@ class User extends Authenticatable
         return $this->belongsTo(Company::class);
     }
 
+    /** Memo de $this->roles (ver getRolesAttribute) — dura solo esta instancia. */
+    private ?array $rolesCache = null;
+
     /**
      * Roles del usuario leídos desde model_has_roles + roles.
      * Se evita Spatie para no agregar dependencia extra por ahora.
+     *
+     * Memoizado en $rolesCache (2026-08-05, Joel): a diferencia de las
+     * relaciones de Eloquent, un accessor `getXAttribute` NO se cachea solo
+     * — cada acceso a `$this->roles` volvía a pegarle a la BD. Serializar
+     * una colección de N productos llama a `hasRole()`/`canViewCost()` por
+     * cada fila (ProductResource), así que esto multiplicaba la misma
+     * consulta N veces (20 filas = 20 queries idénticas, ~90ms cada una por
+     * el pooler de Supabase — la mitad del tiempo de /products).
      */
     public function getRolesAttribute(): array
     {
-        return \DB::table('model_has_roles')
+        if ($this->rolesCache !== null) {
+            return $this->rolesCache;
+        }
+
+        return $this->rolesCache = \DB::table('model_has_roles')
             ->join('roles', 'roles.id', '=', 'model_has_roles.role_id')
             ->where('model_has_roles.model_type', self::class)
             ->where('model_has_roles.model_id', $this->id)

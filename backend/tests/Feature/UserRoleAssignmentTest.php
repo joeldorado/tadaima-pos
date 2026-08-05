@@ -67,6 +67,74 @@ class UserRoleAssignmentTest extends TestCase
         $this->assertSame(['gerente'], $target->fresh()->roles);
     }
 
+    /**
+     * Perf 2026-08-05 (Joel): getRolesAttribute() es un accessor, no una
+     * relación Eloquent — sin memoizar, CADA `$user->hasRole()`/`->roles`
+     * volvía a pegarle a la BD. Serializar una página de N productos llama
+     * a hasRole() por fila (ProductResource::canViewCost), multiplicando la
+     * misma query N veces (era la mitad del tiempo de GET /products).
+     */
+    public function test_roles_accessor_is_memoized_within_the_same_instance(): void
+    {
+        $user = $this->makeUser('cajero2@test.com');
+        $this->seedRole($user, 'cajero');
+
+        DB::enableQueryLog();
+        $user->hasRole('cajero');
+        $user->hasRole('gerente');
+        $user->hasRole(['admin', 'cajero']);
+        $queries = DB::getQueryLog();
+        DB::disableQueryLog();
+
+        $rolesQueries = collect($queries)->filter(fn ($q) => str_contains($q['query'], 'model_has_roles'));
+        $this->assertCount(1, $rolesQueries, 'getRolesAttribute() debe memoizar, no reconsultar en cada hasRole()');
+    }
+
+    /**
+     * El caché es por INSTANCIA (una variable de instancia normal, no un
+     * caché externo) — assignRole()/removeRole() devuelven `$user->fresh()`
+     * a propósito para nunca arriesgar servir el estado de ANTES del
+     * cambio. Este test documenta ambas mitades del contrato.
+     */
+    public function test_fresh_instance_bypasses_stale_roles_cache(): void
+    {
+        $user = $this->makeUser('cajero3@test.com');
+        $this->seedRole($user, 'cajero');
+
+        // Fuerza el caché con el estado ANTES del cambio.
+        $this->assertTrue($user->hasRole('cajero'));
+
+        // Cambia el rol por fuera del modelo (lo mismo que hacen assignRole/removeRole).
+        DB::table('model_has_roles')->where('model_id', $user->id)->where('model_type', User::class)->delete();
+        $gerenteId = DB::table('roles')->insertGetId([
+            'name' => 'gerente', 'guard_name' => 'api', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table('model_has_roles')->insert(['role_id' => $gerenteId, 'model_type' => User::class, 'model_id' => $user->id]);
+
+        // La instancia original mantiene su caché — comportamiento esperado.
+        $this->assertTrue($user->hasRole('cajero'));
+
+        // ->fresh() (el patrón real usado en los endpoints) ve el estado real.
+        $this->assertTrue($user->fresh()->hasRole('gerente'));
+        $this->assertFalse($user->fresh()->hasRole('cajero'));
+    }
+
+    public function test_remove_role_http_returns_updated_roles_not_stale(): void
+    {
+        $admin = $this->makeUser('admin2@test.com');
+        $this->seedRole($admin, 'admin');
+
+        $target = $this->makeUser('cajero4@test.com');
+        $roleId = $this->seedRole($target, 'cajero');
+
+        $resp = $this->actingAs($admin)
+            ->deleteJson("/api/v1/users/{$target->id}/roles/{$roleId}")
+            ->assertOk()
+            ->json('data');
+
+        $this->assertSame([], $resp['roles']);
+    }
+
     public function test_online_endpoint_returns_roles_without_crashing(): void
     {
         $admin = $this->makeUser('admin@test.com');

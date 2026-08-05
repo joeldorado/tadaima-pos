@@ -329,7 +329,10 @@ class UserController extends Controller
             ->where('model_id',   $user->id)
             ->delete();
 
-        return $this->success(['roles' => $user->roles], 'Rol removido.');
+        // ->fresh() en vez de $user->roles: getRolesAttribute() ahora memoiza
+        // por instancia (2026-08-05) — una instancia nueva evita devolver el
+        // caché de roles de ANTES del delete si algo llegara a leerlo antes.
+        return $this->success(['roles' => $user->fresh()->roles], 'Rol removido.');
     }
 
     /**
