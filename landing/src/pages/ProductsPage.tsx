@@ -29,6 +29,7 @@ import { useStoresQuery } from "@/hooks/queries/useStores";
 import { useWarehousesQuery } from "@/hooks/queries/useWarehouses";
 import { queryKeys } from "@/lib/queryKeys";
 import { generateBarcode, generatePlaceholderSku } from "@/lib/barcode";
+import { useFormDraft } from "@/hooks/useFormDraft";
 import { warehouseTypeLabel } from "@/lib/warehouse";
 import { PRICE_FORM_LABELS, PRICE_LEVEL_LABELS, PRICE_LEVEL_COLORS, PRICE_LEVEL_RGB } from "@/lib/priceLevels";
 
@@ -613,12 +614,21 @@ function ProductModal({
   onAddProveedor: (p: string) => void;
   locations: {warehouseId: number, name: string, store: string, storeId: number | null, type: 'central' | 'store' | 'bodega'}[];
 }) {
+  // Borrador en localStorage (Joel 2026-08-05): protege lo capturado si algo
+  // interrumpe la sesión ANTES de guardar (recarga, tab cerrada, crash) —
+  // solo en alta, no tiene sentido "recuperar" sobre un producto existente.
+  // `imagen` se excluye siempre (blob URL que muere al recargar).
+  const { draft, saveDraft, clearDraft } = useFormDraft<{
+    formData: Omit<Partial<Producto>, "imagen">;
+    pendingPromoIds: number[];
+  }>({ key: "tadaima-product-draft", enabled: !product });
+
   const [formData, setFormData] = useState<Partial<Producto>>(() => {
     if (product) {
       // Sincronizar ubicaciones: Si hay nuevas ubicaciones que el producto no tiene, agregarlas con stock 0
       const existingUbicaciones = product.stockUbicaciones?.map(u => u.ubicacion) || [];
       const newUbicaciones = locations.filter(l => !existingUbicaciones.includes(l.name));
-      
+
       const updatedStockUbicaciones = [
         ...(product.stockUbicaciones || []),
         ...newUbicaciones.map(l => ({
@@ -627,10 +637,12 @@ function ProductModal({
           detalle: { bodega: 0, tienda: 0, danado: 0, preventa: 0, enCamino: 0 }
         }))
       ];
-      
+
       return { ...product, stockUbicaciones: updatedStockUbicaciones };
     }
-    
+
+    if (draft) return { imagen: "", imageIds: [], ...draft.formData };
+
     // Nuevo producto — empieza sin ubicaciones; el usuario las agrega desde el tab Inventario
     return {
       nombre: "", sku: "", categoria: "", proveedor: "",
@@ -647,7 +659,19 @@ function ProductModal({
   const [imageFile, setImageFile] = useState<File | null>(null);
   // Producto NUEVO sin guardar: el tab de Promos bufferea aquí las promos
   // elegidas y handleSaveProduct las asigna después del create (2026-07-25).
-  const [pendingPromoIds, setPendingPromoIds] = useState<number[]>([]);
+  const [pendingPromoIds, setPendingPromoIds] = useState<number[]>(() => (!product && draft ? draft.pendingPromoIds : []));
+
+  useEffect(() => {
+    if (draft) toast.info("Se restauró un borrador sin guardar de tu última sesión.");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (product) return;
+    const { imagen: _imagen, ...rest } = formData;
+    saveDraft({ formData: rest, pendingPromoIds });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData, pendingPromoIds, product]);
   const [isDragging, setIsDragging] = useState(false);
   // Mientras el padre confirma con el backend — bloquea Guardar/Cancelar/X
   // para que no se cierre el modal a medio guardar (2026-08-04).
@@ -750,18 +774,27 @@ function ProductModal({
     setSaving(true);
     try {
       await onSave({ ...formData, sku, id: formData.id || Date.now() } as Producto, imageFile ?? undefined, pendingPromoIds);
+      clearDraft();
     } catch {
       // El padre ya mostró el toast de error — no cerramos el modal ni
       // limpiamos formData, así el usuario corrige y reintenta sin perder
       // lo que capturó (antes el modal se cerraba de golpe y se perdía todo).
+      // Tampoco se limpia el borrador — es justo el caso que protege.
     } finally {
       setSaving(false);
     }
   };
 
+  // Abandono deliberado (Cancelar/X/fondo): limpia el borrador para no
+  // insistir la próxima vez que abran "Nuevo Producto".
+  const handleDismiss = () => {
+    clearDraft();
+    onClose();
+  };
+
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={handleDismiss} />
       
       <div 
         className="relative w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-[32px] flex flex-col shadow-2xl"
@@ -774,7 +807,7 @@ function ProductModal({
             </h2>
             <p className="text-xs" style={{ color: T.textSecondary }}>Configuración detallada de catálogo</p>
           </div>
-          <button onClick={onClose} disabled={saving} className="p-2 rounded-xl transition-colors disabled:opacity-40 disabled:cursor-not-allowed" style={SECONDARY_BUTTON}>
+          <button onClick={handleDismiss} disabled={saving} className="p-2 rounded-xl transition-colors disabled:opacity-40 disabled:cursor-not-allowed" style={SECONDARY_BUTTON}>
             <X size={20} style={{ color: T.textSecondary }} />
           </button>
         </div>
@@ -1370,7 +1403,7 @@ function ProductModal({
               Las promociones se guardan al instante con su propio botón — aquí no hay nada más que guardar.
             </span>
             <button
-              onClick={onClose}
+              onClick={handleDismiss}
               className="px-8 py-2.5 rounded-full text-sm font-bold transition-all"
               style={SECONDARY_BUTTON}
             >
@@ -1400,7 +1433,7 @@ function ProductModal({
                </button>
              )}
              <button
-              onClick={onClose}
+              onClick={handleDismiss}
               disabled={saving}
               className="px-6 py-2.5 rounded-full text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
               style={SECONDARY_BUTTON}

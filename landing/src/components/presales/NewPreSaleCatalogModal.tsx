@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { getCategories, getSuppliers, getStores, createSupplier, createCategory, createPreSaleCatalog, updatePreSaleCatalog, uploadPreSaleCatalogImage, removePreSaleCatalogImage } from "@tadaima/api";
 import type { ProductCategory, Supplier, PreSaleCatalog, Store } from "@tadaima/api";
 import { SingleDatePicker } from "@/components/ui/SingleDatePicker";
+import { useFormDraft } from "@/hooks/useFormDraft";
 
 interface Props {
   onClose: () => void;
@@ -111,8 +112,29 @@ function ListPicker({ label, items, value, onChange, onAdd, adding }: {
   );
 }
 
+/** Campos flat que sobreviven a una recarga — sin File/base64 (ver abajo) ni
+ *  estado transitorio no confirmado (tab, pendingStoreId/Qty, editingStoreId/Qty). */
+interface PreSaleCatalogDraft {
+  name: string; categoryId: number | ""; supplierId: number | "";
+  advance: string; limit: string; limitPerCustomer: string;
+  arrivalDate: string; pickupDate: string; cost: string; publishNow: boolean;
+  storeLimits: Record<number, string>;
+  price1: string; price2: string; price3: string; price4: string; price5: string;
+}
+
 export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restrictedStoreId = null, initialTab }: Props) {
   const isEdit = !!catalog;
+
+  // Borrador en localStorage (Joel 2026-08-05): protege lo capturado si algo
+  // interrumpe la sesión antes de guardar — solo en alta (no tiene sentido
+  // "recuperar" sobre un catálogo que ya existe). La imagen NUNCA se
+  // persiste aquí: en alta es un data: URL base64 completo (FileReader),
+  // una imagen de 5MB son ~6.9MB de texto — podría reventar la cuota de
+  // localStorage de todo el origen.
+  const { draft, saveDraft, clearDraft } = useFormDraft<PreSaleCatalogDraft>({
+    key: "tadaima-presale-catalog-draft",
+    enabled: !isEdit,
+  });
 
   const [tab, setTab]               = useState<Tab>(initialTab ?? "general");
   const [categories, setCategories] = useState<ProductCategory[]>([]);
@@ -121,18 +143,18 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
   const [addingSupp, setAddingSupp] = useState(false);
   const [saving, setSaving]         = useState(false);
 
-  // General fields — pre-filled when editing
-  const [name, setName]               = useState(catalog?.product_name ?? "");
-  const [categoryId, setCategoryId]   = useState<number | "">(catalog?.category?.id ?? "");
-  const [supplierId, setSupplierId]   = useState<number | "">(catalog?.supplier?.id ?? "");
+  // General fields — pre-filled when editing (o restaurados desde el borrador en alta)
+  const [name, setName]               = useState(catalog?.product_name ?? draft?.name ?? "");
+  const [categoryId, setCategoryId]   = useState<number | "">(catalog?.category?.id ?? draft?.categoryId ?? "");
+  const [supplierId, setSupplierId]   = useState<number | "">(catalog?.supplier?.id ?? draft?.supplierId ?? "");
   // Catálogo nuevo: anticipo arranca en $100 (base típica del negocio, editable).
   const [advance, setAdvance]         = useState(
-    catalog ? (catalog.advance_payment != null ? String(catalog.advance_payment) : "") : "100"
+    catalog ? (catalog.advance_payment != null ? String(catalog.advance_payment) : "") : (draft?.advance ?? "100")
   );
-  const [limit, setLimit]             = useState(catalog?.preorder_limit != null ? String(catalog.preorder_limit) : "");
-  const [limitPerCustomer, setLimitPerCustomer] = useState(catalog?.limit_per_customer != null ? String(catalog.limit_per_customer) : "");
-  const [arrivalDate, setArrivalDate] = useState(catalog?.arrival_date ?? "");
-  const [pickupDate, setPickupDate]   = useState(catalog?.pickup_deadline ?? "");
+  const [limit, setLimit]             = useState(catalog?.preorder_limit != null ? String(catalog.preorder_limit) : (draft?.limit ?? ""));
+  const [limitPerCustomer, setLimitPerCustomer] = useState(catalog?.limit_per_customer != null ? String(catalog.limit_per_customer) : (draft?.limitPerCustomer ?? ""));
+  const [arrivalDate, setArrivalDate] = useState(catalog?.arrival_date ?? draft?.arrivalDate ?? "");
+  const [pickupDate, setPickupDate]   = useState(catalog?.pickup_deadline ?? draft?.pickupDate ?? "");
   // Último valor de retiro que ESTE form puso automáticamente. Si el usuario
   // lo cambió a mano, ya no lo pisamos al mover la fecha de llegada.
   const autoPickupRef = useRef("");
@@ -147,8 +169,8 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
       setPickupDate(suggested);
     }
   };
-  const [cost, setCost]               = useState(catalog?.cost != null ? String(catalog.cost) : "");
-  const [publishNow, setPublishNow]   = useState(false);
+  const [cost, setCost]               = useState(catalog?.cost != null ? String(catalog.cost) : (draft?.cost ?? ""));
+  const [publishNow, setPublishNow]   = useState(() => (!isEdit ? (draft?.publishNow ?? false) : false));
 
   // Imagen: file pendiente de subir (después de save), preview del file, o URL existente del catálogo.
   // `removeExisting` true cuando el cajero quita la imagen actual en edición — se procesa al save.
@@ -161,6 +183,7 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
   // El cajero las agrega una a una con un selector + input qty.
   const [stores, setStores] = useState<Store[]>([]);
   const [storeLimits, setStoreLimits] = useState<Record<number, string>>(() => {
+    if (!catalog && draft) return draft.storeLimits;
     const init: Record<number, string> = {};
     (catalog?.store_limits ?? []).forEach(sl => {
       // Gerente: oculta las asignaciones de otras tiendas (no las ve ni las edita).
@@ -191,11 +214,25 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
   const hasStock   = totalStock > 0;
 
   // Price fields
-  const [price1, setPrice1] = useState(catalog?.price_1 != null ? String(catalog.price_1) : "");
-  const [price2, setPrice2] = useState(catalog?.price_2 != null ? String(catalog.price_2) : "");
-  const [price3, setPrice3] = useState(catalog?.price_3 != null ? String(catalog.price_3) : "");
-  const [price4, setPrice4] = useState(catalog?.price_4 != null ? String(catalog.price_4) : "");
-  const [price5, setPrice5] = useState(catalog?.price_5 != null ? String(catalog.price_5) : "");
+  const [price1, setPrice1] = useState(catalog?.price_1 != null ? String(catalog.price_1) : (draft?.price1 ?? ""));
+  const [price2, setPrice2] = useState(catalog?.price_2 != null ? String(catalog.price_2) : (draft?.price2 ?? ""));
+  const [price3, setPrice3] = useState(catalog?.price_3 != null ? String(catalog.price_3) : (draft?.price3 ?? ""));
+  const [price4, setPrice4] = useState(catalog?.price_4 != null ? String(catalog.price_4) : (draft?.price4 ?? ""));
+  const [price5, setPrice5] = useState(catalog?.price_5 != null ? String(catalog.price_5) : (draft?.price5 ?? ""));
+
+  useEffect(() => {
+    if (draft) toast.info("Se restauró un borrador sin guardar de tu última sesión.");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    saveDraft({
+      name, categoryId, supplierId, advance, limit, limitPerCustomer,
+      arrivalDate, pickupDate, cost, publishNow, storeLimits,
+      price1, price2, price3, price4, price5,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [name, categoryId, supplierId, advance, limit, limitPerCustomer, arrivalDate, pickupDate, cost, publishNow, storeLimits, price1, price2, price3, price4, price5]);
 
   useEffect(() => {
     Promise.all([getCategories(), getSuppliers(), getStores({ active: true })])
@@ -309,20 +346,33 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
           ? `Catálogo "${result.product_name}" actualizado`
           : `Catálogo "${result.product_name}" ${publishNow ? "publicado" : "guardado como borrador"}`
       );
+      clearDraft();
       onSuccess(result);
     } catch (err: unknown) {
       const msg = (err as { message?: string })?.message ?? "Error al guardar";
       toast.error(msg);
+      // No se limpia el borrador — es justo el caso que protege, el usuario
+      // va a corregir y reintentar con los mismos datos.
     } finally {
       setSaving(false);
     }
+  };
+
+  // Abandono deliberado (Cancelar/X/fondo): limpia el borrador para no
+  // insistir la próxima vez que abran "Nuevo Catálogo de Preventa". Gateado
+  // por `saving` (2026-08-05): antes ningún control de cierre bloqueaba un
+  // guardado en vuelo — un clic ahí a media petición perdía los datos igual.
+  const handleDismiss = () => {
+    if (saving) return;
+    clearDraft();
+    onClose();
   };
 
   const fmt = (n: string) => n ? `$${Number(n).toLocaleString("es-MX")}` : "—";
 
   return (
     <div className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={handleDismiss} />
       <Motion.div
         initial={{ opacity: 0, y: 40 }}
         animate={{ opacity: 1, y: 0 }}
@@ -350,7 +400,11 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
               {isEdit ? `Editando: ${catalog!.product_name}` : "Define el producto, precios y anticipo mínimo"}
             </p>
           </div>
-          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: TM, display: "flex" }}>
+          <button
+            onClick={handleDismiss}
+            disabled={saving}
+            style={{ background: "none", border: "none", cursor: saving ? "not-allowed" : "pointer", color: TM, display: "flex", opacity: saving ? 0.4 : 1 }}
+          >
             <X size={18} />
           </button>
         </div>
@@ -811,7 +865,11 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
             </div>
           )}
           <div style={{ display: "flex", gap: 10 }}>
-            <button onClick={onClose} style={{ flex: 1, padding: "12px 0", borderRadius: 14, border: "1px solid var(--td-panel-border)", background: "transparent", color: TS, fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
+            <button
+              onClick={handleDismiss}
+              disabled={saving}
+              style={{ flex: 1, padding: "12px 0", borderRadius: 14, border: "1px solid var(--td-panel-border)", background: "transparent", color: TS, fontSize: 12, fontWeight: 800, cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.7 : 1 }}
+            >
               Cancelar
             </button>
             <button

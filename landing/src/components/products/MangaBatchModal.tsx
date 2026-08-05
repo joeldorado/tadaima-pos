@@ -4,11 +4,13 @@ import {
   DollarSign, Warehouse, Save, ChevronDown, ChevronRight,
   Camera, Scan,
 } from 'lucide-react'
+import { toast } from 'sonner'
 import { createManga, updateMangaInventory, uploadMangaImage } from '@tadaima/api'
 import type { ApiError } from '@tadaima/api'
 import { EDITORIALS, MANGA_GENRES } from './mangaConstants'
 import { generateBarcode } from '@/lib/barcode'
 import { PRICE_FORM_LABELS } from '@/lib/priceLevels'
+import { useFormDraft } from '@/hooks/useFormDraft'
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 
@@ -143,22 +145,63 @@ interface Props {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
+type TomoDraftRow = Omit<VolumeRow, 'imageFile' | 'imagePreview'>
+
+interface MangaBatchDraft {
+  series: SeriesFields
+  prices: PriceFields
+  warehouseGroups: WarehouseGroup[]
+  tomos: TomoDraftRow[]
+}
+
 export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCost = false }: Props) {
   const [tab, setTab] = useState<Tab>('tomos')
 
-  const [series, setSeries] = useState<SeriesFields>({
+  // Borrador en localStorage (Joel 2026-08-05): protege el lote completo si
+  // algo interrumpe la sesión antes de guardar. Siempre alta — este modal no
+  // tiene modo edición. `imageFile`/`imagePreview` de cada tomo se excluyen
+  // (File no serializa, imagePreview es un blob URL que muere al recargar).
+  const { draft, saveDraft, clearDraft } = useFormDraft<MangaBatchDraft>({ key: 'tadaima-manga-batch-draft' })
+
+  const [series, setSeries] = useState<SeriesFields>(() => draft?.series ?? {
     nombre: '', editorial: '', genero: '', precioPublico: '', margenPct: '30',
   })
-  const [prices, setPrices] = useState<PriceFields>({
+  const [prices, setPrices] = useState<PriceFields>(() => draft?.prices ?? {
     price1: '', price2: '', price3: '', price4: '', price5: '',
   })
 
   // Inventory: tienda groups, each with per-tomo quantities
-  const [warehouseGroups, setWarehouseGroups] = useState<WarehouseGroup[]>([])
+  const [warehouseGroups, setWarehouseGroups] = useState<WarehouseGroup[]>(() => draft?.warehouseGroups ?? [])
   const [addWarehouseId, setAddWarehouseId] = useState<number | ''>('')
 
-  const [tomos, dispatch] = useReducer(tomoReducer, [makeRow()])
+  const [tomos, dispatch] = useReducer(tomoReducer, draft?.tomos, (restored): VolumeRow[] =>
+    restored && restored.length > 0
+      // Cualquier fila que quedó 'loading' a medio request no puede seguir
+      // así — el request murió con la recarga, o quedaría con spinner fijo.
+      ? restored.map((t): VolumeRow => ({ ...t, status: t.status === 'loading' ? 'idle' : t.status }))
+      : [makeRow()]
+  )
   const [submitting, setSubmitting] = useState(false)
+
+  useEffect(() => {
+    if (draft) toast.info('Se restauró un borrador sin guardar de tu última sesión.')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    saveDraft({
+      series, prices, warehouseGroups,
+      tomos: tomos.map(({ imageFile: _imageFile, imagePreview: _imagePreview, ...rest }) => rest),
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [series, prices, warehouseGroups, tomos])
+
+  // Abandono deliberado (Cancelar/X/fondo): limpia el borrador para no
+  // insistir la próxima vez que abran "Alta de Tomos".
+  const handleDismiss = () => {
+    clearDraft()
+    onClose()
+  }
 
   // ── costo = precio × (1 − margen/100) ─────────────────────────────────────
   const costoReal = (() => {
@@ -322,14 +365,14 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
     }
 
     setSubmitting(false)
-    if (!anyError) { onSuccess(); onClose() }
-  }, [canSave, series, prices, warehouseGroups, tomos, onSuccess, onClose])
+    if (!anyError) { clearDraft(); onSuccess(); onClose() }
+  }, [canSave, series, prices, warehouseGroups, tomos, onSuccess, onClose, clearDraft])
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={handleDismiss} />
 
       <div
         className="relative w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-[32px] flex flex-col shadow-2xl"
@@ -346,7 +389,7 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
               <p className="text-xs" style={{ color: T.textSecondary }}>Librería · Manga Nacional · Lote</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 rounded-xl transition-colors" style={SECONDARY_BUTTON}>
+          <button onClick={handleDismiss} className="p-2 rounded-xl transition-colors" style={SECONDARY_BUTTON}>
             <X size={20} style={{ color: T.textSecondary }} />
           </button>
         </div>
@@ -703,7 +746,7 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
             {pendingCount > 0 && <span>{pendingCount} pendiente{pendingCount !== 1 ? 's' : ''}</span>}
           </div>
           <div className="flex gap-3">
-            <button onClick={onClose} className="px-6 py-2.5 rounded-full text-sm font-bold transition-all" style={SECONDARY_BUTTON}>
+            <button onClick={handleDismiss} className="px-6 py-2.5 rounded-full text-sm font-bold transition-all" style={SECONDARY_BUTTON}>
               Cancelar
             </button>
             <button
