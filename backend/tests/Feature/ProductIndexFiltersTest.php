@@ -9,6 +9,8 @@ use App\Models\Inventory;
 use App\Models\Product;
 use App\Models\ProductCategory;
 use App\Models\ProductPromotion;
+use App\Models\Sale;
+use App\Models\SaleItem;
 use App\Models\Store;
 use App\Models\User;
 use App\Models\Warehouse;
@@ -82,6 +84,16 @@ class ProductIndexFiltersTest extends TestCase
             ->assertOk()->json('data');
 
         return collect($json)->pluck('id')->sort()->values()->all();
+    }
+
+    /** Igual que ids() pero preserva el orden que regresa el backend (sin sort()). */
+    private function orderedIds(string $qs): array
+    {
+        $json = $this->actingAs($this->admin)
+            ->getJson("/api/v1/products?per_page=0{$qs}")
+            ->assertOk()->json('data');
+
+        return collect($json)->pluck('id')->values()->all();
     }
 
     public function test_filtro_no_cost(): void
@@ -197,6 +209,73 @@ class ProductIndexFiltersTest extends TestCase
         $this->assertCount(4, $resp['items']);
         $this->assertSame(4, $resp['pagination']['total']);
         $this->assertSame(1, $resp['pagination']['last_page']);
+    }
+
+    /**
+     * Orden default (Joel 2026-08-05): productos sin stock SIEMPRE al final,
+     * sin eliminarlos. Setup ya tiene 1 sin stock (sinCostoAgotado) y 3 con
+     * stock (ids ascendentes por orden de creación: sinCostoConStock,
+     * conCostoPocoStock, conCostoMuchoStock) — el tiebreak es id asc.
+     */
+    public function test_orden_default_sin_stock_al_final(): void
+    {
+        $this->assertSame(
+            [
+                $this->sinCostoConStock->id,
+                $this->conCostoPocoStock->id,
+                $this->conCostoMuchoStock->id,
+                $this->sinCostoAgotado->id,
+            ],
+            $this->orderedIds(''),
+        );
+    }
+
+    public function test_orden_no_cambia_el_total_solo_el_orden(): void
+    {
+        $resp = $this->actingAs($this->admin)
+            ->getJson('/api/v1/products?with_meta=1&per_page=0')
+            ->assertOk()->json('data');
+
+        $this->assertSame(4, $resp['pagination']['total']);
+        $this->assertCount(4, $resp['items']);
+    }
+
+    public function test_sort_top_tambien_manda_sin_stock_al_final(): void
+    {
+        // Producto agotado pero con MÁS ventas recientes que cualquier otro.
+        $agotadoTopVentas = $this->makeProduct('Agotado Top Ventas', 5.0, 0);
+        $sale = Sale::create([
+            'store_id' => $this->store->id,
+            'user_id' => $this->admin->id,
+            'subtotal' => 100, 'discount' => 0, 'total' => 100,
+            'status' => Sale::STATUS_COMPLETED,
+            'created_at' => now(),
+        ]);
+        SaleItem::create([
+            'sale_id' => $sale->id, 'product_id' => $agotadoTopVentas->id,
+            'quantity' => 10, 'price' => 10, 'total' => 100, 'cost' => 5.0,
+        ]);
+
+        $ordered = $this->orderedIds('&sort=top');
+        $posAgotadoTopVentas = array_search($agotadoTopVentas->id, $ordered, true);
+
+        // Los 3 con stock (aunque vendan 0 en 30 días) van ANTES que el
+        // agotado, pese a `sort=top` y a que el agotado vendió más.
+        foreach ([$this->sinCostoConStock, $this->conCostoPocoStock, $this->conCostoMuchoStock] as $conStock) {
+            $this->assertLessThan(
+                $posAgotadoTopVentas,
+                array_search($conStock->id, $ordered, true),
+                "Producto con stock ({$conStock->name}) debe quedar antes que el agotado, pese a sort=top",
+            );
+        }
+
+        // Dentro del grupo sin stock, el ranking por ventas se conserva: el
+        // agotado que sí vendió queda antes que el agotado sin ventas.
+        $this->assertLessThan(
+            array_search($this->sinCostoAgotado->id, $ordered, true),
+            $posAgotadoTopVentas,
+            'Entre agotados, el que vendió más sigue rankeando arriba',
+        );
     }
 
     private function makeAdmin(): User

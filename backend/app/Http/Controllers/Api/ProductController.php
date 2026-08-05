@@ -120,16 +120,20 @@ class ProductController extends Controller
         // con tienda = exhibición + bodega de esa tienda; sin tienda = todo.
         $threshold = max(1, (int) $request->get('threshold', 10));
 
+        // Mismo SQL de stock usado por el filtro out_of_stock/low_stock de abajo
+        // Y por el ORDER BY de más adelante (productos sin stock al final,
+        // Joel 2026-08-05) — se calcula una sola vez para no duplicarlo.
+        $stockSql = $storeId
+            ? 'COALESCE((SELECT SUM(i.quantity) FROM inventory i JOIN warehouses w ON w.id = i.warehouse_id WHERE i.product_id = products.id AND w.store_id = ?), 0)'
+            : 'COALESCE((SELECT SUM(i.quantity) FROM inventory i WHERE i.product_id = products.id), 0)';
+        $bind = $storeId ? [$storeId] : [];
+
         if ($request->boolean('no_cost')) {
             // Paridad con el chip del front: NULL O <= 0 cuentan como "sin costo"
             $query->where(fn ($q) => $q->whereNull('cost')->orWhere('cost', '<=', 0));
         }
 
         if ($request->boolean('out_of_stock') || $request->boolean('low_stock')) {
-            $stockSql = $storeId
-                ? 'COALESCE((SELECT SUM(i.quantity) FROM inventory i JOIN warehouses w ON w.id = i.warehouse_id WHERE i.product_id = products.id AND w.store_id = ?), 0)'
-                : 'COALESCE((SELECT SUM(i.quantity) FROM inventory i WHERE i.product_id = products.id), 0)';
-            $bind = $storeId ? [$storeId] : [];
             if ($request->boolean('out_of_stock')) {
                 $query->whereRaw("{$stockSql} = 0", $bind);
             } else {
@@ -167,6 +171,15 @@ class ProductController extends Controller
             ]);
         }
 
+        // Productos sin stock (0) SIEMPRE al final, sin importar el modo de
+        // orden (Joel 2026-08-05: tras el import Macro solo ~1,541 de ~14k
+        // productos tienen stock real, y sin este orden salían mezclados al
+        // inicio). Se aplica ANTES de cualquier otro criterio para que gane
+        // incluso sobre "más vendidos" — un producto agotado no se antepone
+        // a uno con stock aunque venda más. No se filtra/elimina nada, solo
+        // se reordena.
+        $query->orderByRaw("({$stockSql}) = 0", $bind);
+
         // Order by top sellers (last 30 days) when ?sort=top. The withCount
         // counts sale_items joined within the last 30 days; we order desc by
         // that count, then by id desc as a stable tie-breaker (newest wins).
@@ -177,6 +190,12 @@ class ProductController extends Controller
             $query->withCount(['saleItems as recent_sales_count' => function ($q) use ($since) {
                 $q->whereHas('sale', fn ($sq) => $sq->where('created_at', '>=', $since));
             }])->orderByDesc('recent_sales_count')->orderByDesc('id');
+        } else {
+            // Tiebreak estable (2026-08-05): antes no había NINGÚN orden
+            // secundario en el listado default, lo que hacía la paginación
+            // server-side no determinística con 10k+ filas (una fila podía
+            // repetirse o saltarse entre páginas).
+            $query->orderBy('id', 'asc');
         }
 
         $perPage = (int) $request->get('per_page', 100);
