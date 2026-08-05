@@ -4,6 +4,51 @@
 
 ---
 
+### Sesión 2026-08-05 — Productos: sin stock siempre al final del listado — DEPLOYADO rev `tadaima-00161-m6k`
+
+Joel: tras el import Macro, de los ~13,965 productos solo ~1,541 llegaron
+con stock real. La página Productos no tenía **ningún** `ORDER BY` por
+default, así que Postgres devolvía las filas en el orden físico que le
+convenía, mezclando productos sin stock al inicio. Pidió: no borrar los
+productos sin stock, que salgan al final en cualquier vista (confirmado
+explícitamente que aplica también a `?sort=top`/Más Vendidos — un producto
+agotado por vender mucho igual se va al final), y que la carga siga rápida.
+Commit `b1a9a9f`.
+
+**`ProductController::index`** (`backend/app/Http/Controllers/Api/ProductController.php`):
+- El SQL de stock que ya existía para el filtro `out_of_stock`/`low_stock`
+  se hoisteó (se calcula una sola vez, antes de los filtros) para
+  reutilizarlo también como criterio de orden — sin duplicar el SQL.
+- Nuevo `orderByRaw` de stock=0 al final, aplicado ANTES que cualquier otro
+  criterio (incluido el branch de `?sort=top`) — un producto agotado no se
+  antepone a uno con stock aunque venda más.
+- Tiebreak `id asc` nuevo en el listado default: antes no había ningún
+  orden secundario, lo que hacía la paginación server-side no
+  determinística con 10k+ filas (una fila podía repetirse o saltarse entre
+  páginas).
+- Se descartaron otras pantallas candidatas: el catálogo público (Tienda
+  Online) ya excluye productos sin stock globalmente
+  (`sellableStockExists()`), y el modal de Caja (`ProductCatalogModal.tsx`)
+  ya resuelve esto client-side desde 2026-05-30 sobre su pool acotado.
+
+QA: 3 tests nuevos en `ProductIndexFiltersTest.php` (orden mixto stock
+primero, total sin cambio, `sort=top` respeta stock-primero incluso con
+más ventas) — suite completa 410 PHPUnit en verde, sin regresiones.
+`EXPLAIN ANALYZE` directo contra la Supabase de prod: el nuevo subquery de
+orden usa el índice `inventory_product_id_warehouse_id_unique` y agrega
+~30ms sobre las 13,965 filas — no es el cuello de botella. Smoke en prod:
+`GET /products?per_page=20&with_meta=1` — primera página 100% con stock,
+página 699 (última) 100% sin stock, total sigue en 13,965.
+
+**Hallazgo incidental (no corregido, fuera de alcance de este fix):** el
+mismo smoke reveló que `GET /products` con relaciones (categoría, proveedor,
+precio, imágenes, promos) tarda ~3.5-3.8s consistentemente — confirmado
+que YA existía en la revisión anterior (`tadaima-00160-jhm`, antes de este
+cambio) vía logs de Cloud Run, así que no es una regresión de este fix.
+Sospecha: múltiples round-trips secuenciales al pooler de Supabase por los
+varios `with()`/`withSum()`/`withExists()` de la query (cada uno una
+consulta aparte). Posible tarea futura si Joel la prioriza.
+
 ### Sesión 2026-08-04 (2) — Alta de producto sin SKU: ya no bloquea ni pierde datos — DEPLOYADO rev `tadaima-00160-jhm`
 
 Reporte de cliente vía Joel: al dar de alta un producto sin llenar el SKU, el
