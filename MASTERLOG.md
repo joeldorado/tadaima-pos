@@ -4,6 +4,46 @@
 
 ---
 
+### Sesión 2026-08-05 (2) — Perf: GET /products de ~3.7s a ~2.1s — DEPLOYADO rev `tadaima-00164-7ql`
+
+Joel pidió investigar el hallazgo incidental de la sesión anterior (latencia
+~3.5-3.8s en `GET /products`). Instrumentación temporal (`?debug_timing=1`,
+opt-in, ya removida) reveló la causa real: la llamada ejecutaba **28
+queries**, de las cuales **20 eran IDÉNTICAS** — la misma consulta de roles
+del usuario autenticado, repetida una vez POR CADA producto de la página.
+Commit `71093d2`.
+
+**Causa raíz** (`app/Models/User.php`): `getRolesAttribute()` es un
+accessor plano (`$this->roles`), NO una relación Eloquent — a diferencia de
+las relaciones, Eloquent no cachea accessors automáticamente. Cada
+`hasRole()`/`isAdminRole()`/`canViewCost()` volvía a pegarle a la BD.
+`ProductResource::toArray()` llama `$user->hasRole([...])` una vez POR FILA
+al serializar la colección → 20 filas = 20 queries idénticas, ~90ms cada una
+(el "impuesto" fijo de round-trip al pooler de Supabase en
+`aws-0-us-east-1.pooler.supabase.com` desde Cloud Run `us-central1`) — casi
+la mitad del tiempo total de la respuesta.
+
+**Fix:** `getRolesAttribute()` memoiza en `$rolesCache`, una propiedad de
+instancia (dura solo mientras vive el objeto `User` de esa request, no un
+caché externo/compartido). Verificado que no introduce datos stale:
+`assignRole()`/`removeRole()` (los únicos dos endpoints que mutan
+`model_has_roles`) ya devuelven/ahora devuelven `$user->fresh()` — una
+instancia NUEVA sin caché — así que nunca sirven el estado de antes del
+cambio.
+
+**Resultado medido en prod:** `GET /products?per_page=20&with_meta=1` bajó
+de ~3.7-3.9s (revisión anterior) a ~2.0-2.2s consistente — ~45% menos.
+Total sigue en 13,965, orden por stock (sesión anterior) intacto. El
+tiempo restante es esperable: ~9 queries × ~90-95ms de round-trip fijo al
+pooler (categoría, proveedor, precios, imágenes, método de pago, promos,
+roles, conteo y query principal) — mismo piso que ya mostraba
+`/products/stats` (~1.6-2.3s). Reducir ESE piso (menos round-trips o
+acercar la latencia de red al pooler) queda para otra sesión si se prioriza.
+
+QA: 3 tests nuevos en `UserRoleAssignmentTest.php` (memoización dentro de
+la misma instancia, `->fresh()` evita servir caché stale, `removeRole` HTTP
+devuelve roles actualizados) — suite completa 413 PHPUnit en verde.
+
 ### Sesión 2026-08-05 — Productos: sin stock siempre al final del listado — DEPLOYADO rev `tadaima-00161-m6k`
 
 Joel: tras el import Macro, de los ~13,965 productos solo ~1,541 llegaron
