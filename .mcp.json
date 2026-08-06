@@ -8,6 +8,10 @@
         "TADAIMA_API_TOKEN": "${TADAIMA_API_TOKEN}"
       }
     },
+    "tadaima-docs": {
+      "command": "node",
+      "args": ["mcp/docs/dist/index.js"]
+    },
     "supabase": {
       "type": "http",
       "url": "https://mcp.supabase.com/mcp?project_ref=yndrdteeuljxsovvgyue&features=docs%2Caccount%2Cdatabase%2Cdebugging%2Cdevelopment%2Cfunctions%2Cbranching"

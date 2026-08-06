@@ -1,53 +1,12 @@
-import { test, expect, type Page, type BrowserContext } from '@playwright/test'
-
-const BASE_URL   = 'http://localhost:5173'
-const API_URL    = 'http://localhost:8000/api/v1'
-const ADMIN_EMAIL    = 'admin@tadaima.mx'
-const ADMIN_PASSWORD = 'password'
-const CASHIER_EMAIL    = 'cajero@test.com'
-const CASHIER_PASSWORD = 'password123'
-const MANAGER_EMAIL    = 'gerente@test.com'
-const MANAGER_PASSWORD = 'password123'
-const TOKEN_KEY  = 'tadaima_token'
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-async function apiLogin(email: string, password: string): Promise<string> {
-  const res = await fetch(`${API_URL}/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  })
-  const json = await res.json() as { data: { token: string } }
-  return json.data.token
-}
-
-async function seedAuth(context: BrowserContext, email = ADMIN_EMAIL, password = ADMIN_PASSWORD) {
-  const token = await apiLogin(email, password)
-  await context.addInitScript((args) => {
-    localStorage.setItem(args.key, args.token)
-  }, { key: TOKEN_KEY, token })
-  return token
-}
-
-async function apiReq(method: string, token: string, path: string, body?: Record<string, unknown>) {
-  const res = await fetch(`${API_URL}${path}`, {
-    method,
-    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', Authorization: `Bearer ${token}` },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  })
-  return res.json()
-}
-
-async function waitReady(page: Page) {
-  await page.waitForLoadState('networkidle')
-}
-
-function extractId(res: unknown): number {
-  const r = res as Record<string, unknown>
-  const data = r['data'] as Record<string, unknown> | undefined
-  return (data?.['id'] ?? r['id'] ?? 0) as number
-}
+import { test, expect, type BrowserContext } from '@playwright/test'
+import {
+  BASE_URL, API_URL,
+  ADMIN_EMAIL, ADMIN_PASSWORD,
+  CASHIER_EMAIL, CASHIER_PASSWORD,
+  MANAGER_EMAIL, MANAGER_PASSWORD,
+  TOKEN_KEY,
+  apiLogin, seedAuth, apiReq, waitReady, extractId,
+} from './helpers'
 
 // ─── TC-01 LOGIN ──────────────────────────────────────────────────────────────
 
