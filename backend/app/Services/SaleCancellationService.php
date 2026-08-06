@@ -55,9 +55,20 @@ class SaleCancellationService
         // Regla de negocio (Joel 2026-06-10): ventas pagadas con tarjeta NO se
         // cancelan — la comisión de terminal ya se pagó y la tienda pierde.
         // El reverso de un cobro con tarjeta se maneja fuera del sistema.
-        $this->assertNoCardPayments($sale->payments()->with('paymentMethod')->get(), 'venta');
+        $payments = $sale->payments()->with('paymentMethod')->get();
+        $this->assertNoCardPayments($payments, 'venta');
 
-        return DB::transaction(function () use ($sale, $itemsToCancel, $reasonCode, $reasonText, $cancelledBy, $activeSessionId) {
+        // Pago mixto (2026-08-05): del cajón solo sale la porción pagada con
+        // métodos cash-like — lo transferido nunca entró al cajón, así que su
+        // reverso va por el banco. Sin pagos registrados (legacy) o método
+        // borrado, ratio 1 conserva el comportamiento histórico.
+        $totalPaid = (float) $payments->sum('amount');
+        $cashPaid  = (float) $payments
+            ->filter(fn ($p) => $p->paymentMethod?->isCashLike() ?? true)
+            ->sum('amount');
+        $cashRatio = $totalPaid > 0 ? $cashPaid / $totalPaid : 1.0;
+
+        return DB::transaction(function () use ($sale, $itemsToCancel, $reasonCode, $reasonText, $cancelledBy, $activeSessionId, $cashRatio) {
             $sale->load('items.product');
 
             $isFullCancel = empty($itemsToCancel);
@@ -130,10 +141,15 @@ class SaleCancellationService
             }
             $sale->save();
 
-            // Salida de caja para el reverso de dinero.
+            // Salida de caja para el reverso de dinero — solo la porción
+            // efectivo (prorrateada en cancelaciones parciales de venta mixta).
+            $cashRefund = round($amountRefunded * $cashRatio, 2);
+            $refundNote = $cashRatio < 1.0
+                ? sprintf(' (efectivo $%.2f de $%.2f)', $cashRefund, $amountRefunded)
+                : '';
             $cashMovement = $this->createRefundCashMovement(
-                amount: $amountRefunded,
-                description: "Cancelación venta #{$sale->id} · {$reasonCode}",
+                amount: $cashRefund,
+                description: "Cancelación venta #{$sale->id} · {$reasonCode}{$refundNote}",
                 sessionId: $activeSessionId,
             );
 
@@ -163,6 +179,7 @@ class SaleCancellationService
                     'mode'             => $cancellation->mode,
                     'reason_code'      => $reasonCode,
                     'amount_refunded'  => $amountRefunded,
+                    'cash_refunded'    => $cashRefund,
                     'items_count'      => count($snapshot),
                     'cash_movement_id' => $cashMovement?->id,
                 ],
@@ -207,7 +224,7 @@ class SaleCancellationService
         $this->assertNoCardPayments($paymentsToCheck, 'preventa');
 
         return DB::transaction(function () use ($order, $mode, $reasonCode, $reasonText, $cancelledBy, $activeSessionId) {
-            $order->load(['items.product', 'payments']);
+            $order->load(['items.product', 'payments.paymentMethod']);
             $wasDelivered = $order->status === PreSaleOrder::STATUS_DELIVERED;
 
             $snapshot       = [];
@@ -246,11 +263,16 @@ class SaleCancellationService
                 }
             }
 
+            // Pago mixto (2026-08-05): del cajón solo sale lo pagado con
+            // métodos cash-like — anticipos por transferencia se reversan por
+            // el banco, nunca entraron al cajón.
+            $cashRefund = 0.0;
             if ($mode === SaleCancellation::MODE_LIQUIDATION_ROLLBACK) {
                 // Reversa SOLO el último payment (la liquidación que se acaba de hacer).
-                $lastPayment = $order->payments()->orderByDesc('id')->first();
+                $lastPayment = $order->payments()->with('paymentMethod')->orderByDesc('id')->first();
                 if ($lastPayment) {
                     $amountRefunded = (float) $lastPayment->amount;
+                    $cashRefund     = ($lastPayment->paymentMethod?->isCashLike() ?? true) ? $amountRefunded : 0.0;
                     $lastPayment->delete();
                 }
                 $order->status               = PreSaleOrder::STATUS_READY;
@@ -258,6 +280,9 @@ class SaleCancellationService
             } else {
                 // FULL: reversa todos los payments y cancela el folio.
                 $amountRefunded = (float) $order->payments->sum('amount');
+                $cashRefund     = (float) $order->payments
+                    ->filter(fn ($p) => $p->paymentMethod?->isCashLike() ?? true)
+                    ->sum('amount');
                 $order->payments()->delete();
                 $order->status               = PreSaleOrder::STATUS_CANCELLED;
                 $order->cancellation_status  = PreSaleOrder::CANCELLATION_FULL;
@@ -265,10 +290,13 @@ class SaleCancellationService
             $order->last_cancelled_at = now();
             $order->save();
 
-            $cashMovement = $amountRefunded > 0
+            $refundNote = $cashRefund < $amountRefunded
+                ? sprintf(' (efectivo $%.2f de $%.2f)', $cashRefund, $amountRefunded)
+                : '';
+            $cashMovement = $cashRefund > 0
                 ? $this->createRefundCashMovement(
-                    amount: $amountRefunded,
-                    description: "Cancelación preventa {$order->code} · {$mode} · {$reasonCode}",
+                    amount: $cashRefund,
+                    description: "Cancelación preventa {$order->code} · {$mode} · {$reasonCode}{$refundNote}",
                     sessionId: $activeSessionId,
                 )
                 : null;

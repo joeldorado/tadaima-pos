@@ -10,6 +10,7 @@ import {
   TriangleAlert, PackageX, Bookmark, Calendar, PackageCheck, ClipboardList, Banknote,
   Truck, CheckCircle2, Printer, History, Receipt, RefreshCw,
   ShoppingCart, Crown, Circle, Trash2, XCircle, Clock, Bell, Scissors, MoreVertical,
+  Split,
 } from "lucide-react";
 import type { Product, PriceLevel } from "@/types/pos";
 import { toCartProduct } from "@/lib/productAdapter";
@@ -58,6 +59,7 @@ import { isValidEmail, isValidPhone } from "@/lib/validation";
 import { PRICE_LEVEL_LABELS, PRICE_LEVEL_COLORS, PRICE_LEVEL_RGB } from "@/lib/priceLevels";
 import type { CashSession, CashRegisterInfo, PaymentMethod as ApiPaymentMethod, PreSaleCatalog, PreSaleOrder, PreSaleOrderItem, SaleDetail, Terminal, ExternalCardLookup } from "@tadaima/api";
 import { buildPaymentSummary } from "@/lib/paymentSummary";
+import { computeMixedSplit } from "@/lib/mixedPayment";
 import { computeRegularChargeAmount, discountPct } from "@/lib/promo";
 import { newLineId, recalculateSale, type LineDiscount } from "@/lib/saleCalc";
 import { LineDiscountModal } from "@/components/sell/LineDiscountModal";
@@ -99,7 +101,10 @@ async function loadTicketLogo(): Promise<string | null> {
 // ─── Types ────────────────────────────────────────────────────────────────────
 // `Product` y `PriceLevel` viven en @/types/pos para que el adaptador y el
 // sincronizador del carrito (lib puro, testeable) los puedan importar.
-type PaymentMethod = "Efectivo" | "Dólares" | "Tarjeta" | "Transferencia";
+// "Mixto" = pago dividido Efectivo + Transferencia en la misma venta (Joel
+// 2026-08-05, patrón split-por-monto): el cajero captura la transferencia y el
+// efectivo es el resto. Solo ventas regulares — preventas usan un solo método.
+type PaymentMethod = "Efectivo" | "Dólares" | "Tarjeta" | "Transferencia" | "Mixto";
 
 interface Customer {
   id: string;
@@ -174,6 +179,9 @@ interface Mesa {
   // del dropdown — el cobro siempre es Efectivo, y el cajero declara cuántos
   // USD entraron físicamente para calcular el faltante en pesos.
   cashReceivedUsd?: string;
+  // Monto por transferencia cuando paymentMethod === "Mixto" (split por monto:
+  // el efectivo a cobrar es total − transferAmount). Se limpia al salir de Mixto.
+  transferAmount?: string;
   // true cuando el cajero activó "+ Dólares" en esta mesa. Default false → cada
   // venta nueva inicia en pesos (decisión Joel 2026-05-28).
   usdPrimaryMode?: boolean;
@@ -362,6 +370,7 @@ const makeMesa = (n?: number): Mesa => {
     absorbCommission: true, // tienda siempre absorbe — nunca se cobra al cliente
     cashReceived: "",
     cashReceivedUsd: "",
+    transferAmount: "",
     usdPrimaryMode: false,
     usdApplied: false,
   };
@@ -1016,6 +1025,12 @@ export function SellPage() {
     }));
   }, [activeMesa.id, updMesa]);
 
+  // Pago Mixto: monto por transferencia (por mesa, igual que cashReceived).
+  const transferAmount = activeMesa?.transferAmount ?? "";
+  const setTransferAmount = useCallback((v: string) => {
+    updMesa(activeMesa?.id ?? "", m => ({ ...m, transferAmount: v }));
+  }, [activeMesa?.id, updMesa]);
+
   // (usdPrimaryMode quedó legacy 2026-07-24: el flujo USD vive en la
   //  CALCULADORA — UsdCalculatorModal — y ya no hay vista de moneda que
   //  alternar. El campo de la mesa muere en silencio, como otros legacy.)
@@ -1078,6 +1093,8 @@ export function SellPage() {
   // true solo cuando el monto del input de pesos se TECLEÓ (los presets no
   // pasan por onChange) — así el blur no re-loguea lo que ya logueó el preset.
   const cashTypedRef = useRef(false);
+  // Mismo patrón para el input de transferencia del pago Mixto.
+  const transferTypedRef = useRef(false);
 
   // Menú ⋮ por línea del carrito (Joel 2026-07-30): Desc./Borrar se esconden
   // en un dropdown para reducir el ancho de la fila. Uno abierto a la vez.
@@ -1910,6 +1927,15 @@ export function SellPage() {
       );
       return;
     }
+    // Mixto es solo para ventas regulares: los anticipos de preventa viajan
+    // con UN payment_method_id (createPreSaleOrder) — no hay dónde partirlos.
+    if (pm === "Mixto" && (hasPreventaInCart || activeMesa?.loadedPreSaleOrderId != null)) {
+      toast.error(
+        "Las preventas no admiten pago mixto · usa Efectivo o Transferencia.",
+        { duration: 5500 }
+      );
+      return;
+    }
     // Log de pagos: deja rastro del cambio de método en la ventanita.
     if (pm !== activeMesa?.paymentMethod) pushPayLog(`Método → ${pm}`, "info");
     // Tarjeta y Transferencia no usan campo de efectivo recibido — limpiarlo para
@@ -1918,6 +1944,12 @@ export function SellPage() {
     if (pm === "Tarjeta" || pm === "Transferencia") {
       setCashReceived("");
     }
+    // Mixto no admite dólares (el esperado USD del corte no distingue la
+    // porción efectivo) — se limpian por si venían de Efectivo.
+    if (pm === "Mixto") {
+      setCashReceivedUsd("");
+      setUsdApplied(false);
+    }
     if (pm === "Tarjeta") {
       setShowTerminalModal(true);
     } else {
@@ -1925,6 +1957,8 @@ export function SellPage() {
         ...m,
         paymentMethod: pm,
         selectedTerminalId: undefined,
+        // El monto de transferencia solo vive mientras el método sea Mixto.
+        transferAmount: pm === "Mixto" ? (m.transferAmount ?? "") : "",
         items: repriceForSocio(m.items, (m.customerSocioEligible && !m.isPreventa) ? "b" : "a"),
       }));
     }
@@ -1936,6 +1970,7 @@ export function SellPage() {
       ...m,
       paymentMethod: "Tarjeta",
       selectedTerminalId: terminalId,
+      transferAmount: "",
       // Tarjeta bancaria → precio normal (la tienda absorbe la comisión).
       items: repriceForSocio(m.items, "a"),
     }));
@@ -2130,6 +2165,7 @@ export function SellPage() {
       isPreventa: false, loadedPreSaleOrderId: undefined, loadedPreSaleOrderCode: undefined,
       cashReceived: "",
       cashReceivedUsd: "",
+      transferAmount: "",
       usdPrimaryMode: false,
       usdApplied: false,
       payLog: [],
@@ -2440,6 +2476,15 @@ export function SellPage() {
   }, [activeMesa.loadedPreSaleOrderId, activeMesa.isPreventa, activeMesa.items, totalDeposit, totalBeforeComm, discountAmt]);
     
   const totalUSD       = tc > 0 ? currentPayAmount / tc : 0;
+
+  // Pago Mixto: split transferencia/efectivo contra el total actual. El cambio
+  // y el gate de Cobrar se calculan contra cashPortion, no contra el total.
+  const isMixtoPay = activeMesa?.paymentMethod === "Mixto";
+  const mixtoBlocked = hasPreventaInCart || activeMesa?.loadedPreSaleOrderId != null;
+  const mixedSplit = useMemo(
+    () => computeMixedSplit(currentPayAmount, transferAmount),
+    [currentPayAmount, transferAmount],
+  );
 
   // Bloqueo por método incompatible (QA crítico 2026-06-08): si CUALQUIER item
   // del carrito no acepta el método actual (solo-efectivo con Tarjeta, o
@@ -3965,15 +4010,27 @@ export function SellPage() {
       const customerPhoneSnapshot = activeMesa.customerPhone;
       const customerEmailSnapshot = activeMesa.customerEmail;
       const payMethodSnapshot = activeMesa.paymentMethod;
-      // Solo Efectivo usa campo recibido (incluye USD híbrido convertido a MXN).
-      // Tarjeta/Transferencia siempre 0 (defensa por si quedó algo).
-      const isCashPay = activeMesa.paymentMethod === "Efectivo";
-      const receivedUsdSnapshot = isCashPay && usdAppliedRef.current ? (parseFloat(cashReceivedUsd) || 0) : 0;
+      // Pago Mixto: split contra el MISMO `total` del payload para que los 2
+      // renglones sumen exacto (el backend valida Σ payments == total ±0.01).
+      const mixedSnapshot = payMethodSnapshot === "Mixto"
+        ? computeMixedSplit(total, transferAmount)
+        : null;
+      if (payMethodSnapshot === "Mixto" && !mixedSnapshot?.valid) {
+        toast.error("Captura el monto de la transferencia para el pago mixto.");
+        return;
+      }
+      // Solo Efectivo/Mixto usan campo recibido (incluye USD híbrido en MXN;
+      // Mixto no admite USD). Tarjeta/Transferencia siempre 0 (defensa).
+      const isCashPay = payMethodSnapshot === "Efectivo" || mixedSnapshot != null;
+      const receivedUsdSnapshot = payMethodSnapshot === "Efectivo" && usdAppliedRef.current
+        ? (parseFloat(cashReceivedUsd) || 0) : 0;
       const receivedSnapshot    = isCashPay
         ? (parseFloat(cashReceived) || 0) + receivedUsdSnapshot * tc
         : 0;
-      // Cambio en MXN: receivedSnapshot ya está en pesos.
-      const changeSnapshot = receivedSnapshot > total ? receivedSnapshot - total : 0;
+      // Cambio en MXN contra lo que se cobra EN EFECTIVO: el total, o solo la
+      // porción efectivo cuando el pago es Mixto.
+      const cashDueSnapshot = mixedSnapshot?.valid ? mixedSnapshot.cashPortion : total;
+      const changeSnapshot = receivedSnapshot > cashDueSnapshot ? receivedSnapshot - cashDueSnapshot : 0;
 
       // Items reales (no preventa-catálogo, no folio cargado). En esta rama
       // (venta regular sin folio cargado) todos los items son regulares.
@@ -4003,12 +4060,20 @@ export function SellPage() {
         store_id: activeStore?.id ?? 0,
         register_session_id: cashSession?.id,
         ...(activeMesa.customerId ? { customer_id: Number(activeMesa.customerId) } : {}),
-        payments: [{
-          payment_method_id: paymentMethodId,
-          amount: total,
-          ...(activeMesa.paymentMethod === "Tarjeta" && activeMesa.selectedTerminalId
-            ? { terminal_id: activeMesa.selectedTerminalId } : {}),
-        }],
+        // Mixto → 2 renglones (efectivo + transferencia); el corte y los
+        // reportes ya agregan POR RENGLÓN de pago, así que solo la porción
+        // efectivo entra al "Debe haber" del cajón.
+        payments: mixedSnapshot?.valid
+          ? [
+              { payment_method_id: PM_IDS["Efectivo"]!, amount: mixedSnapshot.cashPortion },
+              { payment_method_id: PM_IDS["Transferencia"]!, amount: mixedSnapshot.transfer },
+            ]
+          : [{
+              payment_method_id: paymentMethodId,
+              amount: total,
+              ...(activeMesa.paymentMethod === "Tarjeta" && activeMesa.selectedTerminalId
+                ? { terminal_id: activeMesa.selectedTerminalId } : {}),
+            }],
         // Dólares físicos recibidos + TC usado (para Historial/Corte/Reporte).
         // receivedUsdSnapshot ya viene gateado por usdApplied (simulación no viaja).
         ...(receivedUsdSnapshot > 0 ? { cash_received_usd: receivedUsdSnapshot, exchange_rate: tc } : {}),
@@ -4040,6 +4105,13 @@ export function SellPage() {
         total,
         ...(discountAmt > 0 ? { discountAmount: discountAmt, subtotalBeforeDiscount: subtotal } : {}),
         paymentMethod: payMethodSnapshot,
+        // Desglose por método para el ticket (solo se pinta cuando hay >1).
+        ...(mixedSnapshot?.valid
+          ? { paymentBreakdown: [
+              { name: "Efectivo", amount: mixedSnapshot.cashPortion },
+              { name: "Transferencia", amount: mixedSnapshot.transfer },
+            ] }
+          : {}),
         customerName: customerNameSnapshot,
         ...(customerPhoneSnapshot ? { customerPhone: customerPhoneSnapshot } : {}),
         ...(customerEmailSnapshot ? { customerEmail: customerEmailSnapshot } : {}),
@@ -6337,24 +6409,79 @@ export function SellPage() {
                       Ahora vive como input secundario opcional dentro de Efectivo: el
                       cajero puede declarar USD físicos recibidos → suma como MXN al
                       total (vía TC) para calcular el faltante o cambio. */}
-                  {activeMesa.paymentMethod === "Efectivo" && (() => {
+                  {(activeMesa.paymentMethod === "Efectivo" || isMixtoPay) && (() => {
                     // Los dólares viven en la CALCULADORA (UsdCalculatorModal,
                     // pedido Joel 2026-07-24): aquí solo se escriben APLICADOS
                     // (el modal es la simulación). Se acabaron el toggle de
                     // moneda, los presets USD y el panel ámbar inline — el panel
                     // de cobro amontonaba letra chica que confundía al cajero.
+                    // Mixto reutiliza TODO este bloque: solo cambia el objetivo
+                    // del cambio/falta (la porción efectivo, no el total) y se
+                    // agrega el input de transferencia arriba. Sin dólares.
+                    const isMixto       = isMixtoPay;
+                    const cashTarget    = isMixto ? mixedSplit.cashPortion : currentPayAmount;
                     const receivedMxn   = parseFloat(cashReceived)    || 0;
-                    const appliedUsd    = usdApplied ? (parseFloat(cashReceivedUsd) || 0) : 0;
+                    const appliedUsd    = !isMixto && usdApplied ? (parseFloat(cashReceivedUsd) || 0) : 0;
                     const usdAsMxn      = appliedUsd * tc;
                     const totalReceived = receivedMxn + usdAsMxn;
-                    const cambio        = totalReceived - currentPayAmount;
-                    const faltaCubrir   = Math.max(0, currentPayAmount - totalReceived);
+                    const cambio        = totalReceived - cashTarget;
+                    const faltaCubrir   = Math.max(0, cashTarget - totalReceived);
                     // Equivalente en USD (chiquito, bajo el número MXN grande).
                     const cambioUsd = tc > 0 && cambio > 0      ? cambio / tc      : 0;
                     const faltaUsd  = tc > 0 && faltaCubrir > 0 ? faltaCubrir / tc : 0;
 
                     return (
                       <div className="flex flex-col gap-2 flex-1 min-w-0">
+
+                        {/* ── TRANSFERENCIA (solo Mixto) — el cajero captura lo
+                            transferido; el resto se cobra en efectivo abajo. */}
+                        {isMixto && (
+                          <div className="flex flex-col gap-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="flex items-center gap-2 text-[11px] font-black uppercase tracking-widest" style={{ color: TLO }}>
+                                Transferencia
+                              </span>
+                              {mixedSplit.valid && (
+                                <span className="text-[12px] font-black uppercase tracking-wider text-emerald-400 tabular-nums">
+                                  Efectivo: {fmt(mixedSplit.cashPortion)}
+                                </span>
+                              )}
+                            </div>
+                            <div className="relative">
+                              <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-xl pointer-events-none" style={{ color: "var(--td-placeholder)" }}>$</span>
+                              <input
+                                type="number" min="0" step="0.01"
+                                value={transferAmount}
+                                onChange={e => { setTransferAmount(e.target.value); transferTypedRef.current = true; }}
+                                placeholder="0.00"
+                                data-testid="mixto-transfer-input"
+                                className="w-full text-center rounded-xl py-2 pl-10 pr-4 text-2xl font-black focus:outline-none transition-all tabular-nums"
+                                style={{ background: "var(--td-input-bg)", border: "2px solid var(--td-input-border)", color: "var(--td-input-text)" }}
+                                onFocus={e => { e.currentTarget.style.borderColor = "rgba(16,185,129,0.55)"; }}
+                                onBlur={e => {
+                                  e.currentTarget.style.borderColor = "var(--td-input-border)";
+                                  if (transferTypedRef.current) {
+                                    transferTypedRef.current = false;
+                                    const v = parseFloat(e.currentTarget.value) || 0;
+                                    if (v > 0) pushPayLog(`Transferencia $${v.toLocaleString("es-MX")}`, "info");
+                                  }
+                                }}
+                              />
+                            </div>
+                            {mixedSplit.reason === "empty" && (
+                              <p className="text-[11px] font-bold" style={{ color: TLO }}>
+                                Captura cuánto transfirió el cliente — el resto se cobra en efectivo.
+                              </p>
+                            )}
+                            {!mixedSplit.valid && mixedSplit.reason !== "empty" && (
+                              <p className="text-[11px] font-bold text-red-400">
+                                {mixedSplit.reason === "exceeds"
+                                  ? "Debe ser menor al total — si todo es por transferencia, usa el método Transferencia."
+                                  : "El monto transferido debe ser mayor a $0."}
+                              </p>
+                            )}
+                          </div>
+                        )}
 
                         {/* ── PESOS — el único input inline. Los dólares se
                             atienden en la CALCULADORA (botón de al lado). */}
@@ -6364,7 +6491,9 @@ export function SellPage() {
                                 Pesos recibidos
                               </span>
                               {/* Abre la calculadora de dólares — grande y notorio:
-                                  es LA puerta al flujo USD (no hay más toggles). */}
+                                  es LA puerta al flujo USD (no hay más toggles).
+                                  Oculto en Mixto: el split no admite dólares. */}
+                              {!isMixto && (
                               <button
                                 type="button"
                                 onClick={() => setUsdCalcOpen(true)}
@@ -6373,6 +6502,7 @@ export function SellPage() {
                                 style={{ background: 'rgba(16,185,129,0.14)', border: '1px solid rgba(16,185,129,0.45)', color: '#34d399' }}
                                 title={`Calculadora de dólares (TC $${tc.toFixed(2)})`}
                               >$ Dólares</button>
+                              )}
                             </div>
                             {/* (Los dólares ya ingresados y el faltante se ven en el
                                 resumen de cobro de abajo — evita mostrar "faltan" 2 veces.) */}
@@ -6386,7 +6516,8 @@ export function SellPage() {
                                 onChange={e => { setCashReceived(e.target.value); cashTypedRef.current = true; }}
                                 onKeyDown={e => {
                                   if (e.key === "Enter") {
-                                    if (totalReceived >= currentPayAmount || (cashReceived === "" && appliedUsd === 0)) void handleCheckout();
+                                    if (isMixto && !mixedSplit.valid) return;
+                                    if (totalReceived >= cashTarget || (cashReceived === "" && appliedUsd === 0)) void handleCheckout();
                                   }
                                 }}
                                 placeholder="0.00"
@@ -6440,8 +6571,10 @@ export function SellPage() {
                             que cobrar. El cajero ve de un vistazo cuánto es el
                             total, cuánto lleva recibido (desglosado pesos/dólares)
                             y, grande, cuánto FALTA (rojo) o de CAMBIO (verde). Sirve
-                            igual en la vista de pesos que en la de dólares. ──── */}
-                        {currentPayAmount > 0 && (
+                            igual en la vista de pesos que en la de dólares.
+                            En Mixto solo aparece con split válido (el objetivo
+                            del cambio es la porción efectivo). ──── */}
+                        {(isMixto ? mixedSplit.valid : currentPayAmount > 0) && (
                           <div
                             className={`rounded-xl px-4 py-3 flex flex-col gap-2 border-2 ${cambio >= 0 ? "bg-emerald-500/12 border-emerald-500/35" : "bg-red-500/12 border-red-500/35"}`}
                           >
@@ -6560,13 +6693,14 @@ export function SellPage() {
                   <div className="col-span-4 relative" ref={paymentMenuRef}>
                     {(() => {
                       const active = activeMesa.paymentMethod;
-                      const allOptions: PaymentMethod[] = ["Efectivo", "Tarjeta", "Transferencia"];
+                      const allOptions: PaymentMethod[] = ["Efectivo", "Tarjeta", "Transferencia", "Mixto"];
                       // Icono por método (Joel 2026-06-12): se distingue de un
                       // vistazo si el cobro es con tarjeta o efectivo.
                       const methodIcon = (pm: PaymentMethod, cls: string, big = false) => {
                         const sz = big ? 17 : 13;
                         if (pm === "Tarjeta") return <CreditCard size={sz} className={cls} />;
                         if (pm === "Transferencia") return <ArrowLeftRight size={sz} className={cls} />;
+                        if (pm === "Mixto") return <Split size={sz} className={cls} />;
                         if (pm === "Dólares") return <DollarSign size={sz} className={cls} />;
                         return <Banknote size={sz} className={cls} />;
                       };
@@ -6646,13 +6780,19 @@ export function SellPage() {
                                   // backend. Antes referenciaba `hasCashOnly`, variable que
                                   // nunca existió → ReferenceError al abrir el menú (QA 06-12).
                                   const bloqueados = activeMesa.items.filter(i => !itemAcceptsMethod(i, pm));
-                                  const isBlocked = bloqueados.length > 0;
+                                  // Mixto solo aplica a ventas regulares: los anticipos
+                                  // de preventa viajan con UN método (createPreSaleOrder).
+                                  const mixtoBloqueado = pm === "Mixto" && mixtoBlocked;
+                                  const isBlocked = bloqueados.length > 0 || mixtoBloqueado;
                                   // Antes la única pista era un triángulo de
                                   // 11px sin tooltip. Y distingue producto de
                                   // promo: decir "el producto no acepta
                                   // tarjeta" cuando el que estorba es un 2x1
                                   // manda al cajero a revisar lo que no es.
                                   const blockedTitle = (() => {
+                                    if (mixtoBloqueado) {
+                                      return "Las preventas no admiten pago mixto — usa Efectivo o Transferencia.";
+                                    }
                                     const primero = bloqueados[0];
                                     if (!primero) return undefined;
                                     const esCard = pm === "Tarjeta";
@@ -6775,15 +6915,20 @@ export function SellPage() {
                       const receivedUsd   = usdApplied ? (parseFloat(cashReceivedUsd) || 0) : 0;
                       const totalReceived = receivedMxn + receivedUsd * tc;
                       const hasAnyCash    = receivedMxn > 0 || receivedUsd > 0;
-                      const isInsufficient = activeMesa.paymentMethod === "Efectivo"
-                        && hasAnyCash && totalReceived < currentPayAmount;
+                      // Mixto: el faltante se mide contra la porción efectivo, y
+                      // sin un monto de transferencia válido no hay cobro posible.
+                      const cashTarget    = isMixtoPay ? mixedSplit.cashPortion : currentPayAmount;
+                      const mixtoInvalid  = isMixtoPay && !mixedSplit.valid;
+                      const isInsufficient = (activeMesa.paymentMethod === "Efectivo" || isMixtoPay)
+                        && hasAnyCash && totalReceived < cashTarget;
                       // El bloqueo por método va PRIMERO: antes el botón se
                       // quedaba gris diciendo "Cobrar", sin decir por qué, y el
                       // único mensaje que lo explicaba vivía en el onClick —
                       // inalcanzable, porque un botón disabled no dispara clic.
                       const label = isProcessing ? "Procesando..."
                         : payBlocked ? `No se puede con ${activeMesa.paymentMethod}`
-                        : isInsufficient ? `Faltan ${fmt(currentPayAmount - totalReceived)}`
+                        : mixtoInvalid ? "Captura transferencia"
+                        : isInsufficient ? `Faltan ${fmt(cashTarget - totalReceived)}`
                         : activeMesa.loadedPreSaleOrderId
                           ? (newItemsSubtotal > 0 ? "Cobrar" : "Liquidar")
                           : activeMesa.isPreventa
@@ -6791,7 +6936,7 @@ export function SellPage() {
                             : "Cobrar";
                       return (
                         <button
-                          disabled={checkoutDisabled || isInsufficient}
+                          disabled={checkoutDisabled || isInsufficient || mixtoInvalid}
                           {...(payBlocked ? { title: blockedItems.map(b => b.nombre).join(", ") + `: no se pueden cobrar con ${activeMesa.paymentMethod}.` } : {})}
                           onClick={() => { void handleCheckout(); }}
                           className="w-full h-[52px] group relative flex items-center justify-center gap-2 rounded-2xl overflow-hidden transition-all disabled:opacity-30 disabled:grayscale"
@@ -8469,10 +8614,10 @@ export function SellPage() {
                   // ── VENTA REGULAR ────────────────────────────────────────────
                   if (entry.type === 'sale') {
                     const sale = entry.data;
-                    const first = sale.payments?.[0];
-                    const method = first?.payment_method?.name ?? "Efectivo";
-                    // Label corto: "Tarjeta débito/crédito" no cabe — basta "Tarjeta".
-                    const methodLabel = /tarjeta/i.test(method) ? "Tarjeta" : method;
+                    // buildPaymentSummary normaliza N pagos: "Tarjeta débito" →
+                    // "Tarjeta", y 2 métodos distintos → "Mixto" (antes se leía
+                    // solo payments[0] y una venta mixta salía como "Efectivo").
+                    const methodLabel = buildPaymentSummary(sale).methodLabel;
                     // Tarjeta NO se cancela/devuelve (la tienda pierde la comisión —
                     // decisión Joel 2026-06-10; el backend ya lo bloquea con 422).
                     // Ocultamos el botón para no invitar al error.
@@ -8688,7 +8833,8 @@ export function SellPage() {
                     ? (historialEntries.find(e => e.type === 'sale' && e.data.id === pair.saleId)?.data as SaleDetail | undefined)
                     : undefined;
                   const isMixed = pairedSale != null;
-                  const regularMethod = pairedSale?.payments?.[0]?.payment_method?.name ?? "Efectivo";
+                  // Igual que arriba: normalizado por si la venta ligada fue mixta.
+                  const regularMethod = pairedSale ? buildPaymentSummary(pairedSale).methodLabel : "Efectivo";
                   const regularTotal = pairedSale?.total ?? 0;
                   const regularItems = pairedSale?.items ?? [];
                   const grandTotal = paidAmt + regularTotal;
