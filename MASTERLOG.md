@@ -4,6 +4,48 @@
 
 ---
 
+### Sesión 2026-08-05 (4) — Pago mixto Efectivo + Transferencia en Caja — DEPLOYADO rev `tadaima-00166-8jl`
+
+Petición de cliente vía Joel: cobrar UNA venta con parte en efectivo y parte
+en transferencia. Modelo "split por monto" (patrón Square/Clover): se captura
+lo transferido y el efectivo es el resto. Commit `d1466cb`.
+
+**Hallazgo clave:** el backend YA soportaba N pagos por venta (tabla
+`payments` 1:N, `CheckoutService` valida `Σ == total`, y el corte suma POR
+RENGLÓN con `cashLikeSqlCondition` → solo la porción efectivo entra al
+"Debe haber"). El trabajo real fue la UI de Caja + un bug de cancelación.
+
+**Fix de backend (primero):** `SaleCancellationService` sacaba del cajón el
+100% de `amount_refunded` sin importar el método — cancelar una mixta $300
+efectivo + $200 transferencia habría sacado $500 (corte corto $200), y una
+venta 100% transferencia cancelada por API generaba salida indebida. Ahora
+la salida se prorratea a la porción cash-like (ventas Y preventas), con nota
+"(efectivo $X de $Y)" en el movimiento. 6 tests en
+`MixedPaymentCancellationTest` (prorrateo total/parcial, transferencia pura
+sin salida, corte con mixto, preventa con anticipo por transferencia).
+
+**Frontend (`SellPage.tsx` + lib nueva `mixedPayment.ts`):**
+- Método "Mixto" en el dropdown (icono Split). Solo ventas regulares:
+  deshabilitado con preventas/folios (los anticipos viajan con UN método).
+- Input TRANSFERENCIA arriba del bloque de pesos (que se reutiliza tal
+  cual); "Efectivo: $X" en vivo; Cambio/Falta contra la porción efectivo.
+- Sin dólares en Mixto (el esperado USD del corte no distingue porciones).
+- Gate de Cobrar: "Captura transferencia" si falta/inválido; `Faltan $X`
+  contra la porción efectivo. Validación 0 < transfer < total
+  (`computeMixedSplit`, 10 tests vitest — la suma SIEMPRE cuadra exacta
+  con el total del payload).
+- Ticket imprime desglose Efectivo/Transferencia (paymentBreakdown ya
+  existía para >1 pago); el Historial de Caja ahora usa
+  `buildPaymentSummary` (mixtas dicen "Mixto", antes leía `payments[0]`).
+
+**QA:** 419 PHPUnit + 188 vitest en verde; tsc 465 (bajó 1 del baseline
+466); E2E navegador vs SQLite local: venta $200 con transfer $50 → 2 pagos
+exactos en BD, corte esperó $150 y reportó $50 en transfer, cancelación
+sacó $150 (movimiento con nota). Cosmético conocido: en `by_payment_method`
+una venta mixta cuenta 1 vez por método (montos correctos).
+
+---
+
 ### Sesión 2026-08-05 (3) — Borrador en localStorage para altas (Productos, Tomos, Preventas) — DEPLOYADO rev `tadaima-00165-zqh`
 
 Feedback de cliente vía Joel: al fallar el guardado de un alta se perdía lo
