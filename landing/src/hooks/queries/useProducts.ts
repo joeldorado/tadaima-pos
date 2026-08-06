@@ -188,7 +188,12 @@ export function useProductsLightQuery(
   storeId?: number | null,
   options?: { refetchIntervalMs?: number | false }
 ) {
-  const params: GetProductsParams = { active: true, sort: 'top', ...(storeId ? { store_id: storeId, include_unassigned: true } : {}) }
+  // in_stock (Joel 2026-08-06): el pool de Caja solo baja lo VENDIBLE
+  // (~1.5k en vez de ~14k → carga mucho más rápida). La búsqueda server-side
+  // (useProductsSearchQuery) y el fallback del escáner NO lo mandan — un SKU
+  // agotado se sigue encontrando y recibe "Stock insuficiente"/"Agregar
+  // stock" en vez de "Sin coincidencias".
+  const params: GetProductsParams = { active: true, sort: 'top', in_stock: true, ...(storeId ? { store_id: storeId, include_unassigned: true } : {}) }
   return useQuery({
     queryKey: [...queryKeys.products.all, 'light', 'top', params],
     queryFn: () => getProductsLight({ ...params, per_page: TOP_PAGE_SIZE, page: 1 } as Parameters<typeof getProductsLight>[0]),

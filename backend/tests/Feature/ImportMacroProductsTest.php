@@ -57,6 +57,7 @@ class ImportMacroProductsTest extends TestCase
             '--unsafe-host' => true,
             '--store' => 'Tadaima MACRO',
             '--user' => (string) $this->admin->id,
+            '--ref' => 'import-macro-test',
         ], $extra);
 
         $pending = $this->artisan('tadaima:import-macro', $args);
@@ -90,7 +91,7 @@ class ImportMacroProductsTest extends TestCase
         ]);
         $this->assertDatabaseHas('inventory_movements', [
             'product_id' => $fig->id, 'warehouse_id' => $this->exhibicion->id,
-            'type' => 'entrada', 'reference' => 'import-macro-20260717', 'user_id' => $this->admin->id,
+            'type' => 'entrada', 'reference' => 'import-macro-test', 'user_id' => $this->admin->id,
         ]);
 
         // La categoría se creó por nombre
@@ -178,6 +179,57 @@ class ImportMacroProductsTest extends TestCase
         $this->assertSame(0, Product::count());
         $this->assertSame(0, \DB::table('product_categories')->count());
         $this->assertSame(0, \DB::table('inventory')->count());
+    }
+
+    public function test_ref_default_es_la_fecha_de_hoy(): void
+    {
+        // Sin --ref: cada corrida se firma con import-macro-YYYYMMDD para que
+        // los re-imports sean distinguibles (antes era una constante fija).
+        $this->runImport(['--ref' => null])->assertExitCode(0);
+
+        $fig = Product::where('sku', '789111')->first();
+        $this->assertDatabaseHas('inventory_movements', [
+            'product_id' => $fig->id,
+            'reference' => 'import-macro-'.now()->format('Ymd'),
+        ]);
+    }
+
+    public function test_pisar_ceros_pone_en_cero_lo_que_el_origen_ya_no_tiene(): void
+    {
+        // El manga 789222 viene con existencia 0 en el staging, pero en Tadaima
+        // tiene 4 piezas — con --pisar-ceros el origen es la verdad: queda en 0
+        // con un ajuste negativo trazable.
+        $manga = Product::create(['name' => 'Manga Frieren 01', 'sku' => '789222', 'active' => true]);
+        \DB::table('inventory')->insert([
+            'product_id' => $manga->id, 'warehouse_id' => $this->exhibicion->id,
+            'quantity' => 4, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $this->runImport(['--pisar-ceros' => true])->assertExitCode(0);
+
+        $this->assertDatabaseHas('inventory', [
+            'product_id' => $manga->id, 'warehouse_id' => $this->exhibicion->id, 'quantity' => 0.0,
+        ]);
+        $this->assertDatabaseHas('inventory_movements', [
+            'product_id' => $manga->id, 'type' => 'ajuste',
+            'quantity' => -4.0, 'reference' => 'import-macro-test',
+        ]);
+    }
+
+    public function test_sin_pisar_ceros_conserva_stock_operado_en_tadaima(): void
+    {
+        // Comportamiento original: existencia 0 en el origen NO borra stock local.
+        $manga = Product::create(['name' => 'Manga Frieren 01', 'sku' => '789222', 'active' => true]);
+        \DB::table('inventory')->insert([
+            'product_id' => $manga->id, 'warehouse_id' => $this->exhibicion->id,
+            'quantity' => 4, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $this->runImport()->assertExitCode(1); // verify ✗: warehouse ≠ staging (4 vs 0) — esperado sin pisar-ceros
+
+        $this->assertDatabaseHas('inventory', [
+            'product_id' => $manga->id, 'warehouse_id' => $this->exhibicion->id, 'quantity' => 4.0,
+        ]);
     }
 
     public function test_guard_rechaza_host_no_supabase_sin_flag(): void
