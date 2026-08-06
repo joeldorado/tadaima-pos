@@ -4,6 +4,35 @@
 
 ---
 
+### Sesión 2026-08-06 (2) — Instalador QZ descargable desde la app + tab Impresora en Settings — PENDIENTE DE DEPLOY
+
+Pedido de Joel: el cliente (Windows) no sabe instalar QZ Tray — "¿hay un zip
+con exe?" + "ponlo en settings" + "¿se puede subir a assets sin bucket?"
+(commit `d2f494e`):
+
+- **Zip instalador servido por la propia app** en
+  `/descargas/tadaima-impresion-silenciosa.zip` (assets del frontend, sin
+  bucket). Truco: el `.exe` de QZ (100MB, GitHub ni lo acepta) NO va en el
+  zip — `instalar.bat` lo descarga del GitHub oficial de QZ 2.2.6, verifica
+  SHA256 pineado, instala `/S`, copia `override.crt` (cert PÚBLICO — la
+  llave privada nunca sale del backend) a Program Files y arranca QZ. El
+  cliente: descomprimir → doble clic → aceptar admin. Fuentes + `build.sh`
+  en `scripts/instalador-qz/` (regenerar el zip tras cambiar el .bat/cert).
+- **PrinterConfigModal**: botón "Descargar instalador (Windows)" en el
+  error de "Sin conexión con QZ Tray" — cada caja se auto-sirve.
+- **SettingsPage** (admin): tab **Impresora** — descarga del zip + botón que
+  abre el MISMO modal por-máquina de la Caja. La config sigue siendo
+  localStorage por computadora; para cajeros el punto de entrada sigue
+  siendo el botón de la Caja (Settings es solo admin).
+- QA: tsc baseline 465 ✓, vitest 188 ✓, `vite build` con el zip en
+  `dist/descargas/` ✓. OJO: `npm run build` local (tsc -b) truena por el
+  baseline — el deploy usa vite directo, igual que el Dockerfile.
+- También esta sesión: zip standalone en `~/Desktop/tadaima-impresion-
+  silenciosa.zip` (versión con el exe adentro, 98MB, para mandar por
+  WhatsApp sin esperar el deploy).
+
+---
+
 ### Sesión 2026-08-06 — Re-import Macro (.bak 20260806) + purga sin-stock + Caja solo-con-stock — DEPLOYADO rev `tadaima-00167-2cm`
 
 Cuatro pedidos de Joel en una sesión (commit `90af8ad`, trabajado en un
