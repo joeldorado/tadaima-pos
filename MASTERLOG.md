@@ -4,6 +4,38 @@
 
 ---
 
+### Sesión 2026-08-05 (3) — Borrador en localStorage para altas (Productos, Tomos, Preventas) — DEPLOYADO rev `tadaima-00165-zqh`
+
+Feedback de cliente vía Joel: al fallar el guardado de un alta se perdía lo
+capturado y había que rellenar todo. Joel pidió explícitamente resolverlo con
+**localStorage** (no una tabla) y extenderlo a Preventas y Tomos. Commit
+`9864be5`.
+
+**Qué se hizo:**
+- Hook genérico nuevo `landing/src/hooks/useFormDraft.ts`: lee el borrador
+  UNA vez al montar, escribe con debounce 400ms, envelope
+  `{version, savedAt, data}` con invalidación por versión y maxAge 24h;
+  try/catch silencioso (cuota llena / modo privado). 9 tests vitest
+  (`useFormDraft.test.ts`) con localStorage mockeado en Map.
+- Cableado en los 3 formularios de ALTA (solo creación, nunca edición):
+  `ProductModal` (`tadaima-product-draft`), `MangaBatchModal`
+  (`tadaima-manga-batch-draft`, filas `loading` → `idle` al restaurar) y
+  `NewPreSaleCatalogModal` (`tadaima-presale-catalog-draft`).
+- Regla de limpieza: se borra al GUARDAR con éxito o al CANCELAR/X/backdrop
+  (abandono deliberado); NUNCA en unmount ni en error de guardado — recarga,
+  crash o tab cerrada restauran todo con toast "Se restauró un borrador…".
+- Nunca se persisten `File`/blob/`data:` URLs (imágenes quedan fuera a
+  propósito — un base64 de 5MB reventaría la cuota del origen).
+- Hueco real cerrado de paso: `NewPreSaleCatalogModal` no gateaba
+  backdrop/X/Cancelar con `saving` — se podía cerrar a media petición y
+  perder los datos; ahora los 3 controles se bloquean mientras guarda.
+
+**QA:** 178 vitest en verde, tsc baseline 466 sin nuevos, build limpio, QA
+navegador de los 3 flujos contra backend SQLite local (persistir → recargar
+→ restaurar con toast → cancelar limpia).
+
+---
+
 ### Sesión 2026-08-05 (2) — Perf: GET /products de ~3.7s a ~2.1s — DEPLOYADO rev `tadaima-00164-7ql`
 
 Joel pidió investigar el hallazgo incidental de la sesión anterior (latencia
