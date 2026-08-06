@@ -22,7 +22,7 @@ const DESC_FILL: [number, number, number] = [255, 241, 118];   // amarillo
 export function exportReportPdf(params: ReportExportParams): void {
   const {
     groupedProducts, paymentBreakdown, from, to, today, canViewCost, ivaRate,
-    effectiveStoreId, selectedUserId, stores, users, supplyMovements,
+    effectiveStoreId, selectedUserId, stores, users, supplyMovements, presaleRows,
   } = params;
   try {
     toast.info("Generando archivo PDF...");
@@ -209,20 +209,14 @@ export function exportReportPdf(params: ReportExportParams): void {
       advanceY();
     }
 
-    // ── 3. APARTADOS Y PREVENTAS — Producto · Cant · Abonado · Pendiente · Pactado · [Costo] · [Utilidad] ─
-    const preSaleProducts = groupedProducts.filter((p) => (p.pre_sale_apartado && p.pre_sale_apartado > 0) || (p.pre_sale_deuda && p.pre_sale_deuda > 0));
-    if (preSaleProducts.length > 0) {
+    // ── 3. APARTADOS Y PREVENTAS — un renglón por PRODUCTO + ESTADO (liquidada/apartada) ─
+    if (presaleRows.length > 0) {
       pageBreak();
       sectionTitle("3. APARTADOS Y PREVENTAS");
       let tCant = 0, tAp = 0, tDeu = 0, tTot = 0, tCost = 0, tUtil = 0;
-      const body = preSaleProducts.map((prod) => {
-        const abonado = prod.pre_sale_apartado || 0;
-        const pendiente = prod.pre_sale_deuda || 0;
-        const pactado = abonado + pendiente;
-        const cost = prod.pre_sale_costo_real || 0;
-        const utilidad = pactado - cost;
-        tCant += prod.total_quantity || 0; tAp += abonado; tDeu += pendiente; tTot += pactado; tCost += cost; tUtil += utilidad;
-        return [prod.name, prod.total_quantity, fmt(abonado), fmt(pendiente), fmt(pactado), ...(canViewCost ? [fmt(cost), fmt(utilidad)] : [])];
+      const body = presaleRows.map((row) => {
+        tCant += row.qty; tAp += row.apartado; tDeu += row.deuda; tTot += row.pactado; tCost += row.costoNeto; tUtil += row.utilidad;
+        return [row.name, row.qty, fmt(row.apartado), fmt(row.deuda), fmt(row.pactado), ...(canViewCost ? [fmt(row.costoNeto), fmt(row.utilidad)] : [])];
       });
       body.push(["TOTAL PREVENTAS", tCant, fmt(tAp), fmt(tDeu), fmt(tTot), ...(canViewCost ? [fmt(tCost), fmt(tUtil)] : [])]);
       autoTable(doc, {

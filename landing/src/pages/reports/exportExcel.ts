@@ -8,7 +8,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
   const {
     groupedProducts, paymentBreakdown, invReport, topReport, custReport,
     from, to, today, activeTab, canViewCost, ivaRate, effectiveStoreId,
-    selectedUserId, stores, users, supplyMovements,
+    selectedUserId, stores, users, supplyMovements, presaleRows,
   } = params;
 
   // Etiqueta legible del origen del dinero de un insumo.
@@ -74,10 +74,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
         const cashProducts = groupedProducts.filter(prod => 
           Object.keys(prod.payment_breakdown).some(m => m.toLowerCase().includes("efectivo") || m.toLowerCase().includes("cash") || m.toLowerCase().includes("dolar") || m.toLowerCase().includes("dólar") || m.toLowerCase().includes("usd") || m.toLowerCase().includes("otro") || m.toLowerCase().includes("unmapped"))
         );
-        const presaleProducts = groupedProducts.filter(prod => 
-          ((prod.pre_sale_apartado && prod.pre_sale_apartado > 0) || (prod.pre_sale_deuda && prod.pre_sale_deuda > 0))
-        );
-        const returnedProducts = groupedProducts.filter(prod => 
+        const returnedProducts = groupedProducts.filter(prod =>
           (prod.returned_revenue && prod.returned_revenue > 0) || 
           (prod.returned_quantity && prod.returned_quantity > 0)
         );
@@ -291,33 +288,25 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
             r3++;
         }
 
-        // TABLE 4: PREVENTAS
-        // Campos correctos: pre_sale_apartado (abonado) y pre_sale_deuda (pendiente).
-        // Pactado = abonado + pendiente (igual que el PDF y la vista en pantalla).
+        // TABLE 4: PREVENTAS — un renglón por PRODUCTO + ESTADO (liquidada vs apartada).
+        // Viene de `presaleRows`: apartada → utilidad = abono, costo = real − abono;
+        // liquidada → utilidad = pactado − costo real, costo = costo real.
         let totPreQty = 0, totPreDeposit = 0, totPrePending = 0, totPrePactado = 0, totPreCost = 0, totPreUtilidad = 0;
-        presaleProducts.forEach((prod) => {
-            const deposit = prod.pre_sale_apartado || 0;
-            const pending = prod.pre_sale_deuda || 0;
-            const pactado = deposit + pending;
-            // Costo real snapshot del folio (anticipos incluidos), no total_cost:
-            // total_cost solo se llena el día de entrega (Opción B) y dejaba $0
-            // en anticipos aunque el costo sí existiera.
-            const cost = prod.pre_sale_costo_real || 0;
-            const utilidad = pactado - cost; // Utilidad esperada al liquidar el folio.
-            totPreQty += prod.sales_count || 0; totPreDeposit += deposit; totPrePending += pending; totPrePactado += pactado; totPreCost += cost; totPreUtilidad += utilidad;
-            setCell(r4, T4_COL, prod.name, { alignment: { horizontal: "left", vertical: "middle", wrapText: true } });
-            setCell(r4, T4_COL + 1, prod.sales_count, { alignment: { horizontal: "center", vertical: "middle" } });
-            setCell(r4, T4_COL + 2, deposit, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } }, alignment: { horizontal: "right", vertical: "middle" } });
-            setCell(r4, T4_COL + 3, pending, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, bold: true, color: { argb: "FFFF2200" } }, alignment: { horizontal: "right", vertical: "middle" } });
-            setCell(r4, T4_COL + 4, pactado, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, color: { argb: "FF444444" } }, alignment: { horizontal: "right", vertical: "middle" } });
+        presaleRows.forEach((row) => {
+            totPreQty += row.qty; totPreDeposit += row.apartado; totPrePending += row.deuda; totPrePactado += row.pactado; totPreCost += row.costoNeto; totPreUtilidad += row.utilidad;
+            setCell(r4, T4_COL, row.name, { alignment: { horizontal: "left", vertical: "middle", wrapText: true } });
+            setCell(r4, T4_COL + 1, row.qty, { alignment: { horizontal: "center", vertical: "middle" } });
+            setCell(r4, T4_COL + 2, row.apartado, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, bold: true, color: { argb: "FF009944" } }, alignment: { horizontal: "right", vertical: "middle" } });
+            setCell(r4, T4_COL + 3, row.deuda, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, bold: true, color: { argb: "FFFF2200" } }, alignment: { horizontal: "right", vertical: "middle" } });
+            setCell(r4, T4_COL + 4, row.pactado, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, color: { argb: "FF444444" } }, alignment: { horizontal: "right", vertical: "middle" } });
             if (canViewCost) {
-                setCell(r4, T4_COL + 5, cost, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, color: { argb: "FF444444" } }, alignment: { horizontal: "right", vertical: "middle" } });
-                setCell(r4, T4_COL + 6, utilidad, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, bold: true, color: { argb: utilidad < 0 ? "FFFF2200" : "FF009944" } }, alignment: { horizontal: "right", vertical: "middle" } });
+                setCell(r4, T4_COL + 5, row.costoNeto, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, color: { argb: "FF444444" } }, alignment: { horizontal: "right", vertical: "middle" } });
+                setCell(r4, T4_COL + 6, row.utilidad, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, bold: true, color: { argb: row.utilidad < 0 ? "FFFF2200" : "FF009944" } }, alignment: { horizontal: "right", vertical: "middle" } });
             }
             sheet.getRow(r4).height = 20;
             r4++;
         });
-        if (presaleProducts.length > 0) {
+        if (presaleRows.length > 0) {
             setCell(r4, T4_COL, "TOTAL PREVENTAS", totalLabelOpts);
             setCell(r4, T4_COL + 1, totPreQty, totalQtyOpts);
             setCell(r4, T4_COL + 2, totPreDeposit, totalMoneyOpts("FF009944"));

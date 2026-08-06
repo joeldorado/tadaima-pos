@@ -168,9 +168,55 @@ fallback a los `sale.items` originales.
   en la misma hoja de Ventas, con la Descripción ANCHA vía **merge de celdas** (para no
   deformar "Cant. Efectivo", que comparte ancho por el layout lado-a-lado).
 
+### 6.8 Preventas — abono vs liquidación (MODELO DEL DUEÑO, 2026-08) ⭐
+
+> **NO REVERTIR sin avisar.** Es una regla de negocio definida por los dueños del
+> sistema. Aplica en **pantalla, Excel y PDF** (todas leen el mismo cálculo).
+
+**Regla del negocio:** el **abono/apartado NO es utilidad** (todavía no se vende ni se
+entrega). La utilidad se reconoce **al entregar (liquidar)**. El abono se "guarda" y al
+liquidar se **resta de la venta Y del costo**.
+
+Por cada item de preventa, **por rango de fechas**:
+
+| Fase | Cómo se clasifica | Venta (lo cobrado en el rango) | Costo | Utilidad |
+|---|---|---|---|---|
+| **Apartada** (abono) | `delivered_at` **NO** cae en el rango (o no entregada) | abono del rango | **= venta** (netea) | **$0** |
+| **Liquidada** | `delivered_at` **SÍ** cae en el rango | lo cobrado en el rango | `costo_real − abonos_previos` | venta − costo |
+
+- **Clasificación por `delivered_at` en el rango, NO por `item.status` actual.** Esto evita
+  que un mes pasado **mute** cuando la preventa se liquida después (los reportes históricos
+  quedan "congelados").
+- **`abonos_previos`** = pagos del folio con `created_at` **anterior** a `desde` (prorrateados
+  por item). Es lo que hace que el costo total cuadre: `costo_apartada + costo_liquidada =
+  costo_real`.
+
+**Ejemplo** (precio $1,000 · costo $500 · abono $100 en jun · liquida $900 en sep):
+
+```
+Consulta JUNIO  → Apartada:  Venta 100 · Costo 100 · Utilidad 0
+Consulta SEP    → Liquidada: Venta 900 · Costo 400 (500−100) · Utilidad 500
+Totales:         Venta 1,000 · Costo 500 · Utilidad 500   (margen real, rastreable por mes)
+```
+
+**Dónde vive el cálculo:**
+- Tabla **"Ventas por Producto"** (pantalla + tablas Efectivo/Tarjeta de exportación):
+  memo `groupedProducts` en `ReportsPage.tsx` — el item de preventa se parte en 2 entradas
+  del `Map` con **id único por estado** (offset `100_000_000` apartada / `200_000_000`
+  liquidada, para no chocar los `key` de React / `expandedIds`). Nombre con sufijo
+  `(Liquidada)` / `(Apartada)`.
+- Tabla dedicada **"Apartados y Preventas"**: memo `presaleRows` (mismo modelo) →
+  `exportExcel.ts` / `exportPdf.ts`.
+- Los totales/KPIs (`uiTotals`) suman sobre `groupedProducts`, así que el split solo
+  **redistribuye** montos (no duplica); lo único que cambia es la **utilidad** (baja a lo real).
+
 ### 6.7 Otros
 - **Pestañas:** solo **"Ventas"** visible. Inventario/Top Productos/Top Clientes están
   **comentadas** en `REPORT_TABS` (y el chevron del selector, oculto). Descomentar para
   reactivar.
+- **Filtro "Dólar" retirado** (2026-08): se quitó de `SALES_HISTORY_FILTERS`. No se podía
+  filtrar por dólar de forma útil (un folio puede pagarse mitad peso / mitad dólar); el USD
+  ya entra contado como **efectivo (MXN)**. La lógica interna del case `"dollar"` quedó como
+  código muerto inofensivo.
 - **Pendiente del dueño:** tarjeta de "efectivo disponible del día/rango − insumos" —
   documentada en `docs/PENDIENTE-reportes-efectivo-disponible.md` (requiere pauta de negocio).

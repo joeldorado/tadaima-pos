@@ -17,7 +17,7 @@ import type { SupplyMoneySource, SupplyMovementRecord } from "@tadaima/api";
 import { ReportsSkeleton } from "@/components/reports/ReportsSkeleton";
 import { exportReportPdf } from "./reports/exportPdf";
 import { exportReportExcel } from "./reports/exportExcel";
-import type { ReportExportParams } from "./reports/reportTypes";
+import type { ReportExportParams, PresaleRow } from "./reports/reportTypes";
 import { getSales } from "@tadaima/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useStoresQuery } from "@/hooks/queries/useStores";
@@ -123,6 +123,12 @@ interface GroupedProduct {
   /** Costo real (snapshot) de los items de preventa del rango, incluye anticipos.
    *  Informativo: NO entra a total_cost/total_profit (la utilidad se reconoce al entregar). */
   pre_sale_costo_real?: number;
+  /** Costo a MOSTRAR en la tabla de Preventas: entregada → costo real; en abono →
+   *  costo real − abono (lo que falta por recuperar de la inversión). */
+  pre_sale_costo_neto?: number;
+  /** Utilidad a MOSTRAR en la tabla de Preventas: entregada → pactado − costo real
+   *  (lógica actual); en abono → el abono directo. */
+  pre_sale_utilidad?: number;
   commission_amount?: number;
   product_type?: 'product' | 'manga';
   /** Descuentos v2: parte de PROMO (NxM/mayoreo) acumulada del producto en el rango. */
@@ -147,7 +153,6 @@ const REPORT_TABS: { id: TabId; label: string; icon: React.ElementType }[] = [
 const SALES_HISTORY_FILTERS: Array<{ id: SalesHistoryFilter; label: string }> = [
   { id: "all", label: "Todo" },
   { id: "cash", label: "Efectivo" },
-  { id: "dollar", label: "Dólar" },
   { id: "card", label: "Tarjeta" },
   { id: "transfer", label: "Transferencia" },
   { id: "preSales", label: "Preventas" },
@@ -667,6 +672,10 @@ export function ReportsPage() {
       // período). El monto reportado = lo COBRADO en el rango, no el acumulado.
       const paymentsInRange = presalePaymentsInRange(order.payments, from, to);
       const paidInRange = paymentsInRange.reduce((sum, p) => sum + (p.amount || 0), 0);
+      // Abonos previos al rango (para el modelo del dueño al liquidar).
+      const paidBeforeTotal = (order.payments ?? [])
+        .filter((p) => toLocalYmd(new Date(p.created_at)) < from)
+        .reduce((sum, p) => sum + (p.amount || 0), 0);
 
       let payMethodName = "Efectivo";
       let mainPayment = paymentsInRange[0] || null;
@@ -694,12 +703,30 @@ export function ReportsPage() {
           // Proportional allocation of paid-in-range and balance based on item's total value vs order items total
           const ratio = orderItemsTotal > 0 ? (itemTotal / orderItemsTotal) : (1 / order.items.length);
           const itemApartado = paidInRange * ratio;
+          const itemPaidBefore = paidBeforeTotal * ratio;
           const itemDeuda = (order.balance || 0) * ratio;
+          const itemCostoReal = (item.cost ?? 0) * qty;
 
-          if (!map.has(prodId)) {
-            map.set(prodId, {
-              id: prodId,
-              name: prodName,
+          // Separamos la preventa por ESTADO (liquidada vs apartada), igual que la
+          // tabla de exportación. Se clasifica por FECHA DE ENTREGA en el rango
+          // (no por el status actual) para que un mes pasado no mute al liquidarse.
+          const deliveredInRange = item.status === 'delivered' && !!item.delivered_at &&
+            (() => { const d = toLocalYmd(new Date(item.delivered_at!)); return d >= from && d <= to; })();
+          // Id único por estado: offset grande para NO chocar con ids reales ni entre
+          // sí (React key / expandedIds usan este número).
+          const rowId = (deliveredInRange ? 200_000_000 : 100_000_000) + prodId;
+          const rowName = `${prodName} ${deliveredInRange ? '(Liquidada)' : '(Apartada)'}`;
+
+          // MODELO DEL DUEÑO (mismo que la tabla de exportación):
+          //  - APARTADA (no entregada): costo = venta (netea) → utilidad $0.
+          //  - LIQUIDADA (entregada): costo = costo real − abonos previos; utilidad = venta − costo.
+          const itemCostForTable = deliveredInRange ? (itemCostoReal - itemPaidBefore) : itemApartado;
+          const itemProfitForTable = itemApartado - itemCostForTable;
+
+          if (!map.has(rowId)) {
+            map.set(rowId, {
+              id: rowId,
+              name: rowName,
               sku: prodSku,
               sales_count: 0,
               total_quantity: 0,
@@ -717,22 +744,12 @@ export function ReportsPage() {
             });
           }
 
-          // Costo de preventa (Opción B: solo descontamos el costo el día de la entrega/liquidación)
-          let itemCostTotal = 0;
-          if (item.status === 'delivered' && item.delivered_at) {
-            const deliveredYmd = toLocalYmd(new Date(item.delivered_at));
-            if (deliveredYmd >= from && deliveredYmd <= to) {
-              const unitCost = item.cost ?? 0;
-              itemCostTotal = unitCost * qty;
-            }
-          }
-
-          const pGroup = map.get(prodId)!;
+          const pGroup = map.get(rowId)!;
           pGroup.sales_count += 1;
           pGroup.total_quantity += qty;
           pGroup.total_revenue += itemApartado;
-          pGroup.total_cost += itemCostTotal;
-          pGroup.total_profit += (itemApartado - itemCostTotal);
+          pGroup.total_cost += itemCostForTable;
+          pGroup.total_profit += itemProfitForTable;
 
           if (!pGroup.payment_breakdown[payMethodName]) {
             pGroup.payment_breakdown[payMethodName] = { qty: 0, revenue: 0 };
@@ -745,10 +762,8 @@ export function ReportsPage() {
 
           pGroup.pre_sale_apartado = (pGroup.pre_sale_apartado ?? 0) + itemApartado;
           pGroup.pre_sale_deuda = (pGroup.pre_sale_deuda ?? 0) + itemDeuda;
-          // Costo real SIEMPRE (anticipos incluidos), aparte de Opción B: es el
-          // dato informativo que Excel/PDF muestran en "Costo Producto". item.cost
-          // llega null si el usuario no puede ver costos (gate en el Resource).
-          pGroup.pre_sale_costo_real = (pGroup.pre_sale_costo_real ?? 0) + (item.cost ?? 0) * qty;
+          // Costo real SIEMPRE (anticipos incluidos): dato informativo del bloque de preventa.
+          pGroup.pre_sale_costo_real = (pGroup.pre_sale_costo_real ?? 0) + itemCostoReal;
         }
       }
     }
@@ -761,6 +776,57 @@ export function ReportsPage() {
       return b.total_quantity - a.total_quantity; // Sort same-type products by volume
     });
   }, [filteredSales, filteredPreSaleOrders, from, to]);
+
+  // Renglones de la tabla de Preventas — MODELO DEL DUEÑO (rastreable por mes):
+  //   • ABONO (no entregado en el rango): Venta = Costo = abono del mes  → Utilidad $0.
+  //     El abono NO es utilidad; se "guarda" (netea) hasta la entrega.
+  //   • LIQUIDACIÓN (entregado en el rango): al entregar se restan los abonos previos
+  //     de la venta Y del costo:  Costo = costo real − abonos previos;
+  //     Venta = lo cobrado en el rango;  Utilidad = Venta − Costo.
+  // Se clasifica por la FECHA DE ENTREGA (delivered_at ∈ rango), NO por el status
+  // actual, para que un mes pasado NO mute cuando la preventa se liquida después.
+  const presaleRows = useMemo<PresaleRow[]>(() => {
+    const map = new Map<string, { productId: number; baseName: string; entregado: boolean; qty: number; apartado: number; deuda: number; costoReal: number; paidBefore: number }>();
+    for (const order of filteredPreSaleOrders) {
+      const paymentsInRange = presalePaymentsInRange(order.payments, from, to);
+      const paidInRange = paymentsInRange.reduce((sum, p) => sum + (p.amount || 0), 0);
+      // Abonos previos al rango (created_at < desde): lo que ya se había cobrado antes.
+      const paidBeforeTotal = (order.payments ?? [])
+        .filter((p) => toLocalYmd(new Date(p.created_at)) < from)
+        .reduce((sum, p) => sum + (p.amount || 0), 0);
+      const orderItemsTotal = order.items ? order.items.reduce((sum, it) => sum + (it.unit_price * it.quantity), 0) : 0;
+      for (const item of order.items ?? []) {
+        const prodId = item.product_id ?? (item.catalog ? item.catalog.id * -1 : -999);
+        const baseName = item.catalog?.product_name ?? `Preventa #${item.id}`;
+        const qty = item.quantity;
+        const itemTotal = item.unit_price * item.quantity;
+        const ratio = orderItemsTotal > 0 ? (itemTotal / orderItemsTotal) : (1 / (order.items?.length || 1));
+        const itemApartado = paidInRange * ratio;
+        const itemPaidBefore = paidBeforeTotal * ratio;
+        const itemDeuda = (order.balance || 0) * ratio;
+        const itemCostoReal = (item.cost ?? 0) * qty;
+        // Entregada EN EL RANGO = es la liquidación de este periodo.
+        const deliveredInRange = item.status === "delivered" && !!item.delivered_at &&
+          (() => { const d = toLocalYmd(new Date(item.delivered_at!)); return d >= from && d <= to; })();
+        const key = `${prodId}__${deliveredInRange ? "liq" : "abono"}`;
+        const g = map.get(key) ?? { productId: prodId, baseName, entregado: deliveredInRange, qty: 0, apartado: 0, deuda: 0, costoReal: 0, paidBefore: 0 };
+        g.qty += qty; g.apartado += itemApartado; g.deuda += itemDeuda; g.costoReal += itemCostoReal; g.paidBefore += itemPaidBefore;
+        map.set(key, g);
+      }
+    }
+    return Array.from(map.values()).map((g) => {
+      const pactado = g.apartado + g.deuda;
+      // Liquidación: costo = costo real − abonos previos; abono: costo = venta (netea a $0).
+      const costoNeto = g.entregado ? (g.costoReal - g.paidBefore) : g.apartado;
+      const utilidad = g.apartado - costoNeto; // abono → 0; liquidación → venta − costo.
+      return {
+        productId: g.productId,
+        name: `${g.baseName} ${g.entregado ? "(Liquidada)" : "(Apartada)"}`,
+        entregado: g.entregado, qty: g.qty, apartado: g.apartado, deuda: g.deuda,
+        pactado, costoReal: g.costoReal, costoNeto, utilidad,
+      };
+    }).sort((a, b) => (a.productId - b.productId) || (a.entregado === b.entregado ? 0 : a.entregado ? -1 : 1));
+  }, [filteredPreSaleOrders, from, to]);
 
   const uiTotals = useMemo(() => {
     let bruto = 0;
@@ -977,6 +1043,7 @@ export function ReportsPage() {
     invReport, topReport, custReport, from, to, today, activeTab,
     canViewCost, ivaRate, effectiveStoreId, selectedUserId, stores, users,
     supplyMovements,
+    presaleRows,
   });
 
   const handleExportPDF = () => exportReportPdf(buildExportParams());
