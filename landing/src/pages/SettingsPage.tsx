@@ -6,6 +6,7 @@ import {
   Info, Clock, Search,
   Shield, ChevronLeft, ChevronRight, User,
   Building2, Hash, Mail, Phone, MapPin,
+  Printer, Download,
 } from "lucide-react";
 import { motion as Motion, AnimatePresence } from "motion/react";
 import { toast } from "sonner";
@@ -20,6 +21,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSystemSettingsQuery } from "@/hooks/queries/useSystemSettings";
 import { queryKeys } from "@/lib/queryKeys";
 import { CatalogTab } from "@/components/settings/CatalogTab";
+import { PrinterConfigModal, QZ_INSTALLER_URL } from "@/components/cash/PrinterConfigModal";
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const BG = "var(--td-page-bg)";
@@ -31,7 +33,7 @@ const GLASS: React.CSSProperties = {
   boxShadow: "0 8px 32px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.04)",
 };
 
-type Tab = "empresa" | "general" | "catalog" | "logs";
+type Tab = "empresa" | "general" | "catalog" | "impresora" | "logs";
 
 // Known setting keys managed in the UI
 const SETTING_KEYS = ["app_name", "currency", "timezone", "maintenance_mode", "exchange_rate"] as const;
@@ -150,11 +152,15 @@ export function SettingsPage() {
     }
   };
 
+  // ── Impresora (QZ Tray — config POR MÁQUINA, el modal es el mismo de Caja) ─
+  const [showPrinterModal, setShowPrinterModal] = useState(false);
+
   const tabs: { id: Tab; label: string; icon: typeof Settings }[] = [
-    { id: "empresa", label: "Empresa",           icon: Building2 },
-    { id: "general", label: "Configuración",     icon: Shield    },
-    { id: "catalog", label: "Catálogo Online",   icon: Globe     },
-    { id: "logs",    label: "Logs del Sistema",  icon: Terminal  },
+    { id: "empresa",   label: "Empresa",           icon: Building2 },
+    { id: "general",   label: "Configuración",     icon: Shield    },
+    { id: "catalog",   label: "Catálogo Online",   icon: Globe     },
+    { id: "impresora", label: "Impresora",         icon: Printer   },
+    { id: "logs",      label: "Logs del Sistema",  icon: Terminal  },
   ];
 
   return (
@@ -411,6 +417,84 @@ export function SettingsPage() {
               </Motion.div>
             )}
 
+            {/* ── TAB: Impresora ───────────────────────────────────────────── */}
+            {activeTab === "impresora" && (
+              <Motion.div
+                key="impresora"
+                initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}
+                className="space-y-6"
+              >
+                <div className="p-8 rounded-[32px]" style={GLASS}>
+                  <div className="flex items-center gap-4 mb-8">
+                    <div className="w-11 h-11 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-[#E0221A]">
+                      <Printer size={20} />
+                    </div>
+                    <div>
+                      <h2 className="text-base font-black text-white uppercase tracking-[0.1em]">Impresión Silenciosa de Tickets</h2>
+                      <p className="text-[9px] font-black uppercase text-white/20 tracking-widest mt-0.5">QZ Tray · se configura por computadora</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-5">
+                    <p className="text-xs font-bold text-white/50 leading-relaxed max-w-2xl">
+                      Con la impresión silenciosa los tickets salen solos en la térmica, sin ventana de
+                      imprimir. Cada caja se configura <span className="text-white">una sola vez</span>:
+                      se instala QZ Tray en esa computadora y se elige su impresora. El mismo botón de
+                      impresora está en la Caja, arriba a la derecha.
+                    </p>
+
+                    {/* Paso 1: instalador */}
+                    <div className="flex items-center justify-between gap-4 p-5 rounded-2xl bg-white/[0.03] border border-white/5">
+                      <div className="flex items-center gap-4 min-w-0">
+                        <div className="w-9 h-9 rounded-xl bg-white/5 flex items-center justify-center text-white/40 shrink-0 text-sm font-black">1</div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-black text-white">Instalar en la computadora de la caja (Windows)</p>
+                          <p className="text-[9px] font-bold text-white/30 uppercase tracking-widest mt-0.5">
+                            Zip con instalador automático + certificado · doble clic en instalar.bat
+                          </p>
+                        </div>
+                      </div>
+                      <a
+                        href={QZ_INSTALLER_URL}
+                        download
+                        data-testid="settings-qz-download"
+                        className="flex items-center gap-2 px-5 py-3 rounded-2xl bg-white/[0.04] border border-white/10 text-white/60 hover:text-white text-[10px] font-black uppercase tracking-widest transition-all shrink-0"
+                      >
+                        <Download size={13} />
+                        Descargar
+                      </a>
+                    </div>
+
+                    {/* Paso 2: configurar esta máquina */}
+                    <div className="flex items-center justify-between gap-4 p-5 rounded-2xl bg-white/[0.03] border border-white/5">
+                      <div className="flex items-center gap-4 min-w-0">
+                        <div className="w-9 h-9 rounded-xl bg-white/5 flex items-center justify-center text-white/40 shrink-0 text-sm font-black">2</div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-black text-white">Elegir la impresora y activar</p>
+                          <p className="text-[9px] font-bold text-white/30 uppercase tracking-widest mt-0.5">
+                            Aplica a ESTA computadora · en las cajas se hace desde el botón de la Caja
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setShowPrinterModal(true)}
+                        data-testid="settings-qz-configure"
+                        className="flex items-center gap-2 px-5 py-3 rounded-2xl bg-white/[0.04] border border-white/10 text-white/60 hover:text-white text-[10px] font-black uppercase tracking-widest transition-all shrink-0"
+                      >
+                        <Printer size={13} />
+                        Configurar
+                      </button>
+                    </div>
+
+                    <p className="text-[10px] font-bold text-white/25">
+                      La guía paso a paso con fotos está en Documentación → "Impresión automática".
+                      Sin QZ Tray los tickets siguen saliendo por la ventana de siempre.
+                    </p>
+                  </div>
+                </div>
+              </Motion.div>
+            )}
+
             {/* ── TAB: Logs ────────────────────────────────────────────────── */}
             {activeTab === "logs" && (
               <Motion.div
@@ -528,6 +612,9 @@ export function SettingsPage() {
           </AnimatePresence>
         </div>
       </div>
+
+      {/* Config de impresora de ESTA máquina (mismo modal que usa la Caja) */}
+      <PrinterConfigModal open={showPrinterModal} onClose={() => setShowPrinterModal(false)} />
     </div>
   );
 }

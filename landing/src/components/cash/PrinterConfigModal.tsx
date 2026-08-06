@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { X, Printer, RefreshCw, Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
+import { X, Printer, RefreshCw, Loader2, CheckCircle2, AlertTriangle, Download } from "lucide-react";
 import { toast } from "sonner";
 import {
   ensureQzConnection,
@@ -14,6 +14,14 @@ import {
   getPrinterSettings,
   savePrinterSettings,
 } from "@/lib/ticketPrint";
+
+/**
+ * Zip servido desde los assets del propio frontend (landing/public/descargas/,
+ * fuente en scripts/instalador-qz/): instalar.bat + certificado. El .bat
+ * descarga el .exe oficial de QZ y lo verifica — por eso el zip pesa KBs y
+ * puede vivir en el repo sin bucket.
+ */
+export const QZ_INSTALLER_URL = "/descargas/tadaima-impresion-silenciosa.zip";
 
 interface PrinterConfigModalProps {
   open: boolean;
@@ -162,6 +170,15 @@ export function PrinterConfigModal({ open, onClose }: PrinterConfigModalProps) {
             <p style={{ margin: "6px 0 0", fontSize: 10, fontWeight: 600, color: "var(--td-text-ghost)" }}>
               La guía de instalación está en Documentación → "Impresión automática". Mientras tanto los tickets siguen saliendo por la ventana de siempre.
             </p>
+            <a
+              href={QZ_INSTALLER_URL}
+              download
+              data-testid="qz-download-installer"
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 10, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 10, color: "var(--td-text-hi)", padding: "8px 14px", fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", textDecoration: "none", cursor: "pointer" }}
+            >
+              <Download size={12} />
+              Descargar instalador (Windows)
+            </a>
           </div>
         )}
 
