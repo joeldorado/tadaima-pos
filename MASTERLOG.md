@@ -4,6 +4,61 @@
 
 ---
 
+### Sesión 2026-08-06 — Re-import Macro (.bak 20260806) + purga sin-stock + Caja solo-con-stock — DEPLOYADO rev `tadaima-00167-2cm`
+
+Cuatro pedidos de Joel en una sesión (commit `90af8ad`, trabajado en un
+worktree aparte para no pisar la sesión paralela de Documentación 2.0):
+
+**1. PR #5 de Ruben** (`develop`→`main`): fix de reportes de preventas —
+abono va a neto, la utilidad se reconoce al liquidar; renglones "(Apartada)/
+(Liquidada)" por producto. 5 archivos solo frontend, cero conflictos con
+main. Pendiente de revisión de Joel; al integrarlo con esta rama revisar el
+contrato de `/reports/pre-sales` vs `PresaleRow`.
+
+**2. Re-import del .bak nuevo (Esmeralda 2026-08-06):** esta vez los scripts
+del paso .bak→JSON quedaron guardados (`MAcro Productos SQL/restore.sh` +
+`extract-staging.py` + venv pymssql; SQL Server 2022 en Docker, tabla
+`dbo.articulos`, categoría viene en `idcatalogo`). Mejoras al comando:
+`--ref` dinámico por corrida (era constante), `--pisar-ceros` (existencia 0
+del origen pisa el warehouse destino — decisión Joel: "las ventas no son
+reales, el .bak es lo actualizado"), `--force`, y updates/precios
+**diff-aware** — el primer intento con 13,949 UPDATEs fila-por-fila murió a
+media transacción en el pooler WAN (rollback limpio); con diff solo escribe
+lo que cambió (23 products, 17 precios) y pasó en minutos. `verify()` ahora
+compara staging vs inventario FINAL (por ref moría en re-imports).
+**Resultado verificado:** 14,139 SKUs ✓, stock 6,744 pzs exacto ✓, 190
+nuevos, 285 puestos en 0. Backup pre-import:
+`~/Documents/JOEL/supabase-catalogo-pre-import-2026-08-06.dump` (pg_dump 17).
+
+**3. Purga sin-stock (`tadaima:purge-no-stock`, comando nuevo):** borró
+10,186 productos sin stock. Protegidos SIEMPRE: `product_type='manga'` +
+categorías cuyo nombre contenga manga/comic/libro/libret/librer/shonen/
+kamite (decisión Joel: "todo lo que se considere libros") + todo lo con
+stock. Con historial de ventas/preventas/apartados se DESACTIVA en vez de
+borrar (products no tiene soft-delete; sale_items es SET NULL y el histórico
+perdería el nombre; layaways es RESTRICT) — en esta corrida fueron 0. Antes
+del DELETE: `product_promotions.product_id = NULL` (su FK CASCADE mataría
+promos multi-producto). **Resultado verificado:** 14,155 → **3,969**
+productos (3,099 mangas + 22 Comics + 51 Libretas + lo con stock), 9 promos
+vivas, muestra de borrados presente: 0 ✓.
+
+**4. Caja solo-con-stock:** `GET /products?in_stock=1` (filtro opt-in; con
+`store_id` cuenta SOLO Exhibición `w.type='store'` — paridad con lo que la
+Caja deja cobrar; sin store_id, global). El pool de Caja
+(`useProductsLightQuery`) lo manda; búsqueda server-side, fallback del
+escáner y policy query NO — un SKU agotado se sigue encontrando y recibe
+"Stock insuficiente"/"Agregar stock" en vez de "Sin coincidencias".
+**Medido en prod (tienda Macro):** pool 1,424 productos / 536KB / 2.6s
+(sin filtro post-purga: 3,969 / 1.5MB / 3.5s; el punto de partida del
+problema era ~14k / ~5MB / 7.5s). Pendiente estructural que sigue vivo:
+el override `per_page: 0` de `packages/api/src/products.ts`.
+
+**QA:** 430 PHPUnit (17 nuevos: import --ref/pisar-ceros, purga, in_stock)
++ 188 vitest + tsc 465 baseline + build limpio. Contenedor SQL Server
+eliminado al terminar.
+
+---
+
 ### Sesión 2026-08-05 (4) — Pago mixto Efectivo + Transferencia en Caja — DEPLOYADO rev `tadaima-00166-8jl`
 
 Petición de cliente vía Joel: cobrar UNA venta con parte en efectivo y parte
