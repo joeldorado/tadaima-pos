@@ -1,0 +1,376 @@
+/* ─── Home: category tiles ───────────────────────────────────────────────── */
+
+.category-tiles {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: clamp(1rem, 0.8rem + 1vw, 1.5rem);
+}
+
+@media (min-width: 820px) {
+  .category-tiles {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.category-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  min-height: 13rem;
+  padding: 1.7rem 1.6rem 1.5rem;
+  background: var(--ink-900);
+  border: 1px solid var(--ink-700);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  color: var(--text-on-ink);
+  transition:
+    transform var(--duration-normal) var(--ease-out-expo),
+    border-color var(--duration-fast) ease;
+}
+
+.category-tile::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--vermilion);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--duration-normal) var(--ease-out-expo);
+}
+
+.category-tile:hover {
+  transform: translateY(-4px);
+  border-color: var(--vermilion);
+}
+
+.category-tile:hover::after {
+  transform: scaleX(1);
+}
+
+.category-tile-jp {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.9rem;
+  font-size: 2.5rem;
+  letter-spacing: 0.06em;
+  color: rgba(245, 241, 232, 0.07);
+  white-space: nowrap;
+  user-select: none;
+  transition: color var(--duration-normal) ease;
+}
+
+.category-tile:hover .category-tile-jp {
+  color: rgba(216, 67, 47, 0.28);
+}
+
+.category-tile-label {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.5rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.category-tile-blurb {
+  max-width: 22rem;
+  font-size: var(--text-sm);
+  color: var(--text-on-ink-muted);
+}
+
+.category-tile-cta {
+  display: inline-block;
+  margin-top: auto;
+  padding-top: 0.9rem;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: var(--text-xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--vermilion);
+  transition: transform var(--duration-fast) var(--ease-out-expo);
+}
+
+.category-tile:hover .category-tile-cta {
+  transform: translateX(4px);
+}
+
+/* ─── Home: welcome band ─────────────────────────────────────────────────── */
+
+.welcome-band {
+  position: relative;
+  overflow: hidden;
+  padding-block: var(--space-section);
+  background: var(--ink-950);
+  color: var(--text-on-ink);
+}
+
+.welcome-band-watermark {
+  position: absolute;
+  top: 50%;
+  right: -1.5rem;
+  transform: translateY(-50%);
+  font-size: clamp(5.5rem, 4rem + 10vw, 11rem);
+  letter-spacing: 0.04em;
+  color: rgba(245, 241, 232, 0.045);
+  white-space: nowrap;
+  user-select: none;
+  pointer-events: none;
+}
+
+.welcome-band-inner {
+  position: relative;
+  max-width: 46rem;
+}
+
+.welcome-band h2 {
+  font-size: var(--text-title);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.welcome-band h2 em {
+  font-style: normal;
+  color: var(--vermilion);
+}
+
+.welcome-band p {
+  margin-top: 1.1rem;
+  color: var(--text-on-ink-muted);
+  max-width: 40rem;
+}
+
+.welcome-band p em {
+  font-style: normal;
+  color: var(--text-on-ink);
+}
+
+/* ─── Contact ────────────────────────────────────────────────────────────── */
+
+.contact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  gap: clamp(1rem, 0.8rem + 1vw, 1.5rem);
+}
+
+.contact-card {
+  padding: 1.6rem 1.5rem 1.5rem;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--vermilion);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  transition:
+    transform var(--duration-normal) var(--ease-out-expo),
+    box-shadow var(--duration-normal) var(--ease-out-expo);
+}
+
+.contact-card:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-card-hover);
+}
+
+.contact-card-jp {
+  font-size: var(--text-xs);
+  letter-spacing: 0.3em;
+  color: var(--vermilion-deep);
+}
+
+.contact-card h2 {
+  margin-block: 0.35rem 0.8rem;
+  font-size: 1.05rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.contact-link {
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 4px;
+  transition:
+    color var(--duration-fast) ease,
+    text-decoration-color var(--duration-fast) ease;
+}
+
+.contact-link:hover {
+  color: var(--vermilion);
+  text-decoration-color: var(--vermilion);
+}
+
+.contact-card-note {
+  margin-top: 0.7rem;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.contact-hours div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-block: 0.4rem;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-sm);
+}
+
+.contact-hours div:last-child {
+  border-bottom: none;
+}
+
+.contact-hours dt {
+  color: var(--text-muted);
+}
+
+.contact-hours dd {
+  font-family: var(--font-display);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.contact-footnote {
+  margin-top: clamp(1.8rem, 1.4rem + 1.5vw, 2.6rem);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+/* ─── Checkout ───────────────────────────────────────────────────────────── */
+
+.checkout-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: clamp(1.5rem, 1.2rem + 1.5vw, 2.5rem);
+  align-items: start;
+}
+
+@media (min-width: 900px) {
+  .checkout-layout {
+    grid-template-columns: minmax(0, 1fr) 22rem;
+  }
+}
+
+.checkout-form {
+  padding: clamp(1.4rem, 1.1rem + 1.5vw, 2.2rem);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.checkout-disclaimer {
+  margin-top: 0.9rem;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.checkout-summary {
+  position: sticky;
+  top: 5.5rem;
+  padding: 1.6rem 1.5rem;
+  background: var(--ink-900);
+  border-radius: var(--radius-lg);
+  color: var(--text-on-ink);
+}
+
+.checkout-summary h2 {
+  padding-bottom: 0.8rem;
+  border-bottom: 1px solid rgba(245, 241, 232, 0.14);
+  font-size: 0.95rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.checkout-summary ul li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  padding-block: 0.55rem;
+  border-bottom: 1px solid rgba(245, 241, 232, 0.08);
+  font-size: var(--text-sm);
+}
+
+.checkout-summary-name {
+  color: var(--text-on-ink);
+}
+
+.checkout-summary-qty {
+  color: var(--text-on-ink-muted);
+  white-space: nowrap;
+}
+
+.checkout-summary-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: 1rem;
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.checkout-summary-total span:last-child {
+  font-size: 1.25rem;
+  color: var(--vermilion);
+}
+
+.checkout-summary-note {
+  margin-top: 0.8rem;
+  font-size: var(--text-xs);
+  color: var(--text-on-ink-muted);
+}
+
+/* ─── Order success ──────────────────────────────────────────────────────── */
+
+.order-success {
+  max-width: 30rem;
+  margin-inline: auto;
+  padding: clamp(2.4rem, 2rem + 2vw, 3.4rem) clamp(1.4rem, 1rem + 2vw, 2.4rem);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-top: 4px solid var(--vermilion);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  text-align: center;
+}
+
+.order-success-jp {
+  font-size: var(--text-sm);
+  letter-spacing: 0.28em;
+  color: var(--vermilion);
+}
+
+.order-success h1 {
+  margin-top: 0.6rem;
+  font-size: var(--text-title);
+  text-transform: uppercase;
+}
+
+.order-success-number {
+  margin-top: 1.2rem;
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+}
+
+.order-success-number strong {
+  color: var(--vermilion-deep);
+  letter-spacing: 0.04em;
+}
+
+.order-success-total {
+  margin-top: 0.3rem;
+  color: var(--text-muted);
+}
+
+.order-success-note {
+  margin-block: 1.3rem 1.6rem;
+  padding: 0.85rem 1rem;
+  background: var(--vermilion-wash);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  text-align: left;
+}

@@ -27,6 +27,10 @@ return [
         'http://127.0.0.1:5177',
         'http://127.0.0.1:3000',
         'https://tadaima.poslite.com.mx',
+        // TadaimaUS — cinturón: en prod la tienda US es same-origin (mismo
+        // contenedor), pero el dominio propio queda permitido explícitamente.
+        'https://tadaimaus.com',
+        'https://www.tadaimaus.com',
         env('APP_URL'),           // Cloud Run URL — se inyecta en producción
         env('CORS_ORIGIN'),       // override puntual si se necesita
     ]),

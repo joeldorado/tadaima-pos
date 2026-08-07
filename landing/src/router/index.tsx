@@ -23,6 +23,7 @@ import { OnlineCatalogPage } from '@/pages/OnlineCatalogPage'
 import { SuppliesPage } from '@/pages/SuppliesPage'
 import { PromosPage } from '@/pages/PromosPage'
 import { DocsPage } from '@/pages/DocsPage'
+import { TadaimaUsPage } from '@/pages/TadaimaUsPage'
 
 function IndexPage() {
   const { user } = useAuth()
@@ -76,6 +77,9 @@ export const router = createBrowserRouter([
       { path: 'settings',  element: <ProtectedRoute requiresPage="settings"><SettingsPage /></ProtectedRoute> },
       { path: 'stores',    element: <ProtectedRoute requiresPage="stores"><StoresPage /></ProtectedRoute> },
       { path: 'admin',     element: <ProtectedRoute requiresPage="admin"><AdminPage /></ProtectedRoute> },
+      // TadaimaUS: módulo admin de la tienda US (misma implementación que el
+      // tab de AdminPage, con página y entrada de menú propias — solo admin).
+      { path: 'tadaima-us', element: <ProtectedRoute requiresPage="admin"><TadaimaUsPage /></ProtectedRoute> },
       { path: 'layaways',  Component: LayawaysPage },
       { path: 'documentacion', element: <ProtectedRoute requiresPage="docs"><DocsPage /></ProtectedRoute> },
       // Walkthrough QA para demos al cliente. Admin only (gate adicional

@@ -4,6 +4,7 @@ import { useAuth } from "@tadaima/auth";
 import { canAccessAdmin, isAdmin } from "@tadaima/permissions";
 import { TabPermisos } from "@/components/admin/TabPermisos";
 import { TabCancelaciones } from "@/components/admin/TabCancelaciones";
+import { TabTadaimaUS } from "@/components/admin/TabTadaimaUS";
 import { UserAvatar } from "@/components/UserAvatar";
 import { AvatarPicker } from "@/components/AvatarPicker";
 import { useActiveStore } from "@/contexts/StoreContext";
@@ -25,6 +26,7 @@ import {
   getTerminals, createTerminal, updateTerminal, deleteTerminal,
   createRole, getPermissions, assignRolePermissions,
   getStorePrices, updateStorePrices,
+  getUsOrdersNewCount,
 } from "@tadaima/api";
 import type {
   Store as ApiStore, Warehouse as ApiWarehouse,
@@ -1676,7 +1678,7 @@ function TabPreciosTienda() {
 }
 
 // ─── Main AdminPage ────────────────────────────────────────────────────────────
-type TabId = "sucursales" | "bodegas" | "usuarios" | /* "roles" | */ "categorias" | "inventario" | /* "precios_tienda" | */ "terminales" | "permisos" | "cancelaciones";
+type TabId = "sucursales" | "bodegas" | "usuarios" | /* "roles" | */ "categorias" | "inventario" | /* "precios_tienda" | */ "terminales" | "permisos" | "cancelaciones" | "tadaimaus";
 
 const TABS: { id: TabId; label: string; icon: React.ElementType; sub: string }[] = [
   { id: "sucursales",     label: "Sucursales",       icon: Store,      sub: "STORES" },
@@ -1689,12 +1691,25 @@ const TABS: { id: TabId; label: string; icon: React.ElementType; sub: string }[]
   { id: "terminales",     label: "Terminales",       icon: Smartphone, sub: "PAYMENT_TERMINALS" },
   { id: "permisos",       label: "Permisos",         icon: Shield,     sub: "PRICE_PERMISSIONS" },
   { id: "cancelaciones",  label: "Cancelaciones",    icon: Trash2,     sub: "SALE_CANCELLATIONS" },
+  { id: "tadaimaus",      label: "TadaimaUS",        icon: Globe,      sub: "TIENDA US" },
 ];
 
 export function AdminPage() {
   const [activeTab, setActiveTab] = useState<TabId>("sucursales");
   const { user } = useAuth();
   const navigate = useNavigate();
+
+  // Badge del tab TadaimaUS: pedidos US en status "new". Polling de 60s.
+  // retry: false — si el endpoint no responde (backend sin deployar) el badge
+  // simplemente no aparece, sin spamear reintentos.
+  const usNewCountQuery = useQuery({
+    queryKey: queryKeys.usStore.newCount(),
+    queryFn: getUsOrdersNewCount,
+    refetchInterval: 60_000,
+    retry: false,
+    enabled: !!user && canAccessAdmin(user.roles),
+  });
+  const usNewCount = usNewCountQuery.data ?? 0;
 
   // Redirect non-admin users immediately
   useEffect(() => {
@@ -1716,6 +1731,7 @@ export function AdminPage() {
       case "terminales":     return <TabTerminales />;
       case "permisos":       return <TabPermisos />;
       case "cancelaciones":  return <TabCancelaciones />;
+      case "tadaimaus":      return <TabTadaimaUS />;
     }
   };
 
@@ -1741,10 +1757,15 @@ export function AdminPage() {
               }}
             >
               <tab.icon size={15} color={isActive ? RED : TM} />
-              <div>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <p style={{ fontSize: 12, fontWeight: 900, color: isActive ? "#FF5544" : TS, margin: 0 }}>{tab.label}</p>
                 <p style={{ fontSize: 8, color: TM, margin: 0, fontFamily: "monospace" }}>{tab.sub}</p>
               </div>
+              {tab.id === "tadaimaus" && usNewCount > 0 && (
+                <span style={{ background: "#E0221A", color: "#fff", borderRadius: 999, fontSize: 9, fontWeight: 900, padding: "2px 6px", minWidth: 16, textAlign: "center", flexShrink: 0 }}>
+                  {usNewCount > 99 ? "99+" : usNewCount}
+                </span>
+              )}
             </button>
           );
         })}

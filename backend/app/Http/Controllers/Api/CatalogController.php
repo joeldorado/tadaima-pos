@@ -494,18 +494,11 @@ class CatalogController extends Controller
     /**
      * Criterio de "vendible": stock > 0 en alguna bodega de tienda. Un solo
      * lugar para que el catálogo público y el panel del admin nunca discrepen.
+     * La lógica vive en App\Support\SellableStock (compartida con TadaimaUS).
      */
     private function sellableStockExists(): \Closure
     {
-        return function ($q) {
-            $q->selectRaw('1')
-                ->from('inventory')
-                ->join('warehouses', 'warehouses.id', '=', 'inventory.warehouse_id')
-                ->whereColumn('inventory.product_id', 'products.id')
-                ->where('warehouses.type', 'store')
-                ->groupBy('inventory.product_id')
-                ->havingRaw('SUM(inventory.quantity) > 0');
-        };
+        return \App\Support\SellableStock::existsClosure('products.id');
     }
 
     /**
