@@ -61,6 +61,9 @@ export function CloseCashModal({ session, title, reason, onClosed, onCancel }: C
   const salidas = pv ? Number(pv.total_salidas ?? 0) : 0;
   const ajustes = pv ? Number(pv.total_ajustes ?? 0) : 0;
   const insumos = pv ? Number(pv.total_supplies ?? 0) : 0;
+  // Los insumos YA vienen dentro de total_salidas — se muestran como renglón
+  // propio (Joel 2026-08-06) pero repartidos para que la resta ocurra UNA vez.
+  const retiros = Math.round((salidas - insumos) * 100) / 100;
 
   const handleCloseCash = async () => {
     const amount = parseFloat(closeCashAmount) || 0;
@@ -165,7 +168,8 @@ export function CloseCashModal({ session, title, reason, onClosed, onCancel }: C
                   { label: "Efectivo inicial", value: `+ ${fmt(Number(pv.opening_cash ?? 0))}`, show: true },
                   { label: "Ventas en efectivo (pesos)", value: `+ ${fmt(pesosCobrados)}`, show: true },
                   { label: "Entradas de caja", value: `+ ${fmt(entradas)}`, show: entradas > 0 },
-                  { label: insumos > 0 ? `Salidas (incluye insumos ${fmt(insumos)})` : "Salidas de caja", value: `− ${fmt(salidas)}`, show: salidas > 0 },
+                  { label: "Insumos", value: `− ${fmt(insumos)}`, show: insumos > 0 },
+                  { label: "Salidas de caja (retiros)", value: `− ${fmt(retiros)}`, show: retiros > 0 },
                   { label: "Ajustes", value: `${ajustes >= 0 ? "+" : "−"} ${fmt(Math.abs(ajustes))}`, show: ajustes !== 0 },
                 ].filter(r => r.show).map(r => (
                   <div key={r.label} style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
