@@ -376,7 +376,7 @@ export function CashCutsPage() {
         </div>
 
         {/* ── Filtros ─────────────────────────────────────────────────────── */}
-        <div className="flex items-center gap-3 flex-wrap p-4 rounded-2xl" style={GLASS}>
+        <div className="flex items-center gap-3 flex-wrap p-4 rounded-2xl" style={GLASS} data-tour="cuts-filters">
           <Calendar size={15} style={{ color: RED }} />
 
           {presets.map(p => {
@@ -427,7 +427,7 @@ export function CashCutsPage() {
         ) : cashQuery.isError ? (
           <div className="py-24 text-center" style={{ color: "#DC2626", fontSize: 12 }}>No se pudieron cargar los cortes.</div>
         ) : cashReport && (
-          <div style={{ ...GLASS, borderRadius: 24, overflow: "hidden" }}>
+          <div style={{ ...GLASS, borderRadius: 24, overflow: "hidden" }} data-tour="cuts-history">
             <div className="px-6 py-4 flex items-center justify-between flex-wrap gap-3" style={{ borderBottom: DIV }}>
               <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: TM }}>
                 {cashReport.summary.total_sessions} sesiones · {cashReport.period.from} → {cashReport.period.to}

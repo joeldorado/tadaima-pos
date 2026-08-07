@@ -1,0 +1,232 @@
+[
+  {
+    "slug": "existencias",
+    "title": "Existencias e inventario",
+    "category": "Inventario",
+    "icon": "package-search",
+    "summary": "Consultar stock por tienda y mover producto entre Piso, Bodega y Central.",
+    "keywords": [
+      "stock",
+      "inventario",
+      "existencias",
+      "piso",
+      "bodega",
+      "central",
+      "quickstock",
+      "ajuste de inventario",
+      "mover producto"
+    ],
+    "updatedAt": "2026-08-06",
+    "sections": [
+      {
+        "heading": "Consultar stock",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "En Inventario / Existencias buscas por nombre, SKU o código y ves cuánto hay en cada tienda y ubicación. El gerente y el cajero ven el stock de su tienda."
+          },
+          {
+            "kind": "link",
+            "toTopic": "buscar-en-tiendas",
+            "label": "¿Quieres ver qué sucursal tiene piezas? Buscar en tiendas"
+          }
+        ]
+      },
+      {
+        "heading": "Las tres ubicaciones",
+        "blocks": [
+          {
+            "kind": "table",
+            "head": [
+              "Ubicación",
+              "Vendible en Caja"
+            ],
+            "rows": [
+              [
+                "Piso",
+                "Sí — es lo que está al frente para vender."
+              ],
+              [
+                "Bodega",
+                "No — respaldo atrás; muévelo a Piso para venderlo."
+              ],
+              [
+                "Central",
+                "No — almacén central de la cadena."
+              ]
+            ]
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Mover con QuickStock",
+            "text": "Desde el producto (o el modal QuickStock) ajustas cantidades y mueves entre Piso y Bodega. Cada ajuste queda en auditoría con su diferencia (delta)."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "slug": "buscar-en-tiendas",
+    "title": "Buscar en tiendas",
+    "category": "Inventario",
+    "icon": "search",
+    "summary": "Escanea o escribe un producto y ve al instante qué sucursal tiene piezas.",
+    "keywords": [
+      "buscar en tiendas",
+      "existencias por tienda",
+      "otra sucursal",
+      "otra tienda",
+      "disponibilidad",
+      "hay en otra tienda",
+      "stock por sucursal",
+      "escáner",
+      "código de barras",
+      "exhibición",
+      "bodega",
+      "llamar tienda",
+      "whatsapp tienda",
+      "cupo de preventa"
+    ],
+    "updatedAt": "2026-08-06",
+    "sections": [
+      {
+        "id": "para-que-sirve",
+        "heading": "Para qué sirve",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Un cliente pregunta por algo que ya no tienes: en lugar de llamar tienda por tienda, buscas el producto aquí y en segundos ves cuántas piezas hay en cada sucursal. La pantalla se llama “Existencias por Tienda” y la pueden usar los tres roles (admin, gerente y cajero)."
+          },
+          {
+            "kind": "image",
+            "src": "buscar-tiendas/01-existencias-por-tienda.png",
+            "alt": "Pantalla Existencias por Tienda con el buscador vacío",
+            "caption": "Existencias por Tienda: escanea o escribe y te muestra dónde hay disponible."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Solo cantidades, sin dinero",
+            "text": "El desglose por tienda muestra piezas y contacto, no costos ni información financiera de otras sucursales. El precio de venta del producto sí aparece junto a su nombre en la lista de resultados."
+          }
+        ]
+      },
+      {
+        "id": "como-buscar",
+        "heading": "Cómo buscar",
+        "blocks": [
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Escanea o escribe",
+                "detail": "El buscador acepta el lector de códigos o texto: nombre, SKU o código de barras (mínimo 2 letras). Si arriba dice “Scanner listo”, escanea y el producto se abre solo."
+              },
+              {
+                "title": "Elige el resultado",
+                "detail": "La lista muestra miniatura, nombre, SKU y precio. Si solo hay un resultado, se abre automáticamente."
+              },
+              {
+                "title": "Lee el desglose por tienda",
+                "detail": "A la derecha aparece cada sucursal con sus piezas, ordenadas de mayor a menor cantidad. Tu sucursal trae la etiqueta “Tu tienda”."
+              }
+            ]
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "También encuentra preventas",
+            "text": "Los catálogos de preventa salen en la búsqueda con la etiqueta “Preventa”: en vez de piezas verás el cupo por tienda (Límite, Reservados y si queda cupo disponible)."
+          }
+        ]
+      },
+      {
+        "id": "leer-resultado",
+        "heading": "Cómo leer cada tarjeta",
+        "blocks": [
+          {
+            "kind": "image",
+            "src": "buscar-tiendas/02-resultado-busqueda.png",
+            "alt": "Resultado de búsqueda con el desglose de existencias por tienda",
+            "caption": "Cada tarjeta es una sucursal: estado, desglose Exhib/Bodega y total en piezas."
+          },
+          {
+            "kind": "table",
+            "head": [
+              "Elemento",
+              "Qué significa"
+            ],
+            "rows": [
+              [
+                "Disponible / Por agotarse / Agotado",
+                "El estado general: “Por agotarse” aparece con 10 piezas o menos; “Agotado” con cero."
+              ],
+              [
+                "Exhib N · Bodega N",
+                "Cuántas piezas están al frente (exhibición, vendibles en Caja) y cuántas guardadas en bodega."
+              ],
+              [
+                "Número grande + “uds”",
+                "El total de piezas de esa sucursal."
+              ],
+              [
+                "Llamar / WhatsApp",
+                "Contacto directo con esa tienda para confirmar o apartar la pieza."
+              ]
+            ]
+          },
+          {
+            "kind": "callout",
+            "tone": "gold",
+            "title": "Se actualiza solo",
+            "text": "El desglose se refresca cada 30 segundos mientras tengas la pantalla abierta — las ventas de otras cajas se reflejan sin recargar."
+          },
+          {
+            "kind": "link",
+            "toTopic": "existencias",
+            "label": "Qué significa cada ubicación (Piso / Bodega / Central)"
+          },
+          {
+            "kind": "link",
+            "toTopic": "traslados",
+            "label": "¿Hay piezas en otra tienda? Pide un traslado"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "slug": "traslados",
+    "title": "Traslados entre tiendas",
+    "category": "Inventario",
+    "icon": "arrow-left-right",
+    "summary": "Enviar producto de una sucursal a otra y confirmarlo al recibir.",
+    "sections": [
+      {
+        "heading": "Flujo",
+        "blocks": [
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Solicitar el traslado",
+                "detail": "Eliges producto, cantidad y tiendas origen/destino. Queda “pendiente” hasta que se confirme."
+              },
+              {
+                "title": "Confirmar / completar",
+                "detail": "El admin puede “Completar ahora”. El gerente solo solicita; la confirmación del destino la hace el admin."
+              }
+            ]
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Nivel bodega",
+            "text": "Los traslados se manejan a nivel de bodega entre tiendas, de modo que el stock cuadre en origen y destino."
+          }
+        ]
+      }
+    ]
+  }
+]

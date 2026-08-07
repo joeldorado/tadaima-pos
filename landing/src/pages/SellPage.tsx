@@ -4343,6 +4343,7 @@ export function SellPage() {
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", justifyContent: "center" }}>
           <button
             onClick={() => setShowOpenCashModal(true)}
+            data-tour="sell-open-register"
             style={{
               display: "flex", alignItems: "center", gap: 12,
               padding: "16px 40px", borderRadius: 20, cursor: "pointer",
@@ -4743,6 +4744,7 @@ export function SellPage() {
           <button
             onClick={() => setShowPrinterModal(true)}
             data-testid="printer-config-btn"
+            data-tour="sell-printer"
             className="h-full px-4 flex items-center transition-colors"
             style={{ color: TLO, borderRight: CARD_B }}
             title="Impresora de tickets (impresión silenciosa de esta máquina)"
@@ -4767,6 +4769,7 @@ export function SellPage() {
               Preventas, Cliente, Escanear) y solo visible cuando hay productos. */}
           <button
             onClick={() => setShowCloseCashModal(true)}
+            data-tour="sell-close-register"
             className="h-full px-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-colors"
             style={{ background: "rgba(245,158,11,0.18)", color: "#F59E0B", borderLeft: "1px solid rgba(245,158,11,0.4)" }}
             title={`Cerrar sesión y hacer el corte del día: ${cashSession?.register?.name ?? "Caja"} · Abierta ${cashSession?.opened_at ? new Date(cashSession.opened_at).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }) : ""}`}
@@ -5228,6 +5231,7 @@ export function SellPage() {
                 <input
                   ref={prodInputRef}
                   type="text"
+                  data-tour="sell-search"
                   placeholder="Añadir producto, escanear código o tipear folio (PREV-…)"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
@@ -5500,6 +5504,7 @@ export function SellPage() {
                   espera que el cajero escanee una tarjeta TAD (auto-asigna). */}
               <button
                 onClick={openCustomerManualPopup}
+                data-tour="sell-client"
                 className={`flex items-center gap-3 px-5 rounded-2xl border transition-all font-black uppercase tracking-widest text-[10px] ${
                   activeMesa.customerId
                     ? "bg-emerald-500/[0.08] border-emerald-500/25 text-emerald-300 hover:bg-emerald-500/[0.12]"
@@ -5556,7 +5561,7 @@ export function SellPage() {
           )}
 
           {/* Lista de Items del Carrito */}
-          <div className="flex-1 overflow-y-auto px-4 pb-4 no-scrollbar">
+          <div className="flex-1 overflow-y-auto px-4 pb-4 no-scrollbar" data-tour="sell-cart">
             {activeMesa.items.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center opacity-20 gap-4">
                 <div className="w-24 h-24 rounded-full border-2 border-dashed flex items-center justify-center" style={{ borderColor: "var(--td-card-border)" }}>
@@ -6937,6 +6942,7 @@ export function SellPage() {
                       return (
                         <button
                           disabled={checkoutDisabled || isInsufficient || mixtoInvalid}
+                          data-tour="sell-cobrar"
                           {...(payBlocked ? { title: blockedItems.map(b => b.nombre).join(", ") + `: no se pueden cobrar con ${activeMesa.paymentMethod}.` } : {})}
                           onClick={() => { void handleCheckout(); }}
                           className="w-full h-[52px] group relative flex items-center justify-center gap-2 rounded-2xl overflow-hidden transition-all disabled:opacity-30 disabled:grayscale"

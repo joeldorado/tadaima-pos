@@ -86,7 +86,7 @@ export function PreSalesPage() {
       </div>
 
       {/* Tab navigation */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }} data-tour="presales-tabs">
         {visibleTabs.map(({ id, label }) => (
           <button
             key={id}

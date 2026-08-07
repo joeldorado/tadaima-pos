@@ -1,0 +1,85 @@
+{
+  "id": "venta-caja",
+  "title": "Venta completa en Caja",
+  "description": "De abrir tu caja a entregar el ticket: búsqueda, carrito, cliente y cobro paso a paso.",
+  "icon": "shopping-cart",
+  "topicSlug": "cobro-caja",
+  "steps": [
+    {
+      "id": "intro",
+      "title": "Venta completa en Caja",
+      "body": "Te llevo de la mano por una venta de principio a fin: abrir tu caja, armar el carrito y cobrar. Nada se cobra solo — tú decides cada paso. Puedes salir cuando quieras con Esc o la ✕."
+    },
+    {
+      "id": "nav-caja",
+      "target": "nav-caja",
+      "placement": "right",
+      "title": "Todo empieza en Caja",
+      "body": "Este botón rojo es tu punto de partida todos los días. Aquí vive la venta completa: productos, cliente y cobro. Vamos para allá."
+    },
+    {
+      "id": "buscar",
+      "route": "/caja",
+      "target": "sell-search",
+      "waitFor": true,
+      "placement": "bottom",
+      "precondition": {
+        "check": "caja-abierta",
+        "target": "sell-open-register",
+        "failTitle": "Necesitas abrir la caja primero",
+        "failBody": "Captura el efectivo con el que arranca el cajón y presiona Abrir Caja. En cuanto la abras, el tour continúa solo."
+      },
+      "title": "Busca, escanea o teclea",
+      "body": "Escribe el nombre o SKU, o escanea el código de barras con el lector. También acepta folios de preventa: teclea PREV- y el número para cargar el pedido completo. Ojo: re-escanear el mismo producto no suma — la cantidad se ajusta con + y −."
+    },
+    {
+      "id": "carrito",
+      "route": "/caja",
+      "target": "sell-cart",
+      "placement": "right",
+      "title": "Tu carrito, línea por línea",
+      "body": "Cada producto muestra su cantidad, precio y total. Las promos NxM se aplican solas cuando la cantidad alcanza, y desde el menú ⋮ de cada línea puedes dar un descuento con motivo y autorización."
+    },
+    {
+      "id": "cliente",
+      "route": "/caja",
+      "target": "sell-client",
+      "placement": "bottom",
+      "title": "Cliente (opcional)",
+      "body": "Asigna el cliente por nombre o teléfono, o escanea su tarjeta de socio Tadaima — el precio de socio se aplica en automático. Para una venta normal no es obligatorio."
+    },
+    {
+      "id": "cobrar",
+      "route": "/caja",
+      "target": "sell-cobrar",
+      "placement": "top",
+      "precondition": {
+        "check": "carrito-con-items",
+        "target": "sell-search",
+        "failTitle": "Agrega un producto al carrito",
+        "failBody": "Busca o escanea al menos un producto para ver el cobro en acción. No te preocupes: el tour no cobra nada por ti.",
+        "allowSkip": true
+      },
+      "title": "El botón Cobrar",
+      "body": "Cuando el carrito está listo, aquí se cierra la venta. Si pagan en efectivo, captura lo recibido y el sistema calcula el cambio al instante."
+    },
+    {
+      "id": "metodos",
+      "title": "Métodos de pago",
+      "body": "Puedes cobrar en efectivo, tarjeta, transferencia o dólares (con el tipo de cambio del día y cambio bilingüe). ¿Pagan mitad y mitad? El pago mixto combina efectivo + transferencia en una sola venta."
+    },
+    {
+      "id": "ticket",
+      "route": "/caja",
+      "target": "sell-printer",
+      "placement": "bottom",
+      "title": "El ticket sale solo",
+      "body": "Al cobrar, el ticket se imprime en automático. Con este botón configuras la impresora de esta máquina (impresión silenciosa). Si necesitas reimprimir uno, lo haces desde Historial."
+    },
+    {
+      "id": "cierre",
+      "title": "¡Eso es todo!",
+      "body": "Ya sabes vender en Tadaima: abrir caja, armar el carrito y cobrar. Cuando termine tu turno, recuerda hacer tu corte — hay un tour para eso."
+    }
+  ]
+}

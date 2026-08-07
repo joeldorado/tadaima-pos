@@ -1,0 +1,1021 @@
+[
+  {
+    "slug": "alta-producto",
+    "title": "Alta de producto",
+    "category": "Catálogo y precios",
+    "icon": "package",
+    "summary": "Crear un producto con nombre, precios, métodos de pago e inventario por tienda.",
+    "tourId": "alta-producto",
+    "updatedAt": "2026-08-06",
+    "keywords": [
+      "alta",
+      "nuevo producto",
+      "crear producto",
+      "registrar producto",
+      "sku",
+      "código de barras",
+      "sku temporal",
+      "pend",
+      "borrador",
+      "manga nacional",
+      "tomos",
+      "proveedor",
+      "categoría",
+      "subir imagen"
+    ],
+    "sections": [
+      {
+        "id": "donde-se-hace",
+        "heading": "Dónde se hace",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "En el menú Productos, botón “Alta de Producto”. Primero eliges el tipo en la ventana “¿Qué tipo de producto?”: “Producto Normal” (figuras, merch, accesorios, artículos en general) o “Manga Nacional” (tomos individuales o en lote, con ISBN y número de volumen). Esta guía cubre el producto normal."
+          },
+          {
+            "kind": "image",
+            "src": "productos/03-tipo-de-alta.png",
+            "alt": "Ventana “¿Qué tipo de producto?” con las opciones Producto Normal y Manga Nacional",
+            "caption": "Al dar clic en “Alta de Producto”, primero eliges qué vas a registrar."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Checklist obligatorio",
+            "text": "Arriba del formulario ves tres requisitos: Nombre · Precio Normal · Inventario. Hasta que los tres estén completos, el botón “Guardar Cambios” queda deshabilitado."
+          }
+        ]
+      },
+      {
+        "heading": "Tab General",
+        "blocks": [
+          {
+            "kind": "fields",
+            "fields": [
+              {
+                "label": "Nombre del Producto",
+                "hint": "Ej. Funko Pop Goku SSJ",
+                "required": true
+              },
+              {
+                "label": "SKU / Código",
+                "hint": "Escanea, escribe o usa “Generar código (sin lector)”. Si lo dejas vacío, se genera uno temporal"
+              },
+              {
+                "label": "Categoría",
+                "hint": "Elige categoría · botón + para crear una nueva al vuelo"
+              },
+              {
+                "label": "Proveedor",
+                "hint": "Elige proveedor · botón + para crear uno nuevo"
+              }
+            ]
+          },
+          {
+            "kind": "prose",
+            "text": "También puedes subir una imagen (arrastrar o clic en “Subir Imagen”). No es obligatoria, pero se ve en Caja y en la tienda en línea."
+          },
+          {
+            "kind": "image",
+            "src": "productos/04-alta-de-producto.png",
+            "alt": "Formulario de alta de producto con sus tabs General, Precios e Inventario",
+            "caption": "El formulario de alta: llena General, Precios e Inventario y guarda."
+          }
+        ]
+      },
+      {
+        "id": "sku-temporal",
+        "heading": "¿No tienes el SKU? Guarda igual",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "A veces registras el producto antes de tenerlo en la mano (una compra que viene en camino) y todavía no conoces su código. Deja el campo SKU vacío: al guardar, el sistema le pone un código temporal que empieza con “PEND-” y te avisa con un mensaje. En la tabla, ese producto se distingue con una etiqueta ámbar ⏳ para que el equipo recuerde ponerle su código real cuando llegue."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Si el guardado falla, no pierdes lo capturado",
+            "text": "El formulario ya no se cierra solo: si el servidor rechaza el alta (por ejemplo, un SKU repetido), el modal se queda abierto con todos tus datos para que corrijas y vuelvas a intentar."
+          }
+        ]
+      },
+      {
+        "id": "borrador",
+        "heading": "Borrador automático",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Mientras capturas un producto NUEVO, el formulario se va guardando solo en esa computadora. Si la página se recarga, se va la luz o el navegador se cierra, al volver a abrir el alta se restaura todo con el aviso “Se restauró un borrador sin guardar de tu última sesión”."
+          },
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Se limpia al guardar con éxito",
+                "detail": "El producto ya quedó registrado — el borrador ya no hace falta."
+              },
+              {
+                "title": "Se limpia al cancelar",
+                "detail": "Cancelar, la X o el clic fuera del modal cuentan como abandono a propósito: el borrador se descarta."
+              },
+              {
+                "title": "Caduca a las 24 horas",
+                "detail": "Un borrador de hace más de un día ya no se restaura solo."
+              }
+            ]
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "La foto no viaja en el borrador",
+            "text": "Las imágenes no se guardan en el borrador — si restauraste uno, vuelve a subir la foto. El mismo borrador automático existe en el alta de Tomos y al crear catálogos de Preventa."
+          }
+        ]
+      },
+      {
+        "heading": "Tab Precios",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "El producto puede tener hasta 5 niveles de precio. Solo el Normal es obligatorio; los demás se usan según el cliente."
+          },
+          {
+            "kind": "table",
+            "head": [
+              "Nivel",
+              "Cuándo aplica"
+            ],
+            "rows": [
+              [
+                "Precio Normal (Default)",
+                "Precio público. Obligatorio y mayor a 0."
+              ],
+              [
+                "Precio Socio",
+                "Socios Tadaima (se asigna solo al escanear la tarjeta TAD)."
+              ],
+              [
+                "Precio Mayorista",
+                "Ventas de volumen."
+              ],
+              [
+                "Precio D / Precio E",
+                "Niveles extra configurables."
+              ]
+            ]
+          },
+          {
+            "kind": "link",
+            "toTopic": "precios-por-nivel",
+            "label": "Niveles de precio: cuándo aplica cada uno en Caja"
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "Costo Real: solo admin",
+            "text": "El campo “Costo Real” solo lo ven administradores (y quien tenga el permiso de ver costos). Gerente y cajero no lo ven ni lo editan."
+          },
+          {
+            "kind": "prose",
+            "text": "Marca los “Métodos de pago aceptados” (Efectivo y/o Tarjeta) — al menos uno. Si marcas solo Efectivo, ese producto restringe la venta a efectivo/dólares. Opcional: “Pieza Única (No Resurtible)”."
+          }
+        ]
+      },
+      {
+        "heading": "Tab Inventario",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Cada tienda tiene tres ubicaciones. Un producto nuevo necesita existencia en al menos una."
+          },
+          {
+            "kind": "table",
+            "head": [
+              "Ubicación",
+              "Qué es"
+            ],
+            "rows": [
+              [
+                "Piso",
+                "Lo que está a la venta en el mostrador (vendible en Caja)."
+              ],
+              [
+                "Bodega",
+                "Respaldo atrás, no vendible hasta moverlo a Piso."
+              ],
+              [
+                "Central",
+                "Almacén central de la cadena."
+              ]
+            ]
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Sin tiendas todavía",
+            "text": "Si no hay almacenes ni tiendas, primero créalos en Tiendas. El formulario te avisa."
+          }
+        ]
+      },
+      {
+        "heading": "Guardar",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Botón “Guardar Cambios” (verás “Guardando…” mientras el servidor confirma). Al editar aparece además “Desactivar Producto (Baja)” y, para admin, “Eliminar”. El tab Promos se habilita una vez guardado el producto (ver la guía de Promos)."
+          },
+          {
+            "kind": "link",
+            "toTopic": "promos-nxm",
+            "label": "Cómo funcionan las promos"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "slug": "buscar-filtrar-productos",
+    "title": "Buscar y filtrar productos",
+    "category": "Catálogo y precios",
+    "icon": "package-search",
+    "summary": "Encontrar cualquier artículo entre ~14,000: búsqueda por nombre/SKU/código, filtros combinables y captura rápida de costos.",
+    "updatedAt": "2026-08-06",
+    "keywords": [
+      "buscar",
+      "búsqueda",
+      "filtros",
+      "sin costo",
+      "agotados",
+      "por agotarse",
+      "stock bajo",
+      "con promo",
+      "más vendidos",
+      "valor invertido",
+      "código de barras",
+      "sku",
+      "escáner",
+      "lector",
+      "tabla",
+      "cuadrícula",
+      "catálogo macro"
+    ],
+    "sections": [
+      {
+        "id": "la-pagina",
+        "heading": "La página Productos",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "En el menú Productos vive el catálogo completo — desde la importación del catálogo Macro son alrededor de 14,000 artículos. Arriba hay dos pestañas (“Productos” y “Tomos / Manga Nacional”), un selector de tienda y dos vistas: Tabla o Cuadrícula. Abajo, la paginación real: “Mostrando 1–20 de 13,950 · página 1 de 698”."
+          },
+          {
+            "kind": "image",
+            "src": "productos/01-listado-almacen.png",
+            "alt": "Página Productos con la tabla del catálogo, buscador y chips de filtros arriba",
+            "caption": "El almacén: buscador, chip “Productos sin Costo”, dropdown “Filtros” y el alta a la derecha."
+          }
+        ]
+      },
+      {
+        "id": "buscar",
+        "heading": "Buscar por nombre, SKU o código de barras",
+        "blocks": [
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Escribe 2 letras o más en el buscador",
+                "detail": "“Escanea o busca · nombre, SKU o código de barras”. La búsqueda corre en el servidor sobre el catálogo COMPLETO — no solo sobre la página que ves en pantalla."
+              },
+              {
+                "title": "O escanea con el lector",
+                "detail": "El Enter del escáner busca al instante, sin esperar. Sirve para verificar si un código ya existe antes de darlo de alta."
+              },
+              {
+                "title": "“No se encontró” es de fiar",
+                "detail": "El aviso solo sale cuando el servidor ya respondió — si no aparece el producto, de verdad no está en el catálogo."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "filtros",
+        "heading": "Filtros combinables",
+        "blocks": [
+          {
+            "kind": "image",
+            "src": "productos/02-filtros.png",
+            "alt": "Dropdown Filtros abierto con Por agotarse, Agotados, Promos y Más vendidos, cada uno con su contador",
+            "caption": "El dropdown “Filtros” con contadores reales; “Ver todos” limpia el filtro."
+          },
+          {
+            "kind": "table",
+            "head": [
+              "Filtro",
+              "Qué muestra"
+            ],
+            "rows": [
+              [
+                "Productos sin Costo",
+                "Productos sin costo real capturado. Es el chip que SIEMPRE está visible — la métrica que el equipo persigue."
+              ],
+              [
+                "Por agotarse",
+                "Stock bajo (10 piezas o menos)."
+              ],
+              [
+                "Agotados",
+                "Sin ninguna pieza en existencia."
+              ],
+              [
+                "Promos",
+                "Productos con promoción vigente."
+              ],
+              [
+                "Más vendidos",
+                "Ordena por ventas de los últimos 30 días."
+              ]
+            ]
+          },
+          {
+            "kind": "prose",
+            "text": "Los filtros se COMBINAN con la búsqueda y con la tienda seleccionada: puedes buscar “cable” con el filtro Agotados puesto y ver solo los cables agotados. “Ver todos” (o “Quitar Filtro”) regresa a la lista completa."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Los contadores son del catálogo completo",
+            "text": "Los números de cada filtro (y el “Valor invertido”, para quien ve costos) se calculan en el servidor sobre TODO el catálogo, no sobre la página cargada. Si dice “Agotados 24”, son 24 de verdad."
+          }
+        ]
+      },
+      {
+        "id": "sin-stock-al-final",
+        "heading": "Los agotados se van al final",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "En cualquier vista — incluso con “Más vendidos” — los productos sin stock se acomodan siempre al final del listado. Un producto agotado no estorba en las primeras páginas aunque haya vendido mucho; nada se borra, solo se va atrás."
+          }
+        ]
+      },
+      {
+        "id": "sin-costo",
+        "heading": "Captura rápida: Productos sin Costo",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "El chip “Productos sin Costo” abre una tabla dedicada para capturar el costo real producto por producto, sin abrir el editor completo de cada uno. Carga de 50 en 50, tiene su propio buscador, y cada costo guardado baja el contador del chip en vivo. Es la herramienta para curar el catálogo Macro, que llegó casi todo sin costo real."
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "Solo quien ve costos",
+            "text": "El chip, el modal y el “Valor invertido” solo aparecen para administradores y usuarios con el permiso de ver costos."
+          },
+          {
+            "kind": "link",
+            "toTopic": "alta-producto",
+            "label": "Dar de alta un producto nuevo"
+          },
+          {
+            "kind": "link",
+            "toTopic": "existencias",
+            "label": "Buscar existencias de un producto por tienda"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "slug": "precios-por-nivel",
+    "title": "Niveles de precio (Normal, Socio, Mayorista)",
+    "category": "Catálogo y precios",
+    "icon": "bookmark",
+    "summary": "Hasta 5 precios por producto y cuándo aplica cada uno — el precio Socio se pone solo.",
+    "updatedAt": "2026-08-06",
+    "keywords": [
+      "precio socio",
+      "mayorista",
+      "niveles de precio",
+      "precio normal",
+      "socio tadaima",
+      "tarjeta tad",
+      "precio especial",
+      "membresía",
+      "socio inactivo",
+      "precio d",
+      "precio e"
+    ],
+    "sections": [
+      {
+        "id": "los-niveles",
+        "heading": "Los 5 niveles",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Cada producto puede tener hasta 5 precios, capturados en su alta o edición (tab Precios). Solo el Normal es obligatorio; en Caja únicamente aparecen los niveles que el producto sí tiene capturados."
+          },
+          {
+            "kind": "table",
+            "head": [
+              "Nivel",
+              "Para quién",
+              "Color en Caja"
+            ],
+            "rows": [
+              [
+                "Normal",
+                "Precio público — el default de toda venta.",
+                "Verde"
+              ],
+              [
+                "Socio",
+                "Socios Tadaima (membresía). Se aplica SOLO al asignar al socio.",
+                "Ámbar"
+              ],
+              [
+                "Mayorista",
+                "Ventas de volumen — lo elige el cajero cuando aplica.",
+                "Azul"
+              ],
+              [
+                "Precio D / E",
+                "Niveles extra, por si el negocio los necesita.",
+                "Morado / Rosa"
+              ]
+            ]
+          },
+          {
+            "kind": "link",
+            "toTopic": "alta-producto",
+            "label": "Dónde se capturan los precios (tab Precios)"
+          }
+        ]
+      },
+      {
+        "id": "socio-automatico",
+        "heading": "El precio Socio se aplica solo",
+        "blocks": [
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Asigna al socio en Caja",
+                "detail": "Escanea su tarjeta TAD o asígnalo desde el buscador de clientes."
+              },
+              {
+                "title": "Si el socio está ACTIVO, todo el carrito pasa a precio Socio",
+                "detail": "Las piezas que ya estaban y las que agregues después entran con el nivel Socio, sin que el cajero mueva nada."
+              },
+              {
+                "title": "Si le quitas el socio a la venta, regresa a Normal",
+                "detail": "El reacomodo de precios también es automático de regreso."
+              }
+            ]
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "Cuándo NO aplica el precio Socio",
+            "text": "Con pago con TARJETA se cobra precio Normal (al cambiar el método, los precios se reacomodan solos). En PREVENTAS tampoco aplica. Un socio INACTIVO se cobra a precio Normal (Caja lo avisa y no se le puede forzar el nivel Socio a mano). Y si el producto no tiene precio Socio capturado, se queda en Normal."
+          }
+        ]
+      },
+      {
+        "id": "nivel-manual",
+        "heading": "Cambiar el nivel a mano",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "En el carrito, cada línea puede cambiar de nivel (por ejemplo a Mayorista para una venta de volumen). Solo se ofrecen los niveles que ese producto tiene capturados; el color del precio te dice de un vistazo qué nivel trae cada línea."
+          },
+          {
+            "kind": "link",
+            "toTopic": "clientes",
+            "label": "Gestión de clientes y socios"
+          },
+          {
+            "kind": "link",
+            "toTopic": "cobro-caja",
+            "label": "El flujo completo de cobro en Caja"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "slug": "promos-nxm",
+    "title": "Promo 2x1 (NxM)",
+    "category": "Catálogo y precios",
+    "icon": "ticket-percent",
+    "summary": "El clásico “se lleva N y paga M”: 2x1, 3x2, etc. — asignable a uno o varios productos.",
+    "updatedAt": "2026-08-06",
+    "keywords": [
+      "2x1",
+      "3x2",
+      "nxm",
+      "promoción",
+      "promo",
+      "gratis",
+      "solo efectivo",
+      "solo tarjeta",
+      "restricción de pago",
+      "mix and match",
+      "combinada",
+      "asignar productos",
+      "cobrar sin promo"
+    ],
+    "sections": [
+      {
+        "id": "donde-se-crean",
+        "heading": "Dónde se crean las promos",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "En el menú Promos, pestaña “Gestión de promos”, botón “Nueva promoción”. La promo es independiente del producto: la creas UNA vez y la asignas a uno o varios productos (desde la misma Gestión, o desde Productos → editar → tab Promos, que funciona como selector de promos existentes)."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Permiso",
+            "text": "Necesitas el permiso “Gestionar Promociones” (viene activado por defecto para admin y gerente). Sin él, ves las promos vigentes en solo lectura."
+          },
+          {
+            "kind": "link",
+            "toTopic": "promos-pantalla",
+            "label": "La página Promos: Modo TV y compartir por WhatsApp"
+          }
+        ]
+      },
+      {
+        "id": "crear-nxm",
+        "heading": "Crear una NxM",
+        "blocks": [
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Nueva promoción → tipo “NxM (2x1, 3x2…)”",
+                "detail": "Descripción: “Se lleva N y paga M”."
+              },
+              {
+                "title": "Ponle Nombre",
+                "detail": "Ej. “Buen Fin 2x1”."
+              },
+              {
+                "title": "Llena “Se lleva (N)” y “Paga (M)”",
+                "detail": "N mínimo 2; M debe ser menor que N. Para un 2x1: N=2, M=1."
+              },
+              {
+                "title": "Opcional: fechas, prioridad y tienda",
+                "detail": "Inicia/Vence, prioridad (desempate) y la tienda (admin puede elegir “Todas las tiendas”)."
+              },
+              {
+                "title": "Asígnale productos",
+                "detail": "Con el botón de asignar de la fila. Una promo sin productos asignados no aplica en Caja."
+              }
+            ]
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Vista rápida",
+            "text": "El formulario muestra en vivo: “el cliente se lleva N y paga M → X gratis por cada N”. Así confirmas antes de guardar."
+          }
+        ]
+      },
+      {
+        "id": "restriccion-pago",
+        "heading": "“Se puede pagar con”: restricción por promo",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Cada promo puede limitarse a Efectivo y/o Tarjeta con las casillas “Se puede pagar con” del formulario. Ejemplo típico: un 2x1 válido solo en efectivo. El propio formulario te advierte lo que va a pasar en Caja si desmarcas un método."
+          },
+          {
+            "kind": "prose",
+            "text": "En Caja, si la promo APLICÓ y el método elegido no está permitido, el cobro se BLOQUEA: el botón dice “No se puede con Tarjeta” (o Efectivo) y un aviso fijo nombra a la promo culpable. Las salidas: cambiar el método de pago, o usar “Cobrar sin promo” en la línea — se cobra a precio normal y el bloqueo desaparece."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Solo bloquea si la promo aplicó de verdad",
+            "text": "Con 1 sola pieza de un 2x1 la promo no dispara, así que no restringe nada — la restricción es del beneficio otorgado, no del producto."
+          }
+        ]
+      },
+      {
+        "id": "mix-match",
+        "heading": "Combinar productos (mix & match)",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Una promo asignada a VARIOS productos se puede completar combinándolos: si el mismo 2x1 está asignado al llavero y a la taza, 1 llavero + 1 taza disparan el 2x1. El sistema regala siempre la(s) pieza(s) más barata(s) del grupo."
+          },
+          {
+            "kind": "prose",
+            "text": "En Caja se ve claro: la línea beneficiada muestra la promo con “(combinada)” y las líneas que ayudan a completar el grupo dicen “Cuenta para {la promo}”. Ojo: “Cobrar sin promo” quita el beneficio del grupo COMPLETO, no solo de esa línea."
+          }
+        ]
+      },
+      {
+        "id": "editar-borrar",
+        "heading": "Si editas o borras una promo",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "La Caja se sincroniza sola: si una promo cambia o desaparece mientras hay un carrito abierto, los precios y promos del carrito se actualizan y el cajero ve el aviso “Cambiaron las promociones de…”. Las ventas ya cobradas no cambian — quedan congeladas con lo que aplicaron."
+          },
+          {
+            "kind": "link",
+            "toTopic": "cobro-caja",
+            "label": "Cómo se ven las promos y sus avisos en Caja"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "slug": "descuento-cantidad",
+    "title": "Mayoreo",
+    "category": "Catálogo y precios",
+    "icon": "layers",
+    "summary": "“A partir de 3 piezas, −$50 a CADA una”. Un mínimo y un descuento por pieza — nada más.",
+    "updatedAt": "2026-08-06",
+    "keywords": [
+      "mayoreo",
+      "descuento por cantidad",
+      "descuento por volumen",
+      "por pieza",
+      "precio de mayoreo",
+      "c/u",
+      "cada una",
+      "escalones",
+      "sin configurar",
+      "mínimo de piezas"
+    ],
+    "sections": [
+      {
+        "id": "que-es",
+        "heading": "Qué es y cómo se crea",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "En lugar de regalar producto (como el 2x1), el mayoreo le baja dinero a CADA pieza cuando el cliente llega al mínimo. Son solo DOS números: desde cuántas piezas arranca, y cuánto se le descuenta a cada una."
+          },
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Nueva promoción → tipo “Mayoreo”",
+                "detail": "En Promos → Gestión de promos, igual que la NxM."
+              },
+              {
+                "title": "“A partir de (pzas)”",
+                "detail": "Desde cuántas piezas aplica. Mínimo 2."
+              },
+              {
+                "title": "“Descuento c/pieza”",
+                "detail": "Cuánto baja CADA pieza — no el total. El formulario te enseña la cuenta hecha en vivo: “Llevar 5 pzas descuenta $250; 7 pzas descuenta $350…”."
+              },
+              {
+                "title": "Fechas, prioridad, tienda y asignación de productos",
+                "detail": "Igual que la NxM: la promo se asigna a uno o varios productos."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "la-regla",
+        "heading": "La cuenta: aplica a TODAS las piezas",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Al llegar al mínimo, el descuento se aplica a cada pieza que lleve — no solo a las que pasan del mínimo. La etiqueta en Caja lo dice tal cual: “3+ pzas −$50 c/u”."
+          },
+          {
+            "kind": "table",
+            "head": [
+              "Piezas (con “3+ pzas −$50 c/u”)",
+              "Descuento"
+            ],
+            "rows": [
+              [
+                "2 piezas",
+                "$0 — no llegó al mínimo"
+              ],
+              [
+                "3 piezas",
+                "−$150 (3 × $50)"
+              ],
+              [
+                "5 piezas",
+                "−$250 (5 × $50)"
+              ],
+              [
+                "10 piezas",
+                "−$500 (10 × $50)"
+              ]
+            ]
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Las fracciones no cuentan",
+            "text": "Si un producto se vende por fracciones, solo las piezas COMPLETAS cuentan — 2.5 piezas valen como 2, tanto para llegar al mínimo como para el descuento."
+          },
+          {
+            "kind": "callout",
+            "tone": "gold",
+            "title": "Nunca descuenta de más",
+            "text": "El descuento total jamás pasa del precio de esas piezas. Si el cálculo diera más que el bruto, se recorta automáticamente y la línea queda en $0, nunca en negativo."
+          },
+          {
+            "kind": "prose",
+            "text": "El mayoreo también combina productos: si la promo está asignada a varios, las piezas de todos SUMAN para llegar al mínimo (ver mix & match en la guía de promos)."
+          },
+          {
+            "kind": "link",
+            "toTopic": "promos-nxm",
+            "label": "Mix & match: combinar productos en una promo"
+          }
+        ]
+      },
+      {
+        "id": "escalones-viejos",
+        "heading": "¿Vienes del modelo viejo de escalones?",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Antes existía un “descuento por cantidad” con varios escalones y una matemática por grupos. Ya no existe: ahora es UN solo escalón (mínimo + descuento por pieza). Las promos viejas de varios escalones quedaron PAUSADAS con la etiqueta roja “Sin configurar” y no se pueden editar — bórralas y créalas de nuevo con el modelo actual."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "slug": "reglas-promos",
+    "title": "Reglas de las promos",
+    "category": "Catálogo y precios",
+    "icon": "shield-check",
+    "summary": "Qué combinaciones permite el sistema y cómo se aplican solas en Caja.",
+    "sections": [
+      {
+        "heading": "Lo que el sistema cuida solo",
+        "blocks": [
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Un producto no mezcla los dos tipos a la vez",
+                "detail": "No puede tener un 2x1 y un “mayoreo” vigentes al mismo tiempo con fechas encimadas. Es uno o el otro. Si lo intentas, el sistema te dice cuál promo estorba."
+              },
+              {
+                "title": "Tope de promos por ámbito",
+                "detail": "Hay un máximo de promos activas por producto (globales y locales por tienda). El mensaje de error indica cuando llegas al tope."
+              },
+              {
+                "title": "Vigencias que no se enciman sí se permiten",
+                "detail": "Puedes programar una promo para después de que termine otra; el choque solo ocurre cuando las fechas se traslapan."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "heading": "Cómo se ve en Caja",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "En Caja no hay que hacer nada manual: al agregar el producto, el sistema aplica sola la MEJOR promo vigente (la que más ahorra; la prioridad desempata)."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "El descuento manual se acumula",
+            "text": "Si además pones un descuento manual en esa línea, se suma encima de la promo. El servidor siempre recalcula — nunca confía en montos del cliente."
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "Los tickets viejos no cambian",
+            "text": "Si editas o borras una promo, las ventas ya hechas quedan congeladas con lo que aplicaron. Solo cambia de aquí en adelante."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "slug": "override-local",
+    "title": "Personalizar promo por tienda",
+    "category": "Catálogo y precios",
+    "icon": "store",
+    "summary": "Un gerente ajusta una promo global para su sucursal sin tocar a las demás.",
+    "sections": [
+      {
+        "heading": "Para qué sirve",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "El admin crea promos globales (aplican en todas las tiendas). Un gerente puede querer una versión distinta solo para su sucursal — sin afectar al resto ni a la promo general."
+          },
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Abre el producto → tab Promos",
+                "detail": "En una promo global verás el botón “Personalizar para mi tienda”."
+              },
+              {
+                "title": "Se prellena con los datos de la global",
+                "detail": "Ajusta lo que necesites (nombre lleva “· local”, escalones, fechas). Queda amarrada a tu tienda."
+              },
+              {
+                "title": "Crear",
+                "detail": "Desde ese momento, tu tienda usa TU versión."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "heading": "La regla de oro",
+        "blocks": [
+          {
+            "kind": "callout",
+            "tone": "gold",
+            "title": "La local apaga a la global en tu tienda",
+            "text": "Mientras tu promo local esté vigente, la global NO aplica en tu sucursal — aunque la global descontara más. Es un reemplazo deliberado, no “la mejor de las dos”."
+          },
+          {
+            "kind": "prose",
+            "text": "Si borras o pausas tu promo local, la global vuelve sola a tu tienda. En las demás tiendas la global nunca se tocó."
+          },
+          {
+            "kind": "chips",
+            "chips": [
+              {
+                "label": "Opacada en tu tienda",
+                "tone": "amber"
+              },
+              {
+                "label": "Reemplaza a la global",
+                "tone": "blue"
+              }
+            ]
+          },
+          {
+            "kind": "prose",
+            "text": "Esos chips aparecen en la lista: “Opacada…” sobre la global cuando una local la tapa, y “Reemplaza a la global” sobre tu local. Así ves de un vistazo qué manda en cada tienda."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "slug": "promos-pantalla",
+    "title": "Pantalla de Promos y Modo TV",
+    "category": "Catálogo y precios",
+    "icon": "ticket-percent",
+    "summary": "Consultar las promos vigentes, proyectarlas en la TV de la tienda y compartirlas por WhatsApp.",
+    "updatedAt": "2026-08-06",
+    "keywords": [
+      "modo tv",
+      "pantalla",
+      "televisión",
+      "banner",
+      "compartir",
+      "whatsapp",
+      "promociones vigentes",
+      "carrusel",
+      "descargar png",
+      "imagen de promo"
+    ],
+    "sections": [
+      {
+        "id": "que-hay",
+        "heading": "Qué hay en la página Promos",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "La página Promos del menú tiene dos pestañas: “Gestión de promos” (crear, editar, pausar, eliminar y asignar productos — para admin y gerente con el permiso “Gestionar Promociones”) y “Asignadas a productos” (la lista de vigentes, con lo que gana el cliente en cada una). Los cajeros entran directo a la lista de vigentes: consultan, comparten y proyectan, pero no gestionan."
+          },
+          {
+            "kind": "image",
+            "src": "promos/01-gestion-de-promos.png",
+            "alt": "Pestaña Gestión de promos con la lista de promociones, sus estados y el botón Nueva promoción",
+            "caption": "Gestión de promos: la promo se crea aquí y se asigna a uno o varios productos."
+          },
+          {
+            "kind": "image",
+            "src": "promos/02-promos-asignadas.png",
+            "alt": "Pestaña Asignadas a productos con las promos vigentes por producto y el botón Compartir por fila",
+            "caption": "Asignadas a productos: qué promo tiene cada producto y qué gana el cliente."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Cada quien ve las suyas",
+            "text": "Gerentes y cajeros ven las promos globales y las de SU tienda. El admin las ve todas, con etiqueta de sucursal."
+          }
+        ]
+      },
+      {
+        "id": "modo-tv",
+        "heading": "Modo TV",
+        "blocks": [
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Botón rojo “Modo TV”",
+                "detail": "La pantalla se pone en negro a pantalla completa y rota una promo cada 8 segundos, con foto, badge gigante (2x1, −$50 c/u…) y precio."
+              },
+              {
+                "title": "Conéctala a la TV de la tienda",
+                "detail": "Déjala andando — se actualiza sola: crea o pausa una promo y la TV la refleja en un minuto aproximadamente."
+              },
+              {
+                "title": "Para salir: Esc o doble clic",
+                "detail": "Si no hay promos vigentes, muestra “Bienvenido a Tadaima”."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "compartir",
+        "heading": "Compartir una promo por WhatsApp",
+        "blocks": [
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Botón “Compartir” en la fila de la promo",
+                "detail": "Se genera un banner vertical (1080×1350) con logo, foto del producto, badge y vigencia — listo para redes."
+              },
+              {
+                "title": "“Compartir imagen (elige el contacto)”",
+                "detail": "Abre el menú de compartir del dispositivo → WhatsApp → contacto. Ideal desde celular o tablet."
+              },
+              {
+                "title": "“WhatsApp con texto” o “Descargar PNG”",
+                "detail": "El texto va con el mensaje ya armado (promo, producto y vigencia); el PNG se descarga para publicarlo donde quieras."
+              }
+            ]
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "Producto sin foto",
+            "text": "El banner sale con el placeholder de la marca. Súbele foto al producto para un banner más vendedor."
+          },
+          {
+            "kind": "link",
+            "toTopic": "alta-producto",
+            "label": "Cómo subirle foto a un producto"
+          }
+        ]
+      },
+      {
+        "id": "no-aparece",
+        "heading": "¿Creaste una promo y no aparece?",
+        "blocks": [
+          {
+            "kind": "table",
+            "head": [
+              "Revisa",
+              "Por qué"
+            ],
+            "rows": [
+              [
+                "Estado de la promo",
+                "Programada (inicio futuro), Pausada o Vencida no salen como vigentes."
+              ],
+              [
+                "Productos asignados",
+                "Una promo sin productos asignados no aplica ni se muestra."
+              ],
+              [
+                "El producto está activo",
+                "Productos dados de baja no aparecen en la lista."
+              ],
+              [
+                "La tienda de la promo",
+                "Si es de otra sucursal, no la verás — solo las globales o las de tu tienda."
+              ]
+            ]
+          },
+          {
+            "kind": "link",
+            "toTopic": "promos-nxm",
+            "label": "Crear y asignar promos paso a paso"
+          }
+        ]
+      }
+    ]
+  }
+]

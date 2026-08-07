@@ -1,4 +1,9 @@
-import { test, expect, type BrowserContext } from '@playwright/test'
+import { test, expect } from '@playwright/test'
+import {
+  BASE_URL,
+  ADMIN_EMAIL, ADMIN_PASSWORD,
+  apiLogin, apiReqFull as apiReq, dataOf,
+} from './helpers'
 
 /**
  * Descuentos v2 — Fase 1 (2026-07-14): descuento POR LÍNEA con split.
@@ -7,43 +12,6 @@ import { test, expect, type BrowserContext } from '@playwright/test'
  * Cubre: API checkout v2 (split + recompute server-side + rechazo de montos
  * manipulados) y el flujo UI (modal Desc. → split → badge → merge-back).
  */
-
-const BASE_URL = 'http://localhost:5173'
-const API_URL = 'http://localhost:8000/api/v1'
-const ADMIN_EMAIL = 'admin@tadaima.mx'
-const ADMIN_PASSWORD = 'password'
-const TOKEN_KEY = 'tadaima_token'
-
-async function apiLogin(email: string, password: string): Promise<string> {
-  const res = await fetch(`${API_URL}/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ email, password }),
-  })
-  const json = (await res.json()) as { data: { token: string } }
-  return json.data.token
-}
-
-async function seedAuth(context: BrowserContext, email = ADMIN_EMAIL, password = ADMIN_PASSWORD) {
-  const token = await apiLogin(email, password)
-  await context.addInitScript(args => {
-    localStorage.setItem(args.key, args.token)
-  }, { key: TOKEN_KEY, token })
-  return token
-}
-
-async function apiReq(method: string, token: string, path: string, body?: Record<string, unknown>) {
-  const res = await fetch(`${API_URL}${path}`, {
-    method,
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json', Authorization: `Bearer ${token}` },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  })
-  return { status: res.status, json: (await res.json()) as Record<string, unknown> }
-}
-
-function dataOf(r: { json: Record<string, unknown> }): Record<string, unknown> {
-  return (r.json['data'] ?? {}) as Record<string, unknown>
-}
 
 test.describe('Descuentos v2 · por línea', () => {
   let token: string

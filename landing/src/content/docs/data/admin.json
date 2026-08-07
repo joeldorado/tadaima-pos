@@ -1,0 +1,392 @@
+[
+  {
+    "slug": "tienda-online",
+    "title": "Tienda en línea / Catálogo",
+    "category": "Difusión y administración",
+    "icon": "store",
+    "summary": "Publicar el catálogo para que el cliente vea productos y pida por WhatsApp — con apariencia y top a tu gusto.",
+    "roles": [
+      "admin"
+    ],
+    "updatedAt": "2026-08-06",
+    "keywords": [
+      "tienda online",
+      "catálogo en línea",
+      "catalogo",
+      "whatsapp",
+      "pedido",
+      "apariencia",
+      "tema",
+      "fondo",
+      "diseño",
+      "corporativo",
+      "destacados",
+      "top",
+      "ordenar",
+      "vista previa",
+      "carrito por tienda"
+    ],
+    "sections": [
+      {
+        "id": "que-es",
+        "heading": "Qué es",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "La tienda en línea es una página pública (no requiere login) donde el cliente ve los productos, sus promos vigentes y precios, y hace pedido. Arriba están la búsqueda y los filtros; solo se muestran productos con existencia."
+          },
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "El cliente arma su pedido",
+                "detail": "Filtra, busca y agrega al carrito."
+              },
+              {
+                "title": "Elige dónde recoger",
+                "detail": "Selecciona la sucursal en el carrito. Solo aparecen las tiendas que tienen número de WhatsApp configurado."
+              },
+              {
+                "title": "Pide por WhatsApp",
+                "detail": "El pedido se manda por WhatsApp a la tienda elegida."
+              }
+            ]
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "Tienda sin WhatsApp no aparece",
+            "text": "Si una sucursal no tiene número, no sale como opción para recoger. El número se precarga del alta de la tienda y se puede cambiar en Configuración → Catálogo Online → WhatsApp."
+          }
+        ]
+      },
+      {
+        "id": "apariencia",
+        "heading": "Apariencia: color × fondo × diseño",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "En Configuración → Catálogo Online → Apariencia eliges TRES cosas que se combinan libremente. Las miniaturas de fondo se pintan con el tema de color que tengas seleccionado, así ves la combinación real antes de guardar."
+          },
+          {
+            "kind": "table",
+            "head": [
+              "Eje",
+              "Opciones"
+            ],
+            "rows": [
+              [
+                "Color",
+                "7 temas: Tadaima (rojo), Dorado elegante, Navidad, Halloween, Mes patrio, Día de Muertos y Corporativo — el único CLARO."
+              ],
+              [
+                "Fondo",
+                "Nebulosa (animado), Degradado (quieto), Galaxia (estrellas) o Sólido (plano, el look corporativo)."
+              ],
+              [
+                "Diseño",
+                "Clásico, Menú lateral, Revista (mosaico de alturas dispares) o Full pantalla (2 a 8 columnas según el monitor)."
+              ]
+            ]
+          },
+          {
+            "kind": "callout",
+            "tone": "gold",
+            "title": "El default es Corporativo claro",
+            "text": "La cadena arranca con el look serio: tema Corporativo + fondo Sólido + Full pantalla. Elegir “Corporativo” aplica ese paquete completo de un clic; los productos sin foto se muestran como tarjetas compactas (chips + nombre + precio) para que el catálogo se vea limpio."
+          },
+          {
+            "kind": "prose",
+            "text": "Antes de guardar, el botón de vista previa abre la tienda REAL en una ventana con interruptor Escritorio/Celular — ves la combinación exacta como la verá el cliente. “Abrir tienda” te lleva a la página ya publicada."
+          }
+        ]
+      },
+      {
+        "id": "top-destacados",
+        "heading": "El top de destacados, en el orden que tú digas",
+        "blocks": [
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Marca productos con ★ en Configuración → Catálogo Online → Productos",
+                "detail": "Los destacados salen primero en la tienda."
+              },
+              {
+                "title": "Botón “Ordenar”",
+                "detail": "Abre la lista arrastrable de destacados. Arrastra cada producto a su lugar; el orden se guarda solo al soltar."
+              },
+              {
+                "title": "La línea marca el top 20",
+                "detail": "Cuenta solo los productos que de verdad se ven en la tienda — uno sin stock, oculto o inactivo no aparece ni ocupa lugar."
+              }
+            ]
+          },
+          {
+            "kind": "prose",
+            "text": "La tienda abre mostrando ese top primero. Quitar la ★ saca al producto del acomodo; los demás conservan su orden."
+          }
+        ]
+      },
+      {
+        "id": "carrito-por-tienda",
+        "heading": "El pedido se arma por tienda",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Si el cliente agrega productos que están en varias sucursales, aparece el popup “¿Dónde lo recoges?” y elige la tienda (el sistema recuerda su “usual”). El carrito arma UN pedido por sucursal, cada uno con su propio botón de WhatsApp — dos tiendas, dos pedidos, sin confusión."
+          },
+          {
+            "kind": "link",
+            "toTopic": "configuracion",
+            "label": "Todos los paneles de Configuración → Catálogo Online"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "slug": "configuracion",
+    "title": "Configuración del sistema",
+    "category": "Difusión y administración",
+    "icon": "clipboard-list",
+    "summary": "Datos de la empresa, tipo de cambio, la tienda online y los logs — el panel de Configuración.",
+    "roles": [
+      "admin"
+    ],
+    "updatedAt": "2026-08-06",
+    "keywords": [
+      "configuración",
+      "ajustes",
+      "empresa",
+      "rfc",
+      "tipo de cambio",
+      "dólar",
+      "mantenimiento",
+      "logs",
+      "catálogo online",
+      "visibilidad",
+      "apariencia",
+      "destacar",
+      "ocultar producto",
+      "redes sociales",
+      "whatsapp"
+    ],
+    "sections": [
+      {
+        "id": "las-pestanas",
+        "heading": "Las 4 pestañas",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "En el menú Configuración (“Control del Sistema”) vive todo lo global. Cuatro pestañas:"
+          },
+          {
+            "kind": "table",
+            "head": [
+              "Pestaña",
+              "Qué se configura"
+            ],
+            "rows": [
+              [
+                "Empresa",
+                "Nombre comercial, RFC, correo, teléfono y dirección — los datos fiscales y de contacto del negocio."
+              ],
+              [
+                "Configuración",
+                "Nombre del sistema, moneda, zona horaria, tipo de cambio USD→MXN y el modo de mantenimiento."
+              ],
+              [
+                "Catálogo Online",
+                "Todo lo de la tienda en línea (5 paneles, abajo el detalle)."
+              ],
+              [
+                "Logs del Sistema",
+                "Bitácora de acciones: quién hizo qué y cuándo, con buscador — útil para aclarar “¿quién movió esto?”."
+              ]
+            ]
+          },
+          {
+            "kind": "prose",
+            "text": "El tipo de cambio es la referencia global que ven todas las cajas para los pagos en dólares — mantenlo al día."
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "Modo de Mantenimiento",
+            "text": "Bloquea nuevas ventas en todo el sistema (solo consultas). Úsalo únicamente para labores puntuales y recuerda apagarlo."
+          }
+        ]
+      },
+      {
+        "id": "catalogo-online",
+        "heading": "Catálogo Online: los 5 paneles",
+        "blocks": [
+          {
+            "kind": "table",
+            "head": [
+              "Panel",
+              "Qué controla"
+            ],
+            "rows": [
+              [
+                "Visibilidad",
+                "Qué se ve en la tienda: precios, existencias, carrito, buscador, filtro de categorías, descripciones y el footer (sucursales, domicilio, contacto). También el orden de entrada: “Más nuevos” o “Destacados”."
+              ],
+              [
+                "Apariencia",
+                "Color × fondo × diseño de la tienda, la descripción de la marca del footer (hasta 600 caracteres) y la vista previa Escritorio/Celular."
+              ],
+              [
+                "Productos",
+                "★ destacar (sale primero) y 👁 ocultar (lo quita de la tienda SIN darlo de baja del POS). Guardado instantáneo por interruptor; botón “Ordenar” para acomodar el top de destacados."
+              ],
+              [
+                "Redes",
+                "URLs de Instagram, Facebook, TikTok, X, YouTube y Discord para el footer — solo se pintan las que configures."
+              ],
+              [
+                "WhatsApp",
+                "El número de pedidos POR SUCURSAL. Sin número explícito, se usa el teléfono del alta de la tienda."
+              ]
+            ]
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Quién puede editar",
+            "text": "La página Configuración es del administrador. La edición del Catálogo Online se puede compartir con el permiso “editar catálogo” por usuario."
+          },
+          {
+            "kind": "link",
+            "toTopic": "tienda-online",
+            "label": "Cómo se ve todo esto en la tienda en línea"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "slug": "usuarios-rbac",
+    "title": "Usuarios y permisos (RBAC)",
+    "category": "Difusión y administración",
+    "icon": "key-round",
+    "summary": "Roles admin / gerente / cajero y qué puede hacer cada uno.",
+    "roles": [
+      "admin"
+    ],
+    "updatedAt": "2026-08-06",
+    "keywords": [
+      "usuarios",
+      "permisos",
+      "roles",
+      "rbac",
+      "admin",
+      "gerente",
+      "cajero",
+      "contraseña",
+      "gestionar promociones",
+      "ver costos",
+      "crear usuario"
+    ],
+    "sections": [
+      {
+        "heading": "Los tres roles",
+        "blocks": [
+          {
+            "kind": "table",
+            "head": [
+              "Rol",
+              "Alcance"
+            ],
+            "rows": [
+              [
+                "Admin",
+                "Ve y hace todo: costos, reportes globales, tiendas, usuarios, catálogos de preventa."
+              ],
+              [
+                "Gerente",
+                "Su tienda: crea/edita productos (sin costo), cortes, promos locales. No ve reportes globales."
+              ],
+              [
+                "Cajero",
+                "Su día a día: vender en Caja, sus cortes, alta rápida de producto (sin costo)."
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "heading": "Reglas de gestión",
+        "blocks": [
+          {
+            "kind": "callout",
+            "tone": "gold",
+            "title": "El gerente no escala privilegios",
+            "text": "El gerente gestiona usuarios de SU tienda, pero NUNCA puede crear ni promover a administrador. Esa barrera está reforzada en el servidor."
+          },
+          {
+            "kind": "prose",
+            "text": "Los permisos son por página (Caja, Reportes, Productos…) y hay permisos finos como “Gestionar Promociones” y “ver costos”, que el admin activa por usuario. El admin puede ver la contraseña de otros usuarios (copia reversible); el login sigue protegido."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "slug": "tiendas-almacenes",
+    "title": "Tiendas y almacenes",
+    "category": "Difusión y administración",
+    "icon": "building-2",
+    "summary": "Crear sucursales y almacenes — el primer paso al montar el sistema.",
+    "roles": [
+      "admin"
+    ],
+    "updatedAt": "2026-08-06",
+    "keywords": [
+      "tiendas",
+      "sucursales",
+      "almacenes",
+      "bodega",
+      "piso",
+      "central",
+      "crear tienda",
+      "whatsapp de tienda",
+      "primeros pasos"
+    ],
+    "sections": [
+      {
+        "heading": "Primeros pasos",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Antes de dar de alta productos necesitas al menos una tienda. Si el sistema está vacío, el tablero de Inicio muestra un asistente de “primeros pasos” que te guía a crear la primera tienda."
+          },
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Crear la tienda",
+                "detail": "Nombre, teléfono (se usa como WhatsApp de la tienda en línea) y datos de la sucursal."
+              },
+              {
+                "title": "Configurar almacenes",
+                "detail": "Cada tienda maneja Piso, Bodega y el Central de la cadena."
+              },
+              {
+                "title": "Ya puedes dar de alta productos",
+                "detail": "Con inventario asignado a esas ubicaciones."
+              }
+            ]
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Solo admin",
+            "text": "El alta y edición de tiendas es del administrador. El gerente cambia de sucursal con el switcher del encabezado."
+          }
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,125 @@
+[
+  {
+    "slug": "clientes",
+    "title": "Clientes",
+    "category": "Clientes y reportes",
+    "icon": "user-circle-2",
+    "summary": "Alta de clientes, socios Tadaima y su historial de compras.",
+    "keywords": [
+      "clientes",
+      "socio",
+      "socio tadaima",
+      "tarjeta tad",
+      "padrón",
+      "teléfono",
+      "historial de compras",
+      "precio socio"
+    ],
+    "updatedAt": "2026-08-06",
+    "sections": [
+      {
+        "heading": "Alta y uso",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Registras clientes con sus datos básicos. En Caja los asignas a una venta manualmente o escaneando su tarjeta TAD de socio Tadaima."
+          },
+          {
+            "kind": "image",
+            "src": "clientes/01-gestion-de-clientes.png",
+            "alt": "Pantalla de gestión de clientes con buscador y filtros",
+            "caption": "Gestión de Clientes: busca por nombre o teléfono y filtra socios / locales."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Socio Tadaima",
+            "text": "El socio se identifica con su id externo (external_member_id, ligado a Supabase). Al asignarlo, la venta toma el precio nivel Socio automáticamente — salvo en pago con tarjeta o en preventa, donde no aplica."
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "Supabase es solo lectura",
+            "text": "El padrón de socios (loyalty) se lee desde el POS pero no se escribe ni se migra desde aquí."
+          },
+          {
+            "kind": "link",
+            "toTopic": "cobro-caja",
+            "label": "Asignar un cliente a la venta en Caja"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "slug": "reportes",
+    "title": "Reportes",
+    "category": "Clientes y reportes",
+    "icon": "bar-chart-2",
+    "summary": "Reporte del día, rangos de fechas, exportar a PDF/Excel y análisis de ventas y caja.",
+    "roles": [
+      "admin",
+      "gerente"
+    ],
+    "keywords": [
+      "reportes",
+      "reporte del día",
+      "ventas por rango",
+      "rango de fechas",
+      "utilidad",
+      "costo",
+      "ganancia",
+      "exportar",
+      "pdf",
+      "excel",
+      "imprimir reporte",
+      "top productos",
+      "descuadre",
+      "sesiones de caja"
+    ],
+    "updatedAt": "2026-08-06",
+    "sections": [
+      {
+        "id": "que-hay",
+        "heading": "Qué hay",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "El “Reporte del Día” resume la operación de la jornada. La sección de Reportes agrega ventas (con 7 presets de fecha), top de productos, clientes y sesiones de caja con su descuadre."
+          },
+          {
+            "kind": "prose",
+            "text": "El histórico se consulta por rango de fechas (por defecto hoy → hoy). Todo es imprimible."
+          },
+          {
+            "kind": "link",
+            "toTopic": "historial-ventas",
+            "label": "El Reporte del Día vive en el menú Ventas"
+          }
+        ]
+      },
+      {
+        "id": "exportar",
+        "heading": "Exportar: PDF y Excel",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Los botones “Excel” y “PDF” se llevan el reporte actual con el rango y los filtros que tengas elegidos: el PDF para imprimir o compartir, el Excel para seguir trabajando los números."
+          },
+          {
+            "kind": "image",
+            "src": "reportes/01-centro-de-reportes.png",
+            "alt": "Centro de Reportes con los botones Actualizar, Excel y PDF en el header",
+            "caption": "El Centro de Reportes: los botones Excel y PDF exportan el reporte con el rango y filtros activos."
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "Costos y utilidad: por permiso",
+            "text": "El costo, la utilidad y la ganancia bruta solo se ven con el permiso “ver costos” (por defecto, admin; se activa por usuario en Permisos). Sin ese permiso tampoco viajan en los exports de PDF/Excel — el reporte sale solo con ventas."
+          }
+        ]
+      }
+    ]
+  }
+]

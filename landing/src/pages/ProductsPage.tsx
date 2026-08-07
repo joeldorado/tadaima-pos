@@ -2788,6 +2788,7 @@ export function ProductsPage() {
           )}
           <button
             onClick={handleCreateNew}
+            data-tour="products-new"
             className="flex items-center justify-center gap-2 px-5 py-2.5 text-sm font-bold transition-all hover:scale-[1.02] active:scale-95 shadow-xl shadow-red-500/20 shrink-0"
             style={T.btnRed}
           >
@@ -2839,6 +2840,7 @@ export function ProductsPage() {
           <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2" style={{ color: T.textMuted }} />
           <input
             type="text"
+            data-tour="products-search"
             placeholder="Escanea o busca · nombre, SKU o código de barras"
             value={search}
             onChange={(e) => setSearch(e.target.value)}

@@ -1,0 +1,71 @@
+{
+  "id": "preventas",
+  "title": "Preventas: del anticipo a la entrega",
+  "description": "Catálogos, folios PREV- y cómo cobrar anticipos y liquidaciones en Caja.",
+  "icon": "clipboard-list",
+  "topicSlug": "preventas",
+  "steps": [
+    {
+      "id": "intro",
+      "title": "Preventas: del anticipo a la entrega",
+      "body": "Una preventa es un pedido con anticipo: el cliente aparta hoy y liquida cuando llega su producto. Te enseño dónde viven, cómo se les da seguimiento y cómo se cobran."
+    },
+    {
+      "id": "nav-preventas",
+      "target": "nav-pre-sales",
+      "placement": "right",
+      "title": "El menú Preventas",
+      "body": "Aquí se administran los catálogos (las campañas de preventa) y se les da seguimiento a los folios de los clientes."
+    },
+    {
+      "id": "tabs",
+      "route": "/pre-sales",
+      "target": "presales-tabs",
+      "waitFor": true,
+      "placement": "bottom",
+      "title": "Una pestaña para cada cosa",
+      "body": "Folios concentra los pedidos (Pendiente, Listo, Entregado, Vencido), Difusión avisa a los clientes por WhatsApp o correo, y Vencidos junta lo que ya expiró. Si eres cajero, Disponibles te muestra qué catálogos puedes vender hoy."
+    },
+    {
+      "id": "nuevo-catalogo",
+      "route": "/pre-sales",
+      "target": "presales-new-catalog",
+      "waitFor": true,
+      "placement": "bottom",
+      "roles": ["admin", "gerente"],
+      "title": "Crear un catálogo",
+      "body": "Un catálogo es la campaña: productos, precios, imagen y stock por tienda. Desde aquí lo creas y lo publicas. También puedes ponerle límite de piezas por cliente — solo bloquea en los catálogos donde lo configures."
+    },
+    {
+      "id": "folios",
+      "title": "Folios PREV-",
+      "body": "Cada pedido genera un folio único que empieza con PREV-. Ese folio es la llave de todo: con él identificas el pedido, cobras el anticipo y liquidas el saldo."
+    },
+    {
+      "id": "cobrar-folio",
+      "route": "/caja",
+      "target": "sell-search",
+      "waitFor": true,
+      "placement": "bottom",
+      "precondition": {
+        "check": "caja-abierta",
+        "target": "sell-open-register",
+        "failTitle": "Abre la caja para cobrar",
+        "failBody": "Para cobrar anticipos o liquidar preventas necesitas tu caja abierta. Ábrela con el efectivo inicial y seguimos — o salta este paso si solo vas de paso.",
+        "allowSkip": true
+      },
+      "title": "Cobra con el folio",
+      "body": "Escribe el folio PREV- aquí y el pedido se carga completo: productos, cliente y saldo. Cobras el anticipo o la liquidación como cualquier venta."
+    },
+    {
+      "id": "anticipo",
+      "title": "Anticipo hoy, liquidación al recoger",
+      "body": "El anticipo aparta el producto. Cuando llega, el cliente paga el saldo y el folio pasa a Entregado. Si no recoge a tiempo, el pedido cae a Vencidos para darle seguimiento."
+    },
+    {
+      "id": "cierre",
+      "title": "Listo",
+      "body": "Ya conoces el ciclo completo de una preventa: catálogo → folio → anticipo → liquidación. Cualquier duda extra está en la guía de Preventas del Centro de Documentación."
+    }
+  ]
+}

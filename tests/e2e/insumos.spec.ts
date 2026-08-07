@@ -1,37 +1,14 @@
 import { test, expect } from '@playwright/test'
+import {
+  BASE_URL,
+  ADMIN_EMAIL, ADMIN_PASSWORD,
+  apiLogin, apiReqFull as apiReq, dataOf,
+} from './helpers'
 
 /**
  * Insumos (Fase 2): compras pagadas con efectivo de la caja.
  * IN-01/02 validan el API (salida linkeada + expected_cash); IN-03 el flujo UI.
  */
-
-const BASE_URL = 'http://localhost:5173'
-const API_URL = 'http://localhost:8000/api/v1'
-const ADMIN_EMAIL = 'admin@tadaima.mx'
-const ADMIN_PASSWORD = 'password'
-
-async function apiLogin(email: string, password: string): Promise<string> {
-  const res = await fetch(`${API_URL}/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ email, password }),
-  })
-  const json = (await res.json()) as { data: { token: string } }
-  return json.data.token
-}
-
-async function apiReq(method: string, token: string, path: string, body?: Record<string, unknown>) {
-  const res = await fetch(`${API_URL}${path}`, {
-    method,
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json', Authorization: `Bearer ${token}` },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  })
-  return { status: res.status, json: (await res.json()) as Record<string, unknown> }
-}
-
-function dataOf(r: { json: Record<string, unknown> }): Record<string, unknown> {
-  return (r.json['data'] ?? {}) as Record<string, unknown>
-}
 
 test.describe('Insumos · compras con efectivo de caja', () => {
   let token: string

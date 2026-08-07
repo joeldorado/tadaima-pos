@@ -1,0 +1,660 @@
+[
+  {
+    "slug": "cobro-caja",
+    "title": "Cobro en Caja",
+    "category": "Caja y ventas",
+    "icon": "shopping-cart",
+    "summary": "Escanear, armar el carrito y cobrar en efectivo, tarjeta, transferencia, dólares o mixto.",
+    "keywords": [
+      "caja",
+      "cobrar",
+      "venta",
+      "carrito",
+      "escanear",
+      "código de barras",
+      "efectivo",
+      "tarjeta",
+      "transferencia",
+      "pago mixto",
+      "mixto",
+      "dólares",
+      "tipo de cambio",
+      "calculadora de dólares",
+      "cambio",
+      "ticket",
+      "descuento",
+      "promoción",
+      "socio",
+      "folio",
+      "log de pagos",
+      "pagos de esta venta"
+    ],
+    "tourId": "venta-caja",
+    "updatedAt": "2026-08-06",
+    "sections": [
+      {
+        "id": "abrir-caja",
+        "heading": "Antes de vender: abrir caja",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Cada usuario abre su caja con el efectivo inicial del cajón. Todo lo que cobres queda en tu sesión hasta que cierres y hagas tu corte. Al final del turno, el botón ámbar “Cerrar Caja” (arriba a la derecha de la pantalla de Caja) abre tu corte."
+          },
+          {
+            "kind": "image",
+            "src": "caja/01-pantalla-caja.png",
+            "alt": "Pantalla principal de Caja con buscador, carrito y panel de cobro",
+            "caption": "La Caja: buscador a la izquierda, carrito al centro y panel de cobro a la derecha."
+          },
+          {
+            "kind": "link",
+            "toTopic": "cortes-caja",
+            "label": "Cómo cerrar la caja y hacer el corte"
+          }
+        ]
+      },
+      {
+        "id": "armar-venta",
+        "heading": "Armar la venta",
+        "blocks": [
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Busca o escanea el producto",
+                "detail": "Lector USB (QR / Code128 / EAN13) o escribe nombre/SKU. Re-escanear el mismo producto NO suma: entra con cantidad 1 y ajustas con +/−."
+              },
+              {
+                "title": "Asigna cliente (opcional)",
+                "detail": "Manual, o escanea la tarjeta TAD de socio Tadaima (asigna cliente y precio socio automático). Lo quitas con la ✕ del pie."
+              },
+              {
+                "title": "Ajusta cantidades y descuentos",
+                "detail": "Puedes poner un descuento manual por línea (con motivo y quién autoriza); se acumula sobre cualquier promo."
+              }
+            ]
+          },
+          {
+            "kind": "image",
+            "src": "caja/02-busqueda-producto.png",
+            "alt": "Buscador de productos de la Caja con resultados",
+            "caption": "Escanea o escribe: el buscador acepta nombre, SKU o código de barras."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Cargar una preventa",
+            "text": "Escribe el folio (empieza con PREV-) en el buscador y se carga el pedido con sus productos y cliente."
+          },
+          {
+            "kind": "image",
+            "src": "caja/03-carrito-con-productos.png",
+            "alt": "Carrito de la Caja con productos agregados",
+            "caption": "El carrito: cantidades con +/−, y el menú ⋮ de cada línea para descuento o eliminar."
+          }
+        ]
+      },
+      {
+        "id": "carrito-al-dia",
+        "heading": "El carrito se mantiene al día solo",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Si mientras vendes alguien edita una promoción o un precio en el catálogo, el carrito se actualiza solo: verás un aviso como “Cambiaron las promociones de …” o “El precio de … cambió de $A a $B.” y el total ya viene corregido. No tienes que borrar ni volver a agregar nada — solo revisa el total antes de cobrar."
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "Único caso donde sí haces algo",
+            "text": "Si el aviso dice que cambiaron las restricciones de pago de un producto (por ejemplo, ahora es solo efectivo), puede que necesites cambiar el método de pago para poder cobrar."
+          }
+        ]
+      },
+      {
+        "id": "cobrar",
+        "heading": "Cobrar",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Elige el método en el panel de cobro: Efectivo, Tarjeta, Transferencia o Mixto. Con Tarjeta eliges la terminal. El cambio o el “Faltan $X” siempre se calculan en pesos."
+          },
+          {
+            "kind": "image",
+            "src": "caja/04-metodos-de-pago.png",
+            "alt": "Panel de cobro con los métodos de pago disponibles",
+            "caption": "El panel de cobro: total fijo arriba, métodos de pago y el botón Cobrar."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "¿El cliente trae dólares? Usa la calculadora",
+            "text": "Con Efectivo, el botón “$ Dólares” abre la calculadora: tecleas los billetes americanos, ves el tipo de cambio y en vivo te dice “LE ALCANZA — CAMBIO $X” o “FALTAN $X”. Nada cuenta hasta presionar “✓ Sí paga con dólares”; si solo era pregunta, cierras con “✗ Solo era pregunta” y no pasa nada. El sistema guarda los dólares físicos recibidos y el tipo de cambio de esa venta para el corte y los reportes."
+          },
+          {
+            "kind": "image",
+            "src": "cobro-caja/01-calculadora-usd.png",
+            "alt": "Calculadora de dólares abierta sobre la Caja, con el monto en USD y su conversión a pesos",
+            "caption": "La calculadora de dólares: simula sin compromiso — nada cuenta hasta confirmar “Sí paga con dólares”."
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "Comisión de terminal",
+            "text": "La comisión de la terminal la absorbe la tienda — NUNCA se le cobra al cliente. Solo se registra el % por venta para reportes."
+          },
+          {
+            "kind": "prose",
+            "text": "Al cobrar, el ticket se imprime solo — ya no aparece ninguna ventana de confirmación. Si necesitas otra copia, se reimprime desde el historial de ventas."
+          },
+          {
+            "kind": "link",
+            "toTopic": "historial-ventas",
+            "label": "Reimprimir tickets y cancelar ventas"
+          },
+          {
+            "kind": "link",
+            "toTopic": "impresion-automatica",
+            "label": "Que el ticket salga sin ventana del navegador (QZ Tray)"
+          }
+        ]
+      },
+      {
+        "id": "pago-mixto",
+        "heading": "Pago mixto: efectivo + transferencia",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Para cuando el cliente paga una parte por transferencia y el resto en efectivo, en UNA sola venta."
+          },
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Elige “Mixto” en el método de pago",
+                "detail": "Aparece un campo de Transferencia arriba del bloque de pesos."
+              },
+              {
+                "title": "Captura cuánto transfirió el cliente",
+                "detail": "En cuanto el monto es válido verás “Efectivo: $X” — el resto que se cobra en billetes. Si te falta capturarlo, el botón dice “Captura transferencia”."
+              },
+              {
+                "title": "Cobra el efectivo como siempre",
+                "detail": "El Cambio o el “Faltan $X” se calculan SOLO sobre la porción en efectivo, no sobre el total."
+              }
+            ]
+          },
+          {
+            "kind": "image",
+            "src": "cobro-caja/03-pago-mixto.png",
+            "alt": "Panel de cobro en método Mixto con el campo Transferencia capturado y la porción en efectivo calculada",
+            "caption": "Pago mixto: capturas la transferencia arriba y el sistema te dice cuánto va en efectivo."
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "Solo ventas normales",
+            "text": "Las preventas y los folios no admiten pago mixto (el anticipo viaja con un solo método) — la opción se apaga sola con el aviso “Las preventas no admiten pago mixto · usa Efectivo o Transferencia.” Tampoco se pueden combinar dólares con Mixto."
+          },
+          {
+            "kind": "callout",
+            "tone": "gold",
+            "title": "Tu corte no se descuadra",
+            "text": "Al corte solo entra la porción en efectivo; la transferencia sale en reportes como transferencia. El ticket imprime el desglose Efectivo / Transferencia."
+          }
+        ]
+      },
+      {
+        "id": "log-pagos",
+        "heading": "Pagos de esta venta (log de pagos)",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Debajo del resumen de cobro vive la sección plegable “Pagos de esta venta (N)”: registra con hora lo que el cliente va entregando — “Billete +$200”, “Capturado $500”, “Dólares US$20 ≈ $360”, cambios de método — para que nadie se confunda con cuánto pusieron."
+          },
+          {
+            "kind": "image",
+            "src": "cobro-caja/02-pagos-de-esta-venta.png",
+            "alt": "Sección Pagos de esta venta expandida con entradas de billetes y su hora",
+            "caption": "El log de pagos: cada entrega del cliente queda registrada con hora; la ✕ revierte el dinero."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Borrar una entrada revierte el dinero",
+            "text": "La ✕ de un billete resta ese monto del recibido; la ✕ de los dólares los quita por completo. Las entradas informativas solo borran el renglón. Es un apoyo visual por venta: se limpia al cobrar y no viaja a reportes."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "slug": "cortes-caja",
+    "title": "Cortes de caja",
+    "category": "Caja y ventas",
+    "icon": "wallet",
+    "summary": "Cerrar la caja contando pesos y dólares por separado, y consultar el historial de cortes.",
+    "keywords": [
+      "corte",
+      "corte de caja",
+      "cerrar caja",
+      "cierre",
+      "arqueo",
+      "efectivo",
+      "dólares",
+      "debe haber",
+      "descuadre",
+      "faltante",
+      "sobrante",
+      "cuadra",
+      "historial de cortes",
+      "sesión de caja"
+    ],
+    "tourId": "corte-caja",
+    "updatedAt": "2026-08-06",
+    "sections": [
+      {
+        "id": "cerrar-caja",
+        "heading": "Cerrar tu caja",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Al final del turno usa el botón ámbar “Cerrar Caja”, arriba a la derecha en la pantalla de Caja. El corte cuenta SOLO el efectivo del cajón: tarjetas y transferencias salen en reportes, pero no entran al esperado ni al faltante/sobrante. En una venta con pago mixto, solo su porción en efectivo cuenta para el cajón."
+          },
+          {
+            "kind": "callout",
+            "tone": "gold",
+            "title": "“Debe haber en el cajón” — antes de contar",
+            "text": "El propio modal te muestra en vivo cuánto debe haber de cada moneda: Pesos y Dólares (billetes), con su desglose (efectivo inicial + ventas en efectivo + entradas − salidas). Así cuentas sabiendo a qué le tiras."
+          },
+          {
+            "kind": "image",
+            "src": "cortes-caja/01-cerrar-caja-debe-haber.png",
+            "alt": "Modal Corte de Caja con el bloque Debe haber en el cajón y los campos de pesos y dólares contados",
+            "caption": "El modal de cierre: “Debe haber en el cajón” te dice el objetivo por moneda antes de contar."
+          },
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Cuenta los pesos",
+                "detail": "Captúralos en “Pesos contados en el cajón ($MXN)”."
+              },
+              {
+                "title": "Cuenta los billetes americanos",
+                "detail": "Van aparte, en “Dólares contados (US$)” — sin convertir, el sistema hace la cuenta. Los dólares recibidos se quedan íntegros en el cajón porque el cambio siempre se da en pesos."
+              },
+              {
+                "title": "Confirma el corte",
+                "detail": "El sistema compara lo contado contra lo esperado POR MONEDA y marca cada diferencia: Cuadra, Falta o Sobra."
+              }
+            ]
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "Caja de día anterior",
+            "text": "Si dejaste una caja abierta de un día previo, aparece un banner de aviso y no puedes vender sobre esa sesión vieja: primero ciérrala con su corte y abre una nueva."
+          }
+        ]
+      },
+      {
+        "id": "cortes-es-historial",
+        "heading": "“Cortes” es el historial — aquí no se cierra nada",
+        "blocks": [
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "La confusión más común",
+            "text": "El menú “Cortes” es SOLO para consultar e imprimir cortes ya hechos. Cerrar la caja se hace desde la pantalla de Caja con el botón “Cerrar Caja”. Si imprimes desde Cortes una sesión que sigue abierta, el cierre saldrá vacío (—) porque aún no existe."
+          },
+          {
+            "kind": "image",
+            "src": "cortes/01-historial-de-cortes.png",
+            "alt": "Pantalla de Cortes de Caja con el historial de sesiones",
+            "caption": "Cortes de Caja: cada sesión con su esperado, contado y diferencias por moneda."
+          },
+          {
+            "kind": "prose",
+            "text": "Cada corte muestra el desglose por moneda (Esperado · Pesos, Esperado · Dólares, lo contado y sus diferencias), más la fila “Fuera de caja (tarj./transf.)” con lo que se cobró sin tocar el cajón. El indicador “Abierta {hora}” te dice cuáles sesiones siguen sin cerrar, y cada corte se puede imprimir en ticket de 58 mm."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Corte del gerente",
+            "text": "El gerente ve los cortes de su tienda con KPIs (sesiones, ventas, entradas, salidas). El cálculo aplica IVA 16% sobre la comisión de terminal y guarda los dólares físicos + TC de cada sesión."
+          },
+          {
+            "kind": "link",
+            "toTopic": "insumos",
+            "label": "Salidas de caja por insumos: qué descuenta y qué no"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "slug": "insumos",
+    "title": "Insumos y origen del dinero",
+    "category": "Caja y ventas",
+    "icon": "shopping-basket",
+    "summary": "Registrar compras de operación indicando de dónde salió el dinero.",
+    "sections": [
+      {
+        "heading": "Registrar una compra",
+        "blocks": [
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Menú Insumos → tab “Registrar compra”",
+                "detail": ""
+              },
+              {
+                "title": "Elige el insumo",
+                "detail": "Escribe el nombre (cinta, bolsas…). Si no existe, se crea al vuelo y queda seleccionado."
+              },
+              {
+                "title": "Cantidad y monto",
+                "detail": ""
+              },
+              {
+                "title": "“¿De dónde salió el dinero?”",
+                "detail": "Elige el origen. Si no es de la caja, aparece “¿Quién puso el dinero?” (ej. Mario)."
+              },
+              {
+                "title": "Nota opcional y “Registrar compra”",
+                "detail": ""
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "heading": "El origen del dinero define el corte",
+        "blocks": [
+          {
+            "kind": "table",
+            "head": [
+              "Origen",
+              "¿Toca tu corte?"
+            ],
+            "rows": [
+              [
+                "Caja",
+                "Sí. El efectivo sale de tu cajón y pega a tu corte. Necesitas caja abierta."
+              ],
+              [
+                "Caja chica",
+                "No. Es gasto registrado fuera del cajón."
+              ],
+              [
+                "Dinero propio",
+                "No. Solo queda como registro (con el nombre de quién puso el dinero)."
+              ]
+            ]
+          },
+          {
+            "kind": "callout",
+            "tone": "gold",
+            "title": "Regla simple",
+            "text": "Solo el origen “Caja” descuenta del efectivo esperado. Caja chica y dinero propio son registro y no descuadran tu corte."
+          },
+          {
+            "kind": "prose",
+            "text": "Abajo ves “Compras de hoy”. El histórico completo se consulta en el tab Reporte, con su rango de fechas y desglose por origen del dinero."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "slug": "impresion-automatica",
+    "title": "Impresión automática (QZ Tray)",
+    "category": "Caja y ventas",
+    "icon": "printer",
+    "summary": "Que el ticket salga solo, sin la ventana de impresión del navegador.",
+    "keywords": [
+      "impresora",
+      "imprimir",
+      "ticket",
+      "qz tray",
+      "impresión silenciosa",
+      "térmica",
+      "xprinter",
+      "58mm",
+      "certificado",
+      "no imprime"
+    ],
+    "updatedAt": "2026-08-06",
+    "sections": [
+      {
+        "id": "que-es",
+        "heading": "Qué es",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Normalmente el navegador abre su ventana de impresión en cada ticket (por seguridad, ningún sitio web puede imprimir solo). Con QZ Tray — un programa gratuito instalado UNA vez en cada computadora de caja — el POS manda el ticket directo a la impresora térmica: sin ventana, sin clics."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Si no está instalado, no pasa nada",
+            "text": "Las cajas sin QZ Tray siguen imprimiendo con la ventana de siempre (o en silencio si Chrome está en modo kiosko con --kiosk-printing). La impresión silenciosa se activa caja por caja."
+          }
+        ]
+      },
+      {
+        "id": "instalacion",
+        "heading": "Instalación en cada caja (Windows, una sola vez)",
+        "blocks": [
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Descarga e instala QZ Tray",
+                "detail": "En qz.io/download (versión 2.2 o más nueva). Acepta las ventanas de instalación — incluye el certificado local que necesita el navegador. Al terminar debe verse su icono junto al reloj de Windows."
+              },
+              {
+                "title": "Copia el certificado de Tadaima",
+                "detail": "Pide el archivo qz-certificate.crt al administrador y cópialo como C:\\Program Files\\QZ Tray\\override.crt — con eso QZ confía en el POS y no pregunta nada. Reinicia QZ Tray (clic derecho al icono → Exit, y ábrelo de nuevo)."
+              },
+              {
+                "title": "Configura la impresora en el POS",
+                "detail": "En Caja, botón de impresora 🖨 (junto a Cortes): debe decir “Conectado a QZ Tray”. Elige la impresora térmica (Xprinter), deja 58 mm, enciende “Impresión silenciosa” e Imprime la prueba."
+              }
+            ]
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "Si no copiaste el certificado",
+            "text": "En la primera impresión QZ muestra un aviso amarillo: marca “Remember this decision” y presiona Allow — queda permitido para siempre en esa máquina."
+          },
+          {
+            "kind": "chips",
+            "chips": [
+              {
+                "label": "Usar Chrome o Edge",
+                "tone": "blue"
+              },
+              {
+                "label": "Reloj de la PC en hora (NTP)",
+                "tone": "amber"
+              },
+              {
+                "label": "58 mm → 48 mm si recorta",
+                "tone": "green"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "problemas",
+        "heading": "Problemas comunes",
+        "blocks": [
+          {
+            "kind": "table",
+            "head": [
+              "Síntoma",
+              "Qué hacer"
+            ],
+            "rows": [
+              [
+                "“Sin conexión con QZ Tray”",
+                "Revisa que QZ Tray esté abierto (icono junto al reloj). Si no aparece, ábrelo desde el menú Inicio."
+              ],
+              [
+                "El ticket se abre en ventana aunque QZ está activo",
+                "Abre el botón de impresora en Caja y revisa que el switch esté encendido y la impresora elegida exista."
+              ],
+              [
+                "Ticket recortado del lado derecho",
+                "Cambia el ancho a 48 mm en la configuración de impresora."
+              ],
+              [
+                "No salió el ticket y no hubo ventana",
+                "La impresora no respondió: revisa cable/papel y reimprime desde Historial o Ventas."
+              ]
+            ]
+          },
+          {
+            "kind": "callout",
+            "tone": "gold",
+            "title": "El respaldo siempre existe",
+            "text": "Cualquier falla de QZ regresa el ticket a la ventana de siempre — nunca se pierde una impresión por la impresión silenciosa."
+          },
+          {
+            "kind": "link",
+            "toTopic": "historial-ventas",
+            "label": "Cómo reimprimir un ticket desde el historial"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "slug": "historial-ventas",
+    "title": "Historial de ventas",
+    "category": "Caja y ventas",
+    "icon": "layers",
+    "summary": "Consultar las ventas del día o de un rango, reimprimir tickets, cancelar y el Reporte del Día.",
+    "keywords": [
+      "historial",
+      "ventas del día",
+      "lista de ventas",
+      "ticket",
+      "reimprimir",
+      "reimpresión",
+      "cancelar venta",
+      "cancelación",
+      "devolución",
+      "reporte del día",
+      "excel",
+      "pdf",
+      "no. ticket",
+      "método de pago"
+    ],
+    "updatedAt": "2026-08-06",
+    "sections": [
+      {
+        "id": "lista-ventas",
+        "heading": "La lista de ventas",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "En el menú Ventas, el tab “Lista de Ventas” muestra los tickets del período: por default los de HOY, con accesos rápidos “7 días” y “Este mes” o un calendario para elegir cualquier rango. Puedes buscar por No. de ticket, cliente o producto, y filtrar por método de pago. Cada quien ve lo suyo: el cajero SOLO sus propias ventas, el gerente su tienda y el admin todas las tiendas (con filtro por cajero para admin y gerente)."
+          },
+          {
+            "kind": "image",
+            "src": "historial/01-historial-de-ventas.png",
+            "alt": "Lista de ventas con fecha, ticket, cliente, método de pago y total",
+            "caption": "La Lista de Ventas: clic en cualquier fila para abrir su detalle."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "El detalle de cada venta",
+            "text": "Clic en la fila y se despliegan los artículos y el bloque “Cómo se pagó”: método, recibido (pesos y dólares con su tipo de cambio) y cambio. Las ventas con pago mixto dicen “Mixto” con el desglose de cada método."
+          }
+        ]
+      },
+      {
+        "id": "reimprimir",
+        "heading": "Reimprimir un ticket",
+        "blocks": [
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Abre la venta",
+                "detail": "Clic en su fila para expandir el detalle."
+              },
+              {
+                "title": "Botón “Ticket”",
+                "detail": "Imprime otra copia igual que en Caja: directo a la térmica si la caja tiene QZ Tray, o con la ventana de siempre."
+              }
+            ]
+          },
+          {
+            "kind": "link",
+            "toTopic": "impresion-automatica",
+            "label": "Configurar la impresión sin ventana (QZ Tray)"
+          }
+        ]
+      },
+      {
+        "id": "cancelaciones",
+        "heading": "Cancelar una venta",
+        "blocks": [
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Abre la venta y presiona “Cancelar”",
+                "detail": "El botón está junto a “Ticket” en el detalle."
+              },
+              {
+                "title": "Elige qué se cancela",
+                "detail": "Puede ser la venta completa o solo algunos artículos (cancelación parcial), ajustando cantidades."
+              },
+              {
+                "title": "Motivo y confirmación",
+                "detail": "El motivo es obligatorio (devolución, error del cajero, producto dañado…) y puedes agregar una nota. Al confirmar, el stock regresa al inventario y se genera una salida de caja en la sesión actual."
+              }
+            ]
+          },
+          {
+            "kind": "prose",
+            "text": "En la lista, una venta cancelada por completo muestra su total en rojo como “−$X” con la etiqueta “cancelada”; una cancelación parcial conserva su total y agrega un renglón rojo “−$X canc.”. En el detalle aparece el sello “Cancelada”."
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "Tarjeta y transferencia no se cancelan desde aquí",
+            "text": "En ventas pagadas con tarjeta o transferencia el botón “Cancelar” ni siquiera aparece: ese dinero no está en el cajón y no se puede reversar desde la caja. Esos casos se resuelven con el administrador."
+          }
+        ]
+      },
+      {
+        "id": "reporte-del-dia",
+        "heading": "Reporte del Día (admin y gerente)",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "El tab “Reporte” arma el Reporte del Día de la tienda: el corte por producto separado en Ventas (Efectivo y Tarjeta, con comisión e IVA de terminal), Preventas (apartados y liquidaciones) y Preventas vencidas. El cajero no ve este tab."
+          },
+          {
+            "kind": "prose",
+            "text": "Abajo están los botones “Imprimir”, “Excel” y “Exportar PDF” para llevarte el reporte del período elegido. Las columnas de Costo y Utilidad solo aparecen si tienes el permiso de ver costos."
+          },
+          {
+            "kind": "link",
+            "toTopic": "reportes",
+            "label": "Análisis por rango de fechas: la sección Reportes"
+          }
+        ]
+      }
+    ]
+  }
+]

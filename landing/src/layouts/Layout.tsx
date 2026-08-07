@@ -8,6 +8,7 @@ import {
   Users, Receipt, UserCircle2, ClipboardList, ArrowLeftRight, ShoppingBasket, BarChart2,
   Settings, Sun, Moon, PackageSearch, Wallet, KeyRound,
   ChevronDown, ChevronRight, PanelLeftClose, TriangleAlert, TicketPercent, BookOpen,
+  HelpCircle, Play,
 } from "lucide-react";
 import { NotificationBadge } from "@/components/notifications/NotificationBadge";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -26,6 +27,10 @@ import { useActiveSessionQuery } from "@/hooks/queries/useCashSession";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { CloseCashModal } from "@/components/cash/CloseCashModal";
 import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
+import { TourOverlay } from "@/components/tour/TourOverlay";
+import { TourPickerDialog } from "@/components/tour/TourPickerDialog";
+import { useTourStore } from "@/stores/tourStore";
+import { helpTopicFor } from "@/content/docs/route-help";
 import { toLocalYmd, getTodayLocal } from "@/lib/date";
 
 interface NavLeaf {
@@ -94,7 +99,7 @@ const isPathActive = (pathname: string, to: string, exact?: boolean): boolean =>
 // ─── Icon-rail (modo colapsado): icono + etiqueta 9px, como el rail original ──
 function RailLeaf({ to, end, label, Icon }: { to: string; end?: boolean; label: string; Icon: typeof Home }) {
   return (
-    <NavLink to={to} end={end} className="flex flex-col items-center gap-1" title={label}>
+    <NavLink to={to} end={end} className="flex flex-col items-center gap-1" title={label} data-tour={"nav-" + (to.replace(/^\//, "") || "inicio")}>
       {({ isActive }) => (
         <>
           <div
@@ -160,7 +165,7 @@ function RailGroup({ group, isOpen, onToggle, pathname }: { group: NavGroup; isO
 // ─── Sidebar ancha (modo expandido): fila icono + etiqueta ────────────────────
 function WideLeaf({ to, end, label, Icon, indent }: { to: string; end?: boolean; label: string; Icon: typeof Home; indent?: boolean }) {
   return (
-    <NavLink to={to} end={end} className="block w-full">
+    <NavLink to={to} end={end} className="block w-full" data-tour={"nav-" + (to.replace(/^\//, "") || "inicio")}>
       {({ isActive }) => (
         <div
           className="flex items-center gap-3 rounded-xl transition-all"
@@ -378,7 +383,7 @@ function LayoutInner() {
 
   // ── Caja: CTA primario, en ambos modos ──────────────────────────────────────
   const CajaCTA = railCollapsed ? (
-    <NavLink to="/caja" className="flex flex-col items-center gap-1" title="Caja">
+    <NavLink to="/caja" className="flex flex-col items-center gap-1" title="Caja" data-tour="nav-caja">
       {({ isActive }) => (
         <>
           <div className="w-10 h-10 rounded-xl flex items-center justify-center transition-all"
@@ -392,7 +397,7 @@ function LayoutInner() {
       )}
     </NavLink>
   ) : (
-    <NavLink to="/caja" className="block w-full">
+    <NavLink to="/caja" className="block w-full" data-tour="nav-caja">
       {({ isActive }) => (
         <div className="flex items-center gap-3 rounded-xl transition-all"
           style={{
@@ -578,6 +583,7 @@ function LayoutInner() {
             className="rounded-full transition-all shrink-0"
             style={{ background: "transparent", border: `1px solid ${showUserMenu ? "var(--td-red-brd)" : "var(--td-panel-border)"}`, padding: 0 }}
             title={user?.name ?? ""}
+            data-tour="avatar-menu"
           >
             <UserAvatar name={user?.name ?? ""} avatarUrl={user?.avatar_url} size={36} />
           </button>
@@ -624,6 +630,34 @@ function LayoutInner() {
                 >
                   <BookOpen size={12} style={{ color: "var(--td-text-lo)" }} />
                   Documentación
+                </button>
+              )}
+
+              {/* Ayuda contextual — lleva al tema de docs de la página actual. */}
+              {canAccessPage(user?.roles, "docs") && helpTopicFor(location.pathname) && (
+                <button
+                  onClick={() => { setShowUserMenu(false); navigate(`/documentacion?tema=${helpTopicFor(location.pathname)}`); }}
+                  className="w-full text-left px-4 py-2.5 text-xs font-semibold flex items-center gap-2 transition-colors"
+                  style={{ color: "var(--td-text-md)", background: "transparent" }}
+                  onMouseEnter={e => (e.currentTarget.style.background = "var(--td-hover-bg)")}
+                  onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                >
+                  <HelpCircle size={12} style={{ color: "var(--td-text-lo)" }} />
+                  ¿Cómo funciona esta página?
+                </button>
+              )}
+
+              {/* Tours guiados — solo escritorio (el motor no arranca en móvil). */}
+              {canAccessPage(user?.roles, "docs") && (
+                <button
+                  onClick={() => { setShowUserMenu(false); useTourStore.getState().openPicker(); }}
+                  className="w-full text-left px-4 py-2.5 text-xs font-semibold hidden md:flex items-center gap-2 transition-colors"
+                  style={{ color: "var(--td-text-md)", background: "transparent" }}
+                  onMouseEnter={e => (e.currentTarget.style.background = "var(--td-hover-bg)")}
+                  onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                >
+                  <Play size={12} style={{ color: "var(--td-text-lo)" }} />
+                  Hacer un tour
                 </button>
               )}
 
@@ -690,6 +724,12 @@ function LayoutInner() {
       <main className="flex-1 overflow-y-auto">
         <Outlet />
       </main>
+
+      {/* ── Tours guiados (F1B): overlay por portal + picker. El picker se abre
+          con openPicker() (integración futura del menú del avatar) o con el
+          evento global `tadaima:open-tour-picker` (e2e). ─────────────────── */}
+      <TourOverlay />
+      <TourPickerDialog />
 
       {/* ADR-014: <ExpiringDraftsModal /> desactivado — carrito client-side. */}
 

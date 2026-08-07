@@ -1,0 +1,60 @@
+{
+  "id": "alta-producto",
+  "title": "Alta de producto",
+  "description": "Buscar antes de crear, los 3 campos obligatorios, precios por nivel y promos NxM.",
+  "icon": "package",
+  "roles": ["admin", "gerente"],
+  "topicSlug": "alta-producto",
+  "steps": [
+    {
+      "id": "intro",
+      "title": "Alta de producto",
+      "body": "Vamos a dar de alta un producto: dónde se hace, qué campos importan de verdad y cómo dejarlo listo para vender con precios y promos."
+    },
+    {
+      "id": "nav-productos",
+      "target": "nav-products",
+      "placement": "right",
+      "title": "El menú Productos",
+      "body": "Aquí vive todo el catálogo: productos regulares y tomos de librería. Vamos a verlo."
+    },
+    {
+      "id": "buscar",
+      "route": "/products",
+      "target": "products-search",
+      "waitFor": true,
+      "placement": "bottom",
+      "title": "Primero busca, luego crea",
+      "body": "Con ~14 mil artículos, la búsqueda es tu mejor amiga: escribe nombre, SKU o escanea el código y el servidor busca en todo el catálogo. Así evitas duplicar un producto que ya existe."
+    },
+    {
+      "id": "nuevo",
+      "route": "/products",
+      "target": "products-new",
+      "waitFor": true,
+      "placement": "bottom",
+      "title": "Alta de Producto",
+      "body": "Este botón abre el formulario. Primero eliges el tipo: Producto Normal, o la ruta de Tomos/Librería para dar de alta lotes de manga."
+    },
+    {
+      "id": "campos",
+      "title": "Solo 3 campos obligatorios",
+      "body": "Nombre, Precio Normal e Inventario — el checklist de arriba del formulario te marca cuáles faltan. El SKU es opcional. Y tranquilo: el borrador se guarda solo; si recargas la página, se restaura donde ibas."
+    },
+    {
+      "id": "precios",
+      "title": "Hasta 5 niveles de precio",
+      "body": "Solo el Normal es obligatorio. El nivel de socio se aplica automático al escanear la tarjeta Tadaima en Caja. El Costo Real solo lo ven administradores (o quien tenga el permiso de ver costos)."
+    },
+    {
+      "id": "promos",
+      "title": "Promos NxM y mayoreo",
+      "body": "Con el producto guardado se habilita el tab Promos: ahí configuras 3x2, descuentos por cantidad con escalones y su vigencia. En Caja se aplican solas."
+    },
+    {
+      "id": "cierre",
+      "title": "A darle",
+      "body": "Ya puedes alimentar el catálogo. Un último tip: marca los métodos de pago aceptados con cuidado — si dejas solo Efectivo, ese producto restringe toda la venta a efectivo/dólares."
+    }
+  ]
+}

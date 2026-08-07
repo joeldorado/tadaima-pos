@@ -1,0 +1,155 @@
+[
+  {
+    "slug": "preventas",
+    "title": "Preventas",
+    "category": "Pedidos",
+    "icon": "clipboard-list",
+    "summary": "Pre-órdenes con anticipo que se liquidan al recoger. El núcleo del negocio.",
+    "keywords": [
+      "preventa",
+      "preorden",
+      "pre-orden",
+      "anticipo",
+      "adelanto",
+      "folio",
+      "PREV",
+      "catálogo",
+      "campaña",
+      "liquidar",
+      "recoger pedido",
+      "difusión",
+      "vencidos",
+      "límite por cliente",
+      "borrador"
+    ],
+    "tourId": "preventas",
+    "updatedAt": "2026-08-06",
+    "sections": [
+      {
+        "id": "como-funciona",
+        "heading": "Cómo funciona",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Una preventa es un pedido con anticipo: el cliente aparta con un adelanto y liquida el resto cuando llega el producto. Cada preventa vive en un catálogo (una campaña con sus productos, precios e imagen)."
+          },
+          {
+            "kind": "image",
+            "src": "preventas/01-catalogos.png",
+            "alt": "Tab Catálogos de Preventas con las campañas publicadas",
+            "caption": "El tab Catálogos: cada tarjeta es una campaña con sus productos y precios."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Catálogos: solo admin",
+            "text": "El admin crea/edita/cierra/cancela los catálogos (tab Catálogos), define stock por tienda e imagen. Gerente y cajero solo ven los catálogos publicados para vender."
+          }
+        ]
+      },
+      {
+        "id": "dia-a-dia",
+        "heading": "El día a día",
+        "blocks": [
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Tomar la preventa",
+                "detail": "Desde un catálogo publicado, con el anticipo del cliente."
+              },
+              {
+                "title": "Liquidar al recoger",
+                "detail": "En Caja escribe el folio (PREV-…) y se carga el pedido con productos y cliente para cobrar el saldo."
+              },
+              {
+                "title": "Seguimiento por folios",
+                "detail": "Los tabs Folios (Pendiente / Listo / Entregado / Vencido), Difusión (avisar por WhatsApp/email) y Vencidos organizan el estatus."
+              }
+            ]
+          },
+          {
+            "kind": "image",
+            "src": "preventas/02-folios.png",
+            "alt": "Tab Folios con las preventas por estatus",
+            "caption": "Los folios se siguen por estatus: Pendiente, Listo, Entregado y Vencido."
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "Límite por cliente",
+            "text": "Un catálogo puede tener límite de piezas por cliente. Ojo: solo bloquea en los catálogos donde SE CONFIGURÓ el límite (arrancan sin límite). La identidad del cliente combina id + teléfono + socio."
+          },
+          {
+            "kind": "link",
+            "toTopic": "cobro-caja",
+            "label": "Cómo cobrar el folio en Caja"
+          }
+        ]
+      },
+      {
+        "id": "borrador-alta-catalogo",
+        "heading": "Alta de catálogo: tu captura no se pierde",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Al crear un catálogo nuevo, lo que vas capturando se guarda solo como borrador en esa computadora. Si la página se recarga, se cierra la pestaña o algo truena a media captura, al volver a abrir el alta todo regresa con el aviso “Se restauró un borrador sin guardar de tu última sesión.”"
+          },
+          {
+            "kind": "image",
+            "src": "preventas/03-nuevo-catalogo.png",
+            "alt": "Formulario de nuevo catálogo de preventa",
+            "caption": "El alta de catálogo guarda borrador automático mientras capturas."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Cuándo se limpia el borrador",
+            "text": "Se borra al guardar con éxito o al cancelar tú el alta (botón Cancelar, la X o clic fuera). Si el guardado falla, el borrador se queda para que no vuelvas a teclear todo. Dura hasta 24 horas."
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "La imagen no viaja en el borrador",
+            "text": "Las fotos no se guardan en el borrador (pesan demasiado para el navegador). Si se restauró una captura, vuelve a elegir la imagen del catálogo antes de guardar."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "slug": "apartados",
+    "title": "Apartados (layaways)",
+    "category": "Pedidos",
+    "icon": "bookmark",
+    "summary": "El cliente abona en partes hasta cubrir el total y se lleva el producto.",
+    "sections": [
+      {
+        "heading": "Flujo",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "A diferencia de la preventa (producto que aún no llega), el apartado es sobre producto que ya existe: el cliente lo separa y lo va abonando."
+          },
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Crear el apartado",
+                "detail": "Con el producto y el abono inicial del cliente."
+              },
+              {
+                "title": "Registrar abonos",
+                "detail": "Cada pago baja el saldo pendiente."
+              },
+              {
+                "title": "Entregar al liquidar",
+                "detail": "Cuando el saldo llega a cero, se entrega el producto."
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

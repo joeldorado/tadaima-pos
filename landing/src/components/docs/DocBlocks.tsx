@@ -1,5 +1,15 @@
-import { Info, TriangleAlert, Sparkles } from "lucide-react"
+import { useEffect, useState } from "react"
+import { Info, TriangleAlert, Sparkles, ImageOff, ChevronRight } from "lucide-react"
 import type { DocBlock, DocField } from "@/content/docs/types"
+import { findTopic } from "@/content/docs"
+import { resolveDocImage } from "@/content/docs/images"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 
 /**
  * Renderers presentacionales del Centro de Documentación.
@@ -172,7 +182,124 @@ function Table({ head, rows }: { head: string[]; rows: string[][] }) {
   )
 }
 
-export function DocBlockView({ block }: { block: DocBlock }) {
+/**
+ * Captura de pantalla con lightbox: la miniatura abre un Radix Dialog con la
+ * imagen grande sobre fondo oscuro (Esc / click fuera / click en la imagen
+ * cierran). Si la captura no existe todavía, placeholder discreto con el alt.
+ */
+function ImageBlock({ src, alt, caption }: { src: string; alt: string; caption?: string | undefined }) {
+  const [open, setOpen] = useState(false)
+  const resolved = resolveDocImage(src)
+
+  useEffect(() => {
+    if (!resolved && import.meta.env.DEV) {
+      console.warn(`[docs] Imagen no encontrada: '${src}' (esperada en src/assets/docs/${src})`)
+    }
+  }, [resolved, src])
+
+  if (!resolved) {
+    return (
+      <div
+        className="rounded-2xl p-4 flex items-center gap-3"
+        style={{ background: "var(--td-surface-soft)", border: "1px dashed var(--td-card-border)" }}
+      >
+        <ImageOff size={16} className="shrink-0" style={{ color: "var(--td-text-ghost)" }} />
+        <span className="text-[13px]" style={{ color: "var(--td-text-lo)" }}>
+          {alt}
+        </span>
+      </div>
+    )
+  }
+
+  return (
+    <figure className="space-y-2">
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="block w-full cursor-zoom-in"
+        aria-label={`Ampliar imagen: ${alt}`}
+      >
+        <img
+          src={resolved}
+          alt={alt}
+          loading="lazy"
+          className="w-full rounded-2xl"
+          style={{ border: "1px solid var(--td-card-border)" }}
+        />
+      </button>
+      {caption && (
+        <figcaption className="text-xs text-center leading-relaxed" style={{ color: "var(--td-text-ghost)" }}>
+          {caption}
+        </figcaption>
+      )}
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="p-1.5 bg-transparent border-none shadow-none max-w-[94vw] sm:max-w-[min(94vw,72rem)]">
+          <DialogHeader className="sr-only">
+            <DialogTitle>{alt}</DialogTitle>
+            <DialogDescription>{caption ?? alt}</DialogDescription>
+          </DialogHeader>
+          <img
+            src={resolved}
+            alt={alt}
+            onClick={() => setOpen(false)}
+            className="w-full max-h-[85vh] object-contain rounded-xl cursor-zoom-out"
+          />
+        </DialogContent>
+      </Dialog>
+    </figure>
+  )
+}
+
+/**
+ * Card "Ver también" hacia otro tema (`?tema=<slug>`). La navegación la pone
+ * el padre vía `onNavigateTopic` (DocsPage). Si el tema no existe, no rinde.
+ */
+function LinkBlock({
+  toTopic,
+  label,
+  onNavigate,
+}: {
+  toTopic: string
+  label?: string | undefined
+  onNavigate?: ((slug: string) => void) | undefined
+}) {
+  const target = findTopic(toTopic)
+  if (!target) return null
+  const Icon = target.icon
+  return (
+    <button
+      type="button"
+      onClick={() => onNavigate?.(toTopic)}
+      className="w-full flex items-center gap-3 rounded-2xl p-3.5 text-left transition-colors hover:brightness-125"
+      style={{ background: "var(--td-surface-soft)", border: "1px solid var(--td-card-border)" }}
+    >
+      <span
+        className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0"
+        style={{ background: "var(--td-red-dim)", border: "1px solid var(--td-red-brd)" }}
+      >
+        <Icon size={15} style={{ color: "#FF8A80" }} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[10px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-ghost)" }}>
+          Ver también
+        </span>
+        <span className="block text-sm font-bold mt-0.5 truncate" style={{ color: "var(--td-text-hi)" }}>
+          {label ?? target.title}
+        </span>
+      </span>
+      <ChevronRight size={16} className="shrink-0" style={{ color: "var(--td-text-lo)" }} />
+    </button>
+  )
+}
+
+export function DocBlockView({
+  block,
+  onNavigateTopic,
+}: {
+  block: DocBlock
+  /** Navegación entre temas para los bloques `link` (la inyecta DocsPage). */
+  onNavigateTopic?: ((slug: string) => void) | undefined
+}) {
   switch (block.kind) {
     case "prose":
       return <Prose text={block.text} />
@@ -186,6 +313,10 @@ export function DocBlockView({ block }: { block: DocBlock }) {
       return <Fields fields={block.fields} />
     case "table":
       return <Table head={block.head} rows={block.rows} />
+    case "image":
+      return <ImageBlock src={block.src} alt={block.alt} caption={block.caption} />
+    case "link":
+      return <LinkBlock toTopic={block.toTopic} label={block.label} onNavigate={onNavigateTopic} />
     default:
       return null
   }

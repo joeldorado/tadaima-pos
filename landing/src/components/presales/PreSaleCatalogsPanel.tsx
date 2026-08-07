@@ -677,6 +677,7 @@ export function PreSaleCatalogsPanel({ restrictedStoreId = null }: { restrictedS
         </div>
         <button
           onClick={() => setShowNew(true)}
+          data-tour="presales-new-catalog"
           style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 12, border: "none", background: "linear-gradient(135deg,#CC2200,#FF4422)", color: "#fff", fontSize: 11, fontWeight: 900, cursor: "pointer", boxShadow: "0 4px 16px rgba(204,34,0,0.35)" }}
         >
           <Plus size={13} />Nuevo Catálogo

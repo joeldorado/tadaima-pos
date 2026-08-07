@@ -1,0 +1,184 @@
+[
+  {
+    "slug": "primeros-pasos",
+    "title": "Primeros pasos",
+    "category": "Primeros pasos",
+    "icon": "rocket",
+    "summary": "Bienvenida al sistema: entrar, ubicar tu pantalla según tu rol y los básicos del menú.",
+    "keywords": [
+      "bienvenida",
+      "empezar",
+      "iniciar sesión",
+      "login",
+      "entrar",
+      "contraseña",
+      "cambiar contraseña",
+      "tema",
+      "modo claro",
+      "modo oscuro",
+      "sucursal",
+      "cambiar tienda",
+      "menú",
+      "avatar",
+      "tours",
+      "recorridos",
+      "perfil",
+      "cerrar sesión"
+    ],
+    "updatedAt": "2026-08-06",
+    "sections": [
+      {
+        "id": "entrar",
+        "heading": "Entrar al sistema",
+        "blocks": [
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Abre el POS en el navegador",
+                "detail": "De preferencia Chrome o Edge, con la dirección que te dio tu administrador."
+              },
+              {
+                "title": "Escribe tu correo y contraseña",
+                "detail": "Tu cuenta la crea el administrador; si no tienes acceso, pídesela a él."
+              },
+              {
+                "title": "Listo — aterrizas en tu pantalla de inicio",
+                "detail": "Lo que ves al entrar depende de tu rol (abajo te mostramos las tres vistas)."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "que-ve-cada-rol",
+        "heading": "Qué ves al entrar, según tu rol",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "El administrador entra a un dashboard con el saludo “Hola, {tu nombre}”, los números del día de la tienda activa (ventas, transacciones) y accesos a todo el sistema."
+          },
+          {
+            "kind": "image",
+            "src": "dashboard/01-panel-administracion.png",
+            "alt": "Dashboard del administrador con KPIs del día y accesos",
+            "caption": "Vista de admin: los números del día y la puerta a todas las secciones."
+          },
+          {
+            "kind": "prose",
+            "text": "El gerente ve el pulso de SU tienda: los cortes de hoy y los cajeros conectados en este momento."
+          },
+          {
+            "kind": "image",
+            "src": "dashboard/02-dashboard-gerente.png",
+            "alt": "Dashboard del gerente con cortes de hoy y cajeros conectados",
+            "caption": "Vista de gerente: cortes del día y quién está en caja ahora mismo."
+          },
+          {
+            "kind": "prose",
+            "text": "El cajero ve “Mi Perfil”: su foto (con “Cambiar foto”), su tienda y el botón “Mis Cortes” con sus cierres de los últimos 90 días, cada uno imprimible. De ahí, “← Volver a Caja” y a vender."
+          },
+          {
+            "kind": "image",
+            "src": "dashboard/03-perfil-cajero.png",
+            "alt": "Pantalla Mi Perfil del cajero con foto y botón Mis Cortes",
+            "caption": "Vista de cajero: su perfil, su tienda y su historial de cortes."
+          }
+        ]
+      },
+      {
+        "id": "tu-sucursal",
+        "heading": "Tu sucursal (y cómo la cambia el admin)",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Gerente y cajero están ligados a SU tienda: se selecciona sola al entrar y no hay nada que configurar. La tienda activa siempre se ve abajo del menú lateral, con su número y nombre."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Admin con varias tiendas",
+            "text": "Al entrar a Caja, el sistema le pide “Selecciona una tienda”; para operar otra sucursal usa el botón “Cambiar tienda” en la misma pantalla de Caja."
+          }
+        ]
+      },
+      {
+        "id": "menu-avatar",
+        "heading": "El menú del avatar (tu foto, abajo del menú lateral)",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Clic en tu foto (abajo a la izquierda) y se abre el menú personal. Ahí viven las opciones que no son de venta:"
+          },
+          {
+            "kind": "table",
+            "head": [
+              "Opción",
+              "Para qué sirve"
+            ],
+            "rows": [
+              [
+                "Configuración (solo admin)",
+                "Ajustes generales del sistema."
+              ],
+              [
+                "Documentación",
+                "Este centro de ayuda, con buscador y tours guiados."
+              ],
+              [
+                "Cambiar contraseña",
+                "Pone una contraseña nueva en un paso, sin salir del sistema."
+              ],
+              [
+                "Modo Claro / Modo Oscuro",
+                "Cambia el tema de toda la app; se queda guardado en esa computadora."
+              ],
+              [
+                "Cerrar sesión",
+                "Sale del sistema."
+              ]
+            ]
+          },
+          {
+            "kind": "callout",
+            "tone": "gold",
+            "title": "Tours guiados",
+            "text": "Los recorridos paso a paso (te van señalando los botones sobre la pantalla real) se abren desde la Documentación: cada tema que tiene tour muestra su botón para iniciarlo."
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "¿Cerrar sesión con caja abierta?",
+            "text": "Si tienes una caja abierta, el sistema te pide hacer tu corte antes de salir — así el dinero del cajón nunca queda en el aire."
+          },
+          {
+            "kind": "link",
+            "toTopic": "cortes-caja",
+            "label": "Cómo hacer el corte de caja"
+          }
+        ]
+      },
+      {
+        "id": "siguientes-pasos",
+        "heading": "¿Y ahora qué sigue?",
+        "blocks": [
+          {
+            "kind": "link",
+            "toTopic": "cobro-caja",
+            "label": "Tu primera venta en Caja"
+          },
+          {
+            "kind": "link",
+            "toTopic": "buscar-en-tiendas",
+            "label": "Ver qué sucursal tiene un producto"
+          },
+          {
+            "kind": "link",
+            "toTopic": "glosario-solucion-problemas",
+            "label": "¿Un término no te suena? Glosario y problemas frecuentes"
+          }
+        ]
+      }
+    ]
+  }
+]

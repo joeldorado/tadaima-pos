@@ -1,0 +1,16 @@
+{
+  "00136": ["tienda-online"],
+  "00137": ["tienda-online"],
+  "00138": ["descuento-cantidad", "promos-nxm"],
+  "00139": ["cobro-caja"],
+  "00140": ["cobro-caja"],
+  "00142": ["promos-nxm", "cobro-caja", "cortes-caja"],
+  "00146": ["cortes-caja", "cobro-caja"],
+  "00155": ["tienda-online"],
+  "00156": ["buscar-filtrar-productos"],
+  "00159": ["buscar-filtrar-productos"],
+  "00160": ["alta-producto"],
+  "00161": ["buscar-filtrar-productos"],
+  "00165": ["alta-producto", "preventas"],
+  "00166": ["cobro-caja"]
+}

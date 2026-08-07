@@ -1,0 +1,65 @@
+{
+  "id": "corte-caja",
+  "title": "Abrir, contar y cerrar tu caja",
+  "description": "El ciclo del corte: efectivo inicial, conteo de pesos y dólares por separado, e historial en Cortes.",
+  "icon": "wallet",
+  "topicSlug": "cortes-caja",
+  "steps": [
+    {
+      "id": "intro",
+      "title": "Abrir, contar y cerrar tu caja",
+      "body": "El corte es tu cuenta clara del día: comparas el efectivo que contaste contra lo que el sistema espera. Te enseño el ciclo completo, de la apertura al historial."
+    },
+    {
+      "id": "nav-caja",
+      "target": "nav-caja",
+      "placement": "right",
+      "title": "Tu caja del día",
+      "body": "Cada quien abre su propia sesión de caja al empezar el turno. Todo lo que cobres queda amarrado a tu sesión hasta que hagas el corte."
+    },
+    {
+      "id": "abrir",
+      "title": "Abrir con efectivo inicial",
+      "body": "Al entrar a Caja sin sesión, el botón Abrir Caja te pide el efectivo con el que arranca el cajón. Ese monto es la base del corte: todo lo que entre y salga se suma o resta de ahí."
+    },
+    {
+      "id": "cerrar",
+      "route": "/caja",
+      "target": "sell-close-register",
+      "waitFor": true,
+      "placement": "bottom",
+      "precondition": {
+        "check": "caja-abierta",
+        "target": "sell-open-register",
+        "failTitle": "Primero abre la caja",
+        "failBody": "El botón Cerrar Caja solo aparece con una sesión abierta. Ábrela con el efectivo inicial y seguimos — o salta el paso si solo quieres ver el recorrido.",
+        "allowSkip": true
+      },
+      "title": "Cerrar Caja = hacer el corte",
+      "body": "Al final del turno cuenta el dinero del cajón y decláralo aquí: pesos y dólares POR SEPARADO. El sistema compara contra lo esperado y te marca si cuadra, falta o sobra."
+    },
+    {
+      "id": "cortes-filtros",
+      "route": "/cortes",
+      "target": "cuts-filters",
+      "waitFor": true,
+      "placement": "bottom",
+      "title": "El historial vive en Cortes",
+      "body": "Aquí consultas los cortes por fecha: Hoy, Ayer, 7 días o un rango a tu gusto. Si eres admin, también puedes filtrar por tienda."
+    },
+    {
+      "id": "cortes-lista",
+      "route": "/cortes",
+      "target": "cuts-history",
+      "waitFor": true,
+      "placement": "top",
+      "title": "Cada sesión, con su detalle",
+      "body": "Toca un corte para desplegar sus ventas, movimientos y diferencias por moneda — y para imprimirlo. Las sesiones marcadas como Abierta siguen sin cerrar."
+    },
+    {
+      "id": "cierre",
+      "title": "Regla de oro",
+      "body": "No dejes cajas abiertas de un día para otro: el sistema te lo marca con un aviso ámbar y bloquea la venta hasta que hagas el corte pendiente."
+    }
+  ]
+}

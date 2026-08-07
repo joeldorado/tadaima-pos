@@ -12,7 +12,9 @@
     "dev:mobile": "turbo run start --filter=@tadaima/mobile",
     "build:web": "turbo run build --filter=@tadaima/web",
     "lint": "turbo run lint",
-    "type-check": "turbo run type-check"
+    "type-check": "turbo run type-check",
+    "docs:seed": "cd backend && APP_ENV=sqlitelocal php artisan db:seed --class=DemoSeeder",
+    "docs:capture": "DOCS_CAPTURE=1 npx playwright test tests/e2e/capture-docs.spec.ts --workers=1"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",

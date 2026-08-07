@@ -1,0 +1,169 @@
+[
+  {
+    "slug": "glosario-solucion-problemas",
+    "title": "Glosario y solución de problemas",
+    "category": "Ayuda",
+    "icon": "help-circle",
+    "summary": "Los términos del POS explicados en corto, y qué hacer cuando algo no funciona.",
+    "keywords": [
+      "glosario",
+      "términos",
+      "qué significa",
+      "folio",
+      "anticipo",
+      "liquidación",
+      "corte",
+      "apartado",
+      "mayoreo",
+      "exhibición",
+      "bodega",
+      "socio",
+      "nivel de precio",
+      "traslado",
+      "problemas",
+      "ayuda",
+      "no imprime",
+      "versión vieja",
+      "actualización",
+      "pwa",
+      "caché",
+      "no encuentro un producto",
+      "caja abierta",
+      "no puedo vender"
+    ],
+    "updatedAt": "2026-08-06",
+    "sections": [
+      {
+        "id": "glosario",
+        "heading": "Glosario: los términos de todos los días",
+        "blocks": [
+          {
+            "kind": "table",
+            "head": [
+              "Término",
+              "Qué significa"
+            ],
+            "rows": [
+              [
+                "Folio (PREV-…)",
+                "El número de una preventa. Se escribe en el buscador de Caja para cargar el pedido completo del cliente."
+              ],
+              [
+                "Anticipo",
+                "El adelanto con el que el cliente aparta su preventa."
+              ],
+              [
+                "Liquidación",
+                "El pago del resto cuando el cliente recoge su producto."
+              ],
+              [
+                "Corte (de caja)",
+                "Contar el dinero del cajón al cerrar tu turno y compararlo contra lo que el sistema esperaba. Pesos y dólares se cuentan por separado."
+              ],
+              [
+                "Apartado (layaway)",
+                "Producto que ya existe en tienda y el cliente va abonando en partes hasta llevárselo."
+              ],
+              [
+                "Mayoreo (descuento por cantidad)",
+                "Precio que baja solo cuando se llevan varias piezas del mismo producto."
+              ],
+              [
+                "Exhibición vs Bodega",
+                "Exhibición (Piso) es lo que está al frente y SÍ se vende en Caja; Bodega es respaldo atrás que no se vende hasta moverlo a exhibición."
+              ],
+              [
+                "Socio Tadaima",
+                "Cliente con tarjeta TAD. Al escanearla en Caja se asigna solo y toma su precio de socio automáticamente."
+              ],
+              [
+                "Nivel de precio",
+                "Cada producto puede tener varios precios (público, socio, mayoreo…); el sistema aplica el que corresponde a la venta."
+              ],
+              [
+                "Traslado",
+                "Mover piezas de una sucursal a otra; queda pendiente hasta que se confirma en el destino."
+              ]
+            ]
+          },
+          {
+            "kind": "link",
+            "toTopic": "preventas",
+            "label": "Preventas: folio, anticipo y liquidación a detalle"
+          },
+          {
+            "kind": "link",
+            "toTopic": "precios-por-nivel",
+            "label": "Cómo funcionan los niveles de precio"
+          },
+          {
+            "kind": "link",
+            "toTopic": "existencias",
+            "label": "Exhibición, Bodega y Central a detalle"
+          }
+        ]
+      },
+      {
+        "id": "problemas-frecuentes",
+        "heading": "Cuando algo no jala",
+        "blocks": [
+          {
+            "kind": "table",
+            "head": [
+              "Qué pasa",
+              "Qué hacer"
+            ],
+            "rows": [
+              [
+                "Acaban de actualizar el sistema y sigo viendo la versión vieja",
+                "La app guarda una copia en la computadora para trabajar rápido. Haz una recarga forzada (Ctrl+Shift+R, o Cmd+Shift+R en Mac) o abre una ventana de incógnito NUEVA — con eso baja la versión nueva."
+              ],
+              [
+                "No imprime el ticket",
+                "Revisa papel y cable de la impresora. Si esa caja usa QZ Tray, confirma que esté abierto (su icono junto al reloj). El ticket siempre se puede reimprimir desde Ventas."
+              ],
+              [
+                "No puedo vender: caja de un día anterior abierta",
+                "Es a propósito: esa sesión vieja se cierra primero con su corte (el aviso ámbar te lleva) y luego abres caja de nuevo."
+              ],
+              [
+                "No encuentro un producto",
+                "Escanea el código o busca por nombre/SKU con otra palabra; revisa que no tengas un filtro activo en el listado."
+              ],
+              [
+                "Me equivoqué en una venta ya cobrada",
+                "Se cancela desde Ventas (completa o solo algunos artículos, con motivo). Si se pagó con tarjeta o transferencia, se resuelve con el administrador."
+              ]
+            ]
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "¿Por qué sale la versión vieja?",
+            "text": "El POS es una app instalable (PWA) que funciona incluso con internet lento: por eso guarda archivos en caché. Tras cada actualización, esa caché puede tardar en soltarse — la recarga forzada la renueva al instante."
+          },
+          {
+            "kind": "link",
+            "toTopic": "impresion-automatica",
+            "label": "Problemas de impresión a detalle (QZ Tray)"
+          },
+          {
+            "kind": "link",
+            "toTopic": "cortes-caja",
+            "label": "Cerrar una caja de día anterior"
+          },
+          {
+            "kind": "link",
+            "toTopic": "buscar-filtrar-productos",
+            "label": "Trucos para buscar y filtrar productos"
+          },
+          {
+            "kind": "link",
+            "toTopic": "historial-ventas",
+            "label": "Cancelar o reimprimir una venta"
+          }
+        ]
+      }
+    ]
+  }
+]
