@@ -15,10 +15,13 @@ import { apiClient } from './client'
 
 export type UsCategory = 'figures' | 'manga' | 'tcg' | 'other'
 
-/** Producto del POS publicado en la tienda US con precio manual en dólares. */
+/** Producto publicado en la tienda US con precio manual en dólares. */
 export interface UsListing {
   id: number
-  product_id: number
+  /** null = listing CUSTOM (dummy del panel o migrado del Wix), sin producto POS. */
+  product_id: number | null
+  /** true ⇔ product_id null — sin stock POS detrás; siempre "disponible". */
+  is_custom: boolean
   /** Nombre del producto en el POS (fallback cuando name_en es null). */
   product_name: string
   sku: string
@@ -82,13 +85,16 @@ export interface GetUsListingsParams {
 }
 
 export interface CreateUsListingInput {
-  product_id: number
+  /** Omitir/null = listing CUSTOM (dummy) — entonces name_en es obligatorio. */
+  product_id?: number | null
   price_usd: number
-  /** Vacío = la tienda US usa el nombre del producto del POS. */
+  /** Vacío = la tienda US usa el nombre del producto del POS (custom: requerido). */
   name_en?: string
   description_en?: string
   /** figures | manga | tcg | other (default backend: other). */
   category?: UsCategory
+  /** Foto propia (URL de /us/uploads o externa). */
+  image_url?: string
   visible?: boolean
 }
 
@@ -98,6 +104,7 @@ export interface UpdateUsListingInput {
   name_en?: string | null
   description_en?: string | null
   category?: UsCategory
+  image_url?: string | null
   visible?: boolean
 }
 
@@ -111,7 +118,8 @@ export interface GetUsOrdersParams {
 
 interface RawListing {
   id: number
-  product_id: number
+  product_id: number | null
+  is_custom?: boolean
   name: string
   description: string | null
   price_usd: string
@@ -146,15 +154,18 @@ interface RawOrder {
 }
 
 function mapListing(raw: RawListing): UsListing {
+  const isCustom = raw.is_custom ?? raw.product_id === null
   const productName = raw.product?.name ?? raw.name
   return {
     id: raw.id,
     product_id: raw.product_id,
+    is_custom: isCustom,
     product_name: productName,
     sku: raw.product?.sku ?? '',
     image_url: raw.image_url,
-    // name igual al del producto = sin nombre EN custom (la UI muestra "usa el del POS").
-    name_en: raw.name === productName ? null : raw.name,
+    // name igual al del producto = sin nombre EN custom (la UI muestra "usa el
+    // del POS"). En un custom el name ES el nombre real — nunca null.
+    name_en: isCustom ? raw.name : raw.name === productName ? null : raw.name,
     description_en: raw.description,
     price_usd: Number(raw.price_usd),
     category: raw.category ?? 'other',
@@ -200,6 +211,7 @@ function toListingBody(input: CreateUsListingInput | UpdateUsListingInput): Reco
   if (input.name_en !== undefined) body['name'] = input.name_en
   if (input.description_en !== undefined) body['description'] = input.description_en
   if (input.category !== undefined) body['category'] = input.category
+  if (input.image_url !== undefined) body['image_url'] = input.image_url
   if (input.visible !== undefined) body['visible'] = input.visible
   return body
 }
@@ -277,4 +289,47 @@ export async function updateUsOrderStatus(
 export async function getUsOrdersNewCount(): Promise<number> {
   const { data } = await listUsOrders({ status: 'new' })
   return data.length
+}
+
+/**
+ * Sube la foto de un listing custom (multipart) y devuelve su URL pública.
+ * POST /us/uploads — GCS absoluto en prod, /storage local en dev.
+ */
+export async function uploadUsImage(file: File): Promise<{ url: string }> {
+  const form = new FormData()
+  form.append('image', file)
+  // Sin Content-Type explícito — el interceptor lo borra para FormData y el
+  // browser pone multipart/form-data con el boundary correcto (patrón products.ts).
+  const response = await apiClient.post<{ path: string; url: string }>('/us/uploads', form)
+  return { url: response.data.url }
+}
+
+// ─── Leads del sitio US (newsletter "We hear you!" + contacto) ───────────────
+
+export type UsLeadSource = 'newsletter' | 'contact'
+
+export interface UsLead {
+  id: number
+  source: UsLeadSource
+  name: string | null
+  email: string
+  message: string | null
+  /** Marcó "I want to subscribe to your mailing list" en el newsletter. */
+  marketing_consent: boolean
+  created_at: string
+}
+
+export interface GetUsLeadsParams {
+  source?: UsLeadSource
+}
+
+/**
+ * Bandeja de leads (más nuevos primero, cap 500 del backend).
+ * GET /us/leads?source=
+ */
+export async function listUsLeads(params?: GetUsLeadsParams): Promise<UsLead[]> {
+  const response = await apiClient.get<UsLead[]>('/us/leads', {
+    params: params?.source ? { source: params.source } : {},
+  })
+  return response.data
 }

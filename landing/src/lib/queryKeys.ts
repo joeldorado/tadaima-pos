@@ -105,6 +105,7 @@ export const queryKeys = {
     listings: (params?: Record<string, unknown>) => ['usStore', 'listings', params ?? {}] as const,
     orders: (params?: Record<string, unknown>) => ['usStore', 'orders', params ?? {}] as const,
     newCount: () => ['usStore', 'newCount'] as const,
+    leads: (params?: Record<string, unknown>) => ['usStore', 'leads', params ?? {}] as const,
   },
   // Historial del día — sales + presales agregados, scope por tienda.
   // Cache persistente (IndexedDB) para que la apertura del modal sea instantánea

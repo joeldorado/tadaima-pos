@@ -62,17 +62,20 @@ function Field({ name, label, type, autoComplete, value, error, onChange }: Fiel
   const errorId = `checkout-${name}-error`
   return (
     <div className="field">
-      <label htmlFor={`checkout-${name}`}>{label}</label>
+      {/* input antes de label + placeholder=" ": lo que necesita la etiqueta
+          flotante (ver .field en base.css). */}
       <input
         id={`checkout-${name}`}
         name={name}
         type={type}
         autoComplete={autoComplete}
+        placeholder=" "
         value={value}
         onChange={(event) => onChange(name, event.target.value)}
         aria-invalid={error !== undefined}
         aria-describedby={error !== undefined ? errorId : undefined}
       />
+      <label htmlFor={`checkout-${name}`}>{label}</label>
       {error !== undefined && (
         <p className="field-error" id={errorId} role="alert">
           {error}
@@ -133,19 +136,12 @@ export function CheckoutPage() {
     return (
       <div className="container section">
         <div className="order-success" role="status">
-          <p className="order-success-jp" lang="ja" aria-hidden="true">
-            ありがとうございます
-          </p>
           <h1>Thank you!</h1>
           <p className="order-success-number">
             Order <strong>{confirmation.order_number}</strong>
           </p>
           <p className="order-success-total">
             Total: <strong>{formatUsd(confirmation.total_usd)}</strong>
-          </p>
-          <p className="order-success-note">
-            This is a demo order — our team will contact you to arrange payment
-            and delivery.
           </p>
           <a className="btn btn-primary" href="#/">
             Back to the shop
@@ -159,9 +155,6 @@ export function CheckoutPage() {
     return (
       <div className="container section">
         <div className="catalog-notice" role="status">
-          <p className="catalog-notice-jp" lang="ja" aria-hidden="true">
-            カート
-          </p>
           <p className="catalog-notice-title">Your cart is empty</p>
           <p className="catalog-notice-copy">
             Add a few items before checking out — the shelves are waiting.
@@ -177,14 +170,8 @@ export function CheckoutPage() {
   return (
     <div className="container section">
       <header className="page-head">
-        <p className="section-kicker">
-          <span lang="ja">ご注文</span> Checkout
-        </p>
+        <p className="section-kicker">Checkout</p>
         <h1 className="page-title">Almost home</h1>
-        <p className="page-sub">
-          Leave your details and we will confirm your order personally — no
-          payment is taken online.
-        </p>
       </header>
 
       <div className="checkout-layout">
@@ -226,10 +213,6 @@ export function CheckoutPage() {
           <button type="submit" className="btn btn-primary btn-block" disabled={isSubmitting}>
             {isSubmitting ? 'Placing order…' : 'Place Order'}
           </button>
-          <p className="checkout-disclaimer">
-            Demo store — by placing an order you are only sharing your contact
-            details so we can reach out.
-          </p>
         </form>
 
         <aside className="checkout-summary" aria-label="Order summary">
@@ -249,9 +232,6 @@ export function CheckoutPage() {
             <span>Subtotal</span>
             <span>{formatUsd(subtotal)}</span>
           </div>
-          <p className="checkout-summary-note">
-            Final total is confirmed by our team together with shipping.
-          </p>
         </aside>
       </div>
     </div>

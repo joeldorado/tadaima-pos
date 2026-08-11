@@ -1,49 +1,36 @@
 import { useState } from 'react'
 import type { UsListing } from '../../lib/api'
-import { SHOP_CATEGORIES } from '../../lib/constants'
+import { categoryLabel } from '../../lib/constants'
 import { formatUsd } from '../../lib/format'
-import { useCart } from '../../store/CartContext'
-
-function categoryLabel(slug: string): string {
-  const match = SHOP_CATEGORIES.find((category) => category.slug === slug)
-  return match ? match.label : 'Goods'
-}
-
-function MediaPlaceholder() {
-  return (
-    <div className="product-placeholder" aria-hidden="true">
-      <svg
-        viewBox="0 0 48 48"
-        width="44"
-        height="44"
-        fill="currentColor"
-        aria-hidden="true"
-      >
-        <path d="M6 10q18 4.5 36 0l-1.5 6.5H41L39 42h-4.4l-1.8-25.5H15.2L13.4 42H9l-2-25.5H7.5L6 10Z" />
-        <rect x="11" y="21" width="26" height="4" />
-      </svg>
-      <span>Photo coming soon</span>
-    </div>
-  )
-}
+import { MediaPlaceholder } from './MediaPlaceholder'
 
 interface ProductCardProps {
   readonly listing: UsListing
+  /**
+   * Badge de categoría sobre la imagen. Solo aporta cuando el grid mezcla
+   * categorías (home / búsqueda): dentro de una categoría todas las cartas
+   * dirían lo mismo y se vuelve ruido.
+   */
+  readonly showCategory?: boolean
 }
 
-export function ProductCard({ listing }: ProductCardProps) {
-  const { addItem } = useCart()
+/**
+ * Carta del grid, al estilo del sitio original: imagen + nombre + precio
+ * centrados, sin marco y SIN "Add to cart" — se compra desde la ficha, que es
+ * donde vive el selector de cantidad. Toda la carta es un solo enlace.
+ */
+export function ProductCard({ listing, showCategory = true }: ProductCardProps) {
   const [imageFailed, setImageFailed] = useState(false)
 
   const showImage = listing.image_url !== null && listing.image_url !== '' && !imageFailed
 
   return (
     <article className="product-card">
-      <div className="product-media">
+      <a className="product-media" href={`#/product/${listing.id}`} tabIndex={-1} aria-hidden="true">
         {showImage ? (
           <img
             src={listing.image_url ?? ''}
-            alt={listing.name}
+            alt=""
             width={480}
             height={480}
             loading="lazy"
@@ -52,24 +39,16 @@ export function ProductCard({ listing }: ProductCardProps) {
         ) : (
           <MediaPlaceholder />
         )}
-        <span className="product-chip">{categoryLabel(listing.category)}</span>
-      </div>
+        {showCategory && (
+          <span className="product-chip">{categoryLabel(listing.category)}</span>
+        )}
+      </a>
 
       <div className="product-body">
-        <h3 className="product-name">{listing.name}</h3>
-        {listing.description !== null && listing.description !== '' && (
-          <p className="product-desc">{listing.description}</p>
-        )}
-        <div className="product-foot">
-          <span className="product-price">{formatUsd(listing.price_usd)}</span>
-          <button
-            type="button"
-            className="btn btn-primary btn-sm"
-            onClick={() => addItem(listing)}
-          >
-            Add to cart
-          </button>
-        </div>
+        <h3 className="product-name">
+          <a href={`#/product/${listing.id}`}>{listing.name}</a>
+        </h3>
+        <span className="product-price">{formatUsd(listing.price_usd)}</span>
       </div>
     </article>
   )

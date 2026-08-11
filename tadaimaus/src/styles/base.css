@@ -41,6 +41,25 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Textura de páginas de manga del sitio original (2000×800, ya en escala de
+   grises). Va en una capa fija detrás de todo: las secciones claras son
+   transparentes y la dejan ver, las oscuras (hero, promo, footer) la tapan
+   solas. `position: fixed` en vez de `background-attachment: fixed` porque
+   este último repinta en cada scroll en móvil.
+   Se importa desde src/assets y NO desde public/: el build usa base relativa
+   (`./`) para poder colgar de /tadaimaus/, y una url absoluta en CSS
+   apuntaría a la raíz del dominio. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: url('../assets/comic-bg.webp') center / cover no-repeat;
+  opacity: 0.75;
+  pointer-events: none;
+}
+
+
 img,
 svg {
   display: block;
@@ -70,7 +89,10 @@ input {
   font: inherit;
 }
 
-ul {
+/* `ol` va junto con `ul`: el breadcrumb es un <ol> y sin este reset heredaba
+   los marcadores decimales del navegador ("1. Home 2. Figures"). */
+ul,
+ol {
   list-style: none;
   padding: 0;
 }
@@ -113,12 +135,20 @@ main:focus {
   padding-inline: var(--gutter);
 }
 
+/* Catalog pages (product grids) lean on the original's edge-to-edge feel —
+   almost the whole viewport is content, just the shared gutter on the sides. */
+.container-wide {
+  max-width: none;
+}
+
 .section {
   padding-block: var(--space-section);
 }
 
+/* Translúcida a propósito: deja pasar la textura de body::before en vez de
+   taparla con un plano gris. */
 .section-alt {
-  background: var(--paper-deep);
+  background: color-mix(in srgb, var(--paper-deep) 80%, transparent);
 }
 
 .skip-link {
@@ -136,6 +166,18 @@ main:focus {
 
 .skip-link:focus {
   top: 0;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* ─── Section headings ───────────────────────────────────────────────────── */
@@ -157,10 +199,6 @@ main:focus {
   width: 1.6rem;
   height: 2px;
   background: var(--vermilion);
-}
-
-.section-kicker [lang='ja'] {
-  letter-spacing: 0.1em;
 }
 
 .section-head {
@@ -204,6 +242,9 @@ main:focus {
 /* ─── Buttons ────────────────────────────────────────────────────────────── */
 
 .btn {
+  position: relative;
+  z-index: 0;
+  overflow: hidden;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -216,11 +257,27 @@ main:focus {
   font-size: 0.82rem;
   letter-spacing: 0.09em;
   text-transform: uppercase;
+  white-space: nowrap;
   transition:
-    background-color var(--duration-fast) ease,
     border-color var(--duration-fast) ease,
     color var(--duration-fast) ease,
     transform var(--duration-fast) var(--ease-out-expo);
+}
+
+/* Fill-sweep Binabox: el relleno crece desde el centro al hover.
+   z-index -1 lo pinta sobre el background del botón pero bajo el texto. */
+.btn::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  transform: scaleX(0);
+  transform-origin: center;
+  transition: transform var(--duration-normal) var(--ease-out-expo);
+}
+
+.btn:hover:not(:disabled)::before {
+  transform: scaleX(1);
 }
 
 .btn:active {
@@ -232,7 +289,7 @@ main:focus {
   color: #fff;
 }
 
-.btn-primary:hover {
+.btn-primary::before {
   background: var(--vermilion-deep);
 }
 
@@ -247,9 +304,12 @@ main:focus {
   color: var(--text-on-ink);
 }
 
+.btn-ghost::before {
+  background: rgba(245, 241, 232, 0.12);
+}
+
 .btn-ghost:hover {
   border-color: var(--text-on-ink);
-  background: rgba(245, 241, 232, 0.08);
 }
 
 .btn-ghost-dark {
@@ -257,9 +317,12 @@ main:focus {
   color: var(--text);
 }
 
+.btn-ghost-dark::before {
+  background: var(--vermilion-wash);
+}
+
 .btn-ghost-dark:hover {
   border-color: var(--text);
-  background: var(--vermilion-wash);
 }
 
 .btn-sm {
@@ -273,46 +336,100 @@ main:focus {
 
 /* ─── Forms ──────────────────────────────────────────────────────────────── */
 
+/* Campo con etiqueta flotante (patrón Materialize, con nuestros tokens): el
+   campo es solo una línea y la etiqueta vive DENTRO hasta que se escribe.
+   Menos ruido visual que una caja por campo y el foco se ve de lejos.
+
+   Depende de dos cosas al escribir el markup:
+   · el input va ANTES del label (los selectores hermanos de CSS solo miran
+     hacia adelante; el `for`/`id` mantiene la asociación para el lector de
+     pantalla, así que el orden del DOM no afecta accesibilidad);
+   · el input lleva placeholder=" " para que `:placeholder-shown` distinga
+     "vacío" de "con texto". */
 .field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  margin-bottom: 1.2rem;
+  position: relative;
+  margin-bottom: 1.6rem;
 }
 
-.field label {
-  font-family: var(--font-display);
-  font-weight: 500;
-  font-size: var(--text-sm);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+.field > input,
+.field > textarea {
+  width: 100%;
+  padding: 0.55rem 0 0.45rem;
+  border: none;
+  border-bottom: 1.5px solid var(--line-strong);
+  border-radius: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--text);
+  transition: border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
 }
 
-.field input {
-  padding: 0.75rem 0.9rem;
-  border: 1.5px solid var(--line-strong);
-  border-radius: var(--radius-sm);
-  background: var(--card);
-  transition: border-color var(--duration-fast) ease;
+.field > textarea {
+  resize: vertical;
+  min-height: 6rem;
 }
 
-.field input:hover {
-  border-color: var(--text-muted);
+.field > label {
+  position: absolute;
+  left: 0;
+  top: 0.55rem;
+  font-size: var(--text-base);
+  color: var(--text-muted);
+  pointer-events: none;
+  transform-origin: left top;
+  transition: transform var(--duration-fast) var(--ease-out-expo),
+    color var(--duration-fast) ease;
 }
 
-.field input:focus {
+/* Sube al enfocar Y cuando ya hay texto (si no, al salir del campo la
+   etiqueta caería encima de lo escrito). */
+.field > input:focus + label,
+.field > input:not(:placeholder-shown) + label,
+.field > textarea:focus + label,
+.field > textarea:not(:placeholder-shown) + label {
+  transform: translateY(-1.15rem) scale(0.78);
+  color: var(--vermilion-deep);
+}
+
+.field > input:hover,
+.field > textarea:hover {
+  border-bottom-color: var(--text-muted);
+}
+
+/* El foco engrosa con box-shadow, no con border-width: cambiar el borde
+   movería el layout un pixel en cada tab. */
+.field > input:focus,
+.field > textarea:focus {
   outline: none;
-  border-color: var(--vermilion);
+  border-bottom-color: var(--vermilion);
+  box-shadow: 0 1.5px 0 0 var(--vermilion);
 }
 
-.field input[aria-invalid='true'] {
-  border-color: var(--vermilion-deep);
+.field > input[aria-invalid='true'],
+.field > textarea[aria-invalid='true'] {
+  border-bottom-color: var(--vermilion-deep);
+  box-shadow: 0 1.5px 0 0 var(--vermilion-deep);
+}
+
+.field > input[aria-invalid='true'] + label,
+.field > textarea[aria-invalid='true'] + label {
+  color: var(--vermilion-deep);
 }
 
 .field-error,
 .form-server-error {
   color: var(--vermilion-deep);
   font-size: var(--text-sm);
+}
+
+/* El error se posiciona absoluto para que aparecer/desaparecer NO empuje los
+   campos de abajo — el margen del .field ya le reserva el espacio. */
+.field > .field-error {
+  position: absolute;
+  left: 0;
+  top: 100%;
+  margin-top: 0.2rem;
+  font-size: var(--text-xs);
 }
 
 .form-server-error {

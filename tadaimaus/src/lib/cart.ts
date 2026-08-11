@@ -10,14 +10,19 @@ export interface CartLine {
   readonly quantity: number
 }
 
-/** Adds one unit of a listing (new line, or +1 on the existing line). */
+/**
+ * Adds units of a listing (new line, or bumps the existing line). `quantity`
+ * comes from the product page stepper; the cards always add one.
+ */
 export function addListing(
   lines: readonly CartLine[],
   listing: UsListing,
+  quantity = 1,
 ): readonly CartLine[] {
+  const units = Math.max(1, Math.trunc(quantity))
   const existing = lines.find((line) => line.listingId === listing.id)
   if (existing) {
-    return changeQuantity(lines, listing.id, existing.quantity + 1)
+    return changeQuantity(lines, listing.id, existing.quantity + units)
   }
   if (lines.length >= MAX_CART_LINES) return lines
 
@@ -27,7 +32,7 @@ export function addListing(
     name: listing.name,
     priceUsd: Number.isFinite(price) ? price : 0,
     imageUrl: listing.image_url,
-    quantity: 1,
+    quantity: Math.min(units, MAX_LINE_QUANTITY),
   }
   return [...lines, newLine]
 }

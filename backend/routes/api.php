@@ -34,6 +34,7 @@ use App\Http\Controllers\Api\SuppliesController;
 use App\Http\Controllers\Api\TerminalController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\UsCatalogController;
+use App\Http\Controllers\Api\UsLeadController;
 use App\Http\Controllers\Api\UsListingController;
 use App\Http\Controllers\Api\UsOrderController;
 use App\Http\Controllers\Api\WarehouseController;
@@ -70,6 +71,10 @@ Route::get('us/catalog', [UsCatalogController::class, 'catalog'])
 // frena spam del checkout dummy (sin CAPTCHA a propósito en v1).
 Route::post('us/orders', [UsOrderController::class, 'store'])
     ->middleware('throttle:us-orders');
+// us-leads = 10 req/min: newsletter ("We hear you!") + formulario de contacto.
+// Honeypot en StoreUsLeadRequest; bucket propio para no pisar el checkout.
+Route::post('us/leads', [UsLeadController::class, 'store'])
+    ->middleware('throttle:us-leads');
 
 // ── Rutas protegidas ──────────────────────────────────────────────────────────
 // Rate limit por usuario (120 req/min) — amortigua polling/abuso sin estorbar al
@@ -365,8 +370,15 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     // Buscador del ABC: productos del POS aún NO listados en la tienda US.
     Route::get('us/products',                 [UsListingController::class, 'products']);
 
+    // Foto de un listing custom (multipart) → { url } para image_url.
+    Route::post('us/uploads',                 [UsListingController::class, 'uploadImage']);
+
     // Bandeja de pedidos US (con items, más nuevos primero). El POST público
     // vive arriba, FUERA de auth:sanctum (checkout del sitio US).
     Route::get('us/orders',                   [UsOrderController::class, 'index']);
     Route::put('us/orders/{usOrder}/status',  [UsOrderController::class, 'updateStatus']);
+
+    // Bandeja de leads del sitio US (newsletter + contacto). El POST público
+    // vive arriba, FUERA de auth:sanctum.
+    Route::get('us/leads',                    [UsLeadController::class, 'index']);
 });

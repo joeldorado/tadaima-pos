@@ -343,6 +343,120 @@ class UsStoreTest extends TestCase
         $this->assertDatabaseCount('us_listings', 1);
     }
 
+    // ── Listings CUSTOM (sin producto POS: Wix migrado / dummy del panel) ─────
+
+    public function test_listing_custom_sin_product_id(): void
+    {
+        // CREATE custom: exige name (no hay producto de dónde caer).
+        $this->actingAs($this->admin)->postJson('/api/v1/us/listings', [
+            'price_usd' => 20, 'category' => 'figures',
+        ])->assertStatus(422)->assertJsonStructure(['errors' => ['name']]);
+
+        $resp = $this->actingAs($this->admin)->postJson('/api/v1/us/listings', [
+            'name'      => 'Mometria Dio',
+            'price_usd' => 37,
+            'category'  => 'figures',
+            'image_url' => 'us-img/products/mometria-dio.jpg',
+        ])->assertCreated();
+        $resp->assertJsonPath('data.is_custom', true);
+        $resp->assertJsonPath('data.product', null);
+        // Custom no depende de stock POS: el panel lo muestra disponible.
+        $resp->assertJsonPath('data.in_stock', true);
+        $customId = $resp->json('data.id');
+
+        // Catálogo público: sale SIN stock POS y con URL absoluta de us-img/.
+        $catalog = $this->getJson('/api/v1/us/catalog')->assertOk();
+        $rows = collect($catalog->json('data'))->keyBy('id');
+        $this->assertArrayHasKey($customId, $rows->all());
+        $this->assertStringContainsString('/us-img/products/mometria-dio.jpg', $rows[$customId]['image_url']);
+        $this->assertStringStartsWith('http', $rows[$customId]['image_url']);
+
+        // Search público por nombre del custom.
+        $this->getJson('/api/v1/us/catalog?search=mometria')->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $customId);
+
+        // Search del admin por nombre del custom (no hay product que matchear).
+        $this->actingAs($this->admin)->getJson('/api/v1/us/listings?search=mometria')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $customId);
+
+        // REGRESIÓN: un listing de producto POS agotado se sigue ocultando.
+        $this->makeListing($this->makeProduct('Agotado', 'FIG-099', stock: 0), [
+            'name' => 'Producto Agotado',
+        ]);
+        $this->getJson('/api/v1/us/catalog?search=agotado')->assertOk()
+            ->assertJsonCount(0, 'data');
+    }
+
+    public function test_import_us_catalog_idempotente(): void
+    {
+        $json = [
+            ['slug' => 'mometria-dio', 'name' => 'Mometria Dio', 'price_usd' => 37,
+                'category' => 'figures', 'image' => 'us-img/products/mometria-dio.jpg'],
+            ['slug' => 'booster-box-op-13', 'name' => 'Booster box OP-13', 'price_usd' => 180,
+                'category' => 'tcg', 'image' => 'us-img/products/booster-box-op-13.jpg'],
+            ['slug' => 'sin-categoria', 'name' => 'Misterioso', 'price_usd' => 5,
+                'category' => 'no-existe', 'image' => null],
+        ];
+        $file = tempnam(sys_get_temp_dir(), 'uscat') . '.json';
+        file_put_contents($file, json_encode($json));
+
+        $this->artisan('tadaima:import-us-catalog', ['--file' => $file])
+            ->assertExitCode(0);
+
+        $this->assertDatabaseCount('us_listings', 3);
+        $this->assertDatabaseHas('us_listings', [
+            'slug' => 'mometria-dio', 'name' => 'Mometria Dio',
+            'price_usd' => 37.0, 'category' => 'figures', 'product_id' => null,
+        ]);
+        // Categoría inválida degrada a 'other'.
+        $this->assertDatabaseHas('us_listings', ['slug' => 'sin-categoria', 'category' => 'other']);
+
+        // Edición manual del admin (precio) …
+        UsListing::where('slug', 'mometria-dio')->update(['price_usd' => 42]);
+
+        // … re-correr NO duplica NI pisa sin --pisar.
+        $this->artisan('tadaima:import-us-catalog', ['--file' => $file])
+            ->assertExitCode(0);
+        $this->assertDatabaseCount('us_listings', 3);
+        $this->assertDatabaseHas('us_listings', ['slug' => 'mometria-dio', 'price_usd' => 42.0]);
+
+        // Con --pisar sí restaura lo del JSON.
+        $this->artisan('tadaima:import-us-catalog', ['--file' => $file, '--pisar' => true])
+            ->assertExitCode(0);
+        $this->assertDatabaseCount('us_listings', 3);
+        $this->assertDatabaseHas('us_listings', ['slug' => 'mometria-dio', 'price_usd' => 37.0]);
+
+        unlink($file);
+    }
+
+    public function test_upload_de_imagen_us(): void
+    {
+        \Illuminate\Support\Facades\Storage::fake(config('filesystems.default'));
+
+        $this->postJson('/api/v1/us/uploads')->assertUnauthorized();
+        $this->actingAs($this->cajero)->postJson('/api/v1/us/uploads', [
+            'image' => \Illuminate\Http\UploadedFile::fake()->image('foto.jpg'),
+        ])->assertForbidden();
+
+        $resp = $this->actingAs($this->admin)->postJson('/api/v1/us/uploads', [
+            'image' => \Illuminate\Http\UploadedFile::fake()->image('foto.jpg', 600, 600),
+        ])->assertCreated();
+
+        $path = $resp->json('data.path');
+        $this->assertStringStartsWith('us-listings/', $path);
+        $this->assertNotEmpty($resp->json('data.url'));
+        \Illuminate\Support\Facades\Storage::disk(config('filesystems.default'))
+            ->assertExists($path);
+
+        // No-imagen → 422.
+        $this->actingAs($this->admin)->postJson('/api/v1/us/uploads', [
+            'image' => \Illuminate\Http\UploadedFile::fake()->create('doc.pdf', 100),
+        ])->assertStatus(422);
+    }
+
     // ── Admin: RBAC ───────────────────────────────────────────────────────────
 
     public function test_no_admin_recibe_403_y_sin_token_401(): void

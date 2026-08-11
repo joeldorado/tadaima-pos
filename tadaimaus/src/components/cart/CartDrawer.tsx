@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { MAX_LINE_QUANTITY } from '../../lib/constants'
 import { formatUsd } from '../../lib/format'
 import { useCart } from '../../store/CartContext'
+import { MediaPlaceholderIcon } from '../product/MediaPlaceholder'
 
 export function CartDrawer() {
   const { lines, subtotal, isDrawerOpen, closeDrawer, setQuantity, removeItem } =
@@ -32,9 +33,6 @@ export function CartDrawer() {
       <aside className="drawer" role="dialog" aria-modal="true" aria-label="Shopping cart">
         <header className="drawer-head">
           <div>
-            <p className="drawer-jp" lang="ja" aria-hidden="true">
-              カート
-            </p>
             <h2>Your cart</h2>
           </div>
           <button
@@ -66,8 +64,8 @@ export function CartDrawer() {
                     {line.imageUrl !== null && line.imageUrl !== '' ? (
                       <img src={line.imageUrl} alt="" width={72} height={72} loading="lazy" />
                     ) : (
-                      <span className="drawer-line-noimg" lang="ja">
-                        品
+                      <span className="drawer-line-noimg">
+                        <MediaPlaceholderIcon size={28} />
                       </span>
                     )}
                   </div>
@@ -123,10 +121,6 @@ export function CartDrawer() {
                 <span>Subtotal</span>
                 <span className="drawer-subtotal-amount">{formatUsd(subtotal)}</span>
               </div>
-              <p className="drawer-note">
-                Demo store — payment and delivery are arranged with our team after
-                you place the order.
-              </p>
               <a
                 className="btn btn-primary btn-block"
                 href="#/checkout"

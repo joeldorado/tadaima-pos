@@ -10,9 +10,12 @@
     />
     <meta
       name="description"
-      content="Tadaima Okaeri LLC — your anime store in the USA. Figures, manga and trading card games. Demo storefront: orders are arranged by our team, no online payment."
+      content="Tadaima Okaeri LLC — anime figures, manga and trading card games."
     />
     <meta name="theme-color" content="#16161f" />
+    <!-- Arte del primer slide del hero = elemento LCP. Precargarlo evita
+         esperar a que React monte para siquiera pedir la imagen. -->
+    <link rel="preload" as="image" href="./img/hero-figures.webp" fetchpriority="high" />
     <title>Tadaima US — Anime Figures, Manga &amp; TCG</title>
   </head>
   <body>

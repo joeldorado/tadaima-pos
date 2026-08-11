@@ -1,21 +1,25 @@
 import { useState } from "react";
-import { Globe, Inbox, PackageCheck } from "lucide-react";
+import { Globe, Inbox, Mail, PackageCheck } from "lucide-react";
 import { PublishedPanel } from "./tadaimaus/PublishedPanel";
 import { OrdersPanel } from "./tadaimaus/OrdersPanel";
+import { LeadsPanel } from "./tadaimaus/LeadsPanel";
 
-type SubTab = "publicados" | "pedidos";
+type SubTab = "publicados" | "pedidos" | "leads";
 
 const SUB_TABS: { id: SubTab; label: string; icon: typeof Globe }[] = [
   { id: "publicados", label: "Publicados", icon: PackageCheck },
   { id: "pedidos",    label: "Pedidos",    icon: Inbox },
+  { id: "leads",      label: "Leads",      icon: Mail },
 ];
 
 /**
  * TadaimaUS — módulo admin de la tienda US (tadaimaus.com, precios USD).
  * Shell con sub-tabs (molde: settings/CatalogTab):
- *  - Publicados: buscar productos del POS y publicarlos con precio en dólares;
- *    tabla de publicados con precio editable, visibilidad y stock.
- *  - Pedidos: pedidos dummy de la tienda US (folio US-XXXXX) con cambio de status.
+ *  - Publicados: buscar productos del POS y publicarlos con precio en dólares
+ *    + alta de productos dummy (solo-US); tabla con precio editable,
+ *    visibilidad y stock.
+ *  - Pedidos: pedidos dummy de la tienda US (folio TUS-XXXXXX) con status.
+ *  - Leads: newsletter ("We hear you!") + formulario de contacto del sitio.
  */
 export function TabTadaimaUS() {
   const [subTab, setSubTab] = useState<SubTab>("publicados");
@@ -57,6 +61,7 @@ export function TabTadaimaUS() {
 
       {subTab === "publicados" && <PublishedPanel />}
       {subTab === "pedidos" && <OrdersPanel />}
+      {subTab === "leads" && <LeadsPanel />}
     </div>
   );
 }

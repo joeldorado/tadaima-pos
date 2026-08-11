@@ -22,16 +22,20 @@ class UsCatalogController extends Controller
      *
      * Solo listings visible=true Y con stock vendible (decisión de Joel:
      * producto publicado se OCULTA si se agota — mismo criterio SellableStock
-     * que el catálogo MX). Filtros: category (figures|manga|tcg|other)
-     * y search (nombre/descripción del listing). Orden created_at desc,
-     * cap 200. image_url del listing con fallback a la foto del producto.
+     * que el catálogo MX). Los listings CUSTOM (product_id null: migrados del
+     * Wix o dummy del panel) no tienen stock POS — salen siempre que estén
+     * visibles. Filtros: category (figures|manga|tcg|other) y search
+     * (nombre/descripción del listing). Orden created_at desc, cap 200.
+     * image_url del listing con fallback a la foto del producto.
      */
     public function catalog(Request $request): JsonResponse
     {
         $listings = UsListing::query()
             ->with('product.images')
             ->where('visible', true)
-            ->whereExists(SellableStock::existsClosure('us_listings.product_id'))
+            ->where(fn ($q) => $q
+                ->whereNull('us_listings.product_id')
+                ->orWhereExists(SellableStock::existsClosure('us_listings.product_id')))
             ->when($request->filled('category'), fn ($q) => $q
                 ->where('category', $request->input('category')))
             ->when($request->filled('search'), function ($q) use ($request) {

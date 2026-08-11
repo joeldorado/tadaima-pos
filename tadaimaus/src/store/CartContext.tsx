@@ -26,7 +26,7 @@ interface CartContextValue {
   readonly count: number
   readonly subtotal: number
   readonly isDrawerOpen: boolean
-  readonly addItem: (listing: UsListing) => void
+  readonly addItem: (listing: UsListing, quantity?: number) => void
   readonly setQuantity: (listingId: number, quantity: number) => void
   readonly removeItem: (listingId: number) => void
   readonly clearCart: () => void
@@ -57,8 +57,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
     }
   }, [lines])
 
-  const addItem = useCallback((listing: UsListing) => {
-    setLines((prev) => addListing(prev, listing))
+  const addItem = useCallback((listing: UsListing, quantity = 1) => {
+    setLines((prev) => addListing(prev, listing, quantity))
     setDrawerOpen(true)
   }, [])
 

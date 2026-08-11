@@ -14,6 +14,7 @@ import type {
 } from "@tadaima/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { errMsg } from "./usFormat";
+import { CustomListingModal } from "./CustomListingModal";
 
 const inputStyle: CSSProperties = {
   background: "var(--td-input-bg)",
@@ -93,7 +94,8 @@ export function PublishedPanel() {
   const listings = listingsQuery.data?.data ?? [];
   const publishedIds = useMemo(() => new Set(listings.map((l) => l.product_id)), [listings]);
 
-  // ── Modal de publicación ───────────────────────────────────────────────────
+  // ── Modales ────────────────────────────────────────────────────────────────
+  const [showCustomModal, setShowCustomModal] = useState(false);
   const [publishTarget, setPublishTarget] = useState<ProductLight | null>(null);
   const [priceInput, setPriceInput] = useState("");
   const [nameEn, setNameEn] = useState("");
@@ -179,11 +181,22 @@ export function PublishedPanel() {
     <div className="space-y-4">
       {/* (a) Publicar producto del POS */}
       <div style={cardStyle}>
-        <div className="flex items-center gap-2 mb-3">
-          <PackagePlus size={15} color="#38BDF8" />
-          <p className="text-[10px] font-black uppercase tracking-widest m-0" style={{ color: "var(--td-text-md)" }}>
-            Publicar producto del POS
-          </p>
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <div className="flex items-center gap-2">
+            <PackagePlus size={15} color="#38BDF8" />
+            <p className="text-[10px] font-black uppercase tracking-widest m-0" style={{ color: "var(--td-text-md)" }}>
+              Publicar producto del POS
+            </p>
+          </div>
+          <button
+            onClick={() => setShowCustomModal(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest cursor-pointer shrink-0"
+            style={{ background: "rgba(0,136,203,0.15)", border: "1px solid rgba(0,136,203,0.4)", color: "#38BDF8" }}
+            title="Producto que solo existe en la tienda US (sin producto POS)"
+          >
+            <PackagePlus size={11} />
+            Crear producto dummy
+          </button>
         </div>
         <div className="relative">
           <SearchIcon size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--td-text-lo)" }} />
@@ -309,7 +322,15 @@ export function PublishedPanel() {
                         </div>
                         <div className="min-w-0">
                           <p className="text-xs font-black truncate m-0" style={{ color: "var(--td-text-hi)" }}>{listing.product_name}</p>
-                          <p className="text-[9px] font-bold truncate m-0" style={{ color: "var(--td-text-lo)" }}>{listing.sku}</p>
+                          <p className="text-[9px] font-bold truncate m-0" style={{ color: "var(--td-text-lo)" }}>
+                            {listing.is_custom ? (
+                              <span className="inline-block px-1.5 rounded" style={{ background: "rgba(0,136,203,0.15)", border: "1px solid rgba(0,136,203,0.35)", color: "#38BDF8" }}>
+                                Custom
+                              </span>
+                            ) : (
+                              listing.sku
+                            )}
+                          </p>
                         </div>
                       </div>
                     </td>
@@ -335,7 +356,11 @@ export function PublishedPanel() {
                       />
                     </td>
                     <td className="py-2 px-2">
-                      {listing.in_stock ? (
+                      {listing.is_custom ? (
+                        <span className="text-[9px] font-black uppercase tracking-wider" style={{ color: "var(--td-text-lo)" }}>
+                          — sin stock POS
+                        </span>
+                      ) : listing.in_stock ? (
                         <span className="inline-flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wider" style={{ color: "#34D399" }}>
                           <span style={{ width: 7, height: 7, borderRadius: 99, background: "#34D399", display: "inline-block" }} />
                           En stock
@@ -376,6 +401,9 @@ export function PublishedPanel() {
           </div>
         )}
       </div>
+
+      {/* Modal de alta dummy (solo-US) */}
+      {showCustomModal && <CustomListingModal onClose={() => setShowCustomModal(false)} />}
 
       {/* Modal de publicación */}
       {publishTarget && (

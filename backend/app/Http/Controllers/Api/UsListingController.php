@@ -40,9 +40,13 @@ class UsListingController extends Controller
             ->with('product.images')
             ->when($request->filled('search'), function ($q) use ($request) {
                 $term = trim((string) $request->input('search'));
-                $q->whereHas('product', fn ($p) => $p
+                // Cubre customs (por su propio name) y publicados del POS
+                // (nombre/sku del producto).
+                $q->where(fn ($w) => $w
                     ->whereLike('name', "%{$term}%", caseSensitive: false)
-                    ->orWhereLike('sku', "%{$term}%", caseSensitive: false));
+                    ->orWhereHas('product', fn ($p) => $p
+                        ->whereLike('name', "%{$term}%", caseSensitive: false)
+                        ->orWhereLike('sku', "%{$term}%", caseSensitive: false)));
             })
             ->orderByDesc('created_at')
             ->orderByDesc('id')
@@ -52,19 +56,25 @@ class UsListingController extends Controller
         // in_stock en 1 query: el panel muestra por qué un listing no sale
         // en la tienda ("Sin stock — oculto"). Mismo criterio SellableStock
         // que usa el catálogo público para ocultar agotados.
-        $inStock = SellableStock::inStockMap($listings->pluck('product_id')->all());
+        $inStock = SellableStock::inStockMap(
+            $listings->pluck('product_id')->filter()->all()
+        );
 
         return $this->success(
             $listings
-                ->map(fn (UsListing $l) => $this->formatListing($l, isset($inStock[$l->product_id])))
+                ->map(fn (UsListing $l) => $this->formatListing(
+                    $l,
+                    $l->product_id === null || isset($inStock[$l->product_id])
+                ))
                 ->values()
         );
     }
 
     /**
      * POST /us/listings
-     * Publica un producto existente del POS en la tienda US.
-     * Body: { product_id, name, description?, price_usd, category, visible?, image_url? }
+     * Publica un producto existente del POS — o crea un listing CUSTOM
+     * (product_id null: alta dummy del panel, sin stock POS).
+     * Body: { product_id?, name, description?, price_usd, category, visible?, image_url? }
      */
     public function store(Request $request): JsonResponse
     {
@@ -73,10 +83,10 @@ class UsListingController extends Controller
         }
 
         $data = $request->validate([
-            'product_id'  => ['required', 'integer', 'exists:products,id'],
-            // name/category opcionales: la UI del POS puede omitirlos —
-            // name cae al nombre del producto y category a 'other'.
-            'name'        => ['nullable', 'string', 'max:255'],
+            'product_id'  => ['nullable', 'integer', 'exists:products,id'],
+            // Con product_id el name es opcional (cae al nombre del producto);
+            // en un custom es obligatorio — no hay de dónde caer.
+            'name'        => ['required_without:product_id', 'nullable', 'string', 'max:255'],
             'description' => ['nullable', 'string', 'max:5000'],
             'price_usd'   => ['required', 'numeric', 'min:0', 'max:99999999'],
             'category'    => ['nullable', Rule::in(UsListing::CATEGORIES)],
@@ -84,18 +94,20 @@ class UsListingController extends Controller
             'visible'     => ['nullable', 'boolean'],
         ]);
 
+        $productId = $data['product_id'] ?? null;
+
         // 422 claro en duplicado (product_id es unique en la tabla).
-        if (UsListing::where('product_id', $data['product_id'])->exists()) {
+        if ($productId !== null && UsListing::where('product_id', $productId)->exists()) {
             return $this->error('Este producto ya está publicado en TadaimaUS.', 422);
         }
 
-        $product = Product::findOrFail($data['product_id']);
+        $product = $productId !== null ? Product::findOrFail($productId) : null;
 
         $listing = UsListing::create([
-            'product_id'  => $data['product_id'],
+            'product_id'  => $productId,
             'name'        => ($data['name'] ?? null) !== null && trim($data['name']) !== ''
                 ? $data['name']
-                : $product->name,
+                : $product?->name,
             'description' => $data['description'] ?? null,
             'price_usd'   => $data['price_usd'],
             'category'    => $data['category'] ?? 'other',
@@ -190,6 +202,38 @@ class UsListingController extends Controller
         ])->values());
     }
 
+    /**
+     * POST /us/uploads
+     * Sube la foto de un listing custom (multipart `image`, max 5 MB) y
+     * devuelve su URL pública. Mismo patrón que ProductController::uploadImage:
+     * disco default (gcs en prod → URL absoluta; public en local → /storage
+     * con APP_URL). El form del panel guarda la URL en image_url.
+     */
+    public function uploadImage(Request $request): JsonResponse
+    {
+        if ($resp = $this->adminOnlyError()) {
+            return $resp;
+        }
+
+        $request->validate([
+            'image' => ['required', 'file', 'image', 'max:5120'],
+        ]);
+
+        try {
+            $path = $request->file('image')->store('us-listings');
+        } catch (\Throwable $e) {
+            \Log::error('UsListing uploadImage falló', ['error' => $e->getMessage()]);
+
+            return $this->error('No se pudo subir la imagen. Intenta de nuevo.', 500);
+        }
+
+        return $this->success(
+            ['path' => $path, 'url' => \Storage::url($path)],
+            'Imagen subida.',
+            201
+        );
+    }
+
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
     private function formatListing(UsListing $l, bool $inStock): array
@@ -199,6 +243,8 @@ class UsListingController extends Controller
         return [
             'id'          => $l->id,
             'product_id'  => $l->product_id,
+            // Custom = migrado del Wix o alta dummy — sin producto POS detrás.
+            'is_custom'   => $l->product_id === null,
             'name'        => $l->name,
             'description' => $l->description,
             'price_usd'   => number_format((float) $l->price_usd, 2, '.', ''),
@@ -222,6 +268,12 @@ class UsListingController extends Controller
     /** Stock vendible del producto de UN listing (para store/update). */
     private function productHasStock(UsListing $l): bool
     {
+        // Un custom no tiene stock POS: siempre "en stock" para el panel
+        // (el catálogo público tampoco se lo exige).
+        if ($l->product_id === null) {
+            return true;
+        }
+
         return SellableStock::inStockMap([$l->product_id]) !== [];
     }
 

@@ -32,8 +32,8 @@ RUN cd landing && npx vite build
 COPY tadaimaus ./tadaimaus
 
 # Tienda US: VITE_API_URL VACÍO a propósito — en prod el SPA cae a
-# window.location.origin/api/v1 (same-origin: su server block de nginx proxea
-# /api/ al MISMO php-fpm). Hornear la URL run.app aquí la haría cross-origin.
+# window.location.origin/api/v1 (same-origin: vive en /tadaimaus/ del mismo
+# dominio del POS). Hornear la URL run.app aquí la haría cross-origin.
 RUN cd tadaimaus && VITE_API_URL= npx vite build
 
 # Output: /repo/landing/dist + /repo/tadaimaus/dist
@@ -129,9 +129,9 @@ COPY --from=vendor /app/vendor /var/www/vendor
 # React SPA alongside Laravel's public/
 COPY --from=frontend-builder /repo/landing/dist/ /var/www/public/
 
-# TadaimaUS SPA — la sirve el segundo server block de nginx
-# (tadaimaus.com / www / us.poslite.com.mx) desde su propio root.
-COPY --from=frontend-builder /repo/tadaimaus/dist/ /var/www/public-us/
+# TadaimaUS SPA — montada en /tadaimaus/ del mismo dominio (build con base
+# relativa ./). Fase futura: proyecto separado con dominio propio.
+COPY --from=frontend-builder /repo/tadaimaus/dist/ /var/www/public/tadaimaus/
 
 # Docker config files
 COPY docker/nginx.conf       /etc/nginx/nginx.conf

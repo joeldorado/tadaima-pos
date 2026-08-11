@@ -32,6 +32,7 @@ class AppServiceProvider extends ServiceProvider
         // regresaba 429 sin haber mandado un solo pedido (bug real, F2 local).
         RateLimiter::for('us-catalog', fn (Request $request) => Limit::perMinute(60)->by($request->ip()));
         RateLimiter::for('us-orders', fn (Request $request) => Limit::perMinute(10)->by($request->ip()));
+        RateLimiter::for('us-leads', fn (Request $request) => Limit::perMinute(10)->by($request->ip()));
 
         // ADR-014: el carrito vive client-side hasta el cobro. Sin drafts en vivo
         // que extender/expirar, este observer queda desactivado. Se mantiene la

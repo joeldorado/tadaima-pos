@@ -12,8 +12,8 @@ interface UseCatalogResult {
   readonly reload: () => void
 }
 
-/** Loads the public catalog (optionally scoped to one category), with retry. */
-export function useCatalog(category?: UsCategory): UseCatalogResult {
+/** Loads the public catalog (optionally category-scoped and searched), with retry. */
+export function useCatalog(category?: UsCategory, search?: string): UseCatalogResult {
   const [state, setState] = useState<CatalogState>({ status: 'loading' })
   const [attempt, setAttempt] = useState(0)
 
@@ -21,7 +21,10 @@ export function useCatalog(category?: UsCategory): UseCatalogResult {
     let cancelled = false
     setState({ status: 'loading' })
 
-    fetchCatalog(category ? { category } : {})
+    fetchCatalog({
+      ...(category ? { category } : {}),
+      ...(search && search.trim() !== '' ? { search: search.trim() } : {}),
+    })
       .then((listings) => {
         if (!cancelled) setState({ status: 'ready', listings })
       })
@@ -37,7 +40,7 @@ export function useCatalog(category?: UsCategory): UseCatalogResult {
     return () => {
       cancelled = true
     }
-  }, [category, attempt])
+  }, [category, search, attempt])
 
   const reload = useCallback(() => setAttempt((count) => count + 1), [])
 

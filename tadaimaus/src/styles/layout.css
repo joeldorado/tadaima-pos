@@ -7,6 +7,13 @@
   background: var(--ink-900);
   color: var(--text-on-ink);
   border-bottom: 3px solid var(--vermilion);
+  transition: box-shadow var(--duration-normal) ease;
+}
+
+/* Compactación Binabox al scrollear: sombra + logo que se encoge.
+   Solo transform/box-shadow — nada de layout animado. */
+.site-header.is-scrolled {
+  box-shadow: 0 14px 34px -18px rgba(16, 16, 22, 0.75);
 }
 
 .site-header-inner {
@@ -14,12 +21,24 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 0.4rem 1.5rem;
-  padding-block: 0.7rem;
+  padding-block: 0.55rem;
 }
 
 .site-logo img {
-  height: 42px;
+  height: 54px;
   width: auto;
+  transform-origin: left center;
+  transition: transform var(--duration-normal) var(--ease-out-expo);
+}
+
+.site-header.is-scrolled .site-logo img {
+  transform: scale(0.82);
+}
+
+@media (min-width: 860px) {
+  .site-logo img {
+    height: 72px;
+  }
 }
 
 .site-nav {
@@ -62,7 +81,7 @@
   height: 2px;
   background: var(--vermilion);
   transform: scaleX(0);
-  transform-origin: left;
+  transform-origin: center;
   transition: transform var(--duration-normal) var(--ease-out-expo);
 }
 
@@ -79,17 +98,48 @@
   color: var(--text-on-ink);
 }
 
-.cart-button {
-  position: relative;
+/* CTA del header estilo Binabox: relleno acento con sweep al hover */
+/* Bloque de acciones a la derecha: login + carrito. El `margin-left:auto`
+   vive aquí (antes lo cargaba el carrito solo) para que ambos viajen juntos. */
+.site-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-left: auto;
+}
+
+/* Login al panel: tipo liga, sin marco — el carrito es el único botón sólido
+   del header y así no compiten dos cajas por la misma esquina. */
+.header-login {
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
-  margin-left: auto;
-  padding: 0.55rem 1rem;
-  background: transparent;
-  border: 1.5px solid rgba(245, 241, 232, 0.35);
-  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.4rem;
+  color: var(--text-on-ink-muted);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.76rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  transition: color var(--duration-fast) ease;
+}
+
+.header-login:hover {
   color: var(--text-on-ink);
+}
+
+.cart-button {
+  position: relative;
+  z-index: 0;
+  overflow: visible;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1.05rem;
+  background: var(--vermilion);
+  border: 1.5px solid var(--vermilion);
+  border-radius: var(--radius-sm);
+  color: #fff;
   font-family: var(--font-display);
   font-weight: 700;
   font-size: 0.76rem;
@@ -101,8 +151,8 @@
 }
 
 .cart-button:hover {
-  border-color: var(--vermilion);
-  background: rgba(216, 67, 47, 0.16);
+  background: var(--vermilion-deep);
+  border-color: var(--vermilion-deep);
 }
 
 .cart-button-count {
@@ -111,9 +161,10 @@
   right: -0.55rem;
   min-width: 1.35rem;
   padding: 0.1rem 0.3rem;
-  background: var(--vermilion);
+  background: var(--ink-950);
+  border: 1.5px solid var(--paper);
   border-radius: 999px;
-  color: #fff;
+  color: var(--text-on-ink);
   font-size: 0.68rem;
   text-align: center;
   line-height: 1.15rem;
@@ -136,6 +187,17 @@
   }
 }
 
+/* El login pierde su texto antes que el carrito: comprar manda sobre entrar. */
+@media (max-width: 620px) {
+  .header-login-label {
+    display: none;
+  }
+
+  .header-login {
+    padding-inline: 0.7rem;
+  }
+}
+
 @media (max-width: 420px) {
   .cart-button-label {
     display: none;
@@ -148,7 +210,6 @@
   background: var(--ink-950);
   color: var(--text-on-ink-muted);
   border-top: 3px solid var(--vermilion);
-  margin-top: var(--space-section);
 }
 
 .site-footer-grid {
@@ -162,12 +223,6 @@
   .site-footer-grid {
     grid-template-columns: 2fr 1fr 1fr;
   }
-}
-
-.site-footer-jp {
-  font-size: var(--text-sm);
-  letter-spacing: 0.3em;
-  color: var(--vermilion);
 }
 
 .site-footer-name {
@@ -211,6 +266,34 @@
   color: var(--vermilion);
 }
 
+/* Íconos de redes (solo se pinta la fila si hay al menos una URL cargada). */
+.site-footer-social {
+  display: flex;
+  gap: 0.9rem;
+  padding-bottom: 1.4rem;
+}
+
+.site-footer-social-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.3rem;
+  height: 2.3rem;
+  border: 1px solid rgba(245, 241, 232, 0.22);
+  border-radius: 999px;
+  color: var(--text-on-ink);
+  transition:
+    color var(--duration-fast) ease,
+    border-color var(--duration-fast) ease,
+    background var(--duration-fast) ease;
+}
+
+.site-footer-social-link:hover {
+  background: var(--vermilion);
+  border-color: var(--vermilion);
+  color: #fff;
+}
+
 .site-footer-bottom {
   display: flex;
   flex-wrap: wrap;
@@ -219,10 +302,6 @@
   padding-block: 1.1rem 1.6rem;
   border-top: 1px solid rgba(245, 241, 232, 0.12);
   font-size: var(--text-xs);
-}
-
-.site-footer-disclaimer {
-  color: var(--vermilion);
 }
 
 /* ─── Cart drawer ────────────────────────────────────────────────────────── */
@@ -277,12 +356,6 @@
   padding: 1.1rem var(--gutter) 1rem;
   background: var(--ink-900);
   color: var(--text-on-ink);
-}
-
-.drawer-jp {
-  font-size: var(--text-xs);
-  letter-spacing: 0.3em;
-  color: var(--vermilion);
 }
 
 .drawer-head h2 {
@@ -356,9 +429,12 @@
   object-fit: cover;
 }
 
+/* Miniatura sin foto: el mismo noren del catálogo, en chico y sin leyenda. */
 .drawer-line-noimg {
-  font-size: 1.4rem;
+  display: grid;
+  place-items: center;
   color: var(--text-muted);
+  opacity: 0.55;
 }
 
 .drawer-line-name {
@@ -459,8 +535,3 @@
   color: var(--vermilion-deep);
 }
 
-.drawer-note {
-  margin-block: 0.6rem 1rem;
-  font-size: var(--text-xs);
-  color: var(--text-muted);
-}

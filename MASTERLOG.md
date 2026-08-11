@@ -4,6 +4,55 @@
 
 ---
 
+### Sesión 2026-08-11 — TadaimaUS consolidado en commit único + PR #7 actualizado — DEPLOY PENDIENTE
+
+Todo el trabajo TadaimaUS de las sesiones 2026-08-08 → 11 (tienda v2 con hero slider,
+custom listings, leads/newsletter, admin extendido, imágenes locales en
+`backend/public/us-img/`, `tadaima:import-us-catalog`, servicio Cloud Run standalone con
+`tadaimaus/Dockerfile` + `nginx.conf`) quedó en UN commit en `feat/tadaimaus` y pusheado a
+GitHub — el PR #7 (`feat/tadaimaus` → `main`) se actualizó para revisión/bajada del hermano
+de Joel. Verificación previa: 56 tests vitest (`tadaimaus/`) + 20 tests PHPUnit
+(`UsStoreTest` + `UsLeadsTest`) en verde. Se agregaron a `.gitignore` `MAcro Productos SQL/`
+(190 MB, .bak con datos de prod) y `tadaima App/` (zips de la app móvil). **El deploy a
+prod quedó PENDIENTE a propósito** (Joel: solo GitHub). `origin/main` sigue 50 commits
+atrás adrede: así el PR #7 muestra todo lo pendiente de bajar, incluida Documentación 2.0.
+
+---
+
+### Sesión 2026-08-10 — Migración a cuenta gcloud nueva (tadaimapos) + tienda TadaimaUS en servicio propio + dominio tadaimamexico.com — SIN COMMIT
+
+**Migración POS (F1–F5 en un día, cero downtime, cero migración de datos — la DB es Supabase
+compartida).** Nueva cuenta `tadaima.devmx@gmail.com`, proyecto `tadaimapos`. Servicio `tadaima`
+en us-central1: `https://tadaima-747134907044.us-central1.run.app` (1 vCPU / 1 GiB, min=1
+siempre prendida, max=5). Rev 00001 desde main limpio; rev 00002 desde la rama feat/tadaimaus
+(working tree). Los 4 secretos copiados por pipe con hash verificado (el APP_KEY JAMÁS se
+regenera — descifra los `password_enc`); bucket `tadaimapos-media` copiado servidor-a-servidor
+(123 objetos / 67 MB). El servicio viejo (`impusodigitaldorado`) queda intacto: el equipo sigue
+trabajando en tadaima.poslite.com.mx hasta el corte (F7, con OK de Joel). **Trampa GCP 2026:**
+en proyectos nuevos el compute SA nace SIN roles — hubo que dar `cloudbuild.builds.builder` +
+`storage.objectAdmin` (bucket media) + `secretAccessor` (por secreto).
+
+**TadaimaUS:** servicio propio `tadaimaus` (proyecto tadaimaus, rev 00001):
+`https://tadaimaus-500621755497.us-central1.run.app` — nginx estático con la URL del backend
+horneada en el build (ARG en `tadaimaus/Dockerfile`, nuevo junto con `nginx.conf` y
+`.gcloudignore`), 1 vCPU / 256 Mi, min=1. CORS resuelto solo con la env `CORS_ORIGIN` en el
+backend (config/cors.php ya traía tadaimaus.com). Los 42 artículos del Wix sembrados en Supabase
+(`tadaima:import-us-catalog`, idempotente por slug, dry-run primero). E2E Playwright contra
+prod: 42 ITEMS, fotos pintando, admin monta login, cero errores de consola.
+
+**Dominio tadaimamexico.com** (GoDaddy, verificado en Search Console con tadaima.devmx): mapeos
+raíz + www al servicio `tadaima`; DNS limpio y verificado punto por punto (4 A + 4 AAAA de
+Google, TTL 600, sin CAA / DNSSEC / registros de parking). El primer intento de certificado
+(17:04) falló por cachés del parking aún vivos — checklist completo de causas persistentes:
+todas limpias; Google reintenta cada 15 min. **Al cierre de la sesión el SSL seguía en
+emisión.** Al prender: actualizar `APP_URL` + `SANCTUM_STATEFUL_DOMAINS` al dominio (receta en
+memoria). Detectado y reparado: `www` no estaba mapeado y el cert del raíz no lo cubre — el
+clásico "SSL a medias".
+
+Todo el trabajo del día quedó SIN commit en feat/tadaimaus (push de Joel).
+
+---
+
 ### Sesión 2026-08-05 (4) — Pago mixto Efectivo + Transferencia en Caja — DEPLOYADO rev `tadaima-00166-8jl`
 
 Petición de cliente vía Joel: cobrar UNA venta con parte en efectivo y parte

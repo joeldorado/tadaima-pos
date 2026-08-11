@@ -1,3 +1,4 @@
+import { useScrolled } from '../../hooks/useScrolled'
 import { BRAND, SHOP_CATEGORIES } from '../../lib/constants'
 import type { Route } from '../../lib/routes'
 import { useCart } from '../../store/CartContext'
@@ -40,22 +41,43 @@ function CartIcon() {
   )
 }
 
+/** Silueta de persona — el ícono de "cuenta / iniciar sesión" de siempre. */
+function LoginIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="20"
+      height="20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="8" r="3.6" />
+      <path d="M4.5 20.5a7.5 7.5 0 0 1 15 0" />
+    </svg>
+  )
+}
+
 interface HeaderProps {
   readonly route: Route
 }
 
 export function Header({ route }: HeaderProps) {
   const { count, openDrawer } = useCart()
+  const isScrolled = useScrolled()
 
   return (
-    <header className="site-header">
+    <header className={`site-header${isScrolled ? ' is-scrolled' : ''}`}>
       <div className="site-header-inner container">
         <a className="site-logo" href="#/" aria-label={`${BRAND.shortName} — home`}>
           <img
             src={BRAND.logoUrl}
             alt={BRAND.legalName}
-            width={150}
-            height={44}
+            width={202}
+            height={72}
             loading="eager"
             fetchPriority="high"
           />
@@ -77,20 +99,29 @@ export function Header({ route }: HeaderProps) {
           </ul>
         </nav>
 
-        <button
-          type="button"
-          className="cart-button"
-          onClick={openDrawer}
-          aria-label={`Open cart, ${count} item${count === 1 ? '' : 's'}`}
-        >
-          <CartIcon />
-          <span className="cart-button-label">Cart</span>
-          {count > 0 && (
-            <span className="cart-button-count" aria-hidden="true">
-              {count > 99 ? '99+' : count}
-            </span>
-          )}
-        </button>
+        <div className="site-header-actions">
+          {/* Acceso al panel (#/admin). Es solo la puerta: el backend gatea de
+              verdad, así que mostrarla no abre nada por sí sola. */}
+          <a className="header-login" href="#/admin" aria-label="Sign in to store admin">
+            <LoginIcon />
+            <span className="header-login-label">Sign in</span>
+          </a>
+
+          <button
+            type="button"
+            className="cart-button"
+            onClick={openDrawer}
+            aria-label={`Open cart, ${count} item${count === 1 ? '' : 's'}`}
+          >
+            <CartIcon />
+            <span className="cart-button-label">Cart</span>
+            {count > 0 && (
+              <span className="cart-button-count" aria-hidden="true">
+                {count > 99 ? '99+' : count}
+              </span>
+            )}
+          </button>
+        </div>
       </div>
     </header>
   )
