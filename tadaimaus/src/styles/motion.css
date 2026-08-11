@@ -1,0 +1,689 @@
+/* ─── Motion layer — mecánicas adaptadas de Binabox ──────────────────────────
+   Hero slider, carrusel de productos, marquee, promo banner y reveals.
+   Solo transform/opacity (compositor). El kill global de reduced-motion vive
+   en base.css; el autoplay JS se apaga en useReducedMotion. */
+
+/* ─── Hero slider ────────────────────────────────────────────────────────── */
+
+.hero-slider {
+  position: relative;
+  display: grid;
+  align-items: center;
+  min-height: min(80vh, 46rem);
+  overflow: hidden;
+  background: var(--ink-950);
+  color: var(--text-on-ink);
+}
+
+.hero-slider .hero-content {
+  padding-bottom: clamp(6rem, 5rem + 4vw, 8.5rem);
+}
+
+/* Escenario: una capa por slide, crossfade por opacity */
+.hero-scene {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.hero-scene-layer {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 900ms ease;
+}
+
+.hero-scene-layer.is-active {
+  opacity: 1;
+}
+
+/* Arte del slide: se ve de verdad (antes era una textura al 13%). El color de
+   marca queda como tinte por slide ENCIMA de la foto, no como fondo. */
+.hero-photo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 32%;
+}
+
+/* Scrim: oscurece la izquierda —donde vive el copy— y deja respirar el arte a
+   la derecha. Sin esto el texto blanco no pasa contraste sobre la ilustración. */
+.hero-scene-layer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(
+      90deg,
+      rgba(11, 12, 16, 0.94) 0%,
+      rgba(11, 12, 16, 0.82) 34%,
+      rgba(11, 12, 16, 0.42) 62%,
+      rgba(11, 12, 16, 0.3) 100%
+    ),
+    linear-gradient(to top, rgba(11, 12, 16, 0.6), transparent 45%);
+}
+
+.hero-scene-layer.is-figures::after {
+  background-image:
+    radial-gradient(46rem 28rem at 88% 22%, rgba(216, 67, 47, 0.28), transparent 62%),
+    linear-gradient(
+      90deg,
+      rgba(11, 12, 16, 0.94) 0%,
+      rgba(11, 12, 16, 0.82) 34%,
+      rgba(11, 12, 16, 0.42) 62%,
+      rgba(11, 12, 16, 0.3) 100%
+    ),
+    linear-gradient(to top, rgba(11, 12, 16, 0.6), transparent 45%);
+}
+
+.hero-scene-layer.is-manga::after {
+  background-image:
+    radial-gradient(42rem 26rem at 82% 78%, rgba(216, 67, 47, 0.22), transparent 60%),
+    linear-gradient(
+      90deg,
+      rgba(11, 12, 16, 0.94) 0%,
+      rgba(11, 12, 16, 0.82) 34%,
+      rgba(11, 12, 16, 0.42) 62%,
+      rgba(11, 12, 16, 0.3) 100%
+    ),
+    linear-gradient(to top, rgba(11, 12, 16, 0.6), transparent 45%);
+}
+
+.hero-scene-layer.is-tcg::after {
+  background-image:
+    radial-gradient(48rem 30rem at 84% 74%, rgba(178, 49, 31, 0.3), transparent 64%),
+    linear-gradient(
+      90deg,
+      rgba(11, 12, 16, 0.94) 0%,
+      rgba(11, 12, 16, 0.82) 34%,
+      rgba(11, 12, 16, 0.42) 62%,
+      rgba(11, 12, 16, 0.3) 100%
+    ),
+    linear-gradient(to top, rgba(11, 12, 16, 0.6), transparent 45%);
+}
+
+/* En móvil el copy ocupa todo el ancho → el scrim tiene que ser parejo. */
+@media (max-width: 720px) {
+  .hero-scene-layer::after,
+  .hero-scene-layer.is-figures::after,
+  .hero-scene-layer.is-manga::after,
+  .hero-scene-layer.is-tcg::after {
+    background-image: linear-gradient(
+      to top,
+      rgba(11, 12, 16, 0.93) 25%,
+      rgba(11, 12, 16, 0.72) 70%,
+      rgba(11, 12, 16, 0.6) 100%
+    );
+  }
+}
+
+/* Gradiente en pan lento (solo transform, capa sobredimensionada) */
+.hero-scene-pan {
+  position: absolute;
+  inset: -30%;
+  background:
+    linear-gradient(
+      74deg,
+      transparent 42%,
+      rgba(245, 241, 232, 0.045) 50%,
+      transparent 58%
+    );
+  animation: hero-pan 22s ease-in-out infinite alternate;
+}
+
+@keyframes hero-pan {
+  from {
+    transform: translate3d(-5%, -3%, 0);
+  }
+  to {
+    transform: translate3d(5%, 3%, 0);
+  }
+}
+
+/* Shapes flotantes (patrón ani1-5 de Binabox, simplificado) */
+.hero-shape {
+  position: absolute;
+  display: block;
+}
+
+.hero-shape-ring {
+  top: -70px;
+  right: -90px;
+  width: 340px;
+  height: 340px;
+  border: 2px solid rgba(216, 67, 47, 0.35);
+  border-radius: 50%;
+  animation: hero-float-a 13s ease-in-out infinite;
+}
+
+.hero-shape-dot {
+  left: 11%;
+  bottom: 24%;
+  width: 13px;
+  height: 13px;
+  background: var(--vermilion);
+  border-radius: 50%;
+  box-shadow: 0 0 26px var(--vermilion-glow);
+  animation: hero-float-b 9s ease-in-out infinite;
+}
+
+.hero-shape-bar {
+  right: 15%;
+  bottom: 32%;
+  width: 130px;
+  height: 3px;
+  background: linear-gradient(90deg, var(--vermilion), transparent);
+  animation: hero-float-c 11s ease-in-out infinite;
+}
+
+@keyframes hero-float-a {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+  50% {
+    transform: translate3d(-20px, 26px, 0) rotate(10deg);
+  }
+}
+
+@keyframes hero-float-b {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(16px, -30px, 0);
+  }
+}
+
+@keyframes hero-float-c {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+  50% {
+    transform: translate3d(-24px, 14px, 0) rotate(-6deg);
+  }
+}
+
+/* Reveal escalonado del texto (mecánica clip de Binabox) */
+.hero-reveal {
+  opacity: 0;
+  transform: translateY(44px);
+  animation: hero-reveal-up var(--duration-slow) var(--ease-out-expo) forwards;
+}
+
+.hero-reveal-1 {
+  animation-delay: var(--delay-stagger-1);
+}
+
+.hero-reveal-2 {
+  animation-delay: var(--delay-stagger-2);
+}
+
+.hero-reveal-3 {
+  animation-delay: var(--delay-stagger-3);
+}
+
+.hero-reveal-4 {
+  animation-delay: var(--delay-stagger-4);
+}
+
+@keyframes hero-reveal-up {
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Las líneas del título entran recortadas por su wrapper */
+.hero-line {
+  display: block;
+  overflow: hidden;
+}
+
+.hero-line-inner {
+  display: block;
+}
+
+.hero-line .hero-reveal {
+  transform: translateY(108%);
+}
+
+/* Controles */
+.hero-controls {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.hero-dots {
+  display: flex;
+  gap: 0.45rem;
+}
+
+/* Barra de 4px con tap-target de 20px (background-clip recorta al contenido) */
+.hero-dot {
+  width: 30px;
+  height: 20px;
+  padding: 8px 0;
+  border: none;
+  background-color: rgba(245, 241, 232, 0.3);
+  background-clip: content-box;
+  border-radius: 999px;
+  transition: background-color var(--duration-fast) ease;
+}
+
+.hero-dot:hover {
+  background-color: rgba(245, 241, 232, 0.6);
+}
+
+.hero-dot.is-active {
+  background-color: var(--vermilion);
+}
+
+.hero-arrows {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.hero-arrow {
+  display: grid;
+  place-items: center;
+  width: 2.7rem;
+  height: 2.7rem;
+  border: 1.5px solid rgba(245, 241, 232, 0.35);
+  border-radius: var(--radius-sm);
+  background: rgba(16, 16, 22, 0.4);
+  color: var(--text-on-ink);
+  transition:
+    border-color var(--duration-fast) ease,
+    background-color var(--duration-fast) ease;
+}
+
+.hero-arrow:hover {
+  border-color: var(--vermilion);
+  background: rgba(216, 67, 47, 0.28);
+}
+
+/* ─── Marquee band ───────────────────────────────────────────────────────── */
+
+.marquee {
+  overflow: hidden;
+  padding-block: 0.85rem;
+  background: var(--vermilion);
+  color: #fff;
+  border-block: 3px solid var(--ink-950);
+}
+
+.marquee-track {
+  display: flex;
+  width: max-content;
+  animation: marquee-scroll 46s linear infinite;
+}
+
+.marquee-group {
+  display: flex;
+}
+
+.marquee-item {
+  display: inline-flex;
+  align-items: baseline;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.05rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.marquee-sep {
+  margin-inline: 1.1rem;
+  opacity: 0.55;
+}
+
+@keyframes marquee-scroll {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+/* ─── Promo banner ───────────────────────────────────────────────────────── */
+
+.promo-banner {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(44rem 26rem at 85% 20%, rgba(216, 67, 47, 0.22), transparent 62%),
+    var(--ink-900);
+  color: var(--text-on-ink);
+  padding-block: clamp(3rem, 2.4rem + 3vw, 5.5rem);
+}
+
+/* Corner-brackets del banner (eco de las cards) */
+.promo-banner::before,
+.promo-banner::after {
+  content: '';
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  pointer-events: none;
+}
+
+.promo-banner::before {
+  top: 16px;
+  left: 16px;
+  border-top: 3px solid var(--vermilion);
+  border-left: 3px solid var(--vermilion);
+}
+
+.promo-banner::after {
+  bottom: 16px;
+  right: 16px;
+  border-bottom: 3px solid var(--vermilion);
+  border-right: 3px solid var(--vermilion);
+}
+
+.promo-banner-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.8rem 3rem;
+}
+
+.promo-banner-kicker {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: var(--text-xs);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--vermilion);
+}
+
+.promo-banner-kicker::before {
+  content: '';
+  width: 1.6rem;
+  height: 2px;
+  background: var(--vermilion);
+}
+
+.promo-banner h2 {
+  margin-top: 0.6rem;
+  font-size: var(--text-title);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.promo-banner-accent {
+  color: var(--vermilion);
+  text-shadow: 0 0 24px var(--vermilion-glow);
+}
+
+.promo-banner-sub {
+  margin-top: 0.8rem;
+  max-width: 34rem;
+  color: var(--text-on-ink-muted);
+}
+
+.promo-banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+}
+
+/* ─── Search del catálogo (category pages) ───────────────────────────────── */
+
+.catalog-search {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  max-width: 26rem;
+  margin-bottom: clamp(1.4rem, 1rem + 1.5vw, 2.2rem);
+  padding: 0.15rem 0.9rem;
+  background: var(--card);
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  transition: border-color var(--duration-fast) ease;
+}
+
+.catalog-search:focus-within {
+  border-color: var(--vermilion);
+  color: var(--vermilion-deep);
+}
+
+.catalog-search input {
+  flex: 1;
+  min-width: 0;
+  padding-block: 0.6rem;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: var(--text);
+}
+
+.catalog-search input:focus {
+  outline: none;
+}
+
+.catalog-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.catalog-search-clear {
+  border: none;
+  background: transparent;
+  padding: 0 0.2rem;
+  font-size: 1.4rem;
+  line-height: 1;
+  color: var(--text-muted);
+  transition: color var(--duration-fast) ease;
+}
+
+.catalog-search-clear:hover {
+  color: var(--vermilion-deep);
+}
+
+/* ─── Newsletter "We hear you!" (Naruto del sitio original) ──────────────── */
+
+.newsletter {
+  position: relative;
+  overflow: hidden;
+  background: var(--paper-deep);
+  border-block: 1px solid var(--line);
+}
+
+.newsletter-inner {
+  display: grid;
+  grid-template-columns: 1fr;
+  align-items: end;
+  gap: 0 2rem;
+  padding-top: clamp(2.6rem, 2rem + 2.5vw, 4.5rem);
+}
+
+.newsletter-kicker {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: var(--text-xs);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--vermilion-deep);
+}
+
+.newsletter-kicker::before {
+  content: '';
+  width: 1.6rem;
+  height: 2px;
+  background: var(--vermilion);
+}
+
+.newsletter-copy {
+  padding-bottom: clamp(2.6rem, 2rem + 2.5vw, 4.5rem);
+}
+
+.newsletter-copy h2 {
+  margin-top: 0.6rem;
+  font-size: var(--text-title);
+  text-transform: uppercase;
+}
+
+.newsletter-sub {
+  margin-top: 0.8rem;
+  max-width: 28rem;
+  color: var(--text-muted);
+}
+
+.newsletter-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  margin-top: 1.4rem;
+  max-width: 28rem;
+}
+
+/* Solo línea, igual que `.field`. Aquí NO flota etiqueta: el placeholder
+   visible ("your@email.com") ya dice qué va, y el label sigue en sr-only. */
+.newsletter-form > input {
+  flex: 1;
+  min-width: 12rem;
+  padding: 0.7rem 0.1rem 0.55rem;
+  border: none;
+  border-bottom: 1.5px solid var(--line-strong);
+  border-radius: 0;
+  background: transparent;
+  font: inherit;
+  transition: border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
+}
+
+.newsletter-form > input:hover {
+  border-bottom-color: var(--text-muted);
+}
+
+.newsletter-form > input:focus {
+  outline: none;
+  border-bottom-color: var(--vermilion);
+  box-shadow: 0 1.5px 0 0 var(--vermilion);
+}
+
+.newsletter-form > input[aria-invalid='true'] {
+  border-bottom-color: var(--vermilion-deep);
+  box-shadow: 0 1.5px 0 0 var(--vermilion-deep);
+}
+
+/* Checkbox de consentimiento: renglón propio debajo del email + botón. */
+.newsletter-consent {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.newsletter-consent input {
+  width: 1.05rem;
+  height: 1.05rem;
+  accent-color: var(--vermilion);
+  cursor: pointer;
+}
+
+.newsletter-success {
+  margin-top: 1.4rem;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.1rem;
+  text-transform: uppercase;
+  color: var(--vermilion-deep);
+}
+
+.newsletter .field-error {
+  margin-top: 0.5rem;
+}
+
+/* El Naruto asoma desde la base de la sección, como en el Wix original */
+.newsletter-naruto {
+  justify-self: center;
+  align-self: end;
+  width: min(230px, 60vw);
+  height: auto;
+  margin-bottom: -6px;
+  filter: drop-shadow(0 12px 24px rgba(16, 16, 22, 0.25));
+}
+
+@media (min-width: 760px) {
+  .newsletter-inner {
+    grid-template-columns: 1fr auto;
+  }
+
+  .newsletter-naruto {
+    width: min(280px, 24vw);
+  }
+}
+
+/* ─── Formulario de contacto ─────────────────────────────────────────────── */
+
+.contact-form {
+  max-width: 34rem;
+  margin-bottom: clamp(2rem, 1.6rem + 2vw, 3.2rem);
+  padding: clamp(1.4rem, 1.1rem + 1.5vw, 2.2rem);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--vermilion);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.contact-form-success {
+  max-width: 34rem;
+  margin-bottom: clamp(2rem, 1.6rem + 2vw, 3.2rem);
+  padding: clamp(2rem, 1.6rem + 2vw, 3rem);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--vermilion);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  text-align: center;
+}
+
+.contact-form-success-title {
+  margin-top: 0.6rem;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.15rem;
+  text-transform: uppercase;
+}
+
+.contact-form-success-copy {
+  margin-top: 0.5rem;
+  color: var(--text-muted);
+}
+
+/* ─── Reveal de secciones (useReveal + IntersectionObserver) ─────────────── */
+
+.reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition:
+    opacity 620ms ease,
+    transform 620ms var(--ease-out-expo);
+}
+
+.reveal.is-revealed {
+  opacity: 1;
+  transform: none;
+}

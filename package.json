@@ -9,6 +9,8 @@
   ],
   "scripts": {
     "dev:web": "turbo run dev --filter=@tadaima/web",
+    "dev:us": "cd tadaimaus && npm run dev",
+    "build:us": "cd tadaimaus && npm run build",
     "dev:mobile": "turbo run start --filter=@tadaima/mobile",
     "build:web": "turbo run build --filter=@tadaima/web",
     "lint": "turbo run lint",

@@ -97,6 +97,16 @@ export const queryKeys = {
     all: ['notifications'] as const,
     list: (params?: { unread_only?: boolean }) => ['notifications', 'list', params ?? {}] as const,
   },
+  // TadaimaUS — tienda US en USD (módulo admin). Listings y pedidos cuelgan
+  // de la misma raíz para poder invalidar todo el módulo de un golpe;
+  // newCount alimenta el badge rojo del aside en AdminPage (refetch 60s).
+  usStore: {
+    all: ['usStore'] as const,
+    listings: (params?: Record<string, unknown>) => ['usStore', 'listings', params ?? {}] as const,
+    orders: (params?: Record<string, unknown>) => ['usStore', 'orders', params ?? {}] as const,
+    newCount: () => ['usStore', 'newCount'] as const,
+    leads: (params?: Record<string, unknown>) => ['usStore', 'leads', params ?? {}] as const,
+  },
   // Historial del día — sales + presales agregados, scope por tienda.
   // Cache persistente (IndexedDB) para que la apertura del modal sea instantánea
   // y un refetch en background traiga lo nuevo tras cada checkout/cancelación.

@@ -19,12 +19,24 @@ COPY apps ./apps
 
 RUN npm install --no-audit --no-fund
 
+# tadaimaus/ es STANDALONE (fuera de los npm workspaces, patrón pos-app):
+# necesita su PROPIO npm install. Manifests primero (layer cache).
+COPY tadaimaus/package.json tadaimaus/package-lock.json ./tadaimaus/
+RUN cd tadaimaus && npm install --no-audit --no-fund
+
 COPY landing ./landing
 
 # Build only the web app (skip tsc type-check, vite transpiles TS natively)
 RUN cd landing && npx vite build
 
-# Output: /repo/landing/dist
+COPY tadaimaus ./tadaimaus
+
+# Tienda US: VITE_API_URL VACÍO a propósito — en prod el SPA cae a
+# window.location.origin/api/v1 (same-origin: vive en /tadaimaus/ del mismo
+# dominio del POS). Hornear la URL run.app aquí la haría cross-origin.
+RUN cd tadaimaus && VITE_API_URL= npx vite build
+
+# Output: /repo/landing/dist + /repo/tadaimaus/dist
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -116,6 +128,10 @@ COPY --from=vendor /app/vendor /var/www/vendor
 
 # React SPA alongside Laravel's public/
 COPY --from=frontend-builder /repo/landing/dist/ /var/www/public/
+
+# TadaimaUS SPA — montada en /tadaimaus/ del mismo dominio (build con base
+# relativa ./). Fase futura: proyecto separado con dominio propio.
+COPY --from=frontend-builder /repo/tadaimaus/dist/ /var/www/public/tadaimaus/
 
 # Docker config files
 COPY docker/nginx.conf       /etc/nginx/nginx.conf

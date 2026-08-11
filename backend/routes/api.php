@@ -33,6 +33,10 @@ use App\Http\Controllers\Api\StoreController;
 use App\Http\Controllers\Api\SuppliesController;
 use App\Http\Controllers\Api\TerminalController;
 use App\Http\Controllers\Api\UserController;
+use App\Http\Controllers\Api\UsCatalogController;
+use App\Http\Controllers\Api\UsLeadController;
+use App\Http\Controllers\Api\UsListingController;
+use App\Http\Controllers\Api\UsOrderController;
 use App\Http\Controllers\Api\WarehouseController;
 use Illuminate\Support\Facades\Route;
 
@@ -54,6 +58,23 @@ Route::prefix('auth')->group(function () {
 // ── Catálogo público (sin auth) ───────────────────────────────────────────────
 Route::get('public/catalog', [CatalogController::class, 'publicCatalogGlobal']);
 Route::get('public/catalog/{catalogUrl}', [CatalogController::class, 'publicCatalog']);
+
+// ── TadaimaUS público (sin auth) ──────────────────────────────────────────────
+// Rate limit por IP (sin auth no hay usuario), con limiters CON NOMBRE
+// (AppServiceProvider) para que cada ruta tenga SU bucket: el throttle inline
+// (`throttle:60,1`) comparte un solo contador por IP entre rutas (firma
+// domain|ip sin URI) y navegar el catálogo tumbaba el checkout con 429.
+// us-catalog = 60 req/min (navegar + search van de a 1 req por acción).
+Route::get('us/catalog', [UsCatalogController::class, 'catalog'])
+    ->middleware('throttle:us-catalog');
+// us-orders = 10 req/min: nadie legítimo manda más de 10 pedidos por minuto —
+// frena spam del checkout dummy (sin CAPTCHA a propósito en v1).
+Route::post('us/orders', [UsOrderController::class, 'store'])
+    ->middleware('throttle:us-orders');
+// us-leads = 10 req/min: newsletter ("We hear you!") + formulario de contacto.
+// Honeypot en StoreUsLeadRequest; bucket propio para no pisar el checkout.
+Route::post('us/leads', [UsLeadController::class, 'store'])
+    ->middleware('throttle:us-leads');
 
 // ── Rutas protegidas ──────────────────────────────────────────────────────────
 // Rate limit por usuario (120 req/min) — amortigua polling/abuso sin estorbar al
@@ -339,4 +360,25 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
         Route::post('movements', [SuppliesController::class, 'storeMovement']);
         Route::put('{supply}',   [SuppliesController::class, 'update']);
     });
+
+    // ── TadaimaUS (módulo admin — cada método gatea con adminOnlyError) ───────
+    Route::get('us/listings',                 [UsListingController::class, 'index']);
+    Route::post('us/listings',                [UsListingController::class, 'store']);
+    Route::put('us/listings/{usListing}',     [UsListingController::class, 'update']);
+    Route::delete('us/listings/{usListing}',  [UsListingController::class, 'destroy']);
+
+    // Buscador del ABC: productos del POS aún NO listados en la tienda US.
+    Route::get('us/products',                 [UsListingController::class, 'products']);
+
+    // Foto de un listing custom (multipart) → { url } para image_url.
+    Route::post('us/uploads',                 [UsListingController::class, 'uploadImage']);
+
+    // Bandeja de pedidos US (con items, más nuevos primero). El POST público
+    // vive arriba, FUERA de auth:sanctum (checkout del sitio US).
+    Route::get('us/orders',                   [UsOrderController::class, 'index']);
+    Route::put('us/orders/{usOrder}/status',  [UsOrderController::class, 'updateStatus']);
+
+    // Bandeja de leads del sitio US (newsletter + contacto). El POST público
+    // vive arriba, FUERA de auth:sanctum.
+    Route::get('us/leads',                    [UsLeadController::class, 'index']);
 });

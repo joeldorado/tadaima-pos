@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { X, Printer, RefreshCw, Loader2, CheckCircle2, AlertTriangle, Download } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -6,6 +6,7 @@ import {
   getQzStatus,
   listQzPrinters,
   onQzStatusChange,
+  QzError,
   type QzStatus,
 } from "@/lib/qz";
 import {
@@ -27,6 +28,13 @@ interface PrinterConfigModalProps {
   open: boolean;
   onClose: () => void;
 }
+
+/**
+ * Timeout de conexión SOLO para este modal: en la primera configuración QZ
+ * puede mostrar su diálogo "Action Required" (Allow) y el humano tarda en
+ * contestarlo — mucho más que los 3.5s del default que usa el flujo de cobro.
+ */
+const SETUP_CONNECT_TIMEOUT_MS = 30_000;
 
 /**
  * Configuración de la impresión silenciosa (QZ Tray) — POR MÁQUINA, no por
@@ -52,7 +60,7 @@ export function PrinterConfigModal({ open, onClose }: PrinterConfigModalProps) {
     setLoadingPrinters(true);
     setConnectError(null);
     try {
-      await ensureQzConnection();
+      await ensureQzConnection({ timeoutMs: SETUP_CONNECT_TIMEOUT_MS });
       const found = await listQzPrinters();
       setPrinters(found);
       // Preselección amable: si no hay impresora elegida aún, sugerir una
@@ -62,9 +70,11 @@ export function PrinterConfigModal({ open, onClose }: PrinterConfigModalProps) {
         const guess = found.find(p => /xp|58|pos|ticket|therm/i.test(p)) ?? found[0] ?? "";
         return guess;
       });
-    } catch {
+    } catch (err) {
       setPrinters([]);
-      setConnectError("No se pudo conectar con QZ Tray. Revisa que esté instalado y abierto en ESTA máquina (icono verde junto al reloj).");
+      setConnectError(err instanceof QzError && err.kind === "sign-failed"
+        ? "QZ Tray sí respondió, pero el servidor no autorizó la firma. Cierra sesión y vuelve a entrar; si sigue, avisa al administrador."
+        : "No se pudo conectar con QZ Tray. Revisa que esté instalado y abierto en ESTA máquina (icono verde junto al reloj).");
     } finally {
       setLoadingPrinters(false);
     }
@@ -74,6 +84,18 @@ export function PrinterConfigModal({ open, onClose }: PrinterConfigModalProps) {
   useEffect(() => {
     if (open) void refreshPrinters();
   }, [open, refreshPrinters]);
+
+  // La conexión puede entrar DESPUÉS de que refreshPrinters se rindió (p.ej.
+  // el usuario tardó en contestar el diálogo Allow de QZ y venció el timeout):
+  // al pasar a "connected" recargamos la lista solos, sin otro clic en Buscar.
+  const prevStatusRef = useRef(status);
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    prevStatusRef.current = status;
+    if (open && status === "connected" && prev !== "connected" && !loadingPrinters) {
+      void refreshPrinters();
+    }
+  }, [status, open, loadingPrinters, refreshPrinters]);
 
   if (!open) return null;
 
@@ -163,6 +185,12 @@ export function PrinterConfigModal({ open, onClose }: PrinterConfigModalProps) {
             Buscar
           </button>
         </div>
+
+        {loadingPrinters && status !== "connected" && (
+          <p style={{ margin: "-6px 0 14px", fontSize: 10, fontWeight: 700, color: "#F59E0B" }}>
+            Si QZ Tray abre una ventana de permiso ("Action Required"), presiona Allow.
+          </p>
+        )}
 
         {connectError && (
           <div style={{ background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.30)", borderRadius: 14, padding: "10px 14px", marginBottom: 14 }}>

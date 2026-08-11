@@ -8,7 +8,7 @@ import {
   Users, Receipt, UserCircle2, ClipboardList, ArrowLeftRight, ShoppingBasket, BarChart2,
   Settings, Sun, Moon, PackageSearch, Wallet, KeyRound,
   ChevronDown, ChevronRight, PanelLeftClose, TriangleAlert, TicketPercent, BookOpen,
-  HelpCircle, Play,
+  HelpCircle, Play, Globe,
 } from "lucide-react";
 import { NotificationBadge } from "@/components/notifications/NotificationBadge";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -77,10 +77,14 @@ const NAV_TREE: NavEntry[] = [
   { to: "/promos",  label: "Promos",  icon: TicketPercent,  page: "promos"   },
   // "Documentación" NO va en el sidebar (pedido Joel 2026-07-17: liberar
   // espacio) — vive en el menú del avatar, junto a Configuración.
+  // TadaimaUS AL FINAL del menú (pedido Joel 2026-08-06): backoffice de la
+  // tienda US en dólares. page "admin" solo existe en NAV_BY_ROLE.admin →
+  // la entrada es invisible para gerente/cajero.
+  { to: "/tadaima-us", label: "TadaimaUS", icon: Globe, page: "admin" },
 ];
 
 const NAV_BY_ROLE: Record<string, PageKey[]> = {
-  admin:   ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers", "supplies", "promos", "reports", "docs"],
+  admin:   ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers", "supplies", "promos", "reports", "docs", "admin"],
   // Gerente: sin Tiendas. Solo gestiona la suya; el switcher del header basta
   // para alternar entre tiendas asignadas. La página /stores es CRUD admin.
   // Reportes habilitado para gerente (verificará permisos/scope en backend)

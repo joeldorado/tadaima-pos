@@ -1,0 +1,338 @@
+[
+  {
+    "slug": "art-book-fma",
+    "name": "Art Book FMA",
+    "price_usd": 45.0,
+    "category": "manga",
+    "image": "us-img/products/art-book-fma.jpg",
+    "source": "https://www.tadaimaus.com/product-page/art-book-fma"
+  },
+  {
+    "slug": "art-book-genshin-impact",
+    "name": "Art Book Genshin Impact",
+    "price_usd": 45.0,
+    "category": "manga",
+    "image": "us-img/products/art-book-genshin-impact.jpg",
+    "source": "https://www.tadaimaus.com/product-page/art-book-genshin-impact"
+  },
+  {
+    "slug": "art-book-haikyu",
+    "name": "Art Book Haikyu!",
+    "price_usd": 45.0,
+    "category": "manga",
+    "image": "us-img/products/art-book-haikyu.jpg",
+    "source": "https://www.tadaimaus.com/product-page/art-book-haikyu"
+  },
+  {
+    "slug": "art-book-naruto",
+    "name": "Art Book Naruto",
+    "price_usd": 25.0,
+    "category": "manga",
+    "image": "us-img/products/art-book-naruto.jpg",
+    "source": "https://www.tadaimaus.com/product-page/art-book-naruto"
+  },
+  {
+    "slug": "art-book-ponyo",
+    "name": "Art Book Ponyo",
+    "price_usd": 45.0,
+    "category": "manga",
+    "image": "us-img/products/art-book-ponyo.jpg",
+    "source": "https://www.tadaimaus.com/product-page/art-book-ponyo"
+  },
+  {
+    "slug": "backpack-mini-frieren-cosplay",
+    "name": "Backpack Mini Frieren Cosplay",
+    "price_usd": 75.0,
+    "category": "figures",
+    "image": "us-img/products/backpack-mini-frieren-cosplay.jpg",
+    "source": "https://www.tadaimaus.com/product-page/backpack-mini-frieren-cosplay"
+  },
+  {
+    "slug": "bayblade",
+    "name": "Bayblade",
+    "price_usd": 20.0,
+    "category": "other",
+    "image": "us-img/products/bayblade.jpg",
+    "source": "https://www.tadaimaus.com/product-page/bayblade"
+  },
+  {
+    "slug": "blind-box-miku-forest",
+    "name": "Blind Box Miku Forest",
+    "price_usd": 20.0,
+    "category": "figures",
+    "image": "us-img/products/blind-box-miku-forest.jpg",
+    "source": "https://www.tadaimaus.com/product-page/blind-box-miku-forest"
+  },
+  {
+    "slug": "booster-box-destined-rivals",
+    "name": "Booster Box - Destined Rivals",
+    "price_usd": 200.0,
+    "category": "tcg",
+    "image": "us-img/products/booster-box-destined-rivals.jpg",
+    "source": "https://www.tadaimaus.com/product-page/booster-box-destined-rivals"
+  },
+  {
+    "slug": "booster-box-op-13",
+    "name": "Booster box OP-13",
+    "price_usd": 180.0,
+    "category": "tcg",
+    "image": "us-img/products/booster-box-op-13.jpg",
+    "source": "https://www.tadaimaus.com/product-page/booster-box-op-13"
+  },
+  {
+    "slug": "booster-box-riftbound",
+    "name": "Booster Box Riftbound",
+    "price_usd": 150.0,
+    "category": "tcg",
+    "image": "us-img/products/booster-box-riftbound.jpg",
+    "source": "https://www.tadaimaus.com/product-page/booster-box-riftbound"
+  },
+  {
+    "slug": "caroline-doll-backpack",
+    "name": "Caroline Doll Backpack",
+    "price_usd": 70.0,
+    "category": "figures",
+    "image": "us-img/products/caroline-doll-backpack.jpg",
+    "source": "https://www.tadaimaus.com/product-page/caroline-doll-backpack"
+  },
+  {
+    "slug": "dandadan-turbo-granny-socks",
+    "name": "Dandadan Turbo Granny Socks",
+    "price_usd": 15.0,
+    "category": "other",
+    "image": "us-img/products/dandadan-turbo-granny-socks.jpg",
+    "source": "https://www.tadaimaus.com/product-page/dandadan-turbo-granny-socks"
+  },
+  {
+    "slug": "dragpult-ex",
+    "name": "Dragpult Ex",
+    "price_usd": 70.0,
+    "category": "tcg",
+    "image": "us-img/products/dragpult-ex.jpg",
+    "source": "https://www.tadaimaus.com/product-page/dragpult-ex"
+  },
+  {
+    "slug": "etb-plastic-protector-pack-10pcs",
+    "name": "ETB Plastic Protector Pack 10PCS",
+    "price_usd": 10.0,
+    "category": "tcg",
+    "image": "us-img/products/etb-plastic-protector-pack-10pcs.jpg",
+    "source": "https://www.tadaimaus.com/product-page/etb-plastic-protector-pack-10pcs"
+  },
+  {
+    "slug": "final-season-izuku-midoriya",
+    "name": "Final Season Izuku Midoriya",
+    "price_usd": 37.0,
+    "category": "figures",
+    "image": "us-img/products/final-season-izuku-midoriya.jpg",
+    "source": "https://www.tadaimaus.com/product-page/final-season-izuku-midoriya"
+  },
+  {
+    "slug": "funko-pop-dio",
+    "name": "Funko Pop Dio",
+    "price_usd": 15.0,
+    "category": "figures",
+    "image": "us-img/products/funko-pop-dio.jpg",
+    "source": "https://www.tadaimaus.com/product-page/funko-pop-dio"
+  },
+  {
+    "slug": "funko-pop-premium-rengoku",
+    "name": "Funko Pop Premium Rengoku",
+    "price_usd": 25.0,
+    "category": "figures",
+    "image": "us-img/products/funko-pop-premium-rengoku.jpg",
+    "source": "https://www.tadaimaus.com/product-page/funko-pop-premium-rengoku"
+  },
+  {
+    "slug": "hair-clip-zoro",
+    "name": "Hair Clip Zoro",
+    "price_usd": 20.0,
+    "category": "figures",
+    "image": "us-img/products/hair-clip-zoro.jpg",
+    "source": "https://www.tadaimaus.com/product-page/hair-clip-zoro"
+  },
+  {
+    "slug": "illustration-box-vol-3-op",
+    "name": "Illustration Box Vol.3 OP",
+    "price_usd": 30.0,
+    "category": "tcg",
+    "image": "us-img/products/illustration-box-vol-3-op.jpg",
+    "source": "https://www.tadaimaus.com/product-page/illustration-box-vol-3-op"
+  },
+  {
+    "slug": "illustration-box-vol-4-op",
+    "name": "Illustration Box Vol.4 OP",
+    "price_usd": 30.0,
+    "category": "tcg",
+    "image": "us-img/products/illustration-box-vol-4-op.jpg",
+    "source": "https://www.tadaimaus.com/product-page/illustration-box-vol-4-op"
+  },
+  {
+    "slug": "jujutsu-kaise-wall-scroll-teaser",
+    "name": "Jujutsu Kaise Wall Scroll Teaser",
+    "price_usd": 20.0,
+    "category": "figures",
+    "image": "us-img/products/jujutsu-kaise-wall-scroll-teaser.jpg",
+    "source": "https://www.tadaimaus.com/product-page/jujutsu-kaise-wall-scroll-teaser"
+  },
+  {
+    "slug": "jujutsu-kaisen-patch",
+    "name": "Jujutsu Kaisen Patch",
+    "price_usd": 5.0,
+    "category": "figures",
+    "image": "us-img/products/jujutsu-kaisen-patch.jpg",
+    "source": "https://www.tadaimaus.com/product-page/jujutsu-kaisen-patch"
+  },
+  {
+    "slug": "jujutsu-kaisen-pin",
+    "name": "Jujutsu Kaisen Pin",
+    "price_usd": 9.0,
+    "category": "other",
+    "image": "us-img/products/jujutsu-kaisen-pin.jpg",
+    "source": "https://www.tadaimaus.com/product-page/jujutsu-kaisen-pin"
+  },
+  {
+    "slug": "legendary-collectio-kaiba-reprint",
+    "name": "Legendary Collectio Kaiba Reprint",
+    "price_usd": 39.0,
+    "category": "tcg",
+    "image": "us-img/products/legendary-collectio-kaiba-reprint.jpg",
+    "source": "https://www.tadaimaus.com/product-page/legendary-collectio-kaiba-reprint"
+  },
+  {
+    "slug": "lugia-ex-latias-ex-premium-collection",
+    "name": "Lugia Ex & Latias Ex Premium Collection",
+    "price_usd": 50.0,
+    "category": "tcg",
+    "image": "us-img/products/lugia-ex-latias-ex-premium-collection.jpg",
+    "source": "https://www.tadaimaus.com/product-page/lugia-ex-latias-ex-premium-collection"
+  },
+  {
+    "slug": "magnetic-card-holder-bundle-10",
+    "name": "Magnetic Card Holder (Bundle 10)",
+    "price_usd": 9.0,
+    "category": "tcg",
+    "image": "us-img/products/magnetic-card-holder-bundle-10.jpg",
+    "source": "https://www.tadaimaus.com/product-page/magnetic-card-holder-bundle-10"
+  },
+  {
+    "slug": "mega-lucario-ex-figure-collection",
+    "name": "Mega Lucario Ex Figure Collection",
+    "price_usd": 50.0,
+    "category": "tcg",
+    "image": "us-img/products/mega-lucario-ex-figure-collection.jpg",
+    "source": "https://www.tadaimaus.com/product-page/mega-lucario-ex-figure-collection"
+  },
+  {
+    "slug": "mometria-dio",
+    "name": "Mometria Dio",
+    "price_usd": 37.0,
+    "category": "figures",
+    "image": "us-img/products/mometria-dio.jpg",
+    "source": "https://www.tadaimaus.com/product-page/mometria-dio"
+  },
+  {
+    "slug": "one-piece-premium-booster-box-prb02",
+    "name": "One Piece - Premium Booster Box (PRB02)",
+    "price_usd": 180.0,
+    "category": "tcg",
+    "image": "us-img/products/one-piece-premium-booster-box-prb02.jpg",
+    "source": "https://www.tadaimaus.com/product-page/one-piece-premium-booster-box-prb02"
+  },
+  {
+    "slug": "playing-cards-dandadan-a",
+    "name": "Playing Cards Dandadan A",
+    "price_usd": 12.0,
+    "category": "other",
+    "image": "us-img/products/playing-cards-dandadan-a.jpg",
+    "source": "https://www.tadaimaus.com/product-page/playing-cards-dandadan-a"
+  },
+  {
+    "slug": "playing-cards-dandadan-b",
+    "name": "Playing Cards Dandadan B",
+    "price_usd": 12.0,
+    "category": "other",
+    "image": "us-img/products/playing-cards-dandadan-b.jpg",
+    "source": "https://www.tadaimaus.com/product-page/playing-cards-dandadan-b"
+  },
+  {
+    "slug": "pokemon-tin-destined-rivals",
+    "name": "Pokemon Tin - Destined Rivals",
+    "price_usd": 20.0,
+    "category": "tcg",
+    "image": "us-img/products/pokemon-tin-destined-rivals.jpg",
+    "source": "https://www.tadaimaus.com/product-page/pokemon-tin-destined-rivals"
+  },
+  {
+    "slug": "pop-cover-ussop",
+    "name": "Pop Cover Ussop",
+    "price_usd": 20.0,
+    "category": "figures",
+    "image": "us-img/products/pop-cover-ussop.jpg",
+    "source": "https://www.tadaimaus.com/product-page/pop-cover-ussop"
+  },
+  {
+    "slug": "riftbound-proving-grounds-box-set",
+    "name": "Riftbound Proving Grounds Box Set",
+    "price_usd": 150.0,
+    "category": "figures",
+    "image": "us-img/products/riftbound-proving-grounds-box-set.jpg",
+    "source": "https://www.tadaimaus.com/product-page/riftbound-proving-grounds-box-set"
+  },
+  {
+    "slug": "turbo-granny-backpack-mini",
+    "name": "Turbo Granny Backpack Mini",
+    "price_usd": 65.0,
+    "category": "figures",
+    "image": "us-img/products/turbo-granny-backpack-mini.jpg",
+    "source": "https://www.tadaimaus.com/product-page/turbo-granny-backpack-mini"
+  },
+  {
+    "slug": "turbo-granny-pin",
+    "name": "Turbo Granny Pin",
+    "price_usd": 10.0,
+    "category": "other",
+    "image": "us-img/products/turbo-granny-pin.jpg",
+    "source": "https://www.tadaimaus.com/product-page/turbo-granny-pin"
+  },
+  {
+    "slug": "upc-phantasmal",
+    "name": "UPC phantasmal",
+    "price_usd": 170.0,
+    "category": "tcg",
+    "image": "us-img/products/upc-phantasmal.jpg",
+    "source": "https://www.tadaimaus.com/product-page/upc-phantasmal"
+  },
+  {
+    "slug": "wall-scroll-sukuna-seal",
+    "name": "Wall Scroll Sukuna Seal",
+    "price_usd": 20.0,
+    "category": "figures",
+    "image": "us-img/products/wall-scroll-sukuna-seal.jpg",
+    "source": "https://www.tadaimaus.com/product-page/wall-scroll-sukuna-seal"
+  },
+  {
+    "slug": "yu-gi-oh-doom-of-dimensions-token-box",
+    "name": "Yu-Gi-Oh! Doom Of Dimensions Token Box",
+    "price_usd": 23.0,
+    "category": "tcg",
+    "image": "us-img/products/yu-gi-oh-doom-of-dimensions-token-box.jpg",
+    "source": "https://www.tadaimaus.com/product-page/yu-gi-oh-doom-of-dimensions-token-box"
+  },
+  {
+    "slug": "zapdos-ex-collection",
+    "name": "Zapdos Ex Collection",
+    "price_usd": 69.0,
+    "category": "tcg",
+    "image": "us-img/products/zapdos-ex-collection.jpg",
+    "source": "https://www.tadaimaus.com/product-page/zapdos-ex-collection"
+  },
+  {
+    "slug": "zapdos-ex-collection-151",
+    "name": "Zapdos Ex Collection 151",
+    "price_usd": 80.0,
+    "category": "tcg",
+    "image": "us-img/products/zapdos-ex-collection-151.jpg",
+    "source": "https://www.tadaimaus.com/product-page/zapdos-ex-collection-151"
+  }
+]

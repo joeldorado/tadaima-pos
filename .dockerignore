@@ -4,6 +4,8 @@
 node_modules
 landing/node_modules
 landing/dist
+tadaimaus/node_modules
+tadaimaus/dist
 packages/*/node_modules
 apps/*/node_modules
 backend/vendor

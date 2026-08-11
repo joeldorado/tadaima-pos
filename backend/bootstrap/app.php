@@ -39,9 +39,15 @@ return Application::configure(basePath: dirname(__DIR__))
         // Validación → JSON consistente para todas las rutas /api/*
         $exceptions->render(function (\Illuminate\Validation\ValidationException $e, $request) {
             if ($request->is('api/*')) {
+                // TadaimaUS público (api/v1/us/*): el consumidor es el cliente
+                // final de la tienda US — mensaje del envelope en inglés (los
+                // mensajes por campo ya vienen en inglés del FormRequest).
+                $error = $request->is('api/*/us/*')
+                    ? 'The submitted data is not valid.'
+                    : 'Los datos enviados no son válidos.';
                 return response()->json([
                     'success' => false,
-                    'error'   => 'Los datos enviados no son válidos.',
+                    'error'   => $error,
                     'errors'  => $e->errors(),
                 ], 422);
             }

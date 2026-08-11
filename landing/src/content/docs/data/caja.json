@@ -468,7 +468,7 @@
             "kind": "callout",
             "tone": "warn",
             "title": "Si no copiaste el certificado",
-            "text": "En la primera impresión QZ muestra un aviso amarillo: marca “Remember this decision” y presiona Allow — queda permitido para siempre en esa máquina."
+            "text": "QZ muestra un aviso “Action Required — Untrusted website”: presiona Allow SIN marcar “Remember this decision” (con certificado no confiable QZ desactiva Allow si la marcas). El permiso vale solo hasta cerrar el navegador — QZ volverá a preguntar cada sesión. Para que no pregunte nunca, haz el paso 2 (override.crt)."
           },
           {
             "kind": "chips",
