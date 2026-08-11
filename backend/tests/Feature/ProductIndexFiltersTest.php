@@ -109,6 +109,35 @@ class ProductIndexFiltersTest extends TestCase
         $this->assertSame([$this->sinCostoAgotado->id], $this->ids('&out_of_stock=1'));
     }
 
+    public function test_filtro_in_stock_solo_con_stock(): void
+    {
+        // El pool de la Caja: solo lo que tiene stock — el agotado no viaja.
+        $conStock = collect([
+            $this->sinCostoConStock->id, $this->conCostoPocoStock->id, $this->conCostoMuchoStock->id,
+        ])->sort()->values()->all();
+        $this->assertSame($conStock, $this->ids('&in_stock=1'));
+        $this->assertSame($conStock, $this->ids("&in_stock=1&store_id={$this->store->id}&include_unassigned=1"));
+    }
+
+    public function test_filtro_in_stock_con_tienda_solo_cuenta_exhibicion(): void
+    {
+        // Backstock de Bodega NO vuelve vendible a un producto: con store_id el
+        // filtro cuenta solo warehouses type='store' (paridad con stock_total
+        // del light resource, que es lo que la Caja deja cobrar).
+        $bodega = Warehouse::create([
+            'company_id' => $this->company->id, 'store_id' => $this->store->id,
+            'name' => 'Bodega A', 'type' => 'bodega', 'active' => true,
+        ]);
+        $soloBodega = $this->makeProduct('Solo Bodega', 5.0);
+        Inventory::create(['product_id' => $soloBodega->id, 'warehouse_id' => $bodega->id, 'quantity' => 9]);
+
+        $conTienda = $this->ids("&in_stock=1&store_id={$this->store->id}&include_unassigned=1");
+        $this->assertNotContains($soloBodega->id, $conTienda, 'con store_id, bodega no cuenta como vendible');
+
+        // Sin store_id (vista global) el stock de bodega SÍ cuenta.
+        $this->assertContains($soloBodega->id, $this->ids('&in_stock=1'));
+    }
+
     public function test_filtro_low_stock_con_threshold(): void
     {
         // Default 10: stock 3 y 5 entran, 50 no, 0 no (agotado ≠ por agotarse).

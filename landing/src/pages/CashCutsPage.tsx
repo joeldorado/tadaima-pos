@@ -57,19 +57,23 @@ const cellTone = (d: number): string => (Math.abs(d) < 0.01 ? "#10b981" : d < 0 
 const cellTag = (d: number): string => (Math.abs(d) < 0.01 ? "✓" : d < 0 ? "Falta" : "Sobra");
 
 function SummaryCell({ label, value, color, tag }: { label: string; value: string; color?: string | undefined; tag?: string | undefined }) {
+  // El pill (Falta/Sobra/✓) va en el renglón de la etiqueta, no junto al
+  // monto: en el grid de 9 columnas las celdas son angostas y el pill se
+  // salía de la tarjeta (Joel 2026-08-06). El monto conserva su línea entera.
   return (
-    <div className="px-4 py-3 rounded-xl" style={{ background: SURFACE_MUTED, border: "1px solid var(--td-card-border)" }}>
-      <p className="text-[8px] font-black uppercase tracking-widest mb-1" style={{ color: TM }}>{label}</p>
-      <p className="text-sm font-black flex items-center gap-2" style={{ color: color ?? TP }}>
-        {value}
+    <div className="px-4 py-3 rounded-xl min-w-0" style={{ background: SURFACE_MUTED, border: "1px solid var(--td-card-border)" }}>
+      <div className="flex items-start justify-between flex-wrap gap-x-1.5 gap-y-1 mb-1">
+        <p className="text-[8px] font-black uppercase tracking-widest min-w-0" style={{ color: TM }}>{label}</p>
         {tag && (
           <span style={{
             fontSize: 8, fontWeight: 900, padding: "1px 6px", borderRadius: 6,
             background: `${color}22`, color, border: `1px solid ${color}40`,
             textTransform: "uppercase", letterSpacing: "0.1em",
+            whiteSpace: "nowrap", flexShrink: 0,
           }}>{tag}</span>
         )}
-      </p>
+      </div>
+      <p className="text-sm font-black truncate" style={{ color: color ?? TP }}>{value}</p>
     </div>
   );
 }
@@ -119,7 +123,10 @@ function CorteDetail({ session: s }: { session: CashSessionReport }) {
           Imprimir
         </button>
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-9 gap-2 mb-4">
+      {/* auto-fill 140px: en vez de 9 columnas fijas (celdas de ~100px donde
+          los montos se truncaban y el pill Falta/Sobra se salía), cada tarjeta
+          garantiza ancho legible y el grid agrega renglones según la pantalla. */}
+      <div className="grid gap-2 mb-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))" }}>
         <SummaryCell label="Abrió con" value={fmt(s.opening_cash)} />
         <SummaryCell label={`Ventas totales (${s.sales_count})`} value={fmt(s.total_sales)} />
         <SummaryCell label="Cobrado en caja" value={`+${fmt(s.cash_collected)}`} color="#10b981" />

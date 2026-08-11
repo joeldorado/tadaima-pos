@@ -39,13 +39,14 @@ class ImportMacroProductsCommand extends Command
         {--user=1 : id del usuario que firma los movimientos de inventario}
         {--connection=pgsql_target : Conexión Laravel destino}
         {--chunk=500 : Filas por lote de INSERT}
+        {--ref= : Referencia de los movimientos (default import-macro-YYYYMMDD de hoy) — distingue cada corrida}
+        {--pisar-ceros : Existencia 0 en el origen TAMBIÉN pone en 0 el stock del warehouse destino (re-import donde el origen es la verdad)}
+        {--force : Saltar la confirmación interactiva (corridas no-TTY YA autorizadas por Joel)}
         {--unsafe-host : Permitir un target que no sea *.supabase.co (QA/tests)}';
 
     protected $description = 'Importa el catálogo del POS viejo de la sucursal Macro (staging JSON) a Supabase';
 
     private const MANGA_CATEGORIES = ['manga', 'manga extranjero', 'kamite', 'shonen jump'];
-
-    private const IMPORT_REF = 'import-macro-20260717';
 
     public function handle(): int
     {
@@ -172,16 +173,19 @@ class ImportMacroProductsCommand extends Command
 
             return self::SUCCESS;
         }
-        if (! $this->confirm(sprintf('¿Importar %d productos a %s?', count($arts), $host ?: $connName))) {
+        if (! $this->option('force')
+            && ! $this->confirm(sprintf('¿Importar %d productos a %s?', count($arts), $host ?: $connName))) {
             return self::FAILURE;
         }
 
         $chunk = max(50, (int) $this->option('chunk'));
         $now = now();
+        $ref = (string) ($this->option('ref') ?: 'import-macro-'.now()->format('Ymd'));
+        $pisarCeros = (bool) $this->option('pisar-ceros');
 
         $db->transaction(function () use (
             $db, $arts, $nuevos, $aActualizar, $catsExistentes, $catsNuevas,
-            $esManga, $warehouse, $userId, $chunk, $now
+            $esManga, $warehouse, $userId, $chunk, $now, $ref, $pisarCeros
         ) {
             // 1. Categorías faltantes
             foreach ($catsNuevas as $key => $nombre) {
@@ -213,45 +217,85 @@ class ImportMacroProductsCommand extends Command
                 $db->table('products')->insert($filas);
             }
 
-            // ids de TODO el set (nuevos + existentes) por sku
+            // ids de TODO el set (nuevos + existentes) por sku + snapshot para
+            // el diff de abajo (evita re-escribir lo que no cambió)
             $ids = [];
+            $snapshot = [];
             foreach (array_chunk(array_keys($arts), 1000) as $skus) {
-                foreach ($db->table('products')->whereIn('sku', $skus)->get(['id', 'sku']) as $p) {
+                foreach ($db->table('products')->whereIn('sku', $skus)
+                    ->get(['id', 'sku', 'name', 'barcode', 'category_id', 'product_type', 'active', 'cost']) as $p) {
                     $ids[$p->sku] = $p->id;
+                    $snapshot[$p->sku] = $p;
                 }
             }
 
-            // 3. Updates de los que ya existían (pocos — fila por fila está bien)
+            // 3. Updates de los que ya existían — SOLO filas con cambios reales.
+            //    En un re-import ~14k skus ya existen pero casi nada cambió;
+            //    actualizar todo fila-por-fila sobre el pooler WAN era ~45 min
+            //    en UNA transacción y el primer intento murió a medio camino
+            //    (rollback limpio). Con diff quedan unos cientos de UPDATEs.
+            $updsReales = 0;
             foreach ($aActualizar as $a) {
-                $upd = [
-                    'name' => $a['name'],
-                    'barcode' => $a['sku'],
-                    'category_id' => $catId($a),
-                    'product_type' => $esManga($a) ? 'manga' : 'product',
-                    'active' => $a['active'],
-                    'updated_at' => $now,
-                ];
-                if ($a['cost'] !== null) {
-                    $upd['cost'] = $a['cost'];   // nunca pisar costo capturado con NULL
+                $prev = $snapshot[$a['sku']] ?? null;
+                if ($prev === null) {
+                    continue;
                 }
+                $newCat = $catId($a);
+                $newType = $esManga($a) ? 'manga' : 'product';
+                $upd = [];
+                if ((string) $prev->name !== $a['name']) {
+                    $upd['name'] = $a['name'];
+                }
+                if ((string) ($prev->barcode ?? '') !== $a['sku']) {
+                    $upd['barcode'] = $a['sku'];
+                }
+                if ((int) ($prev->category_id ?? 0) !== (int) ($newCat ?? 0)) {
+                    $upd['category_id'] = $newCat;
+                }
+                if ((string) $prev->product_type !== $newType) {
+                    $upd['product_type'] = $newType;
+                }
+                if ((bool) $prev->active !== $a['active']) {
+                    $upd['active'] = $a['active'];
+                }
+                // nunca pisar costo capturado con NULL
+                if ($a['cost'] !== null && round((float) ($prev->cost ?? 0), 2) !== $a['cost']) {
+                    $upd['cost'] = $a['cost'];
+                }
+                if ($upd === []) {
+                    continue;
+                }
+                $upd['updated_at'] = $now;
                 $db->table('products')->where('id', $ids[$a['sku']])->update($upd);
+                $updsReales++;
             }
+            $this->line(sprintf('  Updates con cambios reales: %d de %d existentes', $updsReales, count($aActualizar)));
 
-            // 4. Precios — upsert por product_id (price_1/price_2; 3-5 intactos)
+            // 4. Precios — upsert por product_id (price_1/price_2; 3-5 intactos).
+            //    Diff-aware: solo se re-escriben los que de verdad cambiaron.
             $conPrecio = array_filter($arts, fn ($a) => $a['price_1'] !== null);
-            $yaTienenPrecio = [];
+            $preciosPrevios = [];
             foreach (array_chunk(array_values(array_intersect_key($ids, $conPrecio)), 1000) as $lote) {
-                foreach ($db->table('product_prices')->whereIn('product_id', $lote)->get(['product_id']) as $r) {
-                    $yaTienenPrecio[$r->product_id] = true;
+                foreach ($db->table('product_prices')->whereIn('product_id', $lote)
+                    ->get(['product_id', 'price_1', 'price_2']) as $r) {
+                    $preciosPrevios[$r->product_id] = $r;
                 }
             }
             $inserts = [];
+            $preciosCambiados = 0;
             foreach ($conPrecio as $a) {
                 $pid = $ids[$a['sku']];
-                if (isset($yaTienenPrecio[$pid])) {
+                $prev = $preciosPrevios[$pid] ?? null;
+                if ($prev !== null) {
+                    $igual1 = round((float) ($prev->price_1 ?? 0), 2) === ($a['price_1'] ?? 0.0);
+                    $igual2 = round((float) ($prev->price_2 ?? 0), 2) === ($a['price_2'] ?? 0.0);
+                    if ($igual1 && $igual2) {
+                        continue;
+                    }
                     $db->table('product_prices')->where('product_id', $pid)->update([
                         'price_1' => $a['price_1'], 'price_2' => $a['price_2'], 'updated_at' => $now,
                     ]);
+                    $preciosCambiados++;
                 } else {
                     $inserts[] = [
                         'product_id' => $pid, 'price_1' => $a['price_1'], 'price_2' => $a['price_2'],
@@ -262,6 +306,7 @@ class ImportMacroProductsCommand extends Command
             foreach (array_chunk($inserts, $chunk) as $lote) {
                 $db->table('product_prices')->insert($lote);
             }
+            $this->line(sprintf('  Precios: %d nuevos, %d actualizados', count($inserts), $preciosCambiados));
 
             // 5. Detalles de manga (fila vacía: volume/editorial/genre no vienen
             //    del origen) — upsert por product_id (PK)
@@ -306,7 +351,7 @@ class ImportMacroProductsCommand extends Command
                     $movs[] = [
                         'product_id' => $pid, 'warehouse_id' => $warehouse->id,
                         'type' => 'ajuste', 'quantity' => $delta,
-                        'reference' => self::IMPORT_REF,
+                        'reference' => $ref,
                         'notes' => 'Importación catálogo Macro (Esmeralda S.I)',
                         'user_id' => $userId, 'created_at' => $now,
                     ];
@@ -318,7 +363,7 @@ class ImportMacroProductsCommand extends Command
                     $movs[] = [
                         'product_id' => $pid, 'warehouse_id' => $warehouse->id,
                         'type' => 'entrada', 'quantity' => $qty,
-                        'reference' => self::IMPORT_REF,
+                        'reference' => $ref,
                         'notes' => 'Importación catálogo Macro (Esmeralda S.I)',
                         'user_id' => $userId, 'created_at' => $now,
                     ];
@@ -330,13 +375,42 @@ class ImportMacroProductsCommand extends Command
             foreach (array_chunk($movs, $chunk) as $lote) {
                 $db->table('inventory_movements')->insert($lote);
             }
+
+            // 6b. --pisar-ceros: en un RE-IMPORT el origen es la verdad — lo que
+            //    allá está en 0 se pone en 0 acá también (solo el warehouse
+            //    destino; el ajuste con delta negativo deja rastro).
+            if ($pisarCeros) {
+                $aCero = array_filter($arts, fn ($a) => $a['existencia'] <= 0);
+                $movsCero = [];
+                foreach (array_chunk(array_values(array_intersect_key($ids, $aCero)), 1000) as $lote) {
+                    $filas = $db->table('inventory')->where('warehouse_id', $warehouse->id)
+                        ->whereIn('product_id', $lote)->where('quantity', '!=', 0)
+                        ->get(['product_id', 'quantity']);
+                    foreach ($filas as $r) {
+                        $movsCero[] = [
+                            'product_id' => $r->product_id, 'warehouse_id' => $warehouse->id,
+                            'type' => 'ajuste', 'quantity' => -(float) $r->quantity,
+                            'reference' => $ref,
+                            'notes' => 'Re-import Macro: existencia 0 en el origen',
+                            'user_id' => $userId, 'created_at' => $now,
+                        ];
+                    }
+                    $db->table('inventory')->where('warehouse_id', $warehouse->id)
+                        ->whereIn('product_id', $filas->pluck('product_id')->all())
+                        ->update(['quantity' => 0, 'updated_at' => $now]);
+                }
+                foreach (array_chunk($movsCero, $chunk) as $lote) {
+                    $db->table('inventory_movements')->insert($lote);
+                }
+                $this->line(sprintf('  Puestos en 0 (pisar-ceros): %d', count($movsCero)));
+            }
         });
 
-        return $this->verify($db, $arts, $warehouse->id);
+        return $this->verify($db, $arts, $warehouse->id, $ref);
     }
 
-    /** Verificación post-import: conteos y sumas contra el staging. */
-    private function verify($db, array $arts, int $warehouseId): int
+    /** Verificación post-import: conteos y sumas contra el staging (solo movimientos de ESTA corrida vía $ref). */
+    private function verify($db, array $arts, int $warehouseId, string $ref): int
     {
         $this->info('── Verificación ──');
         $skus = array_keys($arts);
@@ -347,16 +421,23 @@ class ImportMacroProductsCommand extends Command
         $okSkus = $enDb === count($arts);
         $this->line(sprintf('  SKUs en destino: %d / %d %s', $enDb, count($arts), $okSkus ? '✓' : '✗'));
 
+        // Staging vs inventario FINAL del warehouse (no vía movimientos: en un
+        // re-import los productos sin delta no generan movimiento y la suma
+        // por reference daría un ✗ falso).
         $stockEsperado = round(array_sum(array_map(
             fn ($a) => $a['existencia'] > 0 ? $a['existencia'] : 0, $arts
         )), 2);
-        $stockReal = (float) $db->table('inventory')->where('warehouse_id', $warehouseId)
-            ->whereIn('product_id', function ($q) use ($warehouseId) {
-                $q->select('product_id')->from('inventory_movements')
-                    ->where('warehouse_id', $warehouseId)->where('reference', self::IMPORT_REF);
-            })->sum('quantity');
+        $stockReal = 0.0;
+        foreach (array_chunk($skus, 1000) as $lote) {
+            $stockReal += (float) $db->table('inventory')
+                ->where('warehouse_id', $warehouseId)
+                ->whereIn('product_id', function ($q) use ($lote) {
+                    $q->select('id')->from('products')->whereIn('sku', $lote);
+                })->sum('quantity');
+        }
         $okStock = abs($stockEsperado - $stockReal) < 0.01;
-        $this->line(sprintf('  Stock importado: %.2f / %.2f %s', $stockReal, $stockEsperado, $okStock ? '✓' : '✗'));
+        $this->line(sprintf('  Stock en warehouse vs staging: %.2f / %.2f %s (ref de esta corrida: %s)',
+            $stockReal, $stockEsperado, $okStock ? '✓' : '✗', $ref));
 
         $muestra = array_slice($arts, 0, 5, true);
         foreach ($muestra as $a) {

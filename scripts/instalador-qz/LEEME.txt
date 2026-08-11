@@ -1,0 +1,40 @@
+TADAIMA - IMPRESION SILENCIOSA DE TICKETS
+==========================================
+
+Con esto los tickets salen SOLOS en la impresora, sin que se abra
+ninguna ventana de imprimir.
+
+COMO INSTALAR (una sola vez por computadora, necesita internet):
+
+  1. Descomprime este zip en una carpeta (por ejemplo el Escritorio).
+  2. Doble clic en:  instalar.bat
+  3. Acepta cuando Windows pida permiso de administrador.
+  4. El instalador descarga QZ Tray (100 MB) del sitio oficial,
+     lo verifica, lo instala y deja el certificado de Tadaima listo.
+  5. Espera a que diga "LISTO" y presiona una tecla para cerrar.
+
+DESPUES, EN EL SISTEMA TADAIMA (en esa misma computadora):
+
+  1. Entra a la Caja.
+  2. Arriba a la derecha esta el boton de la impresora
+     ("Impresora de tickets").
+  3. Clic en BUSCAR - debe decir "Conectado a QZ Tray".
+  4. En "Elegir impresora" selecciona la impresora de tickets
+     (la Xprinter).
+  5. Prende el switch "Impresion silenciosa (sin ventana)".
+  6. Dale "Imprimir prueba" - debe salir un ticket de prueba solo.
+  7. Guardar. Listo: las ventas ya imprimen sin ventana.
+
+NOTAS:
+- Se configura POR COMPUTADORA (cada caja hace estos pasos una vez).
+- QZ Tray se abre solo al prender la compu (icono junto al reloj).
+- Si algun dia no imprime: revisar que el icono de QZ Tray este
+  junto al reloj; si no esta, abrir QZ Tray desde el menu Inicio.
+- La guia con fotos esta dentro del sistema:
+  Documentacion > "Impresion automatica".
+
+QUE TRAE ESTE ZIP:
+- instalar.bat : hace toda la instalacion automaticamente
+- override.crt : certificado de Tadaima (para que la impresora
+                 nunca pida permiso al imprimir)
+- LEEME.txt    : este archivo

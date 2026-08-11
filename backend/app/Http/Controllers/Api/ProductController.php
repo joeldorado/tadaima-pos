@@ -142,6 +142,19 @@ class ProductController extends Controller
             }
         }
 
+        // Solo productos con stock VENDIBLE (Joel 2026-08-06): el pool de la
+        // Caja manda ?in_stock=1 para no bajar ~14k filas de las que solo
+        // ~1.5k se pueden vender. Con tienda cuenta SOLO Exhibición
+        // (w.type='store') — paridad exacta con lo que la Caja deja cobrar
+        // (stock_total del light resource); el backstock de Bodega no vuelve
+        // vendible a un producto. Opt-in: nadie que no mande el param cambia.
+        if ($request->boolean('in_stock')) {
+            $inStockSql = $storeId
+                ? "COALESCE((SELECT SUM(i.quantity) FROM inventory i JOIN warehouses w ON w.id = i.warehouse_id WHERE i.product_id = products.id AND w.store_id = ? AND w.type = 'store'), 0)"
+                : 'COALESCE((SELECT SUM(i.quantity) FROM inventory i WHERE i.product_id = products.id), 0)';
+            $query->whereRaw("{$inStockSql} > 0", $bind);
+        }
+
         if ($request->boolean('has_promo')) {
             $query->whereHas('activePromotions', fn ($q) => $q->forStore($storeId));
         }

@@ -33,6 +33,8 @@ export interface GetProductsParams {
   out_of_stock?: boolean
   /** Stock 1..threshold — chip "Por agotarse". */
   low_stock?: boolean
+  /** Solo con stock VENDIBLE (Exhibición cuando hay store_id) — el pool de Caja. */
+  in_stock?: boolean
   /** Umbral de low_stock (default backend: 10). */
   threshold?: number
   /** Con promo vigente (scoped a store_id si viene). */
