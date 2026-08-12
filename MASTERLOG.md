@@ -4,7 +4,7 @@
 
 ---
 
-### Sesión 2026-08-11 — TadaimaUS consolidado en commit único + PR #7 actualizado — DEPLOY PENDIENTE
+### Sesión 2026-08-11 — TadaimaUS consolidado + merge total a main — DEPLOYADO rev `tadaima-00004-hhp`
 
 Todo el trabajo TadaimaUS de las sesiones 2026-08-08 → 11 (tienda v2 con hero slider,
 custom listings, leads/newsletter, admin extendido, imágenes locales en
@@ -25,8 +25,25 @@ sirve sus endpoints, van juntos. Conflictos resueltos: imports de `PrinterConfig
 (unión: `useRef` de tadaimaus + `Download` del instalador QZ) y este MASTERLOG (orden
 cronológico). **Rollback:** rama `backup/pre-merge-full-2026-08-11` (local + origin) apunta
 al main pre-merge (`1f2c831`); receta: `git checkout main && git reset --hard
-backup/pre-merge-full-2026-08-11` (+ `git push --force-with-lease` si ya se pusheó). Prod
-NO se tocó — cero deploys; Cloud Run sigue en sus revisiones actuales.
+backup/pre-merge-full-2026-08-11` (+ `git push --force-with-lease` si ya se pusheó).
+
+**Deploy a prod (misma sesión, cierre) — rev `tadaima-00004-hhp` al 100%:** con gcloud ya en
+la cuenta nueva (`tadaima.devmx` / proyecto `tadaimapos`), `gcloud run deploy tadaima
+--source .` desde main. **Trampa descubierta:** el servicio tenía el tráfico ANCLADO a
+`00002` con un tag de staging **`ruben`** apuntando a `00003` — una revisión que la sesión
+de mediodía deployó a MEDIA jornada (catálogo US vacío y `/tadaimaus/` cayendo al POS; código
+intermedio jamás commiteado). El deploy nuevo creó `00004` con 0% de tráfico (gcloud incluso
+reportó el nombre/URL del tag viejo — verificar SIEMPRE con `gcloud run revisions list`).
+Flujo seguro: tag `candidate` → smoke tests contra la revisión directa (catálogo 42 ✓,
+`/tadaimaus/` sirve la tienda US ✓, zip QZ 200 ✓, login 401 contra Supabase ✓, us-img 200 ✓)
+→ promover 100% a `00004` + mover tag `ruben` a `00004` + quitar `candidate`. **Bonus:** el
+SSL de `tadaimamexico.com` que quedó "en emisión" el 08-10 ya prendió — el dominio responde
+200. **Rollback de prod:** `00002-vnj` sigue deployada — `gcloud run services update-traffic
+tadaima --to-revisions tadaima-00002-vnj=100 --region us-central1 --project tadaimapos`.
+El servicio `tadaimaus` (tienda US standalone) NO se redeployó: su código no cambió desde
+su deploy del 08-10 noche (diff vacío vs main). Pier ya puede administrar TadaimaUS desde
+el POS nuevo (tadaimamexico.com → Admin → TadaimaUS) o en la tienda (`#/admin`) — NO desde
+tadaima.poslite.com.mx (servicio viejo, sin este código).
 
 ---
 
