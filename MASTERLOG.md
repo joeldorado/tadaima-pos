@@ -45,6 +45,22 @@ su deploy del 08-10 noche (diff vacío vs main). Pier ya puede administrar Tadai
 el POS nuevo (tadaimamexico.com → Admin → TadaimaUS) o en la tienda (`#/admin`) — NO desde
 tadaima.poslite.com.mx (servicio viejo, sin este código).
 
+**Dominio `tadaimausa.com` (misma noche) — LA TIENDA US YA TIENE DOMINIO PROPIO:** Joel
+compró `tadaimausa.com` (con "a" — el `tadaimaus.com` quedó preso en Wix) y agregó los A/AAAA
+en GoDaddy; el mapeo raíz → servicio `tadaimaus` ya existía y el cert prendió a los ~20 min
+(verificado: `https://tadaimausa.com` sirve la tienda con cert propio hasta 2026-11-10).
+Se detectó y arregló el bloqueador real: **el dominio nuevo NO estaba en CORS** del backend
+(cors.php traía `tadaimaus.com` del plan viejo; `CORS_ORIGIN` env solo trae la run.app de la
+tienda y cors.php NO soporta lista en esa env) → commit `9ba8070` agrega
+`https://tadaimausa.com` + `https://www.tadaimausa.com` a `allowed_origins` → deploy rev
+**`tadaima-00005-hxz`** (candidate → smoke: ACAO correcto para raíz/www/run.app sin romper
+nada, catálogo 42 → promovida al 100% + tag ruben). Verificación FINAL con Chromium real
+contra `https://tadaimausa.com`: catálogo 200 desde el navegador, 18 productos pintados
+(page size), 0 errores de consola. **Pendiente `www.tadaimausa.com`:** mapeo creado, cert en
+emisión; el CNAME actual de www apunta a la raíz — Google pide `www CNAME
+ghs.googlehosted.com.` (cambiarlo en GoDaddy si en ~1h no prende). La tienda NO tiene CSP ni
+dominios hardcodeados (verificado) — solo CORS era el bloqueador.
+
 ---
 
 ### Sesión 2026-08-10 — Migración a cuenta gcloud nueva (tadaimapos) + tienda TadaimaUS en servicio propio + dominio tadaimamexico.com — SIN COMMIT
