@@ -31,6 +31,9 @@ return [
         // contenedor), pero el dominio propio queda permitido explícitamente.
         'https://tadaimaus.com',
         'https://www.tadaimaus.com',
+        // Dominio real comprado 2026-08-11 (tadaimaus.com quedó preso en Wix)
+        'https://tadaimausa.com',
+        'https://www.tadaimausa.com',
         env('APP_URL'),           // Cloud Run URL — se inyecta en producción
         env('CORS_ORIGIN'),       // override puntual si se necesita
     ]),
