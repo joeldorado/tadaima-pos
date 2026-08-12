@@ -19,6 +19,10 @@ export function addListing(
   listing: UsListing,
   quantity = 1,
 ): readonly CartLine[] {
+  // Sold-out guard: the product page disables its button, but a stale catalog
+  // in memory (or a re-used listing object) could still call this — no-op.
+  if (listing.sold_out === true) return lines
+
   const units = Math.max(1, Math.trunc(quantity))
   const existing = lines.find((line) => line.listingId === listing.id)
   if (existing) {

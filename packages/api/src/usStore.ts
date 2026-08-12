@@ -31,6 +31,8 @@ export interface UsListing {
   price_usd: number
   category: UsCategory
   visible: boolean
+  /** Agotado MANUAL: la tienda lo muestra con badge "Sold Out" y bloquea la compra. */
+  sold_out: boolean
   /** Stock vendible (SellableStock del backend) — false ⇒ oculto en la tienda US. */
   in_stock: boolean
   created_at: string
@@ -96,6 +98,7 @@ export interface CreateUsListingInput {
   /** Foto propia (URL de /us/uploads o externa). */
   image_url?: string
   visible?: boolean
+  sold_out?: boolean
 }
 
 export interface UpdateUsListingInput {
@@ -106,6 +109,7 @@ export interface UpdateUsListingInput {
   category?: UsCategory
   image_url?: string | null
   visible?: boolean
+  sold_out?: boolean
 }
 
 export interface GetUsOrdersParams {
@@ -126,6 +130,8 @@ interface RawListing {
   category: UsCategory
   image_url: string | null
   visible: boolean
+  /** Ausente en un backend viejo (pre-migración sold_out) ⇒ false. */
+  sold_out?: boolean
   /** Stock vendible (SellableStock) — sin él, la tienda US oculta el listing. */
   in_stock?: boolean
   created_at: string | null
@@ -170,6 +176,7 @@ function mapListing(raw: RawListing): UsListing {
     price_usd: Number(raw.price_usd),
     category: raw.category ?? 'other',
     visible: raw.visible,
+    sold_out: raw.sold_out ?? false,
     // Backends viejos sin el campo → asumir disponible (no alarmar de más).
     in_stock: raw.in_stock ?? true,
     created_at: raw.created_at ?? '',
@@ -213,6 +220,7 @@ function toListingBody(input: CreateUsListingInput | UpdateUsListingInput): Reco
   if (input.category !== undefined) body['category'] = input.category
   if (input.image_url !== undefined) body['image_url'] = input.image_url
   if (input.visible !== undefined) body['visible'] = input.visible
+  if (input.sold_out !== undefined) body['sold_out'] = input.sold_out
   return body
 }
 

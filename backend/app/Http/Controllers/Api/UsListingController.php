@@ -92,6 +92,7 @@ class UsListingController extends Controller
             'category'    => ['nullable', Rule::in(UsListing::CATEGORIES)],
             'image_url'   => ['nullable', 'string', 'max:500'],
             'visible'     => ['nullable', 'boolean'],
+            'sold_out'    => ['nullable', 'boolean'],
         ]);
 
         $productId = $data['product_id'] ?? null;
@@ -113,6 +114,7 @@ class UsListingController extends Controller
             'category'    => $data['category'] ?? 'other',
             'image_url'   => $data['image_url'] ?? null,
             'visible'     => $data['visible'] ?? true,
+            'sold_out'    => $data['sold_out'] ?? false,
         ]);
 
         $listing->load('product.images');
@@ -142,6 +144,7 @@ class UsListingController extends Controller
             'category'    => ['sometimes', Rule::in(UsListing::CATEGORIES)],
             'image_url'   => ['nullable', 'string', 'max:500'],
             'visible'     => ['sometimes', 'boolean'],
+            'sold_out'    => ['sometimes', 'boolean'],
         ]);
 
         if (array_key_exists('name', $data) && ($data['name'] === null || trim($data['name']) === '')) {
@@ -252,6 +255,9 @@ class UsListingController extends Controller
             // Con fallback a la foto del producto (contrato).
             'image_url'   => $l->resolvedImageUrl(),
             'visible'     => (bool) $l->visible,
+            // Agotado MANUAL: se muestra en la tienda como "Sold Out" y no
+            // se puede comprar. Independiente de visible y de in_stock.
+            'sold_out'    => (bool) $l->sold_out,
             // Sin stock vendible ⇒ el catálogo público lo oculta aunque
             // visible=true — el panel lo señala ("Sin stock — oculto").
             'in_stock'    => $inStock,

@@ -4,6 +4,54 @@
 
 ---
 
+### Sesión 2026-08-12 — TadaimaUS: botón "Agotado" (sold_out) + panel de Pedidos en el admin de la tienda — DEPLOYADO rev `tadaima-00007-l9s` / tienda `tadaimaus-00002-hlk`
+
+Dos pedidos de Pier vía Joel: (1) poder marcar productos de la tienda US como
+**agotados a mano** — no existía: `us_listings` solo tenía `visible` (oculta por
+completo) y los custom (los 42 del Wix) no tenían forma de expresar agotado; y
+(2) ver los **Pedidos** desde el admin de la tienda (`#/admin`), que solo tenía
+Items y Leads (el POS ya tenía los 3 paneles).
+
+**`sold_out` (columna nueva en `us_listings`, migración idempotente):** flag
+MANUAL ortogonal a `visible` y al `in_stock` calculado. Semántica: el producto
+**SÍ sale** en el catálogo con `sold_out: true` → la tienda pinta badge
+"Sold Out" (carta y ficha), deshabilita Add to cart, `cart.ts` tiene guard
+defensivo (carrito persistido en localStorage) y `UsOrderService::createOrder`
+rechaza el item con 422 y mensaje en inglés con el nombre del producto (el
+checkout lo muestra tal cual). **El auto-ocultado por sin-stock POS quedó
+INTACTO** (decisión Joel: sin stock = oculto; sold_out gana solo si hay stock).
+Toggle en LOS DOS admins: tienda (`ListingsPanel` botón Ban + badge "Sold out"
++ checkbox en `ListingModal`) y POS (`PublishedPanel` columna "Agotado";
+`CustomListingModal` a propósito sin checkbox — se marca desde la tabla).
+
+**Panel Orders en `#/admin` (tienda):** ruta nueva `#/admin/orders`
+(`AdminSection` + SECTIONS), `OrdersPanel.tsx` nuevo (~330 líneas, patrón
+fetch/useState de LeadsPanel, sin react-query): chips de filtro por status
+(client-side, el endpoint no filtra), tabla folio/cliente (mailto:/tel:)/total/
+fecha/badge, fila expandible con items (snapshot congelado), select de status
+optimista con rollback y confirm al cancelar. `adminApi.ts` ganó el bloque
+Orders (`listOrders`/`updateOrderStatus`/`mapOrder`, cap 200). El POS no
+necesitó paneles nuevos (ya tenía Pedidos y Leads).
+
+**QA:** 457 PHPUnit (3 tests nuevos sold_out: catálogo, orden mixta con
+rollback, toggle admin) + 62 vitest tadaimaus (guard carrito, mapOrder, rutas)
++ tsc tadaimaus limpio + tsc landing 464 (baseline ~465, cero nuevos) + smoke
+Playwright local (backend SQLite): 12/12 tienda+admin y 7/7 POS (toggle
+Agotado ida y vuelta, Orders con cambio de status). OJO local: `php artisan
+serve --env=sqlitelocal` NO carga el env file — usar
+`APP_ENV=sqlitelocal php artisan serve`.
+
+**Hallazgo al deployar:** existía una rev `tadaima-00006-ht5` (deploy de mediodía
+del merge PR #8 "venta mixta desglose") con **0% de tráfico** — se deployó pero
+nunca se promovió, así que el PR #8 NO estaba vivo en prod. Quedó superseded:
+`00007-l9s` sale de main (que ya incluye PR #8) + sold_out, promovida al 100%
+con smoke en candidate (catálogo 42 con sold_out ✓, /tadaimaus/ 200 ✓, login
+401 Supabase ✓, us-img 200 ✓) y tag `ruben` movido. **Rollback:** `00005-hxz`
+sigue deployada (`gcloud run services update-traffic tadaima
+--to-revisions tadaima-00005-hxz=100`).
+
+---
+
 ### Sesión 2026-08-11 — TadaimaUS consolidado + merge total a main — DEPLOYADO rev `tadaima-00004-hhp`
 
 Todo el trabajo TadaimaUS de las sesiones 2026-08-08 → 11 (tienda v2 con hero slider,

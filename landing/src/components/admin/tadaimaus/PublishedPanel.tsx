@@ -3,7 +3,7 @@ import type { CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
-  AlertTriangle, DollarSign, Eye, EyeOff, Loader2, Package, PackagePlus,
+  AlertTriangle, Ban, DollarSign, Eye, EyeOff, Loader2, Package, PackagePlus,
   RefreshCw, Search as SearchIcon, Trash2, X,
 } from "lucide-react";
 import {
@@ -305,6 +305,7 @@ export function PublishedPanel() {
                   <th className="text-right py-2 px-2">Precio USD</th>
                   <th className="text-left py-2 px-2">Stock</th>
                   <th className="text-center py-2 px-2">Visible</th>
+                  <th className="text-center py-2 px-2">Agotado</th>
                   <th className="text-right py-2 px-2"></th>
                 </tr>
               </thead>
@@ -382,6 +383,23 @@ export function PublishedPanel() {
                           : { background: "rgba(224,34,26,0.12)", border: "1px solid rgba(224,34,26,0.35)", color: "#FF8A80" }}
                       >
                         {listing.visible ? <Eye size={14} /> : <EyeOff size={14} />}
+                      </button>
+                    </td>
+                    <td className="py-2 px-2 text-center">
+                      {/* Agotado MANUAL: a diferencia de ocultar (visible), el
+                          producto SE VE en la tienda con badge "Sold Out" y no
+                          se puede comprar. Independiente del stock POS. */}
+                      <button
+                        onClick={() => updateMutation.mutate({ id: listing.id, patch: { sold_out: !listing.sold_out } })}
+                        title={listing.sold_out
+                          ? "Quitar Agotado (se puede volver a comprar)"
+                          : "Marcar Agotado — se muestra \"Sold Out\" en la tienda y no se puede comprar"}
+                        className="w-8 h-8 rounded-lg inline-flex items-center justify-center cursor-pointer transition-all"
+                        style={listing.sold_out
+                          ? { background: "rgba(224,34,26,0.15)", border: "1px solid rgba(224,34,26,0.45)", color: "#FF8A80" }
+                          : { background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", color: "var(--td-text-lo)" }}
+                      >
+                        <Ban size={14} />
                       </button>
                     </td>
                     <td className="py-2 px-2 text-right">

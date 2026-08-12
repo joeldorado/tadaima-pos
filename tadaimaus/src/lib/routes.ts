@@ -2,8 +2,8 @@
 // router dependency. Unknown hashes fall back to home.
 import { isUsCategory, type UsCategory } from './constants'
 
-/** Secciones del panel de administración (`#/admin`, `#/admin/leads`). */
-export type AdminSection = 'listings' | 'leads'
+/** Secciones del panel de administración (`#/admin`, `#/admin/orders`, `#/admin/leads`). */
+export type AdminSection = 'listings' | 'orders' | 'leads'
 
 export type Route =
   | { readonly page: 'home' }
@@ -28,7 +28,10 @@ export function parseRoute(hash: string): Route {
   if (path === 'admin') return { page: 'admin', section: 'listings' }
   if (path.startsWith('admin/')) {
     const section = path.slice('admin/'.length)
-    return { page: 'admin', section: section === 'leads' ? 'leads' : 'listings' }
+    if (section === 'orders' || section === 'leads') {
+      return { page: 'admin', section }
+    }
+    return { page: 'admin', section: 'listings' }
   }
 
   if (isUsCategory(path)) return { page: 'category', category: path }
@@ -53,7 +56,7 @@ export function routeToHash(route: Route): string {
     case 'checkout':
       return '#/checkout'
     case 'admin':
-      return route.section === 'leads' ? '#/admin/leads' : '#/admin'
+      return route.section === 'listings' ? '#/admin' : `#/admin/${route.section}`
   }
 }
 

@@ -60,6 +60,8 @@ export interface AdminListing {
   readonly category: UsCategory
   readonly image_url: string | null
   readonly visible: boolean
+  /** Agotado MANUAL: la tienda lo muestra con badge "Sold Out" y bloquea la compra. */
+  readonly sold_out: boolean
   /** false ⇒ tiene producto del POS detrás y se quedó sin stock: la tienda lo oculta. */
   readonly in_stock: boolean
   /** true ⇒ sin producto del POS detrás; siempre disponible. */
@@ -74,6 +76,7 @@ export interface ListingInput {
   readonly category: UsCategory
   readonly image_url?: string | null
   readonly visible?: boolean
+  readonly sold_out?: boolean
 }
 
 interface RawListing {
@@ -85,6 +88,8 @@ interface RawListing {
   readonly category: string
   readonly image_url: string | null
   readonly visible: boolean
+  /** Ausente en un backend viejo (pre-migración sold_out) ⇒ false. */
+  readonly sold_out?: boolean
   readonly in_stock?: boolean
   readonly is_custom?: boolean
   readonly created_at: string
@@ -107,6 +112,7 @@ export function mapListing(raw: RawListing): AdminListing {
     category: toCategory(raw.category),
     image_url: absoluteImageUrl(raw.image_url),
     visible: raw.visible,
+    sold_out: raw.sold_out ?? false,
     in_stock: raw.in_stock ?? true,
     is_custom: raw.is_custom ?? true,
     created_at: raw.created_at,
@@ -148,6 +154,7 @@ function toBody(input: Partial<ListingInput>): Record<string, unknown> {
   if (input.category !== undefined) body['category'] = input.category
   if (input.image_url !== undefined) body['image_url'] = input.image_url
   if (input.visible !== undefined) body['visible'] = input.visible
+  if (input.sold_out !== undefined) body['sold_out'] = input.sold_out
   return body
 }
 
@@ -191,6 +198,106 @@ export async function uploadImage(file: File): Promise<string> {
     body: form,
   })
   return absoluteImageUrl(data.url) ?? data.url
+}
+
+// ── Pedidos ──────────────────────────────────────────────────────────────────
+
+export type OrderStatus = 'new' | 'contacted' | 'completed' | 'cancelled'
+
+export interface AdminOrderItem {
+  readonly id: number
+  readonly name: string
+  /** Snapshot congelado al crear el pedido — editar el listing no lo cambia. */
+  readonly price_usd: number
+  readonly quantity: number
+  readonly line_total_usd: number
+}
+
+export interface AdminOrder {
+  readonly id: number
+  /** Folio tipo "TUS-000001". */
+  readonly order_number: string
+  readonly customer_name: string
+  readonly customer_email: string
+  readonly customer_phone: string
+  readonly total_usd: number
+  readonly status: OrderStatus
+  readonly created_at: string
+  readonly items: readonly AdminOrderItem[]
+}
+
+interface RawOrderItem {
+  readonly id: number
+  readonly name: string
+  /** El backend serializa decimal(10,2) como string ("12.00"). */
+  readonly price_usd: string | number
+  readonly quantity: number
+  readonly line_total_usd: string | number
+}
+
+interface RawOrder {
+  readonly id: number
+  readonly order_number: string
+  readonly customer_name: string
+  readonly customer_email: string
+  readonly customer_phone: string
+  readonly total_usd: string | number
+  readonly status: string
+  readonly created_at: string
+  readonly items?: readonly RawOrderItem[]
+}
+
+const ORDER_STATUSES: readonly OrderStatus[] = ['new', 'contacted', 'completed', 'cancelled']
+
+function toOrderStatus(value: string): OrderStatus {
+  return ORDER_STATUSES.includes(value as OrderStatus) ? (value as OrderStatus) : 'new'
+}
+
+function toNumber(value: string | number): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+export function mapOrder(raw: RawOrder): AdminOrder {
+  return {
+    id: raw.id,
+    order_number: raw.order_number,
+    customer_name: raw.customer_name,
+    customer_email: raw.customer_email,
+    customer_phone: raw.customer_phone,
+    total_usd: toNumber(raw.total_usd),
+    status: toOrderStatus(raw.status),
+    created_at: raw.created_at,
+    items: (raw.items ?? []).map((item) => ({
+      id: item.id,
+      name: item.name,
+      price_usd: toNumber(item.price_usd),
+      quantity: item.quantity,
+      line_total_usd: toNumber(item.line_total_usd),
+    })),
+  }
+}
+
+/** Tope del backend: sin paginación, corta en 200 (más nuevos primero). */
+export const ORDERS_CAP = 200
+
+/** GET /us/orders */
+export async function listOrders(): Promise<readonly AdminOrder[]> {
+  const data = await request<readonly RawOrder[]>('/us/orders', { auth: true })
+  return Array.isArray(data) ? data.map(mapOrder) : []
+}
+
+/** PUT /us/orders/{id}/status */
+export async function updateOrderStatus(
+  id: number,
+  status: OrderStatus,
+): Promise<AdminOrder> {
+  const raw = await request<RawOrder>(`/us/orders/${id}/status`, {
+    method: 'PUT',
+    auth: true,
+    body: JSON.stringify({ status }),
+  })
+  return mapOrder(raw)
 }
 
 // ── Leads ────────────────────────────────────────────────────────────────────

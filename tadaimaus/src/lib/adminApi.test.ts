@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { absoluteImageUrl, isAdmin, mapListing } from './adminApi'
+import { absoluteImageUrl, isAdmin, mapListing, mapOrder } from './adminApi'
 
 // En pruebas no hay VITE_API_URL ni PROD, así que resolveApiBase() cae al
 // fallback de desarrollo y el origen es http://127.0.0.1:8000.
@@ -63,6 +63,51 @@ describe('mapListing', () => {
     const mapped = mapListing(partial)
     expect(mapped.in_stock).toBe(true)
     expect(mapped.is_custom).toBe(true)
+  })
+
+  it('defaults sold_out to false when an old backend omits it', () => {
+    expect(mapListing(raw).sold_out).toBe(false)
+    expect(mapListing({ ...raw, sold_out: true }).sold_out).toBe(true)
+  })
+})
+
+describe('mapOrder', () => {
+  const raw = {
+    id: 3,
+    order_number: 'TUS-000003',
+    customer_name: 'John Doe',
+    customer_email: 'john@example.com',
+    customer_phone: '+1 619 555 0100',
+    total_usd: '65.00',
+    status: 'new',
+    created_at: '2026-08-12T10:00:00Z',
+    items: [
+      {
+        id: 9,
+        name: 'Rengoku Figure',
+        price_usd: '12.50',
+        quantity: 2,
+        line_total_usd: '25.00',
+      },
+    ],
+  }
+
+  it('coerces the decimal strings the backend sends into numbers', () => {
+    const mapped = mapOrder(raw)
+    expect(mapped.total_usd).toBe(65)
+    expect(mapped.items[0]?.price_usd).toBe(12.5)
+    expect(mapped.items[0]?.line_total_usd).toBe(25)
+  })
+
+  it('keeps unknown statuses inside the frozen contract', () => {
+    expect(mapOrder(raw).status).toBe('new')
+    expect(mapOrder({ ...raw, status: 'weird' }).status).toBe('new')
+    expect(mapOrder({ ...raw, status: 'cancelled' }).status).toBe('cancelled')
+  })
+
+  it('tolerates a payload without items', () => {
+    const { items: _items, ...partial } = raw
+    expect(mapOrder(partial).items).toEqual([])
   })
 })
 

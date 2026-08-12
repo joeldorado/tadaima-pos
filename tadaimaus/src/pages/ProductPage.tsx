@@ -77,6 +77,7 @@ export function ProductPage({ id }: ProductPageProps) {
   const next = index < siblings.length - 1 ? siblings[index + 1] : undefined
 
   const showImage = listing.image_url !== null && listing.image_url !== '' && !imageFailed
+  const isSoldOut = listing.sold_out === true
 
   return (
     <div className="container section">
@@ -137,7 +138,10 @@ export function ProductPage({ id }: ProductPageProps) {
           {listing.description !== null && listing.description !== '' && (
             <p className="product-detail-desc">{listing.description}</p>
           )}
-          <p className="product-detail-price">{formatUsd(listing.price_usd)}</p>
+          <p className="product-detail-price">
+            {formatUsd(listing.price_usd)}
+            {isSoldOut && <span className="product-detail-soldout">Sold Out</span>}
+          </p>
 
           <div className="product-detail-buy">
             <span className="product-detail-qty-label" id="qty-label">
@@ -168,9 +172,10 @@ export function ProductPage({ id }: ProductPageProps) {
             <button
               type="button"
               className="btn btn-primary"
+              disabled={isSoldOut}
               onClick={() => addItem(listing, quantity)}
             >
-              Add to cart
+              {isSoldOut ? 'Sold Out' : 'Add to cart'}
             </button>
           </div>
         </div>

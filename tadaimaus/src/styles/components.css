@@ -196,6 +196,38 @@
   text-transform: uppercase;
 }
 
+/* Agotado manual — esquina opuesta al chip de categoría para no encimarse. */
+.product-soldout {
+  position: absolute;
+  top: 0.7rem;
+  right: 0.7rem;
+  padding: 0.28rem 0.6rem;
+  background: var(--vermilion-700);
+  border-radius: var(--radius-sm);
+  color: var(--text-on-ink);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* Versión inline (ficha del producto, junto al precio). */
+.product-detail-soldout {
+  display: inline-block;
+  margin-left: 0.7rem;
+  padding: 0.28rem 0.6rem;
+  vertical-align: middle;
+  background: var(--vermilion-700);
+  border-radius: var(--radius-sm);
+  color: var(--text-on-ink);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
 .product-body {
   display: flex;
   flex-direction: column;

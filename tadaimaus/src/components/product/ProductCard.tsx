@@ -42,6 +42,9 @@ export function ProductCard({ listing, showCategory = true }: ProductCardProps) 
         {showCategory && (
           <span className="product-chip">{categoryLabel(listing.category)}</span>
         )}
+        {listing.sold_out === true && (
+          <span className="product-soldout">Sold Out</span>
+        )}
       </a>
 
       <div className="product-body">

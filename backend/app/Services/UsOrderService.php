@@ -47,6 +47,15 @@ class UsOrderService
                 if (! $listings->has($listingId)) {
                     throw new \DomainException('One or more items are no longer available.');
                 }
+
+                // Agotado manual (badge "Sold Out" en la tienda): el carrito
+                // persistido puede traer un item marcado DESPUÉS de agregarlo.
+                $listing = $listings->get($listingId);
+                if ($listing->sold_out) {
+                    throw new \DomainException(
+                        "\"{$listing->name}\" is sold out and can no longer be ordered."
+                    );
+                }
             }
 
             // ── Total server-side (nunca confiar en montos del cliente) ───────

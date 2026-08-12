@@ -28,12 +28,13 @@ class UsListing extends Model
 
     protected $fillable = [
         'product_id', 'slug', 'name', 'description', 'price_usd',
-        'category', 'image_url', 'visible',
+        'category', 'image_url', 'visible', 'sold_out',
     ];
 
     protected $casts = [
         'price_usd' => 'float',
         'visible'   => 'boolean',
+        'sold_out'  => 'boolean',
     ];
 
     // ── Relations ─────────────────────────────────────────────────────────────

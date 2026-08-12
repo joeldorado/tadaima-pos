@@ -67,6 +67,23 @@ describe('addListing', () => {
 
     expect(result[0]?.priceUsd).toBe(0)
   })
+
+  it('ignores sold-out listings (no new line, no quantity bump)', () => {
+    const soldOut = makeListing({ sold_out: true })
+    const lines = [makeLine({ listingId: 2, quantity: 1 })]
+
+    expect(addListing([], soldOut)).toEqual([])
+    expect(addListing(lines, soldOut)).toBe(lines)
+    // Existing line for the same listing does not get bumped either.
+    const withLine = [makeLine()]
+    expect(addListing(withLine, soldOut)).toBe(withLine)
+  })
+
+  it('adds normally when sold_out is absent (old backend payload)', () => {
+    const result = addListing([], makeListing())
+
+    expect(result).toHaveLength(1)
+  })
 })
 
 describe('changeQuantity', () => {

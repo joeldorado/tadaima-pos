@@ -56,6 +56,10 @@ class UsCatalogController extends Controller
             'price_usd'   => number_format((float) $l->price_usd, 2, '.', ''),
             'image_url'   => $l->resolvedImageUrl(),
             'category'    => $l->category,
+            // Agotado manual: SÍ sale en el catálogo (a diferencia del
+            // sin-stock POS, que se oculta) — la tienda pinta "Sold Out"
+            // y bloquea la compra.
+            'sold_out'    => (bool) $l->sold_out,
         ])->values());
     }
 }

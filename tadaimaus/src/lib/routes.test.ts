@@ -27,6 +27,7 @@ describe('parseRoute', () => {
   it('parses the admin panel routes', () => {
     expect(parseRoute('#/admin')).toEqual({ page: 'admin', section: 'listings' })
     expect(parseRoute('#/admin/')).toEqual({ page: 'admin', section: 'listings' })
+    expect(parseRoute('#/admin/orders')).toEqual({ page: 'admin', section: 'orders' })
     expect(parseRoute('#/admin/leads')).toEqual({ page: 'admin', section: 'leads' })
     expect(parseRoute('#/ADMIN/LEADS')).toEqual({ page: 'admin', section: 'leads' })
   })
@@ -51,6 +52,7 @@ describe('routeToHash', () => {
     expect(routeToHash({ page: 'contact' })).toBe('#/contact')
     expect(routeToHash({ page: 'checkout' })).toBe('#/checkout')
     expect(routeToHash({ page: 'admin', section: 'listings' })).toBe('#/admin')
+    expect(routeToHash({ page: 'admin', section: 'orders' })).toBe('#/admin/orders')
     expect(routeToHash({ page: 'admin', section: 'leads' })).toBe('#/admin/leads')
   })
 })

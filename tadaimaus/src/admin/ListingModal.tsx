@@ -30,6 +30,7 @@ export function ListingModal({ listing, onClose, onSaved }: ListingModalProps) {
   const [price, setPrice] = useState(listing !== null ? listing.price_usd.toFixed(2) : '')
   const [category, setCategory] = useState<UsCategory>(listing?.category ?? 'figures')
   const [imageUrl, setImageUrl] = useState(listing?.image_url ?? '')
+  const [soldOut, setSoldOut] = useState(listing?.sold_out ?? false)
   const [error, setError] = useState<string | null>(null)
   const [isSaving, setSaving] = useState(false)
   const [isUploading, setUploading] = useState(false)
@@ -85,6 +86,7 @@ export function ListingModal({ listing, onClose, onSaved }: ListingModalProps) {
       price_usd: Math.round(parsedPrice * 100) / 100,
       category,
       image_url: imageUrl.trim() === '' ? null : imageUrl.trim(),
+      sold_out: soldOut,
     }
 
     setSaving(true)
@@ -245,6 +247,21 @@ export function ListingModal({ listing, onClose, onSaved }: ListingModalProps) {
                 </div>
               </div>
             </div>
+
+            <label className="admin-check" htmlFor="listing-sold-out">
+              <input
+                id="listing-sold-out"
+                type="checkbox"
+                checked={soldOut}
+                onChange={(event) => setSoldOut(event.target.checked)}
+              />
+              <span>
+                Sold out
+                <span className="admin-check-hint">
+                  Shown in the store with a “Sold Out” badge; customers can’t order it.
+                </span>
+              </span>
+            </label>
           </div>
 
           <footer className="admin-modal-foot">

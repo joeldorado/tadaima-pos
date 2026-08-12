@@ -9,7 +9,7 @@ import {
 } from '../lib/adminApi'
 import { SHOP_CATEGORIES, type UsCategory } from '../lib/constants'
 import { ApiRequestError } from '../lib/http'
-import { EyeIcon, EyeOffIcon, ImageIcon, PencilIcon, PlusIcon, TrashIcon } from './icons'
+import { BanIcon, EyeIcon, EyeOffIcon, ImageIcon, PencilIcon, PlusIcon, TrashIcon } from './icons'
 import { ListingModal } from './ListingModal'
 
 type PanelState =
@@ -129,7 +129,7 @@ export function ListingsPanel() {
   const patch = useCallback(
     async (
       listing: AdminListing,
-      changes: Partial<Pick<AdminListing, 'price_usd' | 'category' | 'visible'>>,
+      changes: Partial<Pick<AdminListing, 'price_usd' | 'category' | 'visible' | 'sold_out'>>,
     ): Promise<void> => {
       setActionError(null)
       setState((current) =>
@@ -346,8 +346,12 @@ export function ListingsPanel() {
                       </td>
 
                       <td>
+                        {/* Prioridad: Hidden > Sold out (manual) > Out of stock
+                            (calculado) > Live. */}
                         {!listing.visible ? (
                           <span className="admin-badge admin-badge-neutral">Hidden</span>
+                        ) : listing.sold_out ? (
+                          <span className="admin-badge admin-badge-warn">Sold out</span>
                         ) : !listing.in_stock ? (
                           <span className="admin-badge admin-badge-warn">Out of stock</span>
                         ) : (
@@ -369,6 +373,19 @@ export function ListingsPanel() {
                             title={listing.visible ? 'Hide from the store' : 'Show in the store'}
                           >
                             {listing.visible ? <EyeIcon /> : <EyeOffIcon />}
+                          </button>
+                          <button
+                            type="button"
+                            className={`admin-icon-btn${listing.sold_out ? ' is-soldout' : ''}`}
+                            onClick={() => void patch(listing, { sold_out: !listing.sold_out })}
+                            aria-label={
+                              listing.sold_out
+                                ? `Mark ${listing.name} as available`
+                                : `Mark ${listing.name} as sold out`
+                            }
+                            title={listing.sold_out ? 'Mark as available' : 'Mark as sold out'}
+                          >
+                            <BanIcon />
                           </button>
                           <button
                             type="button"

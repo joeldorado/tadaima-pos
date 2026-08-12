@@ -76,6 +76,16 @@ export function CheckIcon(props: IconProps) {
   )
 }
 
+/** Círculo tachado — marcar/desmarcar "Sold out". */
+export function BanIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="m5.6 5.6 12.8 12.8" />
+    </Svg>
+  )
+}
+
 export function ImageIcon(props: IconProps) {
   return (
     <Svg {...props}>

@@ -250,6 +250,97 @@ class UsStoreTest extends TestCase
         $this->assertDatabaseCount('us_orders', 0);
     }
 
+    // ── Agotado manual (sold_out) ─────────────────────────────────────────────
+
+    public function test_catalogo_publico_expone_sold_out(): void
+    {
+        // A diferencia del sin-stock POS (que se OCULTA), el agotado manual SÍ
+        // sale en el catálogo — la tienda pinta "Sold Out" y bloquea la compra.
+        $agotado = $this->makeListing($this->makeProduct('Funko Rengoku', 'FIG-001'), [
+            'name' => 'Rengoku Figure', 'sold_out' => true,
+        ]);
+        $normal = $this->makeListing($this->makeProduct('Booster OP-13', 'TCG-001'), [
+            'name' => 'OP-13 Booster Box',
+        ]);
+
+        $resp = $this->getJson('/api/v1/us/catalog')->assertOk();
+        $rows = collect($resp->json('data'))->keyBy('id');
+
+        $this->assertCount(2, $rows);
+        $this->assertTrue($rows[$agotado->id]['sold_out']);
+        $this->assertFalse($rows[$normal->id]['sold_out']);
+
+        // El filtro de stock NO cambió: sin stock POS sigue oculto por
+        // completo, aunque además esté marcado sold_out.
+        $this->makeListing($this->makeProduct('Sin Stock', 'FIG-099', stock: 0), [
+            'name' => 'Producto Sin Stock', 'sold_out' => true,
+        ]);
+        $this->getJson('/api/v1/us/catalog?search=sin stock')->assertOk()
+            ->assertJsonCount(0, 'data');
+    }
+
+    public function test_orden_rechaza_items_sold_out_con_rollback_total(): void
+    {
+        $normal = $this->makeListing($this->makeProduct('Funko', 'FIG-001'), [
+            'name' => 'Rengoku Figure', 'price_usd' => 25,
+        ]);
+        $agotado = $this->makeListing($this->makeProduct('Booster', 'TCG-001'), [
+            'name' => 'OP-13 Booster Box', 'price_usd' => 120, 'sold_out' => true,
+        ]);
+
+        // Pedido mixto (1 normal + 1 agotado) → 422 con mensaje claro y CERO
+        // pedidos/items creados (rollback total).
+        $this->postJson('/api/v1/us/orders', [
+            'name' => 'John', 'email' => 'john@example.com', 'phone' => '+1 619 555 0100',
+            'items' => [
+                ['listing_id' => $normal->id, 'quantity' => 1],
+                ['listing_id' => $agotado->id, 'quantity' => 1],
+            ],
+        ])->assertStatus(422)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('error', '"OP-13 Booster Box" is sold out and can no longer be ordered.');
+
+        $this->assertDatabaseCount('us_orders', 0);
+        $this->assertDatabaseCount('us_order_items', 0);
+
+        // Al desmarcar, la compra procede normal.
+        $agotado->update(['sold_out' => false]);
+        $this->postJson('/api/v1/us/orders', [
+            'name' => 'John', 'email' => 'john@example.com', 'phone' => '+1 619 555 0100',
+            'items' => [['listing_id' => $agotado->id, 'quantity' => 1]],
+        ])->assertCreated();
+    }
+
+    public function test_admin_marca_y_desmarca_sold_out(): void
+    {
+        $listing = $this->makeListing($this->makeProduct('Funko', 'FIG-001'), [
+            'name' => 'Rengoku Figure',
+        ]);
+
+        // Default: false, expuesto en el index.
+        $this->actingAs($this->admin)->getJson('/api/v1/us/listings')->assertOk()
+            ->assertJsonPath('data.0.sold_out', false);
+
+        // Toggle ON / OFF vía update.
+        $this->actingAs($this->admin)->putJson("/api/v1/us/listings/{$listing->id}", [
+            'sold_out' => true,
+        ])->assertOk()->assertJsonPath('data.sold_out', true);
+        $this->assertDatabaseHas('us_listings', ['id' => $listing->id, 'sold_out' => true]);
+
+        $this->actingAs($this->admin)->putJson("/api/v1/us/listings/{$listing->id}", [
+            'sold_out' => false,
+        ])->assertOk()->assertJsonPath('data.sold_out', false);
+
+        // CREATE custom ya agotado; sin el campo → default false.
+        $this->actingAs($this->admin)->postJson('/api/v1/us/listings', [
+            'name' => 'Custom Agotado', 'price_usd' => 15, 'category' => 'other',
+            'sold_out' => true,
+        ])->assertCreated()->assertJsonPath('data.sold_out', true);
+        $this->actingAs($this->admin)->postJson('/api/v1/us/listings', [
+            'name' => 'Custom Normal', 'price_usd' => 15, 'category' => 'other',
+        ])->assertCreated()->assertJsonPath('data.sold_out', false);
+    }
+
     // ── Admin: CRUD de listings ───────────────────────────────────────────────
 
     public function test_admin_crud_de_listings(): void

@@ -17,6 +17,11 @@ export interface UsListing {
   readonly price_usd: string
   readonly image_url: string | null
   readonly category: string
+  /**
+   * Agotado MANUAL (admin): se muestra con badge "Sold Out" y no se puede
+   * comprar. Opcional a propósito — un backend viejo no lo manda (= false).
+   */
+  readonly sold_out?: boolean
 }
 
 export interface OrderItemInput {

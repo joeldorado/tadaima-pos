@@ -1,8 +1,10 @@
+import type { ComponentType } from 'react'
 import { AuthProvider, useAuth } from '../store/AuthContext'
 import type { AdminSection } from '../lib/routes'
 import { LeadsPanel } from './LeadsPanel'
 import { ListingsPanel } from './ListingsPanel'
 import { LoginPage } from './LoginPage'
+import { OrdersPanel } from './OrdersPanel'
 import './admin.css'
 
 interface AdminAppProps {
@@ -11,11 +13,19 @@ interface AdminAppProps {
 
 const SECTIONS: readonly { readonly value: AdminSection; readonly label: string; readonly hash: string }[] = [
   { value: 'listings', label: 'Items', hash: '#/admin' },
+  { value: 'orders', label: 'Orders', hash: '#/admin/orders' },
   { value: 'leads', label: 'Leads', hash: '#/admin/leads' },
 ]
 
+const PANELS: Record<AdminSection, ComponentType> = {
+  listings: ListingsPanel,
+  orders: OrdersPanel,
+  leads: LeadsPanel,
+}
+
 function AdminShell({ section }: AdminAppProps) {
   const { user, logout } = useAuth()
+  const Panel = PANELS[section]
 
   return (
     <div className="admin-shell">
@@ -49,7 +59,7 @@ function AdminShell({ section }: AdminAppProps) {
       </nav>
 
       <main className="admin-main">
-        {section === 'leads' ? <LeadsPanel /> : <ListingsPanel />}
+        <Panel />
       </main>
     </div>
   )
