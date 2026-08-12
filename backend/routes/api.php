@@ -33,7 +33,9 @@ use App\Http\Controllers\Api\StoreController;
 use App\Http\Controllers\Api\SuppliesController;
 use App\Http\Controllers\Api\TerminalController;
 use App\Http\Controllers\Api\UserController;
+use App\Http\Controllers\Api\UsAccountController;
 use App\Http\Controllers\Api\UsCatalogController;
+use App\Http\Controllers\Api\UsCustomerAuthController;
 use App\Http\Controllers\Api\UsLeadController;
 use App\Http\Controllers\Api\UsListingController;
 use App\Http\Controllers\Api\UsOrderController;
@@ -49,7 +51,8 @@ use Illuminate\Support\Facades\Route;
 
 // ── Auth (públicas — sin middleware) ──────────────────────────────────────────
 Route::prefix('auth')->group(function () {
-    Route::post('login',  [AuthController::class, 'login']);
+    // pos-login = 10/min por ip+email (AppServiceProvider) — estaba SIN límite.
+    Route::post('login',  [AuthController::class, 'login'])->middleware('throttle:pos-login');
     Route::post('logout', [AuthController::class, 'logout'])->middleware('auth:sanctum');
     Route::get('me',      [AuthController::class, 'me'])->middleware('auth:sanctum');
     Route::post('password', [AuthController::class, 'changePassword'])->middleware('auth:sanctum');
@@ -75,6 +78,24 @@ Route::post('us/orders', [UsOrderController::class, 'store'])
 // Honeypot en StoreUsLeadRequest; bucket propio para no pisar el checkout.
 Route::post('us/leads', [UsLeadController::class, 'store'])
     ->middleware('throttle:us-leads');
+
+// ── TadaimaUS clientes (cuentas de comprador — guard `us`, NO users del POS) ──
+// Login de regreso: email O teléfono + contraseña. La cuenta se CREA en el
+// checkout (POST us/orders con password), no hay registro standalone.
+// us-auth = 5/min por ip+identifier (AppServiceProvider).
+Route::post('us/auth/login', [UsCustomerAuthController::class, 'login'])
+    ->middleware('throttle:us-auth');
+
+// Panel del cliente: solo tokens de UsCustomer (auth:us). Un token del POS
+// recibe 401 aquí, y un token de cliente recibe 401 en las rutas del POS
+// (guards con provider explícito en config/auth.php).
+Route::middleware(['auth:us', 'throttle:60,1'])->prefix('us/account')->group(function () {
+    Route::get('me',       [UsAccountController::class, 'me']);
+    Route::get('orders',   [UsAccountController::class, 'orders']);
+    Route::put('profile',  [UsAccountController::class, 'updateProfile']);
+    Route::put('password', [UsAccountController::class, 'changePassword']);
+    Route::post('logout',  [UsCustomerAuthController::class, 'logout']);
+});
 
 // ── Rutas protegidas ──────────────────────────────────────────────────────────
 // Rate limit por usuario (120 req/min) — amortigua polling/abuso sin estorbar al

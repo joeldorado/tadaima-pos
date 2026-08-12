@@ -1,10 +1,11 @@
-// Cliente HTTP compartido por las DOS superficies de la app:
-//   · la tienda pública (lib/api.ts) — sin auth
-//   · el panel de administración (lib/adminApi.ts) — con token Sanctum
+// Cliente HTTP compartido por las TRES superficies de la app:
+//   · la tienda pública (lib/api.ts) — sin auth (checkout con sesión opcional)
+//   · el panel de administración (lib/adminApi.ts) — token Sanctum de User POS
+//   · la cuenta del cliente (lib/customerApi.ts) — token Sanctum de UsCustomer
 //
 // Envelopes del backend (misma convención que todo el repo):
 //   éxito → { success, data, message }
-//   error → { success: false, error, errors }
+//   error → { success: false, error, errors, code? }
 
 // ── Errores ──────────────────────────────────────────────────────────────────
 
@@ -12,17 +13,27 @@ export class ApiRequestError extends Error {
   /** Código HTTP; 0 cuando ni siquiera se pudo alcanzar el servidor. */
   readonly status: number
   readonly fieldErrors: Readonly<Record<string, readonly string[]>>
+  /** Código de negocio opcional del backend (p.ej. 'account_exists'). */
+  readonly code: string | undefined
 
   constructor(
     message: string,
     status = 0,
     fieldErrors: Readonly<Record<string, readonly string[]>> = {},
+    code?: string,
   ) {
     super(message)
     this.name = 'ApiRequestError'
     this.status = status
     this.fieldErrors = fieldErrors
+    this.code = code
   }
+}
+
+function extractCode(body: unknown): string | undefined {
+  if (typeof body !== 'object' || body === null) return undefined
+  const code = (body as Record<string, unknown>)['code']
+  return typeof code === 'string' ? code : undefined
 }
 
 export function extractErrorMessage(body: unknown, fallback: string): string {
@@ -69,21 +80,41 @@ export function resolveApiOrigin(): string {
   return resolveApiBase().replace(/\/api\/v1$/, '')
 }
 
-// ── Token de sesión del panel ────────────────────────────────────────────────
-// Se guarda a nivel módulo (mismo patrón que `setTokenGetter` del POS) para que
-// los módulos de API no tengan que leer storage ni recibir el token por
-// parámetro en cada llamada.
+// ── Tokens de sesión ─────────────────────────────────────────────────────────
+// DOS slots a nivel módulo (mismo patrón que `setTokenGetter` del POS): el del
+// ADMIN (panel #/admin, User del POS) y el del CLIENTE (cuenta de la tienda,
+// UsCustomer). Son sesiones independientes — jamás deben pisarse.
+
+export type AuthKind = 'admin' | 'customer'
 
 let authToken: string | null = null
 let onUnauthorized: (() => void) | null = null
+let customerToken: string | null = null
+let onCustomerUnauthorized: (() => void) | null = null
 
+/** Token del PANEL de administración (back-compat: nombre original). */
 export function setAuthToken(token: string | null): void {
   authToken = token
 }
 
-/** Se dispara cuando el backend rechaza el token (sesión vencida o revocada). */
+/** Se dispara cuando el backend rechaza el token del admin. */
 export function setOnUnauthorized(handler: (() => void) | null): void {
   onUnauthorized = handler
+}
+
+/** Token de la CUENTA del cliente de la tienda. */
+export function setCustomerToken(token: string | null): void {
+  customerToken = token
+}
+
+/** ¿Hay sesión de cliente activa? (el checkout decide si manda bearer). */
+export function hasCustomerToken(): boolean {
+  return customerToken !== null
+}
+
+/** Se dispara cuando el backend rechaza el token del cliente. */
+export function setOnCustomerUnauthorized(handler: (() => void) | null): void {
+  onCustomerUnauthorized = handler
 }
 
 // ── Helper de request ────────────────────────────────────────────────────────
@@ -97,17 +128,24 @@ const RATE_LIMIT_MESSAGE =
 export interface RequestOptions extends RequestInit {
   /** Manda el bearer token y activa el manejo de 401. */
   readonly auth?: boolean
+  /**
+   * Qué sesión usa la llamada. Default 'admin' (back-compat: adminApi no
+   * cambia); customerApi y el checkout mandan 'customer'.
+   */
+  readonly as?: AuthKind
 }
 
 export async function request<T>(path: string, init: RequestOptions = {}): Promise<T> {
-  const { auth = false, headers: extraHeaders, ...rest } = init
+  const { auth = false, as: kind = 'admin', headers: extraHeaders, ...rest } = init
   const isFormData = rest.body instanceof FormData
+
+  const token = kind === 'customer' ? customerToken : authToken
 
   const headers: Record<string, string> = { Accept: 'application/json' }
   // Con FormData el navegador debe poner el Content-Type él mismo: necesita
   // agregarle el boundary del multipart.
   if (!isFormData) headers['Content-Type'] = 'application/json'
-  if (auth && authToken !== null) headers['Authorization'] = `Bearer ${authToken}`
+  if (auth && token !== null) headers['Authorization'] = `Bearer ${token}`
 
   let response: Response
   try {
@@ -131,9 +169,11 @@ export async function request<T>(path: string, init: RequestOptions = {}): Promi
       ? (body as Record<string, unknown>)['success']
       : undefined
 
-  if (response.status === 401 && auth) {
-    // Token vencido o revocado: avisar para que el panel regrese al login.
-    onUnauthorized?.()
+  if (response.status === 401 && auth && token !== null) {
+    // Token vencido o revocado: avisar al handler de LA sesión usada para que
+    // esa superficie regrese a su login (la otra sesión no se toca).
+    if (kind === 'customer') onCustomerUnauthorized?.()
+    else onUnauthorized?.()
     throw new ApiRequestError('Your session expired. Please sign in again.', 401)
   }
 
@@ -147,6 +187,7 @@ export async function request<T>(path: string, init: RequestOptions = {}): Promi
       extractErrorMessage(body, `Request failed (${response.status})`),
       response.status,
       extractFieldErrors(body),
+      extractCode(body),
     )
   }
 

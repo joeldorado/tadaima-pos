@@ -34,6 +34,13 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('us-orders', fn (Request $request) => Limit::perMinute(10)->by($request->ip()));
         RateLimiter::for('us-leads', fn (Request $request) => Limit::perMinute(10)->by($request->ip()));
 
+        // Logins — bucket por ip+cuenta (frena fuerza bruta sin castigar a
+        // toda la IP de un café/oficina por un vecino equivocándose).
+        RateLimiter::for('us-auth', fn (Request $request) => Limit::perMinute(5)
+            ->by($request->ip() . '|' . strtolower((string) $request->input('identifier'))));
+        RateLimiter::for('pos-login', fn (Request $request) => Limit::perMinute(10)
+            ->by($request->ip() . '|' . strtolower((string) $request->input('email'))));
+
         // ADR-014: el carrito vive client-side hasta el cobro. Sin drafts en vivo
         // que extender/expirar, este observer queda desactivado. Se mantiene la
         // clase en código por si volvemos al modelo server-authoritative.

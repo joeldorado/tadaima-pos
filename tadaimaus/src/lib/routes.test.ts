@@ -24,6 +24,15 @@ describe('parseRoute', () => {
     expect(parseRoute('#/product/42/')).toEqual({ page: 'product', id: 42 })
   })
 
+  it('parses the customer login and account routes', () => {
+    expect(parseRoute('#/login')).toEqual({ page: 'login' })
+    expect(parseRoute('#/account')).toEqual({ page: 'account', section: 'orders' })
+    expect(parseRoute('#/account/')).toEqual({ page: 'account', section: 'orders' })
+    expect(parseRoute('#/account/settings')).toEqual({ page: 'account', section: 'settings' })
+    // Sección desconocida se queda DENTRO de la cuenta (no rebota a home).
+    expect(parseRoute('#/account/nope')).toEqual({ page: 'account', section: 'orders' })
+  })
+
   it('parses the admin panel routes', () => {
     expect(parseRoute('#/admin')).toEqual({ page: 'admin', section: 'listings' })
     expect(parseRoute('#/admin/')).toEqual({ page: 'admin', section: 'listings' })
@@ -51,6 +60,9 @@ describe('routeToHash', () => {
     expect(routeToHash({ page: 'product', id: 42 })).toBe('#/product/42')
     expect(routeToHash({ page: 'contact' })).toBe('#/contact')
     expect(routeToHash({ page: 'checkout' })).toBe('#/checkout')
+    expect(routeToHash({ page: 'login' })).toBe('#/login')
+    expect(routeToHash({ page: 'account', section: 'orders' })).toBe('#/account')
+    expect(routeToHash({ page: 'account', section: 'settings' })).toBe('#/account/settings')
     expect(routeToHash({ page: 'admin', section: 'listings' })).toBe('#/admin')
     expect(routeToHash({ page: 'admin', section: 'orders' })).toBe('#/admin/orders')
     expect(routeToHash({ page: 'admin', section: 'leads' })).toBe('#/admin/leads')

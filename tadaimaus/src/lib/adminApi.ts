@@ -213,6 +213,14 @@ export interface AdminOrderItem {
   readonly line_total_usd: number
 }
 
+export interface AdminOrderShipping {
+  readonly address: string | null
+  readonly city: string | null
+  readonly state: string | null
+  readonly zip: string | null
+  readonly country: string | null
+}
+
 export interface AdminOrder {
   readonly id: number
   /** Folio tipo "TUS-000001". */
@@ -223,6 +231,10 @@ export interface AdminOrder {
   readonly total_usd: number
   readonly status: OrderStatus
   readonly created_at: string
+  /** null ⇒ pedido anterior a las cuentas de cliente. */
+  readonly us_customer_id: number | null
+  /** Dirección congelada al comprar; nulls en pedidos legacy. */
+  readonly shipping: AdminOrderShipping
   readonly items: readonly AdminOrderItem[]
 }
 
@@ -244,6 +256,9 @@ interface RawOrder {
   readonly total_usd: string | number
   readonly status: string
   readonly created_at: string
+  /** Ausentes en un backend viejo (pre-cuentas). */
+  readonly us_customer_id?: number | null
+  readonly shipping?: Partial<AdminOrderShipping>
   readonly items?: readonly RawOrderItem[]
 }
 
@@ -268,6 +283,14 @@ export function mapOrder(raw: RawOrder): AdminOrder {
     total_usd: toNumber(raw.total_usd),
     status: toOrderStatus(raw.status),
     created_at: raw.created_at,
+    us_customer_id: raw.us_customer_id ?? null,
+    shipping: {
+      address: raw.shipping?.address ?? null,
+      city: raw.shipping?.city ?? null,
+      state: raw.shipping?.state ?? null,
+      zip: raw.shipping?.zip ?? null,
+      country: raw.shipping?.country ?? null,
+    },
     items: (raw.items ?? []).map((item) => ({
       id: item.id,
       name: item.name,

@@ -33,6 +33,17 @@ export interface OrderInput {
   readonly name: string
   readonly email: string
   readonly phone: string
+  /** Dirección de entrega (snapshot en el pedido, estilo Wix). */
+  readonly address: string
+  readonly city: string
+  readonly state: string
+  readonly zip: string
+  readonly country: string
+  /**
+   * Crea la cuenta del cliente (obligatoria si NO hay sesión). Con sesión de
+   * cliente activa se omite — el backend liga la orden al bearer.
+   */
+  readonly password?: string
   /** Honeypot anti-bots: siempre "" — un humano nunca ve/llena este campo. */
   readonly website?: string
   readonly items: readonly OrderItemInput[]
@@ -42,6 +53,16 @@ export interface OrderConfirmation {
   /** Folio like "TUS-000001". */
   readonly order_number: string
   readonly total_usd: string | number
+  /** Presente SOLO cuando el checkout creó la cuenta → auto-login. */
+  readonly token?: string
+  readonly customer?: { readonly id: number; readonly name: string; readonly email: string }
+  readonly shipping?: {
+    readonly address: string | null
+    readonly city: string | null
+    readonly state: string | null
+    readonly zip: string | null
+    readonly country: string | null
+  }
 }
 
 // ── Endpoints públicos ───────────────────────────────────────────────────────
@@ -84,10 +105,16 @@ export async function submitLead(input: LeadInput): Promise<void> {
   })
 }
 
-/** POST /us/orders — server recomputes all prices; response carries the folio. */
+/**
+ * POST /us/orders — server recomputes all prices; response carries the folio.
+ * `auth + as:'customer'`: con sesión de cliente manda el bearer (el backend
+ * liga la orden a la cuenta); sin sesión no agrega header (sigue público).
+ */
 export async function placeOrder(input: OrderInput): Promise<OrderConfirmation> {
   const data = await request<unknown>('/us/orders', {
     method: 'POST',
+    auth: true,
+    as: 'customer',
     body: JSON.stringify(input),
   })
   if (

@@ -1,7 +1,9 @@
+import { useEffect, useRef, useState } from 'react'
 import { useScrolled } from '../../hooks/useScrolled'
 import { BRAND, SHOP_CATEGORIES } from '../../lib/constants'
 import type { Route } from '../../lib/routes'
 import { useCart } from '../../store/CartContext'
+import { useCustomerAuth } from '../../store/CustomerAuthContext'
 
 interface NavItem {
   readonly label: string
@@ -61,12 +63,79 @@ function LoginIcon() {
   )
 }
 
+/**
+ * Menú de la cuenta del CLIENTE (logueado): My Orders / Settings / Sign out.
+ * Popover propio (sin dependencia): cierra con click fuera y con Escape.
+ */
+function AccountMenu() {
+  const { customer, logout } = useCustomerAuth()
+  const [isOpen, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!isOpen) return
+    const handleDown = (event: MouseEvent): void => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false)
+      }
+    }
+    const handleKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', handleDown)
+    document.addEventListener('keydown', handleKey)
+    return () => {
+      document.removeEventListener('mousedown', handleDown)
+      document.removeEventListener('keydown', handleKey)
+    }
+  }, [isOpen])
+
+  const firstName = (customer?.name ?? '').trim().split(/\s+/)[0] || 'Account'
+
+  return (
+    <div className="header-account" ref={containerRef}>
+      <button
+        type="button"
+        className="header-login"
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <LoginIcon />
+        <span className="header-login-label">{firstName}</span>
+      </button>
+
+      {isOpen && (
+        <div className="header-account-menu" role="menu">
+          <a role="menuitem" href="#/account" onClick={() => setOpen(false)}>
+            My Orders
+          </a>
+          <a role="menuitem" href="#/account/settings" onClick={() => setOpen(false)}>
+            Settings
+          </a>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false)
+              logout()
+            }}
+          >
+            Sign out
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 interface HeaderProps {
   readonly route: Route
 }
 
 export function Header({ route }: HeaderProps) {
   const { count, openDrawer } = useCart()
+  const { status } = useCustomerAuth()
   const isScrolled = useScrolled()
 
   return (
@@ -100,12 +169,16 @@ export function Header({ route }: HeaderProps) {
         </nav>
 
         <div className="site-header-actions">
-          {/* Acceso al panel (#/admin). Es solo la puerta: el backend gatea de
-              verdad, así que mostrarla no abre nada por sí sola. */}
-          <a className="header-login" href="#/admin" aria-label="Sign in to store admin">
-            <LoginIcon />
-            <span className="header-login-label">Sign in</span>
-          </a>
+          {/* Sesión del CLIENTE (cuentas de la tienda). El panel de admin ya
+              no se enlaza desde aquí — queda accesible solo por URL #/admin. */}
+          {status === 'authenticated' ? (
+            <AccountMenu />
+          ) : (
+            <a className="header-login" href="#/login" aria-label="Sign in to your account">
+              <LoginIcon />
+              <span className="header-login-label">Sign in</span>
+            </a>
+          )}
 
           <button
             type="button"

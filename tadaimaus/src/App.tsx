@@ -5,12 +5,16 @@ import { Footer } from './components/layout/Footer'
 import { Header } from './components/layout/Header'
 import { useHashRoute } from './hooks/useHashRoute'
 import type { Route } from './lib/routes'
+import { AccountOrdersPage } from './pages/AccountOrdersPage'
+import { AccountSettingsPage } from './pages/AccountSettingsPage'
 import { CategoryPage } from './pages/CategoryPage'
 import { CheckoutPage } from './pages/CheckoutPage'
 import { ContactPage } from './pages/ContactPage'
 import { HomePage } from './pages/HomePage'
+import { LoginPage } from './pages/LoginPage'
 import { ProductPage } from './pages/ProductPage'
 import { CartProvider } from './store/CartContext'
+import { CustomerAuthProvider } from './store/CustomerAuthContext'
 
 // El panel se carga en su propio chunk: la tienda es un sitio público con
 // presupuesto de peso y la mayoría de sus visitantes nunca lo abre.
@@ -28,6 +32,10 @@ function renderPage(route: Route) {
       return <ContactPage />
     case 'checkout':
       return <CheckoutPage />
+    case 'login':
+      return <LoginPage />
+    case 'account':
+      return route.section === 'settings' ? <AccountSettingsPage /> : <AccountOrdersPage />
     case 'admin':
       // Nunca llega aquí: App lo intercepta antes de montar la tienda.
       return null
@@ -57,19 +65,23 @@ export default function App() {
   }
 
   return (
-    <CartProvider>
-      <a className="skip-link" href="#main" onClick={handleSkip}>
-        Skip to content
-      </a>
-      <Header route={route} />
-      <main id="main" tabIndex={-1}>
-        {renderPage(route)}
-      </main>
-      {/* El newsletter va arriba del pie en TODAS las páginas, no solo en la
-          home: es el enganche del sitio y se pierde si solo vive ahí. */}
-      <NewsletterSection />
-      <Footer />
-      <CartDrawer />
-    </CartProvider>
+    // La sesión del CLIENTE envuelve la tienda entera (el Header la consume);
+    // el branch #/admin de arriba NO la monta — su sesión es independiente.
+    <CustomerAuthProvider>
+      <CartProvider>
+        <a className="skip-link" href="#main" onClick={handleSkip}>
+          Skip to content
+        </a>
+        <Header route={route} />
+        <main id="main" tabIndex={-1}>
+          {renderPage(route)}
+        </main>
+        {/* El newsletter va arriba del pie en TODAS las páginas, no solo en la
+            home: es el enganche del sitio y se pierde si solo vive ahí. */}
+        <NewsletterSection />
+        <Footer />
+        <CartDrawer />
+      </CartProvider>
+    </CustomerAuthProvider>
   )
 }

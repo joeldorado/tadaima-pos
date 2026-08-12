@@ -3,7 +3,7 @@ import type { CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
-  AlertTriangle, ChevronLeft, ChevronRight, Inbox, Loader2, Mail, Phone, RefreshCw,
+  AlertTriangle, ChevronLeft, ChevronRight, Inbox, Loader2, Mail, MapPin, Phone, RefreshCw,
 } from "lucide-react";
 import { listUsOrders, updateUsOrderStatus } from "@tadaima/api";
 import type { UsOrder, UsOrderStatus } from "@tadaima/api";
@@ -211,6 +211,28 @@ export function OrdersPanel() {
                       {isOpen && (
                         <tr style={{ background: "rgba(0,0,0,0.18)" }}>
                           <td colSpan={8} className="px-6 py-3">
+                            {/* Dirección de entrega (snapshot al comprar) — la
+                                necesita quien surte; legacy (pre-cuentas) no trae. */}
+                            <p className="text-xs mb-3 m-0 flex items-center gap-1.5" style={{ color: "var(--td-text-md)" }}>
+                              <MapPin size={11} style={{ color: "var(--td-text-lo)" }} />
+                              <span className="font-black uppercase tracking-widest text-[9px] mr-1" style={{ color: "var(--td-text-lo)" }}>
+                                Enviar a
+                              </span>
+                              {order.shipping.address ? (
+                                <>
+                                  {order.shipping.address}, {order.shipping.city}, {order.shipping.state} {order.shipping.zip}, {order.shipping.country}
+                                  {order.us_customer_id !== null && (
+                                    <span className="text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5" style={{ background: "rgba(16,185,129,0.12)", color: "#34D399", border: "1px solid rgba(16,185,129,0.3)" }}>
+                                      Cuenta
+                                    </span>
+                                  )}
+                                </>
+                              ) : (
+                                <span style={{ color: "var(--td-text-lo)" }}>
+                                  — pedido anterior a las cuentas de cliente
+                                </span>
+                              )}
+                            </p>
                             {order.notes && (
                               <p className="text-xs mb-3 m-0" style={{ color: "var(--td-text-md)" }}>
                                 <span className="font-black uppercase tracking-widest text-[9px] mr-2" style={{ color: "var(--td-text-lo)" }}>Notas</span>

@@ -2,8 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\User;
 use Illuminate\Http\JsonResponse;
 
+// NOTA sobre los gates: `request()->user()` puede NO ser un User del POS —
+// desde 2026-08 existen UsCustomer (clientes de la tienda US, guard `us`).
+// Por eso cada gate exige `instanceof User` (fail-CLOSED: cualquier otro
+// modelo, o null, recibe 403 en vez de un fatal o un pase silencioso).
 abstract class Controller
 {
     protected function success(mixed $data, string $message = null, int $status = 200): JsonResponse
@@ -33,7 +38,7 @@ abstract class Controller
     protected function adminOrManagerGateError(): ?JsonResponse
     {
         $user = request()->user();
-        if ($user && ! $user->isAdminRole() && ! $user->hasRole(['gerente', 'manager'])) {
+        if (! $user instanceof User || (! $user->isAdminRole() && ! $user->hasRole(['gerente', 'manager']))) {
             return $this->error('No tienes permiso para modificar el catálogo de productos.', 403);
         }
 
@@ -47,7 +52,7 @@ abstract class Controller
     protected function adminOnlyError(): ?JsonResponse
     {
         $user = request()->user();
-        if ($user && ! $user->isAdminRole()) {
+        if (! $user instanceof User || ! $user->isAdminRole()) {
             return $this->error('Solo un administrador puede modificar esta configuración.', 403);
         }
 
@@ -63,7 +68,7 @@ abstract class Controller
     protected function catalogEditError(): ?JsonResponse
     {
         $user = request()->user();
-        if ($user && ! $user->canEditCatalog()) {
+        if (! $user instanceof User || ! $user->canEditCatalog()) {
             return $this->error('No tienes permiso para editar el catálogo online.', 403);
         }
 
@@ -79,7 +84,7 @@ abstract class Controller
     protected function promoManageError(): ?JsonResponse
     {
         $user = request()->user();
-        if ($user && ! $user->canManagePromos()) {
+        if (! $user instanceof User || ! $user->canManagePromos()) {
             return $this->error('No tienes permiso para gestionar promociones — pídele al admin que te lo active en Permisos.', 403);
         }
 
@@ -94,7 +99,7 @@ abstract class Controller
     protected function storeScopeError(\Illuminate\Http\Request $request, int|string|null $storeId): ?JsonResponse
     {
         $user = $request->user();
-        if ($user && ! $user->canActOnStore($storeId)) {
+        if (! $user instanceof User || ! $user->canActOnStore($storeId)) {
             return $this->error('No tienes permiso para operar sobre datos de otra tienda.', 403);
         }
 

@@ -42,6 +42,22 @@ return [
             'driver' => 'session',
             'provider' => 'users',
         ],
+
+        // Declarado EXPLÍCITO con provider: sin esto Sanctum inyecta el guard
+        // con provider null y Guard::hasValidProvider() acepta CUALQUIER modelo
+        // tokenable — un token de UsCustomer (cliente de la tienda US) entraría
+        // a todo el POS. Con provider 'users', auth:sanctum solo acepta User.
+        'sanctum' => [
+            'driver' => 'sanctum',
+            'provider' => 'users',
+        ],
+
+        // Clientes de la tienda US (auth:us en rutas us/account/*). Simétrico:
+        // un token del POS NO pasa este guard.
+        'us' => [
+            'driver' => 'sanctum',
+            'provider' => 'us_customers',
+        ],
     ],
 
     /*
@@ -67,10 +83,10 @@ return [
             'model' => env('AUTH_MODEL', User::class),
         ],
 
-        // 'users' => [
-        //     'driver' => 'database',
-        //     'table' => 'users',
-        // ],
+        'us_customers' => [
+            'driver' => 'eloquent',
+            'model' => App\Models\UsCustomer::class,
+        ],
     ],
 
     /*

@@ -439,3 +439,14 @@ main:focus {
   border-left: 3px solid var(--vermilion);
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
+
+/* Confirmación inline de un form guardado (Settings de la cuenta). */
+.form-success {
+  margin-bottom: 1rem;
+  padding: 0.7rem 0.9rem;
+  background: #e7f4ec;
+  border-left: 3px solid #1c6b3f;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  color: #1c6b3f;
+  font-size: var(--text-sm);
+}

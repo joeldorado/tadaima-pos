@@ -403,17 +403,19 @@ test.describe('TadaimaUS admin · aislamiento de la tienda', () => {
     await expect(page.locator('.drawer')).toHaveCount(0)
   })
 
-  test('el ícono de login del header lleva al panel', async ({ page }) => {
+  test('el ícono de login del header lleva al login del CLIENTE (no al panel)', async ({ page }) => {
+    // Desde las cuentas de cliente (2026-08), "Sign in" es la sesión del
+    // comprador; el panel de admin queda accesible SOLO tecleando #/admin.
     await mockBackend(page)
     await page.goto(`${US_BASE_URL}/`)
 
     const login = page.locator('header.site-header a.header-login')
     await expect(login).toBeVisible()
-    await expect(login).toHaveAttribute('href', '#/admin')
+    await expect(login).toHaveAttribute('href', '#/login')
 
     await login.click()
-    await expect(page.locator('.admin-login-card')).toBeVisible()
-    await expect(page).toHaveURL(/#\/admin$/)
+    await expect(page.locator('.customer-login')).toBeVisible()
+    await expect(page).toHaveURL(/#\/login$/)
   })
 
   test('el ícono de login sigue tocable en móvil (pierde el texto, no el botón)', async ({

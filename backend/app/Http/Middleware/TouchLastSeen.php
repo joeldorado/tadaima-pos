@@ -29,7 +29,9 @@ class TouchLastSeen
         $response = $next($request);
 
         $user = $request->user() ?? $request->user('sanctum');
-        if ($user) {
+        // Solo Users del POS: un UsCustomer (tienda US, guard `us`) no tiene
+        // columna last_seen_at y el forceFill explotaría en cada request.
+        if ($user instanceof \App\Models\User) {
             $now = now();
             $previous = $user->last_seen_at;
             // OJO Carbon 3: diffInSeconds es CON SIGNO — $now->diffInSeconds($pasado)

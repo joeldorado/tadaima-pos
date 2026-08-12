@@ -304,6 +304,24 @@ export function OrdersPanel() {
                         {isOpen && (
                           <tr className="admin-order-items-row">
                             <td colSpan={7}>
+                              {/* Dirección de entrega (snapshot); los pedidos
+                                  anteriores a las cuentas no traen una. */}
+                              <p className="admin-order-items-title">Ship to</p>
+                              {order.shipping.address !== null ? (
+                                <p className="admin-order-shipto">
+                                  {order.shipping.address}, {order.shipping.city},{' '}
+                                  {order.shipping.state} {order.shipping.zip},{' '}
+                                  {order.shipping.country}
+                                  {order.us_customer_id !== null && (
+                                    <span className="admin-badge admin-badge-ok">Account</span>
+                                  )}
+                                </p>
+                              ) : (
+                                <p className="admin-order-shipto admin-order-shipto-empty">
+                                  — order placed before customer accounts
+                                </p>
+                              )}
+
                               <p className="admin-order-items-title">
                                 Order items (prices frozen at checkout)
                               </p>

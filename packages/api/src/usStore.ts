@@ -49,6 +49,14 @@ export interface UsOrderItem {
   quantity: number
 }
 
+export interface UsOrderShipping {
+  address: string | null
+  city: string | null
+  state: string | null
+  zip: string | null
+  country: string | null
+}
+
 /** Pedido dummy de la tienda US (folio TUS-XXXXXX, sin cobro online). */
 export interface UsOrder {
   id: number
@@ -60,6 +68,10 @@ export interface UsOrder {
   status: UsOrderStatus
   total_usd: number
   created_at: string
+  /** null ⇒ pedido anterior a las cuentas de cliente de la tienda US. */
+  us_customer_id: number | null
+  /** Dirección de entrega congelada al comprar; nulls en pedidos legacy. */
+  shipping: UsOrderShipping
   items: UsOrderItem[]
 }
 
@@ -156,6 +168,9 @@ interface RawOrder {
   total_usd: string
   status: UsOrderStatus
   created_at: string | null
+  /** Ausentes en un backend viejo (pre-cuentas de cliente). */
+  us_customer_id?: number | null
+  shipping?: Partial<UsOrderShipping>
   items: RawOrderItem[]
 }
 
@@ -194,6 +209,14 @@ function mapOrder(raw: RawOrder): UsOrder {
     status: raw.status,
     total_usd: Number(raw.total_usd),
     created_at: raw.created_at ?? '',
+    us_customer_id: raw.us_customer_id ?? null,
+    shipping: {
+      address: raw.shipping?.address ?? null,
+      city: raw.shipping?.city ?? null,
+      state: raw.shipping?.state ?? null,
+      zip: raw.shipping?.zip ?? null,
+      country: raw.shipping?.country ?? null,
+    },
     items: raw.items.map((i) => ({
       product_id: i.us_listing_id,
       name: i.name,

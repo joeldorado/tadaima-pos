@@ -159,17 +159,14 @@ class UsStoreTest extends TestCase
             'name' => 'OP-13 Booster Box', 'price_usd' => 40,
         ]);
 
-        $resp = $this->postJson('/api/v1/us/orders', [
-            'name'  => 'John Doe',
-            'email' => 'john@example.com',
-            'phone' => '+1 619 555 0100',
+        $resp = $this->postJson('/api/v1/us/orders', $this->orderPayload([
             // Precios/total falsos del cliente → el server los IGNORA.
             'total_usd' => 0.01,
             'items' => [
                 ['listing_id' => $a->id, 'quantity' => 2, 'price_usd' => 0.01, 'price' => 0.01],
                 ['listing_id' => $b->id, 'quantity' => 1, 'price_usd' => 1],
             ],
-        ])->assertCreated();
+        ]))->assertCreated();
 
         // Total server-side: 12.50×2 + 40×1 = 65.00 (jamás 0.01).
         $resp->assertJsonPath('success', true);
@@ -204,10 +201,10 @@ class UsStoreTest extends TestCase
         ]);
 
         // Segundo pedido → folio consecutivo.
-        $resp2 = $this->postJson('/api/v1/us/orders', [
+        $resp2 = $this->postJson('/api/v1/us/orders', $this->orderPayload([
             'name' => 'Jane Roe', 'email' => 'jane@example.com', 'phone' => '+1 619 555 0101',
             'items' => [['listing_id' => $b->id, 'quantity' => 1]],
-        ])->assertCreated();
+        ]))->assertCreated();
         $siguiente = 'TUS-' . str_pad((string) ($order->id + 1), 6, '0', STR_PAD_LEFT);
         $resp2->assertJsonPath('data.order_number', $siguiente);
     }
@@ -217,37 +214,49 @@ class UsStoreTest extends TestCase
         $listing = $this->makeListing($this->makeProduct('Funko', 'FIG-001'), ['price_usd' => 10]);
 
         // Email malo → 422 con envelope de error.
-        $this->postJson('/api/v1/us/orders', [
-            'name' => 'John', 'email' => 'no-es-email', 'phone' => '+1 619 555 0100',
+        $this->postJson('/api/v1/us/orders', $this->orderPayload([
+            'email' => 'no-es-email',
             'items' => [['listing_id' => $listing->id, 'quantity' => 1]],
-        ])->assertStatus(422)
+        ]))->assertStatus(422)
             ->assertJsonPath('success', false)
             ->assertJsonStructure(['errors' => ['email']]);
 
+        // Sin password (guest) → 422: la cuenta es obligatoria para comprar.
+        $this->postJson('/api/v1/us/orders', $this->orderPayload([
+            'password' => null,
+            'items' => [['listing_id' => $listing->id, 'quantity' => 1]],
+        ]))->assertStatus(422)->assertJsonStructure(['errors' => ['password']]);
+
+        // Sin dirección → 422.
+        $this->postJson('/api/v1/us/orders', $this->orderPayload([
+            'address' => null,
+            'items' => [['listing_id' => $listing->id, 'quantity' => 1]],
+        ]))->assertStatus(422)->assertJsonStructure(['errors' => ['address']]);
+
         // Items vacíos → 422.
-        $this->postJson('/api/v1/us/orders', [
-            'name' => 'John', 'email' => 'john@example.com', 'phone' => '+1 619 555 0100',
+        $this->postJson('/api/v1/us/orders', $this->orderPayload([
             'items' => [],
-        ])->assertStatus(422)->assertJsonPath('success', false);
+        ]))->assertStatus(422)->assertJsonPath('success', false);
 
         // Listing invisible → 422 (misma respuesta que inexistente: no filtra info).
         $oculto = $this->makeListing($this->makeProduct('Oculto', 'FIG-002'), [
             'visible' => false,
         ]);
-        $this->postJson('/api/v1/us/orders', [
-            'name' => 'John', 'email' => 'john@example.com', 'phone' => '+1 619 555 0100',
+        $this->postJson('/api/v1/us/orders', $this->orderPayload([
             'items' => [['listing_id' => $oculto->id, 'quantity' => 1]],
-        ])->assertStatus(422)
+        ]))->assertStatus(422)
             ->assertJsonPath('success', false)
             ->assertJsonPath('error', 'One or more items are no longer available.');
 
         // Listing inexistente → 422.
-        $this->postJson('/api/v1/us/orders', [
-            'name' => 'John', 'email' => 'john@example.com', 'phone' => '+1 619 555 0100',
+        $this->postJson('/api/v1/us/orders', $this->orderPayload([
             'items' => [['listing_id' => 999999, 'quantity' => 1]],
-        ])->assertStatus(422)->assertJsonPath('success', false);
+        ]))->assertStatus(422)->assertJsonPath('success', false);
 
         $this->assertDatabaseCount('us_orders', 0);
+        // Ningún 422 dejó cuenta fantasma (la cuenta nace en la MISMA
+        // transacción del pedido).
+        $this->assertDatabaseCount('us_customers', 0);
     }
 
     // ── Agotado manual (sold_out) ─────────────────────────────────────────────
@@ -290,13 +299,12 @@ class UsStoreTest extends TestCase
 
         // Pedido mixto (1 normal + 1 agotado) → 422 con mensaje claro y CERO
         // pedidos/items creados (rollback total).
-        $this->postJson('/api/v1/us/orders', [
-            'name' => 'John', 'email' => 'john@example.com', 'phone' => '+1 619 555 0100',
+        $this->postJson('/api/v1/us/orders', $this->orderPayload([
             'items' => [
                 ['listing_id' => $normal->id, 'quantity' => 1],
                 ['listing_id' => $agotado->id, 'quantity' => 1],
             ],
-        ])->assertStatus(422)
+        ]))->assertStatus(422)
             ->assertJsonPath('success', false)
             ->assertJsonPath('error', '"OP-13 Booster Box" is sold out and can no longer be ordered.');
 
@@ -305,10 +313,9 @@ class UsStoreTest extends TestCase
 
         // Al desmarcar, la compra procede normal.
         $agotado->update(['sold_out' => false]);
-        $this->postJson('/api/v1/us/orders', [
-            'name' => 'John', 'email' => 'john@example.com', 'phone' => '+1 619 555 0100',
+        $this->postJson('/api/v1/us/orders', $this->orderPayload([
             'items' => [['listing_id' => $agotado->id, 'quantity' => 1]],
-        ])->assertCreated();
+        ]))->assertCreated();
     }
 
     public function test_admin_marca_y_desmarca_sold_out(): void
@@ -616,10 +623,10 @@ class UsStoreTest extends TestCase
         ]);
 
         foreach ([['John Doe', 'john@example.com'], ['Jane Roe', 'jane@example.com']] as [$name, $email]) {
-            $this->postJson('/api/v1/us/orders', [
-                'name' => $name, 'email' => $email, 'phone' => '+1 619 555 0100',
+            $this->postJson('/api/v1/us/orders', $this->orderPayload([
+                'name' => $name, 'email' => $email,
                 'items' => [['listing_id' => $a->id, 'quantity' => 2]],
-            ])->assertCreated();
+            ]))->assertCreated();
         }
 
         $resp = $this->actingAs($this->admin)->getJson('/api/v1/us/orders')->assertOk();
@@ -637,6 +644,25 @@ class UsStoreTest extends TestCase
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /**
+     * Payload base del checkout (desde 2026-08: dirección + password son
+     * OBLIGATORIOS — la cuenta del cliente se crea al comprar).
+     */
+    private function orderPayload(array $overrides = []): array
+    {
+        return $overrides + [
+            'name'     => 'John Doe',
+            'email'    => 'john@example.com',
+            'phone'    => '+1 619 555 0100',
+            'address'  => '742 Evergreen Terrace',
+            'city'     => 'San Diego',
+            'state'    => 'CA',
+            'zip'      => '92101',
+            'country'  => 'United States',
+            'password' => 'super-secret-1',
+        ];
+    }
 
     /**
      * Producto del POS con stock vendible por default (5 en Exhibición):

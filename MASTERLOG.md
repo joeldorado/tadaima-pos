@@ -4,6 +4,76 @@
 
 ---
 
+### Sesión 2026-08-12 (2) — TadaimaUS: cuentas de cliente + checkout estilo Wix + "My Orders" — SIN DEPLOY (pendiente OK de Joel)
+
+Joel mandó screenshots (b1–b7) del flujo del Wix viejo y pidió replicarlo pero
+registrando TODO en el sistema: **al comprar, el cliente queda registrado con
+cuenta (contraseña obligatoria en el checkout, SIN verificación de correo), la
+orden se le liga y entra automáticamente a su panel** ("My Orders" +
+Settings con cambio de contraseña). Decidido con Joel: SIN Google — login
+simple con **email O teléfono + contraseña**.
+
+**Modelo:** tabla `us_customers` (email unique, `phone` normalizado a solo
+dígitos para login telefónico, dirección default) + `us_orders` ganó
+`us_customer_id` (nullable, legacy OK) y snapshot `shipping_*` congelado.
+La cuenta se crea EN LA MISMA transacción que el pedido (`UsOrderService`):
+falla el pedido ⇒ no queda cuenta fantasma; email registrado ⇒ 422 con
+`code: 'account_exists'` y el checkout pinta CTA "Sign in to continue".
+
+**FIX DE SEGURIDAD (aprovechado de paso):** `config/auth.php` era stock — sin
+guard `sanctum` declarado, Sanctum lo inyecta con `provider: null` y
+`auth:sanctum` aceptaba CUALQUIER modelo tokenable (un token de cliente US
+habría entrado a TODO el POS). Ahora: guard `sanctum` con provider `users`
+explícito + guard `us` (provider `us_customers`) para las rutas de cliente —
+tokens cruzados dan 401 (tests lo prueban en ambos sentidos). Además: los 5
+gates de `Controller.php` son fail-closed con `instanceof User`,
+`TouchLastSeen` solo toca Users, y el **login del POS ganó throttle**
+(`pos-login` 10/min por ip+email — estaba SIN límite) + limiter `us-auth`
+(5/min por ip+identifier).
+
+**Endpoints nuevos:** `POST us/auth/login` (público) y grupo `auth:us`
+`us/account/{me,orders,profile,password,logout}` (scoping por relación —
+imposible ver pedidos ajenos; cambiar contraseña revoca los demás tokens;
+email NO editable). `POST us/orders` extendido: dirección requerida,
+`password` requerida solo si guest (auth opcional vía `$request->user('us')`
+sin middleware), respuesta con `token` (auto-login) + shipping + customer.
+La bandeja admin (`formatOrder`, deduplicado) expone `shipping` +
+`us_customer_id` — ambos paneles (tienda y POS) muestran "Ship to"/"Enviar a"
+con badge de cuenta; legacy sin dirección pinta aviso.
+
+**Storefront:** `http.ts` con DOS slots de token (admin intacto + customer,
+`as: 'customer'`), `customerApi.ts`, `CustomerAuthContext` (key
+`tadaimaus-customer-token-v1`, `adoptSession` para el auto-login del
+checkout). Rutas nuevas `#/login`, `#/account`, `#/account/settings` (guard →
+redirect a login). El "Sign in" del header ahora es la sesión del CLIENTE
+(logueado = menú My Orders/Settings/Sign out); **el panel de admin quedó solo
+por URL `#/admin`**. Checkout estilo Wix: banner "Logged in as… — Log out",
+Delivery details completos (logueado = resumen + Change, email fijo; invitado
+= form + password), Delivery method "To confirm order — Free", Payment "Cash
+on Delivery", confirmación con 3 columnas (dirección/método/pago) + botón
+"View my orders". `Field` extraído a `components/forms/`, validación en
+`checkoutValidation.ts`.
+
+**QA:** PHPUnit **471** (14 nuevos en `UsCustomerAccountTest`: atomicidad,
+account_exists, login email/tel, throttle 429, scoping, revocación de tokens,
+cross-guard 401 en ambos sentidos, legacy) · vitest tadaimaus **71** · tsc
+tadaimaus 0 · tsc landing 464 (baseline) · **e2e 47/47** (7 nuevos en
+`tadaimaus-customer.spec.ts` con backend mockeado; ajustado el assert del
+header-login a `#/login`) · **smoke REAL contra SQLite local 9/9** (checkout
+→ auto-login → My Orders → cambiar contraseña → re-login con TELÉFONO →
+admin tienda ve Ship to) + POS 3/3 ("Enviar a" + badge Cuenta). Gotcha de
+tests anotado: dentro de un mismo test los guards cachean al usuario entre
+requests — `$this->app['auth']->forgetGuards()` antes de re-probar tokens.
+
+**Deploy pendiente (aprobación de Joel):** orden obligatorio backend
+`tadaima` → servicio `tadaimaus` INMEDIATAMENTE después: el checkout viejo
+truena contra el request nuevo (campos required) — la ventana real es solo
+tadaimausa.com (el mount /tadaimaus/ del POS sube junto con el backend).
+Fuera de v1: recuperar contraseña por email (no hay mailer — bloqueado =
+soporte manual), Google, editar/cancelar pedidos, cambio de email, invitado.
+
+---
+
 ### Sesión 2026-08-12 — TadaimaUS: botón "Agotado" (sold_out) + panel de Pedidos en el admin de la tienda — DEPLOYADO rev `tadaima-00007-l9s` / tienda `tadaimaus-00002-hlk`
 
 Dos pedidos de Pier vía Joel: (1) poder marcar productos de la tienda US como

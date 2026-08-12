@@ -128,6 +128,58 @@
   color: var(--text-on-ink);
 }
 
+/* La misma pinta cuando es <button> (menú de cuenta del cliente logueado). */
+button.header-login {
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+/* ── Menú de la cuenta del cliente (popover del header) ─────────────────── */
+
+.header-account {
+  position: relative;
+}
+
+.header-account-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.4rem);
+  z-index: 30;
+  min-width: 11rem;
+  display: flex;
+  flex-direction: column;
+  padding: 0.4rem;
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card-hover);
+}
+
+.header-account-menu a,
+.header-account-menu button {
+  display: block;
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: left;
+  cursor: pointer;
+}
+
+.header-account-menu a:hover,
+.header-account-menu button:hover {
+  background: var(--vermilion-wash);
+  color: var(--vermilion-deep);
+}
+
 .cart-button {
   position: relative;
   z-index: 0;
