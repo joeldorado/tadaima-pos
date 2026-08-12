@@ -68,8 +68,9 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
         const tableStartRow = 8;
         
         // Definitions for filtered products
-        const cardProducts = groupedProducts.filter(prod => 
-          Object.keys(prod.payment_breakdown).some(m => m.toLowerCase().includes("tarjeta") || m.toLowerCase().includes("credit") || m.toLowerCase().includes("debito") || m.toLowerCase().includes("tpv") || m.toLowerCase().includes("terminal"))
+        const cardProducts = groupedProducts.filter(prod =>
+          // Transferencia se maneja como tarjeta (no entra al cajón físico).
+          Object.keys(prod.payment_breakdown).some(m => m.toLowerCase().includes("tarjeta") || m.toLowerCase().includes("credit") || m.toLowerCase().includes("debito") || m.toLowerCase().includes("tpv") || m.toLowerCase().includes("terminal") || m.toLowerCase().includes("transfer") || m.toLowerCase().includes("deposit") || m.toLowerCase().includes("spei"))
         );
         const cashProducts = groupedProducts.filter(prod => 
           Object.keys(prod.payment_breakdown).some(m => m.toLowerCase().includes("efectivo") || m.toLowerCase().includes("cash") || m.toLowerCase().includes("dolar") || m.toLowerCase().includes("dólar") || m.toLowerCase().includes("usd") || m.toLowerCase().includes("otro") || m.toLowerCase().includes("unmapped"))
@@ -194,7 +195,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
             totCashQty += cashQty; totCashCost += cashCost; totCashRevenue += cashRevenue; totCashProfit += cashProfit;
 
             setCell(r2, T2_COL, prod.name, { alignment: { horizontal: "left", vertical: "middle", wrapText: true } });
-            setCell(r2, T2_COL + 1, cashQty, { alignment: { horizontal: "center", vertical: "middle" } });
+            setCell(r2, T2_COL + 1, Number(cashQty.toFixed(1)), { alignment: { horizontal: "center", vertical: "middle" } });
             if (canViewCost) {
                 setCell(r2, T2_COL + 2, cashCost, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, color: { argb: "FF444444" } }, alignment: { horizontal: "right", vertical: "middle" } });
             }
@@ -215,7 +216,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
         });
         if (cashProducts.length > 0) {
             setCell(r2, T2_COL, "TOTAL EFECTIVO", totalLabelOpts);
-            setCell(r2, T2_COL + 1, totCashQty, totalQtyOpts);
+            setCell(r2, T2_COL + 1, Number(totCashQty.toFixed(1)), totalQtyOpts);
             if (canViewCost) setCell(r2, T2_COL + 2, totCashCost, totalMoneyOpts("FF444444"));
             setCell(r2, cashVentaCol, totCashRevenue, totalMoneyOpts("FF009944"));
             if (canViewCost) setCell(r2, T2_COL + 4, totCashProfit, totalMoneyOpts("FF009944"));
@@ -237,7 +238,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
             let cardQty = 0;
             let cardRevenue = 0;
             Object.entries(prod.payment_breakdown).forEach(([method, data]) => {
-                const isCardMethodName = method.toLowerCase().includes("tarjeta") || method.toLowerCase().includes("credit") || method.toLowerCase().includes("debito") || method.toLowerCase().includes("tpv") || method.toLowerCase().includes("terminal");
+                const isCardMethodName = method.toLowerCase().includes("tarjeta") || method.toLowerCase().includes("credit") || method.toLowerCase().includes("debito") || method.toLowerCase().includes("tpv") || method.toLowerCase().includes("terminal") || method.toLowerCase().includes("transfer") || method.toLowerCase().includes("deposit") || method.toLowerCase().includes("spei");
                 if (isCardMethodName) {
                     cardQty += data.qty;
                     cardRevenue += data.revenue;
@@ -254,7 +255,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
             totCardQty += cardQty; totCardRevenue += cardRevenue; totCardCost += cardCost; totCardComm += prodComm; totCardIva += prodIva; totCardNet += netCard; totCardProfit += cardProfit;
 
             setCell(r3, T3_COL, prod.name, { alignment: { horizontal: "left", vertical: "middle", wrapText: true } });
-            setCell(r3, T3_COL + 1, cardQty, { alignment: { horizontal: "center", vertical: "middle" } });
+            setCell(r3, T3_COL + 1, Number(cardQty.toFixed(1)), { alignment: { horizontal: "center", vertical: "middle" } });
             setCell(r3, T3_COL + 2, cardRevenue, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, color: { argb: "FF444444" } }, alignment: { horizontal: "right", vertical: "middle" } });
             if (canViewCost) {
                 setCell(r3, cardCostCol, cardCost, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, color: { argb: "FF444444" } }, alignment: { horizontal: "right", vertical: "middle" } });
@@ -277,7 +278,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
         });
         if (cardProducts.length > 0) {
             setCell(r3, T3_COL, "TOTAL TARJETA", totalLabelOpts);
-            setCell(r3, T3_COL + 1, totCardQty, totalQtyOpts);
+            setCell(r3, T3_COL + 1, Number(totCardQty.toFixed(1)), totalQtyOpts);
             setCell(r3, T3_COL + 2, totCardRevenue, totalMoneyOpts("FF444444"));
             if (canViewCost) setCell(r3, cardCostCol, totCardCost, totalMoneyOpts("FF444444"));
             setCell(r3, cardCommCol, totCardComm, totalMoneyOpts("FFFF2200"));

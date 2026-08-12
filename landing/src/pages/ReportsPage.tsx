@@ -438,6 +438,22 @@ export function ReportsPage() {
         }
       }
 
+      // Reparto MIXTO (efectivo + tarjeta/transferencia en un mismo ticket): en vez
+      // de mandar todo el producto al método del pago más grande, se divide
+      // PROPORCIONAL al monto de cada pago. Así el desglose por método (pantalla +
+      // Excel/PDF) y el costo/utilidad por método quedan exactos. Un solo método → share 1.
+      const totalPaid = (sale.payments ?? []).reduce((s, p) => s + (p?.amount || 0), 0);
+      const methodShares: Array<{ name: string; share: number }> =
+        totalPaid > 0 && sale.payments && sale.payments.length > 0
+          ? sale.payments.filter(Boolean).map((p) => ({ name: p!.payment_method?.name ?? "Otro", share: (p!.amount || 0) / totalPaid }))
+          : [{ name: payMethodName, share: 1 }];
+      // Proporción pagada con TARJETA para atribuir promos/descuentos por método.
+      // La TRANSFERENCIA cuenta como tarjeta (no entra al cajón físico).
+      const isCardOrTransfer = (n: string) => isCardMethod(n) || isTransferMethod(n);
+      const cardShare = totalPaid > 0
+        ? (sale.payments ?? []).filter(Boolean).reduce((s, p) => s + (isCardOrTransfer((p!.payment_method?.name ?? "").toLowerCase()) ? (p!.amount || 0) : 0), 0) / totalPaid
+        : (isCardOrTransfer(payMethodName.toLowerCase()) ? 1 : 0);
+
       const methods = (sale.payments ?? [])
         .map((p) => (p.payment_method?.name ?? "").toLowerCase())
         .filter(Boolean);
@@ -533,28 +549,33 @@ export function ReportsPage() {
           const manualPart = Math.max(0, lineDisc - promoPart);
           pGroup.promo_total = (pGroup.promo_total ?? 0) + promoPart;
           pGroup.manual_total = (pGroup.manual_total ?? 0) + manualPart;
-          // El descuento/promo se atribuye al MÉTODO real de la venta (no se prorratea).
-          const benefitBucket: "cash" | "card" = isCardMethod(payMethodName.toLowerCase()) ? "card" : "cash";
+          // El beneficio se reparte por método según la proporción del ticket
+          // (mixto: parte a tarjeta/transferencia, parte a efectivo).
           if (promoPart > 0) {
             const key = item.promo_name || "Promo aplicada";
             pGroup.promo_breakdown = pGroup.promo_breakdown ?? {};
             pGroup.promo_breakdown[key] = pGroup.promo_breakdown[key] ?? { cash: 0, card: 0 };
-            pGroup.promo_breakdown[key][benefitBucket] += promoPart;
+            pGroup.promo_breakdown[key].card += promoPart * cardShare;
+            pGroup.promo_breakdown[key].cash += promoPart * (1 - cardShare);
           }
           if (manualPart > 0) {
             const key = item.discount_reason || "otro";
             pGroup.discount_breakdown = pGroup.discount_breakdown ?? {};
             pGroup.discount_breakdown[key] = pGroup.discount_breakdown[key] ?? { cash: 0, card: 0 };
-            pGroup.discount_breakdown[key][benefitBucket] += manualPart;
+            pGroup.discount_breakdown[key].card += manualPart * cardShare;
+            pGroup.discount_breakdown[key].cash += manualPart * (1 - cardShare);
           }
         }
 
-        if (!pGroup.payment_breakdown[payMethodName]) {
-          pGroup.payment_breakdown[payMethodName] = { qty: 0, revenue: 0 };
+        // Desglose por método: se reparte proporcional a cada pago del ticket (mixto).
+        for (const ms of methodShares) {
+          if (!pGroup.payment_breakdown[ms.name]) {
+            pGroup.payment_breakdown[ms.name] = { qty: 0, revenue: 0 };
+          }
+          const pBreakdown = pGroup.payment_breakdown[ms.name]!;
+          pBreakdown.qty += qty * ms.share;
+          pBreakdown.revenue += itemTotal * ms.share;
         }
-        const pBreakdown = pGroup.payment_breakdown[payMethodName]!;
-        pBreakdown.qty += qty;
-        pBreakdown.revenue += itemTotal;
 
         pGroup.price_breakdown[unitPrice] = (pGroup.price_breakdown[unitPrice] ?? 0) + qty;
 
@@ -1137,7 +1158,7 @@ export function ReportsPage() {
                             <span style={{ color: TS, fontWeight: 700 }}>{method}</span>
                             <div className="flex items-center gap-2">
                               <span style={{ color: data.revenue < 0 ? "#FF4422" : "#00CC66", fontWeight: 900 }}>{fmt(data.revenue)}</span>
-                              <span style={{ color: TP, fontWeight: 700, fontSize: 11 }}>({data.qty} {data.qty === 1 ? "unidad" : "unidades"})</span>
+                              <span style={{ color: TP, fontWeight: 700, fontSize: 11 }}>({Number(data.qty.toFixed(1))} {data.qty === 1 ? "unidad" : "unidades"})</span>
                             </div>
                           </div>
                           {isCard && prod.commission_amount && prod.commission_amount > 0 && (

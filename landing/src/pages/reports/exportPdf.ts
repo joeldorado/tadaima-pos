@@ -31,7 +31,9 @@ export function exportReportPdf(params: ReportExportParams): void {
 
     const isCard = (m: string) => {
       const s = m.toLowerCase();
-      return s.includes("tarjeta") || s.includes("credit") || s.includes("debito") || s.includes("tpv") || s.includes("terminal");
+      // La TRANSFERENCIA se maneja como tarjeta (dinero que no entra al cajón físico).
+      return s.includes("tarjeta") || s.includes("credit") || s.includes("debito") || s.includes("tpv") || s.includes("terminal")
+        || s.includes("transfer") || s.includes("deposit") || s.includes("spei");
     };
     const isCash = (m: string) => {
       const s = m.toLowerCase();
@@ -111,7 +113,7 @@ export function exportReportPdf(params: ReportExportParams): void {
         const cost = unitCost * qty;
         const profit = revenue - cost;
         tCant += qty; tCost += cost; tVenta += revenue; tProfit += profit;
-        body.push([prod.name, qty, ...(canViewCost ? [fmt(cost)] : []), fmt(revenue), ...(canViewCost ? [fmt(profit)] : [])]);
+        body.push([prod.name, Number(qty.toFixed(1)), ...(canViewCost ? [fmt(cost)] : []), fmt(revenue), ...(canViewCost ? [fmt(profit)] : [])]);
         // Renglones de beneficio (efectivo): uno por promo (verde) y por motivo (amarillo).
         Object.entries(prod.promo_breakdown ?? {}).forEach(([name, amt]) => {
           if (amt.cash > 0.005) {
@@ -126,7 +128,7 @@ export function exportReportPdf(params: ReportExportParams): void {
           }
         });
       });
-      body.push(["TOTAL EFECTIVO", tCant, ...(canViewCost ? [fmt(tCost)] : []), fmt(tVenta), ...(canViewCost ? [fmt(tProfit)] : [])]);
+      body.push(["TOTAL EFECTIVO", Number(tCant.toFixed(1)), ...(canViewCost ? [fmt(tCost)] : []), fmt(tVenta), ...(canViewCost ? [fmt(tProfit)] : [])]);
       const cashLastIdx = body.length - 1;
       autoTable(doc, {
         startY: currentY,
@@ -170,7 +172,7 @@ export function exportReportPdf(params: ReportExportParams): void {
         const cost = unitCost * qty;
         const profit = net - cost;
         tCant += qty; tBruto += revenue; tCost += cost; tCom += comm; tIva += iva; tNet += net; tProfit += profit;
-        body.push([prod.name, qty, fmt(revenue), ...(canViewCost ? [fmt(cost)] : []), fmt(comm), fmt(iva), fmt(net), ...(canViewCost ? [fmt(profit)] : [])]);
+        body.push([prod.name, Number(qty.toFixed(1)), fmt(revenue), ...(canViewCost ? [fmt(cost)] : []), fmt(comm), fmt(iva), fmt(net), ...(canViewCost ? [fmt(profit)] : [])]);
         // Renglones de beneficio (tarjeta): monto en la columna Bruto (índice 2).
         Object.entries(prod.promo_breakdown ?? {}).forEach(([name, amt]) => {
           if (amt.card > 0.005) {
@@ -185,7 +187,7 @@ export function exportReportPdf(params: ReportExportParams): void {
           }
         });
       });
-      body.push(["TOTAL TARJETA", tCant, fmt(tBruto), ...(canViewCost ? [fmt(tCost)] : []), fmt(tCom), fmt(tIva), fmt(tNet), ...(canViewCost ? [fmt(tProfit)] : [])]);
+      body.push(["TOTAL TARJETA", Number(tCant.toFixed(1)), fmt(tBruto), ...(canViewCost ? [fmt(tCost)] : []), fmt(tCom), fmt(tIva), fmt(tNet), ...(canViewCost ? [fmt(tProfit)] : [])]);
       const cardLastIdx = body.length - 1;
       autoTable(doc, {
         startY: currentY,
