@@ -4,7 +4,35 @@
 
 ---
 
-### Sesión 2026-08-12 (2) — TadaimaUS: cuentas de cliente + checkout estilo Wix + "My Orders" — SIN DEPLOY (pendiente OK de Joel)
+### Sesión 2026-08-12 (3) — Política de Privacidad pública en el POS + DEPLOY TOTAL (cuentas de cliente incluidas)
+
+Joel pidió publicar la **Política de Privacidad del Software POS** (texto que
+él proporcionó, p.ej. para el listing de la app móvil) en tadaimamexico.com.
+
+**Página:** `landing/src/pages/PrivacyPolicyPage.tsx` — pública (sin sesión),
+mismo lenguaje visual del POS (fondo degradado oscuro del login, cards glass,
+acento rojo, badges de fechas, íconos lucide). 12 secciones + callouts para
+los "no hacemos" (sin GPS/publicidad/venta de datos). Placeholders resueltos:
+responsable "Tadaima" (Tijuana, BC), nube "Google Cloud Platform", contacto
+`tadaima@gmail.com` — si Joel quiere la razón social/domicilio fiscal exactos,
+se editan las constantes al inicio del archivo.
+
+**Rutas:** `/privacidad` (canónica) + alias `/politicas`, lazy-loaded (chunk
+de 4.18 kB gz, no engorda el bundle principal). Sin cambios de backend: el
+`try_files … /index.html` de nginx ya cubre rutas nuevas del SPA.
+
+**DEPLOY:** `tadaima-00008-wd6` (candidate → smoke → 100% + tag `ruben`
+movido) y `tadaimaus-00003-77l` INMEDIATAMENTE después (la ventana del
+checkout viejo vs campos nuevos duró minutos, como estaba planeado). Este
+deploy también puso EN VIVO todo lo de la sesión (2): cuentas de cliente,
+checkout estilo Wix, guards Sanctum separados y throttle del POS. Smoke prod:
+`/privacidad` y `/politicas` 200 con bundle nuevo · `us/auth/login` vivo ·
+login POS OK · tadaimausa.com sirviendo checkout con password + login de
+cliente. Commit `b1a2ba1`.
+
+---
+
+### Sesión 2026-08-12 (2) — TadaimaUS: cuentas de cliente + checkout estilo Wix + "My Orders" — DEPLOYADO en sesión (3): revs 00008-wd6 + tadaimaus-00003-77l
 
 Joel mandó screenshots (b1–b7) del flujo del Wix viejo y pidió replicarlo pero
 registrando TODO en el sistema: **al comprar, el cliente queda registrado con
