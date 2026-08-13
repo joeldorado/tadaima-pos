@@ -31,11 +31,21 @@ function IndexPage() {
   return <DashboardPage />
 }
 
+// Política de privacidad: pública y solo texto — lazy para no cargarla en el
+// bundle principal del POS.
+const privacyRoute = {
+  lazy: async () => ({
+    Component: (await import('@/pages/PrivacyPolicyPage')).PrivacyPolicyPage,
+  }),
+}
+
 export const router = createBrowserRouter([
   {
     path: '/login',
     Component: LoginPage,
   },
+  { path: '/privacidad', ...privacyRoute },
+  { path: '/politicas', ...privacyRoute },
   {
     // Catálogo de cadena (v2): una sola URL global. Los paths con slug se
     // conservan como alias (links viejos) y rinden el mismo catálogo global.
