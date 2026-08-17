@@ -4,6 +4,36 @@
 
 ---
 
+### Sesión 2026-08-17 (3) — Eliminar productos = permiso de ver costo — DEPLOYADO rev `tadaima-00010-jmb`
+
+Mario (gerente con `can_view_cost`) no veía "Eliminar" en Productos/Tomos: el
+UI lo gateaba solo a admin (y el API a cualquier gerente, incluso el borrado
+total). Regla nueva (Joel): **eliminar = quien puede ver el costo real** —
+admin siempre, gerente solo con `can_view_cost`. Ambas capas con la misma regla:
+backend `Controller::canDeleteProductsError()` (`User::canViewCost`) en
+`DELETE /products/{id}` y `/mangas/{id}`; `/products/{id}/force` ("Borrar
+TODO", mata historial) pasa a `adminOnlyError`. Front:
+`canDeleteProducts(roles, canViewCost)` en permisos.ts, botón Eliminar en
+ProductModal + MangaEditModal, radio "Borrar TODO" solo admin. Tests:
+`ProductDeletePermissionTest` (4) + permisos.test.ts (4). Suite 482 PHPUnit /
+270 vitest / tsc 464 baseline. Commit `f7d6008` → rev `tadaima-00010-jmb`
+(candidate → smoke → 100% + tag `ruben`).
+
+**Pendiente de confirmación (Joel/Ruben) — mangas extranjeros:** la regla de
+Ruben es "manga nacional (módulo Tomos) = solo nombres que empiezan con
+'Tomo'"; el import mapeó por categoría (Manga/Manga extranjero/kamite/SHONEN
+JUMP → manga). Estado prod: 3,603 en Tomos, 2,803 empiezan con Tomo y ~800 no
+(52 Manga, 407 Manga extranjero, 333 kamite, 5 SHONEN JUMP, 3 sin cat). Del
+import Centro de hoy, 184 nuevos sin stock entraron por "librería" sin ser
+Tomo* (152 Manga extranjero, 12 Manga, 18 Libretas, 1 comic, 1 Liquidación
+Manga). Propuesta: reclasificar los ~800 a product (conservan categoría),
+borrar los 184, cambiar la regla del import/purga a "empieza con Tomo".
+Dudas abiertas: Comics "Tomo…" (15) siguen product?; 5 "Tomo… jap/USA" en
+Manga extranjero; ¿la purga del 08-06 (kamite/comics/libretas sin stock) se
+revisa? NO se tocó nada aún.
+
+---
+
 ### Sesión 2026-08-17 (2) — Fix corte: cancelación total restaba el efectivo DOS veces — DEPLOYADO rev `tadaima-00009-4m9`
 
 **Bug reportado por Mario (Macro):** cobró por error $188 como Efectivo, canceló
