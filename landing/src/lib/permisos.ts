@@ -101,8 +101,14 @@ export function canCreateProducts(roles: string[] | undefined): boolean {
   return isAdmin(roles) || isManager(roles) || isCashier(roles);
 }
 
-export function canDeleteProducts(roles: string[] | undefined): boolean {
-  return isAdmin(roles);
+/**
+ * Eliminar productos/tomos = quien puede ver el costo real (Joel 2026-08-17):
+ * admin siempre; gerente solo con can_view_cost. Antes era solo admin en el
+ * UI (y cualquier gerente en el API) — Mario (gerente con costo) no podía.
+ * El borrado TOTAL ("Borrar TODO", mata historial) sigue siendo solo admin.
+ */
+export function canDeleteProducts(roles: string[] | undefined, canViewCost: boolean): boolean {
+  return isAdmin(roles) || (isManager(roles) && canViewCost);
 }
 
 /** Reportes de ganancia bruta (con costo) — solo quien vea costo real */

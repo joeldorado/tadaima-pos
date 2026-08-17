@@ -17,7 +17,7 @@ import {
 import { useActiveStore } from "@/contexts/StoreContext";
 import { useAuth } from "@tadaima/auth";
 import { promoDetailLabel, promoShortLabel } from "@/lib/promoLabel";
-import { isAdmin as isAdminRole, isManager as isManagerRole } from "@/lib/permisos";
+import { isAdmin as isAdminRole, isManager as isManagerRole, canDeleteProducts } from "@/lib/permisos";
 import { toast } from "sonner";
 import { createProduct, updateProduct, deleteProduct, forceDeleteProduct, uploadProductImage, removeProductImage, getInventory, updateInventory, getPrice, sendStockAlert, getCategories, createCategory, getSuppliers, createSupplier, attachPromotionProducts } from "@tadaima/api";
 import type { ApiError } from "@tadaima/api";
@@ -589,9 +589,9 @@ function ProductModal({
   onSave,
   onDelete,
   product,
-  isAdmin,
   canViewCost,
   canManage,
+  canDelete = false,
   categorias,
   onAddCategoria,
   proveedores,
@@ -608,6 +608,8 @@ function ProductModal({
   isAdmin: boolean;
   canViewCost: boolean;
   canManage: boolean;
+  /** Eliminar producto (admin o gerente con permiso de costo). */
+  canDelete?: boolean;
   categorias: string[];
   onAddCategoria: (c: string) => void;
   proveedores: string[];
@@ -1423,7 +1425,7 @@ function ProductModal({
              </div>
            ) : <div />}
            <div className="flex gap-3">
-             {isAdmin && product && (
+             {canDelete && product && (
                <button
                  onClick={() => onDelete?.(formData as Producto)}
                  className="px-5 py-2.5 rounded-full text-sm font-bold transition-all border border-red-500/30 hover:bg-red-500/10"
@@ -1606,6 +1608,9 @@ export function ProductsPage() {
   const canManage   = isAdmin || isGerente;
   // Cajero puede dar de alta productos nuevos, pero no editar existentes ni borrar
   const canEdit     = canManage; // admin + gerente
+  // Eliminar = permiso de ver costo (Joel 2026-08-17): admin, o gerente con
+  // can_view_cost (Mario). "Borrar TODO" (mata historial) sigue solo admin.
+  const canDelete   = canDeleteProducts(user?.roles, canViewCost);
   const canNotify   = !isAdmin && !!user?.store_id;
 
   // Cajero/no-admin: forzar filtro a su tienda asignada (no debe ver productos de otras sucursales)
@@ -3197,11 +3202,14 @@ export function ProductsPage() {
                   <div className="flex-1">
                     <p className="font-black text-sm" style={{ color: T.textPrimary }}>Solo el producto</p>
                     <p className="text-[11px] mt-0.5" style={{ color: T.textSecondary }}>
-                      Elimina imágenes, inventario y precios. <strong className="text-amber-400">Si tiene ventas o apartados activos, fallará</strong> y tendrás que cambiar a "Borrar TODO".
+                      Elimina imágenes, inventario y precios. <strong className="text-amber-400">Si tiene ventas o apartados activos, fallará</strong>{isAdmin ? ' y tendrás que cambiar a "Borrar TODO"' : ' — en ese caso desactívalo (Baja) o pide a un admin el borrado total'}.
                     </p>
                   </div>
                 </label>
 
+                {/* Borrar TODO (mata ventas históricas): solo admin — el API
+                    también lo exige (adminOnlyError en /products/{id}/force). */}
+                {isAdmin && (
                 <label className={`flex items-start gap-3 p-3 rounded-xl cursor-pointer transition-all ${isForce ? 'bg-red-500/10 border border-red-500/40' : ''}`} style={isForce ? undefined : { background: PRODUCT_THEME.surfaceMuted, border: PRODUCT_THEME.borderSubtle }}>
                   <input
                     type="radio"
@@ -3218,6 +3226,7 @@ export function ProductsPage() {
                     </p>
                   </div>
                 </label>
+                )}
               </div>
 
               {/* Confirmación tipeada para modo force */}
@@ -3425,6 +3434,7 @@ export function ProductsPage() {
           isAdmin={isAdmin}
           canViewCost={canViewCost}
           canManage={canManage}
+          canDelete={canDelete}
           onClose={() => { setIsModalOpen(false); setEditingProduct(undefined); }}
           onSave={handleSaveProduct}
           onDelete={(p) => setDeleteTarget(p)}
@@ -3486,6 +3496,7 @@ export function ProductsPage() {
       {editingManga && (
         <MangaEditModal
           manga={editingManga}
+          canDelete={canDelete}
           onClose={() => setEditingManga(null)}
           onSuccess={_updated => {
             void invalidateMangas();

@@ -310,7 +310,8 @@ class MangaController extends Controller
      */
     public function destroy(Product $manga): JsonResponse
     {
-        if ($resp = $this->adminOrManagerGateError()) {
+        // Eliminar tomo = permiso de ver costo (admin o gerente con can_view_cost).
+        if ($resp = $this->canDeleteProductsError()) {
             return $resp;
         }
 

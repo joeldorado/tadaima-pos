@@ -71,6 +71,8 @@ interface Props {
   onDeleted: () => void
   canViewCost?: boolean
   isAdmin?: boolean
+  /** Eliminar tomo (admin o gerente con permiso de costo, 2026-08-17). Si no se pasa, cae a isAdmin. */
+  canDelete?: boolean
   locations?: { warehouseId: number; name: string; store: string; type: 'central' | 'store' | 'bodega' }[]
 }
 
@@ -78,7 +80,7 @@ interface Props {
 
 export function MangaEditModal({
   manga, onClose, onSuccess, onDeleted,
-  canViewCost = false, isAdmin = false, locations = [],
+  canViewCost = false, isAdmin = false, canDelete, locations = [],
 }: Props) {
   const [tab, setTab] = useState<Tab>('tomo')
   // Gerente/cajero: el tab Inventario muestra y modifica solo el stock de su
@@ -625,7 +627,7 @@ export function MangaEditModal({
           {/* ── Footer ──────────────────────────────────────────────────────── */}
           <div className="p-6 flex items-center justify-between gap-4" style={{ borderTop: BORDER_PANEL }}>
             <div>
-              {isAdmin && (
+              {(canDelete ?? isAdmin) && (
                 <button
                   onClick={() => setShowDeleteDialog(true)}
                   className="flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold transition-all hover:bg-red-500/15"

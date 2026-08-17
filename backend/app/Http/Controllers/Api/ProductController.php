@@ -480,7 +480,8 @@ class ProductController extends Controller
      */
     public function destroy(Product $product): JsonResponse
     {
-        if ($resp = $this->adminOrManagerGateError()) {
+        // Eliminar = permiso de ver costo (admin o gerente con can_view_cost).
+        if ($resp = $this->canDeleteProductsError()) {
             return $resp;
         }
 
@@ -524,7 +525,8 @@ class ProductController extends Controller
      */
     public function forceDestroy(Product $product): JsonResponse
     {
-        if ($resp = $this->adminOrManagerGateError()) {
+        // Borrado TOTAL (mata ventas históricas/apartados): solo admin.
+        if ($resp = $this->adminOnlyError()) {
             return $resp;
         }
 

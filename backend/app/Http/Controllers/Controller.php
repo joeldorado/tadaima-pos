@@ -46,6 +46,22 @@ abstract class Controller
     }
 
     /**
+     * Gate de ELIMINAR productos/tomos (Joel 2026-08-17): quien puede ver el
+     * costo real — admin siempre, gerente solo con can_view_cost (mismo flag
+     * que Permisos de Precios). Antes: UI solo admin, API cualquier gerente.
+     * El borrado TOTAL (/force, mata historial) NO usa este gate: adminOnlyError.
+     */
+    protected function canDeleteProductsError(): ?JsonResponse
+    {
+        $user = request()->user();
+        if (! $user instanceof User || ! $user->canViewCost()) {
+            return $this->error('Solo quien tiene permiso de ver costos puede eliminar productos.', 403);
+        }
+
+        return null;
+    }
+
+    /**
      * Gate admin-only: 403 si el usuario NO es administrador. Para configuración
      * sensible (tiendas/bodegas/terminales) que no es trabajo de gerente/cajero.
      */

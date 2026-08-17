@@ -1,9 +1,28 @@
 import { describe, it, expect } from "vitest";
 import {
   canSeeCost,
+  canDeleteProducts,
   isMasterAdmin,
   isEligibleForPermManagement,
 } from "./permisos";
+
+// ─── canDeleteProducts ───────────────────────────────────────────────────────
+describe("canDeleteProducts — eliminar = permiso de ver costo (2026-08-17)", () => {
+  it("admin siempre, con o sin flag", () => {
+    expect(canDeleteProducts(["admin"], false)).toBe(true);
+    expect(canDeleteProducts(["admin"], true)).toBe(true);
+  });
+  it("gerente CON can_view_cost (Mario) → sí", () => {
+    expect(canDeleteProducts(["gerente"], true)).toBe(true);
+  });
+  it("gerente SIN can_view_cost → no", () => {
+    expect(canDeleteProducts(["gerente"], false)).toBe(false);
+  });
+  it("cajero nunca, aunque vea costo", () => {
+    expect(canDeleteProducts(["cajero"], true)).toBe(false);
+    expect(canDeleteProducts(undefined, true)).toBe(false);
+  });
+});
 
 // ─── canSeeCost ───────────────────────────────────────────────────────────────
 describe("canSeeCost", () => {
