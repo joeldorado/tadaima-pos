@@ -29,6 +29,18 @@ use Illuminate\Support\Facades\DB;
  * Idempotente: upsert por sku — re-correrlo no duplica.
  * El import es masivo (miles de filas por el pooler WAN) → todo va en lotes
  * (insert de chunks + SELECT de ids por sku), nunca fila por fila.
+ *
+ * Filtros para importar OTRA sucursal sobre un catálogo ya poblado (Centro,
+ * 2026-08-17 — mismo .bak Esmeralda, misma extracción, otra tienda destino):
+ * - --desde-fecha=YYYY-MM-DD: solo artículos con fecha_alta ≥ esa fecha
+ *   (sin fecha quedan fuera). Aplica a TODO, librería incluida.
+ * - --solo-con-stock: solo existencia > 0.
+ * - --libreria-sin-stock: la librería (categorías con manga/comic/libro/libret/
+ *   librer/shonen/kamite — el MISMO criterio que protege tadaima:purge-no-stock)
+ *   se exenta SOLO del filtro de stock.
+ * - --existentes-solo-stock: los SKUs que ya existen NO se actualizan (nombre,
+ *   costo, precio, categoría, tipo intactos; las diferencias de precio solo se
+ *   reportan) — únicamente reciben su stock en el warehouse destino.
  */
 class ImportMacroProductsCommand extends Command
 {
@@ -41,12 +53,43 @@ class ImportMacroProductsCommand extends Command
         {--chunk=500 : Filas por lote de INSERT}
         {--ref= : Referencia de los movimientos (default import-macro-YYYYMMDD de hoy) — distingue cada corrida}
         {--pisar-ceros : Existencia 0 en el origen TAMBIÉN pone en 0 el stock del warehouse destino (re-import donde el origen es la verdad)}
+        {--desde-fecha= : Solo artículos con fecha_alta >= YYYY-MM-DD (sin fecha quedan fuera; aplica también a la librería)}
+        {--solo-con-stock : Solo artículos con existencia > 0}
+        {--libreria-sin-stock : La librería (categorías manga/comic/libro/libret/librer/shonen/kamite) entra aunque tenga existencia 0 — exenta SOLO del filtro de stock}
+        {--existentes-solo-stock : Los SKUs que ya existen NO se actualizan (nombre/costo/precio/categoría/tipo); solo reciben su stock en el warehouse destino}
         {--force : Saltar la confirmación interactiva (corridas no-TTY YA autorizadas por Joel)}
         {--unsafe-host : Permitir un target que no sea *.supabase.co (QA/tests)}';
 
-    protected $description = 'Importa el catálogo del POS viejo de la sucursal Macro (staging JSON) a Supabase';
+    protected $description = 'Importa el catálogo del POS viejo (Esmeralda S.I, staging JSON) a Supabase — Macro completo o una sucursal filtrada (Centro)';
 
     private const MANGA_CATEGORIES = ['manga', 'manga extranjero', 'kamite', 'shonen jump'];
+
+    /** Máximo de renglones que se listan por bloque de detalle en el reporte. */
+    private const MAX_DETALLE = 60;
+
+    /** Categoría "librería" = mismo criterio que la purga (un solo lugar de verdad). */
+    private static function esLibreria(string $categoria): bool
+    {
+        $cat = mb_strtolower($categoria);
+        foreach (PurgeNoStockProductsCommand::PROTECTED_CATEGORY_PATTERNS as $pat) {
+            if (str_contains($cat, $pat)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** "Manga 2233 · Libretas 66 · …" (ya ordenado por quien llama). */
+    private function fmtConteos(array $conteos): string
+    {
+        $partes = [];
+        foreach (array_slice($conteos, 0, self::MAX_DETALLE, true) as $k => $n) {
+            $partes[] = "{$k} {$n}";
+        }
+
+        return implode(' · ', $partes);
+    }
 
     public function handle(): int
     {
@@ -110,6 +153,50 @@ class ImportMacroProductsCommand extends Command
                 'fecha_alta' => (string) ($a['fecha_alta'] ?? '') ?: null,
             ];
         }
+        $totalStaging = count($arts);
+
+        // ── Filtros de sucursal (Centro) ─────────────────────────────────────
+        $desdeFecha = (string) ($this->option('desde-fecha') ?? '');
+        if ($desdeFecha !== '') {
+            $dt = \DateTimeImmutable::createFromFormat('!Y-m-d', $desdeFecha);
+            if (! $dt || $dt->format('Y-m-d') !== $desdeFecha) {
+                $this->error("--desde-fecha inválida: \"{$desdeFecha}\" (formato YYYY-MM-DD).");
+
+                return self::FAILURE;
+            }
+        }
+        $soloConStock = (bool) $this->option('solo-con-stock');
+        $libreriaSinStock = (bool) $this->option('libreria-sin-stock');
+        $existentesSoloStock = (bool) $this->option('existentes-solo-stock');
+
+        $fueraFecha = 0;
+        $fueraStock = 0;
+        $libreriaRescatada = [];   // categoría → n (librería sin stock que entró por --libreria-sin-stock)
+        $catsLibreria = [];        // categoría → n (todo el staging, informativo)
+        foreach ($arts as $sku => $a) {
+            if (self::esLibreria($a['categoria'])) {
+                $catsLibreria[$a['categoria']] = ($catsLibreria[$a['categoria']] ?? 0) + 1;
+            }
+            if ($desdeFecha !== '' && ($a['fecha_alta'] === null || $a['fecha_alta'] < $desdeFecha)) {
+                $fueraFecha++;
+                unset($arts[$sku]);
+
+                continue;
+            }
+            if ($soloConStock && $a['existencia'] <= 0) {
+                if ($libreriaSinStock && self::esLibreria($a['categoria'])) {
+                    $libreriaRescatada[$a['categoria']] = ($libreriaRescatada[$a['categoria']] ?? 0) + 1;
+                } else {
+                    $fueraStock++;
+                    unset($arts[$sku]);
+                }
+            }
+        }
+        if ($arts === []) {
+            $this->error('Ningún artículo pasa los filtros — nada que importar.');
+
+            return self::FAILURE;
+        }
 
         // ── Contexto del destino ─────────────────────────────────────────────
         $storeName = (string) $this->option('store');
@@ -142,8 +229,10 @@ class ImportMacroProductsCommand extends Command
         foreach ($db->table('product_categories')->get(['id', 'name']) as $c) {
             $catsExistentes[mb_strtolower(trim($c->name))] = $c->id;
         }
+        // Con --existentes-solo-stock, una categoría que solo usan existentes
+        // no se crea (no se les toca la categoría).
         $catsNuevas = [];
-        foreach ($arts as $a) {
+        foreach ($existentesSoloStock ? $nuevos : $arts as $a) {
             $key = mb_strtolower($a['categoria']);
             if ($a['categoria'] !== '' && ! isset($catsExistentes[$key])) {
                 $catsNuevas[$key] = $a['categoria'];
@@ -158,15 +247,33 @@ class ImportMacroProductsCommand extends Command
 
         // ── Resumen (dry-run y previo a confirmar) ───────────────────────────
         $this->info('── Análisis del staging ──');
-        $this->line(sprintf('  Artículos válidos: %d (descartados sin nombre/código: %d, duplicados internos: %d)',
-            count($arts), $sinNombre, $dupInternos));
-        $this->line(sprintf('  Nuevos: %d · A actualizar (sku ya existe): %d', count($nuevos), count($aActualizar)));
+        $this->line(sprintf('  Artículos en staging: %d (descartados sin nombre/código: %d, duplicados internos: %d)',
+            $totalStaging, $sinNombre, $dupInternos));
+        if ($desdeFecha !== '' || $soloConStock) {
+            $this->line(sprintf('  Filtros → fuera por fecha (< %s): %d · fuera por sin stock: %d · librería sin stock rescatada: %d',
+                $desdeFecha !== '' ? $desdeFecha : '—', $fueraFecha, $fueraStock, array_sum($libreriaRescatada)));
+            if ($libreriaRescatada !== []) {
+                arsort($libreriaRescatada);
+                $this->line('    rescatada por categoría: '.$this->fmtConteos($libreriaRescatada));
+            }
+        }
+        if ($libreriaSinStock || $soloConStock) {
+            arsort($catsLibreria);
+            $this->line(sprintf('  Categorías consideradas librería en el staging (%d): %s',
+                count($catsLibreria), $catsLibreria !== [] ? $this->fmtConteos($catsLibreria) : '—'));
+        }
+        $this->line(sprintf('  Artículos que entran: %d', count($arts)));
+        $this->line(sprintf('  Nuevos: %d · Ya existen (sku): %d%s', count($nuevos), count($aActualizar),
+            $existentesSoloStock ? ' → SOLO stock (sin tocar nombre/costo/precio/categoría)' : ' → se actualizan (diff-aware)'));
         $this->line(sprintf('  Mangas: %d · Sin costo: %d · Sin ningún precio: %d',
             count($mangas), count($sinCosto), count($sinPrecio)));
         $this->line(sprintf('  Con stock: %d (%.0f piezas) → warehouse "%s" (id %d) de "%s"',
             count($conStock), array_sum(array_column($conStock, 'existencia')),
             $warehouse->name, $warehouse->id, $store->name));
-        $this->line(sprintf('  Categorías nuevas a crear: %d', count($catsNuevas)));
+        $this->line(sprintf('  Categorías nuevas a crear: %d%s', count($catsNuevas),
+            $catsNuevas !== [] ? ' ('.implode(', ', array_slice(array_values($catsNuevas), 0, self::MAX_DETALLE)).')' : ''));
+
+        $this->reportarExistentes($db, $aActualizar, $existentes, $warehouse->id, $existentesSoloStock);
 
         if ($this->option('dry-run')) {
             $this->info('Dry-run: no se escribió nada.');
@@ -182,10 +289,16 @@ class ImportMacroProductsCommand extends Command
         $now = now();
         $ref = (string) ($this->option('ref') ?: 'import-macro-'.now()->format('Ymd'));
         $pisarCeros = (bool) $this->option('pisar-ceros');
+        $notas = sprintf('Importación catálogo %s (Esmeralda S.I)', $store->name);
+
+        // Con --existentes-solo-stock, precios y detalles de manga solo se
+        // escriben para los NUEVOS; los existentes solo pasan por el paso 6.
+        $paraDatos = $existentesSoloStock ? $nuevos : $arts;
 
         $db->transaction(function () use (
             $db, $arts, $nuevos, $aActualizar, $catsExistentes, $catsNuevas,
-            $esManga, $warehouse, $userId, $chunk, $now, $ref, $pisarCeros
+            $esManga, $warehouse, $userId, $chunk, $now, $ref, $pisarCeros,
+            $existentesSoloStock, $paraDatos, $notas
         ) {
             // 1. Categorías faltantes
             foreach ($catsNuevas as $key => $nombre) {
@@ -235,7 +348,7 @@ class ImportMacroProductsCommand extends Command
             //    en UNA transacción y el primer intento murió a medio camino
             //    (rollback limpio). Con diff quedan unos cientos de UPDATEs.
             $updsReales = 0;
-            foreach ($aActualizar as $a) {
+            foreach ($existentesSoloStock ? [] : $aActualizar as $a) {
                 $prev = $snapshot[$a['sku']] ?? null;
                 if ($prev === null) {
                     continue;
@@ -269,11 +382,13 @@ class ImportMacroProductsCommand extends Command
                 $db->table('products')->where('id', $ids[$a['sku']])->update($upd);
                 $updsReales++;
             }
-            $this->line(sprintf('  Updates con cambios reales: %d de %d existentes', $updsReales, count($aActualizar)));
+            $this->line($existentesSoloStock
+                ? sprintf('  Updates de existentes: 0 (--existentes-solo-stock, %d intactos)', count($aActualizar))
+                : sprintf('  Updates con cambios reales: %d de %d existentes', $updsReales, count($aActualizar)));
 
             // 4. Precios — upsert por product_id (price_1/price_2; 3-5 intactos).
             //    Diff-aware: solo se re-escriben los que de verdad cambiaron.
-            $conPrecio = array_filter($arts, fn ($a) => $a['price_1'] !== null);
+            $conPrecio = array_filter($paraDatos, fn ($a) => $a['price_1'] !== null);
             $preciosPrevios = [];
             foreach (array_chunk(array_values(array_intersect_key($ids, $conPrecio)), 1000) as $lote) {
                 foreach ($db->table('product_prices')->whereIn('product_id', $lote)
@@ -310,7 +425,7 @@ class ImportMacroProductsCommand extends Command
 
             // 5. Detalles de manga (fila vacía: volume/editorial/genre no vienen
             //    del origen) — upsert por product_id (PK)
-            $mangaIds = array_values(array_intersect_key($ids, array_filter($arts, $esManga)));
+            $mangaIds = array_values(array_intersect_key($ids, array_filter($paraDatos, $esManga)));
             $yaConDetalle = [];
             foreach (array_chunk($mangaIds, 1000) as $lote) {
                 foreach ($db->table('product_manga_details')->whereIn('product_id', $lote)->get(['product_id']) as $r) {
@@ -352,7 +467,7 @@ class ImportMacroProductsCommand extends Command
                         'product_id' => $pid, 'warehouse_id' => $warehouse->id,
                         'type' => 'ajuste', 'quantity' => $delta,
                         'reference' => $ref,
-                        'notes' => 'Importación catálogo Macro (Esmeralda S.I)',
+                        'notes' => $notas,
                         'user_id' => $userId, 'created_at' => $now,
                     ];
                 } else {
@@ -364,7 +479,7 @@ class ImportMacroProductsCommand extends Command
                         'product_id' => $pid, 'warehouse_id' => $warehouse->id,
                         'type' => 'entrada', 'quantity' => $qty,
                         'reference' => $ref,
-                        'notes' => 'Importación catálogo Macro (Esmeralda S.I)',
+                        'notes' => $notas,
                         'user_id' => $userId, 'created_at' => $now,
                     ];
                 }
@@ -391,7 +506,7 @@ class ImportMacroProductsCommand extends Command
                             'product_id' => $r->product_id, 'warehouse_id' => $warehouse->id,
                             'type' => 'ajuste', 'quantity' => -(float) $r->quantity,
                             'reference' => $ref,
-                            'notes' => 'Re-import Macro: existencia 0 en el origen',
+                            'notes' => 'Re-import: existencia 0 en el origen',
                             'user_id' => $userId, 'created_at' => $now,
                         ];
                     }
@@ -406,11 +521,64 @@ class ImportMacroProductsCommand extends Command
             }
         });
 
-        return $this->verify($db, $arts, $warehouse->id, $ref);
+        return $this->verify($db, $arts, $warehouse->id, $ref, $pisarCeros);
+    }
+
+    /**
+     * Reporte previo sobre los SKUs que ya existen en el destino: diferencias
+     * de precio (solo informativas cuando --existentes-solo-stock) y filas de
+     * inventario del warehouse destino que cambiarían de cantidad.
+     */
+    private function reportarExistentes($db, array $aActualizar, $existentes, int $warehouseId, bool $soloStock): void
+    {
+        if ($aActualizar === []) {
+            return;
+        }
+        $idsExist = [];
+        foreach ($aActualizar as $a) {
+            $idsExist[(int) $existentes[$a['sku']]] = $a;
+        }
+
+        if ($soloStock) {
+            $difPrecio = [];
+            foreach (array_chunk(array_keys($idsExist), 1000) as $lote) {
+                foreach ($db->table('product_prices')->whereIn('product_id', $lote)
+                    ->get(['product_id', 'price_1', 'price_2']) as $r) {
+                    $a = $idsExist[(int) $r->product_id];
+                    if ($a['price_1'] !== null && round((float) ($r->price_1 ?? 0), 2) !== $a['price_1']) {
+                        $difPrecio[] = sprintf('%s: %.2f→%.2f', $a['sku'], (float) ($r->price_1 ?? 0), $a['price_1']);
+                    }
+                }
+            }
+            $this->line(sprintf('  Existentes con precio Normal distinto en el origen (NO se tocan): %d%s',
+                count($difPrecio), $difPrecio !== [] ? ' — p.ej. '.implode(' · ', array_slice($difPrecio, 0, 8)) : ''));
+        }
+
+        $conStock = array_filter($idsExist, fn ($a) => $a['existencia'] > 0);
+        $cambios = [];
+        $conservan = 0;
+        foreach (array_chunk(array_keys($idsExist), 1000) as $lote) {
+            foreach ($db->table('inventory')->where('warehouse_id', $warehouseId)
+                ->whereIn('product_id', $lote)->get(['product_id', 'quantity']) as $r) {
+                $a = $idsExist[(int) $r->product_id];
+                if (isset($conStock[(int) $r->product_id])) {
+                    if (abs((float) $r->quantity - $a['existencia']) >= 0.001) {
+                        $cambios[] = sprintf('%s: %g→%g', $a['sku'], (float) $r->quantity, $a['existencia']);
+                    }
+                } elseif ((float) $r->quantity != 0.0) {
+                    $conservan++;
+                }
+            }
+        }
+        $this->line(sprintf('  Stock previo en el warehouse destino que CAMBIA (absoluto, con ajuste): %d%s',
+            count($cambios), $cambios !== [] ? ' — '.implode(' · ', array_slice($cambios, 0, self::MAX_DETALLE)) : ''));
+        if ($conservan > 0) {
+            $this->line(sprintf('  Existentes con existencia 0 en el origen que CONSERVAN stock en destino: %d (sin --pisar-ceros no se tocan)', $conservan));
+        }
     }
 
     /** Verificación post-import: conteos y sumas contra el staging (solo movimientos de ESTA corrida vía $ref). */
-    private function verify($db, array $arts, int $warehouseId, string $ref): int
+    private function verify($db, array $arts, int $warehouseId, string $ref, bool $pisarCeros): int
     {
         $this->info('── Verificación ──');
         $skus = array_keys($arts);
@@ -423,12 +591,13 @@ class ImportMacroProductsCommand extends Command
 
         // Staging vs inventario FINAL del warehouse (no vía movimientos: en un
         // re-import los productos sin delta no generan movimiento y la suma
-        // por reference daría un ✗ falso).
-        $stockEsperado = round(array_sum(array_map(
-            fn ($a) => $a['existencia'] > 0 ? $a['existencia'] : 0, $arts
-        )), 2);
+        // por reference daría un ✗ falso). Sin --pisar-ceros el contrato es
+        // "existencia 0 no toca inventario" → esos SKUs no entran a la suma.
+        $conStock = array_filter($arts, fn ($a) => $a['existencia'] > 0);
+        $stockEsperado = round(array_sum(array_column($conStock, 'existencia')), 2);
+        $skusStock = $pisarCeros ? $skus : array_keys($conStock);
         $stockReal = 0.0;
-        foreach (array_chunk($skus, 1000) as $lote) {
+        foreach (array_chunk($skusStock, 1000) as $lote) {
             $stockReal += (float) $db->table('inventory')
                 ->where('warehouse_id', $warehouseId)
                 ->whereIn('product_id', function ($q) use ($lote) {

@@ -36,8 +36,12 @@ class PurgeNoStockProductsCommand extends Command
 
     protected $description = 'Borra productos sin stock (excepto mangas/comics/libros y los que tienen historial, que solo se desactivan)';
 
-    /** Substrings (lowercase) de categorías "librería" que NUNCA se purgan. */
-    private const PROTECTED_CATEGORY_PATTERNS = [
+    /**
+     * Substrings (lowercase) de categorías "librería" que NUNCA se purgan.
+     * Pública: la reusa ImportMacroProductsCommand (--libreria-sin-stock) para
+     * que "qué es librería" sea UN solo criterio en todo el POS.
+     */
+    public const PROTECTED_CATEGORY_PATTERNS = [
         'manga', 'comic', 'libro', 'libret', 'librer', 'shonen', 'kamite',
     ];
 

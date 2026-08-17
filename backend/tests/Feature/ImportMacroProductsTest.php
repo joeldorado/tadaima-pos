@@ -23,9 +23,13 @@ class ImportMacroProductsTest extends TestCase
     use RefreshDatabase;
 
     private Company $company;
+
     private Store $store;
+
     private Warehouse $exhibicion;
+
     private User $admin;
+
     private string $fixture;
 
     protected function setUp(): void
@@ -225,11 +229,136 @@ class ImportMacroProductsTest extends TestCase
             'quantity' => 4, 'created_at' => now(), 'updated_at' => now(),
         ]);
 
-        $this->runImport()->assertExitCode(1); // verify ✗: warehouse ≠ staging (4 vs 0) — esperado sin pisar-ceros
+        // verify() solo compara los SKUs con existencia > 0 cuando NO se pisan
+        // ceros (el contrato es "0 en el origen no toca inventario"): ✓
+        $this->runImport()->assertExitCode(0);
 
         $this->assertDatabaseHas('inventory', [
             'product_id' => $manga->id, 'warehouse_id' => $this->exhibicion->id, 'quantity' => 4.0,
         ]);
+    }
+
+    // ── Filtros del import de Centro (2026-08-17) ────────────────────────────
+
+    /** Corre el comando con la fixture de Centro y --force (sin prompt). */
+    private function runCentro(array $extra = [])
+    {
+        return $this->artisan('tadaima:import-macro', array_merge([
+            'file' => base_path('tests/Fixtures/centro-articulos-sample.json'),
+            '--connection' => config('database.default'),
+            '--unsafe-host' => true,
+            '--store' => 'Tadaima MACRO',
+            '--user' => (string) $this->admin->id,
+            '--ref' => 'import-centro-test',
+            '--force' => true,
+        ], $extra));
+    }
+
+    private const FILTROS_CENTRO = [
+        '--desde-fecha' => '2025-01-01',
+        '--solo-con-stock' => true,
+        '--libreria-sin-stock' => true,
+    ];
+
+    public function test_filtros_fecha_stock_y_libreria(): void
+    {
+        $this->runCentro(self::FILTROS_CENTRO)->assertExitCode(0);
+
+        // Entra: 2025 con stock
+        $fig = Product::where('sku', 'C-FIG-2025-STOCK')->first();
+        $this->assertNotNull($fig);
+        $this->assertDatabaseHas('inventory', [
+            'product_id' => $fig->id, 'warehouse_id' => $this->exhibicion->id, 'quantity' => 3.0,
+        ]);
+        $this->assertDatabaseHas('product_prices', ['product_id' => $fig->id, 'price_1' => 250.0, 'price_2' => 225.0]);
+
+        // Fuera: 2025 sin stock (no librería), 2024 con stock (fecha), sin fecha
+        $this->assertNull(Product::where('sku', 'C-FIG-2025-SIN')->first());
+        $this->assertNull(Product::where('sku', 'C-FIG-2024-STOCK')->first());
+        $this->assertNull(Product::where('sku', 'C-SINFECHA')->first());
+
+        // Librería 2025 sin stock entra igual (manga con detalle + precio, sin inventario)
+        $manga = Product::where('sku', 'C-MANGA-2025-SIN')->first();
+        $this->assertNotNull($manga);
+        $this->assertSame('manga', $manga->product_type);
+        $this->assertDatabaseHas('product_manga_details', ['product_id' => $manga->id]);
+        $this->assertDatabaseHas('product_prices', ['product_id' => $manga->id, 'price_1' => 169.0, 'price_2' => 152.0]);
+        $this->assertDatabaseMissing('inventory', ['product_id' => $manga->id]);
+
+        // Librería por patrón "libro" (no manga) → product con su categoría
+        $libro = Product::where('sku', 'C-LIBRO-2025-SIN')->first();
+        $this->assertNotNull($libro);
+        $this->assertSame('product', $libro->product_type);
+        $this->assertSame('Libros', $libro->category?->name);
+
+        // Librería 2024 queda fuera: el filtro de fecha SÍ aplica a la librería
+        $this->assertNull(Product::where('sku', 'C-MANGA-2024-SIN')->first());
+
+        // Los "existentes" de la fixture aquí no existían → entran como nuevos
+        $this->assertSame(6, Product::count());
+    }
+
+    public function test_existentes_solo_stock_no_pisa_datos_solo_inventario(): void
+    {
+        $peluche = Product::create(['name' => 'Peluche viejo', 'sku' => 'C-EXIST-STOCK', 'cost' => 10, 'active' => true]);
+        \DB::table('product_prices')->insert([
+            'product_id' => $peluche->id, 'price_1' => 300, 'price_2' => 270,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $mangaExist = Product::create(['name' => 'Manga Frieren 01', 'sku' => 'C-EXIST-SIN', 'product_type' => 'manga', 'active' => true]);
+        $taza = Product::create(['name' => 'Taza CSM', 'sku' => 'C-EXIST-STOCK-PREV', 'active' => true]);
+        \DB::table('inventory')->insert([
+            'product_id' => $taza->id, 'warehouse_id' => $this->exhibicion->id,
+            'quantity' => 2, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $this->runCentro(self::FILTROS_CENTRO + ['--existentes-solo-stock' => true])->assertExitCode(0);
+
+        // Existente con stock: nombre/costo/precio INTACTOS, solo inventario + entrada
+        $peluche->refresh();
+        $this->assertSame('Peluche viejo', $peluche->name);
+        $this->assertEquals(10.0, (float) $peluche->cost);
+        $this->assertNull($peluche->category_id);
+        $this->assertDatabaseHas('product_prices', ['product_id' => $peluche->id, 'price_1' => 300.0, 'price_2' => 270.0]);
+        $this->assertDatabaseHas('inventory', [
+            'product_id' => $peluche->id, 'warehouse_id' => $this->exhibicion->id, 'quantity' => 4.0,
+        ]);
+        $this->assertDatabaseHas('inventory_movements', [
+            'product_id' => $peluche->id, 'type' => 'entrada', 'quantity' => 4.0, 'reference' => 'import-centro-test',
+        ]);
+        // Su categoría (solo usada por un existente) NO se crea
+        $this->assertDatabaseMissing('product_categories', ['name' => 'Peluches']);
+
+        // Existente sin stock (librería): no se toca nada
+        $this->assertDatabaseMissing('inventory', ['product_id' => $mangaExist->id]);
+        $this->assertDatabaseMissing('inventory_movements', ['product_id' => $mangaExist->id]);
+        $this->assertDatabaseMissing('product_prices', ['product_id' => $mangaExist->id]);
+
+        // Existente con stock previo: absoluto 6 con ajuste +4
+        $this->assertDatabaseHas('inventory', [
+            'product_id' => $taza->id, 'warehouse_id' => $this->exhibicion->id, 'quantity' => 6.0,
+        ]);
+        $this->assertDatabaseHas('inventory_movements', [
+            'product_id' => $taza->id, 'type' => 'ajuste', 'quantity' => 4.0, 'reference' => 'import-centro-test',
+        ]);
+
+        // Los nuevos siguen entrando completos (categoría creada, precio)
+        $this->assertDatabaseHas('product_categories', ['name' => 'Figuras']);
+        $this->assertSame(3 + 3, Product::count());
+    }
+
+    public function test_desde_fecha_invalida_falla_sin_escribir(): void
+    {
+        $this->runCentro(['--desde-fecha' => '2025-13-99'])->assertExitCode(1);
+        $this->assertSame(0, Product::count());
+    }
+
+    public function test_dry_run_con_filtros_no_escribe_nada(): void
+    {
+        $this->runCentro(self::FILTROS_CENTRO + ['--existentes-solo-stock' => true, '--dry-run' => true])
+            ->assertExitCode(0);
+        $this->assertSame(0, Product::count());
+        $this->assertSame(0, \DB::table('inventory')->count());
     }
 
     public function test_guard_rechaza_host_no_supabase_sin_flag(): void

@@ -4,6 +4,53 @@
 
 ---
 
+### Sesión 2026-08-17 — Import catálogo + stock de Tadaima CENTRO (.bak Esmeralda 2026-08-17) — SOLO DATOS, sin deploy
+
+Llegó `Tadaima-20260817.bak` (218 MB, mismo POS viejo Esmeralda S.I, "Sucursal
+Centro"). Reglas de Joel: entran los artículos 2025-2026 **con stock**; mangas y
+libros ("librería") entran aunque tengan stock 0; si el SKU **ya existe** no se
+agrega ni se actualiza (nombre/costo/precio/categoría intactos), solo recibe su
+stock en Centro; mapeo idéntico al de Macro. **No hubo deploy ni gcloud:** el
+comando corre local → Supabase (`pgsql_target`), Cloud Run lee la misma DB.
+
+**Pipeline reusado** (`MAcro Productos SQL/`): SQL Server 2022 en Docker +
+`extract-staging.py`. OJO: este .bak trae nombres lógicos `tadaima_dat/tadaima_log`
+(no `MiBD_*` como el de Macro) → el `RESTORE … WITH MOVE` se hizo a mano; ver
+`RESTORE FILELISTONLY` antes de usar `restore.sh`. Staging:
+`articulos-staging-centro-20260817.json` (15,725 filas, untracked).
+
+**Comando `tadaima:import-macro` extendido** (opciones nuevas, TDD, 15 tests):
+`--desde-fecha=YYYY-MM-DD` (fecha_alta ≥; aplica a todo), `--solo-con-stock`,
+`--libreria-sin-stock` (librería = `PurgeNoStockProductsCommand::PROTECTED_CATEGORY_PATTERNS`,
+ahora pública: manga/comic/libro/libret/librer/shonen/kamite — exenta SOLO del
+filtro de stock), `--existentes-solo-stock` (existentes → únicamente paso 6 de
+inventario; sus categorías no se crean; diferencias de precio solo se
+reportan). Reporte del dry-run ampliado: descartados por filtro, librería
+rescatada por categoría, existentes con precio distinto, filas de stock previo
+del warehouse destino que cambian. `verify()` ya no cuenta SKUs con existencia
+0 cuando NO se pisan ceros (el contrato es "0 no toca inventario"; antes daba
+✗ falso). Notas de movimientos parametrizadas por tienda.
+
+**Hallazgos del dry-run:** el filtro 2025-2026 no descartó nada — TODAS las
+FechaA del .bak son ≥ 2025-05-31 (la BD de Centro se cargó masivamente ese
+día: 11,389 filas en el mismo minuto). 3 SKUs genéricos concentran el stock:
+`si` Sticker Individual 213,145 pzs · `carta` Cartas sueltas 9,702 · `club`
+Tarjeta Tadaima 1,147 (Joel: se importan tal cual, el .bak es la verdad).
+
+**Corrida real** (`--ref=import-centro-20260817`, `--user=1`, backup previo
+`~/Documents/JOEL/supabase-catalogo-pre-import-centro-2026-08-17.dump`, pg_dump 17,
+10 tablas): entran 4,390 = **1,173 nuevos** (781 con stock + 392 librería sin
+stock) + 3,217 existentes (973 reciben stock, el resto no-op). 18 categorías
+nuevas (Sleeves, Blindbox, Pokémon TCG, OP TCG, Magic TCG…), 1,172 precios,
+328 existentes con precio distinto NO tocados. **Verificado:** 4,390/4,390 SKUs
+✓, stock warehouse Centro 231,353 = staging ✓; products 3,975 → **5,150**
+(mangas 3,100 → 3,603); inventory warehouse 1: 36 → 1,765 filas / **1,757
+vendibles**; movimientos 1,729 entradas + 21 ajustes (4 bajaron: el .bak manda).
+API prod: `GET /products?in_stock=1&store_id=1` → 1,757 ✓, búsqueda encuentra
+los nuevos. Contenedor SQL Server eliminado. **QA:** 475 PHPUnit verdes.
+
+---
+
 ### Sesión 2026-08-12 (3) — Política de Privacidad pública en el POS + DEPLOY TOTAL (cuentas de cliente incluidas)
 
 Joel pidió publicar la **Política de Privacidad del Software POS** (texto que
