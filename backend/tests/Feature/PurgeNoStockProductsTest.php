@@ -75,26 +75,28 @@ class PurgeNoStockProductsTest extends TestCase
         return $pending;
     }
 
-    public function test_borra_sin_stock_pero_protege_mangas_y_categorias_libreria(): void
+    public function test_borra_sin_stock_pero_protege_solo_tomos(): void
     {
+        // Desde 2026-08-17 (Ruben/Joel): librería = solo tomos (product_type
+        // manga). Comics/libretas sin stock se purgan como cualquier producto.
         $catComics = ProductCategory::create(['name' => 'Comics', 'active' => true]);
         $catLibretas = ProductCategory::create(['name' => 'Libretas', 'active' => true]);
         $catFiguras = ProductCategory::create(['name' => 'Figuras', 'active' => true]);
 
-        $manga = $this->makeProduct(['product_type' => Product::TYPE_MANGA]);           // sin stock, manga
-        $comic = $this->makeProduct(['category_id' => $catComics->id]);                  // sin stock, categoría protegida
-        $libreta = $this->makeProduct(['category_id' => $catLibretas->id]);              // sin stock, categoría protegida
+        $manga = $this->makeProduct(['product_type' => Product::TYPE_MANGA, 'name' => 'Tomo 1 Naruto']); // sin stock, tomo → se queda
+        $comic = $this->makeProduct(['category_id' => $catComics->id]);                  // sin stock → BORRAR (ya no protegido)
+        $libreta = $this->makeProduct(['category_id' => $catLibretas->id]);              // sin stock → BORRAR (ya no protegido)
         $figuraSin = $this->makeProduct(['category_id' => $catFiguras->id]);             // sin stock → BORRAR
         $figuraCon = $this->makeProduct(['category_id' => $catFiguras->id], stock: 3);   // con stock → se queda
         $sinCategoria = $this->makeProduct();                                            // sin stock, sin categoría → BORRAR
 
-        $this->runPurge(confirmMsg: sprintf('¿Borrar %d y desactivar %d productos en %s?', 2, 0, config('database.default')))
+        $this->runPurge(confirmMsg: sprintf('¿Borrar %d y desactivar %d productos en %s?', 4, 0, config('database.default')))
             ->assertExitCode(0);
 
         $this->assertDatabaseHas('products', ['id' => $manga->id]);
-        $this->assertDatabaseHas('products', ['id' => $comic->id]);
-        $this->assertDatabaseHas('products', ['id' => $libreta->id]);
         $this->assertDatabaseHas('products', ['id' => $figuraCon->id]);
+        $this->assertDatabaseMissing('products', ['id' => $comic->id]);
+        $this->assertDatabaseMissing('products', ['id' => $libreta->id]);
         $this->assertDatabaseMissing('products', ['id' => $figuraSin->id]);
         $this->assertDatabaseMissing('products', ['id' => $sinCategoria->id]);
     }

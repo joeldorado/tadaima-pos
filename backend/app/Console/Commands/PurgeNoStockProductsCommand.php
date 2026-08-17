@@ -7,13 +7,14 @@ use Illuminate\Support\Facades\DB;
 
 /**
  * Purga del catálogo importado de Macro (pedido Joel 2026-08-06): borra los
- * productos SIN stock, conservando todo lo "librería" — mangas, comics,
- * libretas y cualquier categoría tipo libro ("todo lo que se considere
- * libros"). Corre LOCAL contra Supabase, igual que tadaima:import-macro.
+ * productos SIN stock, conservando los TOMOS (product_type='manga'). Hasta
+ * 2026-08-17 también protegía categorías comics/libretas/kamite ("todo lo que
+ * se considere libros"); Ruben/Joel acotaron: librería = solo tomos (nombre
+ * "Tomo…"). Corre LOCAL contra Supabase, igual que tadaima:import-macro.
  *
  * Reglas:
- * - PROTEGIDOS (nunca se tocan): product_type='manga'; categoría cuyo nombre
- *   contenga manga/comic/libro/libret/librer/shonen/kamite; y cualquier
+ * - PROTEGIDOS (nunca se tocan): product_type='manga' (= tomos); categorías de
+ *   PROTECTED_CATEGORY_PATTERNS (hoy vacía, ver arriba); y cualquier
  *   producto con stock global > 0 (suma de TODOS los warehouses).
  * - Candidatos con ventas/preventas/apartados → se DESACTIVAN (active=false),
  *   no se borran: products no tiene soft-delete y borrar dejaría el histórico
@@ -37,13 +38,13 @@ class PurgeNoStockProductsCommand extends Command
     protected $description = 'Borra productos sin stock (excepto mangas/comics/libros y los que tienen historial, que solo se desactivan)';
 
     /**
-     * Substrings (lowercase) de categorías "librería" que NUNCA se purgan.
-     * Pública: la reusa ImportMacroProductsCommand (--libreria-sin-stock) para
-     * que "qué es librería" sea UN solo criterio en todo el POS.
+     * Desde 2026-08-17 (Ruben/Joel) "librería" = solo TOMOS (product_type='manga'
+     * = nombre que empieza con "Tomo", ver App\Support\TomoRule). Ya NO se
+     * protegen categorías por nombre (comics/libretas/kamite sin stock se
+     * purgan como cualquier producto). Constante vacía a propósito — la
+     * mecánica queda por si el equipo vuelve a pedir una categoría protegida.
      */
-    public const PROTECTED_CATEGORY_PATTERNS = [
-        'manga', 'comic', 'libro', 'libret', 'librer', 'shonen', 'kamite',
-    ];
+    public const PROTECTED_CATEGORY_PATTERNS = [];
 
     public function handle(): int
     {

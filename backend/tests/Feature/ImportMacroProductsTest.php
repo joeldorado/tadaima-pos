@@ -277,7 +277,7 @@ class ImportMacroProductsTest extends TestCase
         $this->assertNull(Product::where('sku', 'C-FIG-2024-STOCK')->first());
         $this->assertNull(Product::where('sku', 'C-SINFECHA')->first());
 
-        // Librería 2025 sin stock entra igual (manga con detalle + precio, sin inventario)
+        // Tomo 2025 sin stock entra igual (manga con detalle + precio, sin inventario)
         $manga = Product::where('sku', 'C-MANGA-2025-SIN')->first();
         $this->assertNotNull($manga);
         $this->assertSame('manga', $manga->product_type);
@@ -285,17 +285,16 @@ class ImportMacroProductsTest extends TestCase
         $this->assertDatabaseHas('product_prices', ['product_id' => $manga->id, 'price_1' => 169.0, 'price_2' => 152.0]);
         $this->assertDatabaseMissing('inventory', ['product_id' => $manga->id]);
 
-        // Librería por patrón "libro" (no manga) → product con su categoría
-        $libro = Product::where('sku', 'C-LIBRO-2025-SIN')->first();
-        $this->assertNotNull($libro);
-        $this->assertSame('product', $libro->product_type);
-        $this->assertSame('Libros', $libro->category?->name);
+        // Librería = SOLO tomos (Ruben 2026-08-17): un "Libro…" en categoría
+        // Libros y un art book en Manga extranjero, ambos sin stock, quedan FUERA.
+        $this->assertNull(Product::where('sku', 'C-LIBRO-2025-SIN')->first());
+        $this->assertNull(Product::where('sku', 'C-EXTR-2025-SIN')->first());
 
         // Librería 2024 queda fuera: el filtro de fecha SÍ aplica a la librería
         $this->assertNull(Product::where('sku', 'C-MANGA-2024-SIN')->first());
 
         // Los "existentes" de la fixture aquí no existían → entran como nuevos
-        $this->assertSame(6, Product::count());
+        $this->assertSame(5, Product::count());
     }
 
     public function test_existentes_solo_stock_no_pisa_datos_solo_inventario(): void
@@ -344,7 +343,7 @@ class ImportMacroProductsTest extends TestCase
 
         // Los nuevos siguen entrando completos (categoría creada, precio)
         $this->assertDatabaseHas('product_categories', ['name' => 'Figuras']);
-        $this->assertSame(3 + 3, Product::count());
+        $this->assertSame(3 + 2, Product::count());
     }
 
     public function test_desde_fecha_invalida_falla_sin_escribir(): void

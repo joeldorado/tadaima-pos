@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Support\TomoRule;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 
@@ -21,7 +22,11 @@ use Illuminate\Support\Facades\DB;
  *   En UPDATE el costo solo se sobreescribe si el origen trae > 0 — los costos
  *   ya capturados a mano en Tadaima no se pisan con NULL.
  * - categoría → product_categories por nombre (crea faltantes);
- *   Manga/Manga extranjero/kamite/SHONEN JUMP → product_type='manga' + details.
+ *   TOMO (App\Support\TomoRule: categoría Manga/Manga extranjero/kamite/SHONEN
+ *   JUMP Y nombre que empieza con "Tomo") → product_type='manga' + details.
+ *   El resto de esas categorías (art books, box sets, jap/USA, kamite…) es
+ *   producto normal — hasta 2026-08-17 se mapeaba por categoría y metió ~800
+ *   no-tomos al módulo Tomos (corregido con tadaima:depurar-tomos).
  * - existencia > 0 → inventory del warehouse Exhibición de la tienda destino
  *   (absoluto) + inventory_movements (entrada al crear, ajuste si había fila).
  *   Existencia 0 NO toca inventario (no borra stock ya operado en Tadaima).
@@ -35,9 +40,9 @@ use Illuminate\Support\Facades\DB;
  * - --desde-fecha=YYYY-MM-DD: solo artículos con fecha_alta ≥ esa fecha
  *   (sin fecha quedan fuera). Aplica a TODO, librería incluida.
  * - --solo-con-stock: solo existencia > 0.
- * - --libreria-sin-stock: la librería (categorías con manga/comic/libro/libret/
- *   librer/shonen/kamite — el MISMO criterio que protege tadaima:purge-no-stock)
- *   se exenta SOLO del filtro de stock.
+ * - --libreria-sin-stock: la librería (= lo que es TOMO según TomoRule: categoría
+ *   de manga + nombre "Tomo…") se exenta SOLO del filtro de stock. Comics,
+ *   libretas, kamite, art books, etc. NO son librería (Ruben 2026-08-17).
  * - --existentes-solo-stock: los SKUs que ya existen NO se actualizan (nombre,
  *   costo, precio, categoría, tipo intactos; las diferencias de precio solo se
  *   reportan) — únicamente reciben su stock en el warehouse destino.
@@ -55,29 +60,20 @@ class ImportMacroProductsCommand extends Command
         {--pisar-ceros : Existencia 0 en el origen TAMBIÉN pone en 0 el stock del warehouse destino (re-import donde el origen es la verdad)}
         {--desde-fecha= : Solo artículos con fecha_alta >= YYYY-MM-DD (sin fecha quedan fuera; aplica también a la librería)}
         {--solo-con-stock : Solo artículos con existencia > 0}
-        {--libreria-sin-stock : La librería (categorías manga/comic/libro/libret/librer/shonen/kamite) entra aunque tenga existencia 0 — exenta SOLO del filtro de stock}
+        {--libreria-sin-stock : La librería (= tomos: categoría de manga + nombre que empieza con "Tomo") entra aunque tenga existencia 0 — exenta SOLO del filtro de stock}
         {--existentes-solo-stock : Los SKUs que ya existen NO se actualizan (nombre/costo/precio/categoría/tipo); solo reciben su stock en el warehouse destino}
         {--force : Saltar la confirmación interactiva (corridas no-TTY YA autorizadas por Joel)}
         {--unsafe-host : Permitir un target que no sea *.supabase.co (QA/tests)}';
 
     protected $description = 'Importa el catálogo del POS viejo (Esmeralda S.I, staging JSON) a Supabase — Macro completo o una sucursal filtrada (Centro)';
 
-    private const MANGA_CATEGORIES = ['manga', 'manga extranjero', 'kamite', 'shonen jump'];
-
     /** Máximo de renglones que se listan por bloque de detalle en el reporte. */
     private const MAX_DETALLE = 60;
 
-    /** Categoría "librería" = mismo criterio que la purga (un solo lugar de verdad). */
-    private static function esLibreria(string $categoria): bool
+    /** Tomo / librería = App\Support\TomoRule (categoría de manga + nombre "Tomo…"). */
+    private static function esTomo(array $a): bool
     {
-        $cat = mb_strtolower($categoria);
-        foreach (PurgeNoStockProductsCommand::PROTECTED_CATEGORY_PATTERNS as $pat) {
-            if (str_contains($cat, $pat)) {
-                return true;
-            }
-        }
-
-        return false;
+        return TomoRule::esTomo($a['name'], $a['categoria']);
     }
 
     /** "Manga 2233 · Libretas 66 · …" (ya ordenado por quien llama). */
@@ -174,7 +170,7 @@ class ImportMacroProductsCommand extends Command
         $libreriaRescatada = [];   // categoría → n (librería sin stock que entró por --libreria-sin-stock)
         $catsLibreria = [];        // categoría → n (todo el staging, informativo)
         foreach ($arts as $sku => $a) {
-            if (self::esLibreria($a['categoria'])) {
+            if (self::esTomo($a)) {
                 $catsLibreria[$a['categoria']] = ($catsLibreria[$a['categoria']] ?? 0) + 1;
             }
             if ($desdeFecha !== '' && ($a['fecha_alta'] === null || $a['fecha_alta'] < $desdeFecha)) {
@@ -184,7 +180,7 @@ class ImportMacroProductsCommand extends Command
                 continue;
             }
             if ($soloConStock && $a['existencia'] <= 0) {
-                if ($libreriaSinStock && self::esLibreria($a['categoria'])) {
+                if ($libreriaSinStock && self::esTomo($a)) {
                     $libreriaRescatada[$a['categoria']] = ($libreriaRescatada[$a['categoria']] ?? 0) + 1;
                 } else {
                     $fueraStock++;
@@ -239,7 +235,7 @@ class ImportMacroProductsCommand extends Command
             }
         }
 
-        $esManga = fn (array $a): bool => in_array(mb_strtolower($a['categoria']), self::MANGA_CATEGORIES, true);
+        $esManga = fn (array $a): bool => self::esTomo($a);
         $mangas = array_filter($arts, $esManga);
         $sinCosto = array_filter($arts, fn ($a) => $a['cost'] === null);
         $sinPrecio = array_filter($arts, fn ($a) => $a['price_1'] === null);
@@ -259,7 +255,7 @@ class ImportMacroProductsCommand extends Command
         }
         if ($libreriaSinStock || $soloConStock) {
             arsort($catsLibreria);
-            $this->line(sprintf('  Categorías consideradas librería en el staging (%d): %s',
+            $this->line(sprintf('  Tomos ("Tomo…" en categoría de manga) en el staging por categoría (%d): %s',
                 count($catsLibreria), $catsLibreria !== [] ? $this->fmtConteos($catsLibreria) : '—'));
         }
         $this->line(sprintf('  Artículos que entran: %d', count($arts)));
