@@ -55,8 +55,9 @@ Comics 11, Shonen Jump 4, sin cat 3, Liquidación Manga 1) · 0 desactivados
 por categoría); purge-no-stock ya NO protege comics/libretas/kamite
 (`PROTECTED_CATEGORY_PATTERNS` vacía, solo product_type manga); tests:
 DepurarTomosTest (5) + fixtures/asserts de import y purga a la regla nueva
-(487 PHPUnit). Deploy con este commit para que prod tenga la misma base
-(comandos locales; sin efecto funcional en la app).
+(487 PHPUnit). Deploy: commit `3165ac0` → rev **`tadaima-00011-n95`**
+(candidate → smoke: corte 0, /mangas 2,803, us/catalog 200 → 100% + tag
+`ruben`). Solo comandos locales; sin efecto funcional en la app.
 
 ---
 
