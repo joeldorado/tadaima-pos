@@ -5,6 +5,8 @@ export interface ProductCategory {
   name: string
   description: string | null
   active: boolean
+  /** Productos asignados (GET /categories lo trae siempre; una categoría con productos no se puede eliminar). */
+  products_count?: number
   created_at: string
   updated_at: string
 }

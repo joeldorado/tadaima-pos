@@ -101,16 +101,18 @@ function Badge({ color, children }: { color: string; children: React.ReactNode }
   );
 }
 
-function Btn({ onClick, children, variant = "ghost", disabled = false, style = {} }: {
+function Btn({ onClick, children, variant = "ghost", disabled = false, style = {}, title }: {
   onClick?: () => void; children: React.ReactNode;
   variant?: "red" | "ghost" | "outline"; disabled?: boolean; style?: React.CSSProperties;
+  /** Tooltip nativo (p.ej. por qué una acción no aplica). */
+  title?: string;
 }) {
   const styles: Record<string, React.CSSProperties> = {
     red: { background: RED_G, color: "#fff", border: "1px solid rgba(255,80,50,0.3)", borderRadius: 12, padding: "8px 18px", fontSize: 12, fontWeight: 900, cursor: "pointer", opacity: disabled ? 0.4 : 1 },
     ghost: { background: "var(--td-panel-bg)", color: TS, border: "1px solid var(--td-panel-border)", borderRadius: 12, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" },
     outline: { background: "transparent", color: TS, border: "1px solid var(--td-input-border)", borderRadius: 12, padding: "7px 14px", fontSize: 11, fontWeight: 700, cursor: "pointer" },
   };
-  return <button onClick={onClick} disabled={disabled} style={{ ...styles[variant], ...style }}>{children}</button>;
+  return <button onClick={onClick} disabled={disabled} style={{ ...styles[variant], ...style }} {...(title !== undefined ? { title } : {})}>{children}</button>;
 }
 
 function ListSearchBar({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
@@ -1129,13 +1131,22 @@ function TabCategorias() {
     }
   };
 
-  const remove = async (id: number) => {
+  const remove = async (c: ProductCategory) => {
+    // Una categoría con productos no se puede borrar (FK): avisar con el
+    // conteo ANTES de pegarle al API, y si el API rechaza, mostrar SU motivo
+    // (antes se tragaba el 422 y salía "Error al eliminar categoría", QA 2026-08-17).
+    const n = c.products_count ?? 0;
+    if (n > 0) {
+      toast.error(`No se puede eliminar «${c.name}»: tiene ${n} producto${n === 1 ? "" : "s"}. Cámbialos de categoría o elimínalos primero.`);
+      return;
+    }
     try {
-      await deleteCategory(id);
+      await deleteCategory(c.id);
       void invalidateCategories();
       toast.success("Categoría eliminada");
-    } catch {
-      toast.error("Error al eliminar categoría");
+    } catch (e: unknown) {
+      const msg = (e as { message?: string } | null)?.message;
+      toast.error(msg && msg !== "Error desconocido" ? msg : "Error al eliminar categoría");
     }
   };
 
@@ -1161,15 +1172,27 @@ function TabCategorias() {
                 <Tag size={16} color={c.active ? "#F59E0B" : TM} />
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <p style={{ color: TP, fontWeight: 900, fontSize: 14, margin: 0 }}>{c.name}</p>
                   <Badge color={c.active ? "amber" : "red"}>{c.active ? "Activa" : "Inactiva"}</Badge>
+                  {/* Cuántos productos cuelgan de la categoría: con productos NO se puede eliminar */}
+                  {(c.products_count ?? 0) > 0 ? (
+                    <Badge color="blue">{c.products_count} producto{c.products_count === 1 ? "" : "s"}</Badge>
+                  ) : (
+                    <span style={{ color: TM, fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1 }}>sin productos</span>
+                  )}
                 </div>
                 {c.description && <p style={{ color: TS, fontSize: 11, margin: "3px 0 0 0" }}>{c.description}</p>}
               </div>
               <div style={{ display: "flex", gap: 6 }}>
                 <Btn onClick={() => openEdit(c)}><Edit2 size={12} /></Btn>
-                <Btn onClick={() => void remove(c.id)} style={{ color: "#FF4433" }}><Trash2 size={12} /></Btn>
+                <Btn
+                  onClick={() => void remove(c)}
+                  title={(c.products_count ?? 0) > 0 ? `Tiene ${c.products_count} producto(s): no se puede eliminar` : "Eliminar categoría"}
+                  style={{ color: "#FF4433", opacity: (c.products_count ?? 0) > 0 ? 0.45 : 1 }}
+                >
+                  <Trash2 size={12} />
+                </Btn>
               </div>
             </div>
           ))}

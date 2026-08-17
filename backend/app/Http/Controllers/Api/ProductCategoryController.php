@@ -63,8 +63,15 @@ class ProductCategoryController extends Controller
             return $resp;
         }
 
-        if ($category->products()->exists()) {
-            return $this->error('No se puede eliminar la categoría porque tiene productos asociados.', 422);
+        // FK products.category_id: se bloquea con mensaje útil (cuántos son)
+        // en vez de un error genérico — el equipo intentó borrar categorías
+        // con productos y solo veía "Error al eliminar categoría" (2026-08-17).
+        $n = $category->products()->count();
+        if ($n > 0) {
+            return $this->error(sprintf(
+                'No se puede eliminar «%s»: tiene %d producto%s asociado%s. Cámbialos de categoría o elimínalos primero.',
+                $category->name, $n, $n === 1 ? '' : 's', $n === 1 ? '' : 's'
+            ), 422);
         }
 
         $category->delete();

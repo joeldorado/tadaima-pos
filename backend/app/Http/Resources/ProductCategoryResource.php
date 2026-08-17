@@ -15,9 +15,15 @@ class ProductCategoryResource extends JsonResource
             'description'    => $this->description,
             'active'         => $this->active,
 
+            // El índice usa withCount('products') → llega como atributo
+            // products_count (NO carga la relación, por eso relationLoaded()
+            // siempre era false y el conteo nunca salía). Se emite si viene el
+            // atributo o si la relación está cargada.
             'products_count' => $this->when(
-                $this->relationLoaded('products'),
-                fn () => $this->products->count(),
+                isset($this->products_count) || $this->relationLoaded('products'),
+                fn () => isset($this->products_count)
+                    ? (int) $this->products_count
+                    : $this->products->count(),
             ),
 
             'created_at' => $this->created_at?->toISOString(),
