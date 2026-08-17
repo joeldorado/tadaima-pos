@@ -19,18 +19,44 @@ ProductModal + MangaEditModal, radio "Borrar TODO" solo admin. Tests:
 270 vitest / tsc 464 baseline. Commit `f7d6008` → rev `tadaima-00010-jmb`
 (candidate → smoke → 100% + tag `ruben`).
 
-**Pendiente de confirmación (Joel/Ruben) — mangas extranjeros:** la regla de
-Ruben es "manga nacional (módulo Tomos) = solo nombres que empiezan con
-'Tomo'"; el import mapeó por categoría (Manga/Manga extranjero/kamite/SHONEN
-JUMP → manga). Estado prod: 3,603 en Tomos, 2,803 empiezan con Tomo y ~800 no
-(52 Manga, 407 Manga extranjero, 333 kamite, 5 SHONEN JUMP, 3 sin cat). Del
-import Centro de hoy, 184 nuevos sin stock entraron por "librería" sin ser
-Tomo* (152 Manga extranjero, 12 Manga, 18 Libretas, 1 comic, 1 Liquidación
-Manga). Propuesta: reclasificar los ~800 a product (conservan categoría),
-borrar los 184, cambiar la regla del import/purga a "empieza con Tomo".
-Dudas abiertas: Comics "Tomo…" (15) siguen product?; 5 "Tomo… jap/USA" en
-Manga extranjero; ¿la purga del 08-06 (kamite/comics/libretas sin stock) se
-revisa? NO se tocó nada aún.
+---
+
+### Sesión 2026-08-17 (4) — Depurado del módulo Tomos: "tomo = nombre empieza con Tomo" — SOLO DATOS + código (commit `3165ac0`)
+
+**Contexto (Ruben vía Joel):** en el POS viejo, "manga nacional" (módulo
+Tomos, `product_type='manga'`) eran SOLO los artículos cuyo **nombre** empieza
+con "Tomo"; los tomos extranjeros/art books/box sets/kamite/revistas de las
+mismas categorías van como producto normal. La migración de Macro (08-03)
+mapeó por CATEGORÍA (Manga/Manga extranjero/kamite/SHONEN JUMP → manga) y
+metió ~800 no-tomos a Tomos; el import de Centro (hoy) repitió el criterio
+como "librería sin stock". Verificado en ambos .bak y en Supabase: NINGUNA
+categoría empieza con "Tom" — la palabra está en el nombre.
+
+**Regla nueva (Joel confirmó alcance "A + borrar B sin stock; Comics se quedan
+Comics"):** `App\Support\TomoRule` — tomo = categoría de manga Y nombre
+"Tomo…"; librería para importar sin stock = eso mismo. Universo revisado:
+mangas + categorías manga/comic/libro/libret/librer/shonen/kamite. Tomo* → se
+queda (Comics "Tomo Eternos"… siguen Comics); no-tomo CON stock → producto
+normal (conserva categoría); no-tomo SIN stock → se borra (con historial se
+desactiva; promos SET NULL antes). `product_manga_details` de los
+reclasificados se dejan (todo Tomos filtra por product_type; borrarlos
+perdería datos capturados).
+
+**Ejecutado en prod (`tadaima:depurar-tomos`, backup previo
+`~/Documents/JOEL/supabase-catalogo-pre-depurado-tomos-2026-08-17.dump`):**
+200 a producto (kamite 114, Manga extranjero 83, Manga 2, Shonen Jump 1) ·
+**680 borrados** (Manga extranjero 324, kamite 219, Libretas 68, Manga 50,
+Comics 11, Shonen Jump 4, sin cat 3, Liquidación Manga 1) · 0 desactivados
+(ninguno tenía historial). Products **5,150 → 4,470**; Tomos **3,603 → 2,803**
+(0 mangas no-Tomo ✓). Inventario intacto (Centro 1,757 vendibles), promos 9 =
+9, `GET /mangas` total 2,803. system_log `products.tomos_depurados`.
+
+**Código (mismo commit):** import-macro `esManga`/librería → TomoRule (ya no
+por categoría); purge-no-stock ya NO protege comics/libretas/kamite
+(`PROTECTED_CATEGORY_PATTERNS` vacía, solo product_type manga); tests:
+DepurarTomosTest (5) + fixtures/asserts de import y purga a la regla nueva
+(487 PHPUnit). Deploy con este commit para que prod tenga la misma base
+(comandos locales; sin efecto funcional en la app).
 
 ---
 
