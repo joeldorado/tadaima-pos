@@ -4,6 +4,45 @@
 
 ---
 
+### Sesión 2026-08-17 (2) — Fix corte: cancelación total restaba el efectivo DOS veces — DEPLOYADO rev `tadaima-00009-4m9`
+
+**Bug reportado por Mario (Macro):** cobró por error $188 como Efectivo, canceló
+el ticket completo y lo recobró con tarjeta — el "Debe haber" del corte quedó en
+**−$188** en vez de $0 ("me regresa el doble").
+
+**Causa (backend, `ReportsController::cash`):** `$salePaymentTotals` filtraba
+`sales.status='completed'`. La cancelación total deja la venta en `returned`
+SIN borrar sus `payments` y además registra el reverso como `cash_movement`
+`salida` → el efectivo desaparecía del `cash_collected` Y se restaba la salida
+(doble resta). La cancelación PARCIAL nunca tuvo el problema (la venta sigue
+`completed`). El frontend no calcula nada: CloseCashModal, CashCloseSummaryModal,
+Cortes y el Reporte del Día pintan `expected_cash` tal cual → un solo fix server
+arregla las 4 pantallas. `/reports/sales` y ReportsPage NUNCA estuvieron mal
+(netean con cancelled_amount, sin salidas). Ningún corte CERRADO histórico
+afectado (la sesión de Mario seguía abierta; solo hay 2 cancelaciones totales
+en la vida de prod).
+
+**Fix:** contar cobros cash-like de ventas `completed` + `returned` (el reverso
+ya resta vía `total_salidas`). `total_sales`/`sales_count` siguen solo
+`completed`. TDD: 3 tests nuevos en `MixedPaymentCancellationTest` contra
+`GET /reports/cash` (total efectivo → esperado=apertura; total mixta; regresión
+parcial mixta) — RED reprodujo el −500/−300 exacto. Suite: 478 PHPUnit.
+
+**Front (mismo commit):** `invalidateAfterSale` ahora invalida
+`queryKeys.reports.cash()` + `['daily-report','cash']` — tras cancelar, Cortes y
+el Reporte del Día mostraban el esperado viejo hasta 30 s (el CloseCashModal se
+salvaba porque fetchea fresco al abrir). + `optimisticSale.test.ts` (266 vitest).
+
+**Deploy:** commit `0dd455a` → rev real `tadaima-00009-4m9` (gcloud volvió a
+imprimir el nombre viejo 00008-wd6 — trampa conocida) → tag candidate → smoke
+(sesión 26 de Mario: `expected_cash=0`, `cash_sales=188`, `salidas=188` ✓;
+login 401, SPA 200, us/catalog con items) → 100% + tag `ruben` movido. Verificado
+en tadaimamexico.com. En el ticket impreso el renglón "Cancelación venta #27 ·
+−$188" en MOVIMIENTOS es correcto (reverso real) — ahora el Esperado ya no lo
+duplica. El corte de Mario al cerrar hoy debe cuadrar contra $0 físico.
+
+---
+
 ### Sesión 2026-08-17 — Import catálogo + stock de Tadaima CENTRO (.bak Esmeralda 2026-08-17) — SOLO DATOS, sin deploy
 
 Llegó `Tadaima-20260817.bak` (218 MB, mismo POS viejo Esmeralda S.I, "Sucursal
