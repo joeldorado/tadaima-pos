@@ -291,11 +291,18 @@ class ReportsController extends Controller
             ->get()
             ->keyBy('register_session_id');
 
+        // Cobros que ENTRARON al cajón: se cuentan también los de ventas
+        // canceladas por completo ('returned'). La cancelación NO borra los
+        // `payments` y SÍ registra su reverso como cash_movement 'salida'
+        // (SaleCancellationService) — si aquí se excluyera la venta, el
+        // efectivo se restaría DOS veces (bug Mario/Macro 2026-08-17: venta
+        // $188 efectivo cancelada → esperado −188 en vez de 0). La parcial ya
+        // funcionaba así porque la venta sigue 'completed'.
         $salePaymentTotals = DB::table('payments')
             ->join('sales', 'sales.id', '=', 'payments.sale_id')
             ->leftJoin('payment_methods as pm', 'pm.id', '=', 'payments.payment_method_id')
             ->whereIn('sales.register_session_id', $sessionIds)
-            ->where('sales.status', Sale::STATUS_COMPLETED)
+            ->whereIn('sales.status', [Sale::STATUS_COMPLETED, Sale::STATUS_RETURNED])
             ->selectRaw("
                 sales.register_session_id,
                 COALESCE(SUM(payments.amount), 0) as total_paid,

@@ -149,6 +149,14 @@ export function invalidateAfterSale(
   if (opts?.presale) {
     void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all, refetchType: "all" });
   }
+  // El corte (Cortes, "Debe haber" del cierre, Reporte del Día en Caja) suma
+  // cobros en efectivo y salidas de la sesión: vender o cancelar lo mueve.
+  // No se invalidaba → tras cancelar, Cortes/Reporte del Día mostraban el
+  // esperado viejo hasta 30 s o hasta "Actualizar" (QA Mario 2026-08-17).
+  // `reports.cash()` sin params matchea todas las variantes (objeto {} es
+  // subconjunto de cualquier params); ['daily-report','cash'] es prefijo.
+  void queryClient.invalidateQueries({ queryKey: queryKeys.reports.cash() });
+  void queryClient.invalidateQueries({ queryKey: ["daily-report", "cash"] });
   invalidateDashboardKpis(queryClient);
 }
 

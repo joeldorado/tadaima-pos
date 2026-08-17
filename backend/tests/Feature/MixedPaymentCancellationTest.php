@@ -286,4 +286,66 @@ class MixedPaymentCancellationTest extends TestCase
         $this->assertNotNull($row);
         $this->assertEquals(300.0, (float) $row['expected_cash'], 'opening 0 + solo la porción efectivo');
     }
+
+    // ────────────────── cancelación vs esperado del corte (bug Mario 2026-08-17) ──────────────────
+
+    /** Fila de GET /reports/cash de la sesión del test. */
+    private function cashReportRow(): array
+    {
+        $row = collect(
+            $this->actingAs($this->admin)
+                ->getJson('/api/v1/reports/cash?from=' . now()->subDay()->toDateString() . '&to=' . now()->addDay()->toDateString())
+                ->assertOk()
+                ->json('data.sessions')
+        )->firstWhere('id', $this->session->id);
+        $this->assertNotNull($row, 'la sesión del test debe salir en el corte');
+
+        return $row;
+    }
+
+    public function test_cancelacion_total_en_efectivo_deja_el_esperado_en_la_apertura(): void
+    {
+        // Bug real (Mario, Macro, 2026-08-17): venta $188 capturada como
+        // efectivo por error → cancelación total → el corte decía esperado
+        // −188 en vez de 0: la venta 'returned' dejaba de contar sus pagos Y
+        // además se restaba la salida del reverso (doble resta).
+        $sale = $this->makeSaleWithPayments([[$this->cash, 500.0]]);
+        $this->assertEquals(500.0, (float) $this->cashReportRow()['expected_cash'], 'antes de cancelar: entró efectivo');
+
+        $this->service->cancelSale($sale, [], SaleCancellation::REASON_OTRO, null, $this->admin, $this->session->id);
+
+        $row = $this->cashReportRow();
+        $this->assertEquals(0.0, (float) $row['expected_cash'], 'entró 500 y salió 500 → el cajón queda en la apertura');
+        $this->assertEquals(500.0, (float) $row['total_cash_sales'], 'lo que entró físicamente se sigue mostrando');
+        $this->assertEquals(500.0, (float) $row['total_salidas'], 'y el reverso se ve como salida');
+        // Ventas (referencia operativa) sí excluyen la cancelada.
+        $this->assertEquals(0.0, (float) $row['total_sales']);
+        $this->assertSame(0, (int) $row['sales_count']);
+    }
+
+    public function test_cancelacion_total_mixta_deja_el_esperado_en_la_apertura(): void
+    {
+        $sale = $this->makeSaleWithPayments([[$this->cash, 300.0], [$this->transfer, 200.0]]);
+
+        $this->service->cancelSale($sale, [], SaleCancellation::REASON_CLIENTE_DEVUELVE, null, $this->admin, $this->session->id);
+
+        $row = $this->cashReportRow();
+        $this->assertEquals(0.0, (float) $row['expected_cash'], 'entró 300 efectivo, salió 300 → apertura');
+        $this->assertEquals(300.0, (float) $row['total_salidas']);
+    }
+
+    public function test_cancelacion_parcial_mixta_sigue_restando_solo_la_porcion_efectivo(): void
+    {
+        // Regresión: la parcial ya funcionaba (la venta sigue completed) —
+        // 300 efectivo entra, sale 60 (ratio 0.6 de $100) → esperado 240.
+        $sale   = $this->makeSaleWithPayments([[$this->cash, 300.0], [$this->transfer, 200.0]]);
+        $itemId = $sale->items()->first()->id;
+
+        $this->service->cancelSale(
+            $sale, [['sale_item_id' => $itemId, 'quantity' => 1]],
+            SaleCancellation::REASON_DANADO, null, $this->admin, $this->session->id,
+        );
+
+        $this->assertEquals(240.0, (float) $this->cashReportRow()['expected_cash']);
+    }
 }
