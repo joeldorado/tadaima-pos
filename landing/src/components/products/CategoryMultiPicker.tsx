@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type FocusEvent, type KeyboardEvent } from "react";
+import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Check, Plus, Search, Tag, X } from "lucide-react";
 import { toast } from "sonner";
@@ -37,11 +38,16 @@ const CHIP: CSSProperties = {
   border: "1px solid rgba(255,120,90,0.4)",
   color: "#fff",
 };
+// Fondo OPACO (--td-popup-bg): el panel vive en un portal sobre cualquier
+// cosa (footer del modal incluido); --td-panel-bg es casi transparente y se
+// veía el botón "Guardar" a través.
 const PANEL: CSSProperties = {
-  background: "var(--td-panel-bg)",
+  background: "var(--td-popup-bg, var(--td-panel-bg))",
   border: "1px solid var(--td-panel-border)",
-  boxShadow: "0 12px 32px rgba(0,0,0,0.25)",
+  boxShadow: "0 12px 32px rgba(0,0,0,0.35)",
 };
+/** Alto máximo del panel (lista max-h-56 = 224px + pie) para decidir si abre hacia arriba. */
+const PANEL_MAX_PX = 260;
 
 export function CategoryMultiPicker({
   value, onChange, disabled = false, placeholder = "Buscar o crear categoría…", allowCreate = true, dense = false,
@@ -52,6 +58,34 @@ export function CategoryMultiPicker({
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // El picker vive dentro del cuerpo scrolleable del modal (Productos/Tomos):
+  // un panel `absolute` se recortaba contra el footer y solo se veían ~3
+  // opciones (QA 2026-08-18 "al editar no se ve"). El panel se renderiza en un
+  // portal con posición FIJA anclada a la caja de chips (y se voltea hacia
+  // arriba si abajo no cabe), así escapa del overflow del modal. Se recalcula
+  // al hacer scroll/resize y cuando cambian los chips (la caja crece).
+  const [panelPos, setPanelPos] = useState<{ top: number; left: number; width: number; up: boolean } | null>(null);
+  useEffect(() => {
+    if (!open) { setPanelPos(null); return; }
+    const place = () => {
+      const r = boxRef.current?.getBoundingClientRect();
+      if (!r) return;
+      const spaceBelow = window.innerHeight - r.bottom;
+      const up = spaceBelow < PANEL_MAX_PX && r.top > spaceBelow;
+      setPanelPos({ top: up ? r.top - 4 : r.bottom + 4, left: r.left, width: r.width, up });
+    };
+    place();
+    window.addEventListener("resize", place);
+    // capture: también los scrolls de contenedores internos (cuerpo del modal).
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open, value.length]);
 
   const all = useMemo(() => categoriesQuery.data ?? [], [categoriesQuery.data]);
   const byId = useMemo(() => new Map(all.map(c => [c.id, c])), [all]);
@@ -98,10 +132,20 @@ export function CategoryMultiPicker({
     }
   };
 
+  // El panel va en portal (fuera del árbol del picker): el blur cierra solo si
+  // el foco no se fue ni a la caja ni al panel. Las opciones hacen
+  // preventDefault en mousedown, así el input no pierde el foco al elegir.
+  const onBlur = (e: FocusEvent<HTMLDivElement>) => {
+    const next = e.relatedTarget as Node | null;
+    if (e.currentTarget.contains(next) || panelRef.current?.contains(next)) return;
+    setOpen(false);
+  };
+
   return (
-    <div className="relative" onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false); }}>
+    <div className="relative" onBlur={onBlur}>
       {/* Chips + input en la misma "caja" */}
       <div
+        ref={boxRef}
         className={`flex flex-wrap items-center gap-1.5 rounded-2xl ${dense ? "px-2 py-1.5" : "px-3 py-2"} ${disabled ? "opacity-60" : ""}`}
         style={INPUT}
         onClick={() => !disabled && inputRef.current?.focus()}
@@ -143,12 +187,23 @@ export function CategoryMultiPicker({
         />
       </div>
 
-      {open && !disabled && (
+      {open && !disabled && panelPos && createPortal(
         <div
-          className="absolute z-30 left-0 right-0 mt-1 rounded-2xl overflow-hidden"
-          style={PANEL}
+          ref={panelRef}
+          className="rounded-2xl overflow-hidden"
+          style={{
+            ...PANEL,
+            position: "fixed",
+            zIndex: 1000,
+            left: panelPos.left,
+            width: panelPos.width,
+            ...(panelPos.up
+              ? { bottom: window.innerHeight - panelPos.top }
+              : { top: panelPos.top }),
+          }}
           role="listbox"
           tabIndex={-1}
+          data-testid="category-picker-panel"
         >
           <div className="max-h-56 overflow-y-auto py-1">
             {categoriesQuery.isLoading && (
@@ -193,7 +248,8 @@ export function CategoryMultiPicker({
               <Check size={10} /> {selected.length} seleccionada{selected.length === 1 ? "" : "s"} · Enter agrega la primera
             </div>
           )}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
