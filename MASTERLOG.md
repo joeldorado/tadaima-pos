@@ -43,6 +43,55 @@ cancelar post-borrado). Suite 513 PHPUnit · vitest 277 · tsc 464 baseline.
 
 ---
 
+### Sesión 2026-08-18 (3) — "Al editar no deja varias categorías" → el equipo seguía en el servicio VIEJO; reparación + RETIRO de tadaima.poslite.com.mx — DEPLOYADO rev `tadaima-00016-b2v`
+
+**Reporte:** crear producto sí deja varias categorías, editar no. **Reproducido:
+falso en el POS nuevo** (PUT guarda `[A,B]`, al reabrir salen ambos chips).
+
+**Causa real:** las altas/ediciones del equipo NO llegaban al servicio nuevo.
+`tadaima.poslite.com.mx` seguía apuntando al servicio viejo (proyecto
+`impusodigitaldorado`, rev `tadaima-00169-6s4`, código del 08-06) contra la
+**misma Supabase**. Ese código no conoce categorías múltiples: escribe solo
+`products.category_id` sin renglón en el pivote → el POS nuevo los pintaba
+"Sin categoría", y su modal era el select único de antes. Evidencia: `#15529`
+y `#15530` (creados anoche) con `category_id` y pivote vacío; sus `POST
+/products` en los logs del viejo, cero en el nuevo. En 24 h el viejo recibió
+52 POST / 20 PUT / 4 DELETE (13 ventas, 3 cancelaciones, 3 altas) — nadie ahí
+tenía nada de lo deployado desde el 08-11 (fix corte de Mario, permiso
+eliminar, categorías múltiples, snapshot ventas, filtro Sin categoría).
+
+**Fix (PR #11, commit `9ce9683`):**
+- `App\Support\CategoryPivotRepair` — producto con `category_id` y sin pivote →
+  inserta ese id como única categoría; no toca los que ya tienen pivote;
+  idempotente. Migración `2026_08_18_000004` (auto en cada deploy) + comando
+  `tadaima:reparar-categorias` (local → Supabase, `--dry-run`). Prod reparado
+  a mano (2 productos) y de nuevo por la migración al deploy. Tests
+  `CategoryPivotRepairTest` (4). Suite 517 PHPUnit / 277 vitest / tsc 464.
+- `CategoryMultiPicker`: panel de opciones en **portal** (posición fija
+  anclada a la caja, voltea hacia arriba si no cabe, fondo opaco
+  `--td-popup-bg`) — antes se recortaba contra el footer del modal y solo se
+  veían ~3 opciones.
+
+**Retiro del servicio viejo (decisión Joel, cuenta `doradoaguilusjoel@gmail.com`):**
+respaldo YAML del servicio + domain-mapping + revisiones en
+`~/Documents/JOEL/backups/tadaima-viejo-2026-08-18/`; `gs://tadaima-media`
+(123 objetos) ⊂ `gs://tadaimapos-media` (135) — rsync sin faltantes; ninguna
+`us_listings.image_url` ni `product_images` apuntaba al bucket viejo; se borró
+el domain-mapping `tadaima.poslite.com.mx` y el servicio `tadaima` (el
+servicio `pos` de ese proyecto es ajeno y NO se tocó). URL vieja → 404. Queda
+un grant temporal de lectura para tadaima.devmx sobre `tadaima-media`
+(archivo). `backend/AGENTS.md`: entornos actualizados (Supabase, tadaimamexico.com,
+tadaimapos-media). **F7 de la migración: CERRADA.**
+
+**Aviso al equipo:** todos entran por `https://tadaimamexico.com` (reinstalar
+PWA / marcador; QZ Tray puede volver a pedir confianza al certificado la
+primera vez).
+
+Deploy: candidate → smoke (stats sin_categoria 16→14, #15530 = [Cartas],
+corte Mario 0, bundle con el picker nuevo) → 100% + tag `ruben`.
+
+---
+
 ### Sesión 2026-08-18 — Filtro "Sin categoría" en Productos + merge fix reportes de Ruben — DEPLOYADO rev `tadaima-00014-b55`
 
 **Pedido (Joel):** (1) PR con la rama de Ruben (`develop`) y subir su cambio;

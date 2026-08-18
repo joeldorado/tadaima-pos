@@ -33,9 +33,9 @@ Capacidades principales:
 |------|-----------|
 | Framework | Laravel 11, PHP 8.3 |
 | Auth | Laravel Sanctum (Bearer token) |
-| DB producción | MySQL (Cloud SQL `pos-lite-db`, us-west1) |
+| DB producción | PostgreSQL en Supabase (proyecto `yndrdteeuljxsovvgyue`, pooler session :5432) — desde 2026-08-03 |
 | DB tests | SQLite en memoria (`RefreshDatabase`) |
-| Storage | Google Cloud Storage (`gs://tadaima-media`) en prod; local en dev |
+| Storage | Google Cloud Storage (`gs://tadaimapos-media`, público) en prod; local en dev |
 | Deploy | Cloud Run (us-central1), build remoto en Cloud Build |
 | Tests | PHPUnit |
 
@@ -44,8 +44,10 @@ Capacidades principales:
 | Entorno | API base |
 |---------|----------|
 | Local | `http://localhost:8000/api/v1` |
-| Producción | `https://tadaima-987277625193.us-central1.run.app/api/v1` |
-| Dominio custom | `https://tadaima.poslite.com.mx/api/v1` |
+| Producción | `https://tadaimamexico.com/api/v1` (Cloud Run `tadaima`, proyecto `tadaimapos`, us-central1) |
+| URL directa | `https://tadaima-747134907044.us-central1.run.app/api/v1` |
+
+> ⚠️ `tadaima.poslite.com.mx` (proyecto viejo `impusodigitaldorado`) fue **eliminado el 2026-08-18** — ya no existe. Todo el equipo entra por `tadaimamexico.com`.
 
 Credenciales de prueba (prod, fase de pruebas): `pier@tadaima.mx` / `Tadaima2026` (admin).
 
