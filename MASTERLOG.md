@@ -21,6 +21,58 @@ ProductModal + MangaEditModal, radio "Borrar TODO" solo admin. Tests:
 
 ---
 
+### Sesión 2026-08-17 (6) — Categorías MÚLTIPLES por producto + borrar categoría desvinculando — DEPLOYADO rev `tadaima-00013-6ct`
+
+**Pedido (Joel/equipo):** (1) un producto con N categorías, con UI nueva de
+asignación en el alta/edición; (2) borrar una categoría aunque tenga
+productos: mostrar cuáles, confirmar y desvincular. Decisiones de Joel: todas
+las categorías iguales (sin "principal"), aplica a Productos **y** Tomos, y
+al borrar los que se quedan sin ninguna pasan a "Sin categoría".
+
+**Modelo:** tabla `product_category_assignments` (product_id, category_id,
+position, unique) + backfill idempotente (patrón promotion_assignments) —
+corrió solo al arrancar la rev: **4,461 filas = 4,461 productos con
+categoría**. `products.category_id` se conserva SOLO como caché de compat (=
+la primera del pivote; light resource, app móvil, SQL crudo). Único punto de
+escritura: `Product::syncCategories()`. `ProductCategory::products()` es N:N
+→ `products_count` cuenta vínculos.
+
+**API:** `POST/PUT /products` y `/mangas` aceptan `category_ids[]` (compat:
+`category_id` solo = [id]; PUT sin categorías las conserva); filtros
+`?category_id=` de Productos, catálogo por tienda y tienda online matchean
+CUALQUIERA; Resources exponen `categories[{id,name}]` (Product / MangaCompat /
+catálogo público) y `category_ids[]` en el light; `GET
+/categories/{id}/products` (nombre, SKU, other_categories_count) para el modal;
+`DELETE /categories/{id}` desvincula, recalcula la caché y devuelve
+`{unlinked, left_without_category}` + system_log. import-macro escribe el
+pivote; depurar-tomos y purge-no-stock leen el pivote; CopyToPgsql incluye la
+tabla; DemoSeeder sincroniza. Tests: `ProductMultiCategoryTest` (10) +
+ajustes; **500 PHPUnit**.
+
+**Front:** `CategoryMultiPicker` (chips + buscador sin acentos + "crear «x»"
+inline; lógica pura `lib/categoryPicker.ts` con test) en ProductModal,
+MangaEditModal y alta masiva de tomos (misma lista para todos los tomos).
+`Producto.categoryIds[]` (verdad) + `categoria` = nombres unidos con " · ";
+guardado con `category_ids`; se eliminó la resolución por nombre / `prompt()`.
+Admin → Categorías: modal "Desvincular N y eliminar" con lista de vinculados
+(SKU, tomo, "quedará sin categoría"), toast con conteos, invalida productos/
+tomos. Caja (`productAdapter`/`ProductCatalogModal`/normalizer de SellPage) y
+tienda online (`OnlineCatalogPage`): chips y filtros por CUALQUIER categoría
+(un producto en 2 cuenta en las 2), con fallback a API vieja. tsc 464
+baseline · vitest 275/276 (el que falla es `barcode.test.ts` flaky
+pre-existente por aleatorio, archivo sin tocar) · build OK.
+
+**Deploy:** commit `f6ea7b0` → rev `tadaima-00013-6ct` (backup previo
+`~/Documents/JOEL/supabase-catalogo-pre-multicategoria-2026-08-17.dump`) →
+candidate: migración aplicada, conteos/filtro/light/vinculados/tomos/tienda ✓,
+round-trip real de escritura (Amiibo Promo → [amiibos, Hair clips] → conteos y
+filtro reflejan ambas → restaurado) ✓, corte 0 ✓ → 100% + tag `ruben`.
+
+**Pendiente menor:** `barcode.test.ts` › "no repite valores en 1000 llamadas"
+es flaky (aleatorio) — ajustar el generador o el test.
+
+---
+
 ### Sesión 2026-08-17 (5) — Categorías: products_count visible + motivo real al no poder eliminar — DEPLOYADO rev `tadaima-00012-4cf`
 
 El equipo intentó borrar "amiibos" (3 productos) y "Hairclips" (2) y solo veía
