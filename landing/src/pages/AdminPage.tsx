@@ -22,7 +22,7 @@ import {
   getWarehouses, createWarehouse, updateWarehouse,
   getInventory, updateInventory, getProducts,
   createUser, updateUser, deleteUser, assignRole,
-  createCategory, updateCategory, deleteCategory,
+  createCategory, updateCategory, deleteCategory, getCategoryProducts,
   getTerminals, createTerminal, updateTerminal, deleteTerminal,
   createRole, getPermissions, assignRolePermissions,
   getStorePrices, updateStorePrices,
@@ -31,7 +31,7 @@ import {
 import type {
   Store as ApiStore, Warehouse as ApiWarehouse,
   InventoryItem, Product,
-  User as ApiUser, ProductCategory, Terminal,
+  User as ApiUser, ProductCategory, Terminal, CategoryLinkedProduct,
   Role, Permission, StorePriceRow,
 } from "@tadaima/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -1098,6 +1098,16 @@ function TabCategorias() {
   const loading = categoriesQuery.isPending;
   const [modal, setModal] = useState<{ open: boolean; data: CategoryFormData } | null>(null);
   const [saving, setSaving] = useState(false);
+  // Confirmación de borrado (2026-08-17): lista los productos vinculados y
+  // al confirmar la categoría se borra DESVINCULÁNDOLOS (ya no bloquea).
+  const [deleteTarget, setDeleteTarget] = useState<{
+    category: ProductCategory;
+    loading: boolean;
+    total: number;
+    products: CategoryLinkedProduct[];
+    error?: string;
+  } | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (categoriesQuery.error) toast.error("Error al cargar categorías");
@@ -1131,22 +1141,40 @@ function TabCategorias() {
     }
   };
 
-  const remove = async (c: ProductCategory) => {
-    // Una categoría con productos no se puede borrar (FK): avisar con el
-    // conteo ANTES de pegarle al API, y si el API rechaza, mostrar SU motivo
-    // (antes se tragaba el 422 y salía "Error al eliminar categoría", QA 2026-08-17).
-    const n = c.products_count ?? 0;
-    if (n > 0) {
-      toast.error(`No se puede eliminar «${c.name}»: tiene ${n} producto${n === 1 ? "" : "s"}. Cámbialos de categoría o elimínalos primero.`);
-      return;
-    }
+  const openDelete = async (c: ProductCategory) => {
+    setDeleteTarget({ category: c, loading: true, total: 0, products: [] });
     try {
-      await deleteCategory(c.id);
+      const r = await getCategoryProducts(c.id);
+      setDeleteTarget(prev => prev && prev.category.id === c.id
+        ? { ...prev, loading: false, total: r.total, products: r.products }
+        : prev);
+    } catch (e: unknown) {
+      const msg = (e as { message?: string } | null)?.message;
+      setDeleteTarget(prev => prev && prev.category.id === c.id
+        ? { ...prev, loading: false, error: msg && msg !== "Error desconocido" ? msg : "No se pudieron cargar los productos vinculados" }
+        : prev);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget || deleting) return;
+    setDeleting(true);
+    try {
+      const r = await deleteCategory(deleteTarget.category.id);
       void invalidateCategories();
-      toast.success("Categoría eliminada");
+      // Los productos cambian de categorías → refrescar listas de productos/tomos.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.mangas.all });
+      const sin = r.left_without_category > 0 ? ` (${r.left_without_category} quedaron sin categoría)` : "";
+      toast.success(r.unlinked > 0
+        ? `Categoría «${deleteTarget.category.name}» eliminada · ${r.unlinked} producto${r.unlinked === 1 ? "" : "s"} desvinculado${r.unlinked === 1 ? "" : "s"}${sin}`
+        : `Categoría «${deleteTarget.category.name}» eliminada`);
+      setDeleteTarget(null);
     } catch (e: unknown) {
       const msg = (e as { message?: string } | null)?.message;
       toast.error(msg && msg !== "Error desconocido" ? msg : "Error al eliminar categoría");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -1175,7 +1203,7 @@ function TabCategorias() {
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <p style={{ color: TP, fontWeight: 900, fontSize: 14, margin: 0 }}>{c.name}</p>
                   <Badge color={c.active ? "amber" : "red"}>{c.active ? "Activa" : "Inactiva"}</Badge>
-                  {/* Cuántos productos cuelgan de la categoría: con productos NO se puede eliminar */}
+                  {/* Cuántos productos están vinculados (categorías múltiples: cuenta vínculos) */}
                   {(c.products_count ?? 0) > 0 ? (
                     <Badge color="blue">{c.products_count} producto{c.products_count === 1 ? "" : "s"}</Badge>
                   ) : (
@@ -1187,9 +1215,9 @@ function TabCategorias() {
               <div style={{ display: "flex", gap: 6 }}>
                 <Btn onClick={() => openEdit(c)}><Edit2 size={12} /></Btn>
                 <Btn
-                  onClick={() => void remove(c)}
-                  title={(c.products_count ?? 0) > 0 ? `Tiene ${c.products_count} producto(s): no se puede eliminar` : "Eliminar categoría"}
-                  style={{ color: "#FF4433", opacity: (c.products_count ?? 0) > 0 ? 0.45 : 1 }}
+                  onClick={() => void openDelete(c)}
+                  title={(c.products_count ?? 0) > 0 ? `Eliminar (desvincula ${c.products_count} producto(s))` : "Eliminar categoría"}
+                  style={{ color: "#FF4433" }}
                 >
                   <Trash2 size={12} />
                 </Btn>
@@ -1198,6 +1226,55 @@ function TabCategorias() {
           ))}
           {categories.length === 0 && <div style={{ textAlign: "center", padding: 40, color: TM, fontSize: 13 }}>No hay categorías registradas</div>}
         </div>
+      )}
+      {deleteTarget && (
+        <Modal title={`Eliminar categoría «${deleteTarget.category.name}»`} onClose={() => { if (!deleting) setDeleteTarget(null); }} width={620}>
+          <div style={{ display: "grid", gap: 14 }}>
+            {deleteTarget.loading ? (
+              <div style={{ textAlign: "center", padding: 24, color: TM }}><Loader2 size={22} className="animate-spin" /></div>
+            ) : deleteTarget.error ? (
+              <p style={{ color: "#FF4433", fontSize: 13, margin: 0 }}>{deleteTarget.error}</p>
+            ) : deleteTarget.total === 0 ? (
+              <p style={{ color: TS, fontSize: 13, margin: 0 }}>Esta categoría no tiene productos vinculados. Se eliminará y listo.</p>
+            ) : (
+              <>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", borderRadius: 12, background: "rgba(245,158,11,0.10)", border: "1px solid rgba(245,158,11,0.35)" }}>
+                  <AlertTriangle size={18} color="#F59E0B" style={{ flexShrink: 0, marginTop: 1 }} />
+                  <p style={{ color: TP, fontSize: 13, margin: 0, lineHeight: 1.45 }}>
+                    <strong>{deleteTarget.total} producto{deleteTarget.total === 1 ? "" : "s"}</strong> está{deleteTarget.total === 1 ? "" : "n"} vinculado{deleteTarget.total === 1 ? "" : "s"} a esta categoría.
+                    Al confirmar se <strong>desvinculan</strong> (los productos NO se borran).
+                    {deleteTarget.products.filter(p => p.other_categories_count === 0).length > 0 && (
+                      <> <strong style={{ color: "#F59E0B" }}>{deleteTarget.products.filter(p => p.other_categories_count === 0).length}</strong> quedará{deleteTarget.products.filter(p => p.other_categories_count === 0).length === 1 ? "" : "n"} <em>sin categoría</em>.</>
+                    )}
+                  </p>
+                </div>
+                <div style={{ maxHeight: 280, overflowY: "auto", display: "grid", gap: 6, paddingRight: 4 }}>
+                  {deleteTarget.products.map(p => (
+                    <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 10, background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={{ color: TP, fontSize: 13, fontWeight: 800, margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</p>
+                        <p style={{ color: TM, fontSize: 10, margin: 0 }}>SKU {p.sku || "—"}{p.product_type === "manga" ? " · Tomo" : ""}{!p.active ? " · inactivo" : ""}</p>
+                      </div>
+                      {p.other_categories_count === 0
+                        ? <Badge color="amber">quedará sin categoría</Badge>
+                        : <span style={{ color: TM, fontSize: 10, fontWeight: 700 }}>+{p.other_categories_count} otra{p.other_categories_count === 1 ? "" : "s"}</span>}
+                    </div>
+                  ))}
+                  {deleteTarget.total > deleteTarget.products.length && (
+                    <p style={{ color: TM, fontSize: 11, margin: "4px 0 0 0" }}>… y {deleteTarget.total - deleteTarget.products.length} más.</p>
+                  )}
+                </div>
+              </>
+            )}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+              <Btn onClick={() => setDeleteTarget(null)} disabled={deleting}>Cancelar</Btn>
+              <Btn variant="red" onClick={() => void confirmDelete()} disabled={deleting || deleteTarget.loading || !!deleteTarget.error} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                {deleting ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                {deleteTarget.total > 0 ? `Desvincular ${deleteTarget.total} y eliminar` : "Eliminar"}
+              </Btn>
+            </div>
+          </div>
+        </Modal>
       )}
       {modal?.open && (
         <Modal title={modal.data.id ? "Editar Categoría" : "Nueva Categoría"} onClose={closeModal}>

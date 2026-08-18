@@ -45,6 +45,11 @@ class MangaCompatResource extends JsonResource
         return [
             'id'                    => $product->id,
             'name'                  => $product->name,
+            // Categorías múltiples (2026-08-17); category_id = caché compat.
+            'category_id'           => $product->category_id,
+            'categories'            => $product->relationLoaded('categories')
+                ? $product->categories->map(fn ($c) => ['id' => $c->id, 'name' => $c->name])->values()
+                : [],
             'volume_number'         => $details?->volume_number,
             'editorial'             => $details?->editorial,
             'code'                  => $product->barcode ?: $product->sku,

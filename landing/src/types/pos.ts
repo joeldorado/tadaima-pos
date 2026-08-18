@@ -24,7 +24,10 @@ export interface Product {
   name: string;
   sku: string;
   barcode?: string;
+  /** Primera categoría (compat). Para chips/filtros usa `categories`. */
   category: string;
+  /** Todas sus categorías (nombres). Categorías múltiples 2026-08-17. */
+  categories?: string[];
   image?: string;
   price_a: number;
   price_b?: number;

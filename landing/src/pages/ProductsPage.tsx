@@ -18,8 +18,10 @@ import { useActiveStore } from "@/contexts/StoreContext";
 import { useAuth } from "@tadaima/auth";
 import { promoDetailLabel, promoShortLabel } from "@/lib/promoLabel";
 import { isAdmin as isAdminRole, isManager as isManagerRole, canDeleteProducts } from "@/lib/permisos";
+import { CategoryMultiPicker } from "@/components/products/CategoryMultiPicker";
+import { joinCategoryNames } from "@/lib/categoryPicker";
 import { toast } from "sonner";
-import { createProduct, updateProduct, deleteProduct, forceDeleteProduct, uploadProductImage, removeProductImage, getInventory, updateInventory, getPrice, sendStockAlert, getCategories, createCategory, getSuppliers, createSupplier, attachPromotionProducts } from "@tadaima/api";
+import { createProduct, updateProduct, deleteProduct, forceDeleteProduct, uploadProductImage, removeProductImage, getInventory, updateInventory, getPrice, sendStockAlert, getCategories, getSuppliers, createSupplier, attachPromotionProducts } from "@tadaima/api";
 import type { ApiError } from "@tadaima/api";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useProductsQuery, useProductStatsQuery, type ProductsCatalogFilter } from "@/hooks/queries/useProducts";
@@ -156,7 +158,10 @@ interface Producto {
   nombre: string;
   sku: string;
   barcode?: string;
+  /** Nombres de TODAS sus categorías unidos con " · " (display). */
   categoria: string;
+  /** Ids de sus categorías (fuente de verdad para editar; categorías múltiples 2026-08-17). */
+  categoryIds: number[];
   proveedor: string;
   tipo: TipoProducto;
   desactivado: boolean;
@@ -200,7 +205,11 @@ function apiProductToProducto(p: Product): Producto {
     nombre: p.name,
     sku: p.sku,
     barcode: p.barcode ?? undefined,
-    categoria: p.category?.name ?? (p.category_id !== null ? String(p.category_id) : ''),
+    categoria: joinCategoryNames(
+      (p.categories ?? (p.category ? [p.category] : [])).map(c => c.name),
+      p.category_id !== null && !p.category && !p.categories ? String(p.category_id) : '',
+    ),
+    categoryIds: (p.categories ?? (p.category ? [p.category] : [])).map(c => c.id),
     proveedor: p.supplier?.name ?? '',
     tipo: 'normal',
     desactivado: !p.active,
@@ -592,8 +601,6 @@ function ProductModal({
   canViewCost,
   canManage,
   canDelete = false,
-  categorias,
-  onAddCategoria,
   proveedores,
   onAddProveedor,
   locations = []
@@ -610,8 +617,6 @@ function ProductModal({
   canManage: boolean;
   /** Eliminar producto (admin o gerente con permiso de costo). */
   canDelete?: boolean;
-  categorias: string[];
-  onAddCategoria: (c: string) => void;
   proveedores: string[];
   onAddProveedor: (p: string) => void;
   locations: {warehouseId: number, name: string, store: string, storeId: number | null, type: 'central' | 'store' | 'bodega'}[];
@@ -647,7 +652,7 @@ function ProductModal({
 
     // Nuevo producto — empieza sin ubicaciones; el usuario las agrega desde el tab Inventario
     return {
-      nombre: "", sku: "", categoria: "", proveedor: "",
+      nombre: "", sku: "", categoria: "", categoryIds: [], proveedor: "",
       tipo: "normal", desactivado: false, costo: 0, precioA: 0, precioB: 0, precioC: 0, precioD: 0, precioE: 0,
       stockUbicaciones: [],
       etiquetas: ["en bodega"], imagen: "", imageIds: [],
@@ -945,31 +950,16 @@ function ProductModal({
                       </div>
                     </div>
                     <div className="space-y-1.5">
-                      <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>Categoría</label>
-                      <div className="flex gap-2">
-                        <select 
-                          value={formData.categoria} 
-                          onChange={e => setFormData({...formData, categoria: e.target.value})}
-                          className="flex-1 px-4 py-3 rounded-2xl outline-none appearance-none" style={T.input}
-                        >
-                          <option value="">Elige categoría</option>
-                          {categorias.filter(c => c !== "Todo").map(c => <option key={c} value={c}>{c}</option>)}
-                        </select>
-                        <button 
-                          type="button"
-                          onClick={() => {
-                            const newCat = prompt("Ingrese el nombre de la nueva categoría:");
-                            if (newCat) {
-                              onAddCategoria(newCat);
-                              setFormData({...formData, categoria: newCat});
-                            }
-                          }}
-                          className="p-3 rounded-2xl transition-all shrink-0"
-                          style={SECONDARY_BUTTON}
-                        >
-                          <Plus size={18} style={{ color: T.redBright }} />
-                        </button>
-                      </div>
+                      <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>
+                        Categorías <span className="normal-case tracking-normal font-bold" style={{ color: T.textMuted }}>(una o varias)</span>
+                      </label>
+                      {/* Categorías múltiples (2026-08-17): chips + buscador + crear inline.
+                          `categoria` (nombres) se recalcula al guardar; la verdad es categoryIds. */}
+                      <CategoryMultiPicker
+                        value={formData.categoryIds ?? []}
+                        onChange={ids => setFormData({ ...formData, categoryIds: ids })}
+                        disabled={saving}
+                      />
                     </div>
                   </div>
                 </div>
@@ -1723,27 +1713,14 @@ export function ProductsPage() {
     queryFn: () => getSuppliers(),
     staleTime: 5 * 60_000,
   });
-  const categoriasData = categoriesQuery.data ?? [];
-  const categorias = ["Todo", ...categoriasData.map(c => c.name)];
-  const categoriaIdByName = useMemo(
-    () => new Map(categoriasData.map(c => [c.name, c.id] as [string, number])),
-    [categoriasData]
-  );
+  // Categorías: el modal usa CategoryMultiPicker (ids, categorías múltiples
+  // 2026-08-17); aquí solo se mantiene la query viva para el picker/caché.
+  void categoriesQuery.data;
   const proveedores = (suppliersQuery.data ?? []).map(s => s.name);
   const proveedorIdByName = useMemo(
     () => new Map((suppliersQuery.data ?? []).map(s => [s.name, s.id] as [string, number])),
     [suppliersQuery.data]
   );
-
-  const handleAddCategoria = useCallback(async (name: string): Promise<void> => {
-    try {
-      await createCategory({ name });
-      await queryClient.invalidateQueries({ queryKey: ['categories'] });
-    } catch (err: unknown) {
-      const msg = (err as { message?: string }).message ?? 'No se pudo crear la categoría';
-      toast.error(msg);
-    }
-  }, [queryClient]);
 
   const handleAddProveedor = useCallback(async (name: string): Promise<void> => {
     try {
@@ -1814,27 +1791,7 @@ export function ProductsPage() {
     [queryClient]
   );
 
-  /**
-   * Resuelve el id de categoría desde el nombre seleccionado. Si el nombre no
-   * existe aún en el catálogo (recién creado con "+" y el refetch no llegó), lo
-   * crea on-the-fly y usa el id devuelto — así no se pierde por una carrera de
-   * timing al guardar el producto.
-   */
-  const resolveCategoryId = async (nombre: string): Promise<number | null> => {
-    const name = (nombre ?? '').trim();
-    if (!name || name === 'Todo') return null;
-    const existing = categoriaIdByName.get(name);
-    if (existing !== undefined) return existing;
-    try {
-      const created = await createCategory({ name });
-      void queryClient.invalidateQueries({ queryKey: ['categories'] });
-      return created.id;
-    } catch {
-      return null;
-    }
-  };
-
-  /** Igual que resolveCategoryId pero para proveedores. */
+  /** Resuelve (o crea on-the-fly) el id del proveedor desde el nombre. */
   const resolveSupplierId = async (nombre: string): Promise<number | null> => {
     const name = (nombre ?? '').trim();
     if (!name) return null;
@@ -1860,10 +1817,10 @@ export function ProductsPage() {
 
     // Resuelve (o crea on-the-fly) los ids de categoría y proveedor desde el
     // nombre — robusto contra la carrera de timing del "+" recién tecleado.
-    const [categoryId, supplierId] = await Promise.all([
-      resolveCategoryId(p.categoria),
-      resolveSupplierId(p.proveedor),
-    ]);
+    // Categorías múltiples (2026-08-17): el modal manda ids (picker); el
+    // proveedor sigue por nombre (resolveSupplierId crea on-the-fly).
+    const supplierId = await resolveSupplierId(p.proveedor);
+    const categoryIds = Array.from(new Set((p.categoryIds ?? []).map(Number).filter(n => Number.isFinite(n) && n > 0)));
 
     if (isNew) {
       // Toast persistente mientras se crea.
@@ -1876,7 +1833,7 @@ export function ProductsPage() {
           active: !p.desactivado,
           allow_cash: p.allowCash,
           allow_card: p.allowCard,
-          category_id: categoryId,
+          category_ids: categoryIds,
           supplier_id: supplierId,
           prices: {
             price_1: p.precioA,
@@ -1954,7 +1911,7 @@ export function ProductsPage() {
           active: !p.desactivado,
           allow_cash: p.allowCash,
           allow_card: p.allowCard,
-          category_id: categoryId,
+          category_ids: categoryIds,
           supplier_id: supplierId,
           prices: {
             price_1: p.precioA,
@@ -3439,8 +3396,6 @@ export function ProductsPage() {
           onSave={handleSaveProduct}
           onDelete={(p) => setDeleteTarget(p)}
           {...(editingProduct !== undefined ? { product: editingProduct } : {})}
-          categorias={categorias}
-          onAddCategoria={(c) => { void handleAddCategoria(c); }}
           proveedores={proveedores}
           onAddProveedor={(p) => { void handleAddProveedor(p); }}
           locations={locations}

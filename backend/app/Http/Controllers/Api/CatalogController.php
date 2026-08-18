@@ -174,7 +174,7 @@ class CatalogController extends Controller
         $query = CatalogProduct::query()
             ->select('catalog_products.*')
             ->selectSub($stockSub, 'stock_qty')
-            ->with(['product.price', 'product.images', 'product.category'])
+            ->with(['product.price', 'product.images', 'product.category', 'product.categories:product_categories.id,name'])
             ->where('store_id', $store->id)
             ->where('visible', true)
             ->whereHas('product', fn ($q) => $q->where('active', true));
@@ -187,9 +187,11 @@ class CatalogController extends Controller
             );
         }
 
-        // Category filter
+        // Category filter — categorías múltiples (2026-08-17): matchea
+        // CUALQUIERA de las categorías del producto.
         if ($request->filled('category_id')) {
-            $query->whereHas('product', fn ($q) => $q->where('category_id', $request->integer('category_id')));
+            $catId = $request->integer('category_id');
+            $query->whereHas('product.categories', fn ($q) => $q->where('product_categories.id', $catId));
         }
 
         // Ocultar agotados: filtro en la query (whereExists con SUM), NO en el
@@ -222,6 +224,8 @@ class CatalogController extends Controller
                 'name'        => $p->name,
                 'description' => $p->description,
                 'category'    => $p->category ? ['id' => $p->category->id, 'name' => $p->category->name] : null,
+                // Todas sus categorías (2026-08-17); `category` = compat (la primera).
+                'categories'  => $p->relationLoaded('categories') ? $p->categories->map(fn ($c) => ['id' => $c->id, 'name' => $c->name])->values() : [],
                 'images'      => $p->images->map(fn ($img) => ['id' => $img->id, 'path' => $img->image_path, 'url' => $img->url, 'sort_order' => $img->sort_order]),
             ];
 
@@ -283,7 +287,7 @@ class CatalogController extends Controller
             // activePromotions = scope currentlyActive (status + ventana); aquí
             // van TODAS las vigentes (globales y por tienda) — la card pública
             // etiqueta "en {sucursal}" cuando la promo es de una sola tienda.
-            ->with(['price', 'images', 'category', 'activePromotions'])
+            ->with(['price', 'images', 'category', 'categories:product_categories.id,name', 'activePromotions'])
             // Solo productos con stock vendible (>0) en alguna tienda ("salga si está en inventario").
             ->whereExists($this->sellableStockExists());
 
@@ -292,7 +296,8 @@ class CatalogController extends Controller
             $query->where(fn ($q) => $q->whereLike('name', "%{$term}%", caseSensitive: false)->orWhereLike('sku', "%{$term}%", caseSensitive: false));
         }
         if ($request->filled('category_id')) {
-            $query->where('category_id', $request->integer('category_id'));
+            $catId = $request->integer('category_id');
+            $query->whereHas('categories', fn ($q) => $q->where('product_categories.id', $catId));
         }
 
         $perPage = min((int) ($request->per_page ?? 40), 100);
@@ -324,6 +329,7 @@ class CatalogController extends Controller
                 // orden de entrada configurado sea "Más nuevos".
                 'catalog_position' => $p->catalog_position,
                 'category'     => $p->category ? ['id' => $p->category->id, 'name' => $p->category->name] : null,
+                'categories'   => $p->relationLoaded('categories') ? $p->categories->map(fn ($c) => ['id' => $c->id, 'name' => $c->name])->values() : [],
                 'images'       => $p->images->map(fn ($img) => ['id' => $img->id, 'path' => $img->image_path, 'url' => $img->url, 'sort_order' => $img->sort_order]),
                 'stores'       => $stores,
                 'total'        => (float) $stores->sum('qty'),

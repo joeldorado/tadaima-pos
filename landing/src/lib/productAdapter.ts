@@ -56,6 +56,11 @@ export function toCartProduct(
     category:
       (p.category_id != null ? categoryNames?.get(p.category_id) : undefined)
         ?? String(p.category_id ?? ""),
+    // Todas sus categorías (2026-08-17): chips de la Caja por CUALQUIERA.
+    // API vieja sin category_ids → cae a [category].
+    categories: (p.category_ids ?? (p.category_id != null ? [p.category_id] : []))
+      .map(id => categoryNames?.get(id) ?? String(id))
+      .filter(Boolean),
     image: p.image ?? "",
     price_a: priceAt(p, 1),
     ...optionalPrice("price_b", optionalPriceAt(p, 2)),

@@ -22,6 +22,9 @@ class UpdateProductRequest extends FormRequest
             'barcode'       => ['nullable', 'string', 'max:100'],
             'description'   => ['nullable', 'string'],
             'category_id'   => ['nullable', 'integer', 'exists:product_categories,id'],
+            // Categorías múltiples (2026-08-17): manda sobre category_id.
+            'category_ids'   => ['nullable', 'array'],
+            'category_ids.*' => ['integer', 'exists:product_categories,id'],
             'supplier_id'   => ['nullable', 'integer', 'exists:suppliers,id'],
             'cost'          => ['nullable', 'numeric', 'min:0'],
             'active'        => ['boolean'],

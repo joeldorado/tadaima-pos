@@ -72,8 +72,9 @@ class DepurarTomosTest extends TestCase
     {
         $p = Product::create([
             'name' => $name, 'sku' => 'SKU-'.uniqid(), 'active' => true,
-            'product_type' => $type, 'category_id' => $cat->id,
+            'product_type' => $type,
         ]);
+        $p->syncCategories([$cat->id]); // pivote (categorías múltiples 2026-08-17)
         if ($type === Product::TYPE_MANGA) {
             DB::table('product_manga_details')->insert([
                 'product_id' => $p->id, 'created_at' => now(), 'updated_at' => now(),

@@ -48,7 +48,7 @@ class CopyToPgsqlCommand extends Command
         // RBAC pivotes
         'role_has_permissions', 'model_has_roles', 'model_has_permissions',
         // Catálogo de productos
-        'products', 'product_prices', 'product_store_prices',
+        'products', 'product_category_assignments', 'product_prices', 'product_store_prices',
         'product_payment_methods', 'product_images', 'product_manga_details',
         'mangas',
         // Infra de tienda

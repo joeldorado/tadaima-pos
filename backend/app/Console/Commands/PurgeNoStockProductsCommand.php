@@ -82,8 +82,12 @@ class PurgeNoStockProductsCommand extends Command
             ->where('product_type', '!=', 'manga')
             ->whereRaw("{$stockSql} <= 0");
         if ($catsProtegidas !== []) {
-            $query->where(function ($q) use ($catsProtegidas) {
-                $q->whereNull('category_id')->orWhereNotIn('category_id', array_keys($catsProtegidas));
+            // Categorías múltiples (2026-08-17): protegido si CUALQUIERA de sus
+            // categorías (pivote) está en la lista.
+            $query->whereNotExists(function ($sub) use ($catsProtegidas) {
+                $sub->selectRaw('1')->from('product_category_assignments as pca')
+                    ->whereColumn('pca.product_id', 'products.id')
+                    ->whereIn('pca.category_id', array_keys($catsProtegidas));
             });
         }
         $candidatos = $query->pluck('id')->all();

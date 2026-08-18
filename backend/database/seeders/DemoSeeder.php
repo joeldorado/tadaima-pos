@@ -204,6 +204,7 @@ class DemoSeeder extends Seeder
                     'cost' => $cost, 'active' => true, 'product_type' => 'product',
                 ],
             );
+            $product->syncCategories([$cats[$cat]->id]); // pivote (categorías múltiples)
             $product->price()->updateOrCreate([], ['price_1' => $p1, 'price_2' => $p2]);
 
             Inventory::updateOrCreate(
@@ -245,6 +246,7 @@ class DemoSeeder extends Seeder
                     'cost' => null, 'active' => true, 'product_type' => 'product',
                 ],
             );
+            $product->syncCategories([$cats[$cat]->id]); // pivote (categorías múltiples)
             $product->price()->updateOrCreate([], ['price_1' => $p1, 'price_2' => $p2]);
             Inventory::updateOrCreate(
                 ['product_id' => $product->id, 'warehouse_id' => $exhib1->id],

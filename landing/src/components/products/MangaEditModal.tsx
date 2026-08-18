@@ -9,6 +9,7 @@ import { EDITORIALS, MANGA_GENRES } from './mangaConstants'
 import { toast } from 'sonner'
 import { useAuth } from '@tadaima/auth'
 import { isAdmin as isAdminRole } from '@/lib/permisos'
+import { CategoryMultiPicker } from '@/components/products/CategoryMultiPicker'
 import { generateBarcode } from '@/lib/barcode'
 import { PRICE_FORM_LABELS } from '@/lib/priceLevels'
 
@@ -93,6 +94,8 @@ export function MangaEditModal({
   const [nombre,    setNombre]    = useState(manga.name)
   const [editorial, setEditorial] = useState(manga.editorial ?? '')
   const [genero,    setGenero]    = useState(manga.genre ?? '')
+  // Categorías múltiples (2026-08-17): los tomos también llevan N categorías.
+  const [categoryIds, setCategoryIds] = useState<number[]>(() => (manga.categories ?? []).map(c => c.id))
   const [active,    setActive]    = useState(manga.active)
 
   // ── Single-volume fields ───────────────────────────────────────────────────
@@ -196,6 +199,7 @@ export function MangaEditModal({
     try {
       const updated = await updateManga(manga.id, {
         name:                  nombre.trim(),
+        category_ids:          categoryIds,
         volume_number:         volNum.trim() ? Number(volNum) : null,
         editorial:             editorial.trim() || null,
         code:                  isbn.trim() || null,
@@ -229,7 +233,7 @@ export function MangaEditModal({
     } finally {
       setSaving(false)
     }
-  }, [nombre, volNum, editorial, isbn, genero, precioPublico, margenPct, active, prices, quantities, imageFile, manga.id, nombreOk, precioOk, onSuccess])
+  }, [nombre, categoryIds, volNum, editorial, isbn, genero, precioPublico, margenPct, active, prices, quantities, imageFile, manga.id, nombreOk, precioOk, onSuccess])
 
   const [deleteConfirmText, setDeleteConfirmText] = useState("")
   const handleDelete = async () => {
@@ -357,6 +361,12 @@ export function MangaEditModal({
                         {MANGA_GENRES.map(g => <option key={g} value={g}>{g}</option>)}
                       </select>
                     </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>
+                      Categorías <span className="normal-case tracking-normal font-bold">(una o varias)</span>
+                    </label>
+                    <CategoryMultiPicker value={categoryIds} onChange={setCategoryIds} disabled={saving} />
                   </div>
                 </div>
 

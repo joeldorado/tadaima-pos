@@ -36,7 +36,7 @@ class MangaController extends Controller
 
         $query = Product::query()
             ->ofType(Product::TYPE_MANGA)
-            ->with(['mangaDetails', 'price', 'images'])
+            ->with(['mangaDetails', 'price', 'images', 'categories:product_categories.id,name'])
             ->when($request->filled('active'), fn ($q) => $q->where(
                 'active',
                 filter_var($request->active, FILTER_VALIDATE_BOOLEAN),
@@ -141,6 +141,11 @@ class MangaController extends Controller
                 'genre'         => $data['genre'] ?? null,
             ]);
 
+            // Categorías múltiples (2026-08-17): los tomos también las llevan.
+            if (array_key_exists('category_ids', $data)) {
+                $product->syncCategories($data['category_ids'] ?? []);
+            }
+
             $hasPrice = collect(['price_1','price_2','price_3','price_4','price_5'])
                 ->contains(fn ($k) => isset($data[$k]) && $data[$k] !== null);
             if ($hasPrice) {
@@ -156,7 +161,7 @@ class MangaController extends Controller
             return $product;
         });
 
-        $product->load(['mangaDetails', 'price', 'images'])
+        $product->load(['mangaDetails', 'price', 'images', 'categories:product_categories.id,name'])
                 ->loadSum('inventory', 'quantity');
 
         SystemLog::write(
@@ -213,6 +218,10 @@ class MangaController extends Controller
                 $manga->update($productPayload);
             }
 
+            if (array_key_exists('category_ids', $data)) {
+                $manga->syncCategories($data['category_ids'] ?? []);
+            }
+
             $hasDetail = collect(['volume_number','editorial','genre'])
                 ->contains(fn ($k) => array_key_exists($k, $data));
             if ($hasDetail) {
@@ -242,7 +251,7 @@ class MangaController extends Controller
             }
         });
 
-        $manga->load(['mangaDetails', 'price', 'images'])
+        $manga->load(['mangaDetails', 'price', 'images', 'categories:product_categories.id,name'])
               ->loadSum('inventory', 'quantity');
 
         // Diff: producto + detalles. Solo registra si hubo cambios reales.

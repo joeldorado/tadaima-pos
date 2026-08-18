@@ -94,7 +94,10 @@ export interface ProductLight {
   sku: string
   barcode: string | null
   active: boolean
+  /** @deprecated compat: = la primera de category_ids. */
   category_id: number | null
+  /** Todas sus categorías (ids). Opcional: tolera API vieja. Chips de la Caja por CUALQUIERA. */
+  category_ids?: number[]
   prices: {
     price_1: number | null
     price_2: number | null

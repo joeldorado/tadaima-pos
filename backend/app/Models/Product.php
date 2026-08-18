@@ -12,7 +12,8 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 class Product extends Model
 {
     public const TYPE_PRODUCT = 'product';
-    public const TYPE_MANGA   = 'manga';
+
+    public const TYPE_MANGA = 'manga';
 
     protected $fillable = [
         'category_id',
@@ -33,10 +34,10 @@ class Product extends Model
     // forceFill, así ningún update($request->validated()) futuro la toca por
     // accidente.
     protected $casts = [
-        'cost'             => 'float',
-        'active'           => 'boolean',
-        'featured'         => 'boolean',
-        'catalog_visible'  => 'boolean',
+        'cost' => 'float',
+        'active' => 'boolean',
+        'featured' => 'boolean',
+        'catalog_visible' => 'boolean',
         'catalog_position' => 'integer',
     ];
 
@@ -46,9 +47,49 @@ class Product extends Model
 
     // ─── Relations ────────────────────────────────────────────────────────────
 
+    /**
+     * Categoría "caché" (compat). Desde 2026-08-17 un producto tiene N
+     * categorías en `categories()`; `category_id` se mantiene = la primera del
+     * pivote (por position) SOLO para consumidores legacy (light resource,
+     * app móvil, SQL crudo). No tiene significado de "principal" en la UI.
+     * Escribir SIEMPRE vía syncCategories(), nunca category_id directo.
+     */
     public function category(): BelongsTo
     {
         return $this->belongsTo(ProductCategory::class, 'category_id');
+    }
+
+    /** Todas las categorías del producto (fuente de verdad, sin principal). */
+    public function categories(): BelongsToMany
+    {
+        return $this->belongsToMany(ProductCategory::class, 'product_category_assignments', 'product_id', 'category_id')
+            ->withPivot('position')
+            ->withTimestamps()
+            ->orderBy('product_category_assignments.position')
+            ->orderBy('product_categories.name');
+    }
+
+    /**
+     * Único punto de escritura de categorías: sincroniza el pivote (con
+     * position = orden recibido) y la caché `category_id` (= la primera, o
+     * NULL si queda sin categorías). Ids duplicados/no numéricos se descartan.
+     *
+     * @param  array<int, int|string>  $categoryIds
+     */
+    public function syncCategories(array $categoryIds): void
+    {
+        $ids = array_values(array_unique(array_map('intval', array_filter($categoryIds, fn ($v) => $v !== null && $v !== ''))));
+        $sync = [];
+        foreach ($ids as $i => $id) {
+            $sync[$id] = ['position' => $i];
+        }
+        $this->categories()->sync($sync);
+        $first = $ids[0] ?? null;
+        if ((int) ($this->category_id ?? 0) !== (int) ($first ?? 0)) {
+            $this->forceFill(['category_id' => $first])->saveQuietly();
+        }
+        $this->unsetRelation('categories');
+        $this->unsetRelation('category');
     }
 
     public function supplier(): BelongsTo
@@ -148,6 +189,7 @@ class Product extends Model
         $driver = $query->getConnection()->getDriverName();
         if ($driver === 'mysql' && mb_strlen($term) >= 3) {
             $boolean = $this->buildFulltextBooleanTerm($term);
+
             return $query->whereRaw(
                 'MATCH(name, sku, barcode) AGAINST(? IN BOOLEAN MODE)',
                 [$boolean]
@@ -160,8 +202,8 @@ class Product extends Model
         // (LIKE es case-sensitive ahí; el collation _ci de MySQL no).
         return $query->where(function (Builder $q) use ($term) {
             $q->whereLike('name', "%{$term}%", caseSensitive: false)
-              ->orWhereLike('sku', "%{$term}%", caseSensitive: false)
-              ->orWhereLike('barcode', "%{$term}%", caseSensitive: false);
+                ->orWhereLike('sku', "%{$term}%", caseSensitive: false)
+                ->orWhereLike('barcode', "%{$term}%", caseSensitive: false);
         });
     }
 
@@ -175,7 +217,8 @@ class Product extends Model
     {
         $sanitized = preg_replace('/[+\-><()~*"@]+/u', ' ', $term) ?? '';
         $tokens = preg_split('/\s+/u', trim($sanitized)) ?: [];
-        $expr = array_map(static fn (string $t) => $t === '' ? '' : '+' . $t . '*', $tokens);
+        $expr = array_map(static fn (string $t) => $t === '' ? '' : '+'.$t.'*', $tokens);
+
         return implode(' ', array_filter($expr));
     }
 }

@@ -52,9 +52,12 @@ class ProductController extends Controller
         // distinguir tomos de la misma serie en el catálogo (QA 2026-06-11).
         // activePromotions: promos NxM vigentes (Fase 3) — el motor de Caja las
         // evalúa por línea; el filtro de vigencia va en SQL (currentlyActive).
+        // categories (N:N, 2026-08-17) va en ambos modos: light expone
+        // category_ids[] (la Caja arma chips por CUALQUIER categoría) y el
+        // normal expone categories[{id,name}].
         $relations = $light
-            ? ['price', 'images', 'paymentMethod', 'mangaDetails']
-            : ['category', 'supplier', 'price', 'images', 'paymentMethod'];
+            ? ['price', 'images', 'paymentMethod', 'mangaDetails', 'categories:product_categories.id']
+            : ['category', 'categories:product_categories.id,name', 'supplier', 'price', 'images', 'paymentMethod'];
         if ($needsMangaDetails && ! $light) {
             $relations[] = 'mangaDetails';
         }
@@ -159,8 +162,11 @@ class ProductController extends Controller
             $query->whereHas('activePromotions', fn ($q) => $q->forStore($storeId));
         }
 
+        // Categorías múltiples: el filtro matchea CUALQUIERA de sus categorías
+        // (todas iguales, sin principal — Joel 2026-08-17).
         if ($request->filled('category_id')) {
-            $query->where('category_id', (int) $request->category_id);
+            $catId = (int) $request->category_id;
+            $query->whereHas('categories', fn ($q) => $q->where('product_categories.id', $catId));
         }
 
         // Visibilidad por tienda. Por defecto solo se listan productos CON
@@ -328,10 +334,29 @@ class ProductController extends Controller
      */
     public function show(Product $product): JsonResponse
     {
-        $product->load(['category', 'supplier', 'price', 'images', 'paymentMethod', 'activePromotions'])
+        $product->load(['category', 'categories:product_categories.id,name', 'supplier', 'price', 'images', 'paymentMethod', 'activePromotions'])
                 ->loadSum('inventory', 'quantity');
 
         return $this->success(new ProductResource($product));
+    }
+
+    /**
+     * Ids de categoría del request (categorías múltiples, 2026-08-17):
+     * `category_ids[]` manda; si no viene, `category_id` (clientes viejos)
+     * equivale a [category_id]; null/'' → sin categorías.
+     *
+     * @return array<int, int>
+     */
+    public static function categoryIdsFrom(Request $request): array
+    {
+        if ($request->has('category_ids')) {
+            $ids = $request->input('category_ids');
+
+            return is_array($ids) ? array_values(array_map('intval', array_filter($ids, fn ($v) => $v !== null && $v !== ''))) : [];
+        }
+        $single = $request->input('category_id');
+
+        return $single !== null && $single !== '' ? [(int) $single] : [];
     }
 
     /**
@@ -348,7 +373,7 @@ class ProductController extends Controller
     {
         $product = DB::transaction(function () use ($request) {
             $payload = $request->only([
-                'name', 'sku', 'barcode', 'description', 'category_id', 'supplier_id', 'cost', 'active',
+                'name', 'sku', 'barcode', 'description', 'supplier_id', 'cost', 'active',
             ]);
             // product_type opcional — admin de mangas lo manda como 'manga'.
             // Default 'product' viene del modelo.
@@ -357,6 +382,10 @@ class ProductController extends Controller
             }
             $product = Product::create($payload);
 
+            // Categorías múltiples (2026-08-17): category_ids[] es la fuente;
+            // category_id solo (clientes viejos) equivale a [category_id].
+            $product->syncCategories(self::categoryIdsFrom($request));
+
             $this->syncPrices($product, $request->input('prices', []));
             $this->syncPaymentMethod($product, $request);
             $this->syncMangaDetails($product, $request);
@@ -364,7 +393,7 @@ class ProductController extends Controller
             return $product;
         });
 
-        $product->load(['category', 'supplier', 'price', 'images', 'paymentMethod', 'mangaDetails', 'activePromotions'])
+        $product->load(['category', 'categories:product_categories.id,name', 'supplier', 'price', 'images', 'paymentMethod', 'mangaDetails', 'activePromotions'])
                 ->loadSum('inventory', 'quantity');
 
         SystemLog::write(
@@ -399,12 +428,18 @@ class ProductController extends Controller
 
         DB::transaction(function () use ($request, $product) {
             $payload = $request->only([
-                'name', 'sku', 'barcode', 'description', 'category_id', 'supplier_id', 'cost', 'active',
+                'name', 'sku', 'barcode', 'description', 'supplier_id', 'cost', 'active',
             ]);
             if ($request->filled('product_type')) {
                 $payload['product_type'] = $request->get('product_type');
             }
             $product->update($payload);
+
+            // Solo si el cliente mandó categorías (category_ids o category_id);
+            // un PUT parcial sin ellas las conserva.
+            if ($request->has('category_ids') || $request->has('category_id')) {
+                $product->syncCategories(self::categoryIdsFrom($request));
+            }
 
             if ($request->has('prices')) {
                 $this->syncPrices($product, $request->input('prices', []));
@@ -417,7 +452,7 @@ class ProductController extends Controller
             $this->syncMangaDetails($product, $request);
         });
 
-        $product->load(['category', 'supplier', 'price', 'images', 'paymentMethod', 'mangaDetails'])
+        $product->load(['category', 'categories:product_categories.id,name', 'supplier', 'price', 'images', 'paymentMethod', 'mangaDetails'])
                 ->loadSum('inventory', 'quantity');
 
         // Diff: solo campos que cambiaron, con {old, new}. No registra precios

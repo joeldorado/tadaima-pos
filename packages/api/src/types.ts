@@ -43,8 +43,12 @@ export interface Product {
   description: string | null
   cost: number
   active: boolean
+  /** @deprecated compat: = la primera de `categories` (caché). Usa `categories`. */
   category_id: number | null
+  /** @deprecated compat: = la primera de `categories`. Usa `categories`. */
   category: { id: number; name: string } | null
+  /** Todas las categorías del producto (N:N, todas iguales — 2026-08-17). Opcional: tolera API vieja. */
+  categories?: Array<{ id: number; name: string }>
   /** Proveedor del producto. null = sin proveedor asignado. */
   supplier_id: number | null
   supplier: { id: number; name: string } | null
@@ -168,7 +172,10 @@ export interface CreateProductInput {
   active?: boolean
   allow_cash?: boolean
   allow_card?: boolean
+  /** @deprecated compat: usa category_ids. Si se manda solo, equivale a [category_id]. */
   category_id?: number | null
+  /** Categorías múltiples (2026-08-17). Reemplaza el set completo; [] = sin categoría. */
+  category_ids?: number[]
   supplier_id?: number | null
   prices?: {
     price_1?: number
@@ -188,7 +195,10 @@ export interface UpdateProductInput {
   active?: boolean
   allow_cash?: boolean
   allow_card?: boolean
+  /** @deprecated compat: usa category_ids. Si se manda solo, equivale a [category_id]. */
   category_id?: number | null
+  /** Categorías múltiples (2026-08-17). Reemplaza el set completo; [] = sin categoría. */
+  category_ids?: number[]
   supplier_id?: number | null
   prices?: {
     price_1?: number
@@ -983,6 +993,9 @@ export interface UpdatePreSaleOrderStatusInput {
 export interface Manga {
   id: number
   name: string
+  /** Categorías múltiples (2026-08-17). Opcional: tolera API vieja. */
+  categories?: Array<{ id: number; name: string }>
+  category_id?: number | null
   volume_number: number | null
   editorial: string | null
   code: string | null
@@ -1022,6 +1035,8 @@ export interface MangaInventoryItem {
 
 export interface CreateMangaInput {
   name: string
+  /** Categorías múltiples (2026-08-17). */
+  category_ids?: number[]
   volume_number?: number | null
   editorial?: string | null
   code?: string | null
@@ -1039,6 +1054,8 @@ export interface CreateMangaInput {
 
 export interface UpdateMangaInput {
   name?: string
+  /** Categorías múltiples (2026-08-17). Reemplaza el set completo. */
+  category_ids?: number[]
   volume_number?: number | null
   editorial?: string | null
   code?: string | null

@@ -336,6 +336,8 @@ function normalizeProduct(raw: any): Product {
     name:                 raw.nombre       ?? raw.name       ?? "",
     sku:                  raw.sku          ?? "",
     category:             raw.categoria    ?? raw.category   ?? "",
+    // Categorías múltiples (2026-08-17): pasa la lista si viene (adapter).
+    ...(Array.isArray(raw.categories) && raw.categories.length > 0 ? { categories: raw.categories as string[] } : {}),
     image:                raw.imagen       ?? raw.image      ?? "",
     price_a:              raw.precioA      ?? raw.price_a    ?? 0,
     price_b:              raw.precioB      ?? raw.price_b,

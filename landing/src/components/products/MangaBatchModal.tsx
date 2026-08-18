@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { createManga, updateMangaInventory, uploadMangaImage } from '@tadaima/api'
+import { CategoryMultiPicker } from '@/components/products/CategoryMultiPicker'
 import type { ApiError } from '@tadaima/api'
 import { EDITORIALS, MANGA_GENRES } from './mangaConstants'
 import { generateBarcode } from '@/lib/barcode'
@@ -79,6 +80,8 @@ type Tab = 'tomos' | 'precios' | 'inventario'
 interface SeriesFields {
   nombre: string; editorial: string; genero: string
   precioPublico: string; margenPct: string
+  /** Categorías múltiples (2026-08-17): se aplican a TODOS los tomos del alta. */
+  categoryIds?: number[]
 }
 
 interface PriceFields {
@@ -328,6 +331,7 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
 
         const manga = await createManga({
           name: series.nombre.trim(),
+          category_ids: series.categoryIds ?? [],
           volume_number: tomo.numero !== '' ? parseInt(tomo.numero, 10) : null,
           editorial: series.editorial || null,
           code: tomo.isbn.trim() || null,
@@ -475,6 +479,16 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
                       {MANGA_GENRES.map(g => <option key={g} value={g}>{g}</option>)}
                     </select>
                   </div>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>
+                    Categorías <span className="normal-case tracking-normal font-bold">(una o varias, para todos los tomos)</span>
+                  </label>
+                  <CategoryMultiPicker
+                    value={series.categoryIds ?? []}
+                    onChange={ids => setSeries(s => ({ ...s, categoryIds: ids }))}
+                    dense
+                  />
                 </div>
               </div>
 

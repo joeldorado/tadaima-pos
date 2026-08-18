@@ -47,12 +47,18 @@ class ProductResource extends JsonResource
             'active'      => $this->active,
             'category_id' => $this->category_id,
 
+            // `category`/`category_id` = compat (la primera del pivote). Desde
+            // 2026-08-17 la verdad son `categories[]` (todas iguales).
             'category' => $this->when(
                 $this->relationLoaded('category') && $this->category,
                 fn () => [
                     'id'   => $this->category->id,
                     'name' => $this->category->name,
                 ],
+            ),
+            'categories' => $this->when(
+                $this->relationLoaded('categories'),
+                fn () => $this->categories->map(fn ($c) => ['id' => $c->id, 'name' => $c->name])->values(),
             ),
 
             'supplier_id' => $this->supplier_id,

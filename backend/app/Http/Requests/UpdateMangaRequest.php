@@ -19,6 +19,9 @@ class UpdateMangaRequest extends FormRequest
             'public_price'          => ['sometimes', 'numeric', 'min:0'],
             'profit_margin_percent' => ['sometimes', 'numeric', 'min:0', 'max:100'],
             'active'                => ['sometimes', 'boolean'],
+            // Categorías múltiples (2026-08-17)
+            'category_ids'          => ['nullable', 'array'],
+            'category_ids.*'        => ['integer', 'exists:product_categories,id'],
             'price_1'               => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'price_2'               => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'price_3'               => ['sometimes', 'nullable', 'numeric', 'min:0'],

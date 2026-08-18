@@ -4,7 +4,10 @@ export interface CatalogProductItem {
   id: number
   name: string
   description: string | null
+  /** @deprecated compat: la primera de `categories`. */
   category: { id: number; name: string } | null
+  /** Todas sus categorías (2026-08-17). Opcional: tolera API vieja. */
+  categories?: Array<{ id: number; name: string }>
   images: Array<{ id: number; path: string | null; url?: string | null; sort_order: number }>
   price?: number
   stock?: number
@@ -134,7 +137,10 @@ export interface GlobalCatalogItem {
    * Opcional: tolera API previa al rollout.
    */
   catalog_position?: number | null
+  /** @deprecated compat: la primera de `categories`. */
   category: { id: number; name: string } | null
+  /** Todas sus categorías (2026-08-17). Opcional: tolera API vieja. */
+  categories?: Array<{ id: number; name: string }>
   /** `url` = URL absoluta lista para usar (GCS en prod). `path` queda como fallback legacy. */
   images: Array<{ id: number; path: string | null; url?: string | null; sort_order: number }>
   price?: number

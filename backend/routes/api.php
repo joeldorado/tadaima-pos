@@ -312,6 +312,8 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
 
     // ── Product Categories ────────────────────────────────────────────────────
     Route::apiResource('categories', ProductCategoryController::class)->only(['index', 'store', 'update', 'destroy']);
+    // Productos vinculados a una categoría (modal de confirmación al borrar, 2026-08-17)
+    Route::get('categories/{category}/products', [ProductCategoryController::class, 'products']);
 
     // ── Suppliers ─────────────────────────────────────────────────────────────
     Route::apiResource('suppliers', SuppliersController::class)->only(['index', 'store', 'update', 'destroy']);

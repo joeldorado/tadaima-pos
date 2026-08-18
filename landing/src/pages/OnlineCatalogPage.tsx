@@ -54,6 +54,15 @@ function CardSkeleton() {
   );
 }
 
+/**
+ * Nombres de categoría de un item de la tienda: todas (`categories`, API
+ * 2026-08-17) o la única (`category`, API vieja); sin ninguna → ["Otros"].
+ */
+function catNamesOf(p: { category?: { name: string } | null; categories?: Array<{ name: string }> }): string[] {
+  const names = (p.categories && p.categories.length > 0 ? p.categories : (p.category ? [p.category] : [])).map(c => c.name);
+  return names.length ? names : ["Otros"];
+}
+
 export function OnlineCatalogPage() {
   // Solo para el preview del admin (?preview_theme/_bg/_layout). Sin params, la
   // apariencia sale del payload como siempre.
@@ -137,19 +146,20 @@ export function OnlineCatalogPage() {
       list = list.filter((p) => {
         const name = p.name?.toLowerCase() ?? "";
         const desc = p.description?.toLowerCase() ?? "";
-        const cat = p.category?.name?.toLowerCase() ?? "";
-        return name.includes(q) || desc.includes(q) || cat.includes(q);
+        const cats = catNamesOf(p).map(c => c.toLowerCase());
+        return name.includes(q) || desc.includes(q) || cats.some(c => c.includes(q));
       });
     }
     if (promoOnly) list = list.filter((p) => (p.active_promotions?.length ?? 0) > 0);
     return list;
   }, [byType, search, promoOnly]);
 
+  // Categorías múltiples (2026-08-17): un producto cuenta en TODAS sus
+  // categorías (todas iguales); sin ninguna → "Otros".
   const categories = useMemo(() => {
     const map = new Map<string, number>();
     contextItems.forEach((p) => {
-      const name = p.category?.name ?? "Otros";
-      map.set(name, (map.get(name) ?? 0) + 1);
+      catNamesOf(p).forEach((name) => map.set(name, (map.get(name) ?? 0) + 1));
     });
     return Array.from(map.entries())
       .map(([name, count]) => ({ name, count }))
@@ -167,7 +177,7 @@ export function OnlineCatalogPage() {
 
   const gridItems = useMemo(() => {
     const list = categoryFilter
-      ? contextItems.filter((p) => (p.category?.name ?? "Otros") === categoryFilter)
+      ? contextItems.filter((p) => catNamesOf(p).includes(categoryFilter))
       : contextItems;
     if (sortMode === "featured") return list; // orden natural del server = destacados primero
     const sorted = [...list];

@@ -50,6 +50,12 @@ class ProductLightResource extends JsonResource
             'barcode'     => $this->barcode,
             'active'      => $this->active,
             'category_id' => $this->category_id,
+            // Todas sus categorías (ids; el front resuelve nombres con el Map
+            // de /categories) — chips de la Caja por CUALQUIERA (2026-08-17).
+            'category_ids' => $this->when(
+                $this->relationLoaded('categories'),
+                fn () => $this->categories->pluck('id')->values(),
+            ),
 
             'prices' => [
                 'price_1' => $this->price?->price_1,

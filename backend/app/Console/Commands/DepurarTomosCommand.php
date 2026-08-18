@@ -70,15 +70,31 @@ class DepurarTomosCommand extends Command
             }
         }
         $stockSql = 'COALESCE((SELECT SUM(i.quantity) FROM inventory i WHERE i.product_id = products.id), 0)';
+        // Categorías múltiples (2026-08-17): el universo se arma por el pivote
+        // (un producto entra si CUALQUIERA de sus categorías es librería).
         $universo = $db->table('products')
             ->where(function ($q) use ($catsLibreria) {
                 $q->where('product_type', 'manga');
                 if ($catsLibreria !== []) {
-                    $q->orWhereIn('category_id', array_keys($catsLibreria));
+                    $q->orWhereExists(function ($sub) use ($catsLibreria) {
+                        $sub->selectRaw('1')->from('product_category_assignments as pca')
+                            ->whereColumn('pca.product_id', 'products.id')
+                            ->whereIn('pca.category_id', array_keys($catsLibreria));
+                    });
                 }
             })
             ->selectRaw("id, name, product_type, category_id, active, {$stockSql} as stock")
             ->get();
+        // Etiqueta de reporte: sus categorías librería (todas) o "(sin categoría)".
+        $catsPorProducto = [];
+        foreach (array_chunk($universo->pluck('id')->all(), 1000) as $lote) {
+            foreach ($db->table('product_category_assignments')->whereIn('product_id', $lote)
+                ->orderBy('position')->get(['product_id', 'category_id']) as $r) {
+                if (isset($catsLibreria[(int) $r->category_id])) {
+                    $catsPorProducto[(int) $r->product_id][] = $catsLibreria[(int) $r->category_id];
+                }
+            }
+        }
 
         // ── Historial (solo de los que podrían borrarse) ─────────────────────
         $conHistorial = [];
@@ -98,7 +114,9 @@ class DepurarTomosCommand extends Command
         $aBorrar = [];       // no-tomo sin stock sin historial
         $aDesactivar = [];   // no-tomo sin stock con historial (→ inactivo + product)
         $porCat = [];        // reporte: cat → destino → n
-        $catNombre = fn ($p) => $catsLibreria[(int) ($p->category_id ?? 0)] ?? '(sin categoría)';
+        $catNombre = fn ($p) => isset($catsPorProducto[(int) $p->id])
+            ? implode('+', array_unique($catsPorProducto[(int) $p->id]))
+            : ($catsLibreria[(int) ($p->category_id ?? 0)] ?? '(sin categoría)');
         foreach ($universo as $p) {
             $cat = $catNombre($p);
             if (TomoRule::esNombreTomo((string) $p->name)) {

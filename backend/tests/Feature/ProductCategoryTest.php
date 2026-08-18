@@ -15,8 +15,8 @@ use Tests\TestCase;
 /**
  * Categorías: el índice expone products_count (para que el admin vea qué
  * categoría tiene productos antes de intentar borrarla) y el DELETE de una
- * categoría con productos responde 422 con el conteo (QA 2026-08-17: el
- * equipo intentó borrar "amiibos"/"Hairclips" y solo veía un error genérico).
+ * categoría con productos los DESVINCULA (Joel 2026-08-17; antes bloqueaba
+ * con 422 y el equipo solo veía un error genérico).
  */
 class ProductCategoryTest extends TestCase
 {
@@ -47,7 +47,8 @@ class ProductCategoryTest extends TestCase
         $conProductos = ProductCategory::create(['name' => 'amiibos', 'active' => true]);
         $vacia = ProductCategory::create(['name' => 'Hair clips', 'active' => true]);
         foreach (range(1, 3) as $i) {
-            Product::create(['name' => "Amiibo {$i}", 'sku' => "AM-{$i}", 'active' => true, 'category_id' => $conProductos->id]);
+            Product::create(['name' => "Amiibo {$i}", 'sku' => "AM-{$i}", 'active' => true])
+                ->syncCategories([$conProductos->id]);
         }
 
         $rows = collect($this->actingAs($this->admin)->getJson('/api/v1/categories')->assertOk()->json('data'));
@@ -56,18 +57,25 @@ class ProductCategoryTest extends TestCase
         $this->assertSame(0, $rows->firstWhere('id', $vacia->id)['products_count']);
     }
 
-    public function test_no_borra_categoria_con_productos_y_dice_cuantos(): void
+    public function test_borra_categoria_con_productos_desvinculandolos(): void
     {
+        // Desde 2026-08-17 (Joel): se puede borrar aunque tenga productos —
+        // se desvinculan y quedan "Sin categoría" si no tenían otra.
         $cat = ProductCategory::create(['name' => 'Hairclips', 'active' => true]);
-        Product::create(['name' => 'Clip A', 'sku' => 'HC-1', 'active' => true, 'category_id' => $cat->id]);
-        Product::create(['name' => 'Clip B', 'sku' => 'HC-2', 'active' => true, 'category_id' => $cat->id]);
+        $a = Product::create(['name' => 'Clip A', 'sku' => 'HC-1', 'active' => true]);
+        $a->syncCategories([$cat->id]);
+        $b = Product::create(['name' => 'Clip B', 'sku' => 'HC-2', 'active' => true]);
+        $b->syncCategories([$cat->id]);
 
-        $resp = $this->actingAs($this->admin)->deleteJson("/api/v1/categories/{$cat->id}")
-            ->assertStatus(422);
+        $resp = $this->actingAs($this->admin)->deleteJson("/api/v1/categories/{$cat->id}")->assertOk();
 
-        $this->assertStringContainsString('Hairclips', $resp->json('error'));
-        $this->assertStringContainsString('2 productos', $resp->json('error'));
-        $this->assertDatabaseHas('product_categories', ['id' => $cat->id]);
+        $this->assertSame(2, $resp->json('data.unlinked'));
+        $this->assertSame(2, $resp->json('data.left_without_category'));
+        $this->assertStringContainsString('2 productos desvinculados', $resp->json('message'));
+        $this->assertDatabaseMissing('product_categories', ['id' => $cat->id]);
+        $this->assertNull($a->fresh()->category_id);
+        $this->assertDatabaseHas('products', ['id' => $a->id]);
+        $this->assertDatabaseHas('products', ['id' => $b->id]);
     }
 
     public function test_borra_categoria_sin_productos(): void

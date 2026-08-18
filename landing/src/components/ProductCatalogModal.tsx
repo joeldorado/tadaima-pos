@@ -12,6 +12,8 @@ interface CatalogProduct {
   name: string;
   sku: string;
   category: string;
+  /** Todas sus categorías (categorías múltiples 2026-08-17). Si falta, se usa [category]. */
+  categories?: string[];
   image?: string;
   price_a: number;
   price_b?: number;
@@ -339,10 +341,14 @@ export function ProductCatalogModal({ products, onSelect, onClose, title = "Cat�
 
   useEffect(() => { setPage(1); }, [query, category, kind]);
 
+  // Categorías múltiples (2026-08-17): un producto aparece bajo TODAS sus
+  // categorías (todas iguales, sin principal).
+  const catsOf = useCallback((p: CatalogProduct): string[] =>
+    (p.categories && p.categories.length > 0 ? p.categories : [p.category]).filter(Boolean), []);
   const categories = useMemo(() => {
-    const cats = Array.from(new Set(kindFiltered.map(p => p.category).filter(Boolean))).sort();
+    const cats = Array.from(new Set(kindFiltered.flatMap(catsOf))).sort();
     return ["Todos", ...cats];
-  }, [kindFiltered]);
+  }, [kindFiltered, catsOf]);
 
   useEffect(() => {
     if (category !== "Todos" && !categories.includes(category)) {
@@ -360,13 +366,13 @@ export function ProductCatalogModal({ products, onSelect, onClose, title = "Cat�
 
   const filtered = useMemo(() => {
     let list = kindFiltered;
-    if (category !== "Todos") list = list.filter(p => p.category === category);
+    if (category !== "Todos") list = list.filter(p => catsOf(p).includes(category));
     if (query.trim()) {
       const q = query.toLowerCase();
       list = list.filter(p =>
         p.name.toLowerCase().includes(q) ||
         p.sku.toLowerCase().includes(q) ||
-        p.category.toLowerCase().includes(q)
+        catsOf(p).some(c => c.toLowerCase().includes(q))
       );
     }
     // Productos sin stock (0) al final del listado (QA Ruben + Joel 2026-05-30).
@@ -376,7 +382,7 @@ export function ProductCatalogModal({ products, onSelect, onClose, title = "Cat�
       const bOut = effectiveStock(b) === 0 ? 1 : 0;
       return aOut - bOut;
     });
-  }, [kindFiltered, query, category, effectiveStock]);
+  }, [kindFiltered, query, category, effectiveStock, catsOf]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage   = Math.min(page, totalPages);

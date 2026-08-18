@@ -19,6 +19,9 @@ class StoreMangaRequest extends FormRequest
             'public_price'          => ['required', 'numeric', 'min:0'],
             'profit_margin_percent' => ['required', 'numeric', 'min:0', 'max:100'],
             'active'                => ['nullable', 'boolean'],
+            // Categorías múltiples (2026-08-17)
+            'category_ids'          => ['nullable', 'array'],
+            'category_ids.*'        => ['integer', 'exists:product_categories,id'],
             'price_1'               => ['nullable', 'numeric', 'min:0'],
             'price_2'               => ['nullable', 'numeric', 'min:0'],
             'price_3'               => ['nullable', 'numeric', 'min:0'],

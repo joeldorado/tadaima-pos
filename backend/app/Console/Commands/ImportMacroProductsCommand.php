@@ -338,6 +338,23 @@ class ImportMacroProductsCommand extends Command
                 }
             }
 
+            // 2b. Categorías múltiples (2026-08-17): el pivote es la fuente de
+            //     verdad; el origen trae UNA categoría → una asignación por
+            //     producto nuevo (category_id ya quedó como caché arriba).
+            $pivotNuevos = [];
+            foreach ($nuevos as $a) {
+                $cid = $catId($a);
+                if ($cid !== null && isset($ids[$a['sku']])) {
+                    $pivotNuevos[] = [
+                        'product_id' => $ids[$a['sku']], 'category_id' => $cid, 'position' => 0,
+                        'created_at' => $now, 'updated_at' => $now,
+                    ];
+                }
+            }
+            foreach (array_chunk($pivotNuevos, $chunk) as $lote) {
+                $db->table('product_category_assignments')->insertOrIgnore($lote);
+            }
+
             // 3. Updates de los que ya existían — SOLO filas con cambios reales.
             //    En un re-import ~14k skus ya existen pero casi nada cambió;
             //    actualizar todo fila-por-fila sobre el pooler WAN era ~45 min
@@ -360,6 +377,14 @@ class ImportMacroProductsCommand extends Command
                 }
                 if ((int) ($prev->category_id ?? 0) !== (int) ($newCat ?? 0)) {
                     $upd['category_id'] = $newCat;
+                    // Pivote: el origen manda una sola categoría → reemplaza.
+                    $db->table('product_category_assignments')->where('product_id', $ids[$a['sku']])->delete();
+                    if ($newCat !== null) {
+                        $db->table('product_category_assignments')->insertOrIgnore([
+                            'product_id' => $ids[$a['sku']], 'category_id' => $newCat, 'position' => 0,
+                            'created_at' => $now, 'updated_at' => $now,
+                        ]);
+                    }
                 }
                 if ((string) $prev->product_type !== $newType) {
                     $upd['product_type'] = $newType;

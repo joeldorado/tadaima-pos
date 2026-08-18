@@ -66,8 +66,12 @@ class ProductIndexFiltersTest extends TestCase
         $p = Product::create([
             'company_id' => $this->company->id,
             'name' => $name, 'sku' => 'SKU-' . uniqid(), 'active' => true,
-            'cost' => $cost, 'category_id' => $categoryId,
+            'cost' => $cost,
         ]);
+        // Categorías múltiples (2026-08-17): el filtro lee el pivote.
+        if ($categoryId !== null) {
+            $p->syncCategories([$categoryId]);
+        }
         $p->price()->create(['price_1' => 100]);
         if ($stock > 0) {
             Inventory::create(['product_id' => $p->id, 'warehouse_id' => $this->exhib->id, 'quantity' => $stock]);
