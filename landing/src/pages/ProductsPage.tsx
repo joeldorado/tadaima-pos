@@ -12,7 +12,7 @@ import {
   Upload, Camera, Loader2,
   ArrowUp, ArrowDown, ArrowUpDown,
   ChevronLeft, ChevronsLeft, ChevronsRight, Trash2, Pencil, RefreshCw, PackageX, TicketPercent,
-  ChevronDown, SlidersHorizontal
+  ChevronDown, SlidersHorizontal, FolderX
 } from "lucide-react";
 import { useActiveStore } from "@/contexts/StoreContext";
 import { useAuth } from "@tadaima/auth";
@@ -1464,10 +1464,13 @@ function ProductModal({
 // Joel 2026-08-04). "Productos sin Costo" queda FUERA, siempre visible; aquí
 // viven los demás. Los contadores vienen de /products/stats (catálogo REAL).
 const FILTER_META: Record<Exclude<ProductsCatalogFilter, null>, { label: string; color: string; icon: React.ComponentType<{ size?: number | string }> }> = {
-  low_stock:    { label: "Por agotarse", color: "#F59E0B", icon: AlertTriangle },
-  out_of_stock: { label: "Agotados",     color: "#EF4444", icon: PackageX },
-  promos:       { label: "Promos",       color: "#34d399", icon: TicketPercent },
-  top:          { label: "Más vendidos", color: "#AA66FF", icon: TrendingUp },
+  low_stock:    { label: "Por agotarse",  color: "#F59E0B", icon: AlertTriangle },
+  out_of_stock: { label: "Agotados",      color: "#EF4444", icon: PackageX },
+  promos:       { label: "Promos",        color: "#34d399", icon: TicketPercent },
+  top:          { label: "Más vendidos",  color: "#AA66FF", icon: TrendingUp },
+  // Sin NINGUNA categoría (Joel 2026-08-18): tras categorías múltiples el
+  // equipo depura el catálogo — este chip lista lo que falta clasificar.
+  no_category:  { label: "Sin categoría", color: "#38BDF8", icon: FolderX },
 };
 
 function FilterDropdown({ activeFilter, onSelect, isProductos, canViewCost, counts, storeName }: {
@@ -1476,7 +1479,7 @@ function FilterDropdown({ activeFilter, onSelect, isProductos, canViewCost, coun
   isProductos: boolean;
   canViewCost: boolean;
   /** Contadores reales de stats (null = cargando). */
-  counts: { low: number | null; out: number | null; promos: number | null };
+  counts: { low: number | null; out: number | null; promos: number | null; noCategory: number | null };
   storeName?: string | null;
 }) {
   const [open, setOpen] = useState(false);
@@ -1501,6 +1504,7 @@ function FilterDropdown({ activeFilter, onSelect, isProductos, canViewCost, coun
     { key: "out_of_stock", count: counts.out, show: true, title: `Sin stock ${scopeHint}` },
     { key: "promos", count: counts.promos, show: isProductos, title: "Productos con promoción vigente" },
     { key: "top", count: null, show: isProductos && canViewCost, title: "Top 50 más vendidos (últimos 30 días)" },
+    { key: "no_category", count: counts.noCategory, show: true, title: "Sin ninguna categoría asignada (catálogo completo)" },
   ];
 
   const pick = (f: ProductsCatalogFilter) => { onSelect(f); setOpen(false); };
@@ -1547,6 +1551,7 @@ function FilterDropdown({ activeFilter, onSelect, isProductos, canViewCost, coun
                 onClick={() => pick(isActive ? null : key)}
                 disabled={disabled}
                 {...(key === "promos" ? { "data-testid": "filter-promos" } : {})}
+                {...(key === "no_category" ? { "data-testid": "filter-no-category" } : {})}
                 className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-black transition-colors disabled:opacity-40 hover:bg-white/5"
                 style={{ color: meta.color, background: isActive ? `${meta.color}1a` : undefined }}
                 title={title}
@@ -1629,6 +1634,7 @@ export function ProductsPage() {
   const showLowStock = activeFilter === 'low_stock';
   const showOutStock = activeFilter === 'out_of_stock';
   const showPromos = activeFilter === 'promos';
+  const showNoCategory = activeFilter === 'no_category';
   // Modal "Productos sin Costo": tabla editable para capturar el costo real
   // rápido (reemplaza el viejo filtro in-grid showNoCost).
   const [showMissingCost, setShowMissingCost] = useState(false);
@@ -2518,12 +2524,17 @@ export function ProductsPage() {
 
   const filteredMangas = useMemo(() => {
     let list = mangas;
-    // Tab "Por agotarse" / "Agotados" — solo aplica cuando estamos en sección tomos.
+    // Tab "Por agotarse" / "Agotados" / "Sin categoría" — solo aplica cuando
+    // estamos en sección tomos (la lista de mangas viene completa; se filtra aquí).
     if (pageSection === 'tomos') {
       if (showOutStock) {
         list = list.filter(m => (m.stock ?? 0) === 0);
       } else if (showLowStock) {
         list = list.filter(m => (m.stock ?? 0) > 0 && (m.stock ?? 0) <= 10);
+      } else if (showNoCategory) {
+        // Misma semántica que ?no_category=1 del backend: pivote vacío
+        // (categories[]); fallback a category_id solo si la API vieja no lo manda.
+        list = list.filter(m => (m.categories ? m.categories.length === 0 : m.category_id == null));
       }
     }
     if (!mangaSearch.trim()) return list;
@@ -2534,7 +2545,7 @@ export function ProductsPage() {
       (m.genre ?? '').toLowerCase().includes(q) ||
       (m.code ?? '').toLowerCase().includes(q)
     );
-  }, [mangas, mangaSearch, showLowStock, showOutStock, pageSection]);
+  }, [mangas, mangaSearch, showLowStock, showOutStock, showNoCategory, pageSection]);
 
   const mangaTable = useReactTable({
     data: filteredMangas,
@@ -2716,6 +2727,7 @@ export function ProductsPage() {
               low: stats?.por_agotarse ?? null,
               out: stats?.agotados ?? null,
               promos: stats?.con_promo ?? null,
+              noCategory: stats?.sin_categoria ?? null,
             }}
             storeName={selectedStoreId ? (stores.find(s => s.id === selectedStoreId)?.name ?? null) : null}
           />
@@ -2848,7 +2860,7 @@ export function ProductsPage() {
               el largo de la página cargada. */}
           {showTopSellers
             ? `Top 50 Más Vendidos`
-            : `${totalProducts.toLocaleString("es-MX")} ${showOutStock ? "Agotados" : showLowStock ? "Por Agotarse" : showPromos ? "Con Promo" : "Productos"}`}
+            : `${totalProducts.toLocaleString("es-MX")} ${showOutStock ? "Agotados" : showLowStock ? "Por Agotarse" : showPromos ? "Con Promo" : showNoCategory ? "Sin Categoría" : "Productos"}`}
         </p>
         {selectedStoreId && (
           <div className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider border" style={{ background: 'rgba(204,34,0,0.08)', border: '1px solid rgba(204,34,0,0.2)', color: T.redBright }}>

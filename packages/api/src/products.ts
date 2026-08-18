@@ -39,6 +39,8 @@ export interface GetProductsParams {
   threshold?: number
   /** Con promo vigente (scoped a store_id si viene). */
   has_promo?: boolean
+  /** Sin NINGUNA categoría (pivote de categorías múltiples vacío) — chip "Sin categoría". */
+  no_category?: boolean
   /**
    * Respuesta { items, pagination } con el TOTAL real del catálogo — para
    * paginación server-side. Opt-in: sin el flag el backend sigue devolviendo
@@ -59,6 +61,8 @@ export interface ProductStats {
   total_mangas: number
   agotados: number
   por_agotarse: number
+  /** Sin NINGUNA categoría (pivote vacío). Opcional: tolera API vieja cacheada. */
+  sin_categoria?: number
   /** Umbral usado para por_agotarse (default 10). */
   threshold: number
   con_promo: number

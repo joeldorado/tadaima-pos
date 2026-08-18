@@ -197,6 +197,42 @@ class ProductIndexFiltersTest extends TestCase
         $this->assertSame([$this->conCostoMuchoStock->id], $this->ids("&category_id={$this->catFiguras->id}"));
     }
 
+    public function test_filtro_no_category_solo_sin_ninguna_categoria(): void
+    {
+        // Solo "Goku Special" tiene categoría (Figuras) → los otros 3 son "sin categoría".
+        $sinCategoria = collect([
+            $this->sinCostoAgotado->id, $this->sinCostoConStock->id, $this->conCostoPocoStock->id,
+        ])->sort()->values()->all();
+
+        $this->assertSame($sinCategoria, $this->ids('&no_category=1'));
+    }
+
+    public function test_filtro_no_category_lee_el_pivote_no_la_cache_category_id(): void
+    {
+        // Un producto con 2 categorías (pivote) NO es "sin categoría" aunque
+        // se le borre la caché legacy products.category_id a mano; y uno cuya
+        // única categoría se desvincula SÍ pasa a serlo.
+        $catExtra = ProductCategory::create(['name' => 'Anime', 'active' => true]);
+        $this->conCostoMuchoStock->syncCategories([$this->catFiguras->id, $catExtra->id]);
+        DB::table('products')->where('id', $this->conCostoMuchoStock->id)->update(['category_id' => null]);
+
+        $this->assertNotContains($this->conCostoMuchoStock->id, $this->ids('&no_category=1'));
+
+        $this->conCostoMuchoStock->syncCategories([]);
+        $this->assertContains($this->conCostoMuchoStock->id, $this->ids('&no_category=1'));
+    }
+
+    public function test_no_category_combina_con_search_y_tienda(): void
+    {
+        // "Goku" matchea 2: Goku Cheap (sin categoría) y Goku Special (Figuras).
+        $this->assertSame([$this->sinCostoConStock->id], $this->ids('&search=Goku&no_category=1'));
+        // Con tienda: solo los que tienen inventario en ella (Poster Luffy no tiene renglón).
+        $this->assertSame(
+            collect([$this->sinCostoConStock->id, $this->conCostoPocoStock->id])->sort()->values()->all(),
+            $this->ids("&store_id={$this->store->id}&no_category=1"),
+        );
+    }
+
     public function test_with_meta_pagina_con_total_real(): void
     {
         $resp = $this->actingAs($this->admin)

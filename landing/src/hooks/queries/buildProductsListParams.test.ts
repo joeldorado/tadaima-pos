@@ -100,6 +100,27 @@ describe("buildProductsListParams — modo admin (página Productos)", () => {
     });
   });
 
+  it("'no_category' mapea a no_category:true y combina con tienda/búsqueda/paginación", () => {
+    expect(buildProductsListParams({ withMeta: true, type: "product", filter: "no_category" })).toEqual({
+      with_meta: true,
+      type: "product",
+      no_category: true,
+      page: 1,
+      per_page: 100,
+    });
+    expect(
+      buildProductsListParams({ withMeta: true, storeId: 3, search: "goku", filter: "no_category", page: 2, perPage: 20 }),
+    ).toEqual({
+      with_meta: true,
+      store_id: 3,
+      include_unassigned: true,
+      search: "goku",
+      no_category: true,
+      page: 2,
+      per_page: 20,
+    });
+  });
+
   it("'top' pisa la paginación: sort=top, per_page 50, page 1", () => {
     expect(
       buildProductsListParams({ withMeta: true, filter: "top", page: 5, perPage: 20 }),

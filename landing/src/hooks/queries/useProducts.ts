@@ -20,8 +20,11 @@ const SERVER_SEARCH_PAGE = 200
 /** "Más vendidos" server-side: top 50 de los últimos 30 días (?sort=top). */
 const TOP_SELLERS_PAGE = 50
 
-/** Chip de filtro activo en la página Productos — uno a la vez. */
-export type ProductsCatalogFilter = 'low_stock' | 'out_of_stock' | 'promos' | 'top' | null
+/**
+ * Chip de filtro activo en la página Productos — uno a la vez.
+ * `no_category` (2026-08-18): sin NINGUNA categoría (pivote vacío).
+ */
+export type ProductsCatalogFilter = 'low_stock' | 'out_of_stock' | 'promos' | 'top' | 'no_category' | null
 
 export interface ProductsListParamsInput {
   storeId?: number | null | undefined
@@ -80,6 +83,7 @@ export function buildProductsListParams(
       : {}),
     ...(input.filter === 'out_of_stock' ? { out_of_stock: true } : {}),
     ...(input.filter === 'promos' ? { has_promo: true } : {}),
+    ...(input.filter === 'no_category' ? { no_category: true } : {}),
     // "Más vendidos" = top 50 fijo (ordenado por ventas de 30 días): pisa la
     // paginación — una sola página de 50.
     ...(isTop

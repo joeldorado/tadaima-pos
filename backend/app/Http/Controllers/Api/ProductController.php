@@ -34,6 +34,7 @@ class ProductController extends Controller
      *   ?no_cost=1     sin costo real (cost NULL o <= 0)
      *   ?out_of_stock=1 / ?low_stock=1 (+?threshold=, default 10) por stock
      *   ?has_promo=1   con promo vigente (scoped a ?store_id si viene)
+     *   ?no_category=1 sin NINGUNA categoría (pivote vacío)
      *   ?with_meta=1   respuesta { items, pagination } — opt-in: sin el flag el
      *                  shape histórico (array plano) queda intacto byte a byte
      */
@@ -169,6 +170,14 @@ class ProductController extends Controller
             $query->whereHas('categories', fn ($q) => $q->where('product_categories.id', $catId));
         }
 
+        // "Sin categoría" (Joel 2026-08-18): productos sin NINGÚN vínculo en el
+        // pivote. Lee el pivote (la verdad) y no la caché products.category_id
+        // — misma semántica que la UI, que pinta "Sin categoría" cuando
+        // categories[] viene vacío. Combina por AND con lo demás.
+        if ($request->boolean('no_category')) {
+            $query->whereDoesntHave('categories');
+        }
+
         // Visibilidad por tienda. Por defecto solo se listan productos CON
         // inventario en la tienda (flujo histórico). Con ?include_unassigned=1
         // también se listan los "no asignados" (sin renglón de inventario en
@@ -292,6 +301,10 @@ class ProductController extends Controller
         }
 
         // SUM(CASE) y no FILTER(WHERE): MySQL (dev local) no soporta FILTER.
+        // sin_categoria (2026-08-18): sin NINGÚN renglón en el pivote de
+        // categorías múltiples — misma semántica que ?no_category=1 del index
+        // (la caché products.category_id no cuenta). NOT EXISTS correlacionado
+        // sobre un índice (product_id, category_id) — barato aun con ~14k.
         $row = DB::table('products as p')
             ->leftJoinSub($inv, 'inv', 'inv.product_id', '=', 'p.id')
             ->when($type, fn ($q) => $q->where('p.product_type', $type))
@@ -301,6 +314,7 @@ class ProductController extends Controller
                  SUM(CASE WHEN p.cost IS NULL OR p.cost <= 0 THEN 1 ELSE 0 END) as sin_costo,
                  SUM(CASE WHEN COALESCE(inv.qty, 0) = 0 THEN 1 ELSE 0 END) as agotados,
                  SUM(CASE WHEN COALESCE(inv.qty, 0) > 0 AND COALESCE(inv.qty, 0) <= ? THEN 1 ELSE 0 END) as por_agotarse,
+                 SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM product_category_assignments pca WHERE pca.product_id = p.id) THEN 1 ELSE 0 END) as sin_categoria,
                  SUM(CASE WHEN p.cost > 0 THEN p.cost * COALESCE(inv.qty, 0) ELSE 0 END) as valor_invertido',
                 [Product::TYPE_MANGA, $threshold]
             )
@@ -317,6 +331,7 @@ class ProductController extends Controller
             'total_productos' => (int) $row->total - (int) $row->total_mangas,
             'agotados' => (int) $row->agotados,
             'por_agotarse' => (int) $row->por_agotarse,
+            'sin_categoria' => (int) $row->sin_categoria,
             'threshold' => $threshold,
             'con_promo' => $conPromo,
             'store_id' => $storeId,

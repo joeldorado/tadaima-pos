@@ -306,7 +306,7 @@
           {
             "kind": "image",
             "src": "productos/02-filtros.png",
-            "alt": "Dropdown Filtros abierto con Por agotarse, Agotados, Promos y Más vendidos, cada uno con su contador",
+            "alt": "Dropdown Filtros abierto con Por agotarse, Agotados, Promos, Más vendidos y Sin categoría, cada uno con su contador",
             "caption": "El dropdown “Filtros” con contadores reales; “Ver todos” limpia el filtro."
           },
           {
@@ -335,6 +335,10 @@
               [
                 "Más vendidos",
                 "Ordena por ventas de los últimos 30 días."
+              ],
+              [
+                "Sin categoría",
+                "Productos (o tomos) que no tienen NINGUNA categoría asignada — para ir clasificando el catálogo. Ábrelo y asígnales categorías desde Editar."
               ]
             ]
           },

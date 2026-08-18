@@ -7,6 +7,7 @@ namespace Tests\Feature;
 use App\Models\Company;
 use App\Models\Inventory;
 use App\Models\Product;
+use App\Models\ProductCategory;
 use App\Models\ProductPromotion;
 use App\Models\Store;
 use App\Models\User;
@@ -163,6 +164,31 @@ class ProductStatsTest extends TestCase
         $this->assertSame(0, $data['total_productos']);
         $this->assertSame(1, $data['sin_costo']);
         $this->assertSame(1, $data['por_agotarse']);
+    }
+
+    public function test_sin_categoria_cuenta_por_pivote_y_respeta_type(): void
+    {
+        $cat = ProductCategory::create(['name' => 'Figuras', 'active' => true]);
+        $conCat = $this->makeProduct('Con categoría', 10.0);
+        $conCat->syncCategories([$cat->id]);
+        $this->makeProduct('Sin categoría 1');
+        $this->makeProduct('Sin categoría 2', 5.0);
+        $mangaSinCat = $this->makeProduct('Tomo suelto', null, Product::TYPE_MANGA);
+        // La caché legacy NO manda: pivote vacío = sin categoría aunque category_id traiga algo.
+        DB::table('products')->where('id', $mangaSinCat->id)->update(['category_id' => $cat->id]);
+
+        $global = $this->actingAs($this->admin)->getJson('/api/v1/products/stats')->assertOk()->json('data');
+        $this->assertSame(3, $global['sin_categoria']);
+
+        $soloProductos = $this->actingAs($this->admin)->getJson('/api/v1/products/stats?type=product')->assertOk()->json('data');
+        $this->assertSame(2, $soloProductos['sin_categoria']);
+
+        $soloMangas = $this->actingAs($this->admin)->getJson('/api/v1/products/stats?type=manga')->assertOk()->json('data');
+        $this->assertSame(1, $soloMangas['sin_categoria']);
+
+        // No es dato de costo: el gerente sin can_view_cost también lo recibe.
+        $gerente = $this->actingAs($this->gerenteA)->getJson('/api/v1/products/stats')->assertOk()->json('data');
+        $this->assertSame(3, $gerente['sin_categoria']);
     }
 
     public function test_con_promo_solo_vigentes_y_de_la_tienda(): void
