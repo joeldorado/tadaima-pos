@@ -4,6 +4,45 @@
 
 ---
 
+### Sesión 2026-08-18 (2) — Eliminar producto CON ventas: snapshot nombre/SKU en la venta — DEPLOYADO rev `tadaima-REV_PENDIENTE`
+
+**Escenario (cliente vía Joel):** "hoy vendo 1 booster en $100, ya no tendré
+más y no quiero el registro — borro el producto, pero la venta debe seguir en
+el reporte semanal/mensual". Diagnóstico: la venta NUNCA se borraba
+(`sale_items.product_id` es nullOnDelete), PERO (a) el Eliminar normal
+bloqueaba con 422 si había ventas y (b) el "Borrar TODO" dejaba la línea
+huérfana — sin nombre/SKU ("Artículo Desconocido") y fuera de Top Productos
+(INNER JOIN).
+
+**Fix — identidad congelada en la línea (extensión de ADR-015):**
+- Migración `2026_08_18_000003`: `sale_items.product_name` + `product_sku`
+  (nullable) + backfill idempotente desde `products` (subquery correlacionado,
+  portable). Las líneas ya huérfanas de antes no tienen de dónde recuperarse.
+- `CheckoutService` congela nombre/SKU en cada venta nueva (junto al `cost`).
+- `ProductController::destroy`: las VENTAS ya no bloquean — asegura snapshot,
+  null-out de promos compartidas (cinturón de forceDestroy) y borra; mensaje
+  "Sus N venta(s) quedan en el historial". Solo APARTADOS bloquean (FK
+  restrict, contrato vivo). Helper compartido `snapshotAndDelete()` usado
+  también por `forceDestroy` y `MangaController::destroy` (los tomos ya se
+  borran de verdad — antes degradaban a "desactivar").
+- `SaleItemResource`: `product_name`/`product_sku` top-level (snapshot →
+  producto vivo) + flag `product_deleted`. `reports/cash` (tickets del corte)
+  y `reports/top-products` (LEFT JOIN + COALESCE con snapshot + col `deleted`)
+  caen al snapshot. `SaleCancellationService`: cancela ventas de productos
+  borrados sin tronar (skip restaurar stock, nombre del snapshot).
+- Front: historial de Ventas, buscador, agrupados, Excel del historial,
+  ticket reimpreso, CancelTicketModal y Reporte de Ventas caen a
+  `item.product_name`; el nombre lleva sufijo "(eliminado)" y las llaves de
+  agrupación usan `del:{nombre}` (dos borrados distintos no se mezclan y el
+  neteo de cancelaciones cae al mismo renglón). Copys del modal Eliminar
+  actualizados (Solo el producto = ventas intactas; Borrar TODO = + apartados).
+
+Tests: `ProductDeleteWithSalesTest` (9: checkout snapshot, delete con ventas,
+API flag, backfill de viejas, apartados bloquean, manga, top-products, corte,
+cancelar post-borrado). Suite 513 PHPUnit · vitest 277 · tsc 464 baseline.
+
+---
+
 ### Sesión 2026-08-18 — Filtro "Sin categoría" en Productos + merge fix reportes de Ruben — DEPLOYADO rev `tadaima-00014-b55`
 
 **Pedido (Joel):** (1) PR con la rama de Ruben (`develop`) y subir su cambio;

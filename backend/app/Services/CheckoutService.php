@@ -283,6 +283,11 @@ class CheckoutService
                     'sale_id'    => $sale->id,
                     'product_id' => $draftItem->product_id,
                     'manga_id'   => $draftItem->manga_id,
+                    // Snapshot de identidad (2026-08-18, mismo espíritu que
+                    // `cost`): si el producto se elimina después, la línea
+                    // conserva su nombre/SKU en historial/reportes/ticket.
+                    'product_name' => $draftItem->product?->name,
+                    'product_sku'  => $draftItem->product?->sku,
                     'quantity'   => $draftItem->quantity,
                     'price'      => $draftItem->price,
                     'total'      => $draftItem->total,

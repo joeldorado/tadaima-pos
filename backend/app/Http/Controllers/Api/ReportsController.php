@@ -504,8 +504,9 @@ class ReportsController extends Controller
                 'cash_received_usd'   => $sale->cash_received_usd !== null ? (float) $sale->cash_received_usd : null,
                 'exchange_rate'       => $sale->exchange_rate !== null ? (float) $sale->exchange_rate : null,
                 'items'               => $sale->items->map(fn ($i) => [
-                    'name'     => $i->product?->name ?? "#{$i->product_id}",
-                    'sku'      => $i->product?->sku,
+                    // product borrado → cae al snapshot de la línea (2026-08-18).
+                    'name'     => $i->product?->name ?? $i->product_name ?? "#{$i->product_id}",
+                    'sku'      => $i->product?->sku ?? $i->product_sku,
                     'quantity' => (float) $i->quantity,
                     'price'    => (float) $i->price,
                     'total'    => (float) $i->total,
@@ -614,25 +615,35 @@ class ReportsController extends Controller
         $storeId = $this->scopedStoreId($request);
         $limit   = min((int) ($request->input('limit', 20)), 100);
 
-        // Products
+        // Products. LEFT JOIN (2026-08-18): un producto ELIMINADO del catálogo
+        // sigue rankeando con el snapshot de la línea (sale_items.product_name)
+        // — antes el INNER JOIN lo desaparecía del top. Las líneas legacy de
+        // mangas (product_id y snapshot NULL) siguen fuera, van en su query.
         $products = DB::table('sale_items')
             ->join('sales',    'sales.id',    '=', 'sale_items.sale_id')
-            ->join('products', 'products.id', '=', 'sale_items.product_id')
+            ->leftJoin('products', 'products.id', '=', 'sale_items.product_id')
             ->where('sales.status', Sale::STATUS_COMPLETED)
             ->whereDate('sales.sold_at', '>=', $from)
             ->whereDate('sales.sold_at', '<=', $to)
-            ->whereNotNull('sale_items.product_id')
+            ->where(fn ($q) => $q
+                ->whereNotNull('sale_items.product_id')
+                ->orWhereNotNull('sale_items.product_name'))
             ->when($storeId, fn ($q) => $q->where('sales.store_id', $storeId))
             ->selectRaw('
                 sale_items.product_id as id,
-                products.name,
-                products.sku,
+                COALESCE(products.name, sale_items.product_name) as name,
+                COALESCE(products.sku, sale_items.product_sku) as sku,
                 \'product\' as type,
+                CASE WHEN sale_items.product_id IS NULL THEN 1 ELSE 0 END as deleted,
                 COUNT(DISTINCT sale_items.sale_id) as times_sold,
                 COALESCE(SUM(sale_items.quantity), 0) as total_quantity,
                 COALESCE(SUM(sale_items.total * CASE WHEN sales.discount > 0 THEN sales.total * 1.0 / NULLIF(sales.subtotal, 0) ELSE 1 END), 0) as total_revenue
             ')
-            ->groupBy('sale_items.product_id', 'products.name', 'products.sku')
+            ->groupBy(
+                'sale_items.product_id',
+                DB::raw('COALESCE(products.name, sale_items.product_name)'),
+                DB::raw('COALESCE(products.sku, sale_items.product_sku)'),
+            )
             ->get();
 
         // Mangas

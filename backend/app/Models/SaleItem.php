@@ -15,6 +15,11 @@ class SaleItem extends Model
         'sale_id',
         'product_id',
         'manga_id',
+        // Snapshot de identidad al momento del checkout (2026-08-18): si el
+        // producto se ELIMINA después (product_id → NULL por nullOnDelete),
+        // la línea conserva nombre/SKU para historial, reportes y ticket.
+        'product_name',
+        'product_sku',
         'quantity',
         'price',
         'total',

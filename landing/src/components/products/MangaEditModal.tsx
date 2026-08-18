@@ -243,7 +243,7 @@ export function MangaEditModal({
       onDeleted()
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
-        ?? 'No se pudo eliminar el tomo (puede tener ventas/apartados activos)'
+        ?? 'No se pudo eliminar el tomo (puede tener apartados activos)'
       toast.error(msg)
       setDeleting(false)
       setShowDeleteDialog(false)
@@ -694,7 +694,7 @@ export function MangaEditModal({
                 <li>Imagen del bucket</li>
                 <li>Inventario en todas las tiendas</li>
               </ul>
-              <p className="text-amber-400 text-[11px] mt-2">Si tiene ventas o apartados activos, el backend rechazará. No hay borrado forzado para tomos.</p>
+              <p className="text-amber-400 text-[11px] mt-2">Sus ventas NO se tocan: quedan en historial y reportes con el nombre marcado “(eliminado)”. Solo los apartados bloquean el borrado.</p>
             </div>
 
             <div className="mb-4">

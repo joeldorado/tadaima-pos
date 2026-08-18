@@ -1952,8 +1952,9 @@ export function ProductsPage() {
 
   const [deleteTarget, setDeleteTarget] = React.useState<Producto | null>(null);
   const [deleteLoading, setDeleteLoading] = React.useState(false);
-  // Modo del delete: "soft" = borrar solo si no tiene ventas/apartados.
-  //                  "force" = borrar TODO incluyendo ventas, apartados, traspasos.
+  // Modo del delete (2026-08-18): "soft" = borrar el producto; sus VENTAS se
+  //   conservan en historial/reportes vía snapshot (solo apartados bloquean).
+  //   "force" (admin) = además borra los apartados.
   const [deleteMode, setDeleteMode] = React.useState<"soft" | "force">("soft");
   // Confirmación extra para force: el cajero debe tipear el nombre del producto.
   const [forceConfirmText, setForceConfirmText] = React.useState("");
@@ -1973,7 +1974,9 @@ export function ProductsPage() {
       setDeleteTarget(null);
       setDeleteMode("soft");
       setForceConfirmText("");
-      toast.success(deleteMode === "force" ? 'Producto y todo su historial eliminados.' : 'Producto eliminado.');
+      toast.success(deleteMode === "force"
+        ? 'Producto y sus apartados eliminados. Las ventas quedan en el historial.'
+        : 'Producto eliminado. Sus ventas quedan en el historial y reportes.');
       void refreshProductCount();
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
@@ -3171,7 +3174,7 @@ export function ProductsPage() {
                   <div className="flex-1">
                     <p className="font-black text-sm" style={{ color: T.textPrimary }}>Solo el producto</p>
                     <p className="text-[11px] mt-0.5" style={{ color: T.textSecondary }}>
-                      Elimina imágenes, inventario y precios. <strong className="text-amber-400">Si tiene ventas o apartados activos, fallará</strong>{isAdmin ? ' y tendrás que cambiar a "Borrar TODO"' : ' — en ese caso desactívalo (Baja) o pide a un admin el borrado total'}.
+                      Elimina el producto con sus imágenes, inventario y precios. <strong className="text-amber-400">Sus ventas NO se tocan</strong>: quedan en historial y reportes con el nombre marcado como “(eliminado)”. Si tiene apartados, fallará — desactívalo (Baja) o resuelve los apartados primero.
                     </p>
                   </div>
                 </label>
@@ -3189,9 +3192,9 @@ export function ProductsPage() {
                     className="mt-0.5 accent-red-500"
                   />
                   <div className="flex-1">
-                    <p className="font-black text-sm" style={{ color: T.textPrimary }}>⚠️ Borrar TODO (también ventas e historial)</p>
+                    <p className="font-black text-sm" style={{ color: T.textPrimary }}>⚠️ Borrar TODO (también apartados)</p>
                     <p className="text-[11px] mt-0.5" style={{ color: T.textSecondary }}>
-                      Borra el producto Y todo lo relacionado: <strong className="text-red-400">ventas históricas, apartados, traspasos, inventario y precios</strong>. Datos contables se perderán.
+                      Borra el producto Y <strong className="text-red-400">sus apartados</strong> (además de inventario y precios). Las ventas se conservan en historial/reportes. Úsalo solo si “Solo el producto” falla por apartados.
                     </p>
                   </div>
                 </label>

@@ -525,8 +525,12 @@ class ProductController extends Controller
 
     /**
      * DELETE /products/{product}
-     * Marca el producto como inactivo (soft-delete lógico).
-     * No permite eliminar si tiene ventas registradas.
+     *
+     * Elimina el producto del catálogo. Las VENTAS ya no bloquean (Joel
+     * 2026-08-18): `sale_items` conserva el snapshot nombre/SKU/precio/costo
+     * (ADR-015) y su `product_id` queda NULL (flag "producto eliminado") —
+     * el historial, los reportes y el ticket siguen completos. Solo bloquean
+     * los APARTADOS (FK restrict: son un contrato vivo ligado al producto).
      */
     public function destroy(Product $product): JsonResponse
     {
@@ -535,16 +539,10 @@ class ProductController extends Controller
             return $resp;
         }
 
-        $salesCount    = DB::table('sale_items')->where('product_id', $product->id)->count();
         $layawaysCount = DB::table('layaways')->where('product_id', $product->id)->count();
-
-        if ($salesCount > 0 || $layawaysCount > 0) {
-            $reasons = [];
-            if ($salesCount > 0)    $reasons[] = "{$salesCount} venta(s)";
-            if ($layawaysCount > 0) $reasons[] = "{$layawaysCount} apartado(s) activo(s)";
-
+        if ($layawaysCount > 0) {
             return $this->error(
-                'No se puede eliminar: el producto tiene ' . implode(' y ', $reasons) . '. Puedes desactivarlo.',
+                "No se puede eliminar: el producto tiene {$layawaysCount} apartado(s). Puedes desactivarlo.",
                 422
             );
         }
@@ -555,17 +553,49 @@ class ProductController extends Controller
         }
 
         $productSnapshot = ['id' => $product->id, 'name' => $product->name, 'sku' => $product->sku];
-        $product->delete();
+        $salesCount = $this->snapshotAndDelete($product);
 
         SystemLog::write(
             action: 'product.deleted',
             description: "Producto eliminado: {$productSnapshot['name']} (SKU: {$productSnapshot['sku']})",
             entityType: 'product',
             entityId: $productSnapshot['id'],
-            meta: ['mode' => 'soft', 'snapshot' => $productSnapshot],
+            meta: ['mode' => 'soft', 'snapshot' => $productSnapshot, 'sales_kept' => $salesCount],
         );
 
-        return $this->success(null, 'Producto eliminado.');
+        return $this->success(null, $salesCount > 0
+            ? "Producto eliminado. Sus {$salesCount} venta(s) quedan en el historial y reportes."
+            : 'Producto eliminado.');
+    }
+
+    /**
+     * Congela el snapshot en las líneas de venta que aún no lo tengan (ventas
+     * pre-migración), protege las promos generales compartidas y borra el
+     * producto. Devuelve cuántas líneas de venta lo referencian (quedan con
+     * product_id NULL — nullOnDelete). Compartido por destroy/forceDestroy y
+     * MangaController::destroy.
+     */
+    public static function snapshotAndDelete(Product $product): int
+    {
+        return DB::transaction(function () use ($product) {
+            $salesCount = DB::table('sale_items')->where('product_id', $product->id)->count();
+
+            DB::table('sale_items')
+                ->where('product_id', $product->id)
+                ->whereNull('product_name')
+                ->update(['product_name' => $product->name, 'product_sku' => $product->sku]);
+
+            // FK legacy product_id de promos es cascadeOnDelete: sin el
+            // null-out, borrar el producto original mataría una promo general
+            // asignada a otros productos (mismo cinturón que forceDestroy).
+            DB::table('product_promotions')
+                ->where('product_id', $product->id)
+                ->update(['product_id' => null]);
+
+            $product->delete();
+
+            return $salesCount;
+        });
     }
 
     /**
@@ -591,16 +621,9 @@ class ProductController extends Controller
             // Manually handle tables without cascade
             DB::table('layaways')->where('product_id', $product->id)->delete();
 
-            // Promos generales (2026-07-25): el FK legacy product_id sigue
-            // siendo cascadeOnDelete — sin este null-out, borrar el producto
-            // original MATARÍA una promo asignada a otros 19 productos. Las
-            // asignaciones de ESTE producto sí caen (pivote cascade); la promo
-            // sobrevive para los demás (con 0 asignaciones es estado legal).
-            DB::table('product_promotions')
-                ->where('product_id', $product->id)
-                ->update(['product_id' => null]);
-
-            $product->delete();
+            // Snapshot + null-out de promos compartidas + delete (las ventas
+            // conservan nombre/SKU también en el borrado total).
+            self::snapshotAndDelete($product);
         });
 
         SystemLog::write(

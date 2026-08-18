@@ -5,7 +5,8 @@ import type { InventoryReport, TopProductsReport, CustomersReport, Store as Stor
 export type TabId = "ventas" | "inventario" | "productos" | "clientes";
 
 export interface GroupedProduct {
-  id: number;
+  /** number = product_id vivo; "del:{nombre}" = producto eliminado del catálogo (agrupa por snapshot). */
+  id: number | string;
   name: string;
   sku: string;
   sales_count: number;

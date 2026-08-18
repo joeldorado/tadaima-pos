@@ -187,7 +187,9 @@ function printTicket(sale: SaleDetail) {
   </table>`;
   const items = (sale.items || [])
     .map(i => {
-      const name = i.product?.name || String(i.product_id);
+      // Producto borrado del catálogo → snapshot de la línea (el ticket
+      // reimprime con el nombre original, 2026-08-18).
+      const name = i.product?.name || i.product_name || String(i.product_id);
       // Sub-líneas de beneficio (stacking 2026-07-17): promo y descuento manual
       // CONVIVEN — cada uno con su propia sub-línea. Negro puro, jerarquía por
       // tamaño/sangría (regla térmica rev 00108, los grises no imprimen).
@@ -554,7 +556,7 @@ function SaleRow({
               <div key={i} className="rounded-lg border-2 overflow-hidden" style={{ width: 32, height: 32, borderColor: "var(--td-page-bg)" }}>
                 <ProductThumb
                   {...(info?.imagen ? { src: info.imagen } : {})}
-                  {...((info?.name || item.product?.name) ? { name: info?.name || item.product?.name } : {})}
+                  {...((info?.name || item.product?.name || item.product_name) ? { name: info?.name || item.product?.name || item.product_name || undefined } : {})}
                   size={32}
                   rounded="rounded-none"
                 />
@@ -673,8 +675,11 @@ function SaleRow({
           )}
           {(sale.items || []).map((item, idx) => {
             const info = productMap[String(item.product_id)];
-            const name = item.product?.name || info?.name || String(item.product_id);
-            const sku  = item.product?.sku  || info?.sku  || "";
+            // Producto borrado del catálogo → snapshot + flag "(eliminado)".
+            const deleted = item.product_id == null && !!item.product_name;
+            const baseName = item.product?.name || item.product_name || info?.name || String(item.product_id);
+            const name = deleted ? `${baseName} (eliminado)` : baseName;
+            const sku  = item.product?.sku  || item.product_sku || info?.sku  || "";
             const img  = info?.imagen;
             // Beneficios de la línea (QA Joel 2026-07-17: "la promo no se ve en
             // Ventas/Historial") — badges de promo/descuento + neto real.
@@ -2487,11 +2492,13 @@ export function SalesPage() {
     filteredSales.forEach(sale => {
       const seenInThisSale = new Set<string>();
       (sale.items ?? []).forEach(item => {
-        const pid = String(item.product_id);
+        // Producto borrado: agrupar por snapshot (no por "null" — mezclaría
+        // todos los eliminados en un solo renglón).
+        const pid = item.product_id != null ? String(item.product_id) : `del:${item.product_name ?? "?"}`;
         const row = prodMap.get(pid) ?? {
           product_id: pid,
-          name: item.product?.name ?? `#${pid}`,
-          sku:  item.product?.sku  ?? "",
+          name: item.product?.name ?? (item.product_name ? `${item.product_name} (eliminado)` : `#${pid}`),
+          sku:  item.product?.sku  ?? item.product_sku ?? "",
           units: 0, revenue: 0, tickets: 0,
         };
         row.units   += item.quantity;
@@ -2610,7 +2617,7 @@ export function SalesPage() {
         const saleVenta = items.reduce((a, it) => a + (it.price ?? 0) * (it.quantity ?? 0), 0);
         const saleComision = withComision ? (s.commission_amount ?? 0) : 0;
         items.forEach((it, idx) => {
-          const name = it.product?.name ?? `#${it.product_id}`;
+          const name = it.product?.name ?? it.product_name ?? `#${it.product_id}`;
           const precioUnit = it.price ?? 0;
           const key = `${fecha}|${name}|${precioUnit}`;
           const row = map.get(key) ?? { key, name, fecha, precioUnit, cantidad: 0, venta: 0, costo: 0, tieneCosto: false, comision: 0 };
@@ -2796,8 +2803,8 @@ export function SalesPage() {
           getPaymentMethodName(s).toLowerCase().includes(q) ||
           (s.items || []).some(i => {
             const info = productMap[String(i.product_id)];
-            return (i.product?.name || info?.name || "").toLowerCase().includes(q) ||
-                   (i.product?.sku  || info?.sku  || "").toLowerCase().includes(q);
+            return (i.product?.name || i.product_name || info?.name || "").toLowerCase().includes(q) ||
+                   (i.product?.sku  || i.product_sku  || info?.sku  || "").toLowerCase().includes(q);
           })
         );
       }
@@ -2863,10 +2870,11 @@ export function SalesPage() {
     filteredSales.forEach(sale => {
       const seen = new Set<string>();
       (sale.items || []).forEach(item => {
-        const pid  = String(item.product_id);
+        // Producto borrado: agrupar por snapshot, no por "null".
+        const pid  = item.product_id != null ? String(item.product_id) : `del:${item.product_name ?? "?"}`;
         const info = productMap[pid];
-        const name = item.product?.name || info?.name || pid;
-        const sku  = item.product?.sku  || info?.sku  || "";
+        const name = item.product?.name || (item.product_name ? `${item.product_name} (eliminado)` : info?.name || pid);
+        const sku  = item.product?.sku  || item.product_sku || info?.sku  || "";
         const img  = info?.imagen || "";
         if (!map.has(pid)) map.set(pid, { product_id: pid, name, sku, imagen: img, timesAppeared: 0, totalUnits: 0, totalRevenue: 0, avgPrice: 0 });
         const st = map.get(pid)!;

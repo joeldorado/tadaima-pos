@@ -16,6 +16,18 @@ class SaleItemResource extends JsonResource
         return [
             'id'         => $this->id,
             'product_id' => $this->product_id,
+            // Snapshot de identidad al momento del checkout (2026-08-18): la
+            // verdad histórica de la línea. Si el producto se ELIMINA después,
+            // `product` desaparece pero estos campos siguen — el historial,
+            // los reportes y el ticket pintan de aquí primero.
+            'product_name' => $this->product_name
+                ?? ($this->relationLoaded('product') ? $this->product?->name : null),
+            'product_sku' => $this->product_sku
+                ?? ($this->relationLoaded('product') ? $this->product?->sku : null),
+            // Flag "producto eliminado": la línea vendió un producto que ya no
+            // existe en el catálogo (nullOnDelete). Las líneas legacy de mangas
+            // (manga_id) no cuentan.
+            'product_deleted' => $this->product_id === null && $this->manga_id === null,
             'quantity'   => $this->quantity,
             'price'      => $this->price,
             'total'      => $this->total,

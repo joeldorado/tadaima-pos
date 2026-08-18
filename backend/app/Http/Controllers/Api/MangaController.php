@@ -328,35 +328,36 @@ class MangaController extends Controller
             return $this->error('El producto no es de tipo manga.', 422);
         }
 
-        $snapshot = ['id' => $manga->id, 'name' => $manga->name, 'sku' => $manga->sku];
-
-        $salesCount = DB::table('sale_items')->where('product_id', $manga->id)->count();
-        if ($salesCount > 0) {
-            // No borrar physicalmente — desactivar para preservar histórico.
-            $manga->update(['active' => false]);
-            SystemLog::write(
-                action: 'manga.deactivated',
-                description: "Manga desactivado (tiene ventas): {$snapshot['name']} (SKU: {$snapshot['sku']})",
-                entityType: 'manga',
-                entityId: $snapshot['id'],
-                meta: ['mode' => 'soft', 'reason' => 'has_sales', 'snapshot' => $snapshot],
+        // Apartados = FK restrict (contrato vivo): mismo bloqueo que products.
+        $layawaysCount = DB::table('layaways')->where('product_id', $manga->id)->count();
+        if ($layawaysCount > 0) {
+            return $this->error(
+                "No se puede eliminar: el tomo tiene {$layawaysCount} apartado(s). Puedes desactivarlo.",
+                422
             );
-            return $this->success(null, 'Manga desactivado (tiene ventas registradas).');
         }
+
+        $snapshot = ['id' => $manga->id, 'name' => $manga->name, 'sku' => $manga->sku];
 
         $manga->images()->each(function ($img) {
             Storage::delete($img->image_path);
         });
-        $manga->delete();
+
+        // Las ventas ya NO bloquean ni degradan a "desactivar" (Joel
+        // 2026-08-18): sale_items conserva el snapshot nombre/SKU (ADR-015)
+        // y el historial/reportes quedan completos con product_id NULL.
+        $salesCount = ProductController::snapshotAndDelete($manga);
 
         SystemLog::write(
             action: 'manga.deleted',
             description: "Manga eliminado: {$snapshot['name']} (SKU: {$snapshot['sku']})",
             entityType: 'manga',
             entityId: $snapshot['id'],
-            meta: ['mode' => 'hard', 'snapshot' => $snapshot],
+            meta: ['mode' => 'hard', 'snapshot' => $snapshot, 'sales_kept' => $salesCount],
         );
 
-        return $this->success(null, 'Manga eliminado.');
+        return $this->success(null, $salesCount > 0
+            ? "Manga eliminado. Sus {$salesCount} venta(s) quedan en el historial y reportes."
+            : 'Manga eliminado.');
     }
 }

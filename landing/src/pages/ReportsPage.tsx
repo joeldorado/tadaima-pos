@@ -106,7 +106,8 @@ type TabId = "ventas" | "inventario" | "productos" | "clientes";
 type SalesHistoryFilter = "all" | "cash" | "dollar" | "card" | "transfer" | "preSales" | "cancelled" | "notPicked";
 
 interface GroupedProduct {
-  id: number;
+  /** number = product_id vivo; "del:{nombre}" = producto eliminado del catálogo (agrupa por snapshot). */
+  id: number | string;
   name: string;
   sku: string;
   sales_count: number;
@@ -210,7 +211,7 @@ export function ReportsPage() {
   // así las filas abiertas NO colapsan cuando los 6 polls live (20s) refrescan la
   // data. Si en el futuro se nota reflujo de la tabla al refrescar, anclar el
   // scroll del contenedor como en SalesPage (Ventas).
-  const [expandedIds,  setExpandedIds]  = useState<number[]>([]);
+  const [expandedIds,  setExpandedIds]  = useState<(number | string)[]>([]);
   const [selectedFilters, setSelectedFilters] = useState<SalesHistoryFilter[]>(["all"]);
   const [isTableMaximized, setIsTableMaximized] = useState(false);
 
@@ -413,7 +414,7 @@ export function ReportsPage() {
   }, [sales, selectedFilters]);
 
   const groupedProducts = useMemo(() => {
-    const map = new Map<number, GroupedProduct>();
+    const map = new Map<number | string, GroupedProduct>();
 
     const isCardMethod = (name: string) =>
       name.includes("tarjeta") || name.includes("credit") || name.includes("debito") || name.includes("tpv") || name.includes("terminal");
@@ -479,9 +480,15 @@ export function ReportsPage() {
 
         if (!matchesRegularFilter) continue;
 
-        const prodId = item.product_id;
-        const prodName = item.product?.name ?? "Artículo Desconocido";
-        const prodSku = item.product?.sku ?? "—";
+        // Producto ELIMINADO del catálogo (2026-08-18): product_id viene NULL
+        // pero la línea conserva su snapshot product_name/product_sku. Se
+        // agrupa por nombre (llave "del:") para que dos borrados distintos no
+        // se mezclen, y el nombre lleva el flag "(eliminado)".
+        const prodId = item.product_id ?? `del:${item.product_name ?? "?"}`;
+        const isDeletedProduct = item.product_id == null;
+        const baseName = item.product?.name ?? item.product_name ?? "Artículo Desconocido";
+        const prodName = isDeletedProduct && item.product_name ? `${baseName} (eliminado)` : baseName;
+        const prodSku = item.product?.sku ?? item.product_sku ?? "—";
         const qty = item.quantity;
         // Neto del item para el reporte (Joel 2026-07-17 "que salga lo real"):
         //  1. Descuentos v2/promos: si la venta trae beneficios POR LÍNEA
@@ -614,8 +621,9 @@ export function ReportsPage() {
               })
             : (sale.items || []).map((item: any) => ({
                 product_id: item.product_id,
-                name: item.product?.name ?? "Artículo Devuelto",
-                sku: item.product?.sku ?? "—",
+                // Producto borrado del catálogo → snapshot de la línea.
+                name: item.product?.name ?? item.product_name ?? "Artículo Devuelto",
+                sku: item.product?.sku ?? item.product_sku ?? "—",
                 qty_cancelled: Number(item.quantity || 0),
                 line_total: Number(item.total || 0),
                 price: Number(item.price || 0),
@@ -624,10 +632,16 @@ export function ReportsPage() {
               }));
 
           for (const cItem of itemsToProcess) {
-            const prodId = cItem.product_id;
+            // Misma llave que el bloque positivo: producto borrado (sin
+            // product_id) agrupa por "del:{nombre}" para que el neteo
+            // positivo/negativo caiga en el MISMO renglón.
+            const prodId = cItem.product_id ?? (cItem.name ? `del:${cItem.name}` : null);
             if (!prodId) continue;
 
-            const prodName = cItem.name ?? "Artículo Cancelado";
+            const isDeletedProduct = cItem.product_id == null;
+            const prodName = isDeletedProduct && cItem.name
+              ? `${cItem.name} (eliminado)`
+              : (cItem.name ?? "Artículo Cancelado");
             const prodSku = cItem.sku ?? "—";
             // Return/cancellation means negative volume/income to represent withdrawal/refund
             const cancelQty = cItem.qty_cancelled;

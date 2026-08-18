@@ -326,7 +326,18 @@ export interface GetCustomersParams {
 
 export interface SaleItemDetail {
   id: number
-  product_id: number
+  /** NULL cuando el producto fue ELIMINADO del catálogo (nullOnDelete). */
+  product_id: number | null
+  /**
+   * Snapshot de identidad al momento del checkout (2026-08-18, espíritu
+   * ADR-015 como `cost`): si el producto se borra después, la línea conserva
+   * su nombre/SKU. Preferir estos sobre `product.name/sku` para pintar.
+   * NULL solo en líneas huérfanas pre-migración (producto ya borrado antes).
+   */
+  product_name?: string | null
+  product_sku?: string | null
+  /** true = la línea vendió un producto que YA NO existe en el catálogo. */
+  product_deleted?: boolean
   quantity: number
   price: number
   total: number

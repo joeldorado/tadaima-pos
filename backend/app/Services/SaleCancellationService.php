@@ -87,10 +87,14 @@ class SaleCancellationService
                     throw new \DomainException("Item {$row['sale_item_id']} no pertenece a la venta #{$sale->id}.");
                 }
 
+                // Nombre para mensajes/snapshot: producto vivo → snapshot de la
+                // línea (producto eliminado, 2026-08-18) → #id.
+                $itemName = $item->product?->name ?? $item->product_name ?? "#{$item->product_id}";
+
                 $qtyToCancel = (float) $row['quantity'];
                 if ($qtyToCancel <= 0) continue;
                 if ($qtyToCancel > (float) $item->quantity) {
-                    throw new \DomainException("No se puede cancelar {$qtyToCancel} de '{$item->product?->name}': solo quedan {$item->quantity}.");
+                    throw new \DomainException("No se puede cancelar {$qtyToCancel} de '{$itemName}': solo quedan {$item->quantity}.");
                 }
 
                 $lineTotal = $qtyToCancel * (float) $item->price;
@@ -100,16 +104,20 @@ class SaleCancellationService
                 $snapshot[] = [
                     'sale_item_id'   => $item->id,
                     'product_id'     => $item->product_id,
-                    'name'           => $item->product?->name ?? "#{$item->product_id}",
-                    'sku'            => $item->product?->sku ?? null,
+                    'name'           => $itemName,
+                    'sku'            => $item->product?->sku ?? $item->product_sku,
                     'qty_cancelled'  => $qtyToCancel,
                     'price'          => (float) $item->price,
                     'cost'           => $item->cost !== null ? (float) $item->cost : null,
                     'line_total'     => $lineTotal,
                 ];
 
-                // Restaurar stock en bodega de la tienda original.
-                $this->restoreInventory($item->product_id, $sale->store_id, $qtyToCancel, $cancelledBy->id, "Cancelación venta #{$sale->id}");
+                // Restaurar stock en bodega de la tienda original. Si el
+                // producto fue ELIMINADO del catálogo (product_id NULL) no hay
+                // inventario que restaurar — el reembolso de dinero sí procede.
+                if ($item->product_id !== null) {
+                    $this->restoreInventory($item->product_id, $sale->store_id, $qtyToCancel, $cancelledBy->id, "Cancelación venta #{$sale->id}");
+                }
 
                 // Edit-in-place: decrementa qty. Si llega a 0, borra la fila.
                 $newQty = (float) $item->quantity - $qtyToCancel;

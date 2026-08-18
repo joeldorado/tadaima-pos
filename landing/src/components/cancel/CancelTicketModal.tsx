@@ -127,7 +127,7 @@ function SaleCancelBody({ sale, onClose, onSuccess, cashSessionId, reasonCode, s
                 className="w-4 h-4 accent-red-500"
               />
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-bold truncate" style={{ color: 'var(--td-text-hi)' }}>{it.product?.name ?? `#${it.product_id}`}</p>
+                <p className="text-sm font-bold truncate" style={{ color: 'var(--td-text-hi)' }}>{it.product?.name ?? it.product_name ?? `#${it.product_id}`}</p>
                 <p className="text-[10px]" style={{ color: 'var(--td-text-lo)' }}>SKU {it.product?.sku ?? '—'} · {fmt(it.price)} c/u · original ×{it.quantity}</p>
               </div>
               {isSel && (
