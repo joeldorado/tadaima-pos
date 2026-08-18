@@ -4,7 +4,7 @@
 
 ---
 
-### Sesión 2026-08-18 (2) — Eliminar producto CON ventas: snapshot nombre/SKU en la venta — DEPLOYADO rev `tadaima-REV_PENDIENTE`
+### Sesión 2026-08-18 (2) — Eliminar producto CON ventas: snapshot nombre/SKU en la venta — DEPLOYADO rev `tadaima-00015-n94`
 
 **Escenario (cliente vía Joel):** "hoy vendo 1 booster en $100, ya no tendré
 más y no quiero el registro — borro el producto, pero la venta debe seguir en
