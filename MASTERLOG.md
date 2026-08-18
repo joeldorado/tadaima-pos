@@ -21,6 +21,25 @@ ProductModal + MangaEditModal, radio "Borrar TODO" solo admin. Tests:
 
 ---
 
+### Sesión 2026-08-17 (5) — Categorías: products_count visible + motivo real al no poder eliminar — DEPLOYADO rev `tadaima-00012-4cf`
+
+El equipo intentó borrar "amiibos" (3 productos) y "Hairclips" (2) y solo veía
+"Error al eliminar categoría". Logs de Cloud Run: 5 `DELETE /categories` con
+**422** (regla del back: FK `products.category_id`), no un 500. Dos fallas de
+UI: (a) el front tragaba el motivo del 422 (`catch {}` genérico); (b)
+`products_count` NUNCA llegaba — `ProductCategoryResource` lo emitía solo con
+la relación cargada y el índice usa `withCount`. Fix (commit `52784ac`):
+Resource emite el conteo con withCount o relación; `DELETE` responde 422 con
+nombre + conteo; Admin → Categorías muestra badge "N productos"/"sin
+productos", bote atenuado con tooltip, aviso con conteo antes de pegarle al
+API y mensaje real del API en errores. `Btn` acepta `title`. Test
+`ProductCategoryTest` (3); 490 PHPUnit / 270 vitest / tsc 464 baseline.
+Deploy: candidate → smoke (products_count presente, 422 con motivo, corte 0)
+→ 100% + tag `ruben`. Nota: "Hair clips" (id 4) es duplicado con 0 productos
+— ese sí se puede borrar; los 2 de "Hairclips" se recategorizan primero.
+
+---
+
 ### Sesión 2026-08-17 (4) — Depurado del módulo Tomos: "tomo = nombre empieza con Tomo" — SOLO DATOS + código (commit `3165ac0`)
 
 **Contexto (Ruben vía Joel):** en el POS viejo, "manga nacional" (módulo
