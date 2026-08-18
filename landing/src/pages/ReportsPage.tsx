@@ -659,29 +659,40 @@ export function ReportsPage() {
             const itemCostTotal = unitCost * qty; // qty is negative
 
             const pGroup = map.get(prodId)!;
-            // Solo reducimos el sales_count (tickets) 1 vez por venta devuelta, no por cada item
-            // Si es un ticket legacy completo, restarlo por item daría un número de tickets negativo extremo.
-            // Lo omitimos aquí para los items y lo sumamos a nivel de ticket si hiciera falta, pero
-            // por ahora conservamos el comportamiento anterior de contar -1 por item para no romper nada grave, 
-            // aunque idealmente se cuenta a nivel venta.
-            pGroup.sales_count -= 1; 
-            pGroup.total_quantity += qty; // Adds negative quantity
-            pGroup.total_revenue += itemTotal; // Adds negative revenue
-            pGroup.total_cost += itemCostTotal;
-            pGroup.total_profit += (itemTotal - itemCostTotal);
+            // NETEO A 0 — dos flujos distintos:
+            //  • LEGACY (status=returned, sin cancelled_items): el item SIGUE en
+            //    sale.items, así que el bloque positivo YA lo sumó arriba. Aquí lo
+            //    restamos en negativo → netea a 0 (la venta se anula).
+            //  • NUEVO (ADR-016, con cancelled_items/snapshot): el backend YA quitó el
+            //    item de sale.items y redujo sale.total. El positivo NUNCA lo sumó, así
+            //    que restar aquí lo contaría DOBLE (mostraba -$1000 en vez de $0).
+            //    → En ese caso NO tocamos ingresos/costo/utilidad; solo Devoluciones.
+            if (isLegacyReturn) {
+              pGroup.sales_count -= 1;
+              pGroup.total_quantity += qty; // negativo
+              pGroup.total_revenue += itemTotal; // negativo
+              pGroup.total_cost += itemCostTotal;
+              pGroup.total_profit += (itemTotal - itemCostTotal);
+            }
 
             pGroup.returned_quantity = (pGroup.returned_quantity || 0) + cancelQty;
             pGroup.returned_revenue = (pGroup.returned_revenue || 0) + cancelTotal;
 
-            const payMethodCancelled = payMethodName + " (Devuelto)";
-            if (!pGroup.payment_breakdown[payMethodCancelled]) {
-              pGroup.payment_breakdown[payMethodCancelled] = { qty: 0, revenue: 0 };
-            }
-            const pBreakdown = pGroup.payment_breakdown[payMethodCancelled]!;
-            pBreakdown.qty += qty;
-            pBreakdown.revenue += itemTotal;
+            // El "(Devuelto)" negativo en payment_breakdown/price_breakdown SOLO tiene
+            // sentido en el flujo LEGACY: ahí el positivo también se sumó, así que en las
+            // tablas de Efectivo/Tarjeta del Excel/PDF netea a 0. En el flujo NUEVO el
+            // positivo no existe (sale.items vacío) → agregarlo dejaría el export en -$200.
+            if (isLegacyReturn) {
+              const payMethodCancelled = payMethodName + " (Devuelto)";
+              if (!pGroup.payment_breakdown[payMethodCancelled]) {
+                pGroup.payment_breakdown[payMethodCancelled] = { qty: 0, revenue: 0 };
+              }
+              const pBreakdown = pGroup.payment_breakdown[payMethodCancelled]!;
+              pBreakdown.qty += qty;
+              pBreakdown.revenue += itemTotal;
 
-            pGroup.price_breakdown[unitPrice] = (pGroup.price_breakdown[unitPrice] ?? 0) + qty;
+              pGroup.price_breakdown[unitPrice] = (pGroup.price_breakdown[unitPrice] ?? 0) + qty;
+            }
           }
         }
       }
@@ -976,7 +987,14 @@ export function ReportsPage() {
       }
 
       // 2. Process cancelled/negative parts (returns)
-      if (showCancelled && (isFullCancel || (sale.cancellation_status && sale.cancellation_status !== "none")) && sale.cancelled_amount && sale.cancelled_amount > 0) {
+      // NETEO de cancelaciones TOTALES: el dinero entró y se devolvió (neto = 0).
+      // El bloque positivo NO cuenta las ventas full-cancel (sale.items queda vacío),
+      // así que restar aquí las dejaba en NEGATIVO (mostraba -$200 en TODO). Por eso,
+      // para un full-cancel SOLO restamos cuando se aísla la vista CANCELADOS
+      // (showActive=false); en TODO/por-método netea a 0. Los PARCIALES sí se restan
+      // siempre (el positivo ya sumó el total original de la venta).
+      const subtractCancel = !isFullCancel || !showActive;
+      if (subtractCancel && showCancelled && (isFullCancel || (sale.cancellation_status && sale.cancellation_status !== "none")) && sale.cancelled_amount && sale.cancelled_amount > 0) {
         contributed = true;
         const cancelledAmount = sale.cancelled_amount;
         const originalTotal = sale.total + cancelledAmount;
