@@ -4,6 +4,44 @@
 
 ---
 
+### Sesión 2026-08-18 — Filtro "Sin categoría" en Productos + merge fix reportes de Ruben — DEPLOYADO rev `tadaima-00014-b55`
+
+**Pedido (Joel):** (1) PR con la rama de Ruben (`develop`) y subir su cambio;
+(2) en el dropdown de Filtros de Productos (junto a Por agotarse / Agotados /
+Promos / Más vendidos) un filtro nuevo **"Sin categoría"** que liste los
+productos sin NINGUNA categoría; (3) deploy + push.
+
+**Ruben (`develop` → PR #10, merge `70e9481`):** `ReportsPage.tsx` — neteo de
+cancelaciones del flujo NUEVO (ADR-016) en el Reporte de Ventas / Excel / PDF:
+el positivo ya no existe en `sale.items`, así que restar el negativo lo contaba
+doble (−$1,000 en vez de $0). Ahora solo se ajusta ingresos/costo/utilidad y el
+renglón "(Devuelto)" cuando `isLegacyReturn`; los full-cancel solo se restan
+al aislar la vista CANCELADOS. Sin conflictos con main.
+
+**"Sin categoría" (commit `f004518`):**
+- Backend `GET /products?no_category=1` → `whereDoesntHave('categories')` sobre
+  el pivote de categorías múltiples (la caché `products.category_id` NO cuenta —
+  misma semántica que la UI). Combina por AND con search/tienda/type.
+  `GET /products/stats` agrega `sin_categoria` (NOT EXISTS sobre el pivote,
+  respeta `?type`, no es dato de costo → lo ve cualquiera). Tests
+  `ProductIndexFiltersTest` (+3) y `ProductStatsTest` (+1); suite verde.
+- Front: `ProductsCatalogFilter += 'no_category'` (`buildProductsListParams`
+  → `no_category:true`, test vitest); item "Sin categoría" (ícono FolderX,
+  azul) con contador real de stats en el dropdown, visible en Productos y
+  Tomos (en Tomos filtra client-side por `categories[]` vacío como los otros
+  chips); label "N Sin Categoría"; docs in-app (Catálogo → Filtros) con la
+  fila nueva. tsc 464 baseline · vitest 277 · PHPUnit verde.
+- Prod al momento del deploy: 19 sin categoría (16 productos + 3 tomos).
+- Local: `.claude/launch.json` ganó `backend-sqlite` (`APP_ENV=sqlitelocal
+  php backend/artisan serve`) y `landing-dev-5174` (5173 lo ocupa el vite de
+  tadaimaus) para verificar en el navegador.
+
+Deploy: candidate → smoke (login, stats sin_categoria, ?no_category=1, total
+sin flag, corte Mario = 0) → 100% + tag `ruben`. Push de `main` (cierra PR #9
+y #10 como merged).
+
+---
+
 ### Sesión 2026-08-17 (3) — Eliminar productos = permiso de ver costo — DEPLOYADO rev `tadaima-00010-jmb`
 
 Mario (gerente con `can_view_cost`) no veía "Eliminar" en Productos/Tomos: el
