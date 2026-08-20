@@ -113,7 +113,7 @@ export function exportReportPdf(params: ReportExportParams): void {
         const cost = unitCost * qty;
         const profit = revenue - cost;
         tCant += qty; tCost += cost; tVenta += revenue; tProfit += profit;
-        body.push([prod.name, Number(qty.toFixed(1)), ...(canViewCost ? [fmt(cost)] : []), fmt(revenue), ...(canViewCost ? [fmt(profit)] : [])]);
+        body.push([prod.show_cost_tag ? `${prod.name} · Costo ${fmt(prod.cost_tag ?? 0)}` : prod.name, Number(qty.toFixed(1)), ...(canViewCost ? [fmt(cost)] : []), fmt(revenue), ...(canViewCost ? [fmt(profit)] : [])]);
         // Renglones de beneficio (efectivo): uno por promo (verde) y por motivo (amarillo).
         Object.entries(prod.promo_breakdown ?? {}).forEach(([name, amt]) => {
           if (amt.cash > 0.005) {
@@ -172,7 +172,7 @@ export function exportReportPdf(params: ReportExportParams): void {
         const cost = unitCost * qty;
         const profit = net - cost;
         tCant += qty; tBruto += revenue; tCost += cost; tCom += comm; tIva += iva; tNet += net; tProfit += profit;
-        body.push([prod.name, Number(qty.toFixed(1)), fmt(revenue), ...(canViewCost ? [fmt(cost)] : []), fmt(comm), fmt(iva), fmt(net), ...(canViewCost ? [fmt(profit)] : [])]);
+        body.push([prod.show_cost_tag ? `${prod.name} · Costo ${fmt(prod.cost_tag ?? 0)}` : prod.name, Number(qty.toFixed(1)), fmt(revenue), ...(canViewCost ? [fmt(cost)] : []), fmt(comm), fmt(iva), fmt(net), ...(canViewCost ? [fmt(profit)] : [])]);
         // Renglones de beneficio (tarjeta): monto en la columna Bruto (índice 2).
         Object.entries(prod.promo_breakdown ?? {}).forEach(([name, amt]) => {
           if (amt.card > 0.005) {
@@ -242,7 +242,7 @@ export function exportReportPdf(params: ReportExportParams): void {
       let tCant = 0, tMonto = 0;
       const body = returnedProducts.map((prod) => {
         tCant += prod.returned_quantity || 0; tMonto += prod.returned_revenue || 0;
-        return [prod.name, prod.returned_quantity || 0, fmt(prod.returned_revenue || 0)];
+        return [prod.show_cost_tag ? `${prod.name} · Costo ${fmt(prod.cost_tag ?? 0)}` : prod.name, prod.returned_quantity || 0, fmt(prod.returned_revenue || 0)];
       });
       body.push(["TOTAL DEVOLUCIONES", tCant, fmt(tMonto)]);
       autoTable(doc, {

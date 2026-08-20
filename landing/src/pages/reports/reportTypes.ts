@@ -18,6 +18,10 @@ export interface GroupedProduct {
   price_breakdown: { [price: number]: number };
   total_cost: number;
   total_profit: number;
+  /** Split por costo: costo unitario de ESTE renglón (para etiquetar en Excel/PDF). */
+  cost_tag?: number;
+  /** true si el producto base tiene >1 costo distinto en el rango. */
+  show_cost_tag?: boolean;
   pre_sale_apartado?: number;
   pre_sale_deuda?: number;
   /** Costo real (snapshot) de los items de preventa del rango, incluye anticipos.

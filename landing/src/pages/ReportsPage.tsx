@@ -132,6 +132,12 @@ interface GroupedProduct {
   pre_sale_utilidad?: number;
   commission_amount?: number;
   product_type?: 'product' | 'manga';
+  /** Split por costo: producto base (para reagrupar variantes del mismo producto). */
+  base_product_id?: number | string;
+  /** Split por costo: el costo unitario de ESTE renglón (para el badge). */
+  cost_tag?: number;
+  /** true si el producto base tiene >1 costo distinto en el rango → muestra badge. */
+  show_cost_tag?: boolean;
   /** Descuentos v2: parte de PROMO (NxM/mayoreo) acumulada del producto en el rango. */
   promo_total?: number;
   /** Descuentos v2: parte de DESCUENTO MANUAL acumulada del producto en el rango. */
@@ -515,10 +521,19 @@ export function ReportsPage() {
           itemTotal = item.total * discRatio;
         }
         const unitPrice = item.price;
+        const unitCost = item.cost ?? item.product?.cost ?? 0;
+        const itemCostTotal = unitCost * qty;
 
-        if (!map.has(prodId)) {
-          map.set(prodId, {
-            id: prodId,
+        // Split por COSTO (2026-08): si el usuario ve costos, el MISMO producto
+        // vendido con costos distintos se parte en renglones separados (badge con el
+        // costo). Sin canViewCost → llave = producto (un solo renglón, como antes).
+        const groupKey = canViewCost ? `${prodId}::c${Math.round(unitCost * 100)}` : prodId;
+
+        if (!map.has(groupKey)) {
+          map.set(groupKey, {
+            id: groupKey,
+            base_product_id: prodId,
+            cost_tag: unitCost,
             name: prodName,
             sku: prodSku,
             sales_count: 0,
@@ -535,10 +550,7 @@ export function ReportsPage() {
           });
         }
 
-        const unitCost = item.cost ?? item.product?.cost ?? 0;
-        const itemCostTotal = unitCost * qty;
-
-        const pGroup = map.get(prodId)!;
+        const pGroup = map.get(groupKey)!;
         pGroup.sales_count += 1;
         pGroup.total_quantity += qty;
         pGroup.total_revenue += itemTotal;
@@ -649,10 +661,18 @@ export function ReportsPage() {
             const qty = -cancelQty;
             const itemTotal = -cancelTotal;
             const unitPrice = cItem.price;
+            const unitCost = cItem.cost || 0;
+            const itemCostTotal = unitCost * qty; // qty is negative
 
-            if (!map.has(prodId)) {
-              map.set(prodId, {
-                id: prodId,
+            // Misma llave por costo que el bloque positivo, para que la devolución
+            // caiga en el MISMO renglón (mismo producto + mismo costo) y netee bien.
+            const groupKey = canViewCost ? `${prodId}::c${Math.round(unitCost * 100)}` : prodId;
+
+            if (!map.has(groupKey)) {
+              map.set(groupKey, {
+                id: groupKey,
+                base_product_id: prodId,
+                cost_tag: unitCost,
                 name: prodName,
                 sku: prodSku,
                 sales_count: 0,
@@ -669,10 +689,7 @@ export function ReportsPage() {
               });
             }
 
-            const unitCost = cItem.cost || 0;
-            const itemCostTotal = unitCost * qty; // qty is negative
-
-            const pGroup = map.get(prodId)!;
+            const pGroup = map.get(groupKey)!;
             // NETEO A 0 — dos flujos distintos:
             //  • LEGACY (status=returned, sin cancelled_items): el item SIGUE en
             //    sale.items, así que el bloque positivo YA lo sumó arriba. Aquí lo
@@ -814,14 +831,44 @@ export function ReportsPage() {
       }
     }
 
-    return Array.from(map.values()).sort((a, b) => {
+    const arr = Array.from(map.values());
+
+    // Split por costo: marca show_cost_tag en los productos BASE que tienen >1 costo
+    // distinto en el rango (el badge solo se pinta cuando de verdad hubo cambio de costo).
+    if (canViewCost) {
+      const costsByBase = new Map<number | string, Set<number>>();
+      for (const p of arr) {
+        if (p.base_product_id == null) continue;
+        const s = costsByBase.get(p.base_product_id) ?? new Set<number>();
+        s.add(Math.round((p.cost_tag ?? 0) * 100));
+        costsByBase.set(p.base_product_id, s);
+      }
+      for (const p of arr) {
+        if (p.base_product_id != null && (costsByBase.get(p.base_product_id)?.size ?? 0) > 1) {
+          p.show_cost_tag = true;
+        }
+      }
+    }
+
+    // Cantidad total por producto base → mantiene JUNTAS las variantes de costo.
+    const qtyByBase = new Map<number | string, number>();
+    for (const p of arr) {
+      const b = p.base_product_id ?? p.id;
+      qtyByBase.set(b, (qtyByBase.get(b) ?? 0) + (p.total_quantity || 0));
+    }
+
+    return arr.sort((a, b) => {
       const aIsManga = a.product_type === "manga";
       const bIsManga = b.product_type === "manga";
       if (aIsManga && !bIsManga) return 1;  // Mangas go to the bottom
       if (!aIsManga && bIsManga) return -1; // Non-mangas stay at the top
-      return b.total_quantity - a.total_quantity; // Sort same-type products by volume
+      const ba = a.base_product_id ?? a.id, bb = b.base_product_id ?? b.id;
+      const qa = qtyByBase.get(ba) ?? 0, qb = qtyByBase.get(bb) ?? 0;
+      if (qb !== qa) return qb - qa;                            // más vendidos primero
+      if (ba !== bb) return String(ba) < String(bb) ? -1 : 1;   // mismo grupo, juntas
+      return (a.cost_tag ?? 0) - (b.cost_tag ?? 0);             // por costo dentro del grupo
     });
-  }, [filteredSales, filteredPreSaleOrders, from, to]);
+  }, [filteredSales, filteredPreSaleOrders, from, to, canViewCost]);
 
   // Renglones de la tabla de Preventas — MODELO DEL DUEÑO (rastreable por mes):
   //   • ABONO (no entregado en el rango): Venta = Costo = abono del mes  → Utilidad $0.
@@ -1135,6 +1182,9 @@ export function ReportsPage() {
               )}
               {(prod.manual_total ?? 0) > 0 && (
                 <span title={`Con descuento manual — ${fmt(prod.manual_total ?? 0)} en el periodo`} style={{ fontSize: 8.5, fontWeight: 900, color: "#F59E0B", background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.3)", padding: "1px 6px", borderRadius: 6, letterSpacing: "0.03em" }}>🏷️ DESC.</span>
+              )}
+              {prod.show_cost_tag && (
+                <span title={`Este producto se vendió con costos distintos en el periodo — este renglón es costo ${fmt(prod.cost_tag ?? 0)}`} style={{ fontSize: 8.5, fontWeight: 900, color: "#8B5CF6", background: "rgba(139,92,246,0.12)", border: "1px solid rgba(139,92,246,0.35)", padding: "1px 6px", borderRadius: 6, letterSpacing: "0.03em" }}>💲 COSTO {fmt(prod.cost_tag ?? 0)}</span>
               )}
             </div>
           </td>
