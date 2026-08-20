@@ -11,7 +11,7 @@ describe("generateBarcode", () => {
 describe("generatePlaceholderSku", () => {
   it("tiene el prefijo PEND- y respeta el límite de 100 caracteres del backend", () => {
     const sku = generatePlaceholderSku();
-    expect(sku).toMatch(/^PEND-[0-9A-Z]+-[0-9A-Z]{4}$/);
+    expect(sku).toMatch(/^PEND-[0-9A-Z]+-[0-9A-Z]{6}$/);
     expect(sku.length).toBeLessThan(100);
   });
 

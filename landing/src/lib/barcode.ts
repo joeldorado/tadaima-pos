@@ -24,8 +24,14 @@ export function generateBarcode(): string {
  * SKU verdadero cuando el producto llega físicamente (la tabla de productos
  * marca estos valores con un badge).
  */
+// Contador monotónico por sesión: dos llamadas en el MISMO milisegundo ya no
+// dependen solo del azar (4 chars ≈ 1.7M combinaciones colisionaban a veces
+// en altas masivas — y ponían flaky el test de unicidad).
+let placeholderSeq = 0;
+
 export function generatePlaceholderSku(): string {
   const time = Date.now().toString(36).toUpperCase();
+  const seq = (placeholderSeq++ % 1296).toString(36).toUpperCase().padStart(2, "0");
   const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
-  return `PEND-${time}-${rand}`;
+  return `PEND-${time}-${seq}${rand}`;
 }
