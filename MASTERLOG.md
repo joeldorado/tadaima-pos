@@ -4,6 +4,30 @@
 
 ---
 
+### Sesión 2026-08-19 — Reporte: renglones por costo real (Ruben, PR #12) + fix flaky de barcode — DEPLOYADO rev `tadaima-00018-9qc`
+
+**Ruben (`develop` → PR #12, commit `dd608f0`, merge `ebe61e0`):** en el
+Reporte de Ventas, un producto vendido con **costos distintos** dentro del
+rango (recibo a otro costo, corrección de costo) ya no se promedia en un
+renglón: se parte en un renglón POR COSTO con badge "💲 COSTO $X". Solo aplica
+con `canViewCost` (sin el permiso el reporte queda idéntico); el badge solo
+sale cuando de verdad hubo >1 costo (`show_cost_tag`); las cancelaciones usan
+la misma llave producto+costo (netean en el renglón correcto); el orden agrupa
+las variantes bajo el producto base (compatible con el split `del:{nombre}` de
+productos eliminados). Excel/PDF: `Producto · Costo $X` en Efectivo, Tarjeta y
+Devoluciones. Archivos: `ReportsPage.tsx`, `reports/exportExcel.ts`,
+`reports/exportPdf.ts`, `reports/reportTypes.ts`.
+
+**Fix flaky (commit `02a1677`):** `generatePlaceholderSku` colisionaba a veces
+dentro del mismo ms (solo 4 chars aleatorios) — el test "no repite valores en
+1000 llamadas" fallaba al azar desde el 08-17. Ahora lleva contador monotónico
+(`PEND-{time}-{seq}{rand}`, 6 chars finales); el único consumidor checa
+`startsWith("PEND-")`. 5 corridas seguidas verdes; vitest 277 · tsc 464.
+
+Deploy: candidate → smoke → 100% + tag `ruben`. Push de `main` (PR #12 merged).
+
+---
+
 ### Sesión 2026-08-18 (2) — Eliminar producto CON ventas: snapshot nombre/SKU en la venta — DEPLOYADO rev `tadaima-00015-n94`
 
 **Escenario (cliente vía Joel):** "hoy vendo 1 booster en $100, ya no tendré
