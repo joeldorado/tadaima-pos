@@ -194,7 +194,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
             const cashProfit = cashRevenue - cashCost;
             totCashQty += cashQty; totCashCost += cashCost; totCashRevenue += cashRevenue; totCashProfit += cashProfit;
 
-            setCell(r2, T2_COL, prod.name, { alignment: { horizontal: "left", vertical: "middle", wrapText: true } });
+            setCell(r2, T2_COL, prod.show_cost_tag ? `${prod.name} · Costo ${fmt(prod.cost_tag ?? 0)}` : prod.name, { alignment: { horizontal: "left", vertical: "middle", wrapText: true } });
             setCell(r2, T2_COL + 1, Number(cashQty.toFixed(1)), { alignment: { horizontal: "center", vertical: "middle" } });
             if (canViewCost) {
                 setCell(r2, T2_COL + 2, cashCost, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, color: { argb: "FF444444" } }, alignment: { horizontal: "right", vertical: "middle" } });
@@ -254,7 +254,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
             const cardProfit = netCard - cardCost;
             totCardQty += cardQty; totCardRevenue += cardRevenue; totCardCost += cardCost; totCardComm += prodComm; totCardIva += prodIva; totCardNet += netCard; totCardProfit += cardProfit;
 
-            setCell(r3, T3_COL, prod.name, { alignment: { horizontal: "left", vertical: "middle", wrapText: true } });
+            setCell(r3, T3_COL, prod.show_cost_tag ? `${prod.name} · Costo ${fmt(prod.cost_tag ?? 0)}` : prod.name, { alignment: { horizontal: "left", vertical: "middle", wrapText: true } });
             setCell(r3, T3_COL + 1, Number(cardQty.toFixed(1)), { alignment: { horizontal: "center", vertical: "middle" } });
             setCell(r3, T3_COL + 2, cardRevenue, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, color: { argb: "FF444444" } }, alignment: { horizontal: "right", vertical: "middle" } });
             if (canViewCost) {
@@ -323,7 +323,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
         let totRetQty = 0, totRetRevenue = 0;
         returnedProducts.forEach((prod) => {
             totRetQty += prod.returned_quantity || 0; totRetRevenue += prod.returned_revenue || 0;
-            setCell(r5, T5_COL, prod.name, { alignment: { horizontal: "left", vertical: "middle", wrapText: true } });
+            setCell(r5, T5_COL, prod.show_cost_tag ? `${prod.name} · Costo ${fmt(prod.cost_tag ?? 0)}` : prod.name, { alignment: { horizontal: "left", vertical: "middle", wrapText: true } });
             setCell(r5, T5_COL + 1, prod.returned_quantity || 0, { alignment: { horizontal: "center", vertical: "middle", font: { color: { argb: "FFFF2200" }, bold: true } } });
             setCell(r5, T5_COL + 2, prod.returned_revenue || 0, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, bold: true, color: { argb: "FFFF2200" } }, alignment: { horizontal: "right", vertical: "middle" } });
             sheet.getRow(r5).height = 20;
