@@ -9,6 +9,7 @@ use App\Http\Requests\UpdatePreSaleCatalogStatusRequest;
 use App\Http\Resources\PreSaleCatalogResource;
 use App\Models\PreSaleCatalog;
 use App\Models\PreSaleOrder;
+use App\Models\PreSaleOrderItem;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -201,8 +202,29 @@ class PreSaleCatalogsController extends Controller
         }
         $storeLimits = $data['store_limits'] ?? null;
         unset($data['store_limits']);
+        $costChanged = array_key_exists('cost', $data)
+            && (float) ($data['cost'] ?? 0) !== (float) ($catalog->cost ?? 0);
         $catalog->update($data);
         $this->syncStoreLimits($catalog, $storeLimits, $this->storeLimitScope($request));
+
+        // Re-snap del costo a las partidas ABIERTAS (ADR-015 bis).
+        // En preventa la mercancía NO está comprada al crear el folio, así que el
+        // costo congelado en ese momento suele ser NULL/0 — congelar ahí es congelar
+        // un vacío. Por eso el costo se propaga a las partidas mientras el folio
+        // siga abierto, y queda fijo en cuanto se entrega (delivered NO se toca).
+        if ($costChanged) {
+            $touched = PreSaleOrderItem::where('pre_sale_catalog_id', $catalog->id)
+                ->where('status', '!=', PreSaleOrderItem::STATUS_DELIVERED)
+                ->update(['cost' => $catalog->cost]);
+            if ($touched > 0) {
+                \Log::info('Pre-sale cost re-snap', [
+                    'catalog_id' => $catalog->id,
+                    'cost'       => $catalog->cost,
+                    'items'      => $touched,
+                    'user_id'    => $request->user()->id,
+                ]);
+            }
+        }
 
         return $this->success(
             new PreSaleCatalogResource($catalog->load(['category', 'supplier', 'product', 'createdBy', 'orderItems', 'activeOrderItems', 'soldOrderItems', 'deliveredOrderItems.order:id,store_id', 'storeLimits']))
@@ -308,6 +330,20 @@ class PreSaleCatalogsController extends Controller
         if (!in_array($to, $allowed[$catalog->status] ?? [])) {
             return $this->error(
                 "Transición no permitida: {$catalog->status} → {$to}.",
+                422
+            );
+        }
+
+        // Candado de costo en la PUERTA DE ENTRADA (etapa 3).
+        // "Producto llegó" significa que la mercancía ya está física y ya se pagó
+        // al proveedor: aquí el costo real ya se conoce. Exigirlo aquí evita que
+        // los folios pasen a "listo para liquidar" arrastrando un costo vacío.
+        // Se exige costo MAYOR A 0: un 0 en reportes hace que toda la venta cuente
+        // como utilidad, y no vale la pena distinguir "regalo" de "olvido".
+        if ($to === PreSaleCatalog::STATUS_ARRIVED && (float) ($catalog->cost ?? 0) <= 0) {
+            return $this->error(
+                "No se puede marcar \"{$catalog->product_name}\" como llegado: "
+                . 'falta capturar el costo real del producto (pestaña Precios → Costo).',
                 422
             );
         }

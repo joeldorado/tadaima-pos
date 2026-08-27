@@ -29,6 +29,11 @@ class PreSaleOrderItemResource extends JsonResource
                 ? (float) $this->cost
                 : null,
 
+            // Flag NO sensible (dice si hay costo, no cuánto): Caja lo usa para
+            // no dejar cargar a liquidar una partida sin costo real. `cost` llega
+            // null al cajero aunque exista, así que no sirve para ese chequeo.
+            'has_real_cost' => $this->cost !== null && (float) $this->cost > 0,
+
             'catalog' => $this->when($this->relationLoaded('catalog'), fn () => [
                 'id'             => $this->catalog?->id,
                 'product_name'   => $this->catalog?->product_name,

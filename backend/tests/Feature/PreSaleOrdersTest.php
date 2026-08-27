@@ -323,8 +323,11 @@ class PreSaleOrdersTest extends TestCase
         $catalog = $this->makePublishedCatalog();
         $order   = $this->createPendingOrder($catalog);
 
-        // Catalog must be arrived so items can be marked delivered on liquidation
-        $catalog->update(['status' => PreSaleCatalog::STATUS_ARRIVED]);
+        // Catalog must be arrived so items can be marked delivered on liquidation.
+        // El costo se captura al llegar la mercancía: liquidar exige costo real
+        // (ver PreSaleOrderCostSnapshotTest::test_liquidate_blocked_when_cost_is_null).
+        $catalog->update(['status' => PreSaleCatalog::STATUS_ARRIVED, 'cost' => 40.00]);
+        $order->items()->update(['cost' => 40.00]);
 
         // Transition to ready first
         $this->actingAs($this->user)
@@ -367,6 +370,8 @@ class PreSaleOrdersTest extends TestCase
         $order   = $this->createPendingOrder($catalog);
 
         $item = PreSaleOrderItem::where('pre_sale_order_id', $order->id)->firstOrFail();
+        // Entregar exige costo real capturado (candado anti utilidad-inflada).
+        $item->update(['cost' => 40.00]);
 
         // Mark item as delivered
         $deliver = $this->actingAs($this->user)

@@ -276,6 +276,32 @@ class PreSaleOrderService
                 );
             }
 
+            // ── Candado de costo (etapa 2) ────────────────────────────────────
+            // Entregar CONGELA el costo de la partida para siempre. Si nadie lo
+            // capturó, congelaríamos un vacío y el reporte diría utilidad = 100%
+            // de lo cobrado. Esta es la última oportunidad de capturarlo.
+            // Se exige costo MAYOR A 0 (null y 0 se tratan igual).
+            $sinCosto = PreSaleOrderItem::with('catalog:id,product_name')
+                ->where('pre_sale_order_id', $order->id)
+                ->where('status', PreSaleOrderItem::STATUS_PENDING)
+                ->where(fn ($q) => $q->whereNull('cost')->orWhere('cost', '<=', 0))
+                ->whereIn('pre_sale_catalog_id', function ($q) {
+                    $q->select('id')
+                      ->from('pre_sale_catalogs')
+                      ->where('status', PreSaleCatalog::STATUS_ARRIVED);
+                })
+                ->get();
+
+            if ($sinCosto->isNotEmpty()) {
+                $nombres = $sinCosto
+                    ->map(fn ($it) => $it->catalog?->product_name ?? "Partida #{$it->id}")
+                    ->unique()->implode(', ');
+                throw new \DomainException(
+                    "No se puede liquidar el folio {$order->code}: falta capturar el costo real de: {$nombres}. "
+                    . 'Captúralo en el catálogo de preventa (pestaña Precios → Costo).'
+                );
+            }
+
             // Mark items whose catalog has arrived as delivered
             PreSaleOrderItem::where('pre_sale_order_id', $order->id)
                 ->where('status', PreSaleOrderItem::STATUS_PENDING)

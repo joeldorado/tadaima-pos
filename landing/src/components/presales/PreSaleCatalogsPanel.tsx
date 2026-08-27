@@ -21,6 +21,7 @@ import { AnimatePresence } from "motion/react";
 import { NewPreSaleCatalogModal } from "./NewPreSaleCatalogModal";
 import { CatalogToProductModal } from "./CatalogToProductModal";
 import { CatalogHistoryModal } from "./CatalogHistoryModal";
+import { useAuth } from "@tadaima/auth";
 
 const GLASS: React.CSSProperties = {
   background: "var(--td-panel-bg)", backdropFilter: "blur(28px) saturate(160%)",
@@ -345,6 +346,45 @@ function CompletedBlockModal({ catalog, onClose }: { catalog: PreSaleCatalog; on
   );
 }
 
+/**
+ * Aviso previo a "Producto llegó" cuando el catálogo no tiene costo real (o es 0).
+ *
+ * Marcar llegado manda los folios a "Listo", y al liquidar el costo queda
+ * CONGELADO en la partida. Sin costo real congelaríamos un vacío y el reporte
+ * mostraría utilidad = 100% de lo cobrado. Se exige costo MAYOR A 0: un 0 tiene
+ * el mismo efecto que el vacío, así que no se distingue "regalo" de "olvido".
+ *
+ * Se avisa aquí (antes del modal de confirmar) para no hacer que el usuario
+ * confirme algo que el backend va a rechazar con un 422.
+ */
+function MissingCostModal({ catalog, canViewCost, onClose, onEdit }: { catalog: PreSaleCatalog; canViewCost: boolean; onClose: () => void; onEdit: () => void }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999, backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)" }}>
+      <div style={{ ...GLASS, borderRadius: 22, padding: 28, width: 380, maxWidth: "92vw", textAlign: "center" }}>
+        <div style={{ width: 52, height: 52, borderRadius: 16, background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.3)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+          <AlertTriangle size={26} color="#F59E0B" />
+        </div>
+        <p style={{ margin: 0, fontSize: 15, fontWeight: 900, color: TP }}>Falta el costo real del producto</p>
+        <p style={{ margin: "8px 0 10px", fontSize: 12, color: TS, lineHeight: 1.55 }}>
+          <strong style={{ color: TP }}>"{catalog.product_name}"</strong> no tiene costo real capturado. Si lo marcas como llegado,
+          los reportes van a mostrar <strong style={{ color: "#F59E0B" }}>toda la venta como utilidad</strong>.
+        </p>
+        <p style={{ margin: "0 0 22px", fontSize: 11, color: TS, lineHeight: 1.5 }}>
+          {canViewCost
+            ? <>Captúralo en <strong style={{ color: TP }}>Precios → Costo</strong>. Tiene que ser <strong style={{ color: TP }}>mayor a $0</strong>.</>
+            : <>No tienes permiso para capturar costos. Pídele a un <strong style={{ color: TP }}>administrador</strong> que lo registre antes de marcar el producto como llegado.</>}
+        </p>
+        <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+          <button onClick={onClose} style={{ padding: "9px 20px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.12)", background: "transparent", color: TS, fontSize: 12, fontWeight: 900, cursor: "pointer" }}>{canViewCost ? "Cancelar" : "Entendido"}</button>
+          {canViewCost && (
+            <button onClick={onEdit} style={{ padding: "9px 24px", borderRadius: 10, border: "1px solid rgba(245,158,11,0.4)", background: "rgba(245,158,11,0.14)", color: "#F59E0B", fontSize: 12, fontWeight: 900, cursor: "pointer" }}>Capturar costo</button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Panel ────────────────────────────────────────────────────────────────────
 export function PreSaleCatalogsPanel({ restrictedStoreId = null }: { restrictedStoreId?: number | null }) {
   const queryClient = useQueryClient();
@@ -371,6 +411,13 @@ export function PreSaleCatalogsPanel({ restrictedStoreId = null }: { restrictedS
   const [transitioning, setTrans] = useState<number | null>(null);
   const [confirmPending, setConfirmPending] = useState<{ catalog: PreSaleCatalog; to: PreSaleCatalogStatus } | null>(null);
   const [blockedCatalog, setBlockedCatalog] = useState<PreSaleCatalog | null>(null);
+  const [missingCostCatalog, setMissingCostCatalog] = useState<PreSaleCatalog | null>(null);
+  // Al venir del aviso "falta el costo", el modal de edición abre directo en Precios.
+  const [editOnPrecios, setEditOnPrecios] = useState(false);
+  // Mismo gate que el backend (User::canViewCost): admin siempre, el resto por flag.
+  const { user } = useAuth();
+  const canViewCost = (user?.roles?.some(r => ["admin", "super_admin", "owner", "dueño"].includes(r.toLowerCase())) ?? false)
+    || !!(user as { can_view_cost?: boolean } | null)?.can_view_cost;
 
   useEffect(() => {
     if (catalogsQuery.error) toast.error("Error al cargar catálogos");
@@ -389,6 +436,21 @@ export function PreSaleCatalogsPanel({ restrictedStoreId = null }: { restrictedS
     if (to === "cancelled" && (catalog.sold_count ?? 0) > 0 && (catalog.sold_count ?? 0) === (catalog.delivered_count ?? 0)) {
       setBlockedCatalog(catalog); return;
     }
+    // Marcar "llegó" hace que los folios pasen a Listo y su costo quede congelado
+    // al liquidar. Sin costo real capturado congelaríamos un vacío y el reporte
+    // diría utilidad = 100% de lo cobrado. Se avisa ANTES del modal de confirmar
+    // para no hacer que el usuario confirme algo que el backend va a rechazar.
+    // cost 0 (regalo) es válido; solo null bloquea.
+    // OJO: se usa has_real_cost, NO cost — `cost` llega null a quien no tiene
+    // permiso de ver costos, y usarlo marcaría "falta el costo" en falso.
+    if (to === "arrived" && !catalog.has_real_cost) {
+      setMissingCostCatalog(catalog); return;
+    }
+    proceedTransition(catalog, to);
+  };
+
+  /** Sigue el flujo normal (confirmar → API), ya pasado el filtro de costo. */
+  const proceedTransition = (catalog: PreSaleCatalog, to: PreSaleCatalogStatus) => {
     const info = ACTION_INFO[to];
     if (info && localStorage.getItem(`td_confirm_skip_${info.key}`) !== "1") {
       setConfirmPending({ catalog, to });
@@ -817,6 +879,15 @@ export function PreSaleCatalogsPanel({ restrictedStoreId = null }: { restrictedS
         ) : null;
       })()}
 
+      {missingCostCatalog && (
+        <MissingCostModal
+          catalog={missingCostCatalog}
+          canViewCost={canViewCost}
+          onClose={() => setMissingCostCatalog(null)}
+          onEdit={() => { setEditOnPrecios(true); setEditCatalog(missingCostCatalog); setMissingCostCatalog(null); }}
+        />
+      )}
+
       {blockedCatalog && (
         <CompletedBlockModal catalog={blockedCatalog} onClose={() => setBlockedCatalog(null)} />
       )}
@@ -835,11 +906,19 @@ export function PreSaleCatalogsPanel({ restrictedStoreId = null }: { restrictedS
             restrictedStoreId={restrictedStoreId}
             // Gerente editando un catálogo sin unidades de SU tienda (creado por
             // alguien más): cae directo al tab Unidades, que es lo que va a capturar.
-            initialTab={restrictedStoreId != null && stockInfo(editCatalog) == null ? "stock" : undefined}
-            onClose={() => setEditCatalog(null)}
+            {...(() => {
+              // Spread condicional: con exactOptionalPropertyTypes no se puede
+              // pasar `initialTab={undefined}` a una prop opcional.
+              const t = editOnPrecios ? "precios" as const
+                : restrictedStoreId != null && stockInfo(editCatalog) == null ? "stock" as const
+                : null;
+              return t ? { initialTab: t } : {};
+            })()}
+            onClose={() => { setEditCatalog(null); setEditOnPrecios(false); }}
             onSuccess={updated => {
               void invalidateCatalogs();
               setEditCatalog(null);
+              setEditOnPrecios(false);
               toast.success(`"${updated.product_name}" actualizado`);
             }}
           />
