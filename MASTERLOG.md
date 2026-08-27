@@ -4,6 +4,32 @@
 
 ---
 
+### Sesión 2026-08-26 — Preventas: costo real obligatorio al liquidar (Ruben, PR #13) — DEPLOYADO rev `tadaima-00019-dlx`
+
+**Ruben (`develop` → PR #13, commit `539ea8c`, merge):** entregar/liquidar una
+preventa CONGELA el costo de la partida (ADR-015) — si nadie lo capturó, se
+congelaba un vacío y el reporte mostraba utilidad = 100% de lo cobrado. Ahora:
+
+- `PreSaleOrderService::liquidate` rechaza (DomainException → 422) si alguna
+  partida pendiente de catálogo LLEGADO tiene costo null/0, nombrando los
+  productos que faltan.
+- Flag `has_real_cost` (NO sensible: dice si hay costo, no cuánto; visible a
+  todos los roles) en `PreSaleCatalogResource` y `PreSaleOrderItemResource` —
+  `cost` sigue gateado a admin/can_view_cost.
+- UI: modal de aviso antes de "Producto llegó" sin costo (CTA "Capturar costo"
+  para quien puede; "pídele a un admin" para quien no); en Caja, cargar un
+  folio a liquidar se corta con toast si falta el costo.
+- Migración `2026_08_26_000001` (backfill): partidas NO entregadas con costo
+  null/0 toman el costo actual de su catálogo. En prod rellenó 1 (las otras 6
+  sin costo tienen catálogos sin costo → quedarán bloqueadas al liquidar hasta
+  capturarlo, que es la regla).
+
+Tests: `PreSaleOrderCostSnapshotTest` ampliado (+266 líneas) + `PreSaleOrdersTest`.
+Suite 530 PHPUnit / 277 vitest / tsc 463 (bajo el baseline 464). Deploy:
+candidate → smoke (login, has_real_cost en folios/catálogos, corte Mario 0,
+backfill verificado en DB) → 100% + tag `ruben`. Push de `main` (PR #13 merged).
+
+
 ### Sesión 2026-08-19 — Reporte: renglones por costo real (Ruben, PR #12) + fix flaky de barcode — DEPLOYADO rev `tadaima-00018-9qc`
 
 **Ruben (`develop` → PR #12, commit `dd608f0`, merge `ebe61e0`):** en el
