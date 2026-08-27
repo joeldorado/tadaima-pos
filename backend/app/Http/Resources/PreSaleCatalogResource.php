@@ -20,6 +20,11 @@ class PreSaleCatalogResource extends JsonResource
             // Fuga QA 2026-06-10: cost y margen iban a TODOS los roles (hasta
             // cajero). Ahora gated igual que el resto: admin o can_view_cost.
             'cost'            => ($request->user()?->canViewCost() ?? false) ? $this->cost : null,
+            // Flag NO sensible (solo dice si hay costo capturado, no cuánto):
+            // el gate de "Producto llegó" exige costo > 0, y quien no puede ver
+            // costos recibe cost=null aunque sí exista → sin esto la UI marcaría
+            // "falta el costo" en falso. Visible para todos los roles.
+            'has_real_cost'   => $this->cost !== null && (float) $this->cost > 0,
             'margin_percent'  => ($request->user()?->canViewCost() ?? false) ? $this->margin_percent : null,
             'price_1'         => $this->price_1,
             'price_2'         => $this->price_2,

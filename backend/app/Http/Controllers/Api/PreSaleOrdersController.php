@@ -219,6 +219,18 @@ class PreSaleOrdersController extends Controller
         $item   = PreSaleOrderItem::where('pre_sale_order_id', $id)->findOrFail($itemId);
         $status = $request->validate(['status' => 'required|in:pending,delivered'])['status'];
 
+        // Mismo candado que liquidate(): entregar CONGELA el costo de la partida.
+        // Sin costo capturado congelaríamos un vacío y el reporte diría utilidad =
+        // 100% de lo cobrado. Se exige costo MAYOR A 0 (null y 0 se tratan igual).
+        if ($status === 'delivered' && (float) ($item->cost ?? 0) <= 0) {
+            $nombre = $item->catalog?->product_name ?? "Partida #{$item->id}";
+            return $this->error(
+                "No se puede entregar \"{$nombre}\": falta capturar el costo real. "
+                . 'Captúralo en el catálogo de preventa (pestaña Precios → Costo).',
+                422
+            );
+        }
+
         $item->update([
             'status'       => $status,
             'delivered_at' => $status === 'delivered' ? now() : null,

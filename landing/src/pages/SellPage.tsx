@@ -2654,6 +2654,16 @@ export function SellPage() {
       toast.error("Esta preventa no tiene productos para cargar");
       return;
     }
+
+    // Candado de costo: liquidar CONGELA el costo de la partida. Sin costo real
+    // (null o 0) el reporte mostraría toda la venta como utilidad. Se corta aquí
+    // para que el cajero no arme el carrito y truene hasta el cobro.
+    // Mensaje corto y SIN botón: a Caja entra casi cualquier rol, el cajero no
+    // puede capturar costos, y en el equipo ya se sabe a qué se refiere.
+    if (order.items.some(it => it.status !== 'delivered' && it.has_real_cost === false)) {
+      toast.error("Falta el costo del producto");
+      return;
+    }
     const levelMap: Record<number, PriceLevel> = { 1: "a", 2: "b", 3: "c", 4: "d", 5: "e" };
 
     const toCartItem = (it: PreSaleOrderItem, delivered: boolean): CartItem => ({

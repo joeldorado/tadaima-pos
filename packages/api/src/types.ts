@@ -774,6 +774,9 @@ export interface PreSaleCatalog {
   image_url?: string | null
   store_limits?: PreSaleCatalogStoreLimit[]
   cost: number | null
+  /** Si el catálogo tiene costo real capturado (> 0). No expone el monto:
+   *  lo ven todos los roles, a diferencia de `cost` (admin / can_view_cost). */
+  has_real_cost: boolean
   margin_percent: number | null
   price_1: number | null
   price_2: number | null
@@ -892,6 +895,9 @@ export interface PreSaleOrderItem {
   created_at: string
   /** Costo snapshot (ADR-015). Solo admin (null para gerente/cajero). Para utilidad real de preventas. */
   cost?: number | null
+  /** Si la partida tiene costo real capturado (> 0). No expone el monto:
+   *  lo ven todos los roles, a diferencia de `cost`. */
+  has_real_cost?: boolean
   catalog: { id: number; product_name: string; image_path: string | null; status: PreSaleCatalogStatus | null; pickup_deadline: string | null } | null
   product_type?: 'product' | 'manga'
 }
