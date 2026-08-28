@@ -18,6 +18,8 @@ export interface GroupedProduct {
   price_breakdown: { [price: number]: number };
   total_cost: number;
   total_profit: number;
+  /** Split por costo: producto base (para reagrupar variantes del mismo producto). */
+  base_product_id?: number | string;
   /** Split por costo: costo unitario de ESTE renglón (para etiquetar en Excel/PDF). */
   cost_tag?: number;
   /** true si el producto base tiene >1 costo distinto en el rango. */

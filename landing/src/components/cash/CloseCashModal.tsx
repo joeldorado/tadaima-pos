@@ -1,9 +1,13 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { X, Check, Loader2 } from "lucide-react";
+import { X, Check, Loader2, FileSpreadsheet } from "lucide-react";
 import { closeSession, getCashReport, type CashSession, type CashSessionReport } from "@tadaima/api";
 import { getTodayLocal } from "@/lib/date";
+import { useAuth } from "@tadaima/auth";
+import { exportReportExcel } from "@/pages/reports/exportExcel";
+import { buildCashCloseReportParams } from "@/pages/reports/buildCashCloseReport";
+import { readIvaRate } from "@/pages/reports/buildReportData";
 
 interface CloseCashModalProps {
   session: CashSession;
@@ -28,6 +32,8 @@ export function CloseCashModal({ session, title, reason, onClosed, onCancel }: C
   const [closeCashAmount, setCloseCashAmount] = useState("");
   const [closeUsdAmount, setCloseUsdAmount] = useState("");
   const [closingCashLoading, setClosingCashLoading] = useState(false);
+  const [excelLoading, setExcelLoading] = useState(false);
+  const { user } = useAuth();
 
   // "Debe haber" en vivo (Joel 2026-07-30): el cajero ve el objetivo de cada
   // moneda ANTES de contar — mismo /reports/cash del resumen, pero sobre la
@@ -64,6 +70,46 @@ export function CloseCashModal({ session, title, reason, onClosed, onCancel }: C
   // Los insumos YA vienen dentro de total_salidas — se muestran como renglón
   // propio (Joel 2026-08-06) pero repartidos para que la resta ocurra UNA vez.
   const retiros = Math.round((salidas - insumos) * 100) / 100;
+  // Cobros que NO entran al cajón (tarjeta / transferencia) + los dólares que sí
+  // entran pero como billetes. Se muestran para que el corte cuadre contra el
+  // total del turno, no solo contra el efectivo: el cajero veía "vendí $30,000"
+  // y el esperado decía $8,000, sin nada que explicara la diferencia.
+  const cobradoTarjeta = pv ? Number(pv.total_card ?? 0) : 0;
+  const cobradoTransfer = pv ? Number(pv.total_transfer ?? 0) : 0;
+  const usdRecibido = pv ? Number(pv.total_usd_received ?? 0) : 0;
+  const usdEnPesos = pv ? Number(pv.usd_mxn_equiv ?? 0) : 0;
+  const totalTurno = Math.round((pesosCobrados + usdEnPesos + cobradoTarjeta + cobradoTransfer) * 100) / 100;
+
+  /**
+   * Descarga el reporte de ventas del turno: MISMO Excel que la pantalla de
+   * Reportes (mismas reglas de neteo, costo y preventas), acotado al día del
+   * corte, la tienda de la sesión y el cajero dueño de la caja.
+   *
+   * No cierra la caja — el cajero puede descargarlo, revisarlo y luego confirmar.
+   */
+  const handleExportExcel = async () => {
+    setExcelLoading(true);
+    try {
+      const canViewCost = (user?.roles?.some(r => ["admin", "super_admin", "owner", "dueño"].includes(r.toLowerCase())) ?? false)
+        || !!(user as { can_view_cost?: boolean } | null)?.can_view_cost;
+      const params = await buildCashCloseReportParams({
+        day: getTodayLocal(),
+        // La sesión trae la tienda en register.store_id; el nombre solo viene en
+        // el preview de /reports/cash, así que se usa como fallback del header.
+        storeId: session.register?.store_id ?? preview?.store?.id ?? null,
+        userId: session.user?.id ?? user?.id ?? 0,
+        userName: session.user?.name ?? "Cajero",
+        storeName: preview?.store?.name ?? session.register?.name ?? "Tienda",
+        canViewCost,
+        ivaRate: readIvaRate(),
+      });
+      await exportReportExcel(params);
+    } catch {
+      toast.error("No se pudo generar el reporte");
+    } finally {
+      setExcelLoading(false);
+    }
+  };
 
   const handleCloseCash = async () => {
     const amount = parseFloat(closeCashAmount) || 0;
@@ -111,10 +157,10 @@ export function CloseCashModal({ session, title, reason, onClosed, onCancel }: C
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.82)", backdropFilter: "blur(8px)" }} onClick={onCancel} />
-      <div style={{ position: "relative", background: "var(--td-popup-bg)", border: "1px solid var(--td-popup-border)", borderRadius: 28, padding: 32, minWidth: 380, maxWidth: 460, width: "100%" }}>
+      <div style={{ position: "relative", background: "var(--td-popup-bg)", border: "1px solid var(--td-popup-border)", borderRadius: 28, padding: 32, minWidth: 380, maxWidth: 460, width: "100%", maxHeight: "92vh", display: "flex", flexDirection: "column", minHeight: 0 }}>
 
         {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: reason ? 12 : 24 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: reason ? 12 : 24, flexShrink: 0 }}>
           <div>
             <h3 style={{ color: "var(--td-text-hi)", fontSize: 17, fontWeight: 900, margin: 0 }}>{title ?? "Corte de Caja"}</h3>
             <p style={{ color: "var(--td-text-ghost)", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.15em", margin: "4px 0 0" }}>
@@ -125,6 +171,10 @@ export function CloseCashModal({ session, title, reason, onClosed, onCancel }: C
             <X size={18} />
           </button>
         </div>
+
+        {/* Cuerpo scrolleable — header y acciones quedan fijos. Los márgenes
+            negativos dejan la barra de scroll pegada al borde del modal. */}
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", margin: "0 -32px", padding: "0 32px" }}>
 
         {/* Contexto (p.ej. "cierra tu caja para salir") */}
         {reason && (
@@ -192,6 +242,40 @@ export function CloseCashModal({ session, title, reason, onClosed, onCancel }: C
           )}
         </div>
 
+        {/* COBRADO EN EL TURNO — desglose por método (Joel 2026-08-27).
+            Tarjeta y transferencia NO entran al cajón; se listan para que el
+            cajero vea el total del turno y entienda por qué el esperado es menor. */}
+        {pv && totalTurno > 0 && (
+          <div
+            data-testid="close-cash-methods"
+            style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", borderRadius: 14, padding: "12px 16px", marginBottom: 20 }}
+          >
+            <p style={{ margin: 0, fontSize: 9, fontWeight: 900, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.15em" }}>
+              Cobrado en el turno
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 3, margin: "8px 0 0" }}>
+              {[
+                { label: "Efectivo (pesos)",  value: fmt(pesosCobrados),  color: "var(--td-text-hi)", show: true,                 hint: "entra al cajón" },
+                { label: "Dólares",           value: `US$${usdRecibido.toLocaleString("es-MX", { maximumFractionDigits: 2 })}`, color: "#34d399", show: usdRecibido > 0, hint: `≈ ${fmt(usdEnPesos)}` },
+                { label: "Tarjeta",           value: fmt(cobradoTarjeta),  color: "#60A5FA", show: cobradoTarjeta > 0,  hint: "no entra al cajón" },
+                { label: "Transferencia",     value: fmt(cobradoTransfer), color: "#A78BFA", show: cobradoTransfer > 0, hint: "no entra al cajón" },
+              ].filter(r => r.show).map(r => (
+                <div key={r.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "var(--td-text-lo)" }}>
+                    {r.label}
+                    <span style={{ fontSize: 9, fontWeight: 600, color: "var(--td-text-ghost)", marginLeft: 6 }}>{r.hint}</span>
+                  </span>
+                  <span style={{ fontSize: 11, fontWeight: 900, color: r.color, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{r.value}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{ borderTop: "1px dashed var(--td-card-border)", marginTop: 8, paddingTop: 8, display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
+              <span style={{ fontSize: 12, fontWeight: 900, color: "var(--td-text-hi)" }}>Total del turno</span>
+              <span style={{ fontSize: 16, fontWeight: 900, color: "var(--td-text-hi)", fontVariantNumeric: "tabular-nums" }}>{fmt(totalTurno)}</span>
+            </div>
+          </div>
+        )}
+
         {/* Closing cash inputs: pesos y dólares POR SEPARADO (2026-07-30) */}
         <div style={{ marginBottom: 24 }}>
           <label style={{ display: "block", fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "var(--td-text-ghost)", marginBottom: 8 }}>
@@ -221,8 +305,22 @@ export function CloseCashModal({ session, title, reason, onClosed, onCancel }: C
           </p>
         </div>
 
+        </div>
+
+        {/* Reporte del turno — mismo Excel que la pantalla de Reportes, acotado
+            a este cajero y este día. No cierra la caja. */}
+        <button
+          onClick={() => { void handleExportExcel(); }}
+          disabled={excelLoading}
+          data-testid="close-cash-excel"
+          style={{ width: "100%", background: "var(--td-input-bg)", border: "1px solid rgba(16,185,129,0.35)", borderRadius: 14, color: "#34d399", padding: "11px", fontSize: 11, fontWeight: 900, cursor: excelLoading ? "wait" : "pointer", opacity: excelLoading ? 0.6 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 12, flexShrink: 0 }}
+        >
+          {excelLoading ? <Loader2 size={14} className="animate-spin" /> : <FileSpreadsheet size={14} />}
+          {excelLoading ? "Generando reporte…" : "Descargar reporte del turno (Excel)"}
+        </button>
+
         {/* Actions */}
-        <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ display: "flex", gap: 10, flexShrink: 0 }}>
           <button onClick={onCancel} style={{ flex: 1, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", borderRadius: 14, color: "var(--td-text-lo)", padding: "12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
             Cancelar
           </button>
