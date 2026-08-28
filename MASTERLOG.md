@@ -4,6 +4,33 @@
 
 ---
 
+### Sesión 2026-08-28 — Corte de caja: reporte Excel del turno + fix candado de costo (Ruben, PR #14) — DEPLOYADO rev `tadaima-00020-r5l`
+
+**Ruben (`develop` → PR #14, commits `a6efd0e` + `185320c`, merge `f7eadc9`):**
+
+- **Botón "Descargar reporte del turno (Excel)" en el corte** (`CloseCashModal`):
+  genera el MISMO Excel de la pestaña Ventas de Reportes —mismas reglas de
+  neteo, split por costo, prorrateo de preventas y descuentos v2— acotado al
+  día del corte, la tienda de la sesión y el cajero dueño de la caja. No
+  cierra la caja: se descarga, se revisa y luego se confirma.
+- **Bloque "Cobrado en el turno"** en el modal: desglose efectivo / dólares /
+  tarjeta / transferencia + total del turno, para que el cajero entienda por
+  qué el esperado en cajón es menor a lo vendido (tarjeta/transfer no entran
+  al cajón). Modal ahora con cuerpo scrolleable (header y acciones fijos).
+- **Refactor**: la lógica pura de reportes sale de `ReportsPage.tsx` (−754
+  líneas) a `pages/reports/buildReportData.ts` + `buildCashCloseReport.ts`,
+  reusable fuera de la pantalla de Reportes.
+- **Fix candado de costo al liquidar preventas** (seguimiento del PR #13): el
+  candado evaluaba TODOS los items del folio; ahora solo `rawPending` (las
+  partidas cuyo catálogo ya llegó — mismo alcance que `liquidate()`). Una
+  partida de un catálogo que aún no llega ya no bloquea liquidar el resto.
+
+Verificación: vitest 277 · tsc 463 (bajo el baseline). Deploy: el primer
+build quedó atorado en QUEUED ~35 min (cancelado y relanzado) → candidate →
+smoke (index 200, bundle nuevo con el botón, `/auth/login` 422 válido) →
+100% + tags `candidate` y `ruben` en la 00020. Push de `main` (PR #14 merged).
+
+
 ### Sesión 2026-08-26 — Preventas: costo real obligatorio al liquidar (Ruben, PR #13) — DEPLOYADO rev `tadaima-00019-dlx`
 
 **Ruben (`develop` → PR #13, commit `539ea8c`, merge):** entregar/liquidar una
