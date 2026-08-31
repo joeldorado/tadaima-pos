@@ -65,9 +65,15 @@ const SECONDARY_BUTTON = {
 
 function extractMsg(err: unknown): string {
   if (err && typeof err === 'object') {
-    if ('message' in err && typeof (err as ApiError).message === 'string') {
-      return (err as ApiError).message
+    // Los 422 de validación traen el detalle por campo en `errors` (p.ej. el
+    // código duplicado nombra al producto dueño) — ese mensaje es más útil que
+    // el genérico "Los datos enviados no son válidos" de `message`.
+    const apiErr = err as ApiError
+    if (apiErr.errors && typeof apiErr.errors === 'object') {
+      const first = Object.values(apiErr.errors).flat().find(m => typeof m === 'string')
+      if (first) return first
     }
+    if (typeof apiErr.message === 'string') return apiErr.message
   }
   if (err instanceof Error) return err.message
   return 'Error al registrar'
