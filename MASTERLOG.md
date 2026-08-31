@@ -4,6 +4,25 @@
 
 ---
 
+### Sesión 2026-08-31 (4) — Impresión precalentada al entrar a Caja — DEPLOYADO rev `tadaima-00024-dg9`
+
+Joel: "se puede ir preparando antes de imprimir y mandarlo en cuanto paguen".
+- `warmUpQz(printer)` en `qz.ts`: al montar la Caja se abre el websocket,
+  se cachea el certificado y se verifica la impresora (`warmUpTicketPrinting`,
+  no-op sin config QZ, nunca lanza ni muestra toasts).
+- `printHtmlViaQz` se salta el `printers.find` si esa impresora ya se
+  verificó en esta conexión (un roundtrip + una firma menos por ticket);
+  el caché se limpia al cerrarse el websocket.
+- Al cobrar solo queda firmar el print y renderizar → ticket casi inmediato.
+- CONFIRMADO por el cliente en caja Windows real: la impresión silenciosa
+  del deploy 00022 imprime bien y con tamaño correcto. El "letras al doble +
+  recorte derecho" que vio Joel es EXCLUSIVO de su Mac (bug conocido de QZ
+  con pantallas Retina — captura al 2×); las cajas Windows no lo tienen.
+
+vitest 283 (+2) · tsc 463 (baseline). Smoke: candidate → verificación en
+vivo del warm-up (conexión QZ se abre sola al recargar /caja) → 100% + tags.
+
+
 ### Sesión 2026-08-31 (3) — Telemetría remota de impresión + "sin costo" exige stock — DEPLOYADO rev `tadaima-00023-fbb`
 
 - **Telemetría QZ (Joel):** todo intento de impresión silenciosa (venta,
