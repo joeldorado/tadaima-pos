@@ -4,6 +4,25 @@
 
 ---
 
+### Sesión 2026-08-31 (3) — Telemetría remota de impresión + "sin costo" exige stock — DEPLOYADO rev `tadaima-00023-fbb`
+
+- **Telemetría QZ (Joel):** todo intento de impresión silenciosa (venta,
+  reimpresión, corte y prueba del modal — los 4 pasan por `dispatchTicket`)
+  reporta a `POST /logs` como `qz_print_ok` / `qz_print_error` con impresora,
+  ancho, kind del error y mensaje → diagnóstico de cajas remotas sin ir
+  físicamente (Admin → Logs, filtrar por acción). Fire-and-forget (el log
+  jamás afecta la impresión); sin config QZ no reporta (flujo legacy sin
+  ruido). Nuevo `createSystemLog` en `@tadaima/api`.
+- **`?no_cost=1` + `stats.sin_costo` ahora exigen stock > 0** (Joel): la
+  lista "Productos sin Costo" es para capturar costos de lo vendible; los
+  agotados la inflaban (prod: 4,425 → 2,456). Solo backend — el modal y el
+  chip del front consumen los mismos endpoints.
+
+Verificación: vitest 281 (+4 de telemetría) · PHPUnit 534 · tsc 463
+(baseline). Smoke candidate: `stats.sin_costo=2456` (exacto vs SQL directo
+a la BD) + `qz_print_ok` presente en el bundle → 100% + tags.
+
+
 ### Sesión 2026-08-31 (2) — QZ: la impresión silenciosa NUNCA firmó (root cause) + densidad térmicas — DEPLOYADO rev `tadaima-00022-6nx`
 
 **Root cause de "la impresión silenciosa no funciona" (desde 2026-07-30):**
