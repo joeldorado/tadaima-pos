@@ -10,8 +10,19 @@
  */
 import { toast } from "sonner";
 import { createSystemLog } from "@tadaima/api";
-import { DEFAULT_TICKET_WIDTH_MM, QzError, printHtmlViaQz, type QzFailureKind } from "./qz";
+import { DEFAULT_TICKET_WIDTH_MM, QzError, printHtmlViaQz, warmUpQz, type QzFailureKind } from "./qz";
 import { printViaWindow, type WindowTransport } from "./ticketWindow";
+
+/**
+ * Precalienta la impresión silenciosa (conexión QZ + certificado + verificación
+ * de impresora) para que el ticket salga casi inmediato al cobrar. Llamar al
+ * montar la Caja. No-op sin configuración QZ; nunca lanza ni muestra toasts.
+ */
+export function warmUpTicketPrinting(): void {
+  const settings = getPrinterSettings();
+  if (!settings?.enabled) return;
+  void warmUpQz(settings.printerName);
+}
 
 // ─── Telemetría remota (2026-08-31, Joel) ────────────────────────────────────
 // Cada intento de impresión QZ (venta, reimpresión, corte y prueba) reporta su

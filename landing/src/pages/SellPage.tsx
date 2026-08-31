@@ -34,7 +34,7 @@ import { CloseCashModal } from "@/components/cash/CloseCashModal";
 import { UsdCalculatorModal } from "@/components/sell/UsdCalculatorModal";
 import { PayLogPanel } from "@/components/sell/PayLogPanel";
 import { pushPayEntry, removePayEntry, type PayLogEntry } from "@/lib/payLog";
-import { dispatchTicket } from "@/lib/ticketPrint";
+import { dispatchTicket, warmUpTicketPrinting } from "@/lib/ticketPrint";
 import { useLayoutChrome } from "@/contexts/LayoutChromeContext";
 import { CortesModal } from "@/components/cash/CortesModal";
 import { PrinterConfigModal } from "@/components/cash/PrinterConfigModal";
@@ -615,6 +615,13 @@ export function SellPage() {
   useEffect(() => {
     if (terminalsQuery.error) toast.error("Error al cargar terminales");
   }, [terminalsQuery.error]);
+
+  // Precalienta la impresión silenciosa al entrar a Caja (conexión QZ +
+  // verificación de impresora): al cobrar solo queda firmar e imprimir y el
+  // ticket sale casi inmediato (Joel 2026-08-31). No-op sin config QZ.
+  useEffect(() => {
+    warmUpTicketPrinting();
+  }, []);
 
   // Auto-select first available cash register when registers load
   useEffect(() => {

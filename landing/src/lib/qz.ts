@@ -101,6 +101,7 @@ async function loadQz(): Promise<QzModule> {
       qz.security.setSignatureAlgorithm("SHA512");
       qz.websocket.setClosedCallbacks(() => {
         connectPromise = null;
+        verifiedPrinters.clear();
         setStatus("disconnected");
       });
       qz.websocket.setErrorCallbacks(() => {
@@ -177,6 +178,31 @@ export interface QzPrintOptions {
   readonly timeoutMs?: number | undefined;
 }
 
+// Impresoras ya verificadas en esta sesión de conexión: el segundo print de la
+// misma caja se salta el printers.find (un roundtrip + una firma menos = ticket
+// más rápido). Se limpia al cerrarse el websocket — reconectar re-verifica.
+const verifiedPrinters = new Set<string>();
+
+/**
+ * Precalienta el camino de impresión ANTES de cobrar (Joel 2026-08-31): carga
+ * el módulo, abre el websocket, cachea el certificado y verifica la impresora.
+ * Así, al pagar, solo queda firmar el print y renderizar — el ticket sale casi
+ * inmediato. Silencioso: cualquier fallo aquí NO molesta (el print real ya
+ * tiene sus toasts); se reintenta en el siguiente warmUp o en el print.
+ */
+export async function warmUpQz(printerName: string): Promise<void> {
+  try {
+    await ensureQzConnection();
+    const qz = await loadQz();
+    if (!verifiedPrinters.has(printerName)) {
+      await qz.printers.find(printerName);
+      verifiedPrinters.add(printerName);
+    }
+  } catch {
+    // noop — el flujo de print reporta sus propios errores.
+  }
+}
+
 export async function printHtmlViaQz(html: string, opts: QzPrintOptions): Promise<void> {
   await ensureQzConnection();
   const qz = await loadQz();
@@ -184,10 +210,14 @@ export async function printHtmlViaQz(html: string, opts: QzPrintOptions): Promis
 
   // Verificación determinista de la impresora: "apagada con spooler" no es
   // detectable, pero "no existe / cambió de nombre" sí — y da mejor toast.
-  try {
-    await qz.printers.find(opts.printer);
-  } catch (err) {
-    throw classify(err, "printer-not-found", `No se encontró la impresora "${opts.printer}"`);
+  // Si el warmUp (o un print previo de esta conexión) ya la verificó, se salta.
+  if (!verifiedPrinters.has(opts.printer)) {
+    try {
+      await qz.printers.find(opts.printer);
+      verifiedPrinters.add(opts.printer);
+    } catch (err) {
+      throw classify(err, "printer-not-found", `No se encontró la impresora "${opts.printer}"`);
+    }
   }
 
   const config = qz.configs.create(opts.printer, {

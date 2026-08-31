@@ -8,6 +8,7 @@ vi.mock("./qz", async () => {
   return {
     ...actual,
     printHtmlViaQz: vi.fn(),
+    warmUpQz: vi.fn(() => Promise.resolve()),
   };
 });
 vi.mock("./ticketWindow", () => ({
@@ -24,7 +25,7 @@ vi.mock("@tadaima/api", () => ({
 
 import { toast } from "sonner";
 import { createSystemLog } from "@tadaima/api";
-import { QzError, printHtmlViaQz } from "./qz";
+import { QzError, printHtmlViaQz, warmUpQz } from "./qz";
 import { printViaWindow } from "./ticketWindow";
 import {
   QZ_PRINTER_STORAGE_KEY,
@@ -34,6 +35,7 @@ import {
   getPrinterSettings,
   resetQzDownToastForTests,
   savePrinterSettings,
+  warmUpTicketPrinting,
 } from "./ticketPrint";
 
 const mockPrintQz = vi.mocked(printHtmlViaQz);
@@ -210,5 +212,23 @@ describe("dispatchTicket — telemetría remota (POST /logs)", () => {
     const result = await dispatchTicket("<html></html>", { jobName: "Ticket" });
 
     expect(result).toEqual({ transport: "qz" });
+  });
+});
+
+describe("warmUpTicketPrinting — precalentado al entrar a Caja", () => {
+  it("con config QZ activa precalienta con la impresora guardada", () => {
+    savePrinterSettings(SETTINGS);
+
+    warmUpTicketPrinting();
+
+    expect(vi.mocked(warmUpQz)).toHaveBeenCalledWith(SETTINGS.printerName);
+  });
+
+  it("sin configuración (o switch apagado) no hace nada", () => {
+    warmUpTicketPrinting();
+    savePrinterSettings({ ...SETTINGS, enabled: false });
+    warmUpTicketPrinting();
+
+    expect(vi.mocked(warmUpQz)).not.toHaveBeenCalled();
   });
 });
