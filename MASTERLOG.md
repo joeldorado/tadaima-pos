@@ -4,6 +4,29 @@
 
 ---
 
+### Sesión 2026-08-31 — Alta de manga: código duplicado ya no truena con "Server Error" — DEPLOYADO rev `tadaima-00021-hzk`
+
+**Bug (cliente vía Joel, video):** en Alta de Manga Nacional (lote), capturar un
+ISBN/código que ya existía como SKU de otro producto reventaba con 500 "Server
+Error" en el renglón del tomo, sin explicar nada. Causa: el `code` se guarda
+como `products.sku` (UNIQUE) y ni `StoreMangaRequest` ni `UpdateMangaRequest`
+validaban duplicados → QueryException.
+
+- Backend: ambos requests validan el código ANTES de insertar y regresan 422
+  nombrando al dueño: *"El código X ya está registrado en «Y». Usa otro código
+  o edita ese producto."* Update ignora el propio tomo (guardar sin cambiar
+  código sigue válido).
+- Frontend: `MangaBatchModal.extractMsg` prefiere el detalle por campo del 422
+  (`errors.code[0]`) sobre el genérico "Los datos enviados no son válidos".
+- Tests: `MangaDuplicateCodeTest` (4 casos, 16 asserts). Suite 534 PHPUnit /
+  277 vitest / tsc 463 (baseline).
+
+Verificación: repro local del 500 antes del fix + E2E Playwright del modal
+mostrando el mensaje en el renglón. Deploy: candidate → smoke en prod (login
+pier, POST duplicado → 422 claro, sin insertar) → 100% + tags. Commit directo
+a `main` (fix de Joel — sin PR; Ruben lo recibe al sincronizar `develop`).
+
+
 ### Sesión 2026-08-28 — Corte de caja: reporte Excel del turno + fix candado de costo (Ruben, PR #14) — DEPLOYADO rev `tadaima-00020-r5l`
 
 **Ruben (`develop` → PR #14, commits `a6efd0e` + `185320c`, merge `f7eadc9`):**
