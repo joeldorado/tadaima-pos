@@ -4,6 +4,34 @@
 
 ---
 
+### Sesión 2026-08-31 (2) — QZ: la impresión silenciosa NUNCA firmó (root cause) + densidad térmicas — DEPLOYADO rev `tadaima-00022-6nx`
+
+**Root cause de "la impresión silenciosa no funciona" (desde 2026-07-30):**
+`qz.ts` le pasaba a `setSignaturePromise` una arrow que DEVOLVÍA una Promise;
+qz-tray espera un RESOLVER `(resolve, reject) => void` (o función `async` —
+lo decide con `constructor.name === "AsyncFunction"`). Tronaba con
+"Promise resolver is not a function" y NINGUNA llamada firmada (listar
+impresoras, imprimir) salía al websocket → QZ pedía Allow por cada acción.
+Los types de @types/qz-tray sí admiten la forma Promise (por eso compilaba).
+
+- Fix: `signatureFactory: QzTypes.PromiseFactory` estilo resolver; conserva
+  el `QzError("sign-failed")` para el toast correcto.
+- Extra: `density: 203` + `interpolation` en la config de impresión —
+  drivers genéricos (Anjet58 58mm → "STMicroelectronics USB Portable
+  Printer") no reportan resolución y QZ rasterizaba el HTML gigante.
+- Verificación en vivo (Mac de Joel + Anjet58 QIT581701, prod): parche por
+  consola → printers.find/print salen FIRMADOS (openssl SHA512 "Verified
+  OK" contra /qz/cert) y el ticket imprime. Smoke: bundle candidate con
+  `density:203` → 100%.
+
+**Setup por caja (no es código):** el cert de /qz/cert va como override.crt
+en la carpeta de instalación de QZ (`/Applications/QZ Tray.app/Contents/
+Resources/` en Mac — data dirs NO funcionan en QZ 2.2.5) para CERO diálogos.
+En el Mac de Joel además la cola CUPS quedó con driver "Generic PostScript"
+página Letter → tickets kilométricos que vacían el rollo; kit del driver
+zj-58 compilado en `~/Documents/JOEL/anjet58-driver/` (instalar-anjet58.sh).
+
+
 ### Sesión 2026-08-31 — Alta de manga: código duplicado ya no truena con "Server Error" — DEPLOYADO rev `tadaima-00021-hzk`
 
 **Bug (cliente vía Joel, video):** en Alta de Manga Nacional (lote), capturar un
