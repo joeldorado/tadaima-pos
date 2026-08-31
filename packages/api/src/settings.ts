@@ -61,6 +61,15 @@ export async function getSystemLogs(params?: {
   return response.data
 }
 
+/**
+ * Registra un evento iniciado por el frontend en la auditoría del sistema
+ * (POST /logs). Usado p.ej. por la telemetría de impresión silenciosa para
+ * diagnosticar cajas remotas sin ir físicamente.
+ */
+export async function createSystemLog(action: string, description?: string): Promise<void> {
+  await apiClient.post('/logs', { action, description })
+}
+
 // ─── Catalog Settings ─────────────────────────────────────────────────────────
 
 export interface CatalogSettings {

@@ -16,8 +16,14 @@ vi.mock("./ticketWindow", () => ({
 vi.mock("sonner", () => ({
   toast: { info: vi.fn(), warning: vi.fn(), error: vi.fn(), success: vi.fn() },
 }));
+// Telemetría (POST /logs): se simula para que los tests no hagan HTTP real y
+// para poder asegurar que cada intento QZ reporta su resultado.
+vi.mock("@tadaima/api", () => ({
+  createSystemLog: vi.fn(() => Promise.resolve()),
+}));
 
 import { toast } from "sonner";
+import { createSystemLog } from "@tadaima/api";
 import { QzError, printHtmlViaQz } from "./qz";
 import { printViaWindow } from "./ticketWindow";
 import {
@@ -162,5 +168,47 @@ describe("dispatchTicket — matriz de decisión", () => {
 
     expect(result).toEqual({ transport: "window", fallbackReason: "impresora-error" });
     expect(vi.mocked(toast.error)).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("dispatchTicket — telemetría remota (POST /logs)", () => {
+  it("el éxito QZ reporta qz_print_ok con impresora y job", async () => {
+    savePrinterSettings(SETTINGS);
+    mockPrintQz.mockResolvedValueOnce(undefined);
+
+    await dispatchTicket("<html></html>", { jobName: "Ticket #9" });
+
+    expect(vi.mocked(createSystemLog)).toHaveBeenCalledWith(
+      "qz_print_ok",
+      expect.stringContaining("XP-58"),
+    );
+  });
+
+  it("el fallo QZ reporta qz_print_error con el kind y el mensaje", async () => {
+    savePrinterSettings(SETTINGS);
+    mockPrintQz.mockRejectedValueOnce(new QzError("printer-not-found", "no está"));
+
+    await dispatchTicket("<html></html>", { jobName: "Ticket #9" });
+
+    expect(vi.mocked(createSystemLog)).toHaveBeenCalledWith(
+      "qz_print_error",
+      expect.stringContaining("printer-not-found"),
+    );
+  });
+
+  it("sin configuración QZ no se reporta nada (flujo legacy sin ruido)", async () => {
+    await dispatchTicket("<html></html>", { jobName: "Ticket" });
+
+    expect(vi.mocked(createSystemLog)).not.toHaveBeenCalled();
+  });
+
+  it("si el log falla, la impresión NO se ve afectada", async () => {
+    savePrinterSettings(SETTINGS);
+    vi.mocked(createSystemLog).mockRejectedValueOnce(new Error("offline"));
+    mockPrintQz.mockResolvedValueOnce(undefined);
+
+    const result = await dispatchTicket("<html></html>", { jobName: "Ticket" });
+
+    expect(result).toEqual({ transport: "qz" });
   });
 });

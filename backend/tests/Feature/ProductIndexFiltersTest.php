@@ -102,10 +102,9 @@ class ProductIndexFiltersTest extends TestCase
 
     public function test_filtro_no_cost(): void
     {
-        $this->assertSame(
-            collect([$this->sinCostoAgotado->id, $this->sinCostoConStock->id])->sort()->values()->all(),
-            $this->ids('&no_cost=1'),
-        );
+        // Desde 2026-08-31: sin costo Y con stock — los agotados sin costo no
+        // aparecen (la lista es para capturar costos de lo que sí se vende).
+        $this->assertSame([$this->sinCostoConStock->id], $this->ids('&no_cost=1'));
     }
 
     public function test_filtro_out_of_stock(): void

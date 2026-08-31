@@ -9,8 +9,18 @@
  * (ventana + --kiosk-printing como puente), sin toasts.
  */
 import { toast } from "sonner";
+import { createSystemLog } from "@tadaima/api";
 import { DEFAULT_TICKET_WIDTH_MM, QzError, printHtmlViaQz, type QzFailureKind } from "./qz";
 import { printViaWindow, type WindowTransport } from "./ticketWindow";
+
+// ─── Telemetría remota (2026-08-31, Joel) ────────────────────────────────────
+// Cada intento de impresión QZ (venta, reimpresión, corte y prueba) reporta su
+// resultado a POST /logs para diagnosticar cajas sin ir físicamente: en Admin →
+// Logs se filtra por acción "qz_print_ok" / "qz_print_error". Fire-and-forget:
+// si el log falla (offline, 401) la impresión NO se ve afectada.
+function reportPrintOutcome(action: "qz_print_ok" | "qz_print_error", description: string): void {
+  createSystemLog(action, description.slice(0, 2000)).catch(() => { /* noop */ });
+}
 
 // ─── Configuración por MÁQUINA (localStorage — la impresora es del equipo, no
 // de la empresa) ──────────────────────────────────────────────────────────────
@@ -110,6 +120,7 @@ export async function dispatchTicket(html: string, opts: DispatchOptions): Promi
     return { transport: printViaWindow(html, { windowName: opts.windowName }) };
   }
 
+  const printerLabel = `"${opts.jobName}" → ${settings.printerName} (${settings.widthMm}mm)`;
   try {
     await printHtmlViaQz(adaptHtmlForQz(html), {
       printer: settings.printerName,
@@ -117,9 +128,12 @@ export async function dispatchTicket(html: string, opts: DispatchOptions): Promi
       jobName: opts.jobName,
       copies: opts.copies,
     });
+    reportPrintOutcome("qz_print_ok", printerLabel);
     return { transport: "qz" };
   } catch (err) {
     const kind: QzFailureKind = err instanceof QzError ? err.kind : "print-failed";
+    const errMsg = err instanceof Error ? err.message : String(err);
+    reportPrintOutcome("qz_print_error", `${kind} · ${printerLabel} · ${errMsg}`);
 
     if (kind === "print-timeout") {
       // AMBIGUO: el job pudo entrar al spooler — reimprimir aquí duplicaría el

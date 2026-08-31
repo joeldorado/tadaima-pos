@@ -100,7 +100,9 @@ class ProductStatsTest extends TestCase
         $this->assertSame(3, $data['total']);
         $this->assertSame(3, $data['total_productos']);
         $this->assertSame(0, $data['total_mangas']);
-        $this->assertSame(2, $data['sin_costo']);
+        // Desde 2026-08-31 sin_costo exige stock > 0 (paridad con ?no_cost=1):
+        // "Sin costo agotado" ya no cuenta, solo "Costo cero poco stock".
+        $this->assertSame(1, $data['sin_costo']);
         $this->assertSame(1, $data['agotados']);
         $this->assertSame(1, $data['por_agotarse']);
         $this->assertSame(10, $data['threshold']);
