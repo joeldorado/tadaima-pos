@@ -82,11 +82,22 @@ async function loadQz(): Promise<QzModule> {
           reject(toError(err).message);
         });
       });
-      qz.security.setSignaturePromise((toSign: string) =>
-        signQzRequest(toSign).catch((err: unknown) => {
-          throw new QzError("sign-failed", "No se pudo autorizar la impresión con el servidor", err);
-        }),
-      );
+      // OJO: qz-tray espera aquí una función que devuelva un RESOLVER
+      // ((resolve, reject) => void) — o una función declarada `async`. Devolver
+      // una Promise desde una arrow normal cae en `new Promise(promesa)` →
+      // "Promise resolver #<Promise> is not a function" y NINGUNA llamada
+      // firmada (listar impresoras, imprimir) salía al tray (bug 2026-08-31:
+      // la impresión silenciosa nunca funcionó por esto).
+      const signatureFactory: QzTypes.PromiseFactory = toSign => (resolve, reject) => {
+        signQzRequest(toSign).then(resolve, (err: unknown) => {
+          // El tipo de reject pide string, pero en runtime QZ propaga el valor
+          // tal cual al rechazo de la llamada — pasamos el QzError para que
+          // dispatchTicket conserve el kind "sign-failed" (toast correcto).
+          const rejectError = reject as unknown as (reason: QzError) => void;
+          rejectError(new QzError("sign-failed", "No se pudo autorizar la impresión con el servidor", err));
+        });
+      };
+      qz.security.setSignaturePromise(signatureFactory);
       qz.security.setSignatureAlgorithm("SHA512");
       qz.websocket.setClosedCallbacks(() => {
         connectPromise = null;
@@ -185,6 +196,12 @@ export async function printHtmlViaQz(html: string, opts: QzPrintOptions): Promis
     margins: 0,
     scaleContent: true,
     colorType: "grayscale",
+    // Densidad FIJA a 203 dpi (estándar de térmicas 58/80mm). Los drivers
+    // genéricos (p.ej. Anjet58 → "STMicroelectronics USB Portable Printer")
+    // no reportan resolución y QZ rasterizaba a una escala gigante — el
+    // ticket salía kilométrico vaciando el rollo (bug 2026-08-31).
+    density: 203,
+    interpolation: "nearest-neighbor",
     copies: opts.copies ?? 1,
     jobName: opts.jobName,
   } as unknown as QzTypes.PrinterOptions);
