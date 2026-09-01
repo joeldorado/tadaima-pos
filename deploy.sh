@@ -4,7 +4,7 @@ set -euo pipefail
 
 # ─── Config (sobreescribe con env vars si quieres) ────────────────────────────
 PROJECT_ID="${PROJECT_ID:-impusodigitaldorado}"
-REGION="${REGION:-us-central1}"
+REGION="${REGION:-us-east1}"
 SERVICE="${SERVICE:-tadaima}"
 REPO="${REPO:-tadaima}"
 IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short HEAD 2>/dev/null || echo local)-$(date +%s)}"

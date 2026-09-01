@@ -4,6 +4,29 @@
 
 ---
 
+### Sesión 2026-08-31 (5) — Cloud Run mudado a us-east1: API 5-8× más rápido — EN PROPAGACIÓN
+
+**Root cause de la lentitud general** (cobro ~5s, /auth/me ~1s, stats ~2.6s):
+desde la migración a Supabase (2026-08-03) la DB vive en AWS us-east-1
+(Virginia) y Cloud Run en us-central1 (Iowa) → ~33ms por query × decenas de
+queries por request. Medido en logs de tráfico real: POST /sales 4.4-5.3s.
+
+**Solución: mover el servicio junto a la base** (la base ni se toca):
+- Servicio gemelo `tadaima` en us-east1 creado vía `services replace` con el
+  YAML exacto del de us-central1 (misma imagen pineada por sha256, mismas
+  env/secrets/minScale) + IAM allUsers.
+- Verificado por URL directa: /auth/me 1.24s→0.26s · /products/stats
+  2.60s→0.33s (5-8×). El cobro debe quedar <1s.
+- Mapeos de dominio (tadaimamexico.com + www) movidos us-central1→us-east1.
+  us-east1 SÍ soporta domain mappings; el DNS de GoDaddy no se toca (mismos
+  ghs/IPs globales). Cero downtime observado: el edge siguió sirviendo del
+  viejo mientras propaga el cambio de región (minutos a ~1h).
+- Config actualizada: run/region=us-east1 en la config gcloud `tadaimapos`,
+  deploy.sh, CLAUDE.md y backend/AGENTS.md. **Los deploys ahora van a
+  us-east1**; el servicio de us-central1 queda como rollback hasta confirmar
+  la propagación (luego borrarlo o bajarle minScale a 0).
+
+
 ### Sesión 2026-08-31 (4) — Impresión precalentada al entrar a Caja — DEPLOYADO rev `tadaima-00024-dg9`
 
 Joel: "se puede ir preparando antes de imprimir y mandarlo en cuanto paguen".

@@ -110,7 +110,7 @@ en aislamiento) antes que dentro de componentes.
 
 ## Deploy
 
-Un solo contenedor en **Cloud Run** (`us-central1`) sirve el API de Laravel **y** el frontend
+Un solo contenedor en **Cloud Run** (`us-east1` — junto a Supabase desde 2026-08-31; antes us-central1) sirve el API de Laravel **y** el frontend
 ya buildeado. `deploy.sh` hace build + push + deploy; `docker/entrypoint.sh` corre
 `php artisan migrate --force` al arrancar, así que **las migraciones se aplican solas a prod
 en cada deploy**. DB de producción: MySQL en Cloud SQL (`pos-lite-db`).
