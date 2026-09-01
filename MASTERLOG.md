@@ -4,7 +4,7 @@
 
 ---
 
-### Sesión 2026-08-31 (5) — Cloud Run mudado a us-east1: API 5-8× más rápido — EN PROPAGACIÓN
+### Sesión 2026-08-31 (5) — Cloud Run mudado a us-east1: API 5-8× más rápido — COMPLETADO (viejo borrado)
 
 **Root cause de la lentitud general** (cobro ~5s, /auth/me ~1s, stats ~2.6s):
 desde la migración a Supabase (2026-08-03) la DB vive en AWS us-east-1
