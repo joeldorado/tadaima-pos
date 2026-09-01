@@ -23,8 +23,13 @@ queries por request. Medido en logs de tráfico real: POST /sales 4.4-5.3s.
   viejo mientras propaga el cambio de región (minutos a ~1h).
 - Config actualizada: run/region=us-east1 en la config gcloud `tadaimapos`,
   deploy.sh, CLAUDE.md y backend/AGENTS.md. **Los deploys ahora van a
-  us-east1**; el servicio de us-central1 queda como rollback hasta confirmar
-  la propagación (luego borrarlo o bajarle minScale a 0).
+  us-east1**. Propagación confirmada en logs (~25 min: tráfico real del
+  cliente aterrizando en east con /auth/me ~0.4s) y el servicio viejo de
+  us-central1 BORRADO. El cliente no perdió ni un request (200 continuos
+  durante todo el cambio); solo un PoP del edge (el de Joel) dio error SSL
+  ~6 min tras el borrado y se auto-recuperó. Verificación final vía dominio:
+  /auth/me 1.2s→0.55s · /products/stats 2.6s→1.0s (en sitio del cliente
+  mejor aún). Pendiente natural: ver POST /sales en telemetría mañana.
 
 
 ### Sesión 2026-08-31 (4) — Impresión precalentada al entrar a Caja — DEPLOYADO rev `tadaima-00024-dg9`
