@@ -2,19 +2,27 @@ import { useEffect, useMemo, useState } from "react";
 import { X, Loader2, Check, DollarSign, Search, PackageCheck } from "lucide-react";
 import { motion as Motion } from "motion/react";
 import { toast } from "sonner";
-import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
-import { getProducts, updateProduct, type PaginatedResponse, type Product } from "@tadaima/api";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  getMissingCostSummary, getProducts, updateProduct,
+  type MissingCostStockFilter, type PaginatedResponse, type Product,
+} from "@tadaima/api";
 import { queryKeys } from "@/lib/queryKeys";
+import { buildMissingCostParams, MISSING_COST_CHIPS, MISSING_COST_PAGE_SIZE } from "@/lib/missingCost";
 
 const TP = "var(--td-text-hi)";
 const TS = "var(--td-text-md)";
 const TM = "var(--td-text-lo)";
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = MISSING_COST_PAGE_SIZE;
 
 interface Props {
-  /** Tienda seleccionada en Productos (scope del stock; null = todas). */
+  /** Tienda seleccionada en Productos (scope del stock; null = todas). Valor inicial. */
   storeId?: number | null;
+  /** Admin puede cambiar de tienda dentro del modal; el resto queda fijo en la suya. */
+  isAdmin?: boolean;
+  /** Tiendas para el selector (solo admin). */
+  stores?: { id: number; name: string }[];
   /** Solo admin/gerente puede guardar (el backend gatea igual). */
   canEdit: boolean;
   fmt: (n: number) => string;
@@ -47,8 +55,12 @@ const inputStyle: React.CSSProperties = {
  * filas se reordenarían bajo los dedos del capturista. Al reabrir el modal la
  * lista sale fresca (gcTime 0).
  */
-export function MissingCostModal({ storeId, canEdit, fmt, onClose }: Props) {
+export function MissingCostModal({ storeId: initialStoreId, isAdmin = false, stores = [], canEdit, fmt, onClose }: Props) {
   const queryClient = useQueryClient();
+  // Tienda y chip de stock (Joel 2026-09-25). El admin cambia de tienda aquí
+  // mismo; gerente/cajero quedan en la suya (ProductsPage ya la fija).
+  const [storeId, setStoreId] = useState<number | null>(initialStoreId ?? null);
+  const [stockFilter, setStockFilter] = useState<MissingCostStockFilter>("con_stock");
   const [search, setSearch] = useState("");
   const [serverSearch, setServerSearch] = useState("");
   useEffect(() => {
@@ -58,16 +70,10 @@ export function MissingCostModal({ storeId, canEdit, fmt, onClose }: Props) {
   const term = serverSearch.trim().length >= 2 ? serverSearch.trim() : "";
 
   const query = useInfiniteQuery<PaginatedResponse<Product>, Error>({
-    queryKey: ["missing-cost", { storeId: storeId ?? null, term }],
-    queryFn: ({ pageParam = 1 }) => getProducts({
-      no_cost: true,
-      type: "product",
-      with_meta: true,
-      per_page: PAGE_SIZE,
-      page: pageParam as number,
-      ...(term ? { search: term } : {}),
-      ...(storeId ? { store_id: storeId, include_unassigned: true } : {}),
-    }),
+    queryKey: ["missing-cost", { storeId, term, stockFilter }],
+    queryFn: ({ pageParam = 1 }) => getProducts(
+      buildMissingCostParams({ storeId, stockFilter, term, page: pageParam as number }),
+    ),
     initialPageParam: 1,
     getNextPageParam: (lastPage) => {
       const next = (lastPage.current_page ?? 1) + 1;
@@ -77,6 +83,17 @@ export function MissingCostModal({ storeId, canEdit, fmt, onClose }: Props) {
     gcTime: 0,
     refetchOnWindowFocus: false,
   });
+
+  // Contadores de los chips — misma vida que la lista (no se refrescan con
+  // cada costo guardado; al reabrir salen frescos).
+  const summaryQuery = useQuery({
+    queryKey: ["missing-cost", "summary", { storeId }],
+    queryFn: () => getMissingCostSummary({ type: "product", ...(storeId ? { store_id: storeId } : {}) }),
+    staleTime: Infinity,
+    gcTime: 0,
+    refetchOnWindowFocus: false,
+  });
+  const summary = summaryQuery.data;
 
   // Estado de captura por fila, aparte de los datos del server (que están
   // congelados): borrador + guardado/verde sobreviven a "Cargar 50 más".
@@ -92,6 +109,10 @@ export function MissingCostModal({ storeId, canEdit, fmt, onClose }: Props) {
       categoria: p.category?.name ?? "",
       imagen: p.images?.[0]?.url ?? "",
       precioA: Number(p.prices?.price_1 ?? 0) || 0,
+      // Con tienda el backend desglosa Exhibición/Bodega; sin tienda solo total.
+      stockTotal: Number(p.stock_total ?? 0) || 0,
+      stockExh: p.stock_exhibicion ?? null,
+      stockBod: p.stock_bodega ?? null,
     })),
     [query.data],
   );
@@ -126,7 +147,10 @@ export function MissingCostModal({ storeId, canEdit, fmt, onClose }: Props) {
     }
   };
 
-  const isEmpty = !query.isPending && total === 0 && !term;
+  // "Catálogo completo con costo" solo si ni incluyendo agotados queda alguno;
+  // si el chip activo viene vacío es "nada en este filtro", no "todo listo".
+  const isEmpty = !query.isPending && total === 0 && !term && stockFilter === "con_stock" && summary !== undefined && summary.todos === 0;
+  const filterEmpty = !query.isPending && total === 0 && !term && !isEmpty;
   const allDone = total > 0 && remaining === 0;
 
   return (
@@ -141,11 +165,11 @@ export function MissingCostModal({ storeId, canEdit, fmt, onClose }: Props) {
         style={{ background: "var(--td-popup-bg)", border: "1px solid var(--td-popup-border)" }}
       >
         {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "18px 22px", borderBottom: "1px solid var(--td-card-border)" }}>
+        <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 14, padding: "18px 22px", borderBottom: "1px solid var(--td-card-border)" }}>
           <div style={{ width: 44, height: 44, borderRadius: 13, background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.3)", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <DollarSign size={22} color="#EF4444" />
           </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ flex: "1 1 160px", minWidth: 0 }}>
             <p style={{ margin: 0, fontSize: 15, fontWeight: 900, color: TP }}>Productos sin Costo</p>
             <p style={{ margin: 0, fontSize: 11, color: TM, fontWeight: 700 }}>
               {query.isPending
@@ -155,6 +179,20 @@ export function MissingCostModal({ storeId, canEdit, fmt, onClose }: Props) {
                   : `Captura el costo real · faltan ${remaining.toLocaleString("es-MX")}${term ? ` con "${term}"` : ""}${done > 0 ? ` · ${done} listo${done === 1 ? "" : "s"}` : ""}`}
             </p>
           </div>
+          {isAdmin && stores.length > 0 && (
+            <select
+              data-testid="mc-store"
+              value={storeId ?? ""}
+              onChange={e => setStoreId(e.target.value ? Number(e.target.value) : null)}
+              title="Tienda"
+              // En móvil baja a su propia línea (order-last + ancho completo).
+              className="order-last w-full sm:order-none sm:w-auto sm:max-w-[190px]"
+              style={{ padding: "7px 10px", borderRadius: 10, border: "1px solid var(--td-input-border)", background: "var(--td-input-bg)", color: TS, fontSize: 11.5, fontWeight: 800, outline: "none", cursor: "pointer" }}
+            >
+              <option value="">Todas las tiendas</option>
+              {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          )}
           <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 9, background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: TM }}>
             <X size={14} />
           </button>
@@ -185,6 +223,35 @@ export function MissingCostModal({ storeId, canEdit, fmt, onClose }: Props) {
                 <Loader2 size={14} className="animate-spin" style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: TM }} />
               )}
             </div>
+            {/* Chips de stock (una sola selección) — mismo estilo de pill que Filtros de Productos */}
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+              {MISSING_COST_CHIPS.map(chip => {
+                const active = stockFilter === chip.key;
+                const count = summary?.[chip.key];
+                return (
+                  <button
+                    key={chip.key}
+                    type="button"
+                    data-testid={`mc-chip-${chip.key}`}
+                    title={chip.hint}
+                    onClick={() => setStockFilter(chip.key)}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 6, padding: "6px 11px", borderRadius: 999,
+                      background: active ? `${chip.color}1f` : "var(--td-card-bg)",
+                      border: `1px solid ${active ? `${chip.color}80` : "var(--td-card-border)"}`,
+                      color: active ? chip.color : TS, fontSize: 11, fontWeight: 800, cursor: "pointer",
+                    }}
+                  >
+                    {chip.label}
+                    {count !== undefined && (
+                      <span style={{ fontSize: 10, fontWeight: 900, padding: "1px 6px", borderRadius: 999, background: active ? `${chip.color}26` : "var(--td-input-bg)", color: active ? chip.color : TM }}>
+                        {count.toLocaleString("es-MX")}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
 
@@ -206,6 +273,10 @@ export function MissingCostModal({ storeId, canEdit, fmt, onClose }: Props) {
                 Un producto sin costo real queda bloqueado para venta. Aquí aparecen en cuanto detectemos alguno.
               </p>
             </div>
+          ) : filterEmpty ? (
+            <p style={{ margin: "24px 4px", fontSize: 12, fontWeight: 700, color: TM, textAlign: "center" }}>
+              Nada en este filtro. Prueba con otro chip{isAdmin ? " u otra tienda" : ""}.
+            </p>
           ) : rows.length === 0 ? (
             <p style={{ margin: "24px 4px", fontSize: 12, fontWeight: 700, color: TM, textAlign: "center" }}>
               Nada coincide con &quot;{term}&quot; entre los productos sin costo.
@@ -213,8 +284,9 @@ export function MissingCostModal({ storeId, canEdit, fmt, onClose }: Props) {
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {/* Encabezado tabla (desktop) */}
-              <div className="hidden sm:grid" style={{ gridTemplateColumns: "1fr 120px 150px", gap: 12, padding: "0 4px 4px", fontSize: 9.5, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: TM }}>
+              <div className="hidden sm:grid" style={{ gridTemplateColumns: "1fr 96px 100px 150px", gap: 12, padding: "0 4px 4px", fontSize: 9.5, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: TM }}>
                 <span>Producto</span>
+                <span style={{ textAlign: "right" }}>Stock</span>
                 <span style={{ textAlign: "right" }}>Precio venta</span>
                 <span style={{ textAlign: "right" }}>Costo real</span>
               </div>
@@ -227,7 +299,7 @@ export function MissingCostModal({ storeId, canEdit, fmt, onClose }: Props) {
                 return (
                   <div
                     key={row.id}
-                    className="grid grid-cols-1 sm:grid-cols-[1fr_120px_150px] items-center"
+                    className="grid grid-cols-1 sm:grid-cols-[1fr_96px_100px_150px] items-center"
                     style={{
                       gap: 12, padding: "10px 12px", borderRadius: 14,
                       background: saved ? "rgba(16,185,129,0.06)" : "var(--td-card-bg)",
@@ -248,6 +320,21 @@ export function MissingCostModal({ storeId, canEdit, fmt, onClose }: Props) {
                           {row.sku}{row.categoria ? ` · ${row.categoria}` : ""}
                         </p>
                       </div>
+                    </div>
+
+                    {/* Stock — con tienda: Exh (verde) / Bod (ámbar); sin tienda: total */}
+                    <div data-testid={`mc-stock-${row.id}`} style={{ textAlign: "right", fontSize: 12, fontWeight: 800, lineHeight: 1.35 }}>
+                      <span className="sm:hidden" style={{ fontSize: 10, fontWeight: 800, color: TM, marginRight: 6, textTransform: "uppercase" as const }}>Stock</span>
+                      {row.stockTotal <= 0 ? (
+                        <span style={{ color: "#EF4444" }}>Agotado</span>
+                      ) : row.stockExh !== null || row.stockBod !== null ? (
+                        <span className="inline-flex sm:flex sm:flex-col sm:items-end" style={{ gap: 6 }}>
+                          <span style={{ color: (row.stockExh ?? 0) > 0 ? "#10b981" : TM }} title="Exhibición">Exh {(row.stockExh ?? 0).toLocaleString("es-MX")}</span>
+                          <span style={{ color: (row.stockBod ?? 0) > 0 ? "#F59E0B" : TM }} title="Bodega">Bod {(row.stockBod ?? 0).toLocaleString("es-MX")}</span>
+                        </span>
+                      ) : (
+                        <span style={{ color: TS }}>{row.stockTotal.toLocaleString("es-MX")} pzs</span>
+                      )}
                     </div>
 
                     {/* Precio venta (referencia) */}

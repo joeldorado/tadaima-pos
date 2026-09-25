@@ -21,7 +21,7 @@ import { isAdmin as isAdminRole, isManager as isManagerRole, canDeleteProducts }
 import { CategoryMultiPicker } from "@/components/products/CategoryMultiPicker";
 import { joinCategoryNames } from "@/lib/categoryPicker";
 import { toast } from "sonner";
-import { createProduct, updateProduct, deleteProduct, forceDeleteProduct, uploadProductImage, removeProductImage, getInventory, updateInventory, getPrice, sendStockAlert, getCategories, getSuppliers, createSupplier, attachPromotionProducts } from "@tadaima/api";
+import { lookupProductByCode, createProduct, updateProduct, deleteProduct, forceDeleteProduct, uploadProductImage, removeProductImage, getInventory, updateInventory, getPrice, sendStockAlert, getCategories, getSuppliers, createSupplier, attachPromotionProducts } from "@tadaima/api";
 import type { ApiError } from "@tadaima/api";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useProductsQuery, useProductStatsQuery, type ProductsCatalogFilter } from "@/hooks/queries/useProducts";
@@ -31,6 +31,8 @@ import { useStoresQuery } from "@/hooks/queries/useStores";
 import { useWarehousesQuery } from "@/hooks/queries/useWarehouses";
 import { queryKeys } from "@/lib/queryKeys";
 import { generateBarcode, generatePlaceholderSku } from "@/lib/barcode";
+import { isSkuMatch, normalizeCode, shouldLookupCode } from "@/lib/productCode";
+import { DuplicateCodeNotice } from "@/components/products/DuplicateCodeNotice";
 import { useFormDraft } from "@/hooks/useFormDraft";
 import { warehouseTypeLabel } from "@/lib/warehouse";
 import { PRICE_FORM_LABELS, PRICE_LEVEL_LABELS, PRICE_LEVEL_COLORS, PRICE_LEVEL_RGB } from "@/lib/priceLevels";
@@ -603,7 +605,8 @@ function ProductModal({
   canDelete = false,
   proveedores,
   onAddProveedor,
-  locations = []
+  locations = [],
+  onOpenExisting,
 }: {
   onClose: () => void;
   // Promise<void> (2026-08-04): el modal espera la confirmación del padre
@@ -620,6 +623,8 @@ function ProductModal({
   proveedores: string[];
   onAddProveedor: (p: string) => void;
   locations: {warehouseId: number, name: string, store: string, storeId: number | null, type: 'central' | 'store' | 'bodega'}[];
+  /** Alta con código repetido → abrir ESE producto en edición (Joel 2026-09-25). */
+  onOpenExisting?: (p: Product) => void;
 }) {
   // Borrador en localStorage (Joel 2026-08-05): protege lo capturado si algo
   // interrumpe la sesión ANTES de guardar (recarga, tab cerrada, crash) —
@@ -683,6 +688,33 @@ function ProductModal({
   // Mientras el padre confirma con el backend — bloquea Guardar/Cancelar/X
   // para que no se cierre el modal a medio guardar (2026-08-04).
   const [saving, setSaving] = useState(false);
+
+  // ¿El código ya existe? (Joel 2026-09-25 — el sistema viejo preguntaba "Ya
+  // existe artículo con código X, ¿desea modificarlo?"). Se consulta al
+  // backend con debounce mientras escriben/escanean; en edición se excluye
+  // el propio producto.
+  const [lookupCode, setLookupCode] = useState(() => normalizeCode(formData.sku));
+  useEffect(() => {
+    const t = window.setTimeout(() => setLookupCode(normalizeCode(formData.sku)), 400);
+    return () => window.clearTimeout(t);
+  }, [formData.sku]);
+  const duplicateQuery = useQuery({
+    queryKey: [...queryKeys.products.all, "lookup", lookupCode, product?.id ?? null],
+    queryFn: () => lookupProductByCode(lookupCode, product?.id),
+    enabled: shouldLookupCode(lookupCode),
+    staleTime: 30_000,
+  });
+  // Solo si el resultado corresponde a lo que HOY está en el campo.
+  const duplicates = shouldLookupCode(lookupCode) && lookupCode === normalizeCode(formData.sku)
+    ? (duplicateQuery.data ?? [])
+    : [];
+  const skuTaken = duplicates.some(d => isSkuMatch(d, formData.sku));
+
+  const openExisting = (p: Product) => {
+    // Lo capturado era un duplicado: no tiene caso restaurarlo después.
+    clearDraft();
+    onOpenExisting?.(p);
+  };
   // Aplica un archivo de imagen al formulario. Compartido por el <input file>
   // (click) y el drop (drag & drop) para no duplicar la lógica.
   const applyImageFile = (file: File | undefined | null): void => {
@@ -748,6 +780,14 @@ function ProductModal({
     if (!formData.allowCash && !formData.allowCard) {
       toast.error("El producto debe aceptar al menos un método de pago (efectivo o tarjeta)");
       setActiveTab("precios");
+      return;
+    }
+    // SKU repetido: el backend lo rechaza (único). Mejor decir cuál es aquí.
+    if (skuTaken) {
+      toast.error(`Ese código ya es de «${duplicates.find(d => isSkuMatch(d, formData.sku))?.name ?? "otro producto"}»`, {
+        description: product ? "Usa otro código." : "Usa otro código o edita ese producto desde el aviso.",
+      });
+      setActiveTab("general");
       return;
     }
     // BACKUP de inventario (Joel 2026-07-24): si este guardado CAMBIA
@@ -935,7 +975,8 @@ function ProductModal({
                         <input 
                           type="text" value={formData.sku} 
                           onChange={e => setFormData({...formData, sku: e.target.value})}
-                          className="w-full pl-4 pr-12 py-3 rounded-2xl outline-none uppercase" style={T.input}
+                          className="w-full pl-4 pr-12 py-3 rounded-2xl outline-none uppercase"
+                          style={duplicates.length > 0 ? { ...T.input, borderColor: "rgba(245,158,11,0.7)" } : T.input}
                           placeholder="ESCANEÉ O ESCRIBA"
                         />
                         <button
@@ -962,6 +1003,16 @@ function ProductModal({
                       />
                     </div>
                   </div>
+                  {duplicates.length > 0 && (
+                    <DuplicateCodeNotice
+                      matches={duplicates}
+                      code={formData.sku ?? ""}
+                      mode={product ? "edit" : "create"}
+                      canEdit={canManage && !!onOpenExisting}
+                      onEdit={openExisting}
+                      fmt={fmt}
+                    />
+                  )}
                 </div>
               </div>
 
@@ -1813,7 +1864,10 @@ export function ProductsPage() {
   };
 
   const handleSaveProduct = async (p: Producto, imageFile?: File, pendingPromoIds?: number[]): Promise<void> => {
-    const isNew = !products.some(item => item.id === p.id);
+    // Alta vs edición según el modal abierto, NO según la página cargada
+    // (2026-09-25): un producto abierto desde el aviso de código repetido casi
+    // nunca está en la página actual y se iba por la rama de alta (422).
+    const isNew = editingProduct === undefined;
 
     // El modal SOLO se cierra tras confirmar con el backend (2026-08-04 —
     // antes se cerraba aquí, síncrono, antes de saber si el guardado iba a
@@ -3408,7 +3462,9 @@ export function ProductsPage() {
           canManage={canManage}
           canDelete={canDelete}
           onClose={() => { setIsModalOpen(false); setEditingProduct(undefined); }}
+          key={editingProduct?.id ?? 'new'}
           onSave={handleSaveProduct}
+          onOpenExisting={(p) => setEditingProduct(apiProductToProducto(p))}
           onDelete={(p) => setDeleteTarget(p)}
           {...(editingProduct !== undefined ? { product: editingProduct } : {})}
           proveedores={proveedores}
@@ -3502,6 +3558,8 @@ export function ProductsPage() {
       {showMissingCost && canViewCost && (
         <MissingCostModal
           storeId={selectedStoreId}
+          isAdmin={isAdmin}
+          stores={stores}
           canEdit={canEdit}
           fmt={fmt}
           onClose={() => setShowMissingCost(false)}

@@ -145,6 +145,10 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     // stats ANTES del apiResource: si no, products/{product} captura "stats"
     // como id y truena el model binding.
     Route::get('products/stats', [ProductController::class, 'stats']);
+    // Igual, ANTES del apiResource (2026-09-25): código duplicado en el alta y
+    // contadores de los chips del modal "Productos sin Costo".
+    Route::get('products/lookup', [ProductController::class, 'lookup']);
+    Route::get('products/missing-cost/summary', [ProductController::class, 'missingCostSummary']);
 
     Route::apiResource('products', ProductController::class)->only([
         'index', 'show', 'store', 'update', 'destroy',

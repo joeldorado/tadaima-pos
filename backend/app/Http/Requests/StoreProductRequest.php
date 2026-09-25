@@ -64,4 +64,15 @@ class StoreProductRequest extends FormRequest
         });
     }
 
+    /**
+     * SKU duplicado en español (2026-09-25): antes salía el default de Laravel
+     * en inglés ("The sku has already been taken"). El alta ya avisa ANTES de
+     * guardar con GET /products/lookup; esto es el respaldo del 422.
+     */
+    public function messages(): array
+    {
+        return [
+            'sku.unique' => 'Ese SKU / código ya lo tiene otro producto.',
+        ];
+    }
 }

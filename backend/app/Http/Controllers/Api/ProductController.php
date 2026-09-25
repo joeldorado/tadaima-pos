@@ -32,6 +32,9 @@ class ProductController extends Controller
      *   ?per_page=N    paginación (default 100, 0 = todos)
      *   ?category_id=  solo esa categoría
      *   ?no_cost=1     sin costo real (cost NULL o <= 0) Y con stock > 0
+     *     + ?no_cost_stock=con_stock|exhibicion|bodega|todos (default con_stock;
+     *       todos = incluye agotados)
+     *   ?sort=top|stock_desc  más vendidos 30d / más piezas primero
      *   ?out_of_stock=1 / ?low_stock=1 (+?threshold=, default 10) por stock
      *   ?has_promo=1   con promo vigente (scoped a ?store_id si viene)
      *   ?no_category=1 sin NINGUNA categoría (pivote vacío)
@@ -136,8 +139,22 @@ class ProductController extends Controller
             // Paridad con el chip del front: NULL O <= 0 cuentan como "sin costo".
             // Desde 2026-08-31 (Joel) además exige STOCK > 0: la lista es para ir
             // capturando costos y los agotados solo estorbaban (~lista gigante).
-            $query->where(fn ($q) => $q->whereNull('cost')->orWhere('cost', '<=', 0))
-                ->whereRaw("{$stockSql} > 0", $bind);
+            $query->where(fn ($q) => $q->whereNull('cost')->orWhere('cost', '<=', 0));
+
+            // Chips del modal "Productos sin Costo" (2026-09-25, Joel):
+            //   con_stock (default, = antes) · exhibicion · bodega · todos (incluye agotados)
+            switch ((string) $request->get('no_cost_stock', 'con_stock')) {
+                case 'todos':
+                    break;
+                case 'exhibicion':
+                    $query->whereRaw(self::typedStockSql($storeId, 'store') . ' > 0', $bind);
+                    break;
+                case 'bodega':
+                    $query->whereRaw(self::typedStockSql($storeId, 'bodega') . ' > 0', $bind);
+                    break;
+                default:
+                    $query->whereRaw("{$stockSql} > 0", $bind);
+            }
         }
 
         if ($request->boolean('out_of_stock') || $request->boolean('low_stock')) {
@@ -221,6 +238,10 @@ class ProductController extends Controller
             $query->withCount(['saleItems as recent_sales_count' => function ($q) use ($since) {
                 $q->whereHas('sale', fn ($sq) => $sq->where('created_at', '>=', $since));
             }])->orderByDesc('recent_sales_count')->orderByDesc('id');
+        } elseif ($request->get('sort') === 'stock_desc') {
+            // Más piezas primero (modal sin costo, 2026-09-25): capturar primero
+            // el costo de lo que más pesa en inventario. Desempate estable por id.
+            $query->orderByRaw("{$stockSql} DESC", $bind)->orderBy('id', 'asc');
         } else {
             // Tiebreak estable (2026-08-05): antes no había NINGÚN orden
             // secundario en el listado default, lo que hacía la paginación
@@ -345,6 +366,106 @@ class ProductController extends Controller
         }
 
         return $this->success($data);
+    }
+
+    /**
+     * SQL correlacionado del stock de un TIPO de almacén ('store' = Exhibición,
+     * 'bodega' = Bodega) para `products.id`. Con tienda lleva un `?` (store_id)
+     * — mismo binding que $stockSql del index; sin tienda suma todas.
+     */
+    private static function typedStockSql(?int $storeId, string $warehouseType): string
+    {
+        $type = $warehouseType === 'bodega' ? 'bodega' : 'store';
+        $storeCond = $storeId ? ' AND w.store_id = ?' : '';
+
+        return "COALESCE((SELECT SUM(i.quantity) FROM inventory i JOIN warehouses w ON w.id = i.warehouse_id WHERE i.product_id = products.id AND w.type = '{$type}'{$storeCond}), 0)";
+    }
+
+    /**
+     * GET /products/lookup?code=X[&exclude_id=N]
+     *
+     * ¿Ya existe un producto con este código? (Joel 2026-09-25 — el sistema
+     * viejo preguntaba "Ya existe artículo con código X, ¿desea modificarlo?").
+     * El alta lo consulta mientras se escribe/escanea el SKU para mostrar CUÁL
+     * es y ofrecer editarlo, en vez de un 422 genérico al guardar.
+     *
+     * Match EXACTO (trim + sin distinguir mayúsculas) contra sku O barcode, en
+     * TODO el catálogo (activos, inactivos, mangas): cualquiera bloquea el SKU.
+     * Primero el que coincide por SKU. Máx 3. Código < 3 caracteres → [].
+     * Costo gateado por ProductResource como siempre.
+     */
+    public function lookup(Request $request): JsonResponse
+    {
+        $code = mb_strtolower(trim((string) $request->get('code', '')));
+        if (mb_strlen($code) < 3) {
+            return $this->success([]);
+        }
+        $excludeId = $request->integer('exclude_id') ?: null;
+
+        $products = Product::query()
+            ->where(fn ($q) => $q->whereRaw('LOWER(sku) = ?', [$code])
+                ->orWhereRaw('LOWER(barcode) = ?', [$code]))
+            ->when($excludeId, fn ($q) => $q->where('id', '!=', $excludeId))
+            ->with(['category', 'categories:product_categories.id,name', 'supplier', 'price', 'images', 'paymentMethod', 'activePromotions'])
+            ->withSum('inventory', 'quantity')
+            ->orderByRaw('CASE WHEN LOWER(sku) = ? THEN 0 ELSE 1 END', [$code])
+            ->orderBy('id')
+            ->limit(3)
+            ->get();
+
+        return $this->success(ProductResource::collection($products)->resolve($request));
+    }
+
+    /**
+     * GET /products/missing-cost/summary?store_id=&type=
+     *
+     * Contadores de los chips del modal "Productos sin Costo" (2026-09-25):
+     *   con_stock  — total > 0 (lo que lista ?no_cost=1 por default)
+     *   exhibicion — con piezas en Exhibición (vendible en Caja)
+     *   bodega     — con piezas en Bodega
+     *   todos      — incluye agotados
+     * Scope fail-closed igual que stats(): admin filtra libre, gerente/cajero
+     * anclado a su tienda. Es dato de costo → 403 sin canViewCost().
+     */
+    public function missingCostSummary(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (! $user || ! $user->canViewCost()) {
+            return $this->error('No tienes permiso para ver costos.', 403);
+        }
+        $storeId = ! $user->isAdminRole()
+            ? ($user->store_id ?? -1)
+            : ($request->integer('store_id') ?: null);
+        $type = $request->filled('type') ? (string) $request->get('type') : null;
+
+        // Derivada de inventario por producto, un solo scan (patrón de stats()).
+        // SUM(CASE) y no FILTER(WHERE): MySQL (dev local) no soporta FILTER.
+        $inv = DB::table('inventory as i')
+            ->join('warehouses as w', 'w.id', '=', 'i.warehouse_id')
+            ->selectRaw("i.product_id,
+                SUM(i.quantity) as qty,
+                SUM(CASE WHEN w.type = 'store' THEN i.quantity ELSE 0 END) as exh,
+                SUM(CASE WHEN w.type = 'bodega' THEN i.quantity ELSE 0 END) as bod")
+            ->when($storeId, fn ($q) => $q->where('w.store_id', $storeId))
+            ->groupBy('i.product_id');
+
+        $row = DB::table('products as p')
+            ->leftJoinSub($inv, 'inv', 'inv.product_id', '=', 'p.id')
+            ->when($type, fn ($q) => $q->where('p.product_type', $type))
+            ->where(fn ($q) => $q->whereNull('p.cost')->orWhere('p.cost', '<=', 0))
+            ->selectRaw('COUNT(*) as todos,
+                SUM(CASE WHEN COALESCE(inv.qty, 0) > 0 THEN 1 ELSE 0 END) as con_stock,
+                SUM(CASE WHEN COALESCE(inv.exh, 0) > 0 THEN 1 ELSE 0 END) as exhibicion,
+                SUM(CASE WHEN COALESCE(inv.bod, 0) > 0 THEN 1 ELSE 0 END) as bodega')
+            ->first();
+
+        return $this->success([
+            'con_stock' => (int) ($row->con_stock ?? 0),
+            'exhibicion' => (int) ($row->exhibicion ?? 0),
+            'bodega' => (int) ($row->bodega ?? 0),
+            'todos' => (int) ($row->todos ?? 0),
+            'store_id' => $storeId,
+        ]);
     }
 
     /**
