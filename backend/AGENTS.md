@@ -275,7 +275,9 @@ al dar de alta una tienda (y existe la migración de backfill
 
 | Método | Path | Notas |
 |---|---|---|
-| GET | `/products` | `?light=1` (payload ligero), `?search=`, `?store_id=`, `?sort=top`, `?type=` |
+| GET | `/products` | `?light=1` (payload ligero), `?search=`, `?store_id=`, `?sort=top\|stock_desc`, `?type=`, `?no_cost=1` (+`?no_cost_stock=con_stock\|exhibicion\|bodega\|todos`) |
+| GET | `/products/lookup` | `?code=` (+`?exclude_id=`) — productos que YA tienen ese código (exacto contra SKU o barcode, sin distinguir mayúsculas; máx 3, SKU primero). Aviso de duplicado en el alta |
+| GET | `/products/missing-cost/summary` | Contadores del modal "Productos sin Costo" por chip (`con_stock`, `exhibicion`, `bodega`, `todos`). Requiere `can_view_cost`; no-admin anclado a su tienda |
 | GET | `/products/{id}` | Detalle completo |
 | POST | `/products` · PUT `/products/{id}` · DELETE `/products/{id}` | CRUD (delete = soft) |
 | DELETE | `/products/{product}/force` | Borrado físico |

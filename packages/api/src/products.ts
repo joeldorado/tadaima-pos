@@ -11,8 +11,9 @@ export interface GetProductsParams {
   /**
    * 'top' ordena por count de sale_items en los últimos 30 días (desc).
    * Útil para pre-cargar el cache con los productos que el cajero más usa.
+   * 'stock_desc' = más piezas primero (modal "Productos sin Costo").
    */
-  sort?: 'top'
+  sort?: 'top' | 'stock_desc'
   /**
    * Con store_id: incluye también productos "no asignados" (sin inventario en
    * la tienda) con stock 0 + is_assigned=false, para que la sucursal les
@@ -29,6 +30,11 @@ export interface GetProductsParams {
   type?: 'product' | 'manga'
   /** Sin costo real (cost NULL o <= 0) — chip "Productos sin Costo". */
   no_cost?: boolean
+  /**
+   * Chips del modal sin costo (solo con no_cost): 'con_stock' (default del
+   * backend) · 'exhibicion' · 'bodega' · 'todos' (incluye agotados).
+   */
+  no_cost_stock?: MissingCostStockFilter
   /** Stock 0 (con store_id: en esa tienda; sin él: global). */
   out_of_stock?: boolean
   /** Stock 1..threshold — chip "Por agotarse". */
@@ -76,6 +82,42 @@ export interface ProductStatsParams {
   store_id?: number
   type?: 'product' | 'manga'
   threshold?: number
+}
+
+/** Chip de stock del modal "Productos sin Costo". */
+export type MissingCostStockFilter = 'con_stock' | 'exhibicion' | 'bodega' | 'todos'
+
+/** Contadores de los chips — GET /products/missing-cost/summary (requiere can_view_cost). */
+export interface MissingCostSummary {
+  con_stock: number
+  exhibicion: number
+  bodega: number
+  todos: number
+  store_id: number | null
+}
+
+/**
+ * Contadores del modal "Productos sin Costo" por chip de stock.
+ * Gerente/cajero quedan anclados a su tienda en el backend.
+ */
+export async function getMissingCostSummary(
+  params?: { store_id?: number; type?: 'product' | 'manga' }
+): Promise<MissingCostSummary> {
+  const response = await apiClient.get<MissingCostSummary>('/products/missing-cost/summary', { params })
+  return response.data
+}
+
+/**
+ * Productos que YA tienen este código (match exacto contra SKU o código de
+ * barras, sin distinguir mayúsculas). El alta lo usa para avisar cuál es y
+ * ofrecer editarlo. `excludeId` = el producto en edición. Máx 3, SKU primero.
+ * GET /products/lookup
+ */
+export async function lookupProductByCode(code: string, excludeId?: number): Promise<Product[]> {
+  const response = await apiClient.get<Product[]>('/products/lookup', {
+    params: { code, ...(excludeId ? { exclude_id: excludeId } : {}) },
+  })
+  return response.data
 }
 
 /**
