@@ -11,10 +11,11 @@ RUN npm ci --no-audit --no-fund
 
 COPY . .
 
-# URL del backend horneada en el bundle. Default = run.app del POS nuevo
-# (permanente, inmune a cambios de DNS/cert del dominio custom). Va como default
-# del ARG porque `gcloud run deploy --source` no permite pasar build-args.
-ARG VITE_API_URL=https://tadaima-747134907044.us-central1.run.app
+# URL del backend horneada en el bundle. Va como default del ARG porque
+# `gcloud run deploy --source` no permite pasar build-args. Usar el DOMINIO, nunca
+# un *.run.app: la URL run.app cambia si el servicio se recrea o cambia de región
+# (la de us-central1 murió al mudar el POS a us-east1 el 2026-08-31).
+ARG VITE_API_URL=https://tadaimamexico.com
 RUN VITE_API_URL=${VITE_API_URL} npx vite build
 
 FROM nginx:alpine
