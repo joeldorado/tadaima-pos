@@ -4,6 +4,37 @@
 
 ---
 
+### Sesión 2026-09-25 (2) — Aviso de código duplicado en el alta + chips de stock en "Productos sin Costo" (PR #15) — DEPLOYADO rev `tadaima-00002-pew`
+
+**Qué entró (PR #15, rama `claude/friendly-wright-oucvxd`, merge `f1df92b`):**
+- Alta/edición de producto: mientras escriben o escanean el SKU, `GET /products/lookup`
+  (match exacto contra SKU o código de barras, sin distinguir mayúsculas, máx 3) y un
+  aviso con CUÁL producto ya lo tiene (foto, precio, stock) + botón "Editar ese
+  producto" (admin/gerente). Reemplaza el 422 genérico; el 422 de respaldo ya sale en
+  español. `handleSaveProduct` ahora decide alta/edición por el modal abierto, no por
+  la página cargada.
+- Modal "Productos sin Costo": chips Con stock / En exhibición / En bodega / Incluir
+  agotados con contadores (`GET /products/missing-cost/summary`, requiere
+  `can_view_cost`, no-admin anclado a su tienda), selector de tienda para admin,
+  columna Stock (Exh/Bod por tienda) y orden `stock_desc`.
+
+**Validación antes de mergear:** PHPUnit SQLite 550/550 · tests del PR + productos en
+Postgres 17 local 48/48 (la suite PG completa tiene 5 fallas PREEXISTENTES en
+`PurgeNoStockProductsTest`/`CategoryPivotRepairTest`, por prompts/conexión sqlite de
+esos comandos — el PR no los toca) · vitest 293/293 · tsc 463 errores (baseline
+465, ninguno en código nuevo) · vite build OK · prueba en navegador contra SQLite
+local: chips/contadores/tienda, aviso con código en minúsculas y "Editar ese
+producto" → carga el inventario real (no deja stock en 0).
+
+**Deploy (primer deploy con el flujo seguro en us-east1):** `--no-traffic --tag
+candidate` → smoke en candidate (SPA 200, rutas nuevas 401 = existen y piden
+sesión, us/catalog 200, /tadaimaus/ 200, zip QZ 200, login falso 401) → envs
+idénticas (23 + 4 secretos) → "Nothing to migrate" → `update-traffic --to-latest`.
+Dominio sirve `index-DAxXq5QV.js`; 0 errores 5xx.
+**Rollback:** `gcloud run services update-traffic tadaima --to-revisions tadaima-00001-jbm=100 --project tadaimapos --region us-east1`.
+
+---
+
 ### Sesión 2026-09-25 — Tienda US caída desde la mudanza de región + AGENTS.md raíz — DEPLOYADO `tadaimaus-00004-z4c`
 
 **Caída de tadaimausa.com (2026-08-31 → 2026-09-25):** `tadaimaus/Dockerfile`
