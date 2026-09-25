@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+Estado de producción y reglas internas del proyecto (léelo primero):
+
+@AGENTS.md
+
 ## Qué es esto
 
 **Tadaima POS** — sistema de punto de venta multi-sucursal (electrónica, accesorios,
@@ -111,9 +115,10 @@ en aislamiento) antes que dentro de componentes.
 ## Deploy
 
 Un solo contenedor en **Cloud Run** (`us-east1` — junto a Supabase desde 2026-08-31; antes us-central1) sirve el API de Laravel **y** el frontend
-ya buildeado. `deploy.sh` hace build + push + deploy; `docker/entrypoint.sh` corre
+ya buildeado. Se deploya con `gcloud run deploy --source .` desde la raíz (`deploy.sh` está
+obsoleto; el comando y el flujo están en `AGENTS.md` §6); `docker/entrypoint.sh` corre
 `php artisan migrate --force` al arrancar, así que **las migraciones se aplican solas a prod
-en cada deploy**. DB de producción: MySQL en Cloud SQL (`pos-lite-db`).
+en cada deploy**. DB de producción: PostgreSQL en Supabase (MySQL/Cloud SQL ya no existe).
 
 ## Descuentos y Promos — modelo de datos para reportes (Descuentos v2)
 

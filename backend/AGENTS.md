@@ -1,8 +1,8 @@
 # Tadaima POS — Backend (Laravel API)
 
-> **Empieza aquí.** Este documento es el punto de entrada para cualquier IA o
-> desarrollador que baje el backend. Explica de qué trata el proyecto, cómo está
-> armado, cómo correrlo y la referencia completa de endpoints.
+> **Antes que esto, lee [`../AGENTS.md`](../AGENTS.md)** (estado de producción y reglas
+> internas de todo el proyecto). Este documento es la referencia del backend: cómo
+> está armado, cómo correrlo y la referencia completa de endpoints.
 >
 > Para el detalle de los contratos JSON que consume la app móvil, ver también
 > `../pos-app/docs/BACKEND_API.md`. La fuente de verdad de las rutas siempre es
@@ -31,7 +31,7 @@ Capacidades principales:
 
 | Capa | Tecnología |
 |------|-----------|
-| Framework | Laravel 11, PHP 8.3 |
+| Framework | Laravel 13, PHP 8.3 |
 | Auth | Laravel Sanctum (Bearer token) |
 | DB producción | PostgreSQL en Supabase (proyecto `yndrdteeuljxsovvgyue`, pooler session :5432) — desde 2026-08-03 |
 | DB tests | SQLite en memoria (`RefreshDatabase`) |
@@ -49,7 +49,8 @@ Capacidades principales:
 
 > ⚠️ `tadaima.poslite.com.mx` (proyecto viejo `impusodigitaldorado`) fue **eliminado el 2026-08-18** — ya no existe. Todo el equipo entra por `tadaimamexico.com`.
 
-Credenciales de prueba (prod, fase de pruebas): `pier@tadaima.mx` / `Tadaima2026` (admin).
+Credenciales: pídeselas a Joel. **Nunca** se escriben en el repo (es público) y prod
+tiene datos reales del cliente.
 
 ---
 
@@ -94,12 +95,8 @@ php artisan migrate --seed   # crea esquema + datos base (admin, roles, métodos
 php artisan serve            # http://localhost:8000
 ```
 
-Para apuntar a la **DB de producción** (fase de pruebas, vía Cloud SQL Proxy):
-
-```bash
-cloud-sql-proxy <CONNECTION_NAME> --port 3306   # o el socket configurado
-# .env: DB_HOST=127.0.0.1 DB_DATABASE=tadaimaposlite
-```
+Para desarrollo usa SQLite local (ver `docs/LOCAL_DEV_SETUP.md`). **No conectes tu
+entorno local a la base de producción** (Supabase): tiene datos reales del cliente.
 
 ### Tests
 
@@ -110,8 +107,11 @@ php artisan test --filter QABugFixesTest
 
 ### Deploy
 
+Desde la **raíz** del repo (no desde `backend/`). Flujo completo, con prueba antes
+de mandar tráfico y rollback, en [`../AGENTS.md`](../AGENTS.md) §6:
+
 ```bash
-gcloud run deploy tadaima --source . --region us-east1
+gcloud run deploy tadaima --source . --project tadaimapos --region us-east1 --no-traffic --tag candidate
 ```
 
 El `docker/entrypoint.sh` corre `php artisan migrate --force` en el arranque del
@@ -405,5 +405,6 @@ al dar de alta una tienda (y existe la migración de backfill
   (son invariantes load-bearing). Ver `tests/Feature/FullSalesQATest.php` como referencia E2E.
 - **Nunca** hardcodear secretos. Usar env vars / Secret Manager.
 - **Migraciones idempotentes** cuando hagan backfill de datos (corren solas en cada deploy).
-- La DB de prod está en **fase de pruebas** (reseteada a cero, solo admin Pier). QA va
-  directo contra MySQL prod vía proxy — no hace falta SQLite para QA manual.
+- **Prod tiene datos reales del cliente** (la fase de pruebas terminó en junio de 2026).
+  Nada de QA ni datos de prueba contra prod: se prueba en local (SQLite, o Postgres 17
+  local con `phpunit.pgsql.xml` para cambios de SQL).
