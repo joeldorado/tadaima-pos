@@ -149,7 +149,7 @@
             "kind": "callout",
             "tone": "warn",
             "title": "¿Cerrar sesión con caja abierta?",
-            "text": "Si tienes una caja abierta, el sistema te pide hacer tu corte antes de salir — así el dinero del cajón nunca queda en el aire."
+            "text": "Si tienes una caja abierta, el sistema te lo recuerda: puedes hacer tu corte ahí mismo o salir y dejarla abierta (por ejemplo, para cambiar de usuario). Al volver a entrar tu caja sigue donde la dejaste. Ojo: una caja de un día anterior no deja vender hasta hacer su corte."
           },
           {
             "kind": "link",

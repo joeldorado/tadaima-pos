@@ -27,6 +27,7 @@ import { useActiveSessionQuery } from "@/hooks/queries/useCashSession";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { CloseCashModal } from "@/components/cash/CloseCashModal";
 import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
+import { LogoutCashReminder } from "@/components/cash/LogoutCashReminder";
 import { TourOverlay } from "@/components/tour/TourOverlay";
 import { TourPickerDialog } from "@/components/tour/TourPickerDialog";
 import { useTourStore } from "@/stores/tourStore";
@@ -320,13 +321,15 @@ function LayoutInner() {
 
   const isDark = theme === "dark";
 
-  // ── Guard de logout: con caja abierta NO se sale sin hacer el corte ──────
-  // La sesión activa vive en cache RQ ['cash','activeSession'] (poll 60s);
-  // montarla aquí la hace visible en TODAS las páginas, no solo en Caja.
+  // ── Logout con caja abierta: recordatorio, el corte es opcional ──────────
+  // (Joel 2026-09-26: hasta entonces era obligatorio y no dejaba cambiar de
+  // usuario). La sesión activa vive en cache RQ ['cash','activeSession'] (poll
+  // 60s); montarla aquí la hace visible en TODAS las páginas, no solo en Caja.
   const activeSessionQuery = useActiveSessionQuery();
   const cashSession = activeSessionQuery.data ?? null;
   const isStaleSession = !!cashSession?.opened_at &&
     toLocalYmd(new Date(cashSession.opened_at)) < getTodayLocal();
+  const [showLogoutReminder, setShowLogoutReminder] = useState(false);
   const [showLogoutCorte, setShowLogoutCorte] = useState(false);
   const [logoutCorteReport, setLogoutCorteReport] = useState<CashSessionReport | null>(null);
 
@@ -339,7 +342,7 @@ function LayoutInner() {
     // Refresca la sesión antes de decidir (la caché puede tener 60s de edad).
     const fresh = await activeSessionQuery.refetch().then(r => r.data ?? null).catch(() => cashSession);
     if (fresh) {
-      setShowLogoutCorte(true);
+      setShowLogoutReminder(true);
       return;
     }
     await finishLogout();
@@ -741,12 +744,21 @@ function LayoutInner() {
         <ChangePasswordModal onClose={() => setShowChangePassword(false)} />
       )}
 
-      {/* ── Guard de logout: corte obligatorio con caja abierta ─────────────── */}
+      {/* ── Logout con caja abierta: recordatorio → corte opcional ──────────── */}
+      {showLogoutReminder && cashSession && (
+        <LogoutCashReminder
+          session={cashSession}
+          isStale={isStaleSession}
+          onCorte={() => { setShowLogoutReminder(false); setShowLogoutCorte(true); }}
+          onExitWithoutCorte={() => { setShowLogoutReminder(false); void finishLogout(); }}
+          onCancel={() => setShowLogoutReminder(false)}
+        />
+      )}
       {showLogoutCorte && cashSession && (
         <CloseCashModal
           session={cashSession}
-          title="Cierra tu caja para salir"
-          reason="Tienes la caja abierta. Haz el corte con el conteo de efectivo y después se cerrará tu sesión."
+          title="Corte antes de salir"
+          reason="Haz el corte con el conteo de efectivo y después se cerrará tu sesión."
           onClosed={(report) => {
             setShowLogoutCorte(false);
             if (report) {
@@ -763,6 +775,7 @@ function LayoutInner() {
       {logoutCorteReport && (
         <CashCloseSummaryModal
           session={logoutCorteReport}
+          open
           onClose={() => {
             setLogoutCorteReport(null);
             void finishLogout();

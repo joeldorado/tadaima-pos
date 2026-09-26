@@ -121,7 +121,8 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
 - **Una caja por persona** (ADR-017): cada usuario abre y cierra su propio turno.
 - **Día de negocio = `America/Tijuana`** (`backend/app/Support/DateRange.php`).
 - No se puede vender sobre una caja de un día anterior con 12 h o más abierta
-  (`CASH_SESSION_STALE`); cerrar sesión con caja abierta obliga a hacer el corte.
+  (`CASH_SESSION_STALE`). Cerrar sesión con caja abierta solo muestra un recordatorio
+  (`LogoutCashReminder`): el corte es opcional, para poder cambiar de usuario.
 - **El esperado del corte lo calcula solo el backend** (`GET /reports/cash`); ninguna
   pantalla lo recalcula. Cuenta pagos de ventas `completed` **y** `returned`: la
   cancelación ya resta el dinero una vez con un movimiento de salida. No lo cambies a
