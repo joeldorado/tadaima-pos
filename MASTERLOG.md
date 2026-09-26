@@ -4,6 +4,51 @@
 
 ---
 
+### Sesión 2026-09-26 — Import de productos NUEVOS de Macro (.bak Esmeralda 2026-09-24) — SOLO DATOS, sin deploy
+
+Llegó `TADAIMA-20260924.bak` (178 MB). Es de **Macro** (nombres lógicos
+`MiBD_dat/MiBD_log`, igual que el de julio; `restore.sh` sirvió tal cual).
+Macro casi no usa el POS nuevo (29 ventas desde el 7-ago, última el 30-ago):
+sigue operando en el sistema viejo, por eso allá hay altas nuevas.
+
+**Reglas de Joel:** alta ≥ 2026-01-01 · con stock, o tomo aunque esté en 0
+(regla de Centro) · **lo que ya existe no se toca, ni su stock**.
+
+**Código:** `tadaima:import-macro --solo-nuevos` (commit `4f27ebd`, 5 tests,
+suite 555 verde + 20/20 del comando en Postgres local). Con las opciones
+previas, un SKU existente con existencia > 0 recibía el stock del origen como
+ABSOLUTO en Exhibición (pisaba el inventario operado en el POS nuevo), incluso
+con `--existentes-solo-stock`. `--solo-nuevos` descarta por completo lo que
+coincide (trim + sin mayúsculas) con el sku o el barcode de un producto del
+destino; nombres iguales con otro SKU solo se reportan. No se combina con
+`--pisar-ceros` ni `--existentes-solo-stock`.
+
+**Staging:** `articulos-staging-macro-20260924.json` (14,628 filas; 488
+códigos no estaban en el .bak de agosto, todos de 2026). Dry-run → lista CSV
+para Joel (`productos-nuevos-macro-20260924.csv`) → OK de Joel.
+
+**Corrida real** (`--store="Tadaima MACRO" --user=1 --ref=import-macro-20260924
+--desde-fecha=2026-01-01 --solo-con-stock --libreria-sin-stock --solo-nuevos`):
+pasan filtros 1,234 → **955 existentes omitidos** (todos por SKU) + **279
+nuevos** (269 con stock = 1,216 piezas + 10 tomos en 0; 65 tomos, 65 figuras,
+42 cartas…), todos **sin costo** (el origen no lo trae; se venden igual, se
+capturan en "Productos sin Costo"). 0 posibles duplicados por nombre. Categoría
+nueva: "Vasos/Termos". Verificación del comando: 279/279 SKUs ✓, stock 1,216 =
+staging ✓. **Verificación SQL independiente:** products 4,483 → 4,762, tomos
+2,807 → 2,872, inventario Macro (wh 5) 1,527 → 1,796 filas / 6,832 → 8,048 pzs,
++269 movimientos todos `entrada` (0 ajustes → existentes intactos), solo 279
+productos modificados y ninguno con alta previa a 2026; 269 activos con stock
+en Exhibición → salen en Caja Macro.
+
+**Respaldo previo:** `~/Documents/JOEL/supabase-catalogo-pre-import-macro-2026-09-24.dump`
+(pg_dump 17, 7 tablas, verificado 4,483 products). **Log completo:**
+`MAcro Productos SQL/import-macro-20260924.log` (untracked, como los JSON).
+**Rollback:** borrar los productos con movimientos `import-macro-20260924` y
+los 10 tomos en 0 de la lista, o restaurar el dump. Contenedor SQL Server
+eliminado.
+
+---
+
 ### Sesión 2026-09-25 (2) — Aviso de código duplicado en el alta + chips de stock en "Productos sin Costo" (PR #15) — DEPLOYADO rev `tadaima-00002-pew`
 
 **Qué entró (PR #15, rama `claude/friendly-wright-oucvxd`, merge `f1df92b`):**
