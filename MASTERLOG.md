@@ -4,6 +4,40 @@
 
 ---
 
+### Sesión 2026-09-26 (2) — Cerrar sesión con caja abierta = recordatorio (corte opcional) — DEPLOYADO rev `tadaima-00004-pec`
+
+**Pedido de Joel:** el logout con caja abierta obligaba el corte (desde rev 00119,
+julio) y no dejaba cambiar de usuario; que sea solo un recordatorio.
+
+**Cambio** (commit `bcceb2a`): `handleLogout` en `layouts/Layout.tsx` ahora abre
+`components/cash/LogoutCashReminder.tsx` — "Tu caja sigue abierta" con fecha de
+apertura y tres opciones: **Hacer corte y salir** (flujo de siempre:
+CloseCashModal "Corte antes de salir" → resumen imprimible → logout), **Salir
+sin corte** (la caja queda abierta; cada persona tiene la suya, ADR-017; al
+volver sigue igual) y **Cancelar**. Si la caja es de un día anterior avisa que no
+podrá vender hasta su corte. El bloqueo backend `CASH_SESSION_STALE` y la pill
+ámbar del menú NO cambian. Guía in-app (`primeros-pasos.json`) y `AGENTS.md`
+actualizados.
+
+**Bug viejo encontrado y arreglado:** `Layout` renderizaba `CashCloseSummaryModal`
+sin la prop requerida `open` → el modal devolvía `null` desde julio: el corte al
+salir se registraba, pero nunca salía el resumen ni se cerraba la sesión (el
+cajero se quedaba dentro sin aviso). tsc no lo marcaba entre los ~460 errores de
+fondo.
+
+**Validación:** vitest 293/293 (incluye schema de la guía) · tsc 463 = base ·
+navegador contra SQLite local, los 5 casos: recordatorio (con y sin aviso de día
+anterior), Cancelar, Salir sin corte → login y al volver la caja sigue abierta,
+Hacer corte y salir → resumen → login con caja cerrada, sin caja sale directo.
+Monitor de `console.error` activo en todos los flujos: 0 errores.
+
+**Deploy:** `--no-traffic --tag candidate` → smoke (SPA/us-catalog/tadaimaus 200,
+auth 401, bundle con los textos nuevos y sin "Cierra tu caja para salir", envs
+idénticas, "Nothing to migrate") → `update-traffic --to-latest`. Dominio sirve
+`index-DAd1_FIo.js`. **Rollback:** `update-traffic --to-revisions tadaima-00002-pew=100`.
+
+---
+
 ### Sesión 2026-09-26 — Import de productos NUEVOS de Macro (.bak Esmeralda 2026-09-24) — SOLO DATOS, sin deploy
 
 Llegó `TADAIMA-20260924.bak` (178 MB). Es de **Macro** (nombres lógicos
