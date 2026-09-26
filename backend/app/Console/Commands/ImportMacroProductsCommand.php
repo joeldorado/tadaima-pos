@@ -46,6 +46,10 @@ use Illuminate\Support\Facades\DB;
  * - --existentes-solo-stock: los SKUs que ya existen NO se actualizan (nombre,
  *   costo, precio, categoría, tipo intactos; las diferencias de precio solo se
  *   reportan) — únicamente reciben su stock en el warehouse destino.
+ * - --solo-nuevos (Macro 2026-09-24, la tienda sigue operando en el POS viejo):
+ *   un artículo cuyo código coincide (trim + sin mayúsculas) con el sku O el
+ *   barcode de cualquier producto del destino se descarta por completo — ni
+ *   datos ni stock. Los nombres iguales con otro SKU solo se reportan.
  */
 class ImportMacroProductsCommand extends Command
 {
@@ -62,6 +66,7 @@ class ImportMacroProductsCommand extends Command
         {--solo-con-stock : Solo artículos con existencia > 0}
         {--libreria-sin-stock : La librería (= tomos: categoría de manga + nombre que empieza con "Tomo") entra aunque tenga existencia 0 — exenta SOLO del filtro de stock}
         {--existentes-solo-stock : Los SKUs que ya existen NO se actualizan (nombre/costo/precio/categoría/tipo); solo reciben su stock en el warehouse destino}
+        {--solo-nuevos : Solo crea lo que NO existe (código = sku o barcode del destino, sin distinguir mayúsculas); lo existente no se toca, ni su stock}
         {--force : Saltar la confirmación interactiva (corridas no-TTY YA autorizadas por Joel)}
         {--unsafe-host : Permitir un target que no sea *.supabase.co (QA/tests)}';
 
@@ -164,6 +169,12 @@ class ImportMacroProductsCommand extends Command
         $soloConStock = (bool) $this->option('solo-con-stock');
         $libreriaSinStock = (bool) $this->option('libreria-sin-stock');
         $existentesSoloStock = (bool) $this->option('existentes-solo-stock');
+        $soloNuevos = (bool) $this->option('solo-nuevos');
+        if ($soloNuevos && ($existentesSoloStock || $this->option('pisar-ceros'))) {
+            $this->error('--solo-nuevos no toca existentes: no se combina con --existentes-solo-stock ni --pisar-ceros.');
+
+            return self::FAILURE;
+        }
 
         $fueraFecha = 0;
         $fueraStock = 0;
@@ -218,6 +229,43 @@ class ImportMacroProductsCommand extends Command
         }
 
         $existentes = $db->table('products')->pluck('id', 'sku');
+
+        $omitidosPorSku = 0;
+        $omitidosPorBarcode = 0;
+        $dupsPorNombre = [];
+        if ($soloNuevos) {
+            $norm = fn (?string $s): string => mb_strtolower(trim((string) $s));
+            $normNombre = fn (string $s): string => (string) preg_replace('/\s+/u', ' ', $norm($s));
+            $skusDestino = [];
+            $barcodesDestino = [];
+            $nombresDestino = [];
+            foreach ($db->table('products')->get(['sku', 'barcode', 'name']) as $p) {
+                $skusDestino[$norm($p->sku)] = true;
+                if ($norm($p->barcode) !== '') {
+                    $barcodesDestino[$norm($p->barcode)] = true;
+                }
+                $nombresDestino[$normNombre((string) $p->name)] ??= (string) $p->sku;
+            }
+            foreach ($arts as $sku => $a) {
+                if (isset($skusDestino[$norm($sku)])) {
+                    $omitidosPorSku++;
+                    unset($arts[$sku]);
+                } elseif (isset($barcodesDestino[$norm($sku)])) {
+                    $omitidosPorBarcode++;
+                    unset($arts[$sku]);
+                } elseif (isset($nombresDestino[$normNombre($a['name'])])) {
+                    $dupsPorNombre[] = sprintf('%s "%s" ~ existente %s',
+                        $sku, $a['name'], $nombresDestino[$normNombre($a['name'])]);
+                }
+            }
+            if ($arts === []) {
+                $this->info(sprintf('Nada nuevo que importar: los %d artículos que pasan los filtros ya existen en el destino.',
+                    $omitidosPorSku + $omitidosPorBarcode));
+
+                return self::SUCCESS;
+            }
+        }
+
         $nuevos = array_filter($arts, fn ($a) => ! isset($existentes[$a['sku']]));
         $aActualizar = array_filter($arts, fn ($a) => isset($existentes[$a['sku']]));
 
@@ -261,6 +309,15 @@ class ImportMacroProductsCommand extends Command
         $this->line(sprintf('  Artículos que entran: %d', count($arts)));
         $this->line(sprintf('  Nuevos: %d · Ya existen (sku): %d%s', count($nuevos), count($aActualizar),
             $existentesSoloStock ? ' → SOLO stock (sin tocar nombre/costo/precio/categoría)' : ' → se actualizan (diff-aware)'));
+        if ($soloNuevos) {
+            $this->line(sprintf('  Existentes omitidos: %d (por SKU: %d · por código de barras: %d) — no se tocan, ni su stock',
+                $omitidosPorSku + $omitidosPorBarcode, $omitidosPorSku, $omitidosPorBarcode));
+            $this->line(sprintf('  Posibles duplicados por nombre (otro SKU): %d%s', count($dupsPorNombre),
+                $dupsPorNombre !== [] ? ' — entran igual, revisar:' : ''));
+            foreach (array_slice($dupsPorNombre, 0, self::MAX_DETALLE) as $d) {
+                $this->line('    · '.$d);
+            }
+        }
         $this->line(sprintf('  Mangas: %d · Sin costo: %d · Sin ningún precio: %d',
             count($mangas), count($sinCosto), count($sinPrecio)));
         $this->line(sprintf('  Con stock: %d (%.0f piezas) → warehouse "%s" (id %d) de "%s"',

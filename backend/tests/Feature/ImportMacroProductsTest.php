@@ -346,6 +346,112 @@ class ImportMacroProductsTest extends TestCase
         $this->assertSame(3 + 2, Product::count());
     }
 
+    // ── --solo-nuevos (re-import de Macro 2026-09-24) ────────────────────────
+    // Macro sigue operando en el POS viejo: solo se crean los artículos que no
+    // existen; lo que ya existe no se toca (ni datos ni stock).
+
+    public function test_solo_nuevos_no_toca_existentes_ni_su_stock(): void
+    {
+        $peluche = Product::create(['name' => 'Peluche viejo', 'sku' => 'C-EXIST-STOCK', 'cost' => 10, 'active' => true]);
+        \DB::table('product_prices')->insert([
+            'product_id' => $peluche->id, 'price_1' => 300, 'price_2' => 270,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        \DB::table('inventory')->insert([
+            'product_id' => $peluche->id, 'warehouse_id' => $this->exhibicion->id,
+            'quantity' => 7, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $taza = Product::create(['name' => 'Taza CSM', 'sku' => 'C-EXIST-STOCK-PREV', 'active' => true]);
+        \DB::table('inventory')->insert([
+            'product_id' => $taza->id, 'warehouse_id' => $this->exhibicion->id,
+            'quantity' => 2, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $this->runCentro(self::FILTROS_CENTRO + ['--solo-nuevos' => true])->assertExitCode(0);
+
+        // Existentes: datos y stock intactos, sin movimientos
+        $peluche->refresh();
+        $this->assertSame('Peluche viejo', $peluche->name);
+        $this->assertEquals(10.0, (float) $peluche->cost);
+        $this->assertDatabaseHas('product_prices', ['product_id' => $peluche->id, 'price_1' => 300.0, 'price_2' => 270.0]);
+        $this->assertDatabaseHas('inventory', [
+            'product_id' => $peluche->id, 'warehouse_id' => $this->exhibicion->id, 'quantity' => 7.0,
+        ]);
+        $this->assertDatabaseHas('inventory', [
+            'product_id' => $taza->id, 'warehouse_id' => $this->exhibicion->id, 'quantity' => 2.0,
+        ]);
+        $this->assertDatabaseMissing('inventory_movements', ['product_id' => $peluche->id]);
+        $this->assertDatabaseMissing('inventory_movements', ['product_id' => $taza->id]);
+        // Categorías que solo usan existentes no se crean
+        $this->assertDatabaseMissing('product_categories', ['name' => 'Peluches']);
+        $this->assertDatabaseMissing('product_categories', ['name' => 'Tazas']);
+
+        // Nuevos: entran completos con su stock y movimiento de entrada
+        $fig = Product::where('sku', 'C-FIG-2025-STOCK')->first();
+        $this->assertNotNull($fig);
+        $this->assertDatabaseHas('inventory', [
+            'product_id' => $fig->id, 'warehouse_id' => $this->exhibicion->id, 'quantity' => 3.0,
+        ]);
+        $this->assertDatabaseHas('inventory_movements', [
+            'product_id' => $fig->id, 'type' => 'entrada', 'quantity' => 3.0, 'reference' => 'import-centro-test',
+        ]);
+        $this->assertSame('manga', Product::where('sku', 'C-MANGA-2025-SIN')->value('product_type'));
+
+        // 2 existentes + 3 nuevos (figura, tomo y el tomo "existente" de la fixture que aquí no existe)
+        $this->assertSame(5, Product::count());
+    }
+
+    public function test_solo_nuevos_detecta_existente_por_codigo_de_barras_y_mayusculas(): void
+    {
+        // SKU igual salvo mayúsculas → es el mismo producto
+        Product::create(['name' => 'Peluche capturado a mano', 'sku' => 'c-exist-stock', 'active' => true]);
+        // El código del origen es el código de barras de otro producto
+        Product::create([
+            'name' => 'Taza con otro SKU', 'sku' => 'TAZA-MANUAL', 'barcode' => 'C-EXIST-STOCK-PREV', 'active' => true,
+        ]);
+
+        $this->runCentro(self::FILTROS_CENTRO + ['--solo-nuevos' => true])
+            ->expectsOutputToContain('Existentes omitidos: 2 (por SKU: 1 · por código de barras: 1)')
+            ->assertExitCode(0);
+
+        $this->assertNull(Product::where('sku', 'C-EXIST-STOCK')->first());
+        $this->assertNull(Product::where('sku', 'C-EXIST-STOCK-PREV')->first());
+        $this->assertSame(0, \DB::table('inventory_movements')
+            ->whereIn('product_id', Product::whereIn('sku', ['c-exist-stock', 'TAZA-MANUAL'])->pluck('id'))->count());
+        $this->assertSame(2 + 3, Product::count());
+    }
+
+    public function test_solo_nuevos_reporta_posibles_duplicados_por_nombre_sin_omitirlos(): void
+    {
+        Product::create(['name' => '  figura   NEZUKO 2025 ', 'sku' => 'ALTA-MANUAL-1', 'active' => true]);
+
+        $this->runCentro(self::FILTROS_CENTRO + ['--solo-nuevos' => true])
+            ->expectsOutputToContain('Posibles duplicados por nombre (otro SKU): 1')
+            ->expectsOutputToContain('C-FIG-2025-STOCK')
+            ->assertExitCode(0);
+
+        // Solo se reporta: el artículo sí entra
+        $this->assertNotNull(Product::where('sku', 'C-FIG-2025-STOCK')->first());
+    }
+
+    public function test_solo_nuevos_no_se_combina_con_pisar_ceros_ni_existentes_solo_stock(): void
+    {
+        $this->runCentro(['--solo-nuevos' => true, '--pisar-ceros' => true])->assertExitCode(1);
+        $this->runCentro(['--solo-nuevos' => true, '--existentes-solo-stock' => true])->assertExitCode(1);
+        $this->assertSame(0, Product::count());
+    }
+
+    public function test_dry_run_con_solo_nuevos_no_escribe_nada(): void
+    {
+        Product::create(['name' => 'Peluche viejo', 'sku' => 'C-EXIST-STOCK', 'active' => true]);
+
+        $this->runCentro(self::FILTROS_CENTRO + ['--solo-nuevos' => true, '--dry-run' => true])->assertExitCode(0);
+
+        $this->assertSame(1, Product::count());
+        $this->assertSame(0, \DB::table('inventory')->count());
+        $this->assertSame(0, \DB::table('inventory_movements')->count());
+    }
+
     public function test_desde_fecha_invalida_falla_sin_escribir(): void
     {
         $this->runCentro(['--desde-fecha' => '2025-13-99'])->assertExitCode(1);
