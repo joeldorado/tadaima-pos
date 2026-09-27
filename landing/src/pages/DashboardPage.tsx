@@ -319,13 +319,15 @@ export function DashboardPage() {
 
   // Cajero: dashboard simple "Mi Perfil" — avatar editable, datos read-only
   // y acceso a sus cortes de caja. Sin KPIs ni setup global.
-  // Query de cortes propios del cajero (RBAC backend ya lo limita a su user_id).
+  // Query de cortes propios del cajero. El backend ya le deja ver los de toda
+  // su tienda (2026-09-27), así que "Mis Cortes" filtra por su user_id.
   const myCutsQuery = useQuery({
     queryKey: ['my-cuts', user?.id],
     queryFn: () => getCashReport({
       // últimos 90 días — rango razonable para que vea su historial
       from: daysAgoLocal(90),
       to:   getTodayLocal(),
+      ...(user?.id ? { user_id: user.id } : {}),
     }),
     enabled: role === "cajero" && showMyCutsModal && !!user?.id,
     staleTime: 30_000,

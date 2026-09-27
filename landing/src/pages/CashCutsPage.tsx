@@ -312,7 +312,7 @@ function CorteDetail({ session: s }: { session: CashSessionReport }) {
  * Página "Cortes" — cortes de caja con detalle inline, para los 3 roles.
  * Movida desde la pestaña "Cortes de Caja" de Reportes (solo-admin) para que
  * cajero y gerente tengan entrada en el menú (Joel 2026-06-12). El backend
- * acota GET /reports/cash por rol: cajero → sus cortes, gerente → su tienda,
+ * acota GET /reports/cash por rol: cajero y gerente → su tienda,
  * admin → todo (con filtro de tienda opcional).
  */
 export function CashCutsPage() {

@@ -119,6 +119,9 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
 
 ### Caja y cortes
 - **Una caja por persona** (ADR-017): cada usuario abre y cierra su propio turno.
+- **Cortes visibles para toda la tienda:** gerentes y cajeros consultan e imprimen los
+  cortes de todos los de su tienda (`GET /reports/cash` y su detalle). Operar la caja
+  viva de otro (`/cash/movements`) sigue bloqueado.
 - **Día de negocio = `America/Tijuana`** (`backend/app/Support/DateRange.php`).
 - No se puede vender sobre una caja de un día anterior con 12 h o más abierta
   (`CASH_SESSION_STALE`). Cerrar sesión con caja abierta solo muestra un recordatorio

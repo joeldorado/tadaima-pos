@@ -10,7 +10,7 @@ import { CashCloseSummaryModal } from "./CashCloseSummaryModal";
 interface CortesModalProps {
   open: boolean;
   onClose: () => void;
-  /** Tienda activa. El backend además acota por rol (cajero→propios, gerente→tienda, admin→todo). */
+  /** Tienda activa. El backend además acota por rol (cajero y gerente→su tienda, admin→todo). */
   storeId?: number;
 }
 
@@ -25,7 +25,7 @@ const fmtDateTime = (iso: string | null): string =>
  * Lista las sesiones (cortes) del rango elegido y abre el resumen detallado
  * (CashCloseSummaryModal) al hacer click en una. No requiere caja abierta:
  * lee el historial vía GET /reports/cash. El backend acota por rol:
- *   - cajero → solo sus cortes
+ *   - cajero → cortes de su tienda (desde 2026-09-27, igual que gerente)
  *   - gerente → cortes de su tienda
  *   - admin → todos
  */

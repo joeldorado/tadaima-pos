@@ -320,8 +320,8 @@
           {
             "kind": "callout",
             "tone": "info",
-            "title": "Corte del gerente",
-            "text": "El gerente ve los cortes de su tienda con KPIs (sesiones, ventas, entradas, salidas). El cálculo aplica IVA 16% sobre la comisión de terminal y guarda los dólares físicos + TC de cada sesión."
+            "title": "Cortes de toda la tienda",
+            "text": "Gerentes y cajeros ven los cortes de todos los de su tienda, así cualquiera puede revisar el cierre del día aunque no esté el gerente (solo consultar e imprimir; cada quien cierra su propia caja). El gerente además tiene KPIs (sesiones, ventas, entradas, salidas). El cálculo aplica IVA 16% sobre la comisión de terminal y guarda los dólares físicos + TC de cada sesión."
           },
           {
             "kind": "link",

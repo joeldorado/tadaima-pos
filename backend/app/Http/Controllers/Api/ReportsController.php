@@ -218,18 +218,15 @@ class ReportsController extends Controller
         $registerId = $request->integer('register_id') ?: null;
         $userId     = $request->integer('user_id')     ?: null;
 
-        $user      = $request->user();
-        $isAdmin   = $user && $user->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
-        $isCashier = $user && $user->hasRole(['cajero']) && ! $isAdmin;
+        $user    = $request->user();
+        $isAdmin = $user && $user->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
 
-        // RBAC: cajero forzado a su user_id + tienda; gerente a su tienda;
-        // admin libre. Filtros del request se ignoran si intentan ver más.
+        // RBAC: gerente Y cajero anclados a su tienda (ven los cortes de todos
+        // los de su tienda — Joel 2026-09-27, para cerrar el día sin gerente);
+        // admin libre. ?user_id= sigue filtrando dentro de la tienda.
         if (! $isAdmin) {
             // Fail-closed: sin tienda asignada NO cae al filtro del request.
             $storeId = $user?->store_id ?? -1;
-            if ($isCashier) {
-                $userId = $user->id;
-            }
         }
 
         // Rango en zona del NEGOCIO → UTC (mismo patrón que ventas). Antes
@@ -467,19 +464,16 @@ class ReportsController extends Controller
      */
     public function cashDetail(Request $request, CashRegisterSession $session): JsonResponse
     {
-        $user      = $request->user();
-        $isAdmin   = $user && $user->isAdminRole();
-        $isCashier = $user && $user->hasRole(['cajero']) && ! $isAdmin;
+        $user    = $request->user();
+        $isAdmin = $user && $user->isAdminRole();
 
         $session->load(['register.store', 'user']);
 
+        // Cajero y gerente: cualquier corte de SU tienda (2026-09-27).
         if (! $isAdmin) {
             $sessionStoreId = $session->register?->store_id;
             if ($sessionStoreId === null || (int) $sessionStoreId !== (int) ($user->store_id ?? -1)) {
                 return $this->error('No tienes acceso a este corte.', 403);
-            }
-            if ($isCashier && (int) $session->user_id !== (int) $user->id) {
-                return $this->error('Solo puedes ver tus propios cortes.', 403);
             }
         }
 
