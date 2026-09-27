@@ -4,6 +4,52 @@
 
 ---
 
+### Sesión 2026-09-27 — LIMPIEZA DE PROD para la prueba real (28-sep) + cajeros ven los cortes de su tienda — DEPLOYADO rev `tadaima-00006-woc`
+
+**1) Limpieza de datos en prod (Supabase), 14:55 PDT, a pedido de Joel ("ahora
+mismo", aunque hubo venta en Macro a las 12:53).** Una sola transacción
+(`psql --single-transaction`, `LOCK TABLE … ACCESS EXCLUSIVE` + guardia que
+abortaba si los conteos cambiaban vs. el respaldo) con
+`TRUNCATE … RESTART IDENTITY` sin CASCADE:
+- Vaciado: sales 90, sale_items 111, payments 96, sale_cancellations 5,
+  sales_drafts 90 (+117 items), cash_register_sessions 64 (5 abiertas),
+  cash_movements 6, **preventas completas** (catálogos 14, límites por tienda 17,
+  folios 25, partidas 25, anticipos 33, logs 40), supply_movements 2.
+- `TadaimaTest01` (id 2) desactivada. **"Tadaima Test #2" sigue activa**: ahí vive
+  la cuenta de revisión de Google Play (android@tadaima.mx, gerente); desactivar la
+  tienda deja a sus gerentes/cajeros sin Caja.
+- Conservado IDÉNTICO (verificado antes/después): products 4,762, users 20,
+  stores 4 (3 activas), terminals 3, cash_registers 20, warehouses 8, customers 6,
+  promos 10, supplies 5, inventory 3,656 filas / 239,797 pzs (el stock NO se
+  regresó, decisión de Joel), inventory_movements 4,387, tokens 139, us_orders 1.
+- Secuencias en 1: la próxima venta, folio, catálogo y corte son el #1.
+- **Respaldos** (conteos verificados dentro de cada archivo):
+  `~/Documents/JOEL/supabase-operaciones-pre-limpia-2026-09-27.dump` (las 16
+  tablas tocadas), `~/Documents/JOEL/supabase-preventas-2026-09-27.dump` (solo
+  preventas, "por si las quiere de nuevo") y `preventas-catalogos-2026-09-27.csv`
+  (los 14 catálogos legibles). Log completo: `~/Documents/JOEL/limpia-prod-2026-09-27.log`.
+- **Rollback / restaurar preventas:** `pg_restore --data-only` de esos dumps.
+  OJO: si ya hay preventas nuevas, los ids chocan (las secuencias reiniciaron) →
+  restaurar re-numerando, no directo; y `pre_sale_orders.linked_sale_id` apunta a
+  ventas borradas → ponerlo en NULL al restaurar.
+
+**2) Cortes visibles para toda la tienda** (commit `119ada3`): el cliente quiere
+que los cajeros revisen los cortes de los demás para cerrar el día sin gerente.
+`ReportsController::cash()` ya no fuerza `user_id` al cajero (sigue anclado a su
+tienda) y `cashDetail()` ya no da 403 por corte ajeno de la misma tienda.
+`/cash/movements` (caja viva de otro) sigue bloqueado. "Mis Cortes" del perfil
+manda `user_id` para seguir mostrando solo los propios. Guía in-app (`caja.json`)
+y AGENTS.md actualizados. Tests: `CashCutsVisibilityTest` (5); suite 560 verde.
+Verificado por API local: cajero ve 5 cortes de su tienda (1 suyo + 4 del
+admin), "Mis Cortes" 1, detalle ajeno 200, caja viva ajena 403.
+**Tooling:** `phpunit.xml`/`phpunit.pgsql.xml` con `memory_limit=512M` — la suite
+llegó a 127 MB y `php artisan test` tronaba con el default de 128 MB.
+**Deploy:** candidate sin tráfico → smoke (SPA/us-catalog/tadaimaus 200, auth y
+/reports/cash 401, envs idénticas, "Nothing to migrate") → `--to-latest`. Dominio
+sirve `index-CaA_CQSN.js`. **Rollback:** `update-traffic --to-revisions tadaima-00004-pec=100`.
+
+---
+
 ### Sesión 2026-09-26 (2) — Cerrar sesión con caja abierta = recordatorio (corte opcional) — DEPLOYADO rev `tadaima-00004-pec`
 
 **Pedido de Joel:** el logout con caja abierta obligaba el corte (desde rev 00119,
