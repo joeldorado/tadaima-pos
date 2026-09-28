@@ -4,6 +4,44 @@
 
 ---
 
+### Sesión 2026-09-28 (3) — Caja: el lector agrega sin mouse y ya no cobra solo — rev tadaima-00010-buj
+
+**Reporte de la tienda (primer día de prueba real):** (1) al escanear en el campo de
+código el producto no se agregaba: había que elegirlo con el mouse y volver a clicar el
+campo para el siguiente; (2) escaneando sin el cursor en el campo de código, la venta
+**se cobraba sola**. Hoy hubo 3 ventas canceladas en prod (#1, #7, #18) que muy
+probablemente fueron eso.
+
+**Causa:** "Pesos recibidos" tenía `autoFocus` siempre (desde `0b3cfcd`, 24-jul; antes
+solo en el flujo de dólares) → agarraba el cursor al abrir Caja y tras cada venta con
+tarjeta. El detector del lector marcaba el Enter con `preventDefault` pero no detenía
+la propagación, así que el Enter del campo de efectivo ("vacío = pago exacto") cobraba
+en la misma tecla. En el campo de código, el Enter solo buscaba por SKU entre los ~200
+productos cargados (sin código de barras ni servidor) y nada regresaba el cursor.
+Reproducido en local antes del arreglo (se creó una venta sola).
+
+**Arreglo** (`fe7ea8d`):
+- Sin `autoFocus` en efectivo; el cursor vive en el campo de código (escritorio) y
+  regresa ahí tras agregar (lector, Enter o clic en resultado), cobrar e imprimir
+  (también cuando el ticket sale por el iframe de respaldo).
+- `useBarcodeScanner`: Enter de escaneo detectado → `stopImmediatePropagation`; Enter
+  tardío tras flush por tiempo se descarta (300 ms); el campo de código
+  (`data-scan-target="product"`) resuelve su propio Enter.
+- Enter del campo de código con término tipo código → `handleScannedCode` (SKU o código
+  de barras, local y si no servidor). Nombres / SKUs cortos ("si", "carta") igual que antes.
+- Enter en efectivo con un código (letras o 7+ dígitos, `lib/scanGuards.ts` + tests)
+  agrega el producto y **no cobra**. Enter vacío = pago exacto se conserva.
+
+**Verificado en local** (SQLite, simulando el lector): escaneo con cursor en efectivo
+(rápido, lento, con letras, Enter tardío) → agrega, no cobra; escaneo en el campo de
+código (barras y SKU) → agrega sin mouse y el cursor se queda; clic en resultado →
+cursor regresa; cobro con monto + Enter y con Enter vacío → cobra y el cursor regresa.
+vitest 302/302, type-check = base (463).
+
+**Deploy:** `tadaima-00010-buj` al 100% (candidate → smoke: API, `/tadaimaus/`, bundle con el arreglo, 27 env idénticas → to-latest; rollback `tadaima-00008-ven`). Avisar a las cajas: Ctrl+Shift+R.
+
+---
+
 ### Sesión 2026-09-28 (2) — Mangas "en 0" en Centro: stock rellenado desde el sistema viejo — SOLO DATOS + comando, sin deploy
 
 **Reporte de la tienda:** los tomos (manga nacional y extranjero) salían con 0 de stock.
