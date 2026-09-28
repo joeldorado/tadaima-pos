@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Support\DateRange;
 use App\Support\TomoRule;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -50,6 +51,12 @@ use Illuminate\Support\Facades\DB;
  *   un artículo cuyo código coincide (trim + sin mayúsculas) con el sku O el
  *   barcode de cualquier producto del destino se descarta por completo — ni
  *   datos ni stock. Los nombres iguales con otro SKU solo se reportan.
+ * - --solo-manga: solo artículos del origen en categoría de manga (TomoRule).
+ * - --rellenar-ceros --intactos-desde=YYYY-MM-DD (2026-09-28): modo de SOLO stock
+ *   para productos que ya existen. Si en la tienda destino tienen 0 (Exhibición +
+ *   Bodega) y no tuvieron movimientos de inventario ahí desde esa fecha, toman la
+ *   existencia del origen en Exhibición. Nunca crea productos ni baja stock: sirve
+ *   para lo resurtido en el sistema viejo después de la última sincronización.
  */
 class ImportMacroProductsCommand extends Command
 {
@@ -67,6 +74,9 @@ class ImportMacroProductsCommand extends Command
         {--libreria-sin-stock : La librería (= tomos: categoría de manga + nombre que empieza con "Tomo") entra aunque tenga existencia 0 — exenta SOLO del filtro de stock}
         {--existentes-solo-stock : Los SKUs que ya existen NO se actualizan (nombre/costo/precio/categoría/tipo); solo reciben su stock en el warehouse destino}
         {--solo-nuevos : Solo crea lo que NO existe (código = sku o barcode del destino, sin distinguir mayúsculas); lo existente no se toca, ni su stock}
+        {--solo-manga : Solo artículos del origen en categoría de manga (Manga / Manga extranjero / kamite / SHONEN JUMP)}
+        {--rellenar-ceros : Solo stock de productos que YA existen: si en la tienda destino están en 0 y quietos desde --intactos-desde, toman la existencia del origen. No crea ni baja}
+        {--intactos-desde= : YYYY-MM-DD (día-negocio) — con --rellenar-ceros no se toca nada que tuvo movimientos en la tienda desde esa fecha}
         {--force : Saltar la confirmación interactiva (corridas no-TTY YA autorizadas por Joel)}
         {--unsafe-host : Permitir un target que no sea *.supabase.co (QA/tests)}';
 
@@ -175,12 +185,35 @@ class ImportMacroProductsCommand extends Command
 
             return self::FAILURE;
         }
+        $soloManga = (bool) $this->option('solo-manga');
+        $rellenarCeros = (bool) $this->option('rellenar-ceros');
+        $intactosDesde = (string) ($this->option('intactos-desde') ?? '');
+        if ($rellenarCeros) {
+            if ($soloNuevos || $existentesSoloStock || $this->option('pisar-ceros')) {
+                $this->error('--rellenar-ceros es solo stock de existentes: no se combina con --solo-nuevos, --existentes-solo-stock ni --pisar-ceros.');
+
+                return self::FAILURE;
+            }
+            $dt = \DateTimeImmutable::createFromFormat('!Y-m-d', $intactosDesde);
+            if (! $dt || $dt->format('Y-m-d') !== $intactosDesde) {
+                $this->error('--rellenar-ceros exige --intactos-desde=YYYY-MM-DD (no se tocan productos movidos desde esa fecha).');
+
+                return self::FAILURE;
+            }
+        }
 
         $fueraFecha = 0;
         $fueraStock = 0;
+        $fueraManga = 0;
         $libreriaRescatada = [];   // categoría → n (librería sin stock que entró por --libreria-sin-stock)
         $catsLibreria = [];        // categoría → n (todo el staging, informativo)
         foreach ($arts as $sku => $a) {
+            if ($soloManga && ! TomoRule::esCategoriaManga($a['categoria'])) {
+                $fueraManga++;
+                unset($arts[$sku]);
+
+                continue;
+            }
             if (self::esTomo($a)) {
                 $catsLibreria[$a['categoria']] = ($catsLibreria[$a['categoria']] ?? 0) + 1;
             }
@@ -226,6 +259,10 @@ class ImportMacroProductsCommand extends Command
             $this->error("No existe el usuario id {$userId} en el target (firma de movimientos).");
 
             return self::FAILURE;
+        }
+
+        if ($rellenarCeros) {
+            return $this->rellenarCeros($db, $arts, $store, $warehouse, $userId, $intactosDesde, $fueraManga);
         }
 
         $existentes = $db->table('products')->pluck('id', 'sku');
@@ -293,9 +330,9 @@ class ImportMacroProductsCommand extends Command
         $this->info('── Análisis del staging ──');
         $this->line(sprintf('  Artículos en staging: %d (descartados sin nombre/código: %d, duplicados internos: %d)',
             $totalStaging, $sinNombre, $dupInternos));
-        if ($desdeFecha !== '' || $soloConStock) {
-            $this->line(sprintf('  Filtros → fuera por fecha (< %s): %d · fuera por sin stock: %d · librería sin stock rescatada: %d',
-                $desdeFecha !== '' ? $desdeFecha : '—', $fueraFecha, $fueraStock, array_sum($libreriaRescatada)));
+        if ($desdeFecha !== '' || $soloConStock || $soloManga) {
+            $this->line(sprintf('  Filtros → fuera por fecha (< %s): %d · fuera por sin stock: %d · fuera por no ser manga: %d · librería sin stock rescatada: %d',
+                $desdeFecha !== '' ? $desdeFecha : '—', $fueraFecha, $fueraStock, $fueraManga, array_sum($libreriaRescatada)));
             if ($libreriaRescatada !== []) {
                 arsort($libreriaRescatada);
                 $this->line('    rescatada por categoría: '.$this->fmtConteos($libreriaRescatada));
@@ -600,6 +637,117 @@ class ImportMacroProductsCommand extends Command
         });
 
         return $this->verify($db, $arts, $warehouse->id, $ref, $pisarCeros);
+    }
+
+    /**
+     * --rellenar-ceros: pone la existencia del origen SOLO en productos que ya
+     * existen (match sku o barcode, sin mayúsculas), que tienen 0 en toda la
+     * tienda destino (Exhibición + Bodega) y que no tuvieron movimientos de
+     * inventario ahí desde $intactosDesde. Si se vendieron o ajustaron en el POS,
+     * el número del origen ya no es la verdad y no se tocan.
+     */
+    private function rellenarCeros($db, array $arts, object $store, object $warehouse, int $userId, string $intactosDesde, int $fueraManga): int
+    {
+        $norm = fn (?string $s): string => mb_strtolower(trim((string) $s));
+        $porSku = [];
+        $porBarcode = [];
+        foreach ($db->table('products')->get(['id', 'sku', 'barcode']) as $p) {
+            $porSku[$norm($p->sku)] ??= (int) $p->id;
+            if ($norm($p->barcode) !== '') {
+                $porBarcode[$norm($p->barcode)] ??= (int) $p->id;
+            }
+        }
+        $almacenes = $db->table('warehouses')->where('store_id', $store->id)->pluck('id')->all();
+        $stockTienda = $db->table('inventory')->whereIn('warehouse_id', $almacenes)
+            ->selectRaw('product_id, SUM(quantity) as qty')->groupBy('product_id')->pluck('qty', 'product_id');
+        $movidos = $db->table('inventory_movements')->whereIn('warehouse_id', $almacenes)
+            ->where('created_at', '>=', DateRange::fromUtc($intactosDesde))
+            ->distinct()->pluck('product_id')->flip();
+
+        $aRellenar = [];
+        $sinOrigen = $conStock = $conMovs = $noExisten = 0;
+        foreach ($arts as $sku => $a) {
+            if ($a['existencia'] <= 0) {
+                $sinOrigen++;
+
+                continue;
+            }
+            $pid = $porSku[$norm((string) $sku)] ?? $porBarcode[$norm((string) $sku)] ?? null;
+            if ($pid === null) {
+                $noExisten++;
+            } elseif ((float) ($stockTienda[$pid] ?? 0) > 0) {
+                $conStock++;
+            } elseif (isset($movidos[$pid])) {
+                $conMovs++;
+            } else {
+                $aRellenar[$pid] ??= ['sku' => (string) $sku, 'name' => $a['name'], 'qty' => $a['existencia']];
+            }
+        }
+
+        $this->info('── Rellenar ceros ──');
+        $this->line(sprintf('  Destino: "%s" → warehouse "%s" (id %d)%s', $store->name, $warehouse->name, $warehouse->id,
+            $fueraManga > 0 ? " · fuera por no ser manga: {$fueraManga}" : ''));
+        $this->line(sprintf('  a rellenar: %d (%.0f piezas) · ya con stock en la tienda: %d · con movimientos desde %s: %d · sin stock en el origen: %d · no existen en el destino: %d',
+            count($aRellenar), array_sum(array_column($aRellenar, 'qty')), $conStock, $intactosDesde, $conMovs, $sinOrigen, $noExisten));
+        foreach (array_slice($aRellenar, 0, self::MAX_DETALLE, true) as $r) {
+            $this->line(sprintf('    · %s "%s" → %s', $r['sku'], $r['name'], $r['qty'] + 0));
+        }
+
+        if ($this->option('dry-run')) {
+            $this->info('Dry-run: no se escribió nada.');
+
+            return self::SUCCESS;
+        }
+        if ($aRellenar === []) {
+            $this->info('Nada que rellenar.');
+
+            return self::SUCCESS;
+        }
+        if (! $this->option('force')
+            && ! $this->confirm(sprintf('¿Rellenar el stock de %d productos en %s?', count($aRellenar), $store->name))) {
+            return self::FAILURE;
+        }
+
+        $ref = (string) ($this->option('ref') ?: 'sync-ceros-'.now()->format('Ymd'));
+        $notas = sprintf('Stock del POS viejo (%s): producto en 0 en el POS', $store->name);
+        $now = now();
+        $db->transaction(function () use ($db, $aRellenar, $warehouse, $userId, $ref, $notas, $now) {
+            $conFila = $db->table('inventory')->where('warehouse_id', $warehouse->id)
+                ->whereIn('product_id', array_keys($aRellenar))->pluck('product_id')->flip();
+            $movs = [];
+            foreach ($aRellenar as $pid => $r) {
+                if (isset($conFila[$pid])) {
+                    $db->table('inventory')->where('product_id', $pid)->where('warehouse_id', $warehouse->id)
+                        ->update(['quantity' => $r['qty'], 'updated_at' => $now]);
+                } else {
+                    $db->table('inventory')->insert([
+                        'product_id' => $pid, 'warehouse_id' => $warehouse->id,
+                        'quantity' => $r['qty'], 'created_at' => $now, 'updated_at' => $now,
+                    ]);
+                }
+                $movs[] = [
+                    'product_id' => $pid, 'warehouse_id' => $warehouse->id, 'type' => 'entrada',
+                    'quantity' => $r['qty'], 'reference' => $ref, 'notes' => $notas,
+                    'user_id' => $userId, 'created_at' => $now,
+                ];
+            }
+            foreach (array_chunk($movs, 500) as $lote) {
+                $db->table('inventory_movements')->insert($lote);
+            }
+        });
+
+        $cuadran = 0;
+        foreach ($db->table('inventory')->where('warehouse_id', $warehouse->id)
+            ->whereIn('product_id', array_keys($aRellenar))->get(['product_id', 'quantity']) as $fila) {
+            if (abs((float) $fila->quantity - $aRellenar[$fila->product_id]['qty']) < 0.001) {
+                $cuadran++;
+            }
+        }
+        $ok = $cuadran === count($aRellenar);
+        $this->info('── Verificación ──');
+        $this->line(sprintf('  Productos con el stock del origen: %d / %d %s (ref %s)', $cuadran, count($aRellenar), $ok ? '✓' : '✗', $ref));
+
+        return $ok ? self::SUCCESS : self::FAILURE;
     }
 
     /**

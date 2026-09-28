@@ -452,6 +452,158 @@ class ImportMacroProductsTest extends TestCase
         $this->assertSame(0, \DB::table('inventory_movements')->count());
     }
 
+    // ── --rellenar-ceros / --solo-manga (tomos en 0 de Centro, 2026-09-28) ─────
+    // El POS se quedó con el stock de la última sincronización; lo resurtido en
+    // el sistema viejo después salía en 0. Solo se LLENAN ceros de productos
+    // que ya existen, sin tocar lo que se movió en el POS desde una fecha.
+
+    private Warehouse $bodega;
+
+    /** @var array<string, Product> */
+    private array $sync = [];
+
+    private function prepararSync(): void
+    {
+        $this->bodega = Warehouse::create([
+            'company_id' => $this->company->id, 'store_id' => $this->store->id,
+            'name' => 'Bodega MACRO', 'type' => 'bodega', 'active' => true,
+        ]);
+        $crear = fn (string $sku, string $name, string $type = 'manga', ?string $barcode = null) => Product::create([
+            'name' => $name, 'sku' => $sku, 'barcode' => $barcode ?? $sku,
+            'product_type' => $type, 'active' => true,
+        ]);
+        $this->sync = [
+            'cero' => $crear('M-TOMO-CERO', 'Tomo 5 Chainsaw (nombre POS)'),
+            'constock' => $crear('M-TOMO-CONSTOCK', 'Tomo 2 Frieren'),
+            'bodega' => $crear('M-TOMO-BODEGA', 'Tomo 3 Spy x Family'),
+            'movido' => $crear('M-TOMO-MOVIDO', 'Tomo 4 Dandadan'),
+            'extr' => $crear('ZELDA-MANUAL', 'Art book Zelda', 'product', 'M-EXTR-CERO'),
+            'figura' => $crear('F-FIG-CERO', 'Figura Goku', 'product'),
+            'sinorigen' => $crear('M-SIN-ORIGEN', 'Tomo 9 One Piece'),
+        ];
+        $inv = fn (Product $p, Warehouse $w, float $qty) => \DB::table('inventory')->insert([
+            'product_id' => $p->id, 'warehouse_id' => $w->id, 'quantity' => $qty,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $inv($this->sync['cero'], $this->exhibicion, 0);
+        $inv($this->sync['constock'], $this->exhibicion, 2);
+        $inv($this->sync['bodega'], $this->bodega, 1);
+        $mov = fn (Product $p, $cuando) => \DB::table('inventory_movements')->insert([
+            'product_id' => $p->id, 'warehouse_id' => $this->exhibicion->id, 'type' => 'venta',
+            'quantity' => 1, 'reference' => 'VENTA-X', 'user_id' => $this->admin->id, 'created_at' => $cuando,
+        ]);
+        $mov($this->sync['movido'], now());                // se vendió HOY → no se toca
+        $mov($this->sync['cero'], now()->subDays(5));      // movimiento viejo → no bloquea
+    }
+
+    private function runSync(array $extra = [])
+    {
+        return $this->artisan('tadaima:import-macro', array_merge([
+            'file' => base_path('tests/Fixtures/manga-sync-sample.json'),
+            '--connection' => config('database.default'),
+            '--unsafe-host' => true,
+            '--store' => 'Tadaima MACRO',
+            '--user' => (string) $this->admin->id,
+            '--ref' => 'sync-test',
+            '--force' => true,
+        ], $extra));
+    }
+
+    private function hoy(): string
+    {
+        return now('America/Tijuana')->toDateString();
+    }
+
+    private function qty(Product $p, Warehouse $w): ?float
+    {
+        $q = \DB::table('inventory')->where('product_id', $p->id)->where('warehouse_id', $w->id)->value('quantity');
+
+        return $q === null ? null : (float) $q;
+    }
+
+    public function test_rellenar_ceros_solo_manga_llena_solo_lo_que_esta_en_cero_y_quieto(): void
+    {
+        $this->prepararSync();
+        $productos = Product::count();
+
+        $this->runSync(['--solo-manga' => true, '--rellenar-ceros' => true, '--intactos-desde' => $this->hoy()])
+            ->expectsOutputToContain('a rellenar: 2 (4 piezas)')
+            ->assertExitCode(0);
+
+        // En 0 y quieto → toma la existencia del origen, con entrada firmada
+        $this->assertSame(3.0, $this->qty($this->sync['cero'], $this->exhibicion));
+        $this->assertDatabaseHas('inventory_movements', [
+            'product_id' => $this->sync['cero']->id, 'type' => 'entrada', 'quantity' => 3.0, 'reference' => 'sync-test',
+        ]);
+        // Encontrado por código de barras (sku distinto) → también
+        $this->assertSame(1.0, $this->qty($this->sync['extr'], $this->exhibicion));
+        // Datos del producto intactos
+        $this->assertSame('Tomo 5 Chainsaw (nombre POS)', $this->sync['cero']->fresh()->name);
+
+        // No se tocan: con stock, con stock en bodega, movido hoy, sin stock en origen, no-manga
+        $this->assertSame(2.0, $this->qty($this->sync['constock'], $this->exhibicion));
+        $this->assertNull($this->qty($this->sync['bodega'], $this->exhibicion));
+        $this->assertSame(1.0, $this->qty($this->sync['bodega'], $this->bodega));
+        $this->assertNull($this->qty($this->sync['movido'], $this->exhibicion));
+        $this->assertNull($this->qty($this->sync['sinorigen'], $this->exhibicion));
+        $this->assertNull($this->qty($this->sync['figura'], $this->exhibicion));
+        $this->assertSame(2, \DB::table('inventory_movements')->where('reference', 'sync-test')->count());
+
+        // No crea productos (M-NUEVO no existe en el destino)
+        $this->assertSame($productos, Product::count());
+        $this->assertNull(Product::where('sku', 'M-NUEVO')->first());
+    }
+
+    public function test_rellenar_ceros_sin_solo_manga_incluye_otras_categorias(): void
+    {
+        $this->prepararSync();
+
+        $this->runSync(['--rellenar-ceros' => true, '--intactos-desde' => $this->hoy()])->assertExitCode(0);
+
+        $this->assertSame(7.0, $this->qty($this->sync['figura'], $this->exhibicion));
+        $this->assertSame(3.0, $this->qty($this->sync['cero'], $this->exhibicion));
+    }
+
+    public function test_solo_nuevos_con_solo_manga_crea_solo_el_manga_faltante(): void
+    {
+        $this->prepararSync();
+        $productos = Product::count();
+
+        $this->runSync(['--solo-nuevos' => true, '--solo-manga' => true, '--solo-con-stock' => true])->assertExitCode(0);
+
+        $nuevo = Product::where('sku', 'M-NUEVO')->first();
+        $this->assertNotNull($nuevo);
+        $this->assertSame('manga', $nuevo->product_type);
+        $this->assertSame(2.0, $this->qty($nuevo, $this->exhibicion));
+        $this->assertSame($productos + 1, Product::count());
+        // Los existentes siguen intactos
+        $this->assertSame(0.0, $this->qty($this->sync['cero'], $this->exhibicion));
+    }
+
+    public function test_rellenar_ceros_exige_fecha_y_no_se_combina(): void
+    {
+        $this->prepararSync();
+
+        $this->runSync(['--rellenar-ceros' => true])->assertExitCode(1);
+        foreach (['--solo-nuevos', '--pisar-ceros', '--existentes-solo-stock'] as $flag) {
+            $this->runSync(['--rellenar-ceros' => true, '--intactos-desde' => $this->hoy(), $flag => true])->assertExitCode(1);
+        }
+        $this->runSync(['--rellenar-ceros' => true, '--intactos-desde' => '2026-99-99'])->assertExitCode(1);
+
+        $this->assertSame(0, \DB::table('inventory_movements')->where('reference', 'sync-test')->count());
+    }
+
+    public function test_rellenar_ceros_dry_run_no_escribe(): void
+    {
+        $this->prepararSync();
+
+        $this->runSync(['--solo-manga' => true, '--rellenar-ceros' => true, '--intactos-desde' => $this->hoy(), '--dry-run' => true])
+            ->assertExitCode(0);
+
+        $this->assertSame(0.0, $this->qty($this->sync['cero'], $this->exhibicion));
+        $this->assertSame(0, \DB::table('inventory_movements')->where('reference', 'sync-test')->count());
+    }
+
     public function test_desde_fecha_invalida_falla_sin_escribir(): void
     {
         $this->runCentro(['--desde-fecha' => '2025-13-99'])->assertExitCode(1);

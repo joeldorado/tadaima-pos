@@ -1,0 +1,10 @@
+[
+  {"codigo":"M-TOMO-CERO","desc_corta":"","descripcion":"Tomo 5 Chainsaw","categoria":"Manga","existencia":3,"costo":0,"pv1":0,"pv2":0,"pv3":150,"pv4":169,"baja":0,"marca":"","departamento":"","fecha_alta":"2025-06-01"},
+  {"codigo":"M-TOMO-CONSTOCK","desc_corta":"","descripcion":"Tomo 2 Frieren","categoria":"Manga","existencia":5,"costo":0,"pv1":0,"pv2":0,"pv3":150,"pv4":169,"baja":0,"marca":"","departamento":"","fecha_alta":"2025-06-01"},
+  {"codigo":"M-TOMO-BODEGA","desc_corta":"","descripcion":"Tomo 3 Spy x Family","categoria":"Manga","existencia":4,"costo":0,"pv1":0,"pv2":0,"pv3":150,"pv4":169,"baja":0,"marca":"","departamento":"","fecha_alta":"2025-06-01"},
+  {"codigo":"M-TOMO-MOVIDO","desc_corta":"","descripcion":"Tomo 4 Dandadan","categoria":"Manga","existencia":2,"costo":0,"pv1":0,"pv2":0,"pv3":150,"pv4":169,"baja":0,"marca":"","departamento":"","fecha_alta":"2025-06-01"},
+  {"codigo":"M-EXTR-CERO","desc_corta":"","descripcion":"Art book Zelda","categoria":"Manga extranjero","existencia":1,"costo":0,"pv1":0,"pv2":0,"pv3":500,"pv4":550,"baja":0,"marca":"","departamento":"","fecha_alta":"2025-06-01"},
+  {"codigo":"F-FIG-CERO","desc_corta":"","descripcion":"Figura Goku","categoria":"Figuras","existencia":7,"costo":0,"pv1":0,"pv2":0,"pv3":300,"pv4":330,"baja":0,"marca":"","departamento":"","fecha_alta":"2025-06-01"},
+  {"codigo":"M-NUEVO","desc_corta":"","descripcion":"Tomo 1 Hoshi","categoria":"Manga","existencia":2,"costo":0,"pv1":0,"pv2":0,"pv3":150,"pv4":169,"baja":0,"marca":"","departamento":"","fecha_alta":"2025-05-31"},
+  {"codigo":"M-SIN-ORIGEN","desc_corta":"","descripcion":"Tomo 9 One Piece","categoria":"Manga","existencia":0,"costo":0,"pv1":0,"pv2":0,"pv3":150,"pv4":169,"baja":0,"marca":"","departamento":"","fecha_alta":"2025-06-01"}
+]

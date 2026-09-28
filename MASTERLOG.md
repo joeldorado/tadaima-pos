@@ -4,6 +4,43 @@
 
 ---
 
+### Sesión 2026-09-28 (2) — Mangas "en 0" en Centro: stock rellenado desde el sistema viejo — SOLO DATOS + comando, sin deploy
+
+**Reporte de la tienda:** los tomos (manga nacional y extranjero) salían con 0 de stock.
+**Causa:** no se perdió nada; el POS tenía el stock de la última sincronización
+completa (Macro 6-ago, Centro 17-ago) y las importaciones de esta semana no tocan el
+stock de lo existente. Lo resurtido en el sistema viejo después quedó en 0. Medido:
+Centro (.bak 27-sep) 103 mangas con stock que el POS tenía en 0 + 3 que no existían;
+Macro (.bak 24-sep) 124. Además hay deriva en el otro sentido (cientos de productos
+donde el POS tiene MÁS que el sistema viejo) — **no se tocó** (decisión de Joel: solo
+mangas en 0).
+
+**Comando** (`tadaima:import-macro`, 5 tests nuevos, fixture `manga-sync-sample.json`;
+suite 570 + 25/25 en Postgres local):
+- `--solo-manga`: filtra por categoría de manga del origen (`TomoRule::esCategoriaManga`).
+- `--rellenar-ceros --intactos-desde=YYYY-MM-DD`: solo stock de productos existentes
+  (match sku/barcode sin mayúsculas) que tienen 0 en TODA la tienda (Exhibición +
+  Bodega) y sin movimientos ahí desde la fecha → toman la existencia del origen con
+  `entrada`. No crea, no baja, no toca datos. Exclusivo con `--solo-nuevos`,
+  `--pisar-ceros`, `--existentes-solo-stock`.
+
+**Corridas en Centro** (staging del 27-sep; respaldo
+`~/Documents/JOEL/supabase-catalogo-pre-sync-manga-centro-2026-09-28.dump`):
+1. `--solo-manga --rellenar-ceros --intactos-desde=2026-09-28`
+   (`--ref=sync-ceros-manga-centro-20260927`): **103 rellenados, 321 piezas**; 615 ya
+   tenían stock, 0 movidos hoy. Verificado 103/103.
+2. `--solo-manga --solo-nuevos --solo-con-stock` (`--ref=import-manga-faltante-centro-20260927`):
+   3 dados de alta (Tomo Hoshi kamite, Tomo 1 Invincible, Art book boticaria), 6 pzs.
+Resultado: tomos con stock en Centro 637 → 723; piezas Centro 231,903 → 232,230; 106
+movimientos todos en Centro. Log y CSV: `MAcro Productos SQL/sync-manga-centro-20260927.log`,
+`mangas-stock-corregido-centro-20260927.csv`.
+
+**Pendiente Macro:** Joel pidió esperar un .bak nuevo de Macro (el del 24 tiene 3 días
+de ventas del sistema viejo). Al llegar: extraer y correr las mismas dos corridas con
+`--store="Tadaima MACRO"` e `--intactos-desde` = día del respaldo o posterior.
+
+---
+
 ### Sesión 2026-09-28 — Borrar ventas de prueba + import de productos NUEVOS de Centro (.bak 2026-09-27) — SOLO DATOS, sin deploy
 
 **1) Ventas de prueba borradas (11:52 PDT).** Tras la limpieza del 27, el equipo hizo
