@@ -21,6 +21,7 @@ import { QuickStockModal } from "@/components/products/QuickStockModal";
 import { PreSaleDifusionPanel } from "@/components/presales/PreSaleDifusionPanel";
 import { CameraScannerModal } from "@/components/CameraScannerModal";
 import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
+import { classifyCashEnter, looksLikeProductCode } from "@/lib/scanGuards";
 import { useViewportMaxHeight } from "@/hooks/useViewportMaxHeight";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { PaymentRestrictionBadge, getPayRestriction } from "@/components/ui/PaymentRestrictionBadge";
@@ -382,6 +383,8 @@ const makeMesa = (n?: number): Mesa => {
 const BG     = "var(--td-page-bg)";
 const PANEL  = "var(--td-panel-bg)";
 const BORDER = "1px solid var(--td-panel-border)";
+/** Pausa (ms) tras la cual se olvidan las teclas capturadas en "Pesos recibidos". */
+const CASH_KEYS_RESET_MS = 800;
 const RED    = "var(--td-red)";
 const CARD   = "var(--td-card-bg)";
 const CARD_B = "1px solid var(--td-card-border)";
@@ -929,6 +932,32 @@ export function SellPage() {
   const customerSearchRef  = useRef<HTMLInputElement>(null);
   const prodInputRef       = useRef<HTMLInputElement>(null);
   const cashInputRef       = useRef<HTMLInputElement>(null);
+  // Teclas capturadas en "Pesos recibidos" (se reinicia tras una pausa): con
+  // ellas se reconoce un escaneo que cayó ahí y que el detector no agarró.
+  const cashKeysRef        = useRef<{ keys: string; at: number }>({ keys: "", at: 0 });
+
+  // Bug prueba real 2026-09-28: tras agregar o cobrar, el cursor se quedaba
+  // en otro lado y había que volver con el mouse al campo de código. En
+  // escritorio regresa solo; no se roba si el cajero escribe en otro campo.
+  const focusCodeInput = useCallback(() => {
+    if (isNarrow) return;
+    requestAnimationFrame(() => {
+      const el = prodInputRef.current;
+      if (!el) return;
+      const active = document.activeElement;
+      const typingElsewhere = active instanceof HTMLElement
+        && active !== el
+        && active !== cashInputRef.current
+        && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT" || active.isContentEditable);
+      if (!typingElsewhere) el.focus();
+    });
+  }, [isNarrow]);
+  const trackCashKey = (key: string) => {
+    const now = performance.now();
+    const prev = now - cashKeysRef.current.at > CASH_KEYS_RESET_MS ? "" : cashKeysRef.current.keys;
+    const keys = key === "Backspace" ? prev.slice(0, -1) : key.length === 1 ? prev + key : prev;
+    cashKeysRef.current = { keys, at: now };
+  };
 
   // Auto-select store from active session when admin navigates to Caja con
   // sesión ya abierta (stores y session pueden cargar en cualquier orden).
@@ -2191,6 +2220,7 @@ export function SellPage() {
     setShowCustDrop(false);
     setRequireCustomerFlash(false);
     setAssignCustomerPopup(null);
+    focusCodeInput();
   };
 
   const handleCreateCustomer = () => {
@@ -2614,6 +2644,7 @@ export function SellPage() {
       // addScanToCart maneja internamente el "ya está" → no duplicar ni sumar
       // y emite el toast apropiado (info o success).
       addScanToCart(local, "a");
+      focusCodeInput();
       return;
     }
     // 2. Cache miss → hit backend directly (no debounce, scanner is an
@@ -2640,6 +2671,7 @@ export function SellPage() {
         if (adapted.is_assigned === false) { openStockFor(adapted); return; }
         // Scanner usa addScanToCart (nunca suma). Si ya está en venta, toast info.
         addScanToCart(adapted, "a");
+        focusCodeInput();
         return;
       }
     } catch {
@@ -2647,6 +2679,7 @@ export function SellPage() {
     }
     setSearch(code);
     toast.warning(`Sin coincidencias para "${code}"`);
+    focusCodeInput();
   };
 
   // Lector USB HID activo siempre que estemos en SellPage y no haya un modal de form abierto.
@@ -5253,8 +5286,10 @@ export function SellPage() {
                 </div>
                 <input
                   ref={prodInputRef}
+                  autoFocus={!isNarrow}
                   type="text"
                   data-tour="sell-search"
+                  data-scan-target="product"
                   placeholder="Añadir producto, escanear código o tipear folio (PREV-…)"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
@@ -5278,14 +5313,30 @@ export function SellPage() {
                       }
                       return;
                     }
-                    // Enter en escaneo / búsqueda de producto: si hay un único match exacto, lo agrega y limpia.
+                    // Enter del lector (o código tecleado): mismo camino que el
+                    // escaneo — SKU o código de barras, en lo cargado y si no en
+                    // el servidor. Antes solo buscaba por SKU entre lo cargado y
+                    // el escaneo no agregaba (bug prueba real 2026-09-28).
+                    const term = search.trim();
+                    if (looksLikeProductCode(term)) {
+                      e.preventDefault();
+                      setSearch("");
+                      void handleScannedCode(term);
+                      return;
+                    }
+                    // Nombre o SKU corto tecleado ("si", "carta"): match exacto de
+                    // SKU/código o único resultado → se agrega (suma si ya está).
                     if (filteredProds.length === 0) return;
                     e.preventDefault();
-                    const exact = filteredProds.find(p => p.sku === search.trim()) ?? (filteredProds.length === 1 ? filteredProds[0] : null);
+                    const lcTerm = term.toLowerCase();
+                    const exact = filteredProds.find(p =>
+                      p.sku.toLowerCase() === lcTerm || (p.barcode ?? "").toLowerCase() === lcTerm)
+                      ?? (filteredProds.length === 1 ? filteredProds[0] : null);
                     if (!exact) return;
                     if (exact.is_assigned === false) { openStockFor(exact); setSearch(""); return; }
                     void addToCart(exact, "a");
                     setSearch("");
+                    focusCodeInput();
                   }}
                   className="w-full rounded-2xl pl-12 pr-4 py-2.5 text-sm font-bold outline-none transition-all shadow-inner"
                   style={{ background: SOFT, border: CARD_B, color: THI }}
@@ -5360,6 +5411,7 @@ export function SellPage() {
                           onClick={() => {
                             if (p.is_assigned === false) { openStockFor(p); return; }
                             void addToCart(p, "a"); setSearch("");
+                            focusCodeInput();
                           }}
                           onKeyDown={e => {
                             if (e.key === "Enter" || e.key === " ") {
@@ -5367,6 +5419,7 @@ export function SellPage() {
                               if (p.is_assigned === false) { openStockFor(p); return; }
                               void addToCart(p, "a");
                               setSearch("");
+                              focusCodeInput();
                             }
                           }}
                           className="w-full px-5 py-4 flex items-center gap-5 group cursor-pointer transition-colors"
@@ -6536,17 +6589,35 @@ export function SellPage() {
                                 resumen de cobro de abajo — evita mostrar "faltan" 2 veces.) */}
                             <div className="relative">
                               <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-2xl pointer-events-none" style={{ color: "var(--td-placeholder)" }}>$</span>
+                              {/* Sin autoFocus (bug prueba real 2026-09-28): agarraba el
+                                  cursor al abrir Caja y el Enter del lector cobraba la
+                                  venta. El cursor vive en el campo de código. */}
                               <input
                                 ref={cashInputRef}
-                                autoFocus
                                 type="number" min="0" step="0.01"
                                 value={cashReceived}
                                 onChange={e => { setCashReceived(e.target.value); cashTypedRef.current = true; }}
                                 onKeyDown={e => {
-                                  if (e.key === "Enter") {
-                                    if (isMixto && !mixedSplit.valid) return;
-                                    if (totalReceived >= cashTarget || (cashReceived === "" && appliedUsd === 0)) void handleCheckout();
+                                  if (e.key !== "Enter") {
+                                    trackCashKey(e.key);
+                                    return;
                                   }
+                                  // El lector ya tomó este Enter (escaneo detectado).
+                                  if (e.nativeEvent.defaultPrevented) return;
+                                  const typed = cashKeysRef.current.keys;
+                                  cashKeysRef.current = { keys: "", at: 0 };
+                                  // Un código escaneado aquí NO cobra: se agrega el producto.
+                                  if (classifyCashEnter(typed, cashReceived) === "scan") {
+                                    e.preventDefault();
+                                    const code = typed.trim().length >= 4 ? typed.trim() : cashReceived.trim();
+                                    setCashReceived("");
+                                    cashTypedRef.current = false;
+                                    void handleScannedCode(code);
+                                    focusCodeInput();
+                                    return;
+                                  }
+                                  if (isMixto && !mixedSplit.valid) return;
+                                  if (totalReceived >= cashTarget || (cashReceived === "" && appliedUsd === 0)) void handleCheckout();
                                 }}
                                 placeholder="0.00"
                                 className="w-full text-center rounded-xl py-2.5 pl-10 pr-4 text-4xl font-black focus:outline-none transition-all tabular-nums"
@@ -7019,6 +7090,10 @@ export function SellPage() {
           setCashReceivedUsd(usd); setUsdApplied(true); setUsdCalcOpen(false);
           const n = parseFloat(usd) || 0;
           if (n > 0) pushPayLog(`Dólares US$${n.toLocaleString("en-US")} ≈ ${fmt(n * tc)}`, "usd", n);
+          // Si los dólares no alcanzan, el cursor va a pesos para capturar el resto.
+          if (n * tc + (parseFloat(cashReceived) || 0) < currentPayAmount) {
+            requestAnimationFrame(() => cashInputRef.current?.focus());
+          }
         }}
         onClose={() => setUsdCalcOpen(false)}
       />

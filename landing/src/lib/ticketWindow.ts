@@ -55,8 +55,15 @@ export function printViaWindow(html: string, opts?: PrintViaWindowOptions): Wind
   idoc.write(html);
   idoc.close();
   setTimeout(() => {
+    // El iframe se lleva el cursor al imprimir; al quitarlo se regresa a donde
+    // estaba (en Caja: el campo de código, para seguir escaneando sin mouse).
+    const prevFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     try { iframe.contentWindow?.focus(); iframe.contentWindow?.print(); } catch { /* noop */ }
-    setTimeout(() => iframe.remove(), 1500);
+    setTimeout(() => {
+      iframe.remove();
+      const lost = !document.activeElement || document.activeElement === document.body;
+      if (lost && prevFocus?.isConnected) prevFocus.focus();
+    }, 1500);
   }, 250);
   return "iframe";
 }

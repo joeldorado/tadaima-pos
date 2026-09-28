@@ -19,6 +19,14 @@ function isEditableTarget(el: EventTarget | null): boolean {
   return false;
 }
 
+/** Inputs que resuelven su propio Enter como escaneo (campo de código de Caja). */
+function isSelfScanTarget(el: EventTarget | null): boolean {
+  return el instanceof HTMLElement && el.closest('[data-scan-target="product"]') !== null;
+}
+
+/** Ventana (ms) para tragarse el Enter de un escaneo que ya se procesó por tiempo. */
+const LATE_ENTER_WINDOW_MS = 300;
+
 /**
  * Detector global de lectores USB HID (que emiten teclas + Enter).
  *
@@ -27,7 +35,13 @@ function isEditableTarget(el: EventTarget | null): boolean {
  *
  * Si el target del evento es un input/textarea, no interfiere a menos que la velocidad
  * del input claramente sea de máquina (todas las teclas < maxIntervalMs). Cuando detecta
- * escaneo, dispara `preventDefault` para evitar que el código termine "tipeado" en el input.
+ * escaneo, dispara `preventDefault` para evitar que el código termine "tipeado" en el input,
+ * y detiene la propagación del Enter: ningún otro manejador (p. ej. el campo de efectivo,
+ * que cobra con Enter) debe recibir el Enter del lector (bug prueba real 2026-09-28).
+ *
+ * Los inputs marcados `data-scan-target="product"` se ignoran: ellos mismos mandan su
+ * término al flujo de escaneo en su Enter (evita códigos truncados cuando el re-render
+ * por tecla hace que la ráfaga no se reconozca completa).
  */
 export function useBarcodeScanner({
   onScan,
@@ -51,6 +65,9 @@ export function useBarcodeScanner({
     // ignora (algunos lectores re-emiten, o el código quedaba tipeado en el
     // input y se re-procesaba como segunda lectura).
     let lastScan = { code: "", at: 0 };
+    // Si el escaneo se procesó por tiempo (el Enter del lector llegó tarde), ese
+    // Enter se descarta hasta este instante para que no cobre ni envíe formularios.
+    let swallowEnterUntil = 0;
 
     const reset = () => {
       buffer = "";
@@ -97,7 +114,17 @@ export function useBarcodeScanner({
       return false;
     };
 
+    const swallow = (ev: KeyboardEvent) => {
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+    };
+
     const handler = (ev: KeyboardEvent) => {
+      if (isSelfScanTarget(ev.target)) {
+        reset();
+        return;
+      }
+
       if (ev.ctrlKey || ev.metaKey || ev.altKey) {
         reset();
         return;
@@ -108,8 +135,10 @@ export function useBarcodeScanner({
 
       if (ev.key === "Enter") {
         if (buffer.length > 0) {
-          const wasScan = flush();
-          if (wasScan) ev.preventDefault();
+          if (flush()) swallow(ev);
+        } else if (now < swallowEnterUntil) {
+          swallowEnterUntil = 0;
+          swallow(ev);
         }
         return;
       }
@@ -135,8 +164,9 @@ export function useBarcodeScanner({
 
       if (flushTimer) clearTimeout(flushTimer);
       flushTimer = setTimeout(() => {
-        if (buffer.length >= minLength && allFast) flush();
-        else reset();
+        if (buffer.length >= minLength && allFast) {
+          if (flush()) swallowEnterUntil = performance.now() + LATE_ENTER_WINDOW_MS;
+        } else reset();
       }, flushTimeoutMs);
     };
 
