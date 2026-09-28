@@ -148,6 +148,7 @@ class SuppliesController extends Controller
         $user      = $request->user();
         $isAdmin   = $user->isAdminRole();
         $isCashier = $user->hasRole(['cajero']) && ! $isAdmin;
+        $cashierWholeStore = $isCashier && $request->boolean('whole_store');
 
         // Rango de fechas opcional (día-negocio), MISMO helper que /reports/supplies
         // para que la lista detallada del Reporte cuadre con el agregado.
@@ -164,11 +165,14 @@ class SuppliesController extends Controller
             ->when($toUtc,   fn ($q) => $q->where('supply_movements.created_at', '<=', $toUtc))
             // Filtro por tienda DUEÑA del insumo (supplies.store_id); NULL = toda la
             // empresa. Reportes por tienda (2026-07). Solo aplica si se envía store_id.
-            ->when($request->filled('store_id'), fn ($q) => $q->whereHas('supply', fn ($qq) => $qq->where('store_id', $request->integer('store_id'))))
+            ->when($request->filled('store_id') && ! $cashierWholeStore, fn ($q) => $q->whereHas('supply', fn ($qq) => $qq->where('store_id', $request->integer('store_id'))))
             // Filtro por usuario que REGISTRÓ la compra (para el filtro de usuario del
             // Reporte). El cajero de todos modos ya queda scoped a lo suyo abajo.
             ->when($request->integer('user_id'), fn ($q, $id) => $q->where('user_id', $id))
-            ->when($isCashier, fn ($q) => $q->where('user_id', $user->id))
+            ->when($isCashier && ! $cashierWholeStore, fn ($q) => $q->where('user_id', $user->id))
+            // ?whole_store=1 (reporte de toda la tienda desde el corte, 2026-09-27):
+            // el cajero ve lo de todos, pero anclado a los insumos de SU tienda.
+            ->when($cashierWholeStore, fn ($q) => $q->whereHas('supply', fn ($qq) => $qq->where('store_id', $user->store_id ?? -1)))
             ->orderByDesc('created_at')
             ->limit(200)
             ->get();

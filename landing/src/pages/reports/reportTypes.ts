@@ -97,4 +97,6 @@ export interface ReportExportParams {
   users: { id: number; name: string }[];
   /** Compras de insumos del rango (egresos) para la tabla 5. EGRESOS. */
   supplyMovements: SupplyMovementRecord[];
+  /** Sufijo del nombre de archivo (p.ej. "turno" / "tienda" desde el corte). */
+  fileSuffix?: string;
 }

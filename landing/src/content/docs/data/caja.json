@@ -291,6 +291,12 @@
           },
           {
             "kind": "callout",
+            "tone": "info",
+            "title": "Reportes en Excel del día",
+            "text": "Antes de confirmar puedes bajar dos reportes: “reporte del turno” (solo tus ventas de hoy) y “reporte de toda la tienda” (las ventas de todos los cajeros de tu tienda ese día), útil para cerrar el día aunque no esté el gerente. Descargarlos no cierra la caja."
+          },
+          {
+            "kind": "callout",
             "tone": "warn",
             "title": "Caja de día anterior",
             "text": "Si dejaste una caja abierta de un día previo, aparece un banner de aviso y no puedes vender sobre esa sesión vieja: primero ciérrala con su corte y abre una nueva."

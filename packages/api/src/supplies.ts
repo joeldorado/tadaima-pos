@@ -111,6 +111,8 @@ export async function getSupplyMovements(params?: {
   store_id?: number
   /** Filtra por el usuario que REGISTRÓ la compra (filtro de usuario del Reporte). */
   user_id?: number
+  /** Cajero: compras de todos los de SU tienda (reporte de toda la tienda del corte). */
+  whole_store?: boolean
 }): Promise<SupplyMovementRecord[]> {
   const response = await apiClient.get<SupplyMovementRecord[]>('/supplies/movements', { params })
   return response.data

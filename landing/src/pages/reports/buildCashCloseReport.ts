@@ -11,9 +11,10 @@
 // esto hace un fetch de una sola vez al presionar el botón: el corte se descarga
 // y se cierra, no necesita polling.
 import {
-  getSales, getPreSaleOrders, getSupplyMovements,
+  getPreSaleOrders, getSupplyMovements,
   type SaleDetail, type PreSaleOrder, type SupplyMovementRecord,
 } from "@tadaima/api";
+import { fetchAllSales } from "@/lib/fetchAllPages";
 import {
   filterSales, filterPreSaleOrders, buildGroupedProducts, buildPresaleRows,
   buildPaymentBreakdown,
@@ -25,9 +26,12 @@ export interface CashCloseReportInput {
   day: string;
   /** Tienda de la sesión de caja. null = todas (admin sin tienda asignada). */
   storeId: number | null;
-  /** Dueño de la caja: el reporte se acota a SUS movimientos. */
-  userId: number;
-  /** Nombre del cajero, para el encabezado del archivo. */
+  /**
+   * Dueño de la caja: el reporte se acota a SUS movimientos. null = TODA la
+   * tienda ese día (todos los cajeros; al cajero se le abre con whole_store).
+   */
+  userId: number | null;
+  /** Nombre del cajero, para el encabezado del archivo (ignorado si userId es null). */
   userName: string;
   /** Nombre de la tienda, para el encabezado del archivo. */
   storeName: string;
@@ -49,11 +53,12 @@ export async function buildCashCloseReportParams(
 ): Promise<ReportExportParams> {
   const { day, storeId, userId, userName, storeName, canViewCost, ivaRate } = input;
 
+  const scope = userId !== null ? { user_id: userId } : { whole_store: true };
   const baseParams = {
     from: day,
     to: day,
     ...(storeId ? { store_id: storeId } : {}),
-    user_id: userId,
+    ...scope,
   };
 
   // Preventas por FECHA DE PAGO, igual que Reportes: un folio creado antes puede
@@ -63,12 +68,12 @@ export async function buildCashCloseReportParams(
     payment_to: day,
     status: "pending,ready,delivered,expired,cancelled",
     ...(storeId ? { store_id: storeId } : {}),
-    user_id: userId,
+    ...(userId !== null ? { user_id: userId } : {}),
     per_page: 500,
   };
 
   const [salesRes, preSaleRes, suppliesRes] = await Promise.all([
-    getSales({ ...baseParams, per_page: 100 }),
+    fetchAllSales(baseParams),
     getPreSaleOrders(preSaleParams),
     getSupplyMovements(baseParams).catch(() => [] as SupplyMovementRecord[]),
   ]);
@@ -105,7 +110,8 @@ export async function buildCashCloseReportParams(
     effectiveStoreId: storeId,
     selectedUserId: userId,
     stores: storeId ? [{ id: storeId, name: storeName }] as ReportExportParams["stores"] : [],
-    users: [{ id: userId, name: userName }],
+    users: userId !== null ? [{ id: userId, name: userName }] : [],
+    fileSuffix: userId !== null ? "turno" : "tienda",
     supplyMovements,
   };
 }

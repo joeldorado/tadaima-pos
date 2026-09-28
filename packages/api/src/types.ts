@@ -462,6 +462,11 @@ export interface GetSalesParams {
   store_id?: number
   /** Filtrar por cajero — admin/gerente pueden, cajero queda forzado a su id. */
   user_id?: number
+  /**
+   * Reporte de toda la tienda desde el corte: el cajero deja de estar forzado a
+   * sus ventas (sigue anclado a su tienda). Sin esto, el Historial no cambia.
+   */
+  whole_store?: boolean
   from?: string
   to?: string
   status?: string

@@ -32,7 +32,7 @@ export function CloseCashModal({ session, title, reason, onClosed, onCancel }: C
   const [closeCashAmount, setCloseCashAmount] = useState("");
   const [closeUsdAmount, setCloseUsdAmount] = useState("");
   const [closingCashLoading, setClosingCashLoading] = useState(false);
-  const [excelLoading, setExcelLoading] = useState(false);
+  const [excelLoading, setExcelLoading] = useState<"turno" | "tienda" | null>(null);
   const { user } = useAuth();
 
   // "Debe haber" en vivo (Joel 2026-07-30): el cajero ve el objetivo de cada
@@ -81,14 +81,15 @@ export function CloseCashModal({ session, title, reason, onClosed, onCancel }: C
   const totalTurno = Math.round((pesosCobrados + usdEnPesos + cobradoTarjeta + cobradoTransfer) * 100) / 100;
 
   /**
-   * Descarga el reporte de ventas del turno: MISMO Excel que la pantalla de
+   * Descarga el reporte de ventas del día: MISMO Excel que la pantalla de
    * Reportes (mismas reglas de neteo, costo y preventas), acotado al día del
-   * corte, la tienda de la sesión y el cajero dueño de la caja.
+   * corte y la tienda de la sesión. "turno" = solo el cajero dueño de la caja;
+   * "tienda" = todos los cajeros de la tienda ese día (Joel 2026-09-27).
    *
    * No cierra la caja — el cajero puede descargarlo, revisarlo y luego confirmar.
    */
-  const handleExportExcel = async () => {
-    setExcelLoading(true);
+  const handleExportExcel = async (scope: "turno" | "tienda") => {
+    setExcelLoading(scope);
     try {
       const canViewCost = (user?.roles?.some(r => ["admin", "super_admin", "owner", "dueño"].includes(r.toLowerCase())) ?? false)
         || !!(user as { can_view_cost?: boolean } | null)?.can_view_cost;
@@ -97,7 +98,7 @@ export function CloseCashModal({ session, title, reason, onClosed, onCancel }: C
         // La sesión trae la tienda en register.store_id; el nombre solo viene en
         // el preview de /reports/cash, así que se usa como fallback del header.
         storeId: session.register?.store_id ?? preview?.store?.id ?? null,
-        userId: session.user?.id ?? user?.id ?? 0,
+        userId: scope === "turno" ? (session.user?.id ?? user?.id ?? 0) : null,
         userName: session.user?.name ?? "Cajero",
         storeName: preview?.store?.name ?? session.register?.name ?? "Tienda",
         canViewCost,
@@ -107,7 +108,7 @@ export function CloseCashModal({ session, title, reason, onClosed, onCancel }: C
     } catch {
       toast.error("No se pudo generar el reporte");
     } finally {
-      setExcelLoading(false);
+      setExcelLoading(null);
     }
   };
 
@@ -307,17 +308,23 @@ export function CloseCashModal({ session, title, reason, onClosed, onCancel }: C
 
         </div>
 
-        {/* Reporte del turno — mismo Excel que la pantalla de Reportes, acotado
-            a este cajero y este día. No cierra la caja. */}
-        <button
-          onClick={() => { void handleExportExcel(); }}
-          disabled={excelLoading}
-          data-testid="close-cash-excel"
-          style={{ width: "100%", background: "var(--td-input-bg)", border: "1px solid rgba(16,185,129,0.35)", borderRadius: 14, color: "#34d399", padding: "11px", fontSize: 11, fontWeight: 900, cursor: excelLoading ? "wait" : "pointer", opacity: excelLoading ? 0.6 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 12, flexShrink: 0 }}
-        >
-          {excelLoading ? <Loader2 size={14} className="animate-spin" /> : <FileSpreadsheet size={14} />}
-          {excelLoading ? "Generando reporte…" : "Descargar reporte del turno (Excel)"}
-        </button>
+        {/* Reportes del día — mismo Excel que la pantalla de Reportes: el del
+            turno (este cajero) y el de toda la tienda. No cierran la caja. */}
+        {([
+          { scope: "turno", label: "Descargar reporte del turno (Excel)", testId: "close-cash-excel", marginBottom: 8 },
+          { scope: "tienda", label: "Descargar reporte de toda la tienda (Excel)", testId: "close-cash-excel-store", marginBottom: 12 },
+        ] as const).map(b => (
+          <button
+            key={b.scope}
+            onClick={() => { void handleExportExcel(b.scope); }}
+            disabled={excelLoading !== null}
+            data-testid={b.testId}
+            style={{ width: "100%", background: "var(--td-input-bg)", border: "1px solid rgba(16,185,129,0.35)", borderRadius: 14, color: "#34d399", padding: "11px", fontSize: 11, fontWeight: 900, cursor: excelLoading ? "wait" : "pointer", opacity: excelLoading !== null && excelLoading !== b.scope ? 0.45 : excelLoading ? 0.6 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: b.marginBottom, flexShrink: 0 }}
+          >
+            {excelLoading === b.scope ? <Loader2 size={14} className="animate-spin" /> : <FileSpreadsheet size={14} />}
+            {excelLoading === b.scope ? "Generando reporte…" : b.label}
+          </button>
+        ))}
 
         {/* Actions */}
         <div style={{ display: "flex", gap: 10, flexShrink: 0 }}>

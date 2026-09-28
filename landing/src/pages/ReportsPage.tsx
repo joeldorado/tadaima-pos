@@ -18,7 +18,7 @@ import { ReportsSkeleton } from "@/components/reports/ReportsSkeleton";
 import { exportReportPdf } from "./reports/exportPdf";
 import { exportReportExcel } from "./reports/exportExcel";
 import type { ReportExportParams, PresaleRow } from "./reports/reportTypes";
-import { getSales } from "@tadaima/api";
+import { fetchAllSales } from "@/lib/fetchAllPages";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useStoresQuery } from "@/hooks/queries/useStores";
 import { useUsersQuery } from "@/hooks/queries/useUsers";
@@ -250,7 +250,8 @@ export function ReportsPage() {
   const salesListParams = { ...baseParams, per_page: 100 };
   const salesListQuery = useQuery({
     queryKey: queryKeys.sales.list(salesListParams),
-    queryFn: () => getSales(salesListParams),
+    // Todas las páginas: /sales topa en 100 y el reporte se cortaba sin avisar.
+    queryFn: () => fetchAllSales(salesListParams),
     enabled: activeTab === "ventas",
     staleTime: REPORTS_STALE,
     refetchInterval: LIVE_POLL_MS,

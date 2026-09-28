@@ -67,9 +67,11 @@ class SalesController extends Controller
             } else {
                 $query->where('store_id', $storeId);
             }
-            if ($isCashier) {
+            if ($isCashier && ! $request->boolean('whole_store')) {
                 // Cajero solo ve sus propias ventas — incluso si el frontend
-                // intentó pasar un user_id distinto, se sobreescribe.
+                // intentó pasar un user_id distinto, se sobreescribe. Salvo
+                // ?whole_store=1: reporte de toda su tienda desde el corte
+                // (2026-09-27); la tienda de arriba sigue anclada.
                 $query->where('user_id', $user->id);
             }
         } else {

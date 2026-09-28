@@ -587,7 +587,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `tadaima_reporte_${activeTab}_${from}_${to}.xlsx`;
+      a.download = `tadaima_reporte_${activeTab}_${from}_${to}${params.fileSuffix ? `_${params.fileSuffix}` : ""}.xlsx`;
       a.click();
       window.URL.revokeObjectURL(url);
       toast.success("Excel descargado correctamente");
