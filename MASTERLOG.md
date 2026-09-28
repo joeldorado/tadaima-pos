@@ -4,6 +4,44 @@
 
 ---
 
+### Sesión 2026-09-28 — Borrar ventas de prueba + import de productos NUEVOS de Centro (.bak 2026-09-27) — SOLO DATOS, sin deploy
+
+**1) Ventas de prueba borradas (11:52 PDT).** Tras la limpieza del 27, el equipo hizo
+5 ventas de prueba en Macro (27-sep 5:31–5:45 pm, Diana y Mario) con 2 cortes.
+Decisión de Joel: borrar ventas **y sus 2 cortes**, y **regresar las 5 piezas**.
+Una transacción (`LOCK` + guardia de conteos): stock devuelto sumando los 5
+movimientos `venta` (ids 4788–4792, luego borrados) → Pokeball tin 19→21, Gorra pkm
+fosil 0→2, Set pin Megaman 10→11 (inventario total vuelve a 239,797 = post-limpieza
+del 27). `DELETE` (no TRUNCATE: `pre_sale_orders`/`supply_movements` tienen FK hacia
+estas tablas y no se tocan) de cancelaciones, pagos, partidas, ventas, borradores,
+movimientos de caja y cortes; secuencias en 1. Lo demás idéntico (verificado).
+Respaldo: `~/Documents/JOEL/supabase-ventas-prueba-2026-09-28.dump` (verificado). Log:
+`~/Documents/JOEL/limpia-ventas-prueba-2026-09-28.log`.
+
+**2) Import Centro** (`Tadaima-20260927.bak`, nombres lógicos `tadaima_dat/tadaima_log`).
+`restore.sh` ahora lee los nombres lógicos con `RESTORE FILELISTONLY` (antes fijos en
+`MiBD_*`). Staging 16,123 filas (400 códigos nuevos vs el .bak de agosto). Mismas
+reglas que Macro el 26: `--desde-fecha=2026-01-01 --solo-con-stock
+--libreria-sin-stock --solo-nuevos`. Del dry-run salió un staging **ajustado**
+(`articulos-staging-centro-20260927-ajustado.json`):
+- quitada `36319448` "Cartera totoro summer": casi seguro la misma que `36819448`
+  (Macro): mismo nombre y precio, un dígito distinto → error de captura en una tienda.
+- categoría `Blindbox` → `BLIND BOX` (ya existía; se iba a duplicar) y `.` → sin categoría.
+
+Corrida real (`--ref=import-centro-20260927`): **106 nuevos** (90 con stock = 452 pzs
++ 16 tomos en 0; 33 tomos), **1,296 existentes omitidos** sin tocar datos ni stock, 2
+categorías nuevas ("Funko pop 6\"", "funko ex"). Verificación: products 4,762 → 4,868,
+tomos 2,872 → 2,905, inventario Centro 1,771 → 1,861 filas / +452 pzs, +90 movimientos
+todos `entrada`, solo 106 productos modificados. Respaldo previo:
+`~/Documents/JOEL/supabase-catalogo-pre-import-centro-2026-09-28.dump`. Log y CSV en
+`MAcro Productos SQL/` (`import-centro-20260927.log`, `productos-nuevos-centro-20260927.csv`).
+**Para el equipo:** 4 nuevos comparten nombre con otro producto pero son distintos
+(códigos/precios diferentes): Booster box Palworld Chinese, Wall scroll Sephiroth,
+Cartas premium $50 y $100 — marcados en el CSV. La cartera totoro de Centro no se creó:
+si su código real es 36319448, corregir el SKU del existente o darla de alta a mano.
+
+---
+
 ### Sesión 2026-09-27 (2) — Corte de Caja: botón "reporte de toda la tienda" + reportes sin tope de 100 ventas — DEPLOYADO rev `tadaima-00008-ven`
 
 **Pedido:** en el modal "Corte de Caja" el botón existente baja el Excel del turno
