@@ -4,6 +4,41 @@
 
 ---
 
+### Sesión 2026-09-27 (2) — Corte de Caja: botón "reporte de toda la tienda" + reportes sin tope de 100 ventas — DEPLOYADO rev `tadaima-00008-ven`
+
+**Pedido:** en el modal "Corte de Caja" el botón existente baja el Excel del turno
+(solo ese cajero); la tienda necesita otro con **toda la tienda ese día**.
+
+**Cambio** (commit `a626204`):
+- `CloseCashModal`: segundo botón "Descargar reporte de toda la tienda (Excel)"
+  (`data-testid=close-cash-excel-store`); reusa `buildCashCloseReportParams` con
+  `userId: null` → encabezado "Usuario: Todos". Archivos `…_turno.xlsx` / `…_tienda.xlsx`.
+- Backend: `?whole_store=1` en `GET /sales` y `GET /supplies/movements` — el cajero
+  deja de estar forzado a lo suyo, pero anclado a SU tienda (insumos por
+  `supplies.store_id` del cajero, ignora el store_id del request). Sin el
+  parámetro todo igual (el Historial de Ventas del cajero no cambia).
+  `WholeStoreReportScopeTest` (5). Preventas ya daban toda la tienda.
+- **Bug viejo arreglado:** `/sales` topa en 100 por página y tanto el reporte del
+  turno como `ReportsPage` solo pedían la primera → con >100 ventas en el rango el
+  reporte salía incompleto sin avisar. `landing/src/lib/fetchAllPages.ts` recorre
+  todas las páginas. OJO: `/sales` manda la paginación ANIDADA
+  (`data.pagination.last_page`), no plana como dice `PaginatedResponse` — el helper
+  lee ambas (lo cachó la prueba en navegador; con el campo plano habría seguido
+  cortando en 100). Devuelve la misma forma, compatible con `optimisticSale`.
+
+**Validación:** PHPUnit 565 · vitest 297 (4 de fetchAllPages) · tsc 463 = base.
+Navegador contra SQLite local (backend en 8031 — 8000/8020 son de AllTek; CSP de
+`index.html` abierta solo para la prueba y revertida): como cajero, los dos botones
+generan su archivo; el de tienda pide `whole_store=true` y trae la venta del admin
+y la del cajero; con 107 ventas locales pidió `page=1` y `page=2`. Ventas de
+prueba locales borradas.
+**Deploy:** candidate sin tráfico → smoke (SPA/us-catalog/tadaimaus 200, auth y
+/sales 401, bundle con el botón nuevo, envs idénticas, "Nothing to migrate") →
+`--to-latest`. Dominio sirve `index-Bluyq4AW.js`. **Rollback:**
+`update-traffic --to-revisions tadaima-00006-woc=100`.
+
+---
+
 ### Sesión 2026-09-27 — LIMPIEZA DE PROD para la prueba real (28-sep) + cajeros ven los cortes de su tienda — DEPLOYADO rev `tadaima-00006-woc`
 
 **1) Limpieza de datos en prod (Supabase), 14:55 PDT, a pedido de Joel ("ahora
