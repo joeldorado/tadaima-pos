@@ -4,6 +4,26 @@
 
 ---
 
+### Sesión 2026-09-28 (4) — Tomos: el selector de almacén distingue piso y almacén — deploy pendiente (PR)
+
+**Reporte de la tienda:** al agregar stock a un tomo ya registrado (Editar Tomo →
+Inventario), el dropdown mostraba "Tadaima MACRO" dos veces y no se sabía cuál era piso
+y cuál almacén. **No era por rol**: el select pintaba solo `w.store?.name`, y cada tienda
+tiene 2 almacenes (Exhibición `store` + Bodega `bodega`). Además, la fila de la Bodega
+salía marcada como "Tienda".
+
+**Arreglo** (`63ff8a4`): `lib/warehouse.ts` → `warehouseOptionLabel` ("Tadaima MACRO ·
+Exhibición (piso)" / "· Bodega (almacén)") y `compareWarehouses` (Exhibición primero),
+con tests. Aplicado en `MangaEditModal` (select "Agregar almacén" ordenado + filas con
+su tipo y "se vende / no se vende en Caja"), en el filtro de Inventario de Admin y en la
+revisión de Traspasos. Solo cambian etiquetas: el valor sigue siendo el id del almacén.
+Verificado en local (el dropdown lista las 4 opciones distintas; al agregar, cada fila
+queda en su almacén). vitest 305/305, type-check = base (463).
+
+**Deploy:** candidato sin tráfico; se promueve al mergear el PR a `main`.
+
+---
+
 ### Sesión 2026-09-28 (3) — Caja: el lector agrega sin mouse y ya no cobra solo — rev tadaima-00010-buj
 
 **Reporte de la tienda (primer día de prueba real):** (1) al escanear en el campo de
