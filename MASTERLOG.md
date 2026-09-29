@@ -4,6 +4,29 @@
 
 ---
 
+### Sesión 2026-09-29 (2) — Formularios: moverse entre campos con las flechas — rev tadaima-00015-his
+
+**Pedido de tienda:** pasar de un campo a otro con las flechas (además de Tab) en todos
+los formularios; además, en los campos numéricos ↑/↓ subían/bajaban el precio sin querer.
+PR joeldorado/tadaima-pos#18 (`04d3176`).
+
+**Qué hace:** un solo listener global (`hooks/useArrowFieldNavigation`, montado en
+`Layout`, fase bubble → respeta `defaultPrevented`); reglas puras en `lib/fieldNav.ts`
+(tests). ↓/→ siguiente campo, ↑/← anterior, dentro del mismo modal/formulario (alcance:
+`[data-nav-scope]`, `role=dialog`, `form`, `position: fixed` o `<main>`); al llegar se
+selecciona el valor. Números: todas las flechas mueven y ya no cambian el valor. Texto: ←→
+solo saltan en la orilla. Textarea/select/checkbox/calendarios no se tocan; los select se
+saltan como destino. Enter igual. Caja incluida (decisión Joel). `data-arrow-nav="off"`
+excluye un campo/bloque. Guía in-app: Primeros pasos → "Moverte en los formularios".
+
+**Verificado en local:** Editar producto → Precios (↓↑←→ recorren, ningún precio cambió),
+texto (→ en medio mueve el cursor, en la orilla salta), Caja (escaneo, ↓ al efectivo, Enter
+vacío cobra exacto y el cursor vuelve al código). vitest 346, type-check = base (463).
+
+**Deploy:** tadaima-00015-his (rollback `tadaima-00013-zih`).
+
+---
+
 ### Sesión 2026-09-29 — Caja: aumento de precio por línea + reembolso NETO al cancelar — rev tadaima-00013-zih
 
 **Pedido del cliente:** en Caja, además de bajar el precio de una línea, poder SUBIRLO
