@@ -23,9 +23,11 @@
       "tours",
       "recorridos",
       "perfil",
-      "cerrar sesión"
+      "cerrar sesión",
+      "flechas",
+      "teclado"
     ],
-    "updatedAt": "2026-08-06",
+    "updatedAt": "2026-09-29",
     "sections": [
       {
         "id": "entrar",
@@ -45,6 +47,29 @@
               {
                 "title": "Listo — aterrizas en tu pantalla de inicio",
                 "detail": "Lo que ves al entrar depende de tu rol (abajo te mostramos las tres vistas)."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "teclado-formularios",
+        "heading": "Moverte en los formularios con el teclado",
+        "blocks": [
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Flecha ↓ o → para ir al siguiente campo",
+                "detail": "Funciona en todos los formularios (precios, altas, Caja…). Al llegar, el valor queda seleccionado: lo que escribas lo reemplaza."
+              },
+              {
+                "title": "Flecha ↑ o ← para regresar al campo anterior",
+                "detail": "En los campos de texto, ← y → primero mueven el cursor dentro del texto y solo saltan de campo cuando llegas al inicio o al final."
+              },
+              {
+                "title": "Las flechas ya no cambian los precios",
+                "detail": "Antes, ↑/↓ subían o bajaban el número de un campo de precio. Ahora solo te mueven de campo. Tab sigue funcionando igual y Enter sigue guardando donde ya lo hacía."
               }
             ]
           }

@@ -25,6 +25,7 @@ import { getProductsLight, apiClient, type CashSessionReport } from "@tadaima/ap
 import { queryKeys } from "@/lib/queryKeys";
 import { useActiveSessionQuery } from "@/hooks/queries/useCashSession";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { useArrowFieldNavigation } from "@/hooks/useArrowFieldNavigation";
 import { CloseCashModal } from "@/components/cash/CloseCashModal";
 import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
 import { LogoutCashReminder } from "@/components/cash/LogoutCashReminder";
@@ -235,6 +236,8 @@ export function Layout() {
 }
 
 function LayoutInner() {
+  // Flechas para pasar de un campo a otro en todos los formularios (2026-09-29).
+  useArrowFieldNavigation();
   const navigate  = useNavigate();
   const location  = useLocation();
   const { user, logout }  = useAuth();
