@@ -42,7 +42,7 @@ import { useRolesQuery } from "@/hooks/queries/useRoles";
 import { useCategoriesQuery } from "@/hooks/queries/useCategories";
 import { queryKeys } from "@/lib/queryKeys";
 import { isValidEmail, isValidPhone } from "@/lib/validation";
-import { warehouseTypeLabel, warehouseTypeBadgeColor } from "@/lib/warehouse";
+import { warehouseTypeLabel, warehouseTypeBadgeColor, warehouseOptionLabel } from "@/lib/warehouse";
 
 // ─── Design tokens (coherente con resto del sistema) ─────────────────────────
 const BG   = "var(--td-page-bg)";
@@ -1365,7 +1365,7 @@ function TabInventario() {
               style={{ ...INPUT, width: "auto", padding: "7px 12px", fontSize: 11 }}
             >
               <option value="all">Todas las bodegas</option>
-              {warehouses.map(w => <option key={w.id} value={w.id}>{w.store?.name ?? w.name}</option>)}
+              {warehouses.map(w => <option key={w.id} value={w.id}>{warehouseOptionLabel(w)}</option>)}
             </select>
             <Btn onClick={() => void load()}>↺</Btn>
           </div>
