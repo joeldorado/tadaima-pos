@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { updateManga, deleteManga, uploadMangaImage, getMangaInventory, updateMangaInventory, getWarehouses } from '@tadaima/api'
 import type { Manga, MangaInventoryItem, Warehouse } from '@tadaima/api'
+import { compareWarehouses, warehouseOptionLabel, warehouseTypeLabel } from '@/lib/warehouse'
 import { EDITORIALS, MANGA_GENRES } from './mangaConstants'
 import { toast } from 'sonner'
 import { useAuth } from '@tadaima/auth'
@@ -140,7 +141,8 @@ export function MangaEditModal({
         const allowedInventory = restrictedStoreId == null
           ? list
           : list.filter(i => i.warehouse?.store?.id === restrictedStoreId)
-        setInventory(allowedInventory)
+        // Exhibición antes que Bodega, agrupado por tienda.
+        setInventory([...allowedInventory].sort((a, b) => compareWarehouses(a.warehouse ?? {}, b.warehouse ?? {})))
         const init: Record<number, string> = {}
         allowedInventory.forEach(i => { init[i.warehouse_id] = String(i.quantity) })
         setQuantities(init)
@@ -156,9 +158,9 @@ export function MangaEditModal({
   }, [manga.id, restrictedStoreId])
 
   // Warehouses que NO están aún en el inventario del manga — opciones del selector "Agregar".
-  const availableWarehousesToAdd = allWarehouses.filter(
-    w => !(w.id in quantities)
-  )
+  const availableWarehousesToAdd = allWarehouses
+    .filter(w => !(w.id in quantities))
+    .sort(compareWarehouses)
 
   // Preselecciona cuando solo hay una tienda disponible (p.ej. gerente con una sola tienda)
   useEffect(() => {
@@ -514,7 +516,7 @@ export function MangaEditModal({
                   <div className="flex gap-2 items-end p-3 rounded-2xl" style={{ background: SURFACE_MUTED, border: BORDER_SUBTLE }}>
                     <div className="flex-1">
                       <label style={{ fontSize: 9, fontWeight: 900, textTransform: 'uppercase' as const, letterSpacing: '0.12em', color: T.textMuted, display: 'block', marginBottom: 4 }}>
-                        Agregar tienda
+                        Agregar almacén
                       </label>
                       <select
                         value={pendingAddWh}
@@ -524,7 +526,7 @@ export function MangaEditModal({
                       >
                         <option value="">Selecciona…</option>
                         {availableWarehousesToAdd.map(w => (
-                          <option key={w.id} value={w.id}>{w.store?.name ?? w.name}</option>
+                          <option key={w.id} value={w.id}>{warehouseOptionLabel(w)}</option>
                         ))}
                       </select>
                     </div>
@@ -601,15 +603,16 @@ export function MangaEditModal({
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                              <span className="text-sm font-black truncate" style={{ color: T.textPrimary }}>{wh?.name ?? '—'}</span>
+                              <span className="text-sm font-black truncate" style={{ color: T.textPrimary }}>{wh ? warehouseOptionLabel(wh) : '—'}</span>
                               {wh?.type && (
                                 <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-widest shrink-0"
-                                  style={{ background: wh.type === 'central' ? 'rgba(100,160,255,0.12)' : 'rgba(100,220,130,0.12)', color: wh.type === 'central' ? '#88AAFF' : '#55CC88' }}>
-                                  {wh.type === 'central' ? 'Central' : 'Tienda'}
+                                  style={{ background: wh.type === 'bodega' ? 'rgba(245,158,11,0.14)' : wh.type === 'central' ? 'rgba(100,160,255,0.12)' : 'rgba(100,220,130,0.12)', color: wh.type === 'bodega' ? '#F59E0B' : wh.type === 'central' ? '#88AAFF' : '#55CC88' }}>
+                                  {warehouseTypeLabel(wh.type)}
                                 </span>
                               )}
                             </div>
-                            {wh?.store && <p className="text-[10px] truncate" style={{ color: T.textMuted }}>{wh.store.name}</p>}
+                            {wh?.type === 'store' && <p className="text-[10px] truncate" style={{ color: T.textMuted }}>Se vende en Caja</p>}
+                            {wh?.type === 'bodega' && <p className="text-[10px] truncate" style={{ color: T.textMuted }}>No se vende en Caja</p>}
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
                             <span className="text-[10px]" style={{ color: T.textMuted }}>uds</span>

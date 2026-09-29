@@ -17,7 +17,7 @@ import { useWarehousesQuery } from "@/hooks/queries/useWarehouses";
 import { queryKeys } from "@/lib/queryKeys";
 import { useAuth } from "@tadaima/auth";
 import { isAdmin as isAdminRole, isManager as isManagerRole } from "@/lib/permisos";
-import { warehouseTypeLabel } from "@/lib/warehouse";
+import { warehouseTypeLabel, warehouseOptionLabel } from "@/lib/warehouse";
 
 // ─── Paleta Tadaima ───────────────────────────────────────────────────────────
 const T = {
@@ -1049,11 +1049,11 @@ export function TransfersPage() {
                           </div>
                           <div className="text-xs font-bold truncate lg:text-center" style={{ color: T.panelText }}>
                             <span className="mr-1 lg:hidden text-[10px] uppercase" style={{ color: T.softText }}>Origen:</span>
-                            {(() => { const wh = warehouses.find(w => String(w.id) === fromWhId); return wh?.store?.name ?? wh?.name ?? "—"; })()}
+                            {(() => { const wh = warehouses.find(w => String(w.id) === fromWhId); return wh ? warehouseOptionLabel(wh) : "—"; })()}
                           </div>
                           <div className="text-xs font-bold truncate lg:text-center" style={{ color: T.panelText }}>
                             <span className="mr-1 lg:hidden text-[10px] uppercase" style={{ color: T.softText }}>Destino:</span>
-                            {(() => { const wh = warehouses.find(w => String(w.id) === toWhId); return wh?.store?.name ?? wh?.name ?? "—"; })()}
+                            {(() => { const wh = warehouses.find(w => String(w.id) === toWhId); return wh ? warehouseOptionLabel(wh) : "—"; })()}
                           </div>
                           {/* Proyección tras el traslado: origen pierde, destino gana */}
                           <div className="lg:text-center space-y-1">
@@ -1189,14 +1189,14 @@ export function TransfersPage() {
                         <div className="min-w-0 flex-1">
                           <p className="text-[9px] font-black uppercase tracking-[0.24em]" style={{ color: T.softText }}>Origen</p>
                           <p className="truncate text-sm font-black" style={{ color: T.panelText }}>
-                            {(() => { const wh = warehouses.find(w => String(w.id) === fromWhId); return wh?.store?.name ?? wh?.name ?? "Sin origen"; })()}
+                            {(() => { const wh = warehouses.find(w => String(w.id) === fromWhId); return wh ? warehouseOptionLabel(wh) : "Sin origen"; })()}
                           </p>
                         </div>
                         <ArrowRight size={16} style={{ color: T.redBright }} />
                         <div className="min-w-0 flex-1 text-right">
                           <p className="text-[9px] font-black uppercase tracking-[0.24em]" style={{ color: T.softText }}>Destino</p>
                           <p className="truncate text-sm font-black" style={{ color: T.panelText }}>
-                            {(() => { const wh = warehouses.find(w => String(w.id) === toWhId); return wh?.store?.name ?? wh?.name ?? "Sin destino"; })()}
+                            {(() => { const wh = warehouses.find(w => String(w.id) === toWhId); return wh ? warehouseOptionLabel(wh) : "Sin destino"; })()}
                           </p>
                         </div>
                       </div>
