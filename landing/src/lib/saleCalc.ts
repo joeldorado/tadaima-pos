@@ -11,6 +11,12 @@
  * neto-promo). neto de línea = gross − promo − manual, nunca negativo.
  * El cupón aplica a nivel venta pero SOLO sobre líneas sin beneficio.
  *
+ * AUMENTO (2026-09-29): en vez de descuento, una línea puede llevar un aumento
+ * de precio (`surcharge`, mismo shape). Se calcula después de la promo (percent
+ * sobre el neto-promo) y va en `surchargePart` — el beneficio sigue ≥ 0.
+ * neto = max(0, gross − promo − manual) + aumento. Una línea lleva descuento O
+ * aumento (lo garantiza Caja y el server).
+ *
  * El gemelo server-side (backend/app/Services/SaleCalculator.php) implementa
  * exactamente este algoritmo — si cambias algo aquí, cámbialo allá.
  *
@@ -27,6 +33,17 @@ export interface LineDiscount {
   reason: DiscountReason;
   note?: string;
   authorizedByUserId?: number;
+}
+
+export type SurchargeReason = "precio_especial" | "escasez" | "envio" | "otro";
+
+/** Aumento de precio por línea (2026-09-29). Mismo shape que LineDiscount. */
+export interface LineSurcharge {
+  kind: "fixed" | "percent";
+  basis: "unit" | "line";
+  value: number;
+  reason: SurchargeReason;
+  note?: string;
 }
 
 export interface PromoDef {
@@ -74,6 +91,8 @@ export interface CalcLine {
   unitPrice: number;
   qty: number;
   discount?: LineDiscount;
+  /** Aumento de precio (2026-09-29) — excluyente con `discount`. */
+  surcharge?: LineSurcharge;
   /**
    * El cajero renunció a la promo de esta línea a propósito (2026-07-24). Es la
    * salida cuando la promo restringe el método de pago y el cliente no puede
@@ -101,6 +120,8 @@ export interface CalcLineResult {
   promoPart?: LineBenefit | null;
   /** Monto de la parte MANUAL (calculada sobre el neto-promo). 0 si no hay. */
   manualPart?: number;
+  /** Aumento de precio de la línea (2026-09-29). 0 si no hay. */
+  surchargePart: number;
   net: number;
   /** Mix & match (2026-07-23): esta línea CONTRIBUYÓ al pool de una promo sin
    *  recibir descuento (la pieza gratis cayó en otra línea más barata). Solo
@@ -117,6 +138,8 @@ export interface SaleCalcResult {
   subtotal: number;
   /** Σ beneficios por línea (manual + promo), sin cupón. */
   lineBenefitTotal: number;
+  /** Σ aumentos de precio por línea (2026-09-29). */
+  surchargeTotal: number;
   couponDiscount: number;
   /** Σ net − cupón. Nunca negativo. */
   total: number;
@@ -151,6 +174,25 @@ export function computeLineDiscountAmount(
   if (d.kind === "percent") raw = base * (d.value / 100);
   else raw = d.basis === "unit" ? d.value * line.qty : d.value;
   return Math.min(round2(raw), round2(base));
+}
+
+/**
+ * Monto del aumento de una línea (2026-09-29). fixed+unit → value × qty ·
+ * fixed+line → value · percent → base × value/100 (base = neto-promo). Sin
+ * tope aquí: los límites los pone el modal y el server. Espejo de
+ * lineSurchargeAmount en SaleCalculator.php.
+ */
+export function computeLineSurchargeAmount(
+  s: LineSurcharge,
+  line: { unitPrice: number; qty: number },
+  baseOverride?: number,
+): number {
+  if (!Number.isFinite(s.value) || s.value <= 0) return 0;
+  if (s.kind === "percent") {
+    const base = baseOverride ?? line.unitPrice * line.qty;
+    return base > 0 ? round2(base * (s.value / 100)) : 0;
+  }
+  return round2(s.basis === "unit" ? s.value * line.qty : s.value);
 }
 
 /**
@@ -450,7 +492,8 @@ export function recalculateSale(input: {
         : promoPart;
     }
 
-    const net = round2(Math.max(0, gross - totalBenefit));
+    const surchargePart = l.surcharge ? computeLineSurchargeAmount(l.surcharge, l, baseAfterPromo) : 0;
+    const net = round2(Math.max(0, gross - totalBenefit) + surchargePart);
     const contributor = pool.contributors.get(idx);
     return {
       lineId: l.lineId,
@@ -458,6 +501,7 @@ export function recalculateSale(input: {
       benefit,
       promoPart,
       manualPart,
+      surchargePart,
       net,
       // Tag "Cuenta para {promo}" en Caja — solo contribuyentes sin beneficio.
       ...(contributor ? { poolPromoId: contributor.promoId, poolLabel: contributor.promoLabel } : {}),
@@ -466,7 +510,9 @@ export function recalculateSale(input: {
 
   const subtotal = round2(lines.reduce((s, l) => s + l.gross, 0));
   const netSum = round2(lines.reduce((s, l) => s + l.net, 0));
-  const lineBenefitTotal = round2(subtotal - netSum);
+  // Rollups EXPLÍCITOS (2026-09-29): subtotal − Σneto restaría el aumento del descuento.
+  const lineBenefitTotal = round2(lines.reduce((s, l) => s + (l.benefit?.amount ?? 0), 0));
+  const surchargeTotal = round2(lines.reduce((s, l) => s + l.surchargePart, 0));
 
   let couponDiscount = 0;
   let couponRejectedReason: CouponRejectedReason | undefined;
@@ -474,7 +520,7 @@ export function recalculateSale(input: {
   if (coupon) {
     const eligible: CalcLineResult[] = [];
     lines.forEach((l, idx) => {
-      if (l.benefit !== null) return;
+      if (l.benefit !== null || l.surchargePart > 0) return;
       const src = input.lines[idx];
       if (!src) return;
       if (coupon.scope === "products" && !(coupon.productIds ?? []).includes(src.productId)) return;
@@ -497,7 +543,7 @@ export function recalculateSale(input: {
 
   const total = round2(Math.max(0, netSum - couponDiscount - legacy));
 
-  const result: SaleCalcResult = { lines, subtotal, lineBenefitTotal, couponDiscount, total };
+  const result: SaleCalcResult = { lines, subtotal, lineBenefitTotal, surchargeTotal, couponDiscount, total };
   if (couponRejectedReason) result.couponRejectedReason = couponRejectedReason;
   return result;
 }

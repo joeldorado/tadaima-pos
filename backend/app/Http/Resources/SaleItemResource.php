@@ -46,6 +46,15 @@ class SaleItemResource extends JsonResource
             'promo_free_qty'  => $this->promo_free_qty,
             'promo_amount'    => $this->promo_amount !== null ? (float) $this->promo_amount : null,
 
+            // Aumento de precio por línea (2026-09-29). Neto de la línea =
+            // total − discount_amount + surcharge_amount.
+            'surcharge_kind'   => $this->surcharge_kind,
+            'surcharge_basis'  => $this->surcharge_basis,
+            'surcharge_value'  => $this->surcharge_value !== null ? (float) $this->surcharge_value : null,
+            'surcharge_amount' => (float) ($this->surcharge_amount ?? 0),
+            'surcharge_reason' => $this->surcharge_reason,
+            'surcharge_note'   => $this->surcharge_note,
+
             // `cost` snapshot al momento del INSERT (lo que se vendió a ese costo).
             // Solo se expone a admins — gerente/cajero no ven margen. Esta es la
             // verdad histórica; `product.cost` puede mutar después, pero esta

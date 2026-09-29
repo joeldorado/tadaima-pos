@@ -29,6 +29,8 @@ use Illuminate\Support\Facades\DB;
  * Invariantes:
  *  - Stock SIEMPRE se restaura (entra a inventory + InventoryMovement type='devolucion').
  *  - Dinero SIEMPRE genera cash_movement type='salida' en la sesión activa.
+ *  - Se devuelve lo COBRADO (neto: bruto − descuento + aumento, prorrateados
+ *    por cantidad) = total antes − total después (2026-09-29).
  *  - Snapshot inmutable de items cancelados (incluye cost_at_sale ADR-015).
  *  - system_logs + sale_cancellations registran el evento.
  */
@@ -74,7 +76,21 @@ class SaleCancellationService
             $isFullCancel = empty($itemsToCancel);
             $itemMap      = $sale->items->keyBy('id');
             $snapshot     = [];
-            $amountRefunded = 0.0;
+
+            // Reembolso NETO (2026-09-29): se devuelve exactamente lo que la
+            // venta deja de cobrar (total antes − total después). Antes se
+            // devolvía cantidad × precio aunque la línea tuviera descuento
+            // (devolvía de más, el corte quedaba corto); con aumentos sería al
+            // revés. Invariante: total final + Σ reembolsos = Σ pagos.
+            $totalBefore  = round((float) $sale->total, 2);
+            $runSubtotal  = round((float) $sale->items->sum('total'), 2);
+            $runDiscount  = round((float) ($sale->discount ?? 0), 2);
+            $runSurcharge = round((float) ($sale->surcharge ?? 0), 2);
+            // Legacy (antes de Descuentos v2): descuento global sin montos por
+            // línea → se prorratea por bruto.
+            $isLegacy = $runDiscount > 0.005 && $sale->items->every(
+                fn (SaleItem $i) => (float) $i->discount_amount <= 0.005 && (float) ($i->surcharge_amount ?? 0) <= 0.005,
+            );
 
             $itemsToProcess = $isFullCancel
                 ? $sale->items->map(fn ($i) => ['sale_item_id' => $i->id, 'quantity' => $i->quantity])->all()
@@ -97,19 +113,31 @@ class SaleCancellationService
                     throw new \DomainException("No se puede cancelar {$qtyToCancel} de '{$itemName}': solo quedan {$item->quantity}.");
                 }
 
-                $lineTotal = $qtyToCancel * (float) $item->price;
-                $amountRefunded += $lineTotal;
+                $part = $this->cancelledPart($item, $qtyToCancel);
+                if ($isLegacy) {
+                    $part['surcharge'] = 0.0;
+                    $part['discount']  = match (true) {
+                        $runSubtotal <= 0.005                   => 0.0,
+                        $part['gross'] >= $runSubtotal - 0.005 => $runDiscount,
+                        default => round($runDiscount * $part['gross'] / $runSubtotal, 2),
+                    };
+                }
+                $lineRefund = round($part['gross'] - $part['discount'] + $part['surcharge'], 2);
 
-                // Snapshot inmutable (preserva cost_at_sale ADR-015 aunque editemos sale_items)
+                // Snapshot inmutable (preserva cost_at_sale ADR-015 aunque editemos sale_items).
+                // line_total = lo DEVUELTO por la línea (neto) + su desglose.
                 $snapshot[] = [
-                    'sale_item_id'   => $item->id,
-                    'product_id'     => $item->product_id,
-                    'name'           => $itemName,
-                    'sku'            => $item->product?->sku ?? $item->product_sku,
-                    'qty_cancelled'  => $qtyToCancel,
-                    'price'          => (float) $item->price,
-                    'cost'           => $item->cost !== null ? (float) $item->cost : null,
-                    'line_total'     => $lineTotal,
+                    'sale_item_id'        => $item->id,
+                    'product_id'          => $item->product_id,
+                    'name'                => $itemName,
+                    'sku'                 => $item->product?->sku ?? $item->product_sku,
+                    'qty_cancelled'       => $qtyToCancel,
+                    'price'               => (float) $item->price,
+                    'cost'                => $item->cost !== null ? (float) $item->cost : null,
+                    'line_total'          => $lineRefund,
+                    'gross_total'         => $part['gross'],
+                    'discount_cancelled'  => $part['discount'],
+                    'surcharge_cancelled' => $part['surcharge'],
                 ];
 
                 // Restaurar stock en bodega de la tienda original. Si el
@@ -119,28 +147,55 @@ class SaleCancellationService
                     $this->restoreInventory($item->product_id, $sale->store_id, $qtyToCancel, $cancelledBy->id, "Cancelación venta #{$sale->id}");
                 }
 
-                // Edit-in-place: decrementa qty. Si llega a 0, borra la fila.
+                // Edit-in-place: decrementa qty y prorratea los montos de la
+                // línea. Si llega a 0, borra la fila.
                 $newQty = (float) $item->quantity - $qtyToCancel;
                 if ($newQty <= 0.0001) {
                     $item->delete();
                 } else {
                     $item->quantity = $newQty;
-                    $item->total    = $newQty * (float) $item->price;
+                    $item->total    = round((float) $item->total - $part['gross'], 2);
+                    if (! $isLegacy) {
+                        $item->discount_amount  = round((float) $item->discount_amount - $part['discount'], 2);
+                        $item->surcharge_amount = round((float) ($item->surcharge_amount ?? 0) - $part['surcharge'], 2);
+                        if ($item->promo_amount !== null) {
+                            $item->promo_amount = round((float) $item->promo_amount - $part['promo'], 2);
+                        }
+                    }
                     $item->save();
                 }
+
+                $runSubtotal  = round($runSubtotal - $part['gross'], 2);
+                $runDiscount  = round($runDiscount - $part['discount'], 2);
+                $runSurcharge = round($runSurcharge - $part['surcharge'], 2);
             }
 
             // Recalcular totales de la venta.
             $sale->refresh()->load('items');
-            $newSubtotal = (float) $sale->items->sum('total');
-            $newTotal    = max(0, $newSubtotal - (float) ($sale->discount ?? 0));
+            $remainingItemsExist = $sale->items->count() > 0;
+            $newSubtotal  = round((float) $sale->items->sum('total'), 2);
+            $newDiscount  = $remainingItemsExist ? max(0.0, $runDiscount) : 0.0;
+            $newSurcharge = $remainingItemsExist ? max(0.0, $runSurcharge) : 0.0;
+            $newTotal     = $remainingItemsExist
+                ? round(max(0.0, $newSubtotal - $newDiscount + $newSurcharge), 2)
+                : 0.0;
+            $amountRefunded = round(max(0.0, $totalBefore - $newTotal), 2);
 
-            $sale->subtotal = $newSubtotal;
-            $sale->total    = $newTotal;
+            // Centavos de redondeo (o datos viejos inconsistentes): la diferencia
+            // va al último renglón para que Σ line_total = amount_refunded.
+            $diff = round($amountRefunded - array_sum(array_column($snapshot, 'line_total')), 2);
+            if ($snapshot !== [] && abs($diff) >= 0.005) {
+                $last = count($snapshot) - 1;
+                $snapshot[$last]['line_total'] = round($snapshot[$last]['line_total'] + $diff, 2);
+            }
+
+            $sale->subtotal  = $newSubtotal;
+            $sale->discount  = $newDiscount;
+            $sale->surcharge = $newSurcharge;
+            $sale->total     = $newTotal;
             $sale->last_cancelled_at = now();
 
             // Determinar status final.
-            $remainingItemsExist = $sale->items->count() > 0;
             if (! $remainingItemsExist || $newTotal <= 0.01) {
                 $sale->status              = Sale::STATUS_RETURNED;
                 $sale->cancellation_status = Sale::CANCELLATION_FULL;
@@ -195,6 +250,39 @@ class SaleCancellationService
 
             return $cancellation;
         });
+    }
+
+    /**
+     * Porción cancelada de una línea (2026-09-29): bruto, descuento (promo +
+     * manual), aumento y promo, prorrateados por cantidad. La línea completa
+     * toma sus montos tal cual (sin residuos de redondeo).
+     *
+     * @return array{gross: float, discount: float, surcharge: float, promo: float}
+     */
+    private function cancelledPart(SaleItem $item, float $qtyToCancel): array
+    {
+        $qty       = (float) $item->quantity;
+        $discount  = (float) ($item->discount_amount ?? 0);
+        $surcharge = (float) ($item->surcharge_amount ?? 0);
+        $promo     = (float) ($item->promo_amount ?? 0);
+
+        if ($qtyToCancel >= $qty - 0.0001) {
+            return [
+                'gross'     => round((float) $item->total, 2),
+                'discount'  => round($discount, 2),
+                'surcharge' => round($surcharge, 2),
+                'promo'     => round($promo, 2),
+            ];
+        }
+
+        $ratio = $qtyToCancel / $qty;
+
+        return [
+            'gross'     => round($qtyToCancel * (float) $item->price, 2),
+            'discount'  => round($discount * $ratio, 2),
+            'surcharge' => round($surcharge * $ratio, 2),
+            'promo'     => round($promo * $ratio, 2),
+        ];
     }
 
     /**

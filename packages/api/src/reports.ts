@@ -8,6 +8,8 @@ export interface SalesReport {
     total_count: number
     total_revenue: number
     total_discount: number
+    /** Σ aumentos de precio por línea (2026-09-29). */
+    total_surcharge?: number
     total_commission: number
   }
   pre_sale_summary: { total_count: number; total_amount: number }
@@ -177,7 +179,12 @@ export interface CashTicketItem {
   sku: string | null
   quantity: number
   price: number
+  /** Bruto (qty × precio). */
   total: number
+  /** Neto de la línea (2026-09-29): total − discount_amount + surcharge_amount. */
+  discount_amount?: number
+  surcharge_amount?: number
+  net?: number
 }
 
 export interface CashTicket {
@@ -189,6 +196,8 @@ export interface CashTicket {
   cancellation_status: string | null
   subtotal: number
   discount: number
+  /** Σ aumentos de precio (2026-09-29). */
+  surcharge?: number
   total: number
   /** Efectivo total recibido en MXN (incluye los USD ya convertidos). */
   cash_received?: number | null

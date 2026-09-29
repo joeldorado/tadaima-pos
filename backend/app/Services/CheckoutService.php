@@ -103,6 +103,7 @@ class CheckoutService
                         'unit_price'     => (float) $i['price'],
                         'qty'            => (float) $i['quantity'],
                         'line_discount'  => $i['line_discount'] ?? null,
+                        'line_surcharge' => $i['line_surcharge'] ?? null,
                         // El cajero renunció a la promo de esta línea (2026-07-24).
                         'skip_promotion' => (bool) ($i['skip_promotion'] ?? false),
                     ],
@@ -117,6 +118,7 @@ class CheckoutService
                 $v2Lines = [];
                 foreach (array_values($items) as $idx => $item) {
                     $d = $item['line_discount'] ?? null;
+                    $sc = $item['line_surcharge'] ?? null;
                     $promoId = $calc['lines'][$idx]['applied_promotion_id'] ?? null;
                     $promo   = $promoId !== null ? $promoPayFlags->get($promoId) : null;
                     $v2Lines[] = array_merge($calc['lines'][$idx], [
@@ -126,6 +128,13 @@ class CheckoutService
                         'discount_reason'        => is_array($d) ? ($d['reason'] ?? null) : null,
                         'discount_note'          => is_array($d) ? ($d['note'] ?? null) : null,
                         'discount_authorized_by' => is_array($d) ? $userId : null,
+                        // Aumento de precio (2026-09-29): quién/por qué/cuánto.
+                        'surcharge_kind'          => is_array($sc) ? $sc['kind'] : null,
+                        'surcharge_basis'         => is_array($sc) ? $sc['basis'] : null,
+                        'surcharge_value'         => is_array($sc) ? round((float) $sc['value'], 2) : null,
+                        'surcharge_reason'        => is_array($sc) ? ($sc['reason'] ?? null) : null,
+                        'surcharge_note'          => is_array($sc) ? ($sc['note'] ?? null) : null,
+                        'surcharge_authorized_by' => is_array($sc) ? $userId : null,
                         // Llaves extra inertes: los SaleItem::create enumeran
                         // sus columnas explícitamente y las ignoran.
                         'promo_allow_cash'       => $promo !== null ? (bool) $promo->allow_cash : true,
@@ -223,9 +232,13 @@ class CheckoutService
             $this->assertPaymentMethodsAllowed($draftItems, $paymentsData, $v2Lines);
 
             // ── 3. Calcular montos ────────────────────────────────────────────
+            // Aumentos (2026-09-29): el rollup sale de las líneas v2 (legacy = 0).
             $subtotal        = round($draftItems->sum('total'), 2);
             $discountAmount  = round($discount, 2);
-            $total           = round($subtotal - $discountAmount, 2);
+            $surchargeAmount = $v2Lines !== null
+                ? round(array_sum(array_column($v2Lines, 'surcharge_amount')), 2)
+                : 0.0;
+            $total           = round($subtotal - $discountAmount + $surchargeAmount, 2);
 
             if ($total < 0) {
                 throw new \DomainException('El descuento no puede superar el subtotal.');
@@ -254,6 +267,7 @@ class CheckoutService
                 'draft_id'            => $draft->id,
                 'subtotal'            => $subtotal,
                 'discount'            => $discountAmount,
+                'surcharge'           => $surchargeAmount,
                 'total'               => $total,
                 'commission_amount'   => $totalCommission,
                 // Dólares físicos recibidos + TC usado (informativo; el MXN ya
@@ -304,6 +318,13 @@ class CheckoutService
                     'promo_name'             => $meta['promo_name'] ?? null,
                     'promo_free_qty'         => $meta['promo_free_qty'] ?? null,
                     'promo_amount'           => $meta['promo_amount'] ?? null,
+                    'surcharge_kind'          => $meta['surcharge_kind'] ?? null,
+                    'surcharge_basis'         => $meta['surcharge_basis'] ?? null,
+                    'surcharge_value'         => $meta['surcharge_value'] ?? null,
+                    'surcharge_amount'        => $meta['surcharge_amount'] ?? 0,
+                    'surcharge_reason'        => $meta['surcharge_reason'] ?? null,
+                    'surcharge_note'          => $meta['surcharge_note'] ?? null,
+                    'surcharge_authorized_by' => $meta['surcharge_authorized_by'] ?? null,
                 ]);
             }
 

@@ -20,6 +20,9 @@ class SaleResource extends JsonResource
 
             'subtotal'          => $this->subtotal,
             'discount'          => $this->discount,
+            // Aumentos de precio por línea (2026-09-29). `?? 0`: un create()
+            // de Eloquent no relee el default de la DB (p. ej. LayawayService).
+            'surcharge'         => (float) ($this->surcharge ?? 0),
             'total'             => $this->total,
             'commission_amount'   => $this->commission_amount,
             'cash_received_usd'   => $this->cash_received_usd,
@@ -58,7 +61,13 @@ class SaleResource extends JsonResource
                         'sku'          => $i['sku'] ?? null,
                         'quantity'     => (float) ($i['qty_cancelled'] ?? 0),
                         'price'        => (float) ($i['price'] ?? 0),
+                        // Desde 2026-09-29 `line_total` = lo DEVUELTO por la línea
+                        // (neto: bruto − descuento + aumento prorrateados). Los
+                        // snapshots viejos no traen el desglose → null.
                         'line_total'   => (float) ($i['line_total'] ?? 0),
+                        'gross_total'        => isset($i['gross_total']) ? (float) $i['gross_total'] : null,
+                        'discount_cancelled' => isset($i['discount_cancelled']) ? (float) $i['discount_cancelled'] : null,
+                        'surcharge_cancelled' => isset($i['surcharge_cancelled']) ? (float) $i['surcharge_cancelled'] : null,
                         'cost'         => ($canViewCost && isset($i['cost']) && $i['cost'] !== null) ? (float) $i['cost'] : null,
                         'product_type' => isset($i['product_id']) ? ($productTypes[$i['product_id']] ?? 'product') : 'product',
                     ])->values()->all();

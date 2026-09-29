@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import { X, AlertTriangle, Loader2, RotateCcw, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
+import { estimateSaleRefund, type RefundSale } from '@/lib/refundEstimate'
 import {
   cancelSale, cancelPreSaleOrder,
   type SaleDetail, type PreSaleOrder,
@@ -75,27 +76,44 @@ function SaleCancelBody({ sale, onClose, onSuccess, cashSessionId, reasonCode, s
     (sale.items ?? []).filter(it => selected[it.id!] && (qtyMap[it.id!] ?? 0) > 0),
     [sale.items, selected, qtyMap]
   )
-  const refundEstimate = useMemo(() =>
-    toCancel.reduce((s, it) => s + (qtyMap[it.id!] ?? 0) * it.price, 0),
-    [toCancel, qtyMap]
-  )
+  // Reembolso NETO (2026-09-29): lo que se cobró por esa línea (con su
+  // descuento o aumento, prorrateado por pieza). Espejo exacto del backend.
+  const refundSale: RefundSale = useMemo(() => ({
+    subtotal: sale.subtotal,
+    discount: sale.discount,
+    surcharge: sale.surcharge ?? 0,
+    total: sale.total,
+    items: (sale.items ?? []).map(it => ({
+      id: it.id!, quantity: it.quantity, price: it.price, total: it.total,
+      discount_amount: it.discount_amount ?? 0, surcharge_amount: it.surcharge_amount ?? 0,
+    })),
+  }), [sale])
   const isFullCancel = useMemo(() =>
     toCancel.length === (sale.items ?? []).length &&
     toCancel.every(it => (qtyMap[it.id!] ?? 0) >= it.quantity),
     [toCancel, sale.items, qtyMap]
   )
+  const refundEstimate = useMemo(() => {
+    if (isFullCancel) return estimateSaleRefund(refundSale).total
+    const map: Record<number, number> = {}
+    toCancel.forEach(it => { map[it.id!] = qtyMap[it.id!] ?? 0 })
+    return estimateSaleRefund(refundSale, map).total
+  }, [refundSale, toCancel, qtyMap, isFullCancel])
+  /** Devolución de UN renglón con la cantidad elegida (para la columna derecha). */
+  const lineRefund = (id: number, qty: number) =>
+    qty > 0 ? estimateSaleRefund(refundSale, { [id]: qty }).perLine[id] ?? 0 : 0
 
   const handleSubmit = async () => {
     if (toCancel.length === 0) { toast.error('Selecciona al menos un artículo a cancelar.'); return }
     setSubmitting(true)
     try {
-      await cancelSale(sale.id!, {
+      const result = await cancelSale(sale.id!, {
         items: isFullCancel ? undefined : toCancel.map(it => ({ sale_item_id: it.id!, quantity: qtyMap[it.id!]! })),
         reason_code: reasonCode,
         ...(reasonText.trim() ? { reason_text: reasonText.trim() } : {}),
         ...(cashSessionId ? { cash_session_id: cashSessionId } : {}),
       })
-      toast.success(`Cancelación registrada · ${fmt(refundEstimate)} reversados`)
+      toast.success(`Cancelación registrada · ${fmt(result.cancellation?.amount_refunded ?? refundEstimate)} reversados`)
       onSuccess()
       onClose()
     } catch (err: unknown) {
@@ -143,7 +161,7 @@ function SaleCancelBody({ sale, onClose, onSuccess, cashSessionId, reasonCode, s
                 />
               )}
               <span className="text-sm font-black tabular-nums w-20 text-right" style={{ color: isSel && qty > 0 ? '#f87171' : 'var(--td-text-lo)' }}>
-                {fmt((qtyMap[it.id!] ?? 0) * it.price)}
+                {fmt(lineRefund(it.id!, qtyMap[it.id!] ?? 0))}
               </span>
             </div>
           )

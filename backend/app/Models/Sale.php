@@ -27,6 +27,8 @@ class Sale extends Model
         'draft_id',
         'subtotal',
         'discount',
+        // Aumentos de precio por línea (2026-09-29): Σ sale_items.surcharge_amount.
+        'surcharge',
         'total',
         'commission_amount',
         'cash_received_usd',
@@ -41,6 +43,7 @@ class Sale extends Model
     protected $casts = [
         'subtotal'           => 'float',
         'discount'           => 'float',
+        'surcharge'          => 'float',
         'total'              => 'float',
         'commission_amount'  => 'float',
         'cash_received_usd'  => 'float',

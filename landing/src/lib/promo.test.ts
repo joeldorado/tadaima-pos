@@ -52,6 +52,10 @@ describe("computeRegularChargeAmount", () => {
   it("suma anticipos de catálogo y luego resta el descuento", () => {
     expect(computeRegularChargeAmount({ regularSubtotal: 200, catalogDeposit: 100, discountAmt: 50 })).toBe(250);
   });
+
+  it("suma los aumentos de precio por línea (2026-09-29)", () => {
+    expect(computeRegularChargeAmount({ regularSubtotal: 200, catalogDeposit: 0, discountAmt: 10, surchargeAmt: 50 })).toBe(240);
+  });
 });
 
 describe("discountPct", () => {

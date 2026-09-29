@@ -13,6 +13,22 @@ use Illuminate\Support\Facades\DB;
 class ReportsController extends Controller
 {
     /**
+     * Ingreso NETO por línea para rankings (2026-09-29). Ventas v2 (con montos
+     * por línea): total − discount_amount + surcharge_amount, exacto por
+     * producto. Ventas legacy (descuento global sin montos por línea): se
+     * prorratea total/subtotal como siempre. Antes todo se prorrateaba por
+     * venta y una venta solo-con-aumentos salía a bruto.
+     */
+    private const LINE_REVENUE_SQL = 'COALESCE(SUM(CASE
+        WHEN sales.discount > 0 AND NOT EXISTS (
+            SELECT 1 FROM sale_items adj
+            WHERE adj.sale_id = sales.id
+              AND (adj.discount_amount > 0 OR COALESCE(adj.surcharge_amount, 0) > 0)
+        ) THEN sale_items.total * sales.total * 1.0 / NULLIF(sales.subtotal, 0)
+        ELSE sale_items.total - COALESCE(sale_items.discount_amount, 0) + COALESCE(sale_items.surcharge_amount, 0)
+    END), 0)';
+
+    /**
      * Scope de tienda por rol para reportes (QA roles 2026-06-10): admin filtra
      * libre por query string; gerente/cajero SIEMPRE quedan anclados a su
      * tienda (el store_id del request se ignora). Sin tienda asignada → -1
@@ -55,6 +71,7 @@ class ReportsController extends Controller
             'COUNT(*) as total_count,
              COALESCE(SUM(total), 0) as total_revenue,
              COALESCE(SUM(discount), 0) as total_discount,
+             COALESCE(SUM(surcharge), 0) as total_surcharge,
              COALESCE(SUM(commission_amount), 0) as total_commission'
         )->first();
 
@@ -115,6 +132,8 @@ class ReportsController extends Controller
                 'total_count'      => (int) $summary->total_count,
                 'total_revenue'    => round((float) $summary->total_revenue, 2),
                 'total_discount'   => round((float) $summary->total_discount, 2),
+                // Aumentos de precio por línea (2026-09-29).
+                'total_surcharge'  => round((float) $summary->total_surcharge, 2),
                 'total_commission' => round((float) $summary->total_commission, 2),
             ],
             'pre_sale_summary' => [
@@ -491,6 +510,7 @@ class ReportsController extends Controller
                 'cancellation_status' => $sale->cancellation_status,
                 'subtotal'            => (float) $sale->subtotal,
                 'discount'            => (float) $sale->discount,
+                'surcharge'           => (float) ($sale->surcharge ?? 0),
                 'total'               => (float) $sale->total,
                 // Dinero físico recibido (desglose USD del corte, 2026-07-30).
                 'cash_received'       => $sale->cash_received !== null ? (float) $sale->cash_received : null,
@@ -504,6 +524,10 @@ class ReportsController extends Controller
                     'quantity' => (float) $i->quantity,
                     'price'    => (float) $i->price,
                     'total'    => (float) $i->total,
+                    // Neto de la línea (2026-09-29): total − descuento + aumento.
+                    'discount_amount'  => (float) ($i->discount_amount ?? 0),
+                    'surcharge_amount' => (float) ($i->surcharge_amount ?? 0),
+                    'net'              => round((float) $i->total - (float) ($i->discount_amount ?? 0) + (float) ($i->surcharge_amount ?? 0), 2),
                 ])->values(),
                 'payments'            => $sale->payments->map(fn ($p) => [
                     'method' => $p->paymentMethod?->name ?? '—',
@@ -631,7 +655,7 @@ class ReportsController extends Controller
                 CASE WHEN sale_items.product_id IS NULL THEN 1 ELSE 0 END as deleted,
                 COUNT(DISTINCT sale_items.sale_id) as times_sold,
                 COALESCE(SUM(sale_items.quantity), 0) as total_quantity,
-                COALESCE(SUM(sale_items.total * CASE WHEN sales.discount > 0 THEN sales.total * 1.0 / NULLIF(sales.subtotal, 0) ELSE 1 END), 0) as total_revenue
+                ' . self::LINE_REVENUE_SQL . ' as total_revenue
             ')
             ->groupBy(
                 'sale_items.product_id',
@@ -656,7 +680,7 @@ class ReportsController extends Controller
                 \'manga\' as type,
                 COUNT(DISTINCT sale_items.sale_id) as times_sold,
                 COALESCE(SUM(sale_items.quantity), 0) as total_quantity,
-                COALESCE(SUM(sale_items.total * CASE WHEN sales.discount > 0 THEN sales.total * 1.0 / NULLIF(sales.subtotal, 0) ELSE 1 END), 0) as total_revenue
+                ' . self::LINE_REVENUE_SQL . ' as total_revenue
             ')
             ->groupBy('sale_items.manga_id', 'mangas.name', 'mangas.code')
             ->get();

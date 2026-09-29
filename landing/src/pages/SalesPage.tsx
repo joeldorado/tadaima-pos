@@ -27,7 +27,9 @@ import { getCashReport, storageUrl } from "@tadaima/api";
 import { buildPaymentSummary } from "@/lib/paymentSummary";
 import { dispatchTicket } from "@/lib/ticketPrint";
 import { discountPct } from "@/lib/promo";
-import { DISCOUNT_REASON_LABELS } from "@/lib/discountReasons";
+import { DISCOUNT_REASON_LABELS, SURCHARGE_REASON_LABELS } from "@/lib/discountReasons";
+import { finalPriceLine } from "@/lib/ticketLines";
+import { saleItemRevenue } from "@/lib/saleItemNet";
 import { CancelTicketModal } from "@/components/cancel/CancelTicketModal";
 import { useActiveSessionQuery } from "@/hooks/queries/useCashSession";
 import { getTodayLocal, toLocalYmd, daysAgoLocal, BUSINESS_TZ } from "@/lib/date";
@@ -134,7 +136,11 @@ const fmt = (n: number) =>
  * descuento manual CONVIVEN. discount_amount persiste el TOTAL; la parte promo
  * se deriva del snapshot (promo_free_qty × precio) y el manual es el resto.
  */
-function lineBenefitParts(item: { price: number; discount_amount?: number | null; promo_name?: string | null; promo_free_qty?: number | null; promo_amount?: number | null; discount_reason?: string | null }) {
+function lineBenefitParts(item: {
+  price: number; discount_amount?: number | null; promo_name?: string | null; promo_free_qty?: number | null;
+  promo_amount?: number | null; discount_reason?: string | null;
+  surcharge_amount?: number | null; surcharge_reason?: string | null; surcharge_note?: string | null;
+}) {
   const total = item.discount_amount ?? 0;
   // promo_amount = snapshot directo (2026-07-20, cubre qty_discount); ventas
   // anteriores no lo traen → fallback legacy promo_free_qty × price (NxM).
@@ -145,7 +151,15 @@ function lineBenefitParts(item: { price: number; discount_amount?: number | null
   const reasonLabel = item.discount_reason
     ? (DISCOUNT_REASON_LABELS[item.discount_reason as keyof typeof DISCOUNT_REASON_LABELS] ?? item.discount_reason)
     : "";
-  return { total, promoAmount, manualAmount, promoLabel: item.promo_name ?? null, freeQty: item.promo_free_qty ?? 0, reasonLabel };
+  // Aumento de precio (2026-09-29): va aparte, SUMA al neto de la línea.
+  const surchargeAmount = item.surcharge_amount ?? 0;
+  const surchargeReasonLabel = item.surcharge_reason
+    ? (SURCHARGE_REASON_LABELS[item.surcharge_reason as keyof typeof SURCHARGE_REASON_LABELS] ?? item.surcharge_reason)
+    : "";
+  return {
+    total, promoAmount, manualAmount, promoLabel: item.promo_name ?? null, freeQty: item.promo_free_qty ?? 0, reasonLabel,
+    surchargeAmount, surchargeReasonLabel, surchargeNote: item.surcharge_note ?? null,
+  };
 }
 
 // % de comisión efectivo (comisión/venta) — sin decimales de ruido: 6% se ve
@@ -168,7 +182,8 @@ function printTicket(sale: SaleDetail) {
   const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const pay = buildPaymentSummary(sale);
   // Subtotal previo + % de descuento (derivado) para reimprimir el desglose.
-  const reSubBefore = sale.subtotal ?? (sale.total + (sale.discount ?? 0));
+  // Σ importes impresos: los aumentos van incluidos en el precio (2026-09-29).
+  const reSubBefore = (sale.subtotal ?? (sale.total + (sale.discount ?? 0))) + (sale.surcharge ?? 0);
   const rePct = discountPct(sale.discount ?? 0, reSubBefore);
   // Descuentos v2: si algún item trae beneficio por línea, la etiqueta es
   // "Descuentos" (Σ de líneas). Ventas legacy conservan "Promo (X%)".
@@ -194,6 +209,8 @@ function printTicket(sale: SaleDetail) {
       // CONVIVEN — cada uno con su propia sub-línea. Negro puro, jerarquía por
       // tamaño/sangría (regla térmica rev 00108, los grises no imprimen).
       const parts = lineBenefitParts(i);
+      // Precio final: el aumento va incluido en el importe, sin renglón aparte.
+      const { lineTotal } = finalPriceLine(i.price, i.quantity, parts.surchargeAmount);
       const subLines = [
         parts.promoAmount > 0
           ? `<tr><td style="padding:0 0 2px 8px;font-size:9px;font-weight:900">${esc(`Promo ${parts.promoLabel ?? ""}`.trim())}</td><td></td><td style="text-align:right;font-size:10px;font-weight:900">-${fmt(parts.promoAmount)}</td></tr>`
@@ -205,7 +222,7 @@ function printTicket(sale: SaleDetail) {
       return `<tr>
         <td style="padding:2px 0;font-size:11px;font-weight:700;">${esc(name)}</td>
         <td style="text-align:center;padding:2px 4px;font-size:10px;">×${i.quantity}</td>
-        <td style="text-align:right;font-size:11px;font-weight:900;">${fmt(i.price * i.quantity)}</td>
+        <td style="text-align:right;font-size:11px;font-weight:900;">${fmt(lineTotal)}</td>
       </tr>${subLines}`;
     })
     .join("");
@@ -530,6 +547,8 @@ function SaleRow({
   // Descuento del ticket: monto + % derivado (chip en la fila + línea en el detalle).
   const saleDiscount = sale.discount ?? 0;
   const saleDiscPct = discountPct(saleDiscount, sale.subtotal ?? (sale.total + saleDiscount));
+  // Aumentos de precio por línea (2026-09-29).
+  const saleSurcharge = sale.surcharge ?? 0;
 
   const previewItems = (sale.items || []).slice(0, 3);
 
@@ -653,6 +672,12 @@ function SaleRow({
                   −{saleDiscPct}%
                 </p>
               )}
+              {saleSurcharge > 0 && (
+                <p className="text-[8px] font-black uppercase tracking-widest" style={{ color: "#f59e0b" }}
+                   title={`Aumento de precio de ${fmt(saleSurcharge)}`}>
+                  +{fmt(saleSurcharge)} aum.
+                </p>
+              )}
               {sale.cancellation_status === "partial" && cancelled > 0 ? (
                 <p className="text-[8px] font-bold uppercase tracking-widest" style={{ color: "#f87171" }}>
                   −{fmt(cancelled)} canc.
@@ -685,7 +710,8 @@ function SaleRow({
             // Ventas/Historial") — badges de promo/descuento + neto real.
             const parts = lineBenefitParts(item);
             const grossLine = item.price * item.quantity;
-            const netLine = Math.max(0, grossLine - parts.total);
+            const netLine = Math.max(0, grossLine - parts.total) + parts.surchargeAmount;
+            const adjusted = parts.total > 0 || parts.surchargeAmount > 0;
             return (
               <div
                 key={idx}
@@ -697,7 +723,7 @@ function SaleRow({
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-bold truncate" style={{ color: "var(--td-text-hi)" }}>{name}</p>
                   {sku && <p className="text-[9px] uppercase tracking-widest mt-0.5 truncate" style={{ color: "var(--td-text-lo)" }}>{sku}</p>}
-                  {(parts.promoAmount > 0 || parts.manualAmount > 0) && (
+                  {(parts.promoAmount > 0 || parts.manualAmount > 0 || parts.surchargeAmount > 0) && (
                     <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                       {parts.promoAmount > 0 && (
                         <span className="px-1.5 py-0.5 rounded text-[9px] font-black" style={{ color: "#34d399", background: "rgba(16,185,129,0.10)", border: "1px solid rgba(16,185,129,0.35)" }}>
@@ -707,6 +733,18 @@ function SaleRow({
                       {parts.manualAmount > 0 && (
                         <span className="px-1.5 py-0.5 rounded text-[9px] font-black" style={{ color: "var(--td-red)", background: "rgba(224,34,26,0.10)", border: "1px solid rgba(224,34,26,0.35)" }}>
                           Desc.{parts.reasonLabel ? ` ${parts.reasonLabel}` : ""} −{fmt(parts.manualAmount)}
+                        </span>
+                      )}
+                      {/* Aumento de precio (2026-09-29): motivo, nota y quién cobró. */}
+                      {parts.surchargeAmount > 0 && (
+                        <span
+                          className="px-1.5 py-0.5 rounded text-[9px] font-black"
+                          style={{ color: "#F59E0B", background: "rgba(245,158,11,0.10)", border: "1px solid rgba(245,158,11,0.35)" }}
+                          title={sale.user?.name ? `Cobró: ${sale.user.name}` : undefined}
+                        >
+                          Aumento{parts.surchargeReasonLabel ? ` ${parts.surchargeReasonLabel}` : ""} +{fmt(parts.surchargeAmount)}
+                          {parts.surchargeNote ? ` · ${parts.surchargeNote}` : ""}
+                          {sale.user?.name ? ` · ${sale.user.name}` : ""}
                         </span>
                       )}
                     </div>
@@ -723,7 +761,7 @@ function SaleRow({
                     <p className="text-[8px] uppercase" style={{ color: "var(--td-text-lo)" }}>unit.</p>
                   </div>
                   <div className="text-right w-[70px]">
-                    {parts.total > 0 ? (
+                    {adjusted ? (
                       <>
                         <p className="text-sm font-black" style={{ color: "var(--td-text-hi)" }}>{fmt(netLine)}</p>
                         <p className="text-[9px] font-bold line-through" style={{ color: "var(--td-text-lo)" }}>{fmt(grossLine)}</p>
@@ -889,6 +927,11 @@ function SaleRow({
                 {saleDiscPct > 0 && (
                   <div className="flex justify-between text-[10px] mt-1.5" style={{ color: "#f59e0b" }}>
                     <span>Descuento ({saleDiscPct}%)</span><span className="font-bold">−{fmt(saleDiscount)}</span>
+                  </div>
+                )}
+                {saleSurcharge > 0 && (
+                  <div className="flex justify-between text-[10px] mt-1.5" style={{ color: "#f59e0b" }}>
+                    <span>Aumentos de precio</span><span className="font-bold">+{fmt(saleSurcharge)}</span>
                   </div>
                 )}
                 {pay.isMixed && pay.lines.map((l, li) => (
@@ -2502,7 +2545,8 @@ export function SalesPage() {
           units: 0, revenue: 0, tickets: 0,
         };
         row.units   += item.quantity;
-        row.revenue += item.price * item.quantity;
+        // Lo que realmente entró (descuentos y aumentos por línea, 2026-09-29).
+        row.revenue += saleItemRevenue(sale, item);
         if (!seenInThisSale.has(pid)) { row.tickets += 1; seenInThisSale.add(pid); }
         prodMap.set(pid, row);
       });
@@ -2881,7 +2925,7 @@ export function SalesPage() {
         if (!st.imagen && img) st.imagen = img;
         if (!seen.has(pid)) { st.timesAppeared++; seen.add(pid); }
         st.totalUnits   += item.quantity;
-        st.totalRevenue += item.price * item.quantity;
+        st.totalRevenue += saleItemRevenue(sale, item);
       });
     });
     map.forEach(st => { st.avgPrice = st.totalUnits > 0 ? st.totalRevenue / st.totalUnits : 0; });

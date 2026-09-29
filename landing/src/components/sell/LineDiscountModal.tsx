@@ -1,12 +1,21 @@
 import { useMemo, useState } from "react";
-import { X, Tag, Trash2 } from "lucide-react";
+import { X, Tag, Trash2, TrendingUp } from "lucide-react";
 import { motion as Motion } from "motion/react";
 import {
   computeLineDiscountAmount,
+  computeLineSurchargeAmount,
   type DiscountReason,
-  type LineDiscount,
+  type SurchargeReason,
 } from "@/lib/saleCalc";
-import { DISCOUNT_REASON_LABELS, DISCOUNT_REASONS } from "@/lib/discountReasons";
+import {
+  DISCOUNT_REASON_LABELS,
+  DISCOUNT_REASONS,
+  SURCHARGE_REASON_LABELS,
+  SURCHARGE_REASONS,
+} from "@/lib/discountReasons";
+import type { LineAdjustment } from "@/lib/lineAdjustments";
+
+type Direction = LineAdjustment["direction"];
 
 interface Props {
   productName: string;
@@ -16,9 +25,11 @@ interface Props {
   /** Monto de la promo NxM que ya aplica en la línea (stacking 2026-07-17):
    *  el descuento manual se calcula sobre el neto DESPUÉS de la promo. */
   promoAmount?: number;
-  /** Descuento ya aplicado (modo edición: precarga y permite quitar). */
-  existing?: LineDiscount | undefined;
-  onConfirm: (unitsToDiscount: number, discount: LineDiscount) => void;
+  /** Ajuste ya aplicado (modo edición: precarga y permite quitar). */
+  existing?: LineAdjustment | undefined;
+  /** false en mercancía dañada: ahí solo se permite descuento. */
+  allowSurcharge?: boolean;
+  onConfirm: (unitsToAdjust: number, adjustment: LineAdjustment) => void;
   onRemove?: (() => void) | undefined;
   onClose: () => void;
 }
@@ -39,56 +50,78 @@ const fmt = (n: number) =>
     minimumFractionDigits: 0, maximumFractionDigits: 2,
   }).format(n || 0);
 
+const AMBER = "#F59E0B";
+
 /**
- * Modal de descuento POR LÍNEA (Descuentos v2, reemplaza al "Promo" global).
+ * Modal de ajuste POR LÍNEA: descuento (Descuentos v2) o aumento de precio
+ * (Joel 2026-09-29). Mismos campos para los dos: el toggle de arriba elige la
+ * dirección y cambia textos, motivos y color.
  *
- * El cajero elige cuántas unidades descontar (menos que la línea → split),
+ * El cajero elige cuántas unidades ajustar (menos que la línea → split),
  * tipo $/%, base por unidad/por línea, motivo y nota. El preview usa el MISMO
- * `computeLineDiscountAmount` que el checkout — lo que ves es lo que se cobra
- * (y el backend lo recomputa de todos modos: nunca viaja un monto).
+ * cálculo que el checkout — lo que ves es lo que se cobra (y el backend lo
+ * recomputa de todos modos: nunca viaja un monto).
  */
-export function LineDiscountModal({ productName, lineQty, unitPrice, promoAmount = 0, existing, onConfirm, onRemove, onClose }: Props) {
+export function LineDiscountModal({ productName, lineQty, unitPrice, promoAmount = 0, existing, allowSurcharge = true, onConfirm, onRemove, onClose }: Props) {
+  const current = existing?.direction === "discount" ? existing.discount
+    : existing?.direction === "surcharge" ? existing.surcharge
+    : undefined;
+  const [direction, setDirection] = useState<Direction>(existing?.direction ?? "discount");
   const [units, setUnits] = useState<string>(String(lineQty));
-  const [kind, setKind] = useState<"fixed" | "percent">(existing?.kind ?? "fixed");
-  const [basis, setBasis] = useState<"unit" | "line">(existing?.basis ?? "unit");
-  const [value, setValue] = useState<string>(existing ? String(existing.value) : "");
-  const [reason, setReason] = useState<DiscountReason>(existing?.reason ?? "danado");
-  const [note, setNote] = useState<string>(existing?.note ?? "");
+  const [kind, setKind] = useState<"fixed" | "percent">(current?.kind ?? "fixed");
+  const [basis, setBasis] = useState<"unit" | "line">(current?.basis ?? "unit");
+  const [value, setValue] = useState<string>(current ? String(current.value) : "");
+  const [discountReason, setDiscountReason] = useState<DiscountReason>(
+    existing?.direction === "discount" ? existing.discount.reason : "danado");
+  const [surchargeReason, setSurchargeReason] = useState<SurchargeReason>(
+    existing?.direction === "surcharge" ? existing.surcharge.reason : "precio_especial");
+  const [note, setNote] = useState<string>(current?.note ?? "");
+
+  const isUp = direction === "surcharge";
 
   const unitsNum = Math.max(1, Math.min(Math.floor(parseFloat(units) || 0), lineQty));
   const valueNum = parseFloat(value) || 0;
 
   const preview = useMemo(() => {
     if (valueNum <= 0) return null;
-    const draft: LineDiscount = { kind, basis, value: valueNum, reason };
-    // Stacking: si se descuenta la línea COMPLETA y trae promo, la base es el
-    // neto-promo. Al descontar menos unidades (split) la promo se re-evalúa
+    // Stacking: si se ajusta la línea COMPLETA y trae promo, la base es el
+    // neto-promo. Al ajustar menos unidades (split) la promo se re-evalúa
     // en las líneas resultantes — el preview usa el bruto de esa parte.
     const promoOnBase = unitsNum === lineQty ? promoAmount : 0;
     const base = Math.max(0, unitPrice * unitsNum - promoOnBase);
-    const amount = computeLineDiscountAmount(draft, { unitPrice, qty: unitsNum }, base);
-    return { amount, net: Math.max(0, base - amount), base, promoOnBase };
-  }, [kind, basis, valueNum, reason, unitPrice, unitsNum, lineQty, promoAmount]);
+    const line = { unitPrice, qty: unitsNum };
+    if (isUp) {
+      const amount = computeLineSurchargeAmount({ kind, basis, value: valueNum, reason: surchargeReason }, line, base);
+      return { amount, net: base + amount, promoOnBase };
+    }
+    const amount = computeLineDiscountAmount({ kind, basis, value: valueNum, reason: discountReason }, line, base);
+    return { amount, net: Math.max(0, base - amount), promoOnBase };
+  }, [isUp, kind, basis, valueNum, discountReason, surchargeReason, unitPrice, unitsNum, lineQty, promoAmount]);
 
   const invalidPct = kind === "percent" && valueNum > 100;
-  const canConfirm = valueNum > 0 && !invalidPct && unitsNum >= 1;
+  const canConfirm = valueNum > 0 && !invalidPct && unitsNum >= 1 && (!isUp || allowSurcharge);
+  // Aviso suave de dedazo: el aumento por pieza supera el precio de catálogo.
+  const bigIncrease = isUp && preview !== null && preview.amount > unitPrice * unitsNum;
 
   const confirm = () => {
     if (!canConfirm) return;
-    onConfirm(unitsNum, {
-      kind, basis, value: Math.round(valueNum * 100) / 100, reason,
-      ...(note.trim() ? { note: note.trim().slice(0, 255) } : {}),
-    });
+    const base = { kind, basis, value: Math.round(valueNum * 100) / 100,
+      ...(note.trim() ? { note: note.trim().slice(0, 255) } : {}) };
+    onConfirm(unitsNum, isUp
+      ? { direction: "surcharge", surcharge: { ...base, reason: surchargeReason } }
+      : { direction: "discount", discount: { ...base, reason: discountReason } });
     onClose();
   };
 
-  const segBtn = (active: boolean): React.CSSProperties => ({
+  const segBtn = (active: boolean, color = "var(--td-red)", tint = "rgba(224,34,26,"): React.CSSProperties => ({
     flex: 1, padding: "9px 0", borderRadius: 12, fontSize: 12, fontWeight: 800,
     cursor: "pointer", transition: "all .15s",
-    border: active ? "1px solid rgba(224,34,26,0.55)" : "1px solid var(--td-input-border)",
-    background: active ? "rgba(224,34,26,0.14)" : "var(--td-input-bg)",
-    color: active ? "var(--td-red)" : TS,
+    border: active ? `1px solid ${tint}0.55)` : "1px solid var(--td-input-border)",
+    background: active ? `${tint}0.14)` : "var(--td-input-bg)",
+    color: active ? color : TS,
   });
+  const seg = (active: boolean) => isUp ? segBtn(active, AMBER, "rgba(245,158,11,") : segBtn(active);
+  const noun = isUp ? "aumento" : "descuento";
 
   return (
     <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
@@ -101,12 +134,12 @@ export function LineDiscountModal({ productName, lineQty, unitPrice, promoAmount
       >
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="rounded-xl p-2" style={{ background: "rgba(224,34,26,0.14)" }}>
-              <Tag size={18} style={{ color: "var(--td-red)" }} />
+            <div className="rounded-xl p-2" style={{ background: isUp ? "rgba(245,158,11,0.14)" : "rgba(224,34,26,0.14)" }}>
+              {isUp ? <TrendingUp size={18} style={{ color: AMBER }} /> : <Tag size={18} style={{ color: "var(--td-red)" }} />}
             </div>
             <div>
               <h3 className="text-sm font-black uppercase tracking-wide" style={{ color: TP }}>
-                Descuento en línea
+                {isUp ? "Aumento de precio" : "Descuento en línea"}
               </h3>
               <p className="text-[11px] font-bold mt-0.5" style={{ color: TS }}>
                 {productName} · {fmt(unitPrice)} c/u
@@ -118,10 +151,25 @@ export function LineDiscountModal({ productName, lineQty, unitPrice, promoAmount
           </button>
         </div>
 
-        {/* Unidades a descontar (menos que la línea → split automático) */}
+        {/* Dirección: bajar o subir el precio (2026-09-29) */}
+        <div className="flex gap-2">
+          <button data-testid="ld-dir-discount" style={segBtn(!isUp)} onClick={() => setDirection("discount")}>
+            Descuento (−)
+          </button>
+          <button
+            data-testid="ld-dir-surcharge"
+            style={{ ...segBtn(isUp, AMBER, "rgba(245,158,11,"), ...(allowSurcharge ? {} : { opacity: 0.4, cursor: "not-allowed" }) }}
+            onClick={() => { if (allowSurcharge) setDirection("surcharge"); }}
+            title={allowSurcharge ? undefined : "La mercancía dañada no se puede aumentar"}
+          >
+            Aumento (+)
+          </button>
+        </div>
+
+        {/* Unidades a ajustar (menos que la línea → split automático) */}
         <div>
           <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TM }}>
-            Unidades a descontar (de {lineQty})
+            Unidades a ajustar (de {lineQty})
           </label>
           <div className="flex items-center gap-2 mt-1.5">
             <input
@@ -132,7 +180,7 @@ export function LineDiscountModal({ productName, lineQty, unitPrice, promoAmount
             />
             {unitsNum < lineQty && (
               <span className="text-[11px] font-bold" style={{ color: "#F59E0B" }}>
-                Se separará en 2 líneas: {lineQty - unitsNum} a precio normal + {unitsNum} con descuento.
+                Se separará en 2 líneas: {lineQty - unitsNum} a precio normal + {unitsNum} con {noun}.
               </span>
             )}
           </div>
@@ -142,8 +190,8 @@ export function LineDiscountModal({ productName, lineQty, unitPrice, promoAmount
         <div>
           <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TM }}>Tipo</label>
           <div className="flex gap-2 mt-1.5">
-            <button style={segBtn(kind === "fixed")} onClick={() => setKind("fixed")}>Monto ($)</button>
-            <button style={segBtn(kind === "percent")} onClick={() => setKind("percent")}>Porcentaje (%)</button>
+            <button style={seg(kind === "fixed")} onClick={() => setKind("fixed")}>Monto ($)</button>
+            <button style={seg(kind === "percent")} onClick={() => setKind("percent")}>Porcentaje (%)</button>
           </div>
         </div>
 
@@ -152,8 +200,8 @@ export function LineDiscountModal({ productName, lineQty, unitPrice, promoAmount
           <div>
             <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TM }}>Aplicar</label>
             <div className="flex gap-2 mt-1.5">
-              <button style={segBtn(basis === "unit")} onClick={() => setBasis("unit")}>Por unidad</button>
-              <button style={segBtn(basis === "line")} onClick={() => setBasis("line")}>Por línea (total)</button>
+              <button style={seg(basis === "unit")} onClick={() => setBasis("unit")}>Por unidad</button>
+              <button style={seg(basis === "line")} onClick={() => setBasis("line")}>Por línea (total)</button>
             </div>
           </div>
         )}
@@ -161,7 +209,7 @@ export function LineDiscountModal({ productName, lineQty, unitPrice, promoAmount
         {/* Valor */}
         <div>
           <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TM }}>
-            {kind === "percent" ? "Porcentaje de descuento" : basis === "unit" ? "Pesos de descuento por unidad" : "Pesos de descuento (total de la línea)"}
+            {kind === "percent" ? `Porcentaje de ${noun}` : basis === "unit" ? `Pesos de ${noun} por unidad` : `Pesos de ${noun} (total de la línea)`}
           </label>
           <input
             data-testid="ld-value"
@@ -174,7 +222,12 @@ export function LineDiscountModal({ productName, lineQty, unitPrice, promoAmount
           />
           {invalidPct && (
             <p className="text-[11px] font-bold mt-1" style={{ color: "var(--td-red)" }}>
-              El porcentaje no puede exceder 100.
+              El porcentaje no puede exceder 100.{isUp ? " Para más, usa un monto fijo." : ""}
+            </p>
+          )}
+          {bigIncrease && (
+            <p className="text-[11px] font-bold mt-1" style={{ color: AMBER }}>
+              Ojo: el aumento es mayor que el precio de catálogo. Revisa el monto.
             </p>
           )}
         </div>
@@ -183,25 +236,36 @@ export function LineDiscountModal({ productName, lineQty, unitPrice, promoAmount
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TM }}>Motivo</label>
-            <select value={reason} onChange={e => setReason(e.target.value as DiscountReason)} style={{ ...inputStyle, marginTop: 6 }}>
-              {DISCOUNT_REASONS.map(r => (
-                <option key={r} value={r}>{DISCOUNT_REASON_LABELS[r]}</option>
-              ))}
-            </select>
+            {isUp ? (
+              <select data-testid="ld-reason" value={surchargeReason} onChange={e => setSurchargeReason(e.target.value as SurchargeReason)} style={{ ...inputStyle, marginTop: 6 }}>
+                {SURCHARGE_REASONS.map(r => (
+                  <option key={r} value={r}>{SURCHARGE_REASON_LABELS[r]}</option>
+                ))}
+              </select>
+            ) : (
+              <select data-testid="ld-reason" value={discountReason} onChange={e => setDiscountReason(e.target.value as DiscountReason)} style={{ ...inputStyle, marginTop: 6 }}>
+                {DISCOUNT_REASONS.map(r => (
+                  <option key={r} value={r}>{DISCOUNT_REASON_LABELS[r]}</option>
+                ))}
+              </select>
+            )}
           </div>
           <div>
             <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TM }}>Nota (opcional)</label>
-            <input value={note} onChange={e => setNote(e.target.value)} maxLength={255} placeholder="ej. caja golpeada" style={{ ...inputStyle, marginTop: 6 }} />
+            <input value={note} onChange={e => setNote(e.target.value)} maxLength={255} placeholder={isUp ? "ej. última pieza" : "ej. caja golpeada"} style={{ ...inputStyle, marginTop: 6 }} />
           </div>
         </div>
 
         {/* Preview en vivo — mismo cálculo que el cobro */}
         {preview && !invalidPct && (
-          <div className="rounded-2xl p-3 text-center" style={{ background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.25)" }}>
+          <div className="rounded-2xl p-3 text-center" style={isUp
+            ? { background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.3)" }
+            : { background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.25)" }}>
             <p className="text-[11px] font-bold" style={{ color: TS }}>
-              {unitsNum} ud{unitsNum !== 1 ? "s" : ""} × {fmt(unitPrice)} − {fmt(preview.amount)}
+              {unitsNum} ud{unitsNum !== 1 ? "s" : ""} × {fmt(unitPrice)}
+              {preview.promoOnBase > 0 ? ` − promo ${fmt(preview.promoOnBase)}` : ""} {isUp ? "+" : "−"} {fmt(preview.amount)}
             </p>
-            <p className="text-lg font-black" style={{ color: "#10b981" }}>= {fmt(preview.net)}</p>
+            <p className="text-lg font-black" style={{ color: isUp ? AMBER : "#10b981" }}>= {fmt(preview.net)}</p>
           </div>
         )}
 

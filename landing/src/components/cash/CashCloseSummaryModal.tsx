@@ -44,7 +44,9 @@ function buildTicketsHtml(detail: CashSessionDetail | null): string {
   const tickets = detail.tickets.map(t => {
     const cancelled = t.status === "returned" || t.cancellation_status === "full";
     const items = t.items.map(i =>
-      `<div class="row"><span>${i.quantity} × ${esc(i.name)}</span><span>${fmt(i.total)}</span></div>`
+      // Neto del renglón (2026-09-29: con descuento y aumento) → los renglones
+      // suman el total del ticket. Detalles viejos sin `net` caen al bruto.
+      `<div class="row"><span>${i.quantity} × ${esc(i.name)}</span><span>${fmt(i.net ?? i.total)}</span></div>`
     ).join("");
     const pays = t.payments.map(p => `${p.method} ${fmt(p.amount)}`).join(" + ");
     const usdLine = (t.cash_received_usd ?? 0) > 0
@@ -478,6 +480,7 @@ function TicketRow({ ticket: t }: { ticket: CashTicket }) {
         <span style={{ fontSize: 9, color: "var(--td-text-lo)" }}>
           {t.payments.map(p => `${p.method} ${fmt(p.amount)}`).join(" + ") || "—"}
           {t.discount > 0 ? ` · desc ${fmt(t.discount)}` : ""}
+          {(t.surcharge ?? 0) > 0 ? ` · aumento +${fmt(t.surcharge ?? 0)}` : ""}
         </span>
         <span style={{ fontSize: 11, fontWeight: 900, color: "var(--td-text-hi)" }}>{fmt(t.total)}</span>
       </div>

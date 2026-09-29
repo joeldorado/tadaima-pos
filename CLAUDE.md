@@ -120,7 +120,7 @@ obsoleto; el comando y el flujo están en `AGENTS.md` §6); `docker/entrypoint.s
 `php artisan migrate --force` al arrancar, así que **las migraciones se aplican solas a prod
 en cada deploy**. DB de producción: PostgreSQL en Supabase (MySQL/Cloud SQL ya no existe).
 
-## Descuentos y Promos — modelo de datos para reportes (Descuentos v2)
+## Descuentos, Promos y Aumentos — modelo de datos para reportes (Descuentos v2)
 
 > Para quien arme reportes/exportes (Ruben): TODO el detalle de beneficios vive
 > POR LÍNEA en `sale_items`. No infieras descuentos del total — léelos de aquí.
@@ -129,23 +129,40 @@ en cada deploy**. DB de producción: PostgreSQL en Supabase (MySQL/Cloud SQL ya 
 
 | Columna | Qué es |
 |---|---|
-| `total` | **BRUTO** de la línea (`price × quantity`) — NO baja con descuentos |
-| `discount_amount` | Beneficio TOTAL de la línea (promo + descuento manual). **Neto real de la línea = `total − discount_amount`** |
+| `total` | **BRUTO** de la línea (`price × quantity`) — NO baja con descuentos ni sube con aumentos |
+| `discount_amount` | Beneficio TOTAL de la línea (promo + descuento manual), siempre ≥ 0 |
+| `surcharge_amount` | **Aumento de precio** de la línea (desde 2026-09-29), ≥ 0. **Neto real de la línea = `total − discount_amount + surcharge_amount`** |
 | `benefit_type` | `promo` (solo promo) · `discount` (manual, con o sin promo debajo) · null |
 | `discount_kind/basis/value` | Captura del descuento manual (`fixed/percent`, `unit/line`, valor) |
 | `discount_reason` / `discount_note` | Motivo (`danado, caducidad, exhibicion, cortesia, otro`) + nota |
 | `discount_authorized_by` | User que autorizó el descuento manual |
-| `applied_promotion_id`, `promo_name`, `promo_free_qty` | Snapshot de la promo NxM aplicada (sobrevive aunque la promo se edite/borre) |
+| `applied_promotion_id`, `promo_name`, `promo_free_qty`, `promo_amount` | Snapshot de la promo aplicada (sobrevive aunque la promo se edite/borre); `promo_amount` = monto de la promo en la línea |
+| `surcharge_kind/basis/value` | Captura del aumento (`fixed/percent`, `unit/line`, valor) |
+| `surcharge_reason` / `surcharge_note` | Motivo (`precio_especial, escasez, envio, otro`) + nota |
+| `surcharge_authorized_by` | User que cobró el aumento |
 
 **Regla de STACKING (desde 2026-07-17):** la promo NxM aplica PRIMERO y el descuento
 manual se calcula sobre el resultado. Cuando conviven, `benefit_type='discount'` pero
 los campos `promo_*` quedan poblados. Para separar las partes:
-`parte_promo = promo_free_qty × price` · `parte_manual = discount_amount − parte_promo`.
+`parte_promo = promo_amount` (ventas viejas sin `promo_amount`: `promo_free_qty × price`) ·
+`parte_manual = discount_amount − parte_promo`.
 
-**Rollups:** `sales.discount = Σ discount_amount` de sus líneas y
-`sales.total = sales.subtotal − sales.discount`. Ventas ANTERIORES a Descuentos v2
+**Aumento (desde 2026-09-29):** una línea lleva descuento manual O aumento, nunca los
+dos. El aumento se calcula después de la promo (el % sobre el neto-promo) y el precio
+unitario (`price`) sigue siendo el de catálogo. El ticket del cliente imprime el precio
+final (con el aumento incluido); el detalle queda en `surcharge_*`.
+
+**Rollups:** `sales.discount = Σ discount_amount`, `sales.surcharge = Σ surcharge_amount`
+y `sales.total = sales.subtotal − sales.discount + sales.surcharge`. Ventas ANTERIORES a Descuentos v2
 (legacy) pueden traer `sales.discount > 0` con `discount_amount = 0` en todas las
 líneas → para esas, prorratear `total/subtotal` (así lo hace ReportsPage).
+
+**Cancelaciones (desde 2026-09-29):** se devuelve lo COBRADO, no el bruto:
+`amount_refunded = total antes − total después`. Al cancelar parte de una línea se
+prorratean por cantidad `total`, `discount_amount`, `surcharge_amount` y `promo_amount`
+del renglón que queda (y los rollups de `sales`). En `sale_cancellations.items_snapshot`,
+`line_total` = lo devuelto por la línea, con el desglose `gross_total`,
+`discount_cancelled` y `surcharge_cancelled`.
 
 **Promos (`product_promotions`):** NxM por producto (`buy_n`/`pay_m`), `status`
 (`active/paused/expired`), vigencia `starts_at/ends_at` (ancladas a día-negocio

@@ -41,8 +41,10 @@ export function computeRegularChargeAmount(input: {
   regularSubtotal: number;
   catalogDeposit: number;
   discountAmt: number;
+  /** Σ aumentos de precio por línea (2026-09-29). */
+  surchargeAmt?: number;
 }): number {
-  return Math.max(0, input.regularSubtotal + input.catalogDeposit - input.discountAmt);
+  return Math.max(0, input.regularSubtotal + input.catalogDeposit - input.discountAmt + (input.surchargeAmt ?? 0));
 }
 
 /**

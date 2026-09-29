@@ -2,7 +2,9 @@
 
 namespace App\Http\Requests;
 
+use App\Services\SaleCalculator;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class CheckoutRequest extends FormRequest
 {
@@ -73,6 +75,15 @@ class CheckoutRequest extends FormRequest
             'items.*.line_discount.value'   => ['required_with:items.*.line_discount', 'numeric', 'min:0.01', 'max:999999'],
             'items.*.line_discount.reason'  => ['required_with:items.*.line_discount', 'string', 'in:danado,caducidad,exhibicion,cortesia,otro'],
             'items.*.line_discount.note'    => ['nullable', 'string', 'max:255'],
+            // Aumento de precio por línea (2026-09-29): mismo shape que el
+            // descuento, motivos propios. Solo en v2 — sin calc_version el
+            // calculador no corre y el aumento se perdería en silencio.
+            'items.*.line_surcharge'        => [$isV2 ? 'nullable' : 'prohibited', 'array'],
+            'items.*.line_surcharge.kind'   => ['required_with:items.*.line_surcharge', 'string', 'in:fixed,percent'],
+            'items.*.line_surcharge.basis'  => ['required_with:items.*.line_surcharge', 'string', 'in:unit,line'],
+            'items.*.line_surcharge.value'  => ['required_with:items.*.line_surcharge', 'numeric', 'min:0.01', 'max:999999'],
+            'items.*.line_surcharge.reason' => ['required_with:items.*.line_surcharge', 'string', Rule::in(SaleCalculator::SURCHARGE_REASONS)],
+            'items.*.line_surcharge.note'   => ['nullable', 'string', 'max:255'],
             'store_id'                      => [$hasItems ? 'required' : 'nullable', 'integer', 'exists:stores,id'],
             'register_session_id'           => [$hasItems ? 'required' : 'nullable', 'integer', 'exists:cash_register_sessions,id'],
             'customer_id'                   => ['nullable', 'integer', 'exists:customers,id'],
@@ -91,7 +102,9 @@ class CheckoutRequest extends FormRequest
 
     /**
      * Un porcentaje > 100 dejaría la línea negativa; el clamp del calculator lo
-     * toparía, pero es señal de captura errónea → 422 explícito.
+     * toparía, pero es señal de captura errónea → 422 explícito. En el aumento
+     * el mismo tope evita dedazos (para más, monto fijo). Una línea lleva
+     * descuento O aumento, y la mercancía dañada (precio manual) no se aumenta.
      */
     public function withValidator(\Illuminate\Validation\Validator $validator): void
     {
@@ -100,6 +113,20 @@ class CheckoutRequest extends FormRequest
                 $d = $item['line_discount'] ?? null;
                 if (is_array($d) && ($d['kind'] ?? '') === 'percent' && (float) ($d['value'] ?? 0) > 100) {
                     $v->errors()->add("items.{$i}.line_discount.value", 'El porcentaje de descuento no puede exceder 100.');
+                }
+
+                $s = $item['line_surcharge'] ?? null;
+                if (! is_array($s)) {
+                    continue;
+                }
+                if (($s['kind'] ?? '') === 'percent' && (float) ($s['value'] ?? 0) > 100) {
+                    $v->errors()->add("items.{$i}.line_surcharge.value", 'El porcentaje de aumento no puede exceder 100 (para más, usa un monto fijo).');
+                }
+                if (is_array($d)) {
+                    $v->errors()->add("items.{$i}.line_surcharge", 'Una línea lleva descuento o aumento, no ambos.');
+                }
+                if (! empty($item['is_damaged'])) {
+                    $v->errors()->add("items.{$i}.line_surcharge", 'No se puede aplicar aumento a mercancía dañada.');
                 }
             }
         });

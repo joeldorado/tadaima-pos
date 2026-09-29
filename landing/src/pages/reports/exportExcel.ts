@@ -3,6 +3,7 @@
 import { toast } from "sonner";
 import { fmt, fmtDate } from "./reportFormat";
 import type { ReportExportParams } from "./reportTypes";
+import { DISCOUNT_REASON_SHORT, SURCHARGE_REASON_SHORT } from "@/lib/discountReasons";
 
 export async function exportReportExcel(params: ReportExportParams): Promise<void> {
   const {
@@ -17,10 +18,8 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
     caja_chica: "Caja chica",
     propio: "Dinero propio",
   };
-  // Motivo legible de un descuento manual.
-  const DISCOUNT_REASON_LABEL: Record<string, string> = {
-    danado: "dañado", caducidad: "caducidad", exhibicion: "exhibición", cortesia: "cortesía", otro: "otro",
-  };
+  // Motivo legible de un descuento manual / aumento de precio.
+  const DISCOUNT_REASON_LABEL = DISCOUNT_REASON_SHORT;
     try {
       toast.info("Generando archivo de Excel...");
       const ExcelJS = await import("exceljs");
@@ -162,13 +161,15 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
         // verde = promo, amarillo = descuento manual. Muestra cuánto se descontó.
         const PROMO_FLUO = "FFB9FBC0";  // verde fosforescente
         const DESC_FLUO = "FFFFF176";   // amarillo fosforescente
-        const benefitRow = (row: number, colStart: number, colEnd: number, ventaCol: number, label: string, amount: number, fillArgb: string) => {
+        const SUR_FLUO = "FFFFCC80";    // naranja claro (aumento de precio)
+        // sign: −1 descuento/promo (resta), +1 aumento de precio (suma, 2026-09-29).
+        const benefitRow = (row: number, colStart: number, colEnd: number, ventaCol: number, label: string, amount: number, fillArgb: string, sign: 1 | -1 = -1) => {
             const fill = { type: "pattern", pattern: "solid", fgColor: { argb: fillArgb } };
             for (let c = colStart; c <= colEnd; c++) {
                 setCell(row, c, "", { fill, alignment: { horizontal: "left", vertical: "middle" } });
             }
             setCell(row, colStart, label, { fill, font: { name: "Arial", size: 8.5, bold: true, italic: true, color: { argb: "FF222222" } }, alignment: { horizontal: "left", vertical: "middle" } });
-            setCell(row, ventaCol, -amount, { fill, numFmt: "$#,##0.00", font: { name: "Arial", size: 9, bold: true, color: { argb: "FF222222" } }, alignment: { horizontal: "right", vertical: "middle" } });
+            setCell(row, ventaCol, sign * amount, { fill, numFmt: "$#,##0.00", font: { name: "Arial", size: 9, bold: true, color: { argb: "FF222222" } }, alignment: { horizontal: "right", vertical: "middle" } });
             sheet.getRow(row).height = 16;
         };
 
@@ -212,6 +213,9 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
             });
             Object.entries(prod.discount_breakdown ?? {}).forEach(([reason, amt]) => {
                 if (amt.cash > 0.005) { benefitRow(r2, T2_COL, T2_COL + T2_COLS - 1, cashVentaCol, `   🏷️ Descuento (${DISCOUNT_REASON_LABEL[reason] ?? reason})`, amt.cash, DESC_FLUO); r2++; }
+            });
+            Object.entries(prod.surcharge_breakdown ?? {}).forEach(([reason, amt]) => {
+                if (amt.cash > 0.005) { benefitRow(r2, T2_COL, T2_COL + T2_COLS - 1, cashVentaCol, `   📈 Aumento (${SURCHARGE_REASON_SHORT[reason] ?? reason})`, amt.cash, SUR_FLUO, 1); r2++; }
             });
         });
         if (cashProducts.length > 0) {
@@ -274,6 +278,9 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
             });
             Object.entries(prod.discount_breakdown ?? {}).forEach(([reason, amt]) => {
                 if (amt.card > 0.005) { benefitRow(r3, T3_COL, T3_COL + T3_COLS - 1, T3_COL + 2, `   🏷️ Descuento (${DISCOUNT_REASON_LABEL[reason] ?? reason})`, amt.card, DESC_FLUO); r3++; }
+            });
+            Object.entries(prod.surcharge_breakdown ?? {}).forEach(([reason, amt]) => {
+                if (amt.card > 0.005) { benefitRow(r3, T3_COL, T3_COL + T3_COLS - 1, T3_COL + 2, `   📈 Aumento (${SURCHARGE_REASON_SHORT[reason] ?? reason})`, amt.card, SUR_FLUO, 1); r3++; }
             });
         });
         if (cardProducts.length > 0) {
@@ -407,6 +414,47 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
             setCell(egr, EG_INSUMO, "Sin egresos de insumos en el periodo", { font: { name: "Arial", size: 9, italic: true, color: { argb: "FF999999" } }, alignment: { horizontal: "left", vertical: "middle" } });
             sheet.getRow(egr).height = 18;
         }
+        // ─── Tabla 6. AUMENTOS DE PRECIO (2026-09-29) — auditoría de lo cobrado
+        // de más: ticket, producto, quién cobró, motivo y nota. Mismas columnas
+        // que Egresos (Producto · Motivo/Nota(merge) · Ticket · Cobró · Fecha · Monto).
+        const surchargeEntries = groupedProducts.flatMap(p =>
+            (p.surcharge_entries ?? []).map(e => ({ ...e, product: p.name })));
+        if (surchargeEntries.length > 0) {
+            const auRow = egr + 3;
+            setHeader(auRow, EG_INSUMO, EG_MONTO, " 6. AUMENTOS DE PRECIO", "FFCC7722");
+            const auHr = auRow + 1;
+            egMergeDesc(auHr);
+            setCell(auHr, EG_INSUMO, "Producto", egSubOpts);
+            setCell(auHr, EG_DESC, "Motivo / nota", egSubOpts);
+            setCell(auHr, EG_ORIGEN, "Ticket", egSubOpts);
+            setCell(auHr, EG_REG, "Cobró", egSubOpts);
+            setCell(auHr, EG_TIENDA, "Fecha", egSubOpts);
+            setCell(auHr, EG_MONTO, "Aumento", egSubOpts);
+            sheet.getRow(auHr).height = 20;
+            let aur = auHr + 1;
+            let totalAumentos = 0;
+            surchargeEntries.forEach(e => {
+                totalAumentos += e.amount;
+                egMergeDesc(aur);
+                setCell(aur, EG_INSUMO, `${e.product} ×${e.quantity}`, egLeft);
+                setCell(aur, EG_DESC, `${SURCHARGE_REASON_SHORT[e.reason] ?? e.reason}${e.note ? ` · ${e.note}` : ""}`, egLeft);
+                setCell(aur, EG_ORIGEN, `#${e.sale_id}`, egLeft);
+                setCell(aur, EG_REG, e.cashier, egLeft);
+                setCell(aur, EG_TIENDA, e.date ? fmtDate(e.date.slice(0, 10)) : "—", egLeft);
+                setCell(aur, EG_MONTO, e.amount, { numFmt: "$#,##0.00", font: { name: "Arial", size: 9, bold: true, color: { argb: "FFCC7722" } }, alignment: { horizontal: "right", vertical: "top" } });
+                sheet.getRow(aur).height = 18;
+                aur++;
+            });
+            egMergeDesc(aur);
+            setCell(aur, EG_INSUMO, "TOTAL AUMENTOS", totalLabelOpts);
+            setCell(aur, EG_DESC, "", totalLabelOpts);
+            setCell(aur, EG_ORIGEN, "", totalLabelOpts);
+            setCell(aur, EG_REG, "", totalLabelOpts);
+            setCell(aur, EG_TIENDA, "", totalLabelOpts);
+            setCell(aur, EG_MONTO, totalAumentos, totalMoneyOpts("FFCC7722"));
+            sheet.getRow(aur).height = 20;
+        }
+
         // Anchos de las columnas propias de Egresos (las del "gap", no afectan ventas).
         sheet.getColumn(EG_REG).width = 20;
         sheet.getColumn(EG_TIENDA).width = 16;
