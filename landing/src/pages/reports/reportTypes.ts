@@ -43,6 +43,23 @@ export interface GroupedProduct {
   promo_breakdown?: Record<string, { cash: number; card: number }>;
   /** Ídem descuento manual por motivo. */
   discount_breakdown?: Record<string, { cash: number; card: number }>;
+  /** Aumento de precio (2026-09-29): total cobrado de más en el rango. */
+  surcharge_total?: number;
+  /** Aumento por motivo, separado por método real ({ efectivo, tarjeta }). */
+  surcharge_breakdown?: Record<string, { cash: number; card: number }>;
+  /** Detalle de cada aumento (auditoría: quién, cuándo, por qué). */
+  surcharge_entries?: SurchargeEntry[];
+}
+
+export interface SurchargeEntry {
+  sale_id: number;
+  date: string;
+  cashier: string;
+  reason: string;
+  note: string | null;
+  quantity: number;
+  catalog_price: number;
+  amount: number;
 }
 
 export interface ReportPaymentBreakdown {

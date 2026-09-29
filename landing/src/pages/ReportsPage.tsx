@@ -17,7 +17,8 @@ import type { SupplyMoneySource, SupplyMovementRecord } from "@tadaima/api";
 import { ReportsSkeleton } from "@/components/reports/ReportsSkeleton";
 import { exportReportPdf } from "./reports/exportPdf";
 import { exportReportExcel } from "./reports/exportExcel";
-import type { ReportExportParams, PresaleRow } from "./reports/reportTypes";
+import type { ReportExportParams, PresaleRow, SurchargeEntry } from "./reports/reportTypes";
+import { SURCHARGE_REASON_LABELS } from "@/lib/discountReasons";
 import { fetchAllSales } from "@/lib/fetchAllPages";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useStoresQuery } from "@/hooks/queries/useStores";
@@ -140,6 +141,10 @@ interface GroupedProduct {
   promo_breakdown?: Record<string, { cash: number; card: number }>;
   /** Ídem para descuento manual (motivo → { efectivo, tarjeta }). */
   discount_breakdown?: Record<string, { cash: number; card: number }>;
+  /** Aumento de precio (2026-09-29): total, por motivo y detalle por venta. */
+  surcharge_total?: number;
+  surcharge_breakdown?: Record<string, { cash: number; card: number }>;
+  surcharge_entries?: SurchargeEntry[];
 }
 
 const REPORT_TABS: { id: TabId; label: string; icon: React.ElementType }[] = [
@@ -481,6 +486,9 @@ export function ReportsPage() {
               {(prod.promo_total ?? 0) > 0 && (
                 <span title={`Con promo — ${fmt(prod.promo_total ?? 0)} en el periodo`} style={{ fontSize: 8.5, fontWeight: 900, color: "#00CC66", background: "rgba(0,204,102,0.12)", border: "1px solid rgba(0,204,102,0.3)", padding: "1px 6px", borderRadius: 6, letterSpacing: "0.03em" }}>🎁 PROMO</span>
               )}
+              {(prod.surcharge_total ?? 0) > 0 && (
+                <span title={`Con aumento de precio — +${fmt(prod.surcharge_total ?? 0)} en el periodo`} style={{ fontSize: 8.5, fontWeight: 900, color: "#F59E0B", background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.3)", padding: "1px 6px", borderRadius: 6, letterSpacing: "0.03em" }}>📈 AUMENTO</span>
+              )}
               {(prod.manual_total ?? 0) > 0 && (
                 <span title={`Con descuento manual — ${fmt(prod.manual_total ?? 0)} en el periodo`} style={{ fontSize: 8.5, fontWeight: 900, color: "#F59E0B", background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.3)", padding: "1px 6px", borderRadius: 6, letterSpacing: "0.03em" }}>🏷️ DESC.</span>
               )}
@@ -526,7 +534,7 @@ export function ReportsPage() {
         {isExpanded && (
           <tr key={`${prod.id}-detail`}>
             <td colSpan={6} style={{ padding: `0 ${padX}px ${padY}px`, borderBottom: DIV, background: "rgba(255,255,255,0.02)" }}>
-              <div className={`grid grid-cols-1 ${(((prod.pre_sale_apartado && prod.pre_sale_apartado > 0) || (prod.pre_sale_deuda && prod.pre_sale_deuda > 0)) || (prod.promo_total ?? 0) > 0 || (prod.manual_total ?? 0) > 0) ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-6 pt-3 pb-2`}>
+              <div className={`grid grid-cols-1 ${(((prod.pre_sale_apartado && prod.pre_sale_apartado > 0) || (prod.pre_sale_deuda && prod.pre_sale_deuda > 0)) || (prod.promo_total ?? 0) > 0 || (prod.manual_total ?? 0) > 0 || (prod.surcharge_total ?? 0) > 0) ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-6 pt-3 pb-2`}>
                 {/* Métodos de Pago */}
                 <div>
                   <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: TM, marginBottom: 8 }}>
@@ -584,16 +592,16 @@ export function ReportsPage() {
                   </div>
                 </div>
 
-                {/* Beneficios aplicados: promo y descuento manual (Bruto → Neto) */}
-                {((prod.promo_total ?? 0) > 0 || (prod.manual_total ?? 0) > 0) && (
+                {/* Ajustes aplicados: promo, descuento manual y aumento (Catálogo → Neto) */}
+                {((prod.promo_total ?? 0) > 0 || (prod.manual_total ?? 0) > 0 || (prod.surcharge_total ?? 0) > 0) && (
                   <div>
                     <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: TM, marginBottom: 8 }}>
                       Beneficios aplicados
                     </p>
                     <div className="flex flex-col gap-1 py-1.5 px-3" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", borderRadius: 9 }}>
                       <div className="flex items-center justify-between text-[11px]">
-                        <span style={{ color: TM }}>Bruto (sin beneficio)</span>
-                        <span style={{ color: TS, fontWeight: 800 }}>{fmt(prod.total_revenue + (prod.promo_total ?? 0) + (prod.manual_total ?? 0))}</span>
+                        <span style={{ color: TM }}>Precio de catálogo</span>
+                        <span style={{ color: TS, fontWeight: 800 }}>{fmt(prod.total_revenue + (prod.promo_total ?? 0) + (prod.manual_total ?? 0) - (prod.surcharge_total ?? 0))}</span>
                       </div>
                       {(prod.promo_total ?? 0) > 0 && (
                         <div className="flex items-center justify-between text-[11px]">
@@ -607,6 +615,18 @@ export function ReportsPage() {
                           <span style={{ color: "#F59E0B", fontWeight: 800 }}>-{fmt(prod.manual_total ?? 0)}</span>
                         </div>
                       )}
+                      {(prod.surcharge_total ?? 0) > 0 && (
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span style={{ color: TM }}>📈 Aumento de precio</span>
+                          <span style={{ color: "#F59E0B", fontWeight: 800 }}>+{fmt(prod.surcharge_total ?? 0)}</span>
+                        </div>
+                      )}
+                      {(prod.surcharge_entries ?? []).map((e, i) => (
+                        <div key={`${e.sale_id}-${i}`} className="text-[10px]" style={{ color: TM, paddingLeft: 12 }}>
+                          #{e.sale_id} · {e.cashier} · {SURCHARGE_REASON_LABELS[e.reason as keyof typeof SURCHARGE_REASON_LABELS] ?? e.reason}
+                          {e.note ? ` · ${e.note}` : ""} · +{fmt(e.amount)}
+                        </div>
+                      ))}
                       <div className="flex items-center justify-between text-xs pt-0.5 mt-0.5 border-t border-dotted" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
                         <span style={{ color: TS, fontWeight: 700 }}>Neto (lo que entró)</span>
                         <span style={{ color: "#00CC66", fontWeight: 900 }}>{fmt(prod.total_revenue)}</span>

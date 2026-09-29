@@ -22,6 +22,13 @@ use App\Models\ProductPromotion;
  * persisten cuando la promo aplicó — así el historial muestra ambos).
  * El cupón (Fase 4) aplica a nivel venta pero SOLO sobre líneas sin beneficio.
  *
+ * AUMENTO (2026-09-29): una línea puede llevar, en vez de descuento manual, un
+ * aumento de precio (`line_surcharge`, mismo shape kind/basis/value). Se calcula
+ * DESPUÉS de la promo (percent sobre el neto-promo) y va en su propio campo
+ * `surcharge_amount` — discount_amount sigue siendo ≥ 0. Una línea lleva
+ * descuento O aumento (lo garantiza CheckoutRequest); aquí se calculan
+ * independientes. net = max(0, bruto − discount_amount) + surcharge_amount.
+ *
  * El server NO confía en montos del cliente: recibe kind/basis/value y
  * recomputa el monto aquí. Si cambias el algoritmo, cambia también saleCalc.ts.
  */
@@ -29,12 +36,16 @@ final class SaleCalculator
 {
     public const DISCOUNT_REASONS = ['danado', 'caducidad', 'exhibicion', 'cortesia', 'otro'];
 
+    /** Motivos del aumento de precio (Joel 2026-09-29). */
+    public const SURCHARGE_REASONS = ['precio_especial', 'escasez', 'envio', 'otro'];
+
     /**
      * @param array<int, array{
      *   product_id: int,
      *   unit_price: float,
      *   qty: float,
      *   line_discount?: array{kind: string, basis: string, value: float, reason?: ?string, note?: ?string}|null,
+     *   line_surcharge?: array{kind: string, basis: string, value: float, reason?: ?string, note?: ?string}|null,
      *   skip_promotion?: bool,
      * }> $lines Líneas en el MISMO orden en que se persistirán (zip posicional).
      * @param iterable<\App\Models\ProductPromotion> $promotions Promos VIGENTES
@@ -49,9 +60,11 @@ final class SaleCalculator
      *     promo_name: ?string,
      *     promo_free_qty: ?int,
      *     promo_amount: ?float,
+     *     surcharge_amount: float,
      *   }>,
      *   subtotal: float,
      *   line_benefit_total: float,
+     *   surcharge_total: float,
      *   total: float,
      * }
      */
@@ -91,9 +104,11 @@ final class SaleCalculator
         // (stacking, snapshot, rollups) queda casi intacto.
         $poolBenefits = $this->assignPoolBenefits($lines, $promosByProduct);
 
-        $resultLines = [];
-        $subtotal    = 0.0;
-        $netSum      = 0.0;
+        $resultLines    = [];
+        $subtotal       = 0.0;
+        $netSum         = 0.0;
+        $benefitSum     = 0.0;
+        $surchargeSum   = 0.0;
 
         foreach ($lines as $idx => $line) {
             $gross = self::round2((float) $line['unit_price'] * (float) $line['qty']);
@@ -142,7 +157,20 @@ final class SaleCalculator
             // el rollup sales.discount y los netos de reportes siguen cuadrando.
             $discountAmount = self::round2($promoAmount + $manualAmount);
 
-            $net = self::round2(max(0.0, $gross - $discountAmount));
+            // Aumento: sobre el neto-promo, igual que el descuento manual.
+            $surchargeAmount = 0.0;
+            $surcharge = $line['line_surcharge'] ?? null;
+            if (is_array($surcharge)) {
+                $surchargeAmount = $this->lineSurchargeAmount(
+                    kind:  (string) $surcharge['kind'],
+                    basis: (string) $surcharge['basis'],
+                    value: (float) $surcharge['value'],
+                    qty:   (float) $line['qty'],
+                    base:  $baseAfterPromo,
+                );
+            }
+
+            $net = self::round2(max(0.0, $gross - $discountAmount) + $surchargeAmount);
 
             $resultLines[] = [
                 'gross'                => $gross,
@@ -154,20 +182,23 @@ final class SaleCalculator
                 // Snapshot directo del monto promo (2026-07-20): con el tipo
                 // qty_discount ya no se puede derivar de promo_free_qty × price.
                 'promo_amount'         => $best !== null ? $promoAmount : null,
+                'surcharge_amount'     => $surchargeAmount,
             ];
 
-            $subtotal += $gross;
-            $netSum   += $net;
+            $subtotal     += $gross;
+            $netSum       += $net;
+            $benefitSum   += $discountAmount;
+            $surchargeSum += $surchargeAmount;
         }
 
-        $subtotal = self::round2($subtotal);
-        $netSum   = self::round2($netSum);
-
+        // Rollups EXPLÍCITOS (2026-09-29): antes line_benefit_total era
+        // subtotal − Σneto; con aumentos eso restaría el aumento del descuento.
         return [
             'lines'              => $resultLines,
-            'subtotal'           => $subtotal,
-            'line_benefit_total' => self::round2($subtotal - $netSum),
-            'total'              => $netSum,
+            'subtotal'           => self::round2($subtotal),
+            'line_benefit_total' => self::round2($benefitSum),
+            'surcharge_total'    => self::round2($surchargeSum),
+            'total'              => self::round2($netSum),
         ];
     }
 
@@ -437,6 +468,24 @@ final class SaleCalculator
             : ($basis === 'unit' ? $value * $qty : $value);
 
         return min(self::round2($raw), self::round2($base));
+    }
+
+    /**
+     * Monto del aumento de una línea (2026-09-29). fixed+unit → value × qty ·
+     * fixed+line → value · percent → base × value/100 (base = neto-promo).
+     * Sin tope superior aquí: los límites (value ≤ 999,999, % ≤ 100) los pone
+     * CheckoutRequest. Espejo de computeLineSurchargeAmount en saleCalc.ts.
+     */
+    private function lineSurchargeAmount(string $kind, string $basis, float $value, float $qty, float $base): float
+    {
+        if (! is_finite($value) || $value <= 0) {
+            return 0.0;
+        }
+        if ($kind === 'percent') {
+            return $base > 0 ? self::round2($base * ($value / 100)) : 0.0;
+        }
+
+        return self::round2($basis === 'unit' ? $value * $qty : $value);
     }
 
     private static function round2(float $n): float

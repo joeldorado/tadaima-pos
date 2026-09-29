@@ -10,7 +10,11 @@ export interface SaleCancellationItemSnapshot {
   qty_cancelled: number
   price: number
   cost: number | null
+  /** Lo devuelto por la línea (neto desde 2026-09-29). */
   line_total: number
+  gross_total?: number
+  discount_cancelled?: number
+  surcharge_cancelled?: number
   was_delivered?: boolean
 }
 

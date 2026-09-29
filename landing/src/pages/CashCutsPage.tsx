@@ -240,6 +240,9 @@ function CorteDetail({ session: s }: { session: CashSessionReport }) {
                           {t.discount > 0 && (
                             <div style={{ color: "#F59E0B", fontSize: 10 }}>Descuento −{fmt(t.discount)}</div>
                           )}
+                          {(t.surcharge ?? 0) > 0 && (
+                            <div style={{ color: "#F59E0B", fontSize: 10 }}>Aumento +{fmt(t.surcharge ?? 0)}</div>
+                          )}
                         </td>
                         <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>
                           {t.payments.map((p, idx) => (

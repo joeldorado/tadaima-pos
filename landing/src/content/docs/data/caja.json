@@ -23,6 +23,7 @@
       "cambio",
       "ticket",
       "descuento",
+      "aumento",
       "promoción",
       "socio",
       "folio",
@@ -69,8 +70,8 @@
                 "detail": "Manual, o escanea la tarjeta TAD de socio Tadaima (asigna cliente y precio socio automático). Lo quitas con la ✕ del pie."
               },
               {
-                "title": "Ajusta cantidades y descuentos",
-                "detail": "Puedes poner un descuento manual por línea (con motivo y quién autoriza); se acumula sobre cualquier promo."
+                "title": "Ajusta cantidades, descuentos y aumentos",
+                "detail": "Desde el menú ⋮ de cada línea elige Descuento (−) o Aumento (+) de precio, con motivo y nota; queda registrado quién cobró. El descuento se acumula sobre cualquier promo y el aumento se suma después. En el ticket del cliente el aumento ya sale incluido en el precio."
               }
             ]
           },
@@ -90,7 +91,7 @@
             "kind": "image",
             "src": "caja/03-carrito-con-productos.png",
             "alt": "Carrito de la Caja con productos agregados",
-            "caption": "El carrito: cantidades con +/−, y el menú ⋮ de cada línea para descuento o eliminar."
+            "caption": "El carrito: cantidades con +/−, y el menú ⋮ de cada línea para descuento, aumento de precio o eliminar."
           }
         ]
       },

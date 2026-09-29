@@ -6,6 +6,7 @@ import autoTable from "jspdf-autotable";
 import { toast } from "sonner";
 import { fmt, fmtDate } from "./reportFormat";
 import type { ReportExportParams } from "./reportTypes";
+import { DISCOUNT_REASON_SHORT, SURCHARGE_REASON_SHORT } from "@/lib/discountReasons";
 
 const SUPPLY_SOURCE_LABEL: Record<string, string> = {
   caja: "Caja",
@@ -13,9 +14,8 @@ const SUPPLY_SOURCE_LABEL: Record<string, string> = {
   propio: "Dinero propio",
 };
 
-const DISCOUNT_REASON_LABEL: Record<string, string> = {
-  danado: "dañado", caducidad: "caducidad", exhibicion: "exhibición", cortesia: "cortesía", otro: "otro",
-};
+const DISCOUNT_REASON_LABEL = DISCOUNT_REASON_SHORT;
+const SUR_FILL: [number, number, number] = [255, 204, 128];    // naranja claro (aumento)
 const PROMO_FILL: [number, number, number] = [185, 251, 192];  // verde
 const DESC_FILL: [number, number, number] = [255, 241, 118];   // amarillo
 
@@ -127,6 +127,12 @@ export function exportReportPdf(params: ReportExportParams): void {
             rowFill[body.length] = DESC_FILL; body.push(row);
           }
         });
+        Object.entries(prod.surcharge_breakdown ?? {}).forEach(([reason, amt]) => {
+          if (amt.cash > 0.005) {
+            const row = new Array(cashTotalCols).fill(""); row[0] = `   Aumento (${SURCHARGE_REASON_SHORT[reason] ?? reason})`; row[cashVentaIdx] = `+${fmt(amt.cash)}`;
+            rowFill[body.length] = SUR_FILL; body.push(row);
+          }
+        });
       });
       body.push(["TOTAL EFECTIVO", Number(tCant.toFixed(1)), ...(canViewCost ? [fmt(tCost)] : []), fmt(tVenta), ...(canViewCost ? [fmt(tProfit)] : [])]);
       const cashLastIdx = body.length - 1;
@@ -184,6 +190,12 @@ export function exportReportPdf(params: ReportExportParams): void {
           if (amt.card > 0.005) {
             const row = new Array(cardTotalCols).fill(""); row[0] = `   Descuento (${DISCOUNT_REASON_LABEL[reason] ?? reason})`; row[2] = `-${fmt(amt.card)}`;
             rowFill[body.length] = DESC_FILL; body.push(row);
+          }
+        });
+        Object.entries(prod.surcharge_breakdown ?? {}).forEach(([reason, amt]) => {
+          if (amt.card > 0.005) {
+            const row = new Array(cardTotalCols).fill(""); row[0] = `   Aumento (${SURCHARGE_REASON_SHORT[reason] ?? reason})`; row[2] = `+${fmt(amt.card)}`;
+            rowFill[body.length] = SUR_FILL; body.push(row);
           }
         });
       });

@@ -9,6 +9,7 @@
 // neteo de cancelaciones, split por costo, prorrateo de preventas y descuentos v2.
 import type { SaleDetail, PreSaleOrder, PreSaleOrderPayment } from "@tadaima/api";
 import { toLocalYmd } from "@/lib/date";
+import { isLegacyGlobalDiscountSale, saleItemNet } from "@/lib/saleItemNet";
 import type { GroupedProduct, PresaleRow, ReportPaymentBreakdown } from "./reportTypes";
 
 // ─── IVA sobre comisión de terminal ──────────────────────────────────────────
@@ -216,16 +217,17 @@ export function buildGroupedProducts(
         //     demás productos del ticket.
         //  2. Ventas legacy (descuento global sin líneas): prorrateo proporcional
         //     como antes (Joel 2026-06-29). Sin descuento el ratio = 1.
-        //  Con cancelación/devolución se conserva el crudo (la sección de
-        //  cancelados resta line_total crudo y debe netear igual). El costo NO
-        //  se prorratea (es el mismo con/sin promo).
-        const saleHasReversal = (sale.cancelled_items?.length ?? 0) > 0 || sale.status === "returned";
-        const saleHasLineBenefits = (sale.items ?? []).some(si => (si.discount_amount ?? 0) > 0);
+        //  3. Aumento de precio (2026-09-29): suma al neto de la línea.
+        //  Devolución LEGACY (status=returned sin snapshot) conserva el crudo: la
+        //  sección de cancelados le resta el crudo y debe netear igual. Con
+        //  cancelaciones ADR-016 el backend ya prorrateó los montos del renglón
+        //  que queda (2026-09-29) → neto normal. El costo NO se prorratea.
+        const isLegacyReturnSale = sale.status === "returned" && (sale.cancelled_items?.length ?? 0) === 0;
         let itemTotal: number;
-        if (saleHasReversal) {
+        if (isLegacyReturnSale) {
           itemTotal = item.total;
-        } else if (saleHasLineBenefits) {
-          itemTotal = Math.max(0, item.total - (item.discount_amount ?? 0));
+        } else if (!isLegacyGlobalDiscountSale(sale)) {
+          itemTotal = saleItemNet(item);
         } else {
           const discRatio = ((sale.discount ?? 0) > 0 && sale.subtotal > 0)
             ? sale.total / sale.subtotal
@@ -296,6 +298,31 @@ export function buildGroupedProducts(
             pGroup.discount_breakdown[key].card += manualPart * cardShare;
             pGroup.discount_breakdown[key].cash += manualPart * (1 - cardShare);
           }
+        }
+
+        // Aumento de precio (2026-09-29): total, desglose por motivo y detalle
+        // por venta (quién cobró, motivo, nota) — es dinero que se cobró de más.
+        const lineSur = item.surcharge_amount ?? 0;
+        if (lineSur > 0) {
+          const key = item.surcharge_reason || "otro";
+          pGroup.surcharge_total = (pGroup.surcharge_total ?? 0) + lineSur;
+          pGroup.surcharge_breakdown = pGroup.surcharge_breakdown ?? {};
+          pGroup.surcharge_breakdown[key] = pGroup.surcharge_breakdown[key] ?? { cash: 0, card: 0 };
+          pGroup.surcharge_breakdown[key].card += lineSur * cardShare;
+          pGroup.surcharge_breakdown[key].cash += lineSur * (1 - cardShare);
+          pGroup.surcharge_entries = [
+            ...(pGroup.surcharge_entries ?? []),
+            {
+              sale_id: sale.id,
+              date: sale.sold_at ?? sale.created_at ?? "",
+              cashier: sale.user?.name ?? "—",
+              reason: key,
+              note: item.surcharge_note ?? null,
+              quantity: qty,
+              catalog_price: item.price,
+              amount: lineSur,
+            },
+          ];
         }
 
         // Desglose por método: se reparte proporcional a cada pago del ticket (mixto).

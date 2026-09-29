@@ -359,6 +359,16 @@ export interface SaleItemDetail {
   /** Snapshot directo del monto promo de la línea (2026-07-20). Ventas viejas: null → derivar promo_free_qty × price. */
   promo_amount?: number | null
   /**
+   * Aumento de precio por línea (2026-09-29). Neto de la línea =
+   * total − discount_amount + surcharge_amount. 0/null en ventas sin aumento.
+   */
+  surcharge_kind?: 'fixed' | 'percent' | null
+  surcharge_basis?: 'unit' | 'line' | null
+  surcharge_value?: number | null
+  surcharge_amount?: number
+  surcharge_reason?: string | null
+  surcharge_note?: string | null
+  /**
    * Cost snapshot al momento EXACTO del checkout. Solo viene cuando el caller
    * es admin (security gate en `SaleItemResource`). NULL para ventas pre-
    * migración cost_at_sale (2026-05-22). Esta es la verdad histórica:
@@ -392,6 +402,8 @@ export interface SaleDetail {
   draft_id: number | null
   subtotal: number
   discount: number
+  /** Σ aumentos de precio por línea (2026-09-29). total = subtotal − discount + surcharge. */
+  surcharge?: number
   total: number
   commission_amount: number
   /** Dólares físicos recibidos en esta venta (null si no entraron USD). */
@@ -421,7 +433,12 @@ export interface SaleDetail {
     /** Alias de quantity que lee el Reporte de Ruben (fallback a quantity). */
     qty_cancelled?: number
     price: number
+    /** Lo DEVUELTO por la línea. Desde 2026-09-29 es neto (bruto − descuento + aumento). */
     line_total: number
+    /** Desglose del reembolso (2026-09-29). null en cancelaciones anteriores. */
+    gross_total?: number | null
+    discount_cancelled?: number | null
+    surcharge_cancelled?: number | null
     /** cost_at_sale del item cancelado (snapshot ADR-015). Solo para admin/can_view_cost; null si no. */
     cost?: number | null
     product_type?: 'product' | 'manga'
@@ -540,6 +557,14 @@ export interface SaleLineDiscountInput {
   reason: 'danado' | 'caducidad' | 'exhibicion' | 'cortesia' | 'otro'
   note?: string
 }
+/** Aumento de precio por línea (2026-09-29). Excluyente con line_discount. */
+export interface SaleLineSurchargeInput {
+  kind: 'fixed' | 'percent'
+  basis: 'unit' | 'line'
+  value: number
+  reason: 'precio_especial' | 'escasez' | 'envio' | 'otro'
+  note?: string
+}
 export interface SaleDirectItem {
   product_id: number
   quantity: number
@@ -549,6 +574,10 @@ export interface SaleDirectItem {
   is_damaged?: boolean
   /** Descuento por línea (requiere calc_version: 2 en el input). */
   line_discount?: SaleLineDiscountInput
+  /** Aumento de precio por línea (requiere calc_version: 2). */
+  line_surcharge?: SaleLineSurchargeInput
+  /** El cajero renunció a la promo de esta línea (2026-07-24). */
+  skip_promotion?: boolean
 }
 export interface CreateSaleInput {
   draft_id?: number

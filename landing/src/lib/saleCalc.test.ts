@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   recalculateSale,
   computeLineDiscountAmount,
+  computeLineSurchargeAmount,
   computePromoBenefit,
   newLineId,
   type CalcLine,
@@ -627,5 +628,87 @@ describe("mix & match — paridad S1..S12 con MixMatchCheckoutTest.php", () => {
     expect(r.lines[1]!.benefit?.type).toBe("promo");
     expect(r.lineBenefitTotal).toBe(170);
     expect(r.total).toBe(180);
+  });
+});
+
+describe("aumento de precio por línea (2026-09-29) — gemelo de LineSurchargeCheckoutTest", () => {
+  const promo2x1: PromoDef = { id: 7, productId: "X", name: "2x1", buyN: 2, payM: 1, priority: 0 };
+
+  it("computeLineSurchargeAmount: fijo por unidad, por línea y porcentaje", () => {
+    const l = { unitPrice: 100, qty: 2 };
+    expect(computeLineSurchargeAmount({ kind: "fixed", basis: "unit", value: 50, reason: "escasez" }, l)).toBe(100);
+    expect(computeLineSurchargeAmount({ kind: "fixed", basis: "line", value: 200, reason: "envio" }, l)).toBe(200);
+    expect(computeLineSurchargeAmount({ kind: "percent", basis: "line", value: 10, reason: "otro" }, l)).toBe(20);
+    expect(computeLineSurchargeAmount({ kind: "fixed", basis: "unit", value: 0, reason: "otro" }, l)).toBe(0);
+    expect(computeLineSurchargeAmount({ kind: "fixed", basis: "unit", value: -5, reason: "otro" }, l)).toBe(0);
+  });
+
+  it("fijo por unidad: 2 × $100 +$50 c/u → $300; el descuento no se toca", () => {
+    const r = recalculateSale({
+      lines: [line({ qty: 2, surcharge: { kind: "fixed", basis: "unit", value: 50, reason: "precio_especial" } })],
+    });
+    expect(r.subtotal).toBe(200);
+    expect(r.lineBenefitTotal).toBe(0);
+    expect(r.surchargeTotal).toBe(100);
+    expect(r.total).toBe(300);
+    expect(r.lines[0]!.surchargePart).toBe(100);
+    expect(r.lines[0]!.benefit).toBeNull();
+    expect(r.lines[0]!.net).toBe(300);
+  });
+
+  it("porcentaje sobre el neto-promo: 2 × $50 con 2x1 +10% → $55", () => {
+    const r = recalculateSale({
+      lines: [line({ productId: "X", unitPrice: 50, qty: 2, surcharge: { kind: "percent", basis: "line", value: 10, reason: "otro" } })],
+      promotions: [promo2x1],
+    });
+    expect(r.lineBenefitTotal).toBe(50);
+    expect(r.surchargeTotal).toBe(5);
+    expect(r.total).toBe(55);
+    expect(r.lines[0]!.benefit).toEqual(expect.objectContaining({ type: "promo", amount: 50 }));
+  });
+
+  it("fijo sobre línea con promo: 2 × $50 con 2x1 +$30 → $80", () => {
+    const r = recalculateSale({
+      lines: [line({ productId: "X", unitPrice: 50, qty: 2, surcharge: { kind: "fixed", basis: "line", value: 30, reason: "envio" } })],
+      promotions: [promo2x1],
+    });
+    expect(r.total).toBe(80);
+  });
+
+  it("descuento y aumento en líneas distintas: el rollup del descuento no se come el aumento", () => {
+    const r = recalculateSale({
+      lines: [
+        line({ productId: "A", discount: { kind: "fixed", basis: "unit", value: 10, reason: "danado" } }),
+        line({ productId: "B", surcharge: { kind: "fixed", basis: "unit", value: 20, reason: "precio_especial" } }),
+      ],
+    });
+    expect(r.subtotal).toBe(200);
+    expect(r.lineBenefitTotal).toBe(10);
+    expect(r.surchargeTotal).toBe(20);
+    expect(r.total).toBe(210);
+  });
+
+  it("split: la línea con aumento y la línea normal del mismo producto", () => {
+    const r = recalculateSale({
+      lines: [
+        line({ qty: 1 }),
+        line({ qty: 2, surcharge: { kind: "fixed", basis: "unit", value: 50, reason: "precio_especial" } }),
+      ],
+    });
+    expect(r.total).toBe(400);
+    expect(r.lines[0]!.surchargePart).toBe(0);
+  });
+
+  it("el cupón no aplica a líneas con aumento", () => {
+    const coupon: CouponDef = { id: 1, code: "X10", kind: "percent", value: 10, scope: "whole_sale" };
+    const r = recalculateSale({
+      lines: [
+        line({ productId: "A" }),
+        line({ productId: "B", surcharge: { kind: "fixed", basis: "unit", value: 50, reason: "otro" } }),
+      ],
+      coupon,
+    });
+    expect(r.couponDiscount).toBe(10); // 10% de $100 (solo la línea A)
+    expect(r.total).toBe(240);
   });
 });

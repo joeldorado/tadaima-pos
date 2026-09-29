@@ -37,6 +37,14 @@ class SaleItem extends Model
         'promo_name',
         'promo_free_qty',
         'promo_amount',
+        // Aumento de precio por línea (2026-09-29) — espejo del descuento manual.
+        'surcharge_kind',
+        'surcharge_basis',
+        'surcharge_value',
+        'surcharge_amount',
+        'surcharge_reason',
+        'surcharge_note',
+        'surcharge_authorized_by',
     ];
 
     protected $casts = [
@@ -48,6 +56,8 @@ class SaleItem extends Model
         'discount_amount' => 'float',
         'promo_free_qty'  => 'integer',
         'promo_amount'    => 'float',
+        'surcharge_value'  => 'float',
+        'surcharge_amount' => 'float',
         'created_at'      => 'datetime',
     ];
 
