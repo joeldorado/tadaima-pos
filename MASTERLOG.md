@@ -4,7 +4,38 @@
 
 ---
 
-### Sesión 2026-09-28 (4) — Tomos: el selector de almacén distingue piso y almacén — deploy pendiente (PR)
+### Sesión 2026-09-29 — Caja: aumento de precio por línea + reembolso NETO al cancelar — rev tadaima-00013-zih
+
+**Pedido del cliente:** en Caja, además de bajar el precio de una línea, poder SUBIRLO
+libremente, con registro. PR joeldorado/tadaima-pos#17 (`7216ec4`, rebase a `main`).
+
+**Aumento:** mismo modal "Descuento en línea" con toggle Descuento (−) | Aumento (+):
+monto o %, por unidad o por línea, split de piezas, motivo (Precio especial / Escasez /
+Envío / Otro) y nota. Línea = descuento O aumento; mercancía dañada no; % ≤ 100.
+Datos ADITIVOS (migraciones `2026_09_29_000001/000002`, corren solas en el deploy):
+`sale_items.surcharge_{kind,basis,value,amount,reason,note,authorized_by}` + `sales.surcharge`.
+`total = subtotal − discount + surcharge`; `price` sigue siendo el de catálogo (guard de
+precios intacto). Ticket del cliente con PRECIO FINAL (decisión Joel); Historial, Ventas,
+Cortes y Reportes (pantalla/Excel/PDF, sección "6. Aumentos de precio") muestran motivo,
+nota y cajero. Cualquiera que cobra puede aumentar (queda quién).
+
+**Bug arreglado:** la cancelación devolvía `qty × precio` aunque la línea tuviera
+descuento (devolvía de más, corte corto; en prod aún no había pasado). Ahora reembolso =
+total antes − total después, con descuento/aumento/promo prorrateados por cantidad (legacy
+prorratea `sales.discount`). Además "Por producto" en Ventas y `top-products` cuentan el
+ingreso NETO por renglón (antes bruto/prorrateo por venta) → avisar a Ruben.
+
+**Tests:** backend 596 (+26: `LineSurchargeCheckoutTest`, `CancellationNetRefundTest`, también
+en Postgres 17 local), vitest 337, type-check = base (463). Verificado en local: aumento
++$101 → venta $1,500 (precio $1,399 + aumento con motivo/nota), ticket "1 × $1,500";
+cancelar 1 de 2 piezas (línea con aumento + línea con descuento) estima y devuelve $408.
+
+**Deploy:** tadaima-00013-zih (junto con #16). Rollback: `tadaima-00010-buj` (las columnas nuevas no
+le estorban). Tras usar aumentos en tienda, preferir fix-forward.
+
+---
+
+### Sesión 2026-09-28 (4) — Tomos: el selector de almacén distingue piso y almacén — rev tadaima-00013-zih
 
 **Reporte de la tienda:** al agregar stock a un tomo ya registrado (Editar Tomo →
 Inventario), el dropdown mostraba "Tadaima MACRO" dos veces y no se sabía cuál era piso
@@ -20,7 +51,7 @@ revisión de Traspasos. Solo cambian etiquetas: el valor sigue siendo el id del 
 Verificado en local (el dropdown lista las 4 opciones distintas; al agregar, cada fila
 queda en su almacén). vitest 305/305, type-check = base (463).
 
-**Deploy:** candidato sin tráfico; se promueve al mergear el PR a `main`.
+**Deploy:** PR joeldorado/tadaima-pos#16 mergeado (rebase) y deployado junto con #17 en tadaima-00013-zih.
 
 ---
 
