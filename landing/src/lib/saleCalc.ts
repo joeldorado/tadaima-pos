@@ -100,6 +100,13 @@ export interface CalcLine {
    * Espejo de `skip_promotion` en SaleCalculator.php.
    */
   skipPromo?: boolean;
+  /**
+   * Precio NORMAL (nivel 1) del producto (2026-09-30). Promo y precio socio
+   * NO se suman: si la línea queda dentro de una promo aplicada, TODA la
+   * línea se cobra a este precio y la promo se calcula encima. Sin él (o en
+   * dañados) no hay re-precio. Espejo de `base_price` en SaleCalculator.php.
+   */
+  basePrice?: number;
 }
 
 export interface LineBenefit {
@@ -112,6 +119,10 @@ export interface LineBenefit {
 
 export interface CalcLineResult {
   lineId: string;
+  /** Precio unitario EFECTIVO (el de `basePrice` si la promo re-precio). */
+  unitPrice: number;
+  /** La línea se re-precio a NORMAL por estar en una promo (2026-09-30). */
+  promoRepriced: boolean;
   gross: number;
   /** Beneficio COMBINADO de la línea (promo + manual). Con manual presente el
    *  type es 'discount' (compat con consumidores previos); amount = suma. */
@@ -265,6 +276,8 @@ interface PoolBenefits {
   benefits: Map<number, LineBenefit>;
   /** índice de línea → promo a cuyo pool contribuyó SIN recibir descuento. */
   contributors: Map<number, { promoId: number; promoLabel: string }>;
+  /** TODAS las líneas del pool de una promo aplicada (beneficiadas o no). */
+  pooled: Set<number>;
 }
 
 /**
@@ -311,6 +324,7 @@ function assignPoolBenefits(lines: CalcLine[], promotions: PromoDef[]): PoolBene
   });
 
   const consumed = new Set<number>();
+  const pooled = new Set<number>();
   const benefits = new Map<number, LineBenefit>();
   const contributors = new Map<number, { promoId: number; promoLabel: string }>();
 
@@ -373,10 +387,13 @@ function assignPoolBenefits(lines: CalcLine[], promotions: PromoDef[]): PoolBene
         contributors.set(idx, { promoId: chosen.promo.id, promoLabel: chosen.promo.name });
       }
     });
-    chosen.pool.forEach((idx) => consumed.add(idx));
+    chosen.pool.forEach((idx) => {
+      consumed.add(idx);
+      pooled.add(idx);
+    });
   }
 
-  return { benefits, contributors };
+  return { benefits, contributors, pooled };
 }
 
 /**
@@ -463,9 +480,24 @@ export function recalculateSale(input: {
 
   // MIX & MATCH (2026-07-23): el beneficio por línea sale del reparto de
   // pools — el loop de abajo (stacking, netos) queda casi intacto.
-  const pool = assignPoolBenefits(input.lines, promotions);
+  let pool = assignPoolBenefits(input.lines, promotions);
 
-  const lines: CalcLineResult[] = input.lines.map((l, idx) => {
+  // PROMO VS NIVEL DE PRECIO (Joel 2026-09-30): promo y precio socio no se
+  // suman. Las líneas que quedaron en una promo aplicada se re-precian a
+  // NORMAL y se reparte de nuevo. Siempre gana la promo. Espejo de
+  // SaleCalculator::calculate.
+  const repriced = new Set<number>();
+  const effLines = input.lines.map((l, idx) => {
+    const base = l.basePrice ?? 0;
+    if (pool.pooled.has(idx) && base > 0 && Math.abs(base - l.unitPrice) > 0.001) {
+      repriced.add(idx);
+      return { ...l, unitPrice: base };
+    }
+    return l;
+  });
+  if (repriced.size > 0) pool = assignPoolBenefits(effLines, promotions);
+
+  const lines: CalcLineResult[] = effLines.map((l, idx) => {
     const gross = round2(l.unitPrice * l.qty);
 
     // STACKING (Joel 2026-07-17): la promo aplica SIEMPRE que alcance; el
@@ -497,6 +529,8 @@ export function recalculateSale(input: {
     const contributor = pool.contributors.get(idx);
     return {
       lineId: l.lineId,
+      unitPrice: l.unitPrice,
+      promoRepriced: repriced.has(idx),
       gross,
       benefit,
       promoPart,

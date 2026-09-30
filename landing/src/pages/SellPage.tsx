@@ -2319,6 +2319,11 @@ export function SellPage() {
         productId: i.product.id,
         unitPrice: getItemPrice(i),
         qty: i.quantity,
+        // Promo vs precio socio (2026-09-30): con promo aplicada el motor
+        // cobra la línea a NORMAL (price_a). Solo líneas regulares no dañadas.
+        ...(!i.isDamaged && !i.isFromPreSale && i.sellingCatalogId == null && (i.product.price_a ?? 0) > 0
+          ? { basePrice: i.product.price_a }
+          : {}),
         ...(i.discount ? { discount: i.discount } : {}),
         ...(i.surcharge ? { surcharge: i.surcharge } : {}),
         // El cajero renunció a la promo de esta línea a propósito.
@@ -2361,6 +2366,15 @@ export function SellPage() {
     for (const l of saleCalcResult.lines) map[l.lineId] = l;
     return map;
   }, [saleCalcResult]);
+  /**
+   * Precio unitario EFECTIVO de una línea: el del motor, que re-precia a
+   * NORMAL cuando la línea cae en una promo (promo y socio no se suman,
+   * 2026-09-30). Es el que se muestra, imprime y manda al cobrar.
+   */
+  const priceOf = useCallback(
+    (ci: CartItem): number => lineCalcById[ci.lineId]?.unitPrice ?? getItemPrice(ci),
+    [lineCalcById],
+  );
 
   /**
    * Renglón del ticket de una línea del carrito. Con aumento de precio va el
@@ -2375,7 +2389,7 @@ export function SellPage() {
     const benefitLabel = benefit?.type === "promo"
       ? `Promo ${benefit.promoLabel ?? ""}`.trim()
       : ci.discount ? `Desc. ${DISCOUNT_REASON_LABELS[ci.discount.reason]}` : "";
-    const { price, lineTotal } = finalPriceLine(getItemPrice(ci), ci.quantity, calc?.surchargePart ?? 0);
+    const { price, lineTotal } = finalPriceLine(priceOf(ci), ci.quantity, calc?.surchargePart ?? 0);
     return {
       name,
       quantity: ci.quantity,
@@ -2461,8 +2475,8 @@ export function SellPage() {
   const totalItems     = activeMesa.items.reduce((s, i) => s + i.quantity, 0);
   // Subtotal de ítems nuevos (no de preventa cargada) — usado en carrito mixto
   const newItemsSubtotal = useMemo(
-    () => activeMesa.items.filter(i => !i.isFromPreSale).reduce((s, i) => s + getItemPrice(i) * i.quantity, 0),
-    [activeMesa.items]
+    () => activeMesa.items.filter(i => !i.isFromPreSale).reduce((s, i) => s + priceOf(i) * i.quantity, 0),
+    [activeMesa.items, priceOf]
   );
   
   // Comisión interna: se calcula y se manda al backend para reportes,
@@ -2501,7 +2515,7 @@ export function SellPage() {
       // es order.balance, y redondear por línea puede mostrar/gatear 1¢ menos
       // de lo que se cobra (review Fase 0 2026-07-14). Paridad exacta con el
       // math previo: subtotal crudo − descuento.
-      const rawSubtotal = activeMesa.items.reduce((s, i) => s + getItemPrice(i) * i.quantity, 0);
+      const rawSubtotal = activeMesa.items.reduce((s, i) => s + priceOf(i) * i.quantity, 0);
       // Clamp ≥0: un descuento ≥ subtotal no debe mostrar/gatear un total negativo.
       return Math.max(0, rawSubtotal - discountAmt + surchargeAmt);
     }
@@ -2514,12 +2528,12 @@ export function SellPage() {
     // cobraba el precio completo aunque el backend sí aplicara el descuento).
     const regularSubtotal = activeMesa.items
       .filter(i => i.sellingCatalogId == null)
-      .reduce((s, i) => s + getItemPrice(i) * i.quantity, 0);
+      .reduce((s, i) => s + priceOf(i) * i.quantity, 0);
     const catalogDeposit = activeMesa.items
       .filter(i => i.sellingCatalogId != null)
       .reduce((s, i) => s + (i.depositAmount ?? 0), 0);
     return computeRegularChargeAmount({ regularSubtotal, catalogDeposit, discountAmt, surchargeAmt });
-  }, [activeMesa.loadedPreSaleOrderId, activeMesa.isPreventa, activeMesa.items, totalDeposit, totalBeforeComm, discountAmt, surchargeAmt]);
+  }, [activeMesa.loadedPreSaleOrderId, activeMesa.isPreventa, activeMesa.items, totalDeposit, totalBeforeComm, discountAmt, surchargeAmt, priceOf]);
     
   const totalUSD       = tc > 0 ? currentPayAmount / tc : 0;
 
@@ -3581,7 +3595,7 @@ export function SellPage() {
       const regularItems     = activeMesa.items.filter(i => !i.isFromPreSale && i.sellingCatalogId == null);
 
       const liquidationAmount = activeMesa.depositAmount || 0;
-      const regularSubtotal   = regularItems.reduce((s, i) => s + getItemPrice(i) * i.quantity, 0);
+      const regularSubtotal   = regularItems.reduce((s, i) => s + priceOf(i) * i.quantity, 0);
       const newPreventaDeposit = newCatalogItems.reduce((s, i) => s + (i.depositAmount ?? 0), 0);
 
       try {
@@ -3594,8 +3608,8 @@ export function SellPage() {
             .map(ci => ({
               product_id: parseInt(ci.product.id, 10),
               quantity: ci.quantity,
-              price: ci.damagedPrice ?? getItemPrice(ci),
-              price_level: (["a","b","c"].includes(ci.priceLevel) ? ci.priceLevel : "a") as "a" | "b" | "c",
+              price: ci.damagedPrice ?? priceOf(ci),
+              price_level: (lineCalcById[ci.lineId]?.promoRepriced ? "a" : ["a","b","c"].includes(ci.priceLevel) ? ci.priceLevel : "a") as "a" | "b" | "c",
               // Dañado → precio manual; el backend salta la validación de catálogo.
               ...(ci.isDamaged ? { is_damaged: true } : {}),
               // Descuento o aumento por línea (v2): viaja la captura, el monto lo recomputa el server.
@@ -3606,7 +3620,7 @@ export function SellPage() {
           // Neto regular (con descuentos por línea) — el pago debe cuadrar con
           // el recompute del backend, no con el bruto.
           const regularNet = regularItems.reduce(
-            (sum, i) => sum + (lineCalcById[i.lineId]?.net ?? getItemPrice(i) * i.quantity), 0);
+            (sum, i) => sum + (lineCalcById[i.lineId]?.net ?? priceOf(i) * i.quantity), 0);
 
           if (directItems.length > 0) {
             // Efectivo del ticket (liquidación + regular + anticipo nuevo) en MXN
@@ -3702,7 +3716,7 @@ export function SellPage() {
         // El total del ticket usa el NETO de las líneas regulares (con sus
         // descuentos v2) — debe cuadrar con lo realmente cobrado, no el bruto.
         const regularNetTicket = regularItems.reduce(
-          (sum, i) => sum + (lineCalcById[i.lineId]?.net ?? getItemPrice(i) * i.quantity), 0);
+          (sum, i) => sum + (lineCalcById[i.lineId]?.net ?? priceOf(i) * i.quantity), 0);
         const regularBenefitTicket = regularItems.reduce(
           (sum, i) => sum + (i.discount ? (lineCalcById[i.lineId]?.benefit?.amount ?? 0) : 0), 0);
         const ticketTotal = liquidationAmount + regularNetTicket + newPreventaDeposit;
@@ -3847,13 +3861,13 @@ export function SellPage() {
         // Create regular sale first so we can link it to the pre-sale order
         let regularSaleId: number | undefined;
         if (regularItems.length > 0) {
-          const regularSubtotal = regularItems.reduce((s, i) => s + getItemPrice(i) * i.quantity, 0);
+          const regularSubtotal = regularItems.reduce((s, i) => s + priceOf(i) * i.quantity, 0);
           const directItems = regularItems
             .map(ci => ({
               product_id: parseInt(ci.product.id, 10),
               quantity: ci.quantity,
-              price: ci.damagedPrice ?? getItemPrice(ci),
-              price_level: (["a","b","c"].includes(ci.priceLevel) ? ci.priceLevel : "a") as "a" | "b" | "c",
+              price: ci.damagedPrice ?? priceOf(ci),
+              price_level: (lineCalcById[ci.lineId]?.promoRepriced ? "a" : ["a","b","c"].includes(ci.priceLevel) ? ci.priceLevel : "a") as "a" | "b" | "c",
               // Dañado → precio manual; el backend salta la validación de catálogo.
               ...(ci.isDamaged ? { is_damaged: true } : {}),
               // Descuento o aumento por línea (v2): viaja la captura, el monto lo recomputa el server.
@@ -3864,7 +3878,7 @@ export function SellPage() {
           // Neto regular (con descuentos por línea) — debe cuadrar con el
           // recompute server-side del backend (SaleCalculator).
           const regularNet = regularItems.reduce(
-            (sum, i) => sum + (lineCalcById[i.lineId]?.net ?? getItemPrice(i) * i.quantity), 0);
+            (sum, i) => sum + (lineCalcById[i.lineId]?.net ?? priceOf(i) * i.quantity), 0);
 
           if (directItems.length > 0 && regularSubtotal > 0) {
             // Efectivo del ticket (incluye USD convertido a TC) + cambio, para el
@@ -3931,7 +3945,7 @@ export function SellPage() {
         // NETO de las líneas regulares (con descuentos v2) — el ticket debe
         // cuadrar con lo cobrado, no con el bruto.
         const regularSubtotalFinal = regularItems.reduce(
-          (sum, i) => sum + (lineCalcById[i.lineId]?.net ?? getItemPrice(i) * i.quantity), 0);
+          (sum, i) => sum + (lineCalcById[i.lineId]?.net ?? priceOf(i) * i.quantity), 0);
 
         setCashReceived("");
         clearCart();
@@ -4060,8 +4074,8 @@ export function SellPage() {
         .map(ci => ({
           product_id: parseInt(ci.product.id, 10),
           quantity: ci.quantity,
-          price: ci.damagedPrice ?? getItemPrice(ci),
-          price_level: (["a","b","c"].includes(ci.priceLevel) ? ci.priceLevel : "a") as "a" | "b" | "c",
+          price: ci.damagedPrice ?? priceOf(ci),
+          price_level: (lineCalcById[ci.lineId]?.promoRepriced ? "a" : ["a","b","c"].includes(ci.priceLevel) ? ci.priceLevel : "a") as "a" | "b" | "c",
           // Dañado → precio manual; el backend salta la validación de catálogo.
           ...(ci.isDamaged ? { is_damaged: true } : {}),
           // Descuento por línea (v2): viaja la captura, el monto lo recomputa el server.
@@ -5621,7 +5635,7 @@ export function SellPage() {
                     const hasItemImage = !!item.product.image?.trim();
                     const shouldHideImageSlot = !hasItemImage;
                     const priceLevels = getPriceLevels(item.product);
-                    const unitPrice = getItemPrice(item);
+                    const unitPrice = priceOf(item);
                     const lineTotal = unitPrice * item.quantity;
                     // Descuentos v2/Fase 3: beneficio de ESTA línea (manual o promo NxM).
                     const lineCalc = lineCalcById[item.lineId];
@@ -5980,6 +5994,18 @@ export function SellPage() {
                             >
                               Cuenta para {lineCalc.poolLabel ?? "la promo"}
                             </span>
+                          )}
+                          {/* Promo vs precio socio (2026-09-30): no se suman — con
+                              promo la línea va a precio normal aunque diga SOCIO. */}
+                          {lineCalc?.promoRepriced && (
+                            <p
+                              data-testid="line-promo-repriced"
+                              className="text-[10px] font-black uppercase tracking-widest mt-0.5"
+                              style={{ color: TLO }}
+                              title="La promoción no se suma al precio socio: la línea se cobra a precio normal con la promo"
+                            >
+                              Promo a precio normal
+                            </p>
                           )}
                           {!item.isFromPreSale && item.isDamaged && (
                             <p className="text-[10px] font-black uppercase tracking-widest mt-0.5" style={{ color: TLO }}>
@@ -7227,7 +7253,7 @@ export function SellPage() {
             key={line.lineId}
             productName={line.product.name}
             lineQty={line.quantity}
-            unitPrice={getItemPrice(line)}
+            unitPrice={priceOf(line)}
             promoAmount={lineCalcById[line.lineId]?.promoPart?.amount ?? 0}
             existing={lineAdjustmentOf(line)}
             allowSurcharge={!line.isDamaged}

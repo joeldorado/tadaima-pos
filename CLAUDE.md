@@ -152,6 +152,11 @@ dos. El aumento se calcula después de la promo (el % sobre el neto-promo) y el 
 unitario (`price`) sigue siendo el de catálogo. El ticket del cliente imprime el precio
 final (con el aumento incluido); el detalle queda en `surcharge_*`.
 
+**Promo vs nivel de precio (desde 2026-09-30):** promo y precio socio (u otro nivel
+más bajo) NO se suman. Si la línea cae en una promo aplicada, se re-precia completa a
+NORMAL (nivel 1) y la promo se calcula sobre ese precio; `sale_items.price` guarda el
+precio efectivo (p. ej. $1,100 aunque la línea estuviera en SOCIO $980).
+
 **Rollups:** `sales.discount = Σ discount_amount`, `sales.surcharge = Σ surcharge_amount`
 y `sales.total = sales.subtotal − sales.discount + sales.surcharge`. Ventas ANTERIORES a Descuentos v2
 (legacy) pueden traer `sales.discount > 0` con `discount_amount = 0` en todas las

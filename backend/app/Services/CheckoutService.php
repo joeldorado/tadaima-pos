@@ -66,7 +66,10 @@ class CheckoutService
             // precio de cada item NO dañado coincida con un nivel del catálogo
             // del producto (base o precio por tienda). Los dañados llevan flag
             // `is_damaged` y permiten precio manual.
-            $this->assertPricesMatchCatalog($storeId, $items);
+            // De paso devuelve el precio NORMAL (nivel 1) de cada producto:
+            // con promo aplicada la línea se cobra a ese precio (2026-09-30).
+            $normalPrices = $this->assertPricesMatchCatalog($storeId, $items);
+            $items = array_values($items);
 
             // Descuentos v2: recomputar el beneficio de CADA línea server-side
             // (SaleCalculator, gemelo de saleCalc.ts). El cliente solo manda
@@ -106,9 +109,21 @@ class CheckoutService
                         'line_surcharge' => $i['line_surcharge'] ?? null,
                         // El cajero renunció a la promo de esta línea (2026-07-24).
                         'skip_promotion' => (bool) ($i['skip_promotion'] ?? false),
+                        // Promo vs precio socio (2026-09-30): con promo, la línea
+                        // se cobra a NORMAL. Dañados llevan precio manual: nunca.
+                        'base_price'     => empty($i['is_damaged'])
+                            ? ($normalPrices[(int) $i['product_id']] ?? null)
+                            : null,
                     ],
-                    array_values($items),
+                    $items,
                 ), $activePromos);
+
+                // El precio que se guarda (draft → sale_items.price, total =
+                // qty × price) es el EFECTIVO del motor: si la promo re-precio la
+                // línea a NORMAL, un socio a $980 queda en $1,100 con la promo.
+                foreach ($items as $idx => $item) {
+                    $items[$idx]['price'] = $calc['lines'][$idx]['unit_price'];
+                }
 
                 // Flags de pago de cada promo, para el guard de restricciones.
                 // Se arman AQUÍ porque `$activePromos` ya está en memoria: el
@@ -374,9 +389,11 @@ class CheckoutService
      * qué comparar). Tolerancia de 1 centavo.
      *
      * @param array<int,array{product_id:int,price:float,is_damaged?:bool,price_level?:string}> $items
+     * @return array<int,float> product_id → precio NORMAL (nivel 1) de la
+     *   tienda (override por tienda o base); solo productos que lo tienen.
      * @throws \DomainException si un precio no dañado cae fuera del catálogo
      */
-    private function assertPricesMatchCatalog(int $storeId, array $items): void
+    private function assertPricesMatchCatalog(int $storeId, array $items): array
     {
         $productIds = array_values(array_unique(array_map(
             static fn ($i) => (int) $i['product_id'],
@@ -384,7 +401,7 @@ class CheckoutService
         )));
 
         if (empty($productIds)) {
-            return;
+            return [];
         }
 
         $products = Product::query()
@@ -395,6 +412,15 @@ class CheckoutService
             ->whereIn('id', $productIds)
             ->get()
             ->keyBy('id');
+
+        $normalPrices = [];
+        foreach ($products as $product) {
+            $normal = $product->storePrices->firstWhere('price_level', 1)?->price
+                ?? $product->price?->price_1;
+            if ($normal !== null && (float) $normal > 0) {
+                $normalPrices[(int) $product->id] = round((float) $normal, 2);
+            }
+        }
 
         foreach ($items as $item) {
             if (! empty($item['is_damaged'])) {
@@ -431,6 +457,8 @@ class CheckoutService
                 );
             }
         }
+
+        return $normalPrices;
     }
 
     /**

@@ -29,6 +29,14 @@ use App\Models\ProductPromotion;
  * descuento O aumento (lo garantiza CheckoutRequest); aquí se calculan
  * independientes. net = max(0, bruto − discount_amount) + surcharge_amount.
  *
+ * PROMO VS NIVEL DE PRECIO (Joel 2026-09-30): promo y precio socio (u otro
+ * nivel más bajo) NO se suman. Si una línea queda dentro de una promo
+ * aplicada (con descuento o como contribuyente del pool), TODA la línea se
+ * re-precia a `base_price` (nivel 1 / NORMAL) y la promo se calcula sobre
+ * ese precio. Caso real: $1,100 normal / $980 socio con "2 x $1,800" daba
+ * $1,560 con socio; ahora $1,800. Siempre gana la promo, aunque el socio
+ * sin promo saliera más barato. Cada línea devuelve su `unit_price` efectivo.
+ *
  * El server NO confía en montos del cliente: recibe kind/basis/value y
  * recomputa el monto aquí. Si cambias el algoritmo, cambia también saleCalc.ts.
  */
@@ -47,6 +55,7 @@ final class SaleCalculator
      *   line_discount?: array{kind: string, basis: string, value: float, reason?: ?string, note?: ?string}|null,
      *   line_surcharge?: array{kind: string, basis: string, value: float, reason?: ?string, note?: ?string}|null,
      *   skip_promotion?: bool,
+     *   base_price?: float|null,
      * }> $lines Líneas en el MISMO orden en que se persistirán (zip posicional).
      * @param iterable<\App\Models\ProductPromotion> $promotions Promos VIGENTES
      *   de los productos del carrito (el caller filtra con currentlyActive()).
@@ -61,6 +70,8 @@ final class SaleCalculator
      *     promo_free_qty: ?int,
      *     promo_amount: ?float,
      *     surcharge_amount: float,
+     *     unit_price: float,
+     *     promo_repriced: bool,
      *   }>,
      *   subtotal: float,
      *   line_benefit_total: float,
@@ -102,7 +113,23 @@ final class SaleCalculator
         // misma promo forman un POOL — 1 pieza de A + 1 de B sí disparan el 2x1
         // asignado a ambos. El reparto por línea sale de aquí; el loop de abajo
         // (stacking, snapshot, rollups) queda casi intacto.
-        $poolBenefits = $this->assignPoolBenefits($lines, $promosByProduct);
+        $assigned = $this->assignPoolBenefits($lines, $promosByProduct);
+
+        // PROMO VS NIVEL DE PRECIO (2026-09-30): las líneas que quedaron en una
+        // promo aplicada se re-precian a NORMAL y se reparte de nuevo con los
+        // precios efectivos. Espejo de recalculateSale en saleCalc.ts.
+        $repriced = [];
+        foreach ($assigned['pooled'] as $idx => $_) {
+            $base = (float) ($lines[$idx]['base_price'] ?? 0);
+            if ($base > 0 && abs($base - (float) $lines[$idx]['unit_price']) > 0.001) {
+                $lines[$idx]['unit_price'] = $base;
+                $repriced[$idx] = true;
+            }
+        }
+        if ($repriced !== []) {
+            $assigned = $this->assignPoolBenefits($lines, $promosByProduct);
+        }
+        $poolBenefits = $assigned['benefits'];
 
         $resultLines    = [];
         $subtotal       = 0.0;
@@ -183,6 +210,9 @@ final class SaleCalculator
                 // qty_discount ya no se puede derivar de promo_free_qty × price.
                 'promo_amount'         => $best !== null ? $promoAmount : null,
                 'surcharge_amount'     => $surchargeAmount,
+                // Precio unitario EFECTIVO (con el re-precio por promo).
+                'unit_price'           => (float) $line['unit_price'],
+                'promo_repriced'       => isset($repriced[$idx]),
             ];
 
             $subtotal     += $gross;
@@ -230,8 +260,12 @@ final class SaleCalculator
      * @param array<int, array<string, mixed>> $lines Las líneas de calculate().
      * @param array<int, array<int, ProductPromotion>> $promosByProduct Promos
      *   por producto, ya con el override local aplicado.
-     * @return array<int, array{amount: float, promo_id: int, promo_name: string, free_qty: int}>
-     *   Mapa índice-de-línea → beneficio (solo líneas beneficiadas).
+     * @return array{
+     *   benefits: array<int, array{amount: float, promo_id: int, promo_name: string, free_qty: int}>,
+     *   pooled: array<int, true>,
+     * } `benefits`: índice-de-línea → beneficio (solo líneas beneficiadas).
+     *   `pooled`: TODAS las líneas del pool de una promo aplicada (también las
+     *   contribuyentes sin descuento) — se re-precian a NORMAL (2026-09-30).
      */
     private function assignPoolBenefits(array $lines, array $promosByProduct): array
     {
@@ -256,6 +290,8 @@ final class SaleCalculator
 
         $consumed = [];
         $benefits = [];
+        // Líneas del pool de una promo APLICADA (con o sin descuento propio).
+        $pooled = [];
 
         while (true) {
             // Promos con al menos una línea candidata viva, en orden de id
@@ -337,10 +373,11 @@ final class SaleCalculator
             }
             foreach ($best['pool'] as $idx) {
                 $consumed[$idx] = true;
+                $pooled[$idx] = true;
             }
         }
 
-        return $benefits;
+        return ['benefits' => $benefits, 'pooled' => $pooled];
     }
 
     /**

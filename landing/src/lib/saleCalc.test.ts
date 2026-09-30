@@ -712,3 +712,55 @@ describe("aumento de precio por línea (2026-09-29) — gemelo de LineSurchargeC
     expect(r.total).toBe(240);
   });
 });
+
+describe("promo vs precio socio (Joel 2026-09-30) — no se suman, gana la promo a precio NORMAL", () => {
+  // Caso real: $1,100 normal / $980 socio con "2 x $1,800" (mayoreo min 2, −$200 c/u).
+  const promo2x1800: PromoDef = {
+    id: 21, productId: "1", name: "2 x $1,800", type: "qty_discount",
+    buyN: 0, payM: 0, minQty: 2, discountPerUnit: 200, priority: 0,
+  };
+  const socio = (qty: number, over: Partial<CalcLine> = {}) =>
+    line({ unitPrice: 980, basePrice: 1100, qty, ...over });
+
+  it("2 piezas socio con la promo → $1,800 (antes $1,560)", () => {
+    const r = recalculateSale({ lines: [socio(2)], promotions: [promo2x1800] });
+    expect(r.total).toBe(1800);
+    expect(r.lines[0]!.unitPrice).toBe(1100);
+    expect(r.lines[0]!.promoRepriced).toBe(true);
+    expect(r.lines[0]!.gross).toBe(2200);
+    expect(r.lines[0]!.promoPart?.amount).toBe(400);
+  });
+
+  it("1 pieza socio (no alcanza la promo) → conserva $980", () => {
+    const r = recalculateSale({ lines: [socio(1)], promotions: [promo2x1800] });
+    expect(r.total).toBe(980);
+    expect(r.lines[0]!.promoRepriced).toBe(false);
+    expect(r.lines[0]!.unitPrice).toBe(980);
+  });
+
+  it("3 piezas socio → 3 × 1,100 − 600 = $2,700", () => {
+    expect(recalculateSale({ lines: [socio(3)], promotions: [promo2x1800] }).total).toBe(2700);
+  });
+
+  it("NxM 2x1 con 3 piezas socio → todo el renglón a normal: 3,300 − 1,100 = $2,200", () => {
+    const dosPorUno: PromoDef = { id: 22, productId: "1", name: "2x1", buyN: 2, payM: 1, priority: 0 };
+    expect(recalculateSale({ lines: [socio(3)], promotions: [dosPorUno] }).total).toBe(2200);
+  });
+
+  it("promo débil igual gana (2 × 1,100 − 100 = $2,100 aunque socio sin promo fuera $1,960)", () => {
+    const debil: PromoDef = { ...promo2x1800, discountPerUnit: 50 };
+    expect(recalculateSale({ lines: [socio(2)], promotions: [debil] }).total).toBe(2100);
+  });
+
+  it("sin basePrice (dañados / compat) → no hay re-precio", () => {
+    const r = recalculateSale({ lines: [line({ unitPrice: 700, qty: 2 })], promotions: [promo2x1800] });
+    expect(r.total).toBe(1000);
+    expect(r.lines[0]!.promoRepriced).toBe(false);
+  });
+
+  it("precio normal (unitPrice = basePrice) → igual que siempre", () => {
+    const r = recalculateSale({ lines: [line({ unitPrice: 1100, basePrice: 1100, qty: 2 })], promotions: [promo2x1800] });
+    expect(r.total).toBe(1800);
+    expect(r.lines[0]!.promoRepriced).toBe(false);
+  });
+});

@@ -456,4 +456,116 @@ class PromotionCheckoutTest extends TestCase
             ['product_id' => $product->id, 'quantity' => 2, 'price' => 50.0],
         ], 50.0)->assertStatus(201)->assertJsonPath('data.discount', 50);
     }
+
+    // ── Promo vs precio socio (Joel 2026-09-30) ──────────────────────────────
+    // Caso real: $1,100 normal / $980 socio con "2 x $1,800" (mayoreo min 2,
+    // −$200 c/u). Con socio salía 2×980 − 400 = $1,560: se sumaban los dos
+    // beneficios. Con promo aplicada la línea se cobra a NORMAL.
+
+    private function makeSocioProduct(): Product
+    {
+        $product = $this->makeProduct(1100);
+        $product->price()->update(['price_2' => 980]);
+
+        return $product->fresh();
+    }
+
+    public function test_promo_con_precio_socio_cobra_la_promo_a_precio_normal(): void
+    {
+        $product = $this->makeSocioProduct();
+        $this->makeQtyPromo($product, 2, 200.0);
+
+        // Caja manda el precio socio: el server lo re-precia a $1,100.
+        $this->checkout([
+            ['product_id' => $product->id, 'quantity' => 2, 'price' => 980.0, 'price_level' => 'b'],
+        ], 1800.0)
+            ->assertStatus(201)
+            ->assertJsonPath('data.subtotal', 2200)
+            ->assertJsonPath('data.discount', 400)
+            ->assertJsonPath('data.total', 1800);
+
+        $item = SaleItem::firstOrFail();
+        $this->assertEqualsWithDelta(1100.0, (float) $item->price, 0.001);
+        $this->assertEqualsWithDelta(2200.0, (float) $item->total, 0.001);
+        $this->assertEqualsWithDelta(400.0, (float) $item->promo_amount, 0.001);
+    }
+
+    public function test_pago_con_el_total_viejo_de_socio_se_rechaza(): void
+    {
+        $product = $this->makeSocioProduct();
+        $this->makeQtyPromo($product, 2, 200.0);
+
+        // Una PWA vieja calcularía $1,560: el server exige $1,800.
+        $this->checkout([
+            ['product_id' => $product->id, 'quantity' => 2, 'price' => 980.0, 'price_level' => 'b'],
+        ], 1560.0)->assertStatus(422);
+    }
+
+    public function test_socio_sin_alcanzar_la_promo_conserva_su_precio(): void
+    {
+        $product = $this->makeSocioProduct();
+        $this->makeQtyPromo($product, 2, 200.0);
+
+        $this->checkout([
+            ['product_id' => $product->id, 'quantity' => 1, 'price' => 980.0, 'price_level' => 'b'],
+        ], 980.0)
+            ->assertStatus(201)
+            ->assertJsonPath('data.total', 980);
+
+        $this->assertEqualsWithDelta(980.0, (float) SaleItem::firstOrFail()->price, 0.001);
+    }
+
+    public function test_mayoreo_3_piezas_socio(): void
+    {
+        $product = $this->makeSocioProduct();
+        $this->makeQtyPromo($product, 2, 200.0);
+
+        // 3 × 1,100 − 3 × 200 = 2,700.
+        $this->checkout([
+            ['product_id' => $product->id, 'quantity' => 3, 'price' => 980.0, 'price_level' => 'b'],
+        ], 2700.0)
+            ->assertStatus(201)
+            ->assertJsonPath('data.total', 2700);
+    }
+
+    public function test_nxm_socio_todo_el_renglon_a_normal(): void
+    {
+        $product = $this->makeSocioProduct();
+        ProductPromotion::create(['product_id' => $product->id, 'name' => '2x1', 'buy_n' => 2, 'pay_m' => 1]);
+
+        // 3 pzas socio en 2x1: todo el renglón a normal (la sobrante también):
+        // 3 × 1,100 − 1,100 = 2,200.
+        $this->checkout([
+            ['product_id' => $product->id, 'quantity' => 3, 'price' => 980.0, 'price_level' => 'b'],
+        ], 2200.0)
+            ->assertStatus(201)
+            ->assertJsonPath('data.total', 2200);
+    }
+
+    public function test_promo_debil_igual_gana_sobre_el_socio(): void
+    {
+        // Decisión Joel: siempre gana la promo, aunque el socio sin promo
+        // saliera más barato (2 × 980 = 1,960 < 2 × 1,100 − 100 = 2,100).
+        $product = $this->makeSocioProduct();
+        $this->makeQtyPromo($product, 2, 50.0);
+
+        $this->checkout([
+            ['product_id' => $product->id, 'quantity' => 2, 'price' => 980.0, 'price_level' => 'b'],
+        ], 2100.0)
+            ->assertStatus(201)
+            ->assertJsonPath('data.total', 2100);
+    }
+
+    public function test_danado_con_promo_conserva_su_precio_manual(): void
+    {
+        $product = $this->makeSocioProduct();
+        $this->makeQtyPromo($product, 2, 200.0);
+
+        // Dañado = precio manual: no se re-precia (2 × 700 − 400 = 1,000).
+        $this->checkout([
+            ['product_id' => $product->id, 'quantity' => 2, 'price' => 700.0, 'is_damaged' => true],
+        ], 1000.0)
+            ->assertStatus(201)
+            ->assertJsonPath('data.total', 1000);
+    }
 }

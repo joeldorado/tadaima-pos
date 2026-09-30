@@ -111,6 +111,10 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   vive en `sale_items` (ver "Descuentos y Promos" en `CLAUDE.md`).
 - **Precio socio:** a un socio Tadaima activo se le aplica el nivel de precio "b"
   automáticamente, excepto si paga con tarjeta o es preventa.
+- **Promo y precio socio NO se suman** (2026-09-30): si una línea entra a una promo,
+  TODA la línea se cobra a precio NORMAL (nivel A) con la promo encima, aunque diga
+  SOCIO (siempre gana la promo). Lo aplican `saleCalc.ts` y `SaleCalculator.php`
+  (`basePrice` / `base_price`); `sale_items.price` guarda ese precio efectivo.
 - **Pagos:** `sales` no tiene método de pago; viven en `payments` (1:N) y deben sumar
   el total (±$0.01). "Mixto" = solo efectivo + transferencia, solo ventas regulares,
   sin dólares.
