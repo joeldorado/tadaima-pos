@@ -108,7 +108,9 @@ export function TransfersPage() {
   // Flujo de negocio 2026-06-11:
   // - Solo admin y gerente pueden usar esta pantalla.
   // - Gerente puede solicitar viendo stock de TODAS las tiendas.
-  // - Solo admin puede completar/cancelar traslados.
+  // - RECIBE (completa, mueve stock) el gerente de la tienda DESTINO o admin
+  //   (Joel 2026-09-30: antes era el origen y quien recibía no tenía botón).
+  // - Cancela admin o el gerente que creó la solicitud.
   const isAdminUser = isAdminRole(user?.roles ?? []);
   const isManagerUser = isManagerRole(user?.roles ?? []);
   const currentUserId = user?.id ?? null;
@@ -116,8 +118,15 @@ export function TransfersPage() {
   const canCompleteTransfer = (transfer?: Transfer) => {
     if (!transfer) return false;
     if (isAdminUser) return true;
-    return isManagerUser && user?.store_id && transfer.from_warehouse?.store_id === user.store_id;
+    return isManagerUser && user?.store_id && transfer.to_warehouse?.store_id === user.store_id;
   };
+  /** Pendiente que llega a MI tienda → me toca recibirla. */
+  const isIncomingForMe = (transfer: Transfer) =>
+    transfer.status === "pending" && !!user?.store_id && transfer.to_warehouse?.store_id === user.store_id;
+  /** Pendiente que salió de MI tienda → espera a que el destino la reciba. */
+  const isOutgoingFromMe = (transfer: Transfer) =>
+    transfer.status === "pending" && !!user?.store_id && transfer.from_warehouse?.store_id === user.store_id
+    && transfer.to_warehouse?.store_id !== user.store_id;
   const canCancelTransfer = (transfer: Transfer) => {
     if (isAdminUser) return true;
     return isManagerUser && currentUserId !== null && transfer.user_id === currentUserId;
@@ -412,10 +421,11 @@ export function TransfersPage() {
     if (!fromWhId || !toWhId)       { toast.error("Selecciona origen y destino"); return; }
     if (fromWhId === toWhId)        { toast.error("Origen y destino no pueden ser iguales"); return; }
     if (items.length === 0)         { toast.error("Agrega al menos un producto"); return; }
-    const originWarehouseStoreId = warehouses.find(w => String(w.id) === fromWhId)?.store_id;
-    const canCompleteNewTransfer = isAdminUser || (isManagerUser && user?.store_id && user.store_id === originWarehouseStoreId);
+    // "Completar ahora" (crear + recibir en un paso) es solo de admin: el
+    // gerente origen ya no recibe (lo hace la tienda destino).
+    const canCompleteNewTransfer = isAdminUser;
     if (transferMode === "complete" && !canCompleteNewTransfer) {
-      toast.error("Solo admin o el gerente origen pueden completar transferencias");
+      toast.error("Solo admin puede completar al momento; la tienda destino recibe el traslado");
       return;
     }
     const itemWithoutStock = items.find(item => {
@@ -468,16 +478,18 @@ export function TransfersPage() {
   const handleComplete = async (id: number) => {
     const trf = transfers.find(t => t.id === id);
     if (!canCompleteTransfer(trf)) {
-      toast.error("Solo admin o el gerente de la tienda origen pueden completar transferencias");
+      toast.error("Solo el gerente de la tienda que recibe (o un admin) puede recibir esta transferencia");
       return;
     }
+    // El stock se mueve al confirmar: solo cuando la mercancía ya llegó.
+    if (!window.confirm(`¿Ya llegó la mercancía del traslado #${id}?\nSe sumará al inventario de ${trf?.to_warehouse?.name ?? "la tienda destino"}.`)) return;
     setActionLoading(prev => ({ ...prev, [id]: true }));
     try {
       await completeTransfer(id);
       void invalidateTransfers();
-      toast.success("Transferencia completada — inventario actualizado");
-    } catch {
-      toast.error("Error al completar transferencia");
+      toast.success("Transferencia recibida — inventario actualizado");
+    } catch (err: unknown) {
+      toast.error((err as { message?: string })?.message ?? "Error al recibir transferencia");
     } finally {
       setActionLoading(prev => ({ ...prev, [id]: false }));
     }
@@ -514,6 +526,8 @@ export function TransfersPage() {
       return matchesSearch && matchesStatus;
     });
   }, [transfers, searchQuery, filterStatus]);
+  /** Pendientes que llegan a mi tienda — contador en la pestaña Pendientes. */
+  const incomingCount = transfers.filter(isIncomingForMe).length;
 
   // Destino = cualquier bodega/exhibición distinta del origen exacto. Mantiene
   // el modelo a nivel-bodega para elegir Bodega vs Exhibición específica como
@@ -636,6 +650,11 @@ export function TransfersPage() {
                   }`}
                 >
                   {s === "all" ? "Todos" : s === "pending" ? "Pendientes" : s === "completed" ? "Completados" : "Cancelados"}
+                  {s === "pending" && incomingCount > 0 && (
+                    <span className="ml-1.5 rounded-full px-1.5 py-0.5 text-[9px]" style={{ background: "#F59E0B", color: "#000" }} title="Por recibir en tu tienda">
+                      {incomingCount}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -665,7 +684,7 @@ export function TransfersPage() {
                   style={T.glass}
                 >
                   <div className="w-2 shrink-0" style={{ background: s.color }} />
-                  <div className="flex-1 p-4 sm:p-6 flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-8">
+                  <div className="flex-1 min-w-0 p-4 sm:p-6 flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-6">
 
                     {/* ID + status */}
                     <div className="w-full lg:w-40 shrink-0 space-y-3">
@@ -674,10 +693,18 @@ export function TransfersPage() {
                         <StatusIcon size={12} />
                         {s.label}
                       </div>
+                      {isIncomingForMe(trf) && (
+                        <div data-testid={`trf-incoming-${trf.id}`} className="inline-flex items-center px-3 py-1 rounded-xl text-[9px] font-black uppercase tracking-widest" style={{ background: "rgba(245,158,11,0.15)", color: "#F59E0B" }}>
+                          Por recibir
+                        </div>
+                      )}
+                      {isOutgoingFromMe(trf) && (
+                        <p className="text-[9px] font-bold uppercase tracking-widest text-white/40">Enviado · esperando recepción</p>
+                      )}
                     </div>
 
                     {/* Route */}
-                    <div className="w-full lg:flex-1 flex items-center justify-between lg:px-8 py-2 lg:py-0 border-y lg:border-y-0 lg:border-x border-white/5">
+                    <div className="w-full lg:flex-1 lg:min-w-0 flex items-center justify-between gap-2 lg:px-6 py-2 lg:py-0 border-y lg:border-y-0 lg:border-x border-white/5">
                       <div className="flex flex-col">
                         <span className="text-[9px] font-black text-red-500 uppercase tracking-widest">Origen</span>
                         <span className="text-sm font-bold text-white">{trf.from_warehouse?.name ?? "—"}</span>
@@ -717,7 +744,7 @@ export function TransfersPage() {
                             className="text-[10px] font-black uppercase px-3 py-1.5 rounded-xl transition-all hover:scale-105 disabled:opacity-40"
                             style={{ background: "rgba(0,204,102,0.15)", color: "#00CC66" }}
                           >
-                            {busy ? <Loader2 size={10} className="animate-spin" /> : "Completar"}
+                            {busy ? <Loader2 size={10} className="animate-spin" /> : "Recibir"}
                           </button>
                           {canCancelTransfer(trf) && (
                             <button
@@ -869,8 +896,9 @@ export function TransfersPage() {
                     </button>
                     {/* "Completar ahora" mueve stock inmediatamente, sin que la
                         tienda destino confirme la recepción. Solo admin debe
-                        poder hacer eso — gerente solo solicita y el admin
-                        confirma del otro lado. Decisión Joel 2026-05-25. */}
+                        poder hacer eso (Joel 2026-05-25); lo normal es
+                        "Solicitar" y que la tienda destino dé "Recibir"
+                        cuando llega la mercancía (2026-09-30). */}
                     {isAdminUser && (
                       <button
                         type="button"
@@ -882,6 +910,11 @@ export function TransfersPage() {
                       >
                         Completar ahora
                       </button>
+                    )}
+                    {isAdminUser && transferMode === "complete" && (
+                      <span className="text-[10px] font-bold" style={{ color: T.softText }}>
+                        Mueve el stock ya; la tienda destino no tendrá que recibir.
+                      </span>
                     )}
                   </div>
                 </div>

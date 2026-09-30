@@ -174,9 +174,14 @@ class TransferController extends Controller
     }
 
     /**
-     * PUT /transfers/{transfer}/complete
+     * PUT /transfers/{transfer}/complete — "Recibir".
      * Ejecuta el traslado: mueve inventario de bodega origen a destino.
      * Falla si algún producto no tiene stock suficiente en origen.
+     *
+     * Quién recibe (Joel 2026-09-30): el gerente de la tienda DESTINO, cuando
+     * la mercancía llega físicamente — antes solo el origen/admin podía y la
+     * tienda que recibía veía la solicitud sin ningún botón. Admin conserva
+     * el override.
      */
     public function complete(Transfer $transfer): JsonResponse
     {
@@ -184,11 +189,11 @@ class TransferController extends Controller
 
         if (! $this->isAdminUser($user)) {
             $isManager = $this->isManagerUser($user);
-            $transfer->loadMissing('fromWarehouse');
-            $isOriginStore = $user?->store_id && ((int) ($transfer->fromWarehouse?->store_id ?? 0) === (int) $user->store_id);
+            $transfer->loadMissing('toWarehouse');
+            $isDestinationStore = $user?->store_id && ((int) ($transfer->toWarehouse?->store_id ?? 0) === (int) $user->store_id);
 
-            if (! $isManager || ! $isOriginStore) {
-                return $this->error('Solo admin o el gerente de la tienda origen pueden completar traslados.', 403);
+            if (! $isManager || ! $isDestinationStore) {
+                return $this->error('Solo el gerente de la tienda que recibe (o un admin) puede recibir este traslado.', 403);
             }
         }
 
@@ -198,7 +203,7 @@ class TransferController extends Controller
             return $this->error($e->getMessage(), 422);
         }
 
-        return $this->success(new TransferResource($transfer), 'Traslado completado. Inventario actualizado.');
+        return $this->success(new TransferResource($transfer), 'Traslado recibido. Inventario actualizado.');
     }
 
     /**

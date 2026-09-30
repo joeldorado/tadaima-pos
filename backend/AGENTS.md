@@ -307,7 +307,7 @@ al dar de alta una tienda (y existe la migración de backfill
 |---|---|---|
 | GET | `/transfers` · POST `/transfers` | Listar / solicitar |
 | GET | `/transfers/{transfer}` · GET `/transfers/{transfer}/items` | Detalle / items |
-| PUT | `/transfers/{transfer}/complete` | Completar (admin o gerente de tienda origen) |
+| PUT | `/transfers/{transfer}/complete` | Recibir: mueve el stock (admin o gerente de la tienda DESTINO, desde 2026-09-30) |
 | PUT | `/transfers/{transfer}/cancel` | Cancelar |
 
 ### Clientes (`CustomerController`)

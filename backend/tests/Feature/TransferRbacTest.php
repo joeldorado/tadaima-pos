@@ -17,7 +17,8 @@ use Tests\TestCase;
  * - Solo admin y gerente crean traslados (cajero 403).
  * - Gerente solicita viendo stock de TODAS las tiendas: origen libre, pero su
  *   tienda debe ser origen o destino.
- * - Solo admin completa (mueve inventario).
+ * - Recibe (completa, mueve inventario) el gerente de la tienda DESTINO o
+ *   admin (2026-09-30; antes era el origen y el destino no tenía botón).
  * - Cancela admin o el gerente que creó la solicitud.
  */
 class TransferRbacTest extends TestCase
@@ -123,18 +124,55 @@ class TransferRbacTest extends TestCase
             ->assertForbidden();
     }
 
-    public function test_solo_admin_completa_traslados(): void
+    public function test_recibe_el_gerente_de_la_tienda_destino(): void
     {
-        $transfer = $this->createPendingTransfer($this->managerA);
+        // Traslado B → A: A es la tienda que recibe.
+        $transfer = $this->createPendingTransfer($this->admin);
 
-        // Gerente de la tienda destino NO puede completar (aunque tiene acceso).
-        $this->actingAs($this->managerA)
+        // Gerente de la tienda ORIGEN ya no completa: la recepción es del destino.
+        $this->actingAs($this->managerB)
             ->putJson("/api/v1/transfers/{$transfer->id}/complete")
             ->assertForbidden();
+
+        // Gerente de una tercera tienda tampoco.
+        $storeC = Store::create(['company_id' => $this->company->id, 'name' => 'Tienda C', 'active' => true]);
+        $managerC = $this->makeUser('gerentec@test.com', 'gerente', $storeC->id);
+        $this->actingAs($managerC)
+            ->putJson("/api/v1/transfers/{$transfer->id}/complete")
+            ->assertForbidden();
+
+        // Cajero de la tienda destino tampoco.
+        $this->actingAs($this->cashierA)
+            ->putJson("/api/v1/transfers/{$transfer->id}/complete")
+            ->assertForbidden();
+
+        // Gerente DESTINO recibe y el inventario se mueve.
+        $this->actingAs($this->managerA)
+            ->putJson("/api/v1/transfers/{$transfer->id}/complete")
+            ->assertOk()
+            ->assertJsonPath('message', 'Traslado recibido. Inventario actualizado.');
+        $this->assertSame(9.0, (float) DB::table('inventory')->where('warehouse_id', $this->whB->id)->value('quantity'));
+        $this->assertSame(11.0, (float) DB::table('inventory')->where('warehouse_id', $this->whA->id)->value('quantity'));
+    }
+
+    public function test_admin_puede_recibir(): void
+    {
+        $transfer = $this->createPendingTransfer($this->managerA);
 
         $this->actingAs($this->admin)
             ->putJson("/api/v1/transfers/{$transfer->id}/complete")
             ->assertOk();
+    }
+
+    public function test_gerente_destino_ve_traslado_entrante_creado_por_admin(): void
+    {
+        // Caso real (Pier admin → Mario Macroplaza): el traslado lo crea un
+        // admin sin tienda y el gerente destino debe verlo para recibirlo.
+        $transfer = $this->createPendingTransfer($this->admin);
+
+        $ids = collect($this->actingAs($this->managerA)->getJson('/api/v1/transfers')->assertOk()->json('data.data'))
+            ->pluck('id')->all();
+        $this->assertContains($transfer->id, $ids);
     }
 
     public function test_cancela_admin_o_gerente_creador(): void
