@@ -214,8 +214,8 @@
                 "detail": "Eliges producto, cantidad y tiendas origen/destino. Queda “pendiente” hasta que se confirme."
               },
               {
-                "title": "Confirmar / completar",
-                "detail": "El admin puede “Completar ahora”. El gerente solo solicita; la confirmación del destino la hace el admin."
+                "title": "Recibir en la tienda destino",
+                "detail": "Cuando llega la mercancía, el gerente de la tienda que recibe entra a Traslados, busca la tarjeta con la etiqueta “Por recibir” y da “Recibir”: en ese momento el stock sale del origen y entra al destino. El admin también puede recibir, o usar “Completar ahora” para mover el stock sin que el destino tenga que aceptar."
               }
             ]
           },
