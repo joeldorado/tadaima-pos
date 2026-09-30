@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Support\SocioSearchQuery;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -23,6 +24,11 @@ use RuntimeException;
  */
 class TadaimaMemberService
 {
+    private const MAX_SEARCH_RESULTS = 10;
+
+    /** Candidatos por consulta de nombre antes del filtro sin acentos. */
+    private const NAME_CANDIDATES = 40;
+
     /**
      * Busca un socio por id_socio. Devuelve el shape mapeado o null si no existe.
      *
@@ -68,12 +74,16 @@ class TadaimaMemberService
 
             $socio = $rows[0];
 
-            return $this->mapSocio($socio, $this->extractUsuario($socio['usuarios'] ?? []));
+            return $this->mapSocio($socio, $this->firstRelated($socio['usuarios'] ?? []));
         });
     }
 
     /**
      * Busca socios por id_socio, nombre, apellidos o email. Hasta 10 resultados.
+     *
+     * Por nombre busca palabra por palabra (todas deben aparecer, en cualquiera de
+     * nombre/apellidos/correo) y sin importar acentos: "Andrea Lizarraga Navarro"
+     * encuentra a "Andrea Lizárraga Navarro" (ver SocioSearchQuery).
      *
      * @return array<int, array<string, mixed>>
      */
@@ -90,57 +100,112 @@ class TadaimaMemberService
         }
 
         // Cache 30s por término — el buscador de Caja repite consultas al teclear.
-        return Cache::remember('socio:search:' . md5(mb_strtolower($q)), 30, function () use ($url, $key, $q) {
+        return Cache::remember('socio:search:v2:' . md5(mb_strtolower($q)), 30, function () use ($url, $key, $q) {
             $headers = $this->headers($key);
+
+            // 1. Número de socio (TAD…, coincidencia parcial): solo si es una palabra.
+            $byId = preg_match('/\s/u', $q) ? [] : $this->searchByMemberId($url, $headers, $q);
+            // 2. Nombre / apellidos / correo vía tabla usuarios.
+            $byName = $this->searchByName($url, $headers, SocioSearchQuery::words($q));
+
             $results = [];
-            $seenIds = [];
-
-            // 1. Buscar por id_socio (partial match). Si falla/timeout, se omite.
-            $sociosRes = $this->safeGet("{$url}/rest/v1/socios", $headers, [
-                'select'   => '*,usuarios(*)',
-                'id_socio' => 'ilike.*' . $q . '*',
-                'limit'    => '10',
-            ]);
-
-            if ($sociosRes && $sociosRes->successful()) {
-                foreach ($sociosRes->json() as $row) {
-                    $mapped = $this->mapSocio($row, $this->extractUsuario($row['usuarios'] ?? []));
-                    $id     = $mapped['external_member_id'];
-                    if ($id && ! in_array($id, $seenIds, true)) {
-                        $seenIds[] = $id;
-                        $results[] = $mapped;
-                    }
+            foreach ([...$byId, ...$byName] as $mapped) {
+                $id = $mapped['external_member_id'];
+                if ($id !== '' && ! isset($results[$id])) {
+                    $results[$id] = $mapped;
                 }
             }
 
-            // 2. Buscar por nombre / apellidos / correo vía tabla usuarios.
-            $usuariosRes = $this->safeGet("{$url}/rest/v1/usuarios", $headers, [
-                'select' => 'id,nombre,apellidos,email,telefono,socios(*)',
-                'or'     => "(nombre.ilike.*{$q}*,apellidos.ilike.*{$q}*,email.ilike.*{$q}*)",
-                'limit'  => '10',
-            ]);
-
-            if ($usuariosRes && $usuariosRes->successful()) {
-                foreach ($usuariosRes->json() as $usuario) {
-                    $socioRaw  = $usuario['socios'] ?? [];
-                    $socioList = is_array($socioRaw) && array_is_list($socioRaw) ? $socioRaw : [(array) $socioRaw];
-                    if (empty($socioList) || empty($socioList[0])) {
-                        continue;
-                    }
-
-                    $socio = $socioList[0];
-                    $id    = (string) ($socio['id_socio'] ?? '');
-                    if (! $id || in_array($id, $seenIds, true)) {
-                        continue;
-                    }
-
-                    $seenIds[] = $id;
-                    $results[] = $this->mapSocio($socio, $usuario);
-                }
-            }
-
-            return array_values(array_slice($results, 0, 10));
+            return array_values(array_slice($results, 0, self::MAX_SEARCH_RESULTS));
         });
+    }
+
+    /**
+     * @param  array<string, string>  $headers
+     * @return list<array<string, mixed>>
+     */
+    private function searchByMemberId(string $url, array $headers, string $q): array
+    {
+        $response = $this->safeGet("{$url}/rest/v1/socios", $headers, [
+            'select'   => '*,usuarios(*)',
+            'id_socio' => 'ilike.*' . $q . '*',
+            'limit'    => (string) self::MAX_SEARCH_RESULTS,
+        ]);
+        if (! $this->usable($response, 'socios')) {
+            return [];
+        }
+
+        return array_map(
+            fn (array $row) => $this->mapSocio($row, $this->firstRelated($row['usuarios'] ?? [])),
+            $response->json(),
+        );
+    }
+
+    /**
+     * Por nombre, con TODAS las palabras a la vez. Primero tal cual la escribieron
+     * (lo de siempre); si no alcanza para llenar la lista, se completa sin acentos
+     * (vocales/ñ comodín). Va en ese orden porque el comodín trae de más ("_ndr__"
+     * también es Alejandro, Sandra…) y solo con él se llenarían los candidatos de
+     * nombres que luego se descartan.
+     *
+     * @param  array<string, string>  $headers
+     * @param  list<string>  $words
+     * @return list<array<string, mixed>>
+     */
+    private function searchByName(string $url, array $headers, array $words): array
+    {
+        if ($words === []) {
+            return [];
+        }
+
+        $found = $this->fetchUsuarios($url, $headers, $words, $words);
+        $patterns = array_map([SocioSearchQuery::class, 'likePattern'], $words);
+        if (count($found) >= self::MAX_SEARCH_RESULTS || $patterns === $words) {
+            return $found;
+        }
+
+        return [...$found, ...$this->fetchUsuarios($url, $headers, $words, $patterns)];
+    }
+
+    /**
+     * and=(or(nombre…p1, apellidos…p1, email…p1), or(…p2…)) y filtro final sin
+     * acentos (quita lo que el comodín trajo de más). Solo usuarios con membresía.
+     *
+     * @param  array<string, string>  $headers
+     * @param  list<string>  $words
+     * @param  list<string>  $patterns  Uno por palabra, para `ilike`.
+     * @return list<array<string, mixed>>
+     */
+    private function fetchUsuarios(string $url, array $headers, array $words, array $patterns): array
+    {
+        $groups = array_map(
+            static fn (string $p): string => "or(nombre.ilike.*{$p}*,apellidos.ilike.*{$p}*,email.ilike.*{$p}*)",
+            $patterns,
+        );
+
+        $response = $this->safeGet("{$url}/rest/v1/usuarios", $headers, [
+            // !inner: solo usuarios con membresía (no ocupan lugar entre los candidatos).
+            'select' => 'id,nombre,apellidos,email,telefono,socios!inner(*)',
+            'and'    => '(' . implode(',', $groups) . ')',
+            'limit'  => (string) self::NAME_CANDIDATES,
+        ]);
+        if (! $this->usable($response, 'usuarios')) {
+            return [];
+        }
+
+        $found = [];
+        foreach ($response->json() as $usuario) {
+            $socio = $this->firstRelated($usuario['socios'] ?? []);
+            if (empty($socio['id_socio'])) {
+                continue; // usuario sin membresía
+            }
+            $text = implode(' ', [$usuario['nombre'] ?? '', $usuario['apellidos'] ?? '', $usuario['email'] ?? '']);
+            if (SocioSearchQuery::matches($text, $words)) {
+                $found[] = $this->mapSocio($socio, $usuario);
+            }
+        }
+
+        return $found;
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -154,6 +219,28 @@ class TadaimaMemberService
             Log::warning('Supabase connection error', ['url' => $url, 'msg' => $e->getMessage()]);
             return null;
         }
+    }
+
+    /**
+     * Respuesta 2xx; si Supabase contestó con error se deja en el log (no se cuelga
+     * la búsqueda). Sin el cuerpo: un 400 de PostgREST repite el filtro (nombres).
+     */
+    private function usable(?\Illuminate\Http\Client\Response $response, string $table): bool
+    {
+        if ($response === null) {
+            return false;
+        }
+        if (! $response->successful()) {
+            Log::warning('Supabase search error', [
+                'table'  => $table,
+                'status' => $response->status(),
+                'code'   => $response->json('code'),
+            ]);
+
+            return false;
+        }
+
+        return is_array($response->json());
     }
 
     /** Fallback de lookup: stub SOLO en dev; en PRODUCCIÓN nunca sirve datos falsos. */
@@ -194,12 +281,13 @@ class TadaimaMemberService
     }
 
     /**
-     * Supabase devuelve el objeto relacionado directamente (no array) en join 1-1.
+     * Primer renglón relacionado (usuario de un socio / socio de un usuario):
+     * Supabase lo manda como objeto en join 1-1 y como lista en 1-N.
      *
      * @param  mixed  $raw
      * @return array<string, mixed>
      */
-    private function extractUsuario($raw): array
+    private function firstRelated($raw): array
     {
         return is_array($raw) && array_is_list($raw) ? ($raw[0] ?? []) : (array) $raw;
     }
