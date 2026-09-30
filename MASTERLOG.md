@@ -4,6 +4,54 @@
 
 ---
 
+### Sesión 2026-09-30 — Socios sin acentos + traslados los recibe el destino + promo vs precio socio — rev tadaima-00019-pal
+
+Un solo deploy con 3 cambios (PRs joeldorado/tadaima-pos#20 y joeldorado/tadaima-pos#21, sin migraciones):
+
+**1. Traslados: los recibe la tienda destino** (PR #20, `017a119`). Mario (gerente de Macroplaza)
+no tenía nada que aceptar de un traslado de Centro: solo el admin o el gerente ORIGEN podían
+completarlo. Ahora `PUT /transfers/{id}/complete` lo hace el gerente de la tienda DESTINO (o
+admin); botón "Recibir" + "Por recibir" en Pendientes; el origen ve "Enviado · esperando
+recepción"; "Completar ahora" solo admin. Cancelar no cambia.
+
+**2. Caja: promo y precio socio ya no se suman** (PR #20, `c299d33`). ETB $1,100 / socio $980 con
+promo "2 x $1,800": con SOCIO cobraba $1,560 (los dos beneficios juntos). Regla nueva: si la
+línea entra a una promo aplicada, toda la línea va a precio NORMAL y la promo encima ($1,800);
+siempre gana la promo. Sin promo el socio conserva su precio. `saleCalc.ts` / `SaleCalculator.php`
+re-precian el pool de la promo; `sale_items.price` guarda el precio efectivo. **Una Caja con el
+bundle viejo recibe 422 en socio+promo hasta recargar (Ctrl+Shift+R).**
+
+**3. Búsqueda de socios Tadaima: nombre completo y sin acentos** (PR #21, `2e22c1a`).
+
+**Reporte de tienda:** dieron de alta a la socia "Andrea Lizarraga Navarro" y en Caja no salía
+("Alondra aurora" sí). Revisado en la base de socios (Supabase de lealtad, solo lectura): sí
+existe como **"Andrea Lizárraga Navarro", TAD51711150, ACTIVO**.
+
+**Causas** (en `TadaimaMemberService::search`): el `ilike` de PostgREST no ignora acentos
+("Lizarraga" ≠ "Lizárraga") y el texto COMPLETO se comparaba contra nombre, apellidos y
+correo por separado (un nombre completo cruza nombre + apellidos y no empataba con ninguno).
+
+**Qué cambia** (solo backend; la base de socios NO se toca):
+- Por nombre se busca palabra por palabra: todas deben aparecer, en cualquiera de
+  nombre/apellidos/correo (`and=(or(…),or(…))` de PostgREST).
+- Primero tal cual lo escribieron (lo de siempre) y, si no llena los 10, se completa sin
+  acentos: en palabras de 4+ letras cada vocal/ñ es comodín `_`; filtro final en PHP sin
+  acentos (`app/Support/SocioSearchQuery.php`). Ese orden evita que el comodín ("_ndr__" =
+  Alejandro, Sandra…) desplace a los resultados exactos.
+- Número de socio (TAD…) igual que antes, solo con una palabra. Caché `socio:search:v2`.
+  `socios!inner`: solo usuarios con membresía. Límite conocido: "Munoz" (sin ñ) no trae "Muñoz"
+  (igual que antes); "Muñoz" sí trae "Munoz".
+
+**Verificado contra la base real (solo GET):** "Andrea Lizarraga Navarro" y "andrea lizarraga"
+→ Andrea Lizárraga; "Lizarraga" 2 → 3 (la agrega); "Andrea", "Muñoz", "Munoz", "Garcia",
+"García", "Jose", "josé" dan exactamente lo mismo que antes.
+
+**Pruebas del conjunto (main con #20 + #21):** backend 613, vitest 365, build OK.
+
+**Deploy:** tadaima-00019-pal (rollback `tadaima-00017-pin`).
+
+---
+
 ### Sesión 2026-09-30 — Altas: el borrador sobrevive al cerrar la ventana + "Limpiar datos" — rev tadaima-00017-pin
 
 **Pedido de tienda:** si cerraban por error el Alta de Producto o de Tomos, perdían lo
