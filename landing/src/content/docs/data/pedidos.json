@@ -23,7 +23,7 @@
       "borrador"
     ],
     "tourId": "preventas",
-    "updatedAt": "2026-08-06",
+    "updatedAt": "2026-09-30",
     "sections": [
       {
         "id": "como-funciona",
@@ -93,7 +93,7 @@
         "blocks": [
           {
             "kind": "prose",
-            "text": "Al crear un catálogo nuevo, lo que vas capturando se guarda solo como borrador en esa computadora. Si la página se recarga, se cierra la pestaña o algo truena a media captura, al volver a abrir el alta todo regresa con el aviso “Se restauró un borrador sin guardar de tu última sesión.”"
+            "text": "Al crear un catálogo nuevo, lo que vas capturando se guarda solo como borrador para tu usuario, con todo e imagen. Si cierras la ventana, la página se recarga o algo truena a media captura, al volver a abrir el alta sigues donde ibas, con el aviso “Se restauró lo que tenías capturado”."
           },
           {
             "kind": "image",
@@ -105,13 +105,13 @@
             "kind": "callout",
             "tone": "info",
             "title": "Cuándo se limpia el borrador",
-            "text": "Se borra al guardar con éxito o al cancelar tú el alta (botón Cancelar, la X o clic fuera). Si el guardado falla, el borrador se queda para que no vuelvas a teclear todo. Dura hasta 24 horas."
+            "text": "Se borra al guardar con éxito o con el botón “Limpiar datos” (pide un segundo clic para confirmar). Cancelar, la X o el clic fuera solo cierran la ventana. Si el guardado falla, el borrador se queda. Dura hasta 24 horas."
           },
           {
             "kind": "callout",
-            "tone": "warn",
-            "title": "La imagen no viaja en el borrador",
-            "text": "Las fotos no se guardan en el borrador (pesan demasiado para el navegador). Si se restauró una captura, vuelve a elegir la imagen del catálogo antes de guardar."
+            "tone": "info",
+            "title": "La imagen también se guarda",
+            "text": "Desde septiembre de 2026 la imagen del catálogo también se guarda en el borrador: al reabrir el alta ya está elegida."
           }
         ]
       }

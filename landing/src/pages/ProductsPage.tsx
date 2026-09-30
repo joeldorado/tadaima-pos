@@ -33,7 +33,8 @@ import { queryKeys } from "@/lib/queryKeys";
 import { generateBarcode, generatePlaceholderSku } from "@/lib/barcode";
 import { isSkuMatch, normalizeCode, shouldLookupCode } from "@/lib/productCode";
 import { DuplicateCodeNotice } from "@/components/products/DuplicateCodeNotice";
-import { useFormDraft } from "@/hooks/useFormDraft";
+import { useFormDraft, draftKeyFor, clearFormDraftStorage, isEmptyDraft } from "@/hooks/useFormDraft";
+import { saveDraftFiles, loadDraftFiles, clearDraftFiles } from "@/lib/draftFiles";
 import { warehouseTypeLabel } from "@/lib/warehouse";
 import { PRICE_FORM_LABELS, PRICE_LEVEL_LABELS, PRICE_LEVEL_COLORS, PRICE_LEVEL_RGB } from "@/lib/priceLevels";
 
@@ -595,6 +596,35 @@ const columnHelper = createColumnHelper<Producto>();
 const mangaColumnHelper = createColumnHelper<Manga>();
 
 // ─── Componente Modal de Producto ──────────────────────────────────────────────
+/** Alta de producto vacía (también define "no hay borrador", 2026-09-30). */
+const EMPTY_NEW_PRODUCT: Partial<Producto> = {
+  nombre: "", sku: "", categoria: "", categoryIds: [], proveedor: "",
+  tipo: "normal", desactivado: false, costo: 0, precioA: 0, precioB: 0, precioC: 0, precioD: 0, precioE: 0,
+  stockUbicaciones: [],
+  etiquetas: ["en bodega"], imagen: "", imageIds: [],
+  ventasTotales: 0,
+  allowCash: true,
+  allowCard: true,
+};
+
+type ProductDraft = { formData: Omit<Partial<Producto>, "imagen">; pendingPromoIds: number[] };
+
+const EMPTY_PRODUCT_DRAFT: ProductDraft = (() => {
+  const { imagen: _imagen, ...formData } = EMPTY_NEW_PRODUCT;
+  return { formData, pendingPromoIds: [] };
+})();
+
+/** Borrador del alta de producto de ESTE usuario (datos + foto). */
+const PRODUCT_DRAFT_BASE = "tadaima-product-draft";
+const productDraftKey = (userId: number | string | null | undefined) => draftKeyFor(PRODUCT_DRAFT_BASE, userId);
+
+/** Se llama en cuanto el producto se CREA (antes de subir foto/inventario/promos). */
+function clearProductDraft(userId: number | string | null | undefined): void {
+  const key = productDraftKey(userId);
+  clearFormDraftStorage(key);
+  void clearDraftFiles(key);
+}
+
 function ProductModal({
   onClose,
   onSave,
@@ -627,13 +657,17 @@ function ProductModal({
   onOpenExisting?: (p: Product) => void;
 }) {
   // Borrador en localStorage (Joel 2026-08-05): protege lo capturado si algo
-  // interrumpe la sesión ANTES de guardar (recarga, tab cerrada, crash) —
-  // solo en alta, no tiene sentido "recuperar" sobre un producto existente.
-  // `imagen` se excluye siempre (blob URL que muere al recargar).
-  const { draft, saveDraft, clearDraft } = useFormDraft<{
-    formData: Omit<Partial<Producto>, "imagen">;
-    pendingPromoIds: number[];
-  }>({ key: "tadaima-product-draft", enabled: !product });
+  // interrumpe la sesión ANTES de guardar — solo en alta. Desde 2026-09-30
+  // sobrevive a cerrar el modal (solo se borra al crear o con "Limpiar
+  // datos"), es por usuario y la foto va aparte en IndexedDB (lib/draftFiles).
+  const { user: draftUser } = useAuth();
+  const draftKey = productDraftKey(draftUser?.id);
+  const { draft, saveDraft, clearDraft, pauseDraft, resumeDraft } = useFormDraft<ProductDraft>({
+    key: draftKey,
+    legacyKey: PRODUCT_DRAFT_BASE,
+    emptyValue: EMPTY_PRODUCT_DRAFT,
+    enabled: !product,
+  });
 
   const [formData, setFormData] = useState<Partial<Producto>>(() => {
     if (product) {
@@ -656,15 +690,7 @@ function ProductModal({
     if (draft) return { imagen: "", imageIds: [], ...draft.formData };
 
     // Nuevo producto — empieza sin ubicaciones; el usuario las agrega desde el tab Inventario
-    return {
-      nombre: "", sku: "", categoria: "", categoryIds: [], proveedor: "",
-      tipo: "normal", desactivado: false, costo: 0, precioA: 0, precioB: 0, precioC: 0, precioD: 0, precioE: 0,
-      stockUbicaciones: [],
-      etiquetas: ["en bodega"], imagen: "", imageIds: [],
-      ventasTotales: 0,
-      allowCash: true,
-      allowCard: true,
-    };
+    return { ...EMPTY_NEW_PRODUCT };
   });
 
   const [activeTab, setActiveTab] = useState<"general" | "precios" | "inventario" | "promociones">("general");
@@ -674,7 +700,7 @@ function ProductModal({
   const [pendingPromoIds, setPendingPromoIds] = useState<number[]>(() => (!product && draft ? draft.pendingPromoIds : []));
 
   useEffect(() => {
-    if (draft) toast.info("Se restauró un borrador sin guardar de tu última sesión.");
+    if (draft) toast.info("Se restauró lo que tenías capturado. Usa \"Limpiar datos\" para empezar de cero.", { id: "draft-restored" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -684,6 +710,54 @@ function ProductModal({
     saveDraft({ formData: rest, pendingPromoIds });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData, pendingPromoIds, product]);
+
+  // Foto del borrador (IndexedDB): se restaura al abrir y se guarda al cambiar.
+  // `photoReady` evita que el guardado inicial (sin foto) borre la guardada
+  // antes de leerla.
+  const [photoReady, setPhotoReady] = useState(!!product);
+  useEffect(() => {
+    if (product) return;
+    let alive = true;
+    void loadDraftFiles(draftKey).then(files => {
+      if (!alive) return;
+      const blob = files?.image;
+      if (blob instanceof Blob) {
+        const file = blob instanceof File ? blob : new File([blob], "foto", { type: blob.type });
+        setImageFile(file);
+        setFormData(prev => ({ ...prev, imagen: URL.createObjectURL(file) }));
+      }
+      setPhotoReady(true);
+    });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (product || !photoReady) return;
+    void saveDraftFiles(draftKey, imageFile ? { image: imageFile } : {});
+  }, [imageFile, photoReady, product, draftKey]);
+
+  // "Limpiar datos" con confirmación en el mismo botón (2 clics).
+  const [confirmClear, setConfirmClear] = useState(false);
+  useEffect(() => {
+    if (!confirmClear) return;
+    const t = window.setTimeout(() => setConfirmClear(false), 4000);
+    return () => window.clearTimeout(t);
+  }, [confirmClear]);
+  const hasCapture = !product && (() => {
+    if (imageFile !== null) return true;
+    const { imagen: _imagen, ...rest } = formData;
+    return !isEmptyDraft<ProductDraft>({ formData: rest, pendingPromoIds }, EMPTY_PRODUCT_DRAFT);
+  })();
+  const clearCapture = () => {
+    clearDraft();
+    void clearDraftFiles(draftKey);
+    setFormData({ ...EMPTY_NEW_PRODUCT });
+    setPendingPromoIds([]);
+    setImageFile(null);
+    setActiveTab("general");
+    setConfirmClear(false);
+    toast.success("Datos limpiados.");
+  };
   const [isDragging, setIsDragging] = useState(false);
   // Mientras el padre confirma con el backend — bloquea Guardar/Cancelar/X
   // para que no se cierre el modal a medio guardar (2026-08-04).
@@ -711,8 +785,7 @@ function ProductModal({
   const skuTaken = duplicates.some(d => isSkuMatch(d, formData.sku));
 
   const openExisting = (p: Product) => {
-    // Lo capturado era un duplicado: no tiene caso restaurarlo después.
-    clearDraft();
+    // El borrador NO se borra (2026-09-30): solo al crear o con "Limpiar datos".
     onOpenExisting?.(p);
   };
   // Aplica un archivo de imagen al formulario. Compartido por el <input file>
@@ -819,23 +892,29 @@ function ProductModal({
     }
 
     setSaving(true);
+    // Mientras se guarda no se escribe el borrador: si el padre cierra el
+    // modal a media creación, no se reescribe lo que ya se creó.
+    pauseDraft();
     try {
       await onSave({ ...formData, sku, id: formData.id || Date.now() } as Producto, imageFile ?? undefined, pendingPromoIds);
       clearDraft();
+      if (!product) void clearDraftFiles(draftKey);
     } catch {
       // El padre ya mostró el toast de error — no cerramos el modal ni
       // limpiamos formData, así el usuario corrige y reintenta sin perder
       // lo que capturó (antes el modal se cerraba de golpe y se perdía todo).
       // Tampoco se limpia el borrador — es justo el caso que protege.
+      resumeDraft();
     } finally {
       setSaving(false);
     }
   };
 
-  // Abandono deliberado (Cancelar/X/fondo): limpia el borrador para no
-  // insistir la próxima vez que abran "Nuevo Producto".
+  // Cerrar (Cancelar/X/fondo) YA NO borra el borrador (Joel 2026-09-30): si
+  // cerraron por error, al reabrir siguen donde iban. Se borra al crear o
+  // con "Limpiar datos". Bloqueado mientras se guarda.
   const handleDismiss = () => {
-    clearDraft();
+    if (saving) return;
     onClose();
   };
 
@@ -1464,6 +1543,20 @@ function ProductModal({
                 />
                 <span className="text-xs font-bold text-gray-500">Desactivar Producto (Baja)</span>
              </div>
+           ) : !product && hasCapture ? (
+             <button
+               type="button"
+               data-testid="draft-clear"
+               onClick={() => (confirmClear ? clearCapture() : setConfirmClear(true))}
+               disabled={saving}
+               className="flex items-center gap-1.5 px-4 py-2.5 rounded-full text-xs font-bold transition-all disabled:opacity-40"
+               style={confirmClear
+                 ? { background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.5)", color: "#ef4444" }
+                 : SECONDARY_BUTTON}
+               title="Borra lo capturado y la foto guardada de esta alta"
+             >
+               <Trash2 size={14} /> {confirmClear ? "¿Borrar todo? Sí, limpiar" : "Limpiar datos"}
+             </button>
            ) : <div />}
            <div className="flex gap-3">
              {canDelete && product && (
@@ -1903,6 +1996,10 @@ export function ProductsPage() {
             ...(p.precioE !== undefined && p.precioE > 0 ? { price_5: p.precioE } : {}),
           },
         });
+        // El backend ya confirmó el producto: se borra su borrador YA (antes
+        // de foto/inventario/promos) para que reabrir "Alta de Producto" en
+        // ese hueco no muestre lo recién creado y se duplique (2026-09-30).
+        clearProductDraft(user?.id);
         // El backend ya confirmó el producto — ahora sí se cierra el modal.
         setIsModalOpen(false);
         setEditingProduct(undefined);
