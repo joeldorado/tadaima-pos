@@ -4,6 +4,31 @@
 
 ---
 
+### Sesión 2026-09-30 — Altas: el borrador sobrevive al cerrar la ventana + "Limpiar datos" — rev tadaima-00017-pin
+
+**Pedido de tienda:** si cerraban por error el Alta de Producto o de Tomos, perdían lo
+capturado. El autoguardado (`useFormDraft`, rev 00165) ya existía, pero cerrar (X, Cancelar,
+clic afuera) lo borraba a propósito. PR joeldorado/tadaima-pos#19 (`a38ae9d`).
+
+**Qué cambia** (decisiones de Joel: fotos sí, por usuario, 24 h, las tres altas):
+- Cerrar ya NO borra; el borrador se borra al crear con éxito o con el botón **"Limpiar
+  datos"** (2 clics). Aplica a Alta de Producto, Alta de Tomos y Alta de Preventa.
+- Fotos del borrador en IndexedDB (`lib/draftFiles`, store `tadaima-drafts`): la del
+  producto, cada tomo del lote y la imagen de la preventa.
+- Llave por usuario `{base}:{userId}`; migra una vez el borrador de la llave vieja.
+- `useFormDraft`: sin captura no hay borrador ni aviso (`emptyValue`/`isEmpty`), escribe lo
+  pendiente al cerrar y en `pagehide`, se pausa mientras se guarda.
+- Producto: borrador borrado justo después de `createProduct` (no se duplica si reabren
+  mientras sube foto/inventario). Cerrar bloqueado mientras se guarda en las tres altas.
+
+**Verificado en local:** Producto (cerrar con clic afuera y recargar → restaura con foto;
+Limpiar datos; crear → reabre vacío), Tomos (serie/vol/ISBN/foto restaurados) y Preventa
+(nombre + imagen). vitest 358, type-check = base − 1 (462).
+
+**Deploy:** tadaima-00017-pin (rollback `tadaima-00015-his`).
+
+---
+
 ### Sesión 2026-09-29 (2) — Formularios: moverse entre campos con las flechas — rev tadaima-00015-his
 
 **Pedido de tienda:** pasar de un campo a otro con las flechas (además de Tab) en todos

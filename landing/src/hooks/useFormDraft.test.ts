@@ -1,5 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { clearFormDraftStorage, createDebouncer, readFormDraft, writeFormDraft } from "./useFormDraft"
+import {
+  clearFormDraftStorage,
+  createDebouncer,
+  draftKeyFor,
+  isEmptyDraft,
+  migrateLegacyDraft,
+  readFormDraft,
+  writeFormDraft,
+} from "./useFormDraft"
 
 // vitest corre en env node: se stubbea window.localStorage con un Map (mismo
 // patrón que StorePickPopover.test.ts/ticketPrint.test.ts).
@@ -92,5 +100,75 @@ describe("createDebouncer", () => {
     vi.advanceTimersByTime(500)
 
     expect(run).not.toHaveBeenCalled()
+  })
+})
+
+describe("createDebouncer.flush (2026-09-30)", () => {
+  beforeEach(() => vi.useFakeTimers())
+
+  it("flush() corre YA lo pendiente (cerrar el modal no pierde lo último tecleado)", () => {
+    const run = vi.fn()
+    const debouncer = createDebouncer<number>(run, 400)
+
+    debouncer.schedule(7)
+    debouncer.flush()
+    expect(run).toHaveBeenCalledWith(7)
+    vi.advanceTimersByTime(500)
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
+  it("en pausa no agenda nada; al reanudar vuelve a guardar", () => {
+    const run = vi.fn()
+    const debouncer = createDebouncer<number>(run, 400)
+
+    debouncer.setPaused(true)
+    debouncer.schedule(1)
+    vi.advanceTimersByTime(500)
+    expect(run).not.toHaveBeenCalled()
+    expect(debouncer.isPaused()).toBe(true)
+
+    debouncer.setPaused(false)
+    debouncer.schedule(2)
+    vi.advanceTimersByTime(500)
+    expect(run).toHaveBeenCalledWith(2)
+  })
+
+  it("flush() sin nada pendiente no hace nada", () => {
+    const run = vi.fn()
+    createDebouncer<number>(run, 400).flush()
+    expect(run).not.toHaveBeenCalled()
+  })
+})
+
+describe("isEmptyDraft", () => {
+  it("igual a los valores iniciales = vacío (abrir y cerrar no deja borrador)", () => {
+    expect(isEmptyDraft({ name: "", qty: 0 }, { name: "", qty: 0 })).toBe(true)
+    expect(isEmptyDraft({ name: "Goku", qty: 0 }, { name: "", qty: 0 })).toBe(false)
+    expect(isEmptyDraft({ name: "", qty: 0 }, undefined)).toBe(false)
+    expect(isEmptyDraft({ qty: 0, name: "" }, { name: "", qty: 0 })).toBe(true) // el orden no importa
+  })
+})
+
+describe("draftKeyFor", () => {
+  it("un borrador por usuario", () => {
+    expect(draftKeyFor("tadaima-product-draft", 7)).toBe("tadaima-product-draft:7")
+    expect(draftKeyFor("tadaima-product-draft", undefined)).toBe("tadaima-product-draft:anon")
+  })
+})
+
+describe("migrateLegacyDraft", () => {
+  it("pasa el borrador de la llave vieja a la nueva y borra la vieja", () => {
+    writeFormDraft<Payload>("old", 1, { name: "Goku", qty: 3 })
+    migrateLegacyDraft("old", "new")
+    expect(readFormDraft<Payload>("new", 1)).toEqual({ name: "Goku", qty: 3 })
+    expect(storage.has("old")).toBe(false)
+  })
+
+  it("si ya hay borrador en la llave nueva, no lo pisa; solo borra la vieja", () => {
+    writeFormDraft<Payload>("old", 1, { name: "Viejo", qty: 1 })
+    writeFormDraft<Payload>("new", 1, { name: "Nuevo", qty: 2 })
+    migrateLegacyDraft("old", "new")
+    expect(readFormDraft<Payload>("new", 1)).toEqual({ name: "Nuevo", qty: 2 })
+    expect(storage.has("old")).toBe(false)
   })
 })

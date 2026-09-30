@@ -5,7 +5,9 @@ import { toast } from "sonner";
 import { getCategories, getSuppliers, getStores, createSupplier, createCategory, createPreSaleCatalog, updatePreSaleCatalog, uploadPreSaleCatalogImage, removePreSaleCatalogImage } from "@tadaima/api";
 import type { ProductCategory, Supplier, PreSaleCatalog, Store } from "@tadaima/api";
 import { SingleDatePicker } from "@/components/ui/SingleDatePicker";
-import { useFormDraft } from "@/hooks/useFormDraft";
+import { useFormDraft, draftKeyFor, isEmptyDraft } from "@/hooks/useFormDraft";
+import { useAuth } from "@tadaima/auth";
+import { saveDraftFiles, loadDraftFiles, clearDraftFiles } from "@/lib/draftFiles";
 
 interface Props {
   onClose: () => void;
@@ -122,17 +124,28 @@ interface PreSaleCatalogDraft {
   price1: string; price2: string; price3: string; price4: string; price5: string;
 }
 
+/** Alta de preventa vacía (define "no hay borrador", 2026-09-30). */
+const EMPTY_PRESALE_DRAFT: PreSaleCatalogDraft = {
+  name: "", categoryId: "", supplierId: "", advance: "100", limit: "", limitPerCustomer: "",
+  arrivalDate: "", pickupDate: "", cost: "", publishNow: false, storeLimits: {},
+  price1: "", price2: "", price3: "", price4: "", price5: "",
+};
+const PRESALE_DRAFT_BASE = "tadaima-presale-catalog-draft";
+
 export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restrictedStoreId = null, initialTab }: Props) {
   const isEdit = !!catalog;
 
   // Borrador en localStorage (Joel 2026-08-05): protege lo capturado si algo
-  // interrumpe la sesión antes de guardar — solo en alta (no tiene sentido
-  // "recuperar" sobre un catálogo que ya existe). La imagen NUNCA se
-  // persiste aquí: en alta es un data: URL base64 completo (FileReader),
-  // una imagen de 5MB son ~6.9MB de texto — podría reventar la cuota de
-  // localStorage de todo el origen.
-  const { draft, saveDraft, clearDraft } = useFormDraft<PreSaleCatalogDraft>({
-    key: "tadaima-presale-catalog-draft",
+  // interrumpe la sesión antes de guardar — solo en alta. La imagen no va en
+  // localStorage (5MB de base64 reventaría la cuota): desde 2026-09-30 el
+  // archivo va en IndexedDB (lib/draftFiles). El borrador sobrevive a cerrar
+  // el modal, es por usuario y se borra al crear o con "Limpiar datos".
+  const { user: draftUser } = useAuth();
+  const draftKey = draftKeyFor(PRESALE_DRAFT_BASE, draftUser?.id);
+  const { draft, saveDraft, clearDraft, pauseDraft, resumeDraft } = useFormDraft<PreSaleCatalogDraft>({
+    key: draftKey,
+    legacyKey: PRESALE_DRAFT_BASE,
+    emptyValue: EMPTY_PRESALE_DRAFT,
     enabled: !isEdit,
   });
 
@@ -221,9 +234,33 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
   const [price5, setPrice5] = useState(catalog?.price_5 != null ? String(catalog.price_5) : (draft?.price5 ?? ""));
 
   useEffect(() => {
-    if (draft) toast.info("Se restauró un borrador sin guardar de tu última sesión.");
+    if (draft) toast.info("Se restauró lo que tenías capturado. Usa \"Limpiar datos\" para empezar de cero.", { id: "draft-restored" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Imagen del borrador (IndexedDB): se restaura al abrir y se guarda al
+  // cambiar. `photoReady` evita borrar la guardada antes de leerla.
+  const [photoReady, setPhotoReady] = useState(isEdit);
+  useEffect(() => {
+    if (isEdit) return;
+    let alive = true;
+    void loadDraftFiles(draftKey).then(files => {
+      if (!alive) return;
+      const blob = files?.image;
+      if (blob instanceof Blob) {
+        const file = blob instanceof File ? blob : new File([blob], "imagen", { type: blob.type });
+        setImageFile(file);
+        setImagePreview(URL.createObjectURL(file));
+      }
+      setPhotoReady(true);
+    });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (isEdit || !photoReady) return;
+    void saveDraftFiles(draftKey, imageFile ? { image: imageFile } : {});
+  }, [imageFile, photoReady, isEdit, draftKey]);
 
   useEffect(() => {
     saveDraft({
@@ -295,6 +332,7 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
     }
 
     setSaving(true);
+    pauseDraft();
     try {
       // Store limits: única fuente de verdad para "dónde se vende este catálogo".
       // Sin entradas → catálogo no se vende en ninguna tienda. Sin entrada para
@@ -347,25 +385,53 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
           : `Catálogo "${result.product_name}" ${publishNow ? "publicado" : "guardado como borrador"}`
       );
       clearDraft();
+      if (!isEdit) void clearDraftFiles(draftKey);
       onSuccess(result);
     } catch (err: unknown) {
       const msg = (err as { message?: string })?.message ?? "Error al guardar";
       toast.error(msg);
       // No se limpia el borrador — es justo el caso que protege, el usuario
       // va a corregir y reintentar con los mismos datos.
+      resumeDraft();
     } finally {
       setSaving(false);
     }
   };
 
-  // Abandono deliberado (Cancelar/X/fondo): limpia el borrador para no
-  // insistir la próxima vez que abran "Nuevo Catálogo de Preventa". Gateado
-  // por `saving` (2026-08-05): antes ningún control de cierre bloqueaba un
-  // guardado en vuelo — un clic ahí a media petición perdía los datos igual.
+  // Cerrar (Cancelar/X/fondo) YA NO borra el borrador (Joel 2026-09-30): al
+  // reabrir siguen donde iban; se borra al crear o con "Limpiar datos".
+  // Gateado por `saving` (2026-08-05) para no cerrar a media petición.
   const handleDismiss = () => {
     if (saving) return;
-    clearDraft();
     onClose();
+  };
+
+  // "Limpiar datos" con confirmación en el mismo botón (2 clics).
+  const [confirmClear, setConfirmClear] = useState(false);
+  useEffect(() => {
+    if (!confirmClear) return;
+    const t = window.setTimeout(() => setConfirmClear(false), 4000);
+    return () => window.clearTimeout(t);
+  }, [confirmClear]);
+  const hasCapture = !isEdit && (imageFile !== null || !isEmptyDraft<PreSaleCatalogDraft>({
+    name, categoryId, supplierId, advance, limit, limitPerCustomer,
+    arrivalDate, pickupDate, cost, publishNow, storeLimits,
+    price1, price2, price3, price4, price5,
+  }, EMPTY_PRESALE_DRAFT));
+  const clearCapture = () => {
+    clearDraft();
+    void clearDraftFiles(draftKey);
+    const e = EMPTY_PRESALE_DRAFT;
+    setName(e.name); setCategoryId(e.categoryId); setSupplierId(e.supplierId);
+    setAdvance(e.advance); setLimit(e.limit); setLimitPerCustomer(e.limitPerCustomer);
+    setArrivalDate(e.arrivalDate); setPickupDate(e.pickupDate); autoPickupRef.current = "";
+    setCost(e.cost); setPublishNow(e.publishNow); setStoreLimits({});
+    setPrice1(e.price1); setPrice2(e.price2); setPrice3(e.price3); setPrice4(e.price4); setPrice5(e.price5);
+    setImageFile(null); setImagePreview(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    setTab("general");
+    setConfirmClear(false);
+    toast.success("Datos limpiados.");
   };
 
   const fmt = (n: string) => n ? `$${Number(n).toLocaleString("es-MX")}` : "—";
@@ -865,6 +931,25 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
             </div>
           )}
           <div style={{ display: "flex", gap: 10 }}>
+            {hasCapture && (
+              <button
+                type="button"
+                data-testid="draft-clear"
+                onClick={() => (confirmClear ? clearCapture() : setConfirmClear(true))}
+                disabled={saving}
+                title="Borra lo capturado y la imagen guardada de esta alta"
+                style={{
+                  flex: 1, padding: "12px 0", borderRadius: 14, fontSize: 12, fontWeight: 800,
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                  cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.7 : 1,
+                  ...(confirmClear
+                    ? { background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.5)", color: "#ef4444" }
+                    : { background: "transparent", border: "1px solid var(--td-panel-border)", color: TS }),
+                }}
+              >
+                <Trash2 size={13} /> {confirmClear ? "¿Borrar todo? Sí" : "Limpiar datos"}
+              </button>
+            )}
             <button
               onClick={handleDismiss}
               disabled={saving}

@@ -6,7 +6,7 @@
     "icon": "package",
     "summary": "Crear un producto con nombre, precios, métodos de pago e inventario por tienda.",
     "tourId": "alta-producto",
-    "updatedAt": "2026-08-06",
+    "updatedAt": "2026-09-30",
     "keywords": [
       "alta",
       "nuevo producto",
@@ -105,7 +105,7 @@
         "blocks": [
           {
             "kind": "prose",
-            "text": "Mientras capturas un producto NUEVO, el formulario se va guardando solo en esa computadora. Si la página se recarga, se va la luz o el navegador se cierra, al volver a abrir el alta se restaura todo con el aviso “Se restauró un borrador sin guardar de tu última sesión”."
+            "text": "Mientras capturas un producto NUEVO, el formulario se va guardando solo (con todo y foto), para tu usuario. Si cierras la ventana por error, la página se recarga o el navegador se cierra, al volver a abrir el alta sigues donde ibas, con el aviso “Se restauró lo que tenías capturado”. Otro usuario en la misma computadora no ve tu borrador."
           },
           {
             "kind": "steps",
@@ -115,8 +115,12 @@
                 "detail": "El producto ya quedó registrado — el borrador ya no hace falta."
               },
               {
-                "title": "Se limpia al cancelar",
-                "detail": "Cancelar, la X o el clic fuera del modal cuentan como abandono a propósito: el borrador se descarta."
+                "title": "Cerrar NO lo borra",
+                "detail": "Cancelar, la X o el clic fuera solo cierran la ventana: al reabrir el alta, lo capturado sigue ahí."
+              },
+              {
+                "title": "Botón “Limpiar datos” para empezar de cero",
+                "detail": "Abajo a la izquierda del alta. Pide confirmar con un segundo clic y borra lo capturado y la foto guardada."
               },
               {
                 "title": "Caduca a las 24 horas",
@@ -126,9 +130,9 @@
           },
           {
             "kind": "callout",
-            "tone": "warn",
-            "title": "La foto no viaja en el borrador",
-            "text": "Las imágenes no se guardan en el borrador — si restauraste uno, vuelve a subir la foto. El mismo borrador automático existe en el alta de Tomos y al crear catálogos de Preventa."
+            "tone": "info",
+            "title": "También en Tomos y Preventas",
+            "text": "El alta de Tomos por lote (con la foto de cada tomo) y el alta de catálogos de Preventa guardan su borrador igual, con su propio botón “Limpiar datos”."
           }
         ]
       },
