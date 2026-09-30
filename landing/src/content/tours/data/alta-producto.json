@@ -39,7 +39,7 @@
     {
       "id": "campos",
       "title": "Solo 3 campos obligatorios",
-      "body": "Nombre, Precio Normal e Inventario — el checklist de arriba del formulario te marca cuáles faltan. El SKU es opcional. Y tranquilo: el borrador se guarda solo; si recargas la página, se restaura donde ibas."
+      "body": "Nombre, Precio Normal e Inventario — el checklist de arriba del formulario te marca cuáles faltan. El SKU es opcional. Y tranquilo: el borrador se guarda solo (con foto); si cierras la ventana o recargas, al reabrir sigues donde ibas. Para empezar de cero usa “Limpiar datos”."
     },
     {
       "id": "precios",

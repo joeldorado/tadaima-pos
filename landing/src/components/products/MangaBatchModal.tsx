@@ -11,7 +11,10 @@ import type { ApiError } from '@tadaima/api'
 import { EDITORIALS, MANGA_GENRES } from './mangaConstants'
 import { generateBarcode } from '@/lib/barcode'
 import { PRICE_FORM_LABELS } from '@/lib/priceLevels'
-import { useFormDraft } from '@/hooks/useFormDraft'
+import { useFormDraft, draftKeyFor } from '@/hooks/useFormDraft'
+import { useAuth } from '@tadaima/auth'
+import { saveDraftFiles, loadDraftFiles, clearDraftFiles } from '@/lib/draftFiles'
+import { isEmptyMangaBatchDraft } from '@/lib/mangaBatchDraft'
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 
@@ -120,6 +123,7 @@ type TomoAction =
   | { type: 'UPDATE'; id: string; field: 'numero' | 'isbn'; value: string }
   | { type: 'SET_IMAGE'; id: string; imageFile: File; imagePreview: string }
   | { type: 'SET_STATUS'; id: string; status: VolumeStatus; errorMsg?: string }
+  | { type: 'RESET'; rows: VolumeRow[] }
 
 function makeRow(): VolumeRow {
   return { id: crypto.randomUUID(), numero: '', isbn: '', status: 'idle' }
@@ -132,6 +136,7 @@ function tomoReducer(state: VolumeRow[], action: TomoAction): VolumeRow[] {
     case 'UPDATE':     return state.map(r => r.id === action.id ? { ...r, [action.field]: action.value } : r)
     case 'SET_IMAGE':  return state.map(r => r.id === action.id ? { ...r, imageFile: action.imageFile, imagePreview: action.imagePreview } : r)
     case 'SET_STATUS': return state.map(r => r.id === action.id ? { ...r, status: action.status, errorMsg: action.errorMsg } : r)
+    case 'RESET':      return action.rows
     default:           return state
   }
 }
@@ -163,21 +168,28 @@ interface MangaBatchDraft {
   tomos: TomoDraftRow[]
 }
 
+const EMPTY_SERIES: SeriesFields = { nombre: '', editorial: '', genero: '', precioPublico: '', margenPct: '30' }
+const EMPTY_PRICES: PriceFields = { price1: '', price2: '', price3: '', price4: '', price5: '' }
+const MANGA_DRAFT_BASE = 'tadaima-manga-batch-draft'
+
 export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCost = false }: Props) {
   const [tab, setTab] = useState<Tab>('tomos')
 
   // Borrador en localStorage (Joel 2026-08-05): protege el lote completo si
   // algo interrumpe la sesión antes de guardar. Siempre alta — este modal no
-  // tiene modo edición. `imageFile`/`imagePreview` de cada tomo se excluyen
-  // (File no serializa, imagePreview es un blob URL que muere al recargar).
-  const { draft, saveDraft, clearDraft } = useFormDraft<MangaBatchDraft>({ key: 'tadaima-manga-batch-draft' })
+  // tiene modo edición. Desde 2026-09-30 sobrevive a cerrar el modal (solo se
+  // borra al registrar todo o con "Limpiar datos"), es por usuario y las fotos
+  // de cada tomo van aparte en IndexedDB (lib/draftFiles), por id de renglón.
+  const { user } = useAuth()
+  const draftKey = draftKeyFor(MANGA_DRAFT_BASE, user?.id)
+  const { draft, saveDraft, clearDraft } = useFormDraft<MangaBatchDraft>({
+    key: draftKey,
+    legacyKey: MANGA_DRAFT_BASE,
+    isEmpty: d => isEmptyMangaBatchDraft(d),
+  })
 
-  const [series, setSeries] = useState<SeriesFields>(() => draft?.series ?? {
-    nombre: '', editorial: '', genero: '', precioPublico: '', margenPct: '30',
-  })
-  const [prices, setPrices] = useState<PriceFields>(() => draft?.prices ?? {
-    price1: '', price2: '', price3: '', price4: '', price5: '',
-  })
+  const [series, setSeries] = useState<SeriesFields>(() => draft?.series ?? { ...EMPTY_SERIES })
+  const [prices, setPrices] = useState<PriceFields>(() => draft?.prices ?? { ...EMPTY_PRICES })
 
   // Inventory: tienda groups, each with per-tomo quantities
   const [warehouseGroups, setWarehouseGroups] = useState<WarehouseGroup[]>(() => draft?.warehouseGroups ?? [])
@@ -193,9 +205,35 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
-    if (draft) toast.info('Se restauró un borrador sin guardar de tu última sesión.')
+    if (draft) toast.info('Se restauró lo que tenías capturado. Usa "Limpiar datos" para empezar de cero.', { id: 'draft-restored' })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Fotos de los tomos (IndexedDB, por id de renglón). `photosReady` evita que
+  // el primer guardado (sin fotos) borre las guardadas antes de leerlas.
+  const [photosReady, setPhotosReady] = useState(false)
+  useEffect(() => {
+    let alive = true
+    void loadDraftFiles(draftKey).then(files => {
+      if (!alive) return
+      for (const [rowId, blob] of Object.entries(files ?? {})) {
+        if (!(blob instanceof Blob) || !tomos.some(t => t.id === rowId)) continue
+        const file = blob instanceof File ? blob : new File([blob], 'foto', { type: blob.type })
+        dispatch({ type: 'SET_IMAGE', id: rowId, imageFile: file, imagePreview: URL.createObjectURL(file) })
+      }
+      setPhotosReady(true)
+    })
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const imageSig = tomos.map(t => (t.imageFile ? `${t.id}:${t.imageFile.name}:${t.imageFile.size}` : '')).join('|')
+  useEffect(() => {
+    if (!photosReady) return
+    const files: Record<string, File> = {}
+    for (const t of tomos) if (t.imageFile) files[t.id] = t.imageFile
+    void saveDraftFiles(draftKey, files)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imageSig, photosReady, draftKey])
 
   useEffect(() => {
     saveDraft({
@@ -205,11 +243,32 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [series, prices, warehouseGroups, tomos])
 
-  // Abandono deliberado (Cancelar/X/fondo): limpia el borrador para no
-  // insistir la próxima vez que abran "Alta de Tomos".
+  // Cerrar (Cancelar/X/fondo) YA NO borra el borrador (Joel 2026-09-30): al
+  // reabrir siguen donde iban. Bloqueado mientras se registra el lote (cerrar
+  // a medias podía duplicar tomos).
   const handleDismiss = () => {
-    clearDraft()
+    if (submitting) return
     onClose()
+  }
+
+  // "Limpiar datos" con confirmación en el mismo botón (2 clics).
+  const [confirmClear, setConfirmClear] = useState(false)
+  useEffect(() => {
+    if (!confirmClear) return
+    const t = window.setTimeout(() => setConfirmClear(false), 4000)
+    return () => window.clearTimeout(t)
+  }, [confirmClear])
+  const hasCapture = !isEmptyMangaBatchDraft({ series, prices, warehouseGroups, tomos }, tomos.some(t => t.imageFile))
+  const clearCapture = () => {
+    clearDraft()
+    void clearDraftFiles(draftKey)
+    setSeries({ ...EMPTY_SERIES })
+    setPrices({ ...EMPTY_PRICES })
+    setWarehouseGroups([])
+    dispatch({ type: 'RESET', rows: [makeRow()] })
+    setTab('tomos')
+    setConfirmClear(false)
+    toast.success('Datos limpiados.')
   }
 
   // ── costo = precio × (1 − margen/100) ─────────────────────────────────────
@@ -375,8 +434,8 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
     }
 
     setSubmitting(false)
-    if (!anyError) { clearDraft(); onSuccess(); onClose() }
-  }, [canSave, series, prices, warehouseGroups, tomos, onSuccess, onClose, clearDraft])
+    if (!anyError) { clearDraft(); void clearDraftFiles(draftKey); onSuccess(); onClose() }
+  }, [canSave, series, prices, warehouseGroups, tomos, onSuccess, onClose, clearDraft, draftKey])
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -399,7 +458,7 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
               <p className="text-xs" style={{ color: T.textSecondary }}>Librería · Manga Nacional · Lote</p>
             </div>
           </div>
-          <button onClick={handleDismiss} className="p-2 rounded-xl transition-colors" style={SECONDARY_BUTTON}>
+          <button onClick={handleDismiss} disabled={submitting} className="p-2 rounded-xl transition-colors disabled:opacity-40 disabled:cursor-not-allowed" style={SECONDARY_BUTTON}>
             <X size={20} style={{ color: T.textSecondary }} />
           </button>
         </div>
@@ -760,13 +819,30 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
 
         {/* ── Footer ──────────────────────────────────────────────────────── */}
         <div className="p-6 flex items-center justify-between gap-4" style={{ borderTop: BORDER_PANEL }}>
-          <div className="text-xs" style={{ color: T.textMuted }}>
-            {successCount > 0 && <span style={{ color: '#4ade80', fontWeight: 700 }}>{successCount} registrado{successCount !== 1 ? 's' : ''}</span>}
-            {successCount > 0 && pendingCount > 0 && <span className="mx-1">·</span>}
-            {pendingCount > 0 && <span>{pendingCount} pendiente{pendingCount !== 1 ? 's' : ''}</span>}
+          <div className="flex items-center gap-3 text-xs" style={{ color: T.textMuted }}>
+            {hasCapture && (
+              <button
+                type="button"
+                data-testid="draft-clear"
+                onClick={() => (confirmClear ? clearCapture() : setConfirmClear(true))}
+                disabled={submitting}
+                className="flex items-center gap-1.5 px-4 py-2.5 rounded-full text-xs font-bold transition-all disabled:opacity-40"
+                style={confirmClear
+                  ? { background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.5)', color: '#ef4444' }
+                  : SECONDARY_BUTTON}
+                title="Borra lo capturado y las fotos guardadas de esta alta"
+              >
+                <Trash2 size={14} /> {confirmClear ? '¿Borrar todo? Sí, limpiar' : 'Limpiar datos'}
+              </button>
+            )}
+            <span>
+              {successCount > 0 && <span style={{ color: '#4ade80', fontWeight: 700 }}>{successCount} registrado{successCount !== 1 ? 's' : ''}</span>}
+              {successCount > 0 && pendingCount > 0 && <span className="mx-1">·</span>}
+              {pendingCount > 0 && <span>{pendingCount} pendiente{pendingCount !== 1 ? 's' : ''}</span>}
+            </span>
           </div>
           <div className="flex gap-3">
-            <button onClick={handleDismiss} className="px-6 py-2.5 rounded-full text-sm font-bold transition-all" style={SECONDARY_BUTTON}>
+            <button onClick={handleDismiss} disabled={submitting} className="px-6 py-2.5 rounded-full text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed" style={SECONDARY_BUTTON}>
               Cancelar
             </button>
             <button
