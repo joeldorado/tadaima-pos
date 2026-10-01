@@ -15,14 +15,14 @@
       "historial de compras",
       "precio socio"
     ],
-    "updatedAt": "2026-08-06",
+    "updatedAt": "2026-10-01",
     "sections": [
       {
         "heading": "Alta y uso",
         "blocks": [
           {
             "kind": "prose",
-            "text": "Registras clientes con sus datos básicos. En Caja los asignas a una venta manualmente o escaneando su tarjeta TAD de socio Tadaima."
+            "text": "Registras clientes con sus datos básicos. En Caja los asignas a una venta manualmente o escaneando su tarjeta TAD de socio Tadaima. El buscador de Clientes trae los clientes del POS y, abajo, los socios Tadaima que coincidan (sin importar acentos; puedes escribir nombre y apellido): “Agregar” lo da de alta en el POS y “Abrir” te lleva al que ya está."
           },
           {
             "kind": "image",
