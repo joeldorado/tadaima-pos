@@ -4,6 +4,28 @@
 
 ---
 
+### Sesión 2026-10-01 — Clientes: el buscador trae siempre también a los socios Tadaima — rev tadaima-00026-yug
+
+**Reporte de tienda:** en Gestión de Clientes escribían al socio recién dado de alta y no salía.
+La pantalla SÍ está conectada a socios (mismo `GET /external/customers` que Caja, sin candado de
+rol), pero solo consultaba socios cuando NINGÚN cliente del POS coincidía, sin indicador de
+"buscando", y el filtro local era sensible a acentos y a la frase completa. PR
+joeldorado/tadaima-pos#25 (`f5c509e`), solo frontend.
+
+- Con 2+ letras busca en socios siempre: arriba clientes del POS, abajo "Socios Tadaima" con
+  "Buscando…" / "No se encontró". Socio que ya es cliente → botón "Abrir" (no se duplica); si no,
+  "Agregar".
+- `lib/customerSearch`: filtro local sin acentos y palabra por palabra (nombre, correo, teléfono,
+  número de socio). Caja sin cambios.
+
+**Verificado:** vitest 390, tsc = base, lint = base − 1. QA local (stub de socios): "ana" muestra
+la local Ana Sofía Rivera y el socio Ana García; Agregar → cliente; "garcia" sin acento lo
+encuentra y el socio pasa a "Abrir".
+
+**Deploy:** tadaima-00026-yug (rollback `tadaima-00024-wev`). Pedir Ctrl+Shift+R en tiendas.
+
+---
+
 ### Sesión 2026-10-01 — Cajero ajusta el tipo de cambio + filtro por Transferencia/Mixto en Ventas — rev tadaima-00024-wev
 
 **Pedido de Joel:** quitar el flag para que los cajeros puedan editar el tipo de cambio. En Caja,
