@@ -31,7 +31,7 @@
       "pagos de esta venta"
     ],
     "tourId": "venta-caja",
-    "updatedAt": "2026-08-06",
+    "updatedAt": "2026-10-01",
     "sections": [
       {
         "id": "abrir-caja",
@@ -129,7 +129,7 @@
             "kind": "callout",
             "tone": "info",
             "title": "¿El cliente trae dólares? Usa la calculadora",
-            "text": "Con Efectivo, el botón “$ Dólares” abre la calculadora: tecleas los billetes americanos, ves el tipo de cambio y en vivo te dice “LE ALCANZA — CAMBIO $X” o “FALTAN $X”. Nada cuenta hasta presionar “✓ Sí paga con dólares”; si solo era pregunta, cierras con “✗ Solo era pregunta” y no pasa nada. El sistema guarda los dólares físicos recibidos y el tipo de cambio de esa venta para el corte y los reportes."
+            "text": "Con Efectivo, el botón “$ Dólares” abre la calculadora: tecleas los billetes americanos, ves el tipo de cambio y en vivo te dice “LE ALCANZA — CAMBIO $X” o “FALTAN $X”. Nada cuenta hasta presionar “✓ Sí paga con dólares”; si solo era pregunta, cierras con “✗ Solo era pregunta” y no pasa nada. El sistema guarda los dólares físicos recibidos y el tipo de cambio de esa venta para el corte y los reportes. Si el tipo de cambio del día no es el que usas, el botón de ajustes junto a “Efectivo” lo cambia para tu caja (solo en tu pantalla; la referencia global la pone el admin en Configuración)."
           },
           {
             "kind": "image",

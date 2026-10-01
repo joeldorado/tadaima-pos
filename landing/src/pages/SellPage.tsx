@@ -6847,7 +6847,10 @@ export function SellPage() {
                                   "colapsar abajo"). */}
                               <ChevronUp size={11} className={`opacity-50 transition-transform ${paymentMenuOpen ? 'rotate-180' : ''}`} />
                             </button>
-                            {active === "Efectivo" && isAdmin && (
+                            {/* Ajuste del tipo de cambio de ESTA caja (solo esta pantalla; la
+                                referencia global la pone el admin en Configuración). Desde
+                                2026-10-01 también el cajero, no solo el admin. */}
+                            {active === "Efectivo" && (
                               <button
                                 onClick={() => { setTcDraft(tc.toString()); setShowTc(!showTc); }}
                                 className="w-9 border-l flex items-center justify-center transition-colors"
