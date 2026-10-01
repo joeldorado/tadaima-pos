@@ -4,6 +4,33 @@
 
 ---
 
+### Sesión 2026-10-01 — Cajero ajusta el tipo de cambio + filtro por Transferencia/Mixto en Ventas — rev tadaima-00024-wev
+
+**Pedido de Joel:** quitar el flag para que los cajeros puedan editar el tipo de cambio. En Caja,
+el botón de ajustes del TC (junto a Efectivo) era `active === "Efectivo" && isAdmin`; ahora lo ve
+cualquier rol. PR joeldorado/tadaima-pos#23 (`c8a935f`), solo frontend + guía in-app.
+
+- El ajuste cambia el TC de **esa pantalla de Caja** (estado local); se guarda en las ventas con
+  dólares (`sales.exchange_rate`). La referencia global sigue en Configuración (admin) y la Caja
+  se re-sincroniza cuando el admin la cambia. El backend no valida el TC.
+- Aviso: un TC mal puesto por el cajero mueve el reparto pesos/dólares de su corte.
+
+QA local como cajero: aparece el botón, TC 15.50 → 18.25 y la calculadora de dólares usa $18.25.
+
+**Filtro por Transferencia y Mixto en Ventas** (PR joeldorado/tadaima-pos#24, `f68cdc6`): en tienda
+piden filtrar por transferencias. El filtro de método de la Lista de Ventas no tenía Transferencia,
+miraba solo el PRIMER pago (una mixta salía solo bajo su primer método) y "Dólares" buscaba el
+método viejo (desde 2026-05-28 los USD van como Efectivo + `cash_received_usd`). Ahora
+`lib/paymentFilter` revisa todos los pagos: Efectivo, Tarjeta, Transferencia, Dólares (USD
+recibidos), Mixto y Varios/Preventas; el renglón de una mixta dice "Mixto". QA local: 4 ventas →
+Transferencia #124+#125, Mixto #125, Dólares #126, Efectivo #125–#127.
+
+**Verificado:** vitest 387, tsc = base (462), lint = base. Solo frontend, sin migraciones.
+
+**Deploy:** tadaima-00024-wev (rollback `tadaima-00021-xew`). Pedir Ctrl+Shift+R en tiendas.
+
+---
+
 ### Sesión 2026-09-30 — El cajero corrige ventas: tarjeta, toda la tienda y "Corregir pago" — rev tadaima-00021-xew
 
 **Pedido:** el admin tenía que ir a arreglar ventas mal hechas; el dueño dio luz verde a que
