@@ -570,7 +570,7 @@
         "blocks": [
           {
             "kind": "prose",
-            "text": "En el menú Ventas, el tab “Lista de Ventas” muestra los tickets del período: por default los de HOY, con accesos rápidos “7 días” y “Este mes” o un calendario para elegir cualquier rango. Puedes buscar por No. de ticket, cliente o producto, y filtrar por método de pago. El cajero y el gerente ven las ventas de toda su tienda (con el nombre de quien cobró) y el admin las de todas las tiendas; todos pueden filtrar por cajero."
+            "text": "En el menú Ventas, el tab “Lista de Ventas” muestra los tickets del período: por default los de HOY, con accesos rápidos “7 días” y “Este mes” o un calendario para elegir cualquier rango. Puedes buscar por No. de ticket, cliente o producto, y filtrar por método de pago (Efectivo, Tarjeta, Transferencia, Dólares o Mixto; una venta mixta sale en cada método que usó). El cajero y el gerente ven las ventas de toda su tienda (con el nombre de quien cobró) y el admin las de todas las tiendas; todos pueden filtrar por cajero."
           },
           {
             "kind": "image",
