@@ -284,6 +284,8 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     Route::post('sales/{sale}/return', [SalesController::class, 'return']);
     // ADR-016 — cancelación con log + reverso a cash_movements
     Route::post('sales/{sale}/cancel', [SalesController::class, 'cancel']);
+    // Corregir el método de pago (2026-09-30): caja de la venta abierta, o admin.
+    Route::put('sales/{sale}/payments', [SalesController::class, 'correctPayments']);
     // ADR-016 Fase 4 — lectura del log de cancelaciones
     Route::get('sale-cancellations', [SaleCancellationsController::class, 'index']);
 

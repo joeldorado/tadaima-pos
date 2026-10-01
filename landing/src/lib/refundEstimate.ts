@@ -92,3 +92,35 @@ export function estimateSaleRefund(sale: RefundSale, toCancel: Readonly<Record<n
     : round2(Math.max(0, runSubtotal - Math.max(0, runDiscount) + Math.max(0, runSurcharge)));
   return { total: round2(Math.max(0, Number(sale.total || 0) - totalAfter)), perLine };
 }
+
+export interface RefundSplit {
+  /** Sale del cajón (salida de caja en la sesión de quien cancela). */
+  cash: number;
+  /** Se devuelve por la terminal (tarjeta) o el banco (transferencia). */
+  other: number;
+}
+
+interface RefundPayment {
+  amount: number;
+  payment_method?: { name?: string | null } | null;
+}
+
+/**
+ * Parte el reembolso igual que SaleCancellationService (cashRatio): del cajón
+ * sale solo la proporción cobrada en efectivo/dólares. Sin pagos registrados o
+ * sin método (legacy) cuenta como efectivo, igual que el backend.
+ */
+export function splitRefundByCash(amount: number, payments: readonly RefundPayment[]): RefundSplit {
+  const total = payments.reduce((s, p) => s + Number(p.amount || 0), 0);
+  if (payments.length === 0 || total <= 0) return { cash: round2(amount), other: 0 };
+
+  const isCashLike = (p: RefundPayment): boolean => {
+    if (!p.payment_method) return true;
+    const name = (p.payment_method.name ?? "").toLowerCase();
+    return name.includes("efectivo") || name.includes("dolar") || name.includes("dólar");
+  };
+  const cashPaid = payments.filter(isCashLike).reduce((s, p) => s + Number(p.amount || 0), 0);
+  const cash = round2(amount * (cashPaid / total));
+
+  return { cash, other: round2(amount - cash) };
+}

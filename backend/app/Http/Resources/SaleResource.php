@@ -13,6 +13,12 @@ class SaleResource extends JsonResource
             'id'                  => $this->id,
             'store_id'            => $this->store_id,
             'register_session_id' => $this->register_session_id,
+            // 'open' | 'closed' | null — "Corregir pago" solo con la caja abierta
+            // (2026-09-30). Se expone cuando el caller cargó registerSession.
+            'register_session_status' => $this->when(
+                $this->relationLoaded('registerSession'),
+                fn () => $this->registerSession?->status,
+            ),
             'user_id'             => $this->user_id,
             'customer_id'         => $this->customer_id,
             'terminal_id'         => $this->terminal_id,

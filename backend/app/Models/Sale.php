@@ -112,4 +112,10 @@ class Sale extends Model
     {
         return $this->belongsTo(SalesDraft::class, 'draft_id');
     }
+
+    /** Caja (sesión/corte) donde se cobró. Corregir el pago depende de si sigue abierta. */
+    public function registerSession(): BelongsTo
+    {
+        return $this->belongsTo(CashRegisterSession::class, 'register_session_id');
+    }
 }

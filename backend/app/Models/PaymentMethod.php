@@ -21,7 +21,8 @@ class PaymentMethod extends Model
     /**
      * Clasificación tarjeta vs efectivo-like por nombre ("Tarjeta Débito",
      * "Tarjeta Crédito" del seeder). Usada por el guard de restricciones de
-     * pago del checkout y por el bloqueo de cancelaciones con tarjeta.
+     * pago (cobro y corrección de pago) y por el bloqueo de cancelaciones de
+     * PREVENTAS con tarjeta (las ventas con tarjeta se cancelan desde 2026-09-30).
      */
     public function isCard(): bool
     {

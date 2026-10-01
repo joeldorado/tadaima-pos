@@ -128,7 +128,7 @@ delgados → `app/Services/`). Decisiones load-bearing:
 |-----|-----|
 | **ADR-014** | **Carrito client-authoritative.** El carrito vive en el frontend; `POST /sales` recibe `items[]` directos. Casi no se usan los drafts en vivo (endpoints comentados en `routes/api.php`). |
 | **ADR-015** | **`cost_at_sale` (snapshot de costo).** `sale_items.cost`, `pre_sale_order_items.cost` y `layaways.cost` se congelan al INSERT. Re-preciar un producto NO altera reportes históricos. `cost` se expone solo a admin (o rol con `can_view_cost`). Desde 2026-08-18 también se congela la IDENTIDAD: `sale_items.product_name`/`product_sku` — eliminar un producto (ventas ya NO bloquean el DELETE; solo apartados) deja `product_id` NULL pero la venta conserva nombre/SKU en historial, reportes, top-products y ticket (`product_deleted: true` en el Resource). |
-| **ADR-016** | **Cancelaciones con log + reverso de caja.** `POST /sales/{id}/cancel` y `POST /pre-sale-orders/{id}/cancel`: editan in-place, restauran stock (`InventoryMovement` type `devolucion`), reversan efectivo (`cash_movements` type `salida`) y guardan snapshot en `sale_cancellations`. Desde 2026-09-29 se devuelve lo **cobrado** (neto con descuento/aumento prorrateado por cantidad): `amount_refunded = total antes − total después`. |
+| **ADR-016** | **Cancelaciones con log + reverso de caja.** `POST /sales/{id}/cancel` y `POST /pre-sale-orders/{id}/cancel`: editan in-place, restauran stock (`InventoryMovement` type `devolucion`), reversan efectivo (`cash_movements` type `salida`) y guardan snapshot en `sale_cancellations`. Desde 2026-09-29 se devuelve lo **cobrado** (neto con descuento/aumento prorrateado por cantidad): `amount_refunded = total antes − total después`. Desde 2026-09-30 las ventas con **tarjeta** también se cancelan (del cajón sale solo la porción en efectivo; preventas con tarjeta y el `/return` viejo siguen bloqueados). |
 | **ADR-017** | **Una caja por persona.** Cada usuario opera su propia sesión/corte; la caja se nombra `"{usuario} · {tienda}"`. Varios usuarios pueden tener caja abierta en la misma tienda a la vez. Corte = por persona (mismo user en 2 devices = 1 corte). |
 | Guard de precios | `CheckoutService` valida server-side que cada `price` coincida (±$0.01) con un nivel del catálogo del producto para esa tienda. Items `is_damaged=true` permiten precio manual. Para cobrar ARRIBA del catálogo existe el aumento por línea (`items.*.line_surcharge`, 2026-09-29): el `price` sigue siendo el de catálogo y el aumento va en `sale_items.surcharge_*`. |
 
@@ -229,7 +229,8 @@ al dar de alta una tienda (y existe la migración de backfill
 | GET | `/sales` · GET `/sales/{id}` | Lista paginada (scoped por rol) / detalle |
 | POST | `/sales` | **Checkout.** `items[]` + `payments[]` directos (carrito client-authoritative) |
 | POST | `/sales/{sale}/return` | Devolución (restaura inventario) |
-| POST | `/sales/{sale}/cancel` | Cancelación parcial/total con log + reverso |
+| POST | `/sales/{sale}/cancel` | Cancelación parcial/total con log + reverso (también tarjeta desde 2026-09-30: sin salida de caja) |
+| PUT | `/sales/{sale}/payments` | Corregir el método de pago (2026-09-30): caja de la venta abierta o admin; misma suma; `SalePaymentCorrectionService` |
 | GET | `/sale-cancellations` | Historial de cancelaciones (filtros + paginado) |
 
 ### Sales Drafts (`SalesDraftController`)

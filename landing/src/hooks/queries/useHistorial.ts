@@ -1,5 +1,6 @@
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
-import { getSales, getPreSaleOrders, type SaleDetail, type PreSaleOrder } from '@tadaima/api'
+import { getPreSaleOrders, type SaleDetail, type PreSaleOrder } from '@tadaima/api'
+import { fetchAllSales } from '@/lib/fetchAllPages'
 import { queryKeys } from '@/lib/queryKeys'
 import { useTodayLocal } from '@/lib/date'
 
@@ -16,6 +17,9 @@ export type HistorialEntry =
  *   refetch traiga el cambio.
  * - Invalidar con `queryClient.invalidateQueries({ queryKey: queryKeys.historial.all })`
  *   en los success handlers de checkout/cancelación → la lista se actualiza sola.
+ * - Ventas de TODA la tienda del día (2026-09-30, `whole_store`): el cajero
+ *   corrige/cancela también las de otros cajeros. Todas las páginas: con la
+ *   tienda completa 50 se quedaba corto en un día movido.
  */
 export function useTodayHistorialQuery(storeId?: number | null, options?: { enabled?: boolean }) {
   // Fecha local reactiva: el hook detecta el cambio de día (setInterval 60s) y
@@ -24,12 +28,9 @@ export function useTodayHistorialQuery(storeId?: number | null, options?: { enab
   return useQuery<HistorialEntry[]>({
     queryKey: queryKeys.historial.today(storeId, today),
     queryFn: async () => {
-      const baseParams: Record<string, unknown> = { per_page: 50 }
-      if (storeId) baseParams.store_id = storeId
-
       const [salesRes, ordersRes] = await Promise.all([
-        getSales({ ...baseParams, from: today, to: today } as Parameters<typeof getSales>[0]),
-        getPreSaleOrders({ ...(storeId ? { store_id: storeId } : {}), from: today, to: today, per_page: 50 } as Parameters<typeof getPreSaleOrders>[0]),
+        fetchAllSales({ ...(storeId ? { store_id: storeId } : {}), from: today, to: today, whole_store: true }),
+        getPreSaleOrders({ ...(storeId ? { store_id: storeId } : {}), from: today, to: today, per_page: 50 }),
       ])
 
       const entries: HistorialEntry[] = [

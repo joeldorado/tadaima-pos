@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { X, AlertTriangle, Loader2, RotateCcw, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
-import { estimateSaleRefund, type RefundSale } from '@/lib/refundEstimate'
+import { estimateSaleRefund, splitRefundByCash, type RefundSale } from '@/lib/refundEstimate'
 import {
   cancelSale, cancelPreSaleOrder,
   type SaleDetail, type PreSaleOrder,
@@ -99,6 +99,9 @@ function SaleCancelBody({ sale, onClose, onSuccess, cashSessionId, reasonCode, s
     toCancel.forEach(it => { map[it.id!] = qtyMap[it.id!] ?? 0 })
     return estimateSaleRefund(refundSale, map).total
   }, [refundSale, toCancel, qtyMap, isFullCancel])
+  // Del cajón sale solo lo cobrado en efectivo; tarjeta/transferencia se
+  // devuelven por la terminal o el banco (2026-09-30: tarjeta ya se cancela).
+  const refundSplit = useMemo(() => splitRefundByCash(refundEstimate, sale.payments ?? []), [refundEstimate, sale.payments])
   /** Devolución de UN renglón con la cantidad elegida (para la columna derecha). */
   const lineRefund = (id: number, qty: number) =>
     qty > 0 ? estimateSaleRefund(refundSale, { [id]: qty }).perLine[id] ?? 0 : 0
@@ -128,8 +131,16 @@ function SaleCancelBody({ sale, onClose, onSuccess, cashSessionId, reasonCode, s
   return (
     <Shell title={`Cancelar Venta #${sale.id}`} onClose={onClose}>
       <p className="text-xs mb-3" style={{ color: 'var(--td-text-lo)' }}>
-        Selecciona los artículos a cancelar. El stock regresa al inventario y se genera una <strong>salida de caja</strong> en la sesión actual.
+        Selecciona los artículos a cancelar. El stock regresa al inventario.{' '}
+        {refundSplit.other > 0 && refundSplit.cash <= 0
+          ? <>No sale efectivo del cajón: <strong>devuelve el dinero por la terminal (tarjeta) o el banco (transferencia)</strong>.</>
+          : <>Lo cobrado en efectivo sale como <strong>salida de caja</strong> en tu caja abierta.</>}
       </p>
+      {refundSplit.cash > 0 && !cashSessionId && (
+        <p className="text-[11px] mb-3 font-bold" style={{ color: '#f59e0b' }}>
+          No tienes caja abierta: la salida de efectivo no quedará en ningún corte.
+        </p>
+      )}
 
       {/* Items */}
       <div className="rounded-2xl overflow-hidden mb-4" style={{ background: 'var(--td-card-bg)', border: '1px solid var(--td-card-border)' }}>
@@ -172,7 +183,8 @@ function SaleCancelBody({ sale, onClose, onSuccess, cashSessionId, reasonCode, s
 
       {/* Footer */}
       <Footer
-        refundEstimate={refundEstimate}
+        refundEstimate={refundSplit.cash}
+        otherRefund={refundSplit.other}
         isFullCancel={isFullCancel}
         submitting={submitting}
         onClose={onClose}
@@ -321,12 +333,19 @@ function ReasonPicker({ code, setCode, text, setText }: { code: CancellationReas
   )
 }
 
-function Footer({ refundEstimate, isFullCancel, submitting, onClose, onSubmit, disabled }: { refundEstimate: number; isFullCancel: boolean; submitting: boolean; onClose: () => void; onSubmit: () => void; disabled: boolean }) {
+function Footer({ refundEstimate, otherRefund = 0, isFullCancel, submitting, onClose, onSubmit, disabled }: { refundEstimate: number; otherRefund?: number; isFullCancel: boolean; submitting: boolean; onClose: () => void; onSubmit: () => void; disabled: boolean }) {
   return (
     <div className="flex items-center justify-between gap-3 pt-3 border-t" style={{ borderColor: 'var(--td-divider)' }}>
       <div>
-        <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--td-text-lo)' }}>Salida estimada</p>
+        <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--td-text-lo)' }}>
+          {otherRefund > 0 ? 'Salida de caja (efectivo)' : 'Salida estimada'}
+        </p>
         <p className="text-xl font-black" style={{ color: '#f87171' }}>{fmt(refundEstimate)}</p>
+        {otherRefund > 0 && (
+          <p className="text-[11px] font-bold" style={{ color: 'var(--td-text-md)' }}>
+            + {fmt(otherRefund)} por terminal / banco
+          </p>
+        )}
       </div>
       <div className="flex items-center gap-2">
         <button

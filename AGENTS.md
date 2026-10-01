@@ -8,7 +8,7 @@
 > Detalle adicional: [`CLAUDE.md`](CLAUDE.md) (comandos y arquitectura del frontend) y
 > [`backend/AGENTS.md`](backend/AGENTS.md) (API, ADRs y referencia de endpoints).
 >
-> Última revisión: 2026-09-25.
+> Última revisión: 2026-09-30.
 
 ---
 
@@ -135,6 +135,19 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   cancelación ya resta el dinero una vez con un movimiento de salida. No lo cambies a
   "solo completed" (restaría doble).
 - La cancelación prorratea la salida de caja solo a la porción en efectivo.
+- **Corregir ventas (2026-09-30):** cajeros y gerentes ven las ventas de toda su tienda
+  (`whole_store=1` desde la UI) y cancelan cualquiera, también con **tarjeta** (no sale
+  efectivo: se devuelve en la terminal; la comisión queda como gasto). La salida de una
+  cancelación cae en la caja de quien cancela. Las PREVENTAS con tarjeta siguen sin
+  cancelarse.
+- **Corregir el método de pago** (`PUT /sales/{id}/payments`): cualquier rol mientras la
+  caja donde se cobró siga abierta; con el corte cerrado solo admin. Misma suma, un método
+  o Mixto (efectivo + transferencia), sin dólares, nunca en ventas con cancelaciones, motivo
+  obligatorio. Pasar a EFECTIVO una venta de la caja de otro: solo su dueño, gerente o admin
+  (si no, un cajero inventaría efectivo en caja ajena y lo sacaría cancelando en la suya).
+  Recalcula comisión y el esperado del corte; queda en `system_logs` (`sale.payment_changed`).
+- La salida de una cancelación solo va a una caja ABIERTA de quien cancela (admin: cualquiera
+  abierta) — `Controller::refundSessionError()`.
 
 ### Productos e inventario
 - **Dos almacenes por tienda:** Exhibición (`warehouses.type='store'`, lo único que se

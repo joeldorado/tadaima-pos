@@ -28,7 +28,9 @@ use Illuminate\Support\Facades\DB;
  *
  * Invariantes:
  *  - Stock SIEMPRE se restaura (entra a inventory + InventoryMovement type='devolucion').
- *  - Dinero SIEMPRE genera cash_movement type='salida' en la sesión activa.
+ *  - Del cajón sale solo la porción COBRADA EN EFECTIVO (cash_movement
+ *    type='salida' en la sesión activa); lo de tarjeta/transferencia se
+ *    devuelve por la terminal o el banco, fuera del sistema.
  *  - Se devuelve lo COBRADO (neto: bruto − descuento + aumento, prorrateados
  *    por cantidad) = total antes − total después (2026-09-29).
  *  - Snapshot inmutable de items cancelados (incluye cost_at_sale ADR-015).
@@ -50,27 +52,32 @@ class SaleCancellationService
         User $cancelledBy,
         ?int $activeSessionId,
     ): SaleCancellation {
-        if ($sale->cancellation_status === Sale::CANCELLATION_FULL) {
-            throw new \DomainException('Esta venta ya fue cancelada por completo.');
-        }
+        return DB::transaction(function () use ($sale, $itemsToCancel, $reasonCode, $reasonText, $cancelledBy, $activeSessionId) {
+            // Lock de la venta: los pagos y el cashRatio se leen DENTRO de la
+            // transacción para no cruzarse con una corrección de método de pago
+            // (PUT /sales/{id}/payments) que se confirme a media cancelación.
+            $sale = Sale::lockForUpdate()->findOrFail($sale->id);
+            if ($sale->cancellation_status === Sale::CANCELLATION_FULL) {
+                throw new \DomainException('Esta venta ya fue cancelada por completo.');
+            }
 
-        // Regla de negocio (Joel 2026-06-10): ventas pagadas con tarjeta NO se
-        // cancelan — la comisión de terminal ya se pagó y la tienda pierde.
-        // El reverso de un cobro con tarjeta se maneja fuera del sistema.
-        $payments = $sale->payments()->with('paymentMethod')->get();
-        $this->assertNoCardPayments($payments, 'venta');
+            // Ventas con tarjeta SÍ se cancelan desde 2026-09-30 (decisión Joel; antes
+            // bloqueado desde 2026-06-10): regresa el stock y queda el registro, pero
+            // no sale efectivo del cajón (cashRatio = 0) — la devolución al cliente se
+            // hace en la terminal y la comisión ya pagada queda como gasto de la
+            // tienda. Las PREVENTAS con tarjeta siguen bloqueadas (cancelPreSaleOrder).
+            $payments = $sale->payments()->with('paymentMethod')->get();
 
-        // Pago mixto (2026-08-05): del cajón solo sale la porción pagada con
-        // métodos cash-like — lo transferido nunca entró al cajón, así que su
-        // reverso va por el banco. Sin pagos registrados (legacy) o método
-        // borrado, ratio 1 conserva el comportamiento histórico.
-        $totalPaid = (float) $payments->sum('amount');
-        $cashPaid  = (float) $payments
-            ->filter(fn ($p) => $p->paymentMethod?->isCashLike() ?? true)
-            ->sum('amount');
-        $cashRatio = $totalPaid > 0 ? $cashPaid / $totalPaid : 1.0;
+            // Pago mixto (2026-08-05): del cajón solo sale la porción pagada con
+            // métodos cash-like — lo transferido nunca entró al cajón, así que su
+            // reverso va por el banco. Sin pagos registrados (legacy) o método
+            // borrado, ratio 1 conserva el comportamiento histórico.
+            $totalPaid = (float) $payments->sum('amount');
+            $cashPaid  = (float) $payments
+                ->filter(fn ($p) => $p->paymentMethod?->isCashLike() ?? true)
+                ->sum('amount');
+            $cashRatio = $totalPaid > 0 ? $cashPaid / $totalPaid : 1.0;
 
-        return DB::transaction(function () use ($sale, $itemsToCancel, $reasonCode, $reasonText, $cancelledBy, $activeSessionId, $cashRatio) {
             $sale->load('items.product');
 
             $isFullCancel = empty($itemsToCancel);
