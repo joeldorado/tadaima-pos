@@ -4,6 +4,37 @@
 
 ---
 
+### Sesión 2026-09-30 — El cajero corrige ventas: tarjeta, toda la tienda y "Corregir pago" — rev tadaima-00021-xew
+
+**Pedido:** el admin tenía que ir a arreglar ventas mal hechas; el dueño dio luz verde a que
+el cajero pueda. Revisado (código + prod solo lectura): **no había validación de rol que
+quitar** — cajeros ya cancelaban ventas en efectivo (CAJA MACROPLAZA, 28/09). Bloqueaban
+4 cosas, las 4 confirmadas por Joel. PR joeldorado/tadaima-pos#22 (`440353e`), sin migraciones.
+
+**Qué cambia** (decisiones de Joel):
+- **Cancelar con tarjeta** (total/parcial), para todos: regresa stock y queda registro; NO sale
+  efectivo del cajón (se devuelve en la terminal; la comisión queda como gasto). Preventas con
+  tarjeta y el `/return` viejo siguen bloqueados. Transferencia ya se puede cancelar en Ventas.
+- **El cajero ve toda su tienda** (Ventas y Caja → Historial, `whole_store=1`) con el nombre de
+  quien cobró y filtro por cajero.
+- **"Corregir pago"** (`PUT /sales/{id}/payments`): cualquier rol con la caja de la venta
+  abierta; corte cerrado → solo admin. Misma suma, un método o Mixto (E+T), sin dólares, nunca
+  con cancelaciones, motivo obligatorio; recalcula comisión y esperado del corte; log
+  `sale.payment_changed`.
+- **Revisión de seguridad:** pasar a efectivo una venta de la caja de OTRO solo su dueño /
+  gerente / admin; la salida de una cancelación solo a una caja abierta de quien cancela
+  (`refundSessionError`); locks en corrección y cancelación.
+
+**Verificado:** backend 638, vitest 382, tsc = base (462). QA local como cajero: efectivo→tarjeta
+(esperado $249→$0, tarjeta $399→$648, comisión $8.72, log), cancelar con tarjeta (sin salida,
+stock regresa), ventas de otro usuario visibles, corte cerrado → 403.
+
+**Pendiente aparte:** `GET /sale-cancellations` no filtra por tienda (tarea separada).
+
+**Deploy:** tadaima-00021-xew (rollback `tadaima-00019-pal`). Pedir Ctrl+Shift+R en tiendas.
+
+---
+
 ### Sesión 2026-09-30 — Socios sin acentos + traslados los recibe el destino + promo vs precio socio — rev tadaima-00019-pal
 
 Un solo deploy con 3 cambios (PRs joeldorado/tadaima-pos#20 y joeldorado/tadaima-pos#21, sin migraciones):
