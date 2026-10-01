@@ -25,6 +25,7 @@ import {
 } from "recharts";
 import { getCashReport, storageUrl } from "@tadaima/api";
 import { buildPaymentSummary } from "@/lib/paymentSummary";
+import { saleMatchesPaymentFilter, type PaymentFilter } from "@/lib/paymentFilter";
 import { dispatchTicket } from "@/lib/ticketPrint";
 import { discountPct } from "@/lib/promo";
 import { DISCOUNT_REASON_LABELS, SURCHARGE_REASON_LABELS } from "@/lib/discountReasons";
@@ -93,6 +94,9 @@ function paymentTone(method: string): React.CSSProperties {
   }
   if (value.includes("transfer")) {
     return { background: "rgba(14,165,233,0.12)", border: "1px solid rgba(14,165,233,0.28)", color: "#0284c7" };
+  }
+  if (value.includes("mixto")) {
+    return { background: "rgba(168,85,247,0.12)", border: "1px solid rgba(168,85,247,0.28)", color: "#9333ea" };
   }
   return { background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.28)", color: "#059669" };
 }
@@ -545,7 +549,8 @@ function SaleRow({
   onToggle: () => void;
 }) {
   const itemCount = sale.items?.reduce((s, i) => s + i.quantity, 0) ?? 0;
-  const paymentName = getPaymentMethodName(sale);
+  // Todos los pagos (2026-10-01): una venta mixta dice "Mixto", no su primer método.
+  const paymentName = buildPaymentSummary(sale).methodLabel;
   // Descuento del ticket: monto + % derivado (chip en la fila + línea en el detalle).
   const saleDiscount = sale.discount ?? 0;
   const saleDiscPct = discountPct(saleDiscount, sale.subtotal ?? (sale.total + saleDiscount));
@@ -2186,7 +2191,7 @@ export function SalesPage() {
   const todayISO = () => getTodayLocal();
   const [filterStartDate, setFilterStartDate] = useState<string>(todayISO);
   const [filterEndDate, setFilterEndDate]     = useState<string>(todayISO);
-  const [filterMethod, setFilterMethod]       = useState("all");
+  const [filterMethod, setFilterMethod]       = useState<PaymentFilter>("all");
   const [filterCashierId, setFilterCashierId] = useState<number | null>(null);
   const [isMethodOpen, setIsMethodOpen]       = useState(false);
   const [activeTab, setActiveTab]             = useState<"ventas" | "productos" | "flujo" | "reporte">("ventas");
@@ -2231,12 +2236,16 @@ export function SalesPage() {
     return "custom";
   }, [filterStartDate, filterEndDate]);
 
-  const methodOptions = [
-    { value: "all",      label: "Todos los pagos" },
-    { value: "efectivo", label: "Efectivo" },
-    { value: "tarjeta",  label: "Tarjeta" },
-    { value: "dólares",  label: "Dólares" },
-    { value: "varios",   label: "Varios / Preventas" },
+  // Filtro por método (2026-10-01): + Transferencia y Mixto; revisa todos los
+  // pagos de la venta y Dólares = efectivo con USD recibidos (lib/paymentFilter).
+  const methodOptions: Array<{ value: PaymentFilter; label: string }> = [
+    { value: "all",           label: "Todos los pagos" },
+    { value: "efectivo",      label: "Efectivo" },
+    { value: "tarjeta",       label: "Tarjeta" },
+    { value: "transferencia", label: "Transferencia" },
+    { value: "dolares",       label: "Dólares" },
+    { value: "mixto",         label: "Mixto" },
+    { value: "varios",        label: "Varios / Preventas" },
   ];
 
   const gradientId = useMemo(() => `grad-${Math.random().toString(36).slice(2, 8)}`, []);
@@ -2396,7 +2405,7 @@ export function SalesPage() {
   // ── Filtrado (method only, dates now server-side) ─────────────────────────
   const filteredSales = useMemo(() => {
     if (filterMethod === "all") return sales;
-    return sales.filter(s => getPaymentMethodName(s).toLowerCase().includes(filterMethod.toLowerCase()));
+    return sales.filter(s => saleMatchesPaymentFilter(s, filterMethod));
   }, [sales, filterMethod]);
 
   const filteredPreSales = useMemo(() => {
