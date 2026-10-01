@@ -18,6 +18,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useCustomersQuery } from "@/hooks/queries/useCustomers";
 import { queryKeys } from "@/lib/queryKeys";
 import { isValidEmail, isValidPhone } from "@/lib/validation";
+import { matchesCustomerSearch } from "@/lib/customerSearch";
 
 // ─── Paleta Tadaima ───────────────────────────────────────────────────────────
 const T = {
@@ -122,6 +123,75 @@ type EditingCustomer = {
 
 const EMPTY_FORM: EditingCustomer = { name: "", phone: "", email: "", address: "", notes: "" };
 
+interface SocioResultsProps {
+  results: ExternalCardLookup[];
+  loading: boolean;
+  /** Clientes del POS por número de socio: si ya existe se ofrece "Abrir", no "Agregar". */
+  localByMemberId: ReadonlyMap<string, Customer>;
+  addingExt: string | null;
+  onAdd: (ext: ExternalCardLookup) => void;
+  onOpen: (customer: Customer) => void;
+}
+
+/**
+ * Resultados de la base de socios Tadaima (2026-10-01): se buscan SIEMPRE que
+ * haya búsqueda, no solo cuando no hay clientes del POS que coincidan.
+ */
+function SocioResults({ results, loading, localByMemberId, addingExt, onAdd, onOpen }: SocioResultsProps) {
+  return (
+    <div className="w-full pt-4 space-y-2">
+      <p className="text-[9px] font-black text-red-400/70 uppercase tracking-widest">Socios Tadaima</p>
+      {loading && results.length === 0 && (
+        <p className="flex items-center gap-2 text-[11px] font-bold text-white/40">
+          <Loader2 size={13} className="animate-spin" /> Buscando en socios Tadaima…
+        </p>
+      )}
+      {!loading && results.length === 0 && (
+        <p className="text-[11px] font-bold text-white/30">No se encontró en socios Tadaima.</p>
+      )}
+      {results.map(ext => {
+        const existing = localByMemberId.get(ext.external_member_id);
+        return (
+          <div
+            key={ext.external_member_id}
+            className="flex items-center gap-4 px-5 py-4 rounded-[20px] bg-white/[0.03] border border-red-500/15 hover:border-red-500/30 transition-all"
+          >
+            <div className="w-11 h-11 rounded-xl flex items-center justify-center text-base font-black italic shrink-0"
+              style={{ background: "linear-gradient(135deg,#CC2200,#000)", border: "1px solid rgba(255,255,255,0.1)" }}>
+              {(ext.name ?? "?").charAt(0)}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-black text-white truncate uppercase tracking-tight">{ext.name}</p>
+              <p className="text-[10px] font-black text-white/20 uppercase tracking-widest">{ext.external_member_id}{ext.email ? ` · ${ext.email}` : ""}</p>
+              {ext.estatus && <div className="mt-1.5"><SocioBadge status={ext.estatus} /></div>}
+            </div>
+            {existing ? (
+              <button
+                type="button"
+                onClick={() => onOpen(existing)}
+                className="px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider text-white/80 border border-white/15 hover:border-white/30 transition-all"
+                title="Ya está en tus clientes"
+              >
+                Abrir
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={addingExt === ext.external_member_id}
+                onClick={() => onAdd(ext)}
+                className="px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider text-white transition-all disabled:opacity-50"
+                style={{ background: "linear-gradient(135deg,#CC2200,#FF4422)" }}
+              >
+                {addingExt === ext.external_member_id ? "..." : "Agregar"}
+              </button>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function ClientsPage() {
   const [saving, setSaving]           = useState(false);
   const [search, setSearch]           = useState("");
@@ -129,6 +199,7 @@ export function ClientsPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [form, setForm]               = useState<EditingCustomer>(EMPTY_FORM);
   const [extResults, setExtResults]   = useState<ExternalCardLookup[]>([]);
+  const [extLoading, setExtLoading]   = useState(false);
   const [addingExt, setAddingExt]     = useState<string | null>(null);
   const [filterMode, setFilterMode]   = useState<"all" | "socios" | "locales">("all");
   const [refreshingMember, setRefreshingMember] = useState(false);
@@ -254,15 +325,10 @@ export function ClientsPage() {
   };
 
   // ── Filtrado local ─────────────────────────────────────────────────────────
+  // Sin acentos y palabra por palabra (lib/customerSearch, 2026-10-01).
   const filtered = useMemo(() =>
     customers.filter(c => {
-      const q = search.toLowerCase();
-      const matchesSearch =
-        c.name.toLowerCase().includes(q) ||
-        (c.email?.toLowerCase().includes(q)) ||
-        (c.phone?.includes(search)) ||
-        (c.external_member_id?.toLowerCase().includes(q));
-      if (!matchesSearch) return false;
+      if (!matchesCustomerSearch(c, search)) return false;
       if (filterMode === "socios")  return !!c.external_member_id;
       if (filterMode === "locales") return !c.external_member_id;
       return true;
@@ -270,16 +336,34 @@ export function ClientsPage() {
     [customers, search, filterMode]
   );
 
-  // Supabase fallback cuando no hay resultados en POS
+  const localByMemberId = useMemo(
+    () => new Map(customers.filter(c => c.external_member_id).map(c => [c.external_member_id as string, c])),
+    [customers],
+  );
+
+  // Socios Tadaima (2026-10-01): se consulta SIEMPRE con 2+ letras, aunque haya
+  // clientes del POS que coincidan — antes solo con 0 locales y un socio nuevo
+  // "no salía" si algún cliente local se parecía. Las respuestas viejas se
+  // descartan (cancelled) para no pintar resultados de lo que ya se borró.
+  const term = search.trim();
+  const searchSocios = term.length >= 2 && filterMode !== "locales";
   useEffect(() => {
     setExtResults([]);
-    if (!search.trim() || search.trim().length < 2 || filtered.length > 0) return;
+    if (!searchSocios) {
+      setExtLoading(false);
+      return;
+    }
+    setExtLoading(true);
+    let cancelled = false;
     const t = setTimeout(async () => {
-      const exts = await searchExternalCustomers(search.trim());
-      setExtResults(exts);
+      const exts = await searchExternalCustomers(term);
+      if (!cancelled) {
+        setExtResults(exts);
+        setExtLoading(false);
+      }
     }, 400);
-    return () => clearTimeout(t);
-  }, [search, filtered.length]);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [term, searchSocios]);
 
   const handleAddExtCustomer = useCallback(async (ext: ExternalCardLookup) => {
     setAddingExt(ext.external_member_id);
@@ -404,44 +488,17 @@ export function ClientsPage() {
                 <Loader2 size={32} className="animate-spin text-red-500" />
                 <p className="text-xs font-black uppercase tracking-widest text-white/20">Cargando clientes...</p>
               </div>
-            ) : filtered.length === 0 ? (
-              <div className="flex flex-col items-center justify-center p-10 gap-4">
-                <Users size={40} className="text-white/10" />
-                <p className="text-xs font-black uppercase tracking-widest text-white/20">
-                  {search ? "Sin resultados en el POS" : "No hay clientes registrados"}
-                </p>
-                {extResults.length > 0 && (
-                  <div className="w-full mt-2 space-y-2">
-                    <p className="text-[9px] font-black text-red-400/70 uppercase tracking-widest text-center">Socios Tadaima</p>
-                    {extResults.map(ext => (
-                      <div
-                        key={ext.external_member_id}
-                        className="flex items-center gap-4 px-5 py-4 rounded-[20px] bg-white/[0.03] border border-red-500/15 hover:border-red-500/30 transition-all"
-                      >
-                        <div className="w-11 h-11 rounded-xl flex items-center justify-center text-base font-black italic shrink-0"
-                          style={{ background: "linear-gradient(135deg,#CC2200,#000)", border: "1px solid rgba(255,255,255,0.1)" }}>
-                          {(ext.name ?? "?").charAt(0)}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-black text-white truncate uppercase tracking-tight">{ext.name}</p>
-                          <p className="text-[10px] font-black text-white/20 uppercase tracking-widest">{ext.external_member_id}{ext.email ? ` · ${ext.email}` : ""}</p>
-                          {ext.estatus && <div className="mt-1.5"><SocioBadge status={ext.estatus} /></div>}
-                        </div>
-                        <button
-                          type="button"
-                          disabled={addingExt === ext.external_member_id}
-                          onClick={() => handleAddExtCustomer(ext)}
-                          className="px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider text-white transition-all disabled:opacity-50"
-                          style={{ background: "linear-gradient(135deg,#CC2200,#FF4422)" }}
-                        >
-                          {addingExt === ext.external_member_id ? "..." : "Agregar"}
-                        </button>
-                      </div>
-                    ))}
+            ) : (
+              <>
+                {filtered.length === 0 && (
+                  <div className="flex flex-col items-center justify-center p-10 gap-4">
+                    <Users size={40} className="text-white/10" />
+                    <p className="text-xs font-black uppercase tracking-widest text-white/20">
+                      {search ? "Sin clientes del POS con esa búsqueda" : "No hay clientes registrados"}
+                    </p>
                   </div>
                 )}
-              </div>
-            ) : filtered.map(c => {
+                {filtered.map(c => {
               const tier = resolveTier(c);
               return (
                 <div
@@ -479,6 +536,18 @@ export function ClientsPage() {
                 </div>
               );
             })}
+                {searchSocios && (
+                  <SocioResults
+                    results={extResults}
+                    loading={extLoading}
+                    localByMemberId={localByMemberId}
+                    addingExt={addingExt}
+                    onAdd={ext => { void handleAddExtCustomer(ext); }}
+                    onOpen={c => setSelectedId(c.id)}
+                  />
+                )}
+              </>
+            )}
           </div>
         </div>
 
