@@ -73,6 +73,7 @@ import { useActiveStore } from "@/contexts/StoreContext";
 import { useAuth } from "@tadaima/auth";
 import { isAdmin as isAdminRole } from "@/lib/permisos";
 import { CancelTicketModal } from "@/components/cancel/CancelTicketModal";
+import { CorrectPaymentModal } from "@/components/sales/CorrectPaymentModal";
 import { motion as Motion, AnimatePresence } from "motion/react";
 
 // API_BASE removed — using @tadaima/api (Laravel backend)
@@ -855,6 +856,8 @@ export function SellPage() {
     | { kind: 'presale'; order: PreSaleOrder }
     | null
   >(null);
+  // "Corregir pago" (2026-09-30): el método de pago se registró mal.
+  const [correctPaymentTarget, setCorrectPaymentTarget] = useState<SaleDetail | null>(null);
 
   // ── Popup asignar cliente (escanear TAD\d+ o botón "Cliente" del toolbar) ──
   // Se abre cuando el scanner detecta un código TAD o cuando el cajero clickea
@@ -3383,6 +3386,9 @@ export function SellPage() {
       for (const other of historialEntries) {
         if (other.type !== 'sale') continue;
         if (usedSaleIds.has(other.data.id!)) continue;
+        // Historial de toda la tienda (2026-09-30): no emparejar con la venta
+        // de OTRO cajero que cayó en la misma ventana de 30 s.
+        if (entry.data.user?.id != null && other.data.user_id != null && entry.data.user.id !== other.data.user_id) continue;
         const saleTime = new Date(other.data.sold_at || other.data.created_at).getTime();
         if (Math.abs(orderTime - saleTime) <= 30_000) {
           detectedPairs.push({ preSaleOrderId: entry.data.id, saleId: other.data.id! });
@@ -4761,7 +4767,7 @@ export function SellPage() {
             onClick={() => { void openHistorial(); }}
             className="h-full px-5 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-colors"
             style={{ color: TLO, borderRight: CARD_B }}
-            title="Ver historial de ventas de esta sesión"
+            title="Ver historial de ventas de hoy (toda la tienda)"
           >
             <History size={13} />
             Historial
@@ -8522,6 +8528,15 @@ export function SellPage() {
         onClose={() => setShowPrinterModal(false)}
       />
 
+      {correctPaymentTarget && (
+        <CorrectPaymentModal
+          sale={correctPaymentTarget}
+          isAdmin={isAdmin}
+          activeSessionId={cashSession?.id ?? null}
+          onClose={() => setCorrectPaymentTarget(null)}
+        />
+      )}
+
       {/* ADR-016 Fase 3 — Modal de cancelación de ticket */}
       {cancelTarget && (
         <CancelTicketModal
@@ -8739,10 +8754,10 @@ export function SellPage() {
                     // "Tarjeta", y 2 métodos distintos → "Mixto" (antes se leía
                     // solo payments[0] y una venta mixta salía como "Efectivo").
                     const methodLabel = buildPaymentSummary(sale).methodLabel;
-                    // Tarjeta NO se cancela/devuelve (la tienda pierde la comisión —
-                    // decisión Joel 2026-06-10; el backend ya lo bloquea con 422).
-                    // Ocultamos el botón para no invitar al error.
-                    const hasCardPayment = (sale.payments ?? []).some(p => /tarjeta|card/i.test(p.payment_method?.name ?? ""));
+                    // Desde 2026-09-30 toda venta vigente se cancela (también
+                    // tarjeta: no sale efectivo, se devuelve en la terminal) y
+                    // se le puede corregir el método de pago.
+                    const canFix = sale.status === "completed" && (sale.cancellation_status ?? "none") === "none";
                     const itemCount = sale.items?.reduce((s, i) => s + i.quantity, 0) ?? 0;
                     const dateStr = sale.sold_at || sale.created_at;
                     // Rollup del descuento de la venta (v2 = Σ beneficios por
@@ -8764,6 +8779,8 @@ export function SellPage() {
                             <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
                               <span style={{ fontSize: 9, fontWeight: 700, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.08em" }}>{methodLabel}</span>
                               <span style={{ fontSize: 9, color: "var(--td-text-ghost)" }}>· {itemCount} art.</span>
+                              {/* Historial de toda la tienda (2026-09-30): quién cobró. */}
+                              {sale.user?.name && <span style={{ fontSize: 9, color: "var(--td-text-ghost)", maxWidth: 110, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>· {sale.user.name}</span>}
                               {sale.status === "returned" && <span style={{ fontSize: 9, fontWeight: 900, color: "#f87171", background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.30)", borderRadius: 999, padding: "2px 8px", textTransform: "uppercase", letterSpacing: "0.08em" }}>Cancelada</span>}
                               {sale.status !== "returned" && sale.cancellation_status === "partial" && <span style={{ fontSize: 9, fontWeight: 900, color: "#fbbf24", background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.30)", borderRadius: 999, padding: "2px 8px", textTransform: "uppercase", letterSpacing: "0.08em" }}>Cancelada parcial</span>}
                             </div>
@@ -8831,7 +8848,16 @@ export function SellPage() {
                             onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = "var(--td-input-bg)"; (e.currentTarget as HTMLDivElement).style.borderColor = "var(--td-input-border)"; (e.currentTarget as HTMLDivElement).style.color = "var(--td-text-lo)"; }}>
                             <Printer size={13} />
                           </div>
-                          {sale.status !== "returned" && !hasCardPayment && (
+                          {canFix && (
+                            <div onClick={e => { e.stopPropagation(); setCorrectPaymentTarget(sale); }}
+                              role="button" title="Corregir método de pago"
+                              style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 9, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--td-text-lo)" }}
+                              onMouseEnter={e => { e.currentTarget.style.background = "rgba(59,130,246,0.12)"; e.currentTarget.style.borderColor = "rgba(59,130,246,0.35)"; e.currentTarget.style.color = "#60a5fa"; }}
+                              onMouseLeave={e => { e.currentTarget.style.background = "var(--td-input-bg)"; e.currentTarget.style.borderColor = "var(--td-input-border)"; e.currentTarget.style.color = "var(--td-text-lo)"; }}>
+                              <ArrowLeftRight size={14} />
+                            </div>
+                          )}
+                          {sale.status !== "returned" && (
                             <div onClick={e => { e.stopPropagation(); setCancelTarget({ kind: 'sale', sale }); }}
                               role="button" title="Cancelar venta"
                               style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 9, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--td-text-lo)" }}

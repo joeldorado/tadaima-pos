@@ -31,7 +31,7 @@
       "caja abierta",
       "no puedo vender"
     ],
-    "updatedAt": "2026-08-06",
+    "updatedAt": "2026-09-30",
     "sections": [
       {
         "id": "glosario",
@@ -132,7 +132,7 @@
               ],
               [
                 "Me equivoqué en una venta ya cobrada",
-                "Se cancela desde Ventas (completa o solo algunos artículos, con motivo). Si se pagó con tarjeta o transferencia, se resuelve con el administrador."
+                "Se cancela desde Ventas o Caja → Historial (completa o solo algunos artículos, con motivo), también si se pagó con tarjeta o transferencia (ese dinero se devuelve por la terminal o el banco). Si solo se marcó mal el método de pago, usa “Corregir pago” mientras la caja siga abierta."
               ]
             ]
           },

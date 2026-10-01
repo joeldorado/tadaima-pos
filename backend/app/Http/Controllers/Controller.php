@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\CashRegisterSession;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 
@@ -117,6 +118,30 @@ abstract class Controller
         $user = $request->user();
         if (! $user instanceof User || ! $user->canActOnStore($storeId)) {
             return $this->error('No tienes permiso para operar sobre datos de otra tienda.', 403);
+        }
+
+        return null;
+    }
+
+    /**
+     * La salida de caja de una cancelación solo puede ir a una caja ABIERTA de
+     * quien cancela; el admin puede usar cualquier caja abierta (2026-09-30).
+     * Antes bastaba que el `cash_session_id` existiera: se podía mandar la
+     * salida a la caja de otro, o a un corte ya cerrado.
+     */
+    protected function refundSessionError(\Illuminate\Http\Request $request, ?int $sessionId): ?JsonResponse
+    {
+        if ($sessionId === null) {
+            return null;
+        }
+
+        $user    = $request->user();
+        $session = CashRegisterSession::find($sessionId);
+        if ($session === null || $session->status !== CashRegisterSession::STATUS_OPEN) {
+            return $this->error('Esa caja ya está cerrada: abre tu caja para registrar la salida.', 422, ['code' => ['REFUND_SESSION_CLOSED']]);
+        }
+        if (! $user instanceof User || (! $user->isAdminRole() && (int) $session->user_id !== (int) $user->id)) {
+            return $this->error('La salida de caja solo puede ir a tu propia caja abierta.', 403);
         }
 
         return null;

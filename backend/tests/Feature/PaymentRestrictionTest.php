@@ -136,24 +136,79 @@ class PaymentRestrictionTest extends TestCase
             ->assertCreated();
     }
 
-    // ── Bloqueo de cancelaciones con tarjeta (Joel 2026-06-10) ────────────────
+    // ── Cancelaciones con tarjeta: permitidas desde 2026-09-30 (antes bloqueadas
+    //    desde 2026-06-10). Regresa el stock, NO sale efectivo del cajón. ────────
 
-    public function test_card_paid_sale_cannot_be_cancelled(): void
+    private function cardSale(Product $product, int $qty = 1): int
     {
-        $product = $this->makeProduct(allowCash: true, allowCard: true);
+        $payload = $this->checkoutPayload($product, $this->card);
+        $payload['items'][0]['quantity']    = $qty;
+        $payload['payments'][0]['amount']   = 100.0 * $qty;
 
-        $saleId = $this->actingAs($this->user)
-            ->postJson('/api/v1/sales', $this->checkoutPayload($product, $this->card))
+        return (int) $this->actingAs($this->user)
+            ->postJson('/api/v1/sales', $payload)
             ->assertCreated()
             ->json('data.id');
+    }
+
+    public function test_card_paid_sale_can_be_cancelled_without_cash_out(): void
+    {
+        $product = $this->makeProduct(allowCash: true, allowCard: true);
+        $saleId  = $this->cardSale($product);
 
         $this->actingAs($this->user)
-            ->postJson("/api/v1/sales/{$saleId}/cancel", ['reason_code' => 'otro'])
-            ->assertStatus(422)
-            ->assertJsonFragment(['error' => 'No se puede cancelar: esta venta tiene un pago con tarjeta (Tarjeta Crédito). Las cancelaciones con tarjeta no están permitidas.']);
+            ->postJson("/api/v1/sales/{$saleId}/cancel", [
+                'reason_code'     => 'otro',
+                'cash_session_id' => $this->session->id,
+            ])
+            ->assertOk();
 
-        // La venta sigue intacta y el stock no regresó
+        // Stock de regreso y venta cancelada…
+        $this->assertSame(10.0, (float) Inventory::where('product_id', $product->id)->first()->quantity);
+        $this->assertSame('returned', \App\Models\Sale::find($saleId)->status);
+        // …pero del cajón no sale nada: la devolución va por la terminal.
+        $this->assertDatabaseCount('cash_movements', 0);
+        $this->assertNull(\App\Models\SaleCancellation::where('sale_id', $saleId)->first()->cash_movement_id);
+        // El pago con tarjeta queda registrado tal cual (la comisión ya se pagó).
+        $this->assertSame(100.0, (float) \App\Models\Payment::where('sale_id', $saleId)->sum('amount'));
+    }
+
+    public function test_card_paid_sale_partial_cancel_without_cash_out(): void
+    {
+        $product = $this->makeProduct(allowCash: true, allowCard: true);
+        $saleId  = $this->cardSale($product, 2);
+        $itemId  = \App\Models\SaleItem::where('sale_id', $saleId)->value('id');
+
+        $this->actingAs($this->user)
+            ->postJson("/api/v1/sales/{$saleId}/cancel", [
+                'reason_code'     => 'otro',
+                'cash_session_id' => $this->session->id,
+                'items'           => [['sale_item_id' => $itemId, 'quantity' => 1]],
+            ])
+            ->assertOk();
+
         $this->assertSame(9.0, (float) Inventory::where('product_id', $product->id)->first()->quantity);
+        $this->assertSame(100.0, (float) \App\Models\Sale::find($saleId)->total);
+        $this->assertDatabaseCount('cash_movements', 0);
+    }
+
+    public function test_card_cancel_does_not_move_expected_cash(): void
+    {
+        $product = $this->makeProduct(allowCash: true, allowCard: true);
+        $saleId  = $this->cardSale($product);
+
+        $this->actingAs($this->user)
+            ->postJson("/api/v1/sales/{$saleId}/cancel", [
+                'reason_code'     => 'otro',
+                'cash_session_id' => $this->session->id,
+            ])
+            ->assertOk();
+
+        $range = 'from=' . now()->subDay()->toDateString() . '&to=' . now()->addDay()->toDateString();
+        $row = collect($this->actingAs($this->user)->getJson("/api/v1/reports/cash?{$range}")->assertOk()->json('data.sessions'))
+            ->firstWhere('id', $this->session->id);
+        $this->assertNotNull($row);
+        $this->assertEquals(0.0, (float) $row['expected_cash']);
     }
 
     public function test_cash_paid_sale_can_still_be_cancelled(): void
@@ -176,6 +231,7 @@ class PaymentRestrictionTest extends TestCase
         $this->assertSame(10.0, (float) Inventory::where('product_id', $product->id)->first()->quantity);
     }
 
+    // El /return viejo (sin uso en la UI) sigue bloqueando tarjeta.
     public function test_card_paid_sale_cannot_be_returned(): void
     {
         $product = $this->makeProduct(allowCash: true, allowCard: true);

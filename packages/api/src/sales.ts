@@ -83,3 +83,23 @@ export async function cancelSale(id: number, input: CancelSaleInput): Promise<Ca
   const response = await apiClient.post<CancellationResult>(`/sales/${id}/cancel`, input)
   return response.data
 }
+
+// ─── Corregir el método de pago (2026-09-30) ─────────────────────────────────
+
+export interface CorrectSalePaymentsInput {
+  /** Un método (Efectivo/Tarjeta/Transferencia) o Mixto = Efectivo + Transferencia; misma suma. */
+  payments: Array<{ payment_method_id: number; amount: number; terminal_id?: number | null }>
+  /** Obligatorio (mín. 3 caracteres): queda en el log. */
+  reason: string
+}
+
+/**
+ * PUT /sales/{id}/payments — corrige cómo se pagó una venta sin cancelarla.
+ * Cualquier rol con la caja de la venta abierta; con el corte cerrado solo
+ * admin. Pasar a efectivo una venta de otra caja: su dueño, gerente o admin.
+ * 403 SALE_PAYMENT_CORRECTION_FORBIDDEN / 422 con el motivo si no aplica.
+ */
+export async function correctSalePayments(id: number, input: CorrectSalePaymentsInput): Promise<SaleDetail> {
+  const response = await apiClient.put<SaleDetail>(`/sales/${id}/payments`, input)
+  return response.data
+}

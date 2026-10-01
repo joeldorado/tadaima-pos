@@ -562,7 +562,7 @@
       "no. ticket",
       "método de pago"
     ],
-    "updatedAt": "2026-08-06",
+    "updatedAt": "2026-09-30",
     "sections": [
       {
         "id": "lista-ventas",
@@ -570,7 +570,7 @@
         "blocks": [
           {
             "kind": "prose",
-            "text": "En el menú Ventas, el tab “Lista de Ventas” muestra los tickets del período: por default los de HOY, con accesos rápidos “7 días” y “Este mes” o un calendario para elegir cualquier rango. Puedes buscar por No. de ticket, cliente o producto, y filtrar por método de pago. Cada quien ve lo suyo: el cajero SOLO sus propias ventas, el gerente su tienda y el admin todas las tiendas (con filtro por cajero para admin y gerente)."
+            "text": "En el menú Ventas, el tab “Lista de Ventas” muestra los tickets del período: por default los de HOY, con accesos rápidos “7 días” y “Este mes” o un calendario para elegir cualquier rango. Puedes buscar por No. de ticket, cliente o producto, y filtrar por método de pago. El cajero y el gerente ven las ventas de toda su tienda (con el nombre de quien cobró) y el admin las de todas las tiendas; todos pueden filtrar por cajero."
           },
           {
             "kind": "image",
@@ -627,7 +627,7 @@
               },
               {
                 "title": "Motivo y confirmación",
-                "detail": "El motivo es obligatorio (devolución, error del cajero, producto dañado…) y puedes agregar una nota. Al confirmar, el stock regresa al inventario y se genera una salida de caja en la sesión actual."
+                "detail": "El motivo es obligatorio (devolución, error del cajero, producto dañado…) y puedes agregar una nota. Al confirmar, el stock regresa al inventario y lo cobrado en efectivo sale como salida de caja en TU caja abierta (aunque la venta la haya cobrado otro cajero)."
               }
             ]
           },
@@ -637,9 +637,25 @@
           },
           {
             "kind": "callout",
+            "tone": "info",
+            "title": "Ventas con tarjeta o transferencia",
+            "text": "También se cancelan: el stock regresa y queda el registro, pero NO sale efectivo del cajón. El dinero se le devuelve al cliente por la terminal (tarjeta) o por el banco (transferencia), y la comisión de la terminal no se recupera."
+          }
+        ]
+      },
+      {
+        "id": "corregir-pago",
+        "heading": "Corregir el método de pago",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Si se registró un método equivocado (se marcó Efectivo y pagó con Tarjeta, o al revés), no hace falta cancelar: en la venta presiona “Corregir pago” (en Ventas o en Caja → Historial), elige cómo se pagó en realidad (Efectivo, Tarjeta con su terminal, Transferencia o Mixto) y guarda. El total no cambia; el corte se ajusta solo."
+          },
+          {
+            "kind": "callout",
             "tone": "warn",
-            "title": "Tarjeta y transferencia no se cancelan desde aquí",
-            "text": "En ventas pagadas con tarjeta o transferencia el botón “Cancelar” ni siquiera aparece: ese dinero no está en el cajón y no se puede reversar desde la caja. Esos casos se resuelven con el administrador."
+            "title": "Solo con la caja abierta",
+            "text": "Cualquier cajero o gerente de la tienda puede corregirlo mientras la caja donde se cobró siga abierta (el motivo es obligatorio). Si ese corte ya se cerró, solo un administrador puede. Pasar a Efectivo una venta de la caja de otra persona solo lo hace quien cobró, un gerente o un administrador. Tampoco se corrige una venta que ya tiene cancelaciones ni una cobrada con dólares a Efectivo."
           }
         ]
       },

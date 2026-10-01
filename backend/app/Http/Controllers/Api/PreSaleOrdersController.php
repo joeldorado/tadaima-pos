@@ -289,6 +289,9 @@ class PreSaleOrdersController extends Controller
             'reason_text'     => ['nullable', 'string', 'max:500'],
             'cash_session_id' => ['nullable', 'integer', 'exists:cash_register_sessions,id'],
         ]);
+        if ($resp = $this->refundSessionError($request, $data['cash_session_id'] ?? null)) {
+            return $resp;
+        }
 
         try {
             $cancellation = $service->cancelPreSaleOrder(

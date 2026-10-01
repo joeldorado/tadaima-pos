@@ -397,6 +397,10 @@ export interface SalePaymentDetail {
 export interface SaleDetail {
   id: number
   store_id: number | null
+  /** Caja (sesión) donde se cobró. */
+  register_session_id?: number | null
+  /** 'open' | 'closed' — "Corregir pago" solo con la caja abierta (o admin). */
+  register_session_status?: 'open' | 'closed' | null
   user_id: number | null
   customer_id: number | null
   draft_id: number | null

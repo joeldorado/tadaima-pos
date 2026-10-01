@@ -2,8 +2,10 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Exceptions\SalePaymentCorrectionForbidden;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\CheckoutRequest;
+use App\Http\Requests\CorrectSalePaymentsRequest;
 use App\Http\Resources\SaleResource;
 use App\Models\Inventory;
 use App\Models\InventoryMovement;
@@ -11,12 +13,20 @@ use App\Models\Sale;
 use App\Models\SaleCancellation;
 use App\Services\CheckoutService;
 use App\Services\SaleCancellationService;
+use App\Services\SalePaymentCorrectionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class SalesController extends Controller
 {
+    /** Relaciones del detalle de una venta (show y respuestas de mutaciones). */
+    private const DETAIL_RELATIONS = [
+        'items.product', 'payments.paymentMethod', 'customer', 'user:id,name',
+        'preSaleOrders.items.catalog:id,product_name',
+        'cancellations', 'registerSession:id,status',
+    ];
+
     public function __construct(private readonly CheckoutService $checkoutService) {}
 
     /**
@@ -45,6 +55,7 @@ class SalesController extends Controller
 
         $query = Sale::with([
                 'customer', 'payments.paymentMethod', 'items.product', 'user:id,name',
+                'registerSession:id,status',
                 // Preventas creadas en el mismo ticket (cobro mixto). Sin esto
                 // el frontend separa el ticket de la nueva preventa como si
                 // fueran ventas distintas.
@@ -104,11 +115,7 @@ class SalesController extends Controller
             return $resp;
         }
 
-        $sale->load([
-            'items.product', 'payments.paymentMethod', 'customer', 'user:id,name',
-            'preSaleOrders.items.catalog:id,product_name',
-            'cancellations',
-        ]);
+        $sale->load(self::DETAIL_RELATIONS);
 
         return $this->success(new SaleResource($sale));
     }
@@ -296,6 +303,9 @@ class SalesController extends Controller
             'reason_text'        => ['nullable', 'string', 'max:500'],
             'cash_session_id'    => ['nullable', 'integer', 'exists:cash_register_sessions,id'],
         ]);
+        if ($resp = $this->refundSessionError($request, $data['cash_session_id'] ?? null)) {
+            return $resp;
+        }
 
         try {
             $cancellation = $service->cancelSale(
@@ -310,7 +320,7 @@ class SalesController extends Controller
             return $this->error($e->getMessage(), 422);
         }
 
-        $sale->refresh()->load(['items.product', 'payments.paymentMethod', 'customer']);
+        $sale->refresh()->load(['items.product', 'payments.paymentMethod', 'customer', 'registerSession:id,status']);
         return $this->success([
             'sale'         => new SaleResource($sale),
             'cancellation' => [
@@ -320,5 +330,33 @@ class SalesController extends Controller
                 'cash_movement_id'=> $cancellation->cash_movement_id,
             ],
         ], 'Cancelación registrada correctamente.');
+    }
+
+    /**
+     * PUT /sales/{sale}/payments — corregir el método de pago (2026-09-30).
+     *
+     * Cualquier rol de la tienda mientras la caja donde se cobró siga abierta
+     * (así no se mueven cortes ya cerrados); con el corte cerrado solo admin.
+     * Las reglas de quién puede (403) y de forma (422) viven en el servicio.
+     * Body: { payments: [{payment_method_id, amount, terminal_id?}], reason? }.
+     */
+    public function correctPayments(
+        Sale $sale,
+        CorrectSalePaymentsRequest $request,
+        SalePaymentCorrectionService $service,
+    ): JsonResponse {
+        if ($resp = $this->storeScopeError($request, $sale->store_id)) {
+            return $resp;
+        }
+
+        try {
+            $sale = $service->correct($sale, $request->validated('payments'), $request->user(), $request->validated('reason'));
+        } catch (SalePaymentCorrectionForbidden $e) {
+            return $this->error($e->getMessage(), 403, ['code' => ['SALE_PAYMENT_CORRECTION_FORBIDDEN']]);
+        } catch (\DomainException $e) {
+            return $this->error($e->getMessage(), 422);
+        }
+
+        return $this->success(new SaleResource($sale->load(self::DETAIL_RELATIONS)), 'Método de pago corregido.');
     }
 }

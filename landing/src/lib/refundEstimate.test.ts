@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { estimateSaleRefund } from "./refundEstimate";
+import { estimateSaleRefund, splitRefundByCash } from "./refundEstimate";
 
 // Mismos casos que backend/tests/Feature/CancellationNetRefundTest.php.
 describe("estimateSaleRefund", () => {
@@ -41,5 +41,27 @@ describe("estimateSaleRefund", () => {
     expect(estimateSaleRefund(sale, { 1: 1 })).toEqual({ total: 90, perLine: { 1: 90 } });
     expect(estimateSaleRefund(sale, { 2: 1 })).toEqual({ total: 120, perLine: { 2: 120 } });
     expect(estimateSaleRefund(sale)).toEqual({ total: 300, perLine: { 1: 180, 2: 120 } });
+  });
+});
+
+describe("splitRefundByCash", () => {
+  const p = (name: string | null, amount: number) => ({ amount, payment_method: name === null ? null : { name } });
+
+  it("efectivo: todo sale del cajón", () => {
+    expect(splitRefundByCash(500, [p("Efectivo", 500)])).toEqual({ cash: 500, other: 0 });
+  });
+
+  it("tarjeta o transferencia: nada sale del cajón (2026-09-30)", () => {
+    expect(splitRefundByCash(500, [p("Tarjeta Débito", 500)])).toEqual({ cash: 0, other: 500 });
+    expect(splitRefundByCash(500, [p("Transferencia", 500)])).toEqual({ cash: 0, other: 500 });
+  });
+
+  it("mixto: en proporción a lo cobrado en efectivo", () => {
+    expect(splitRefundByCash(250, [p("Efectivo", 300), p("Transferencia", 200)])).toEqual({ cash: 150, other: 100 });
+  });
+
+  it("sin pagos o sin método cuenta como efectivo (como el backend)", () => {
+    expect(splitRefundByCash(100, [])).toEqual({ cash: 100, other: 0 });
+    expect(splitRefundByCash(100, [p(null, 100)])).toEqual({ cash: 100, other: 0 });
   });
 });

@@ -4,7 +4,7 @@ import {
   CreditCard, CalendarDays, ChevronDown, X, ChevronRight, ChevronLeft,
   Package, Receipt, ImageOff, XCircle,
   Store, Printer, User as UserIcon, FileText, Download, Bookmark, FileSpreadsheet,
-  Maximize2, Minimize2, Ban,
+  Maximize2, Minimize2, Ban, ArrowLeftRight,
 } from "lucide-react";
 import {
   Button as AriaButton,
@@ -31,6 +31,7 @@ import { DISCOUNT_REASON_LABELS, SURCHARGE_REASON_LABELS } from "@/lib/discountR
 import { finalPriceLine } from "@/lib/ticketLines";
 import { saleItemRevenue } from "@/lib/saleItemNet";
 import { CancelTicketModal } from "@/components/cancel/CancelTicketModal";
+import { CorrectPaymentModal } from "@/components/sales/CorrectPaymentModal";
 import { useActiveSessionQuery } from "@/hooks/queries/useCashSession";
 import { getTodayLocal, toLocalYmd, daysAgoLocal, BUSINESS_TZ } from "@/lib/date";
 import type { CashSessionReport } from "@tadaima/api";
@@ -531,12 +532,13 @@ function SalesDateRangePicker({
 
 // ─── SaleRow expandible ───────────────────────────────────────────────────────
 function SaleRow({
-  sale, productMap, rank, onCancel, expanded, onToggle,
+  sale, productMap, rank, onCancel, onCorrectPayment, expanded, onToggle,
 }: {
   sale: SaleDetail;
   productMap: Record<string, ProductInfo>;
   rank: number;
   onCancel: (sale: SaleDetail) => void;
+  onCorrectPayment: (sale: SaleDetail) => void;
   // Expansión controlada por el padre (Set de keys estables): así el ticket
   // abierto sobrevive a cualquier re-render/reorden del polling live.
   expanded: boolean;
@@ -966,9 +968,19 @@ function SaleRow({
               </button>
 
               {/* Cancelar — mismo flujo que Caja (ADR-016): pide motivo, soporta
-                  parcial/total, reversa el efectivo del corte y deja registro.
-                  Solo efectivo (tarjeta/transferencia no reversan caja). */}
-              {sale.status === "completed" && !paymentName.toLowerCase().includes("tarjeta") && !paymentName.toLowerCase().includes("transfer") && (
+                  parcial/total y deja registro. Desde 2026-09-30 también tarjeta
+                  y transferencia: del cajón sale solo lo cobrado en efectivo. */}
+              {sale.status === "completed" && (sale.cancellation_status ?? "none") === "none" && (
+                <button
+                  onClick={() => onCorrectPayment(sale)}
+                  className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest transition-all hover:border-blue-500/40"
+                  style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)", color: "var(--td-text-lo)" }}
+                >
+                  <ArrowLeftRight size={10} />
+                  Corregir pago
+                </button>
+              )}
+              {sale.status === "completed" && (
                 <button
                   onClick={() => onCancel(sale)}
                   className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest transition-all hover:border-red-500/40"
@@ -2155,9 +2167,10 @@ export function SalesPage() {
   // Gráfico semanal admin + gerente. Cajero no ve nada de agregados.
   const canSeeKpiRow = isAdmin;
   const canSeeFinancials = !isCashier;
-  // Gerente puede filtrar por cajero dentro de su tienda; admin si selecciona
-  // tienda también; cajero queda forzado a sus propias ventas.
-  const canFilterByCashier = isAdmin || isGerente;
+  // Filtro por cajero dentro de la tienda: admin (si elige tienda), gerente y,
+  // desde 2026-09-30, también el cajero — ve y corrige las ventas de toda su
+  // tienda (el backend lo deja anclado a su tienda con whole_store=1).
+  const canFilterByCashier = isAdmin || isGerente || isCashier;
 
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
   const effectiveStoreId: number | null = canPickStore ? selectedStoreId : (user?.store_id ?? null);
@@ -2235,8 +2248,8 @@ export function SalesPage() {
     ? (stores.find(s => s.id === effectiveStoreId)?.name ?? user?.store?.name ?? "")
     : (user?.store?.name ?? "Todas las tiendas"));
 
-  // Lista de cajeros de la tienda — solo gerente/admin la consume para el
-  // dropdown "Filtrar por cajero". Admin sin tienda seleccionada → todos.
+  // Lista de cajeros de la tienda para el dropdown "Filtrar por cajero"
+  // (gerente, cajero y admin con tienda seleccionada).
   const cashiersQuery = useUsersQuery(
     canFilterByCashier && effectiveStoreId ? { store_id: effectiveStoreId, active: true } : undefined,
     { enabled: canFilterByCashier && !!effectiveStoreId }
@@ -2249,10 +2262,10 @@ export function SalesPage() {
   if (effectiveStoreId) salesParams.store_id = effectiveStoreId;
   if (filterStartDate) salesParams.from = filterStartDate;
   if (filterEndDate)   salesParams.to   = filterEndDate;
-  // Cajero queda forzado backend a su propio user_id (RBAC), pero le mandamos
-  // el filtro explícito para que el caching de RQ no mezcle con datos viejos.
-  if (isCashier && user?.id) salesParams.user_id = user.id;
-  else if (filterCashierId)   salesParams.user_id = filterCashierId;
+  // Cajero: ventas de TODA su tienda (2026-09-30, para corregir errores de
+  // otros cajeros). Sin whole_store el backend lo forzaría a sus propias ventas.
+  if (isCashier) salesParams.whole_store = true;
+  if (filterCashierId) salesParams.user_id = filterCashierId;
 
   // Incluimos delivered+expired (además de pending/ready) para alimentar las
   // tablas "Preventa liquidación" y "Preventa vencidas" del Reporte del Día, y
@@ -2263,17 +2276,14 @@ export function SalesPage() {
   if (effectiveStoreId) preSaleOrdersParams.store_id = effectiveStoreId;
   if (filterStartDate) preSaleOrdersParams.from = filterStartDate;
   if (filterEndDate)   preSaleOrdersParams.to   = filterEndDate;
-  // Cajero: solo SUS movimientos de preventa (creados o cobrados por él), igual
-  // que sus ventas. El backend ya fuerza ventas/cortes a su user_id; preventa es
-  // opt-in vía `mine` (Caja NO lo manda, para poder liquidar folios de otros).
-  if (isCashier && user?.id) preSaleOrdersParams.mine = true;
+  // Cajero: movimientos de preventa de toda su tienda, igual que sus ventas
+  // (2026-09-30). Antes `mine` lo limitaba a lo suyo.
 
   // Polling casi-live (Joel 2026-06-12): SOLO mientras esta pantalla está
-  // montada y la tab enfocada — admin/gerente ven ventas/folios hechos en
-  // OTRAS máquinas sin tocar nada. El cajero no lo necesita: sus movimientos
-  // ya aparecen al instante por la escritura optimista del checkout.
+  // montada y la tab enfocada — se ven ventas/folios hechos en OTRAS máquinas
+  // sin tocar nada. Desde 2026-09-30 el cajero también ve las de toda su tienda.
   const LIVE_POLL_MS = 20_000;
-  const livePoll = { refetchIntervalMs: isCashier ? (false as const) : LIVE_POLL_MS };
+  const livePoll = { refetchIntervalMs: LIVE_POLL_MS };
   const salesQuery = useSalesQuery(salesParams as Parameters<typeof useSalesQuery>[0], livePoll);
   const preSaleOrdersQuery = usePreSaleOrdersQuery(preSaleOrdersParams as Parameters<typeof usePreSaleOrdersQuery>[0], livePoll);
 
@@ -2378,6 +2388,8 @@ export function SalesPage() {
   // CancelTicketModal — motivo, parcial/total, reversa de caja y registro. La
   // salida de caja se asienta en el corte ABIERTO del usuario actual (si tiene).
   const [cancelTarget, setCancelTarget] = useState<{ kind: 'sale'; sale: SaleDetail } | null>(null);
+  // "Corregir pago" (2026-09-30): el método se registró mal.
+  const [correctTarget, setCorrectTarget] = useState<SaleDetail | null>(null);
   const activeSessionQuery = useActiveSessionQuery();
   const cashSession = activeSessionQuery.data ?? null;
 
@@ -2978,7 +2990,7 @@ export function SalesPage() {
             <p className="text-[9px] font-black uppercase tracking-[0.3em] mt-0.5" style={{ color: "var(--td-text-lo)" }}>
               {(() => {
                 const storeName = (canPickStore ? stores.find(s => s.id === effectiveStoreId)?.name : user?.store?.name) ?? null;
-                if (isCashier) return `MI TIENDA · ${storeName ?? "—"} · MIS VENTAS`;
+                if (isCashier) return `MI TIENDA · ${storeName ?? "—"} · VENTAS DE LA TIENDA`;
                 if (isGerente) return `GERENTE · ${storeName ?? "—"}`;
                 return `Control Financiero · ${storeName ?? "Todas las tiendas"}`;
               })()}
@@ -3258,7 +3270,7 @@ export function SalesPage() {
                     ) : (
                       displayedRows.map((row, idx) => (
                         row.kind === "sale" ? (
-                          <SaleRow key={row.key} sale={row.sale} productMap={productMap} rank={idx + 1} onCancel={(s) => setCancelTarget({ kind: 'sale', sale: s })} expanded={expandedRowKeys.has(row.key)} onToggle={() => toggleRow(row.key)} />
+                          <SaleRow key={row.key} sale={row.sale} productMap={productMap} rank={idx + 1} onCancel={(s) => setCancelTarget({ kind: 'sale', sale: s })} onCorrectPayment={setCorrectTarget} expanded={expandedRowKeys.has(row.key)} onToggle={() => toggleRow(row.key)} />
                         ) : (
                           <PreSaleMovementRow key={row.key} order={row.order} movement={row.movement} rank={idx + 1} expanded={expandedRowKeys.has(row.key)} onToggle={() => toggleRow(row.key)} />
                         )
@@ -3456,6 +3468,15 @@ export function SalesPage() {
           )}
         </div>
       </div>
+
+      {correctTarget && (
+        <CorrectPaymentModal
+          sale={correctTarget}
+          isAdmin={isAdmin}
+          activeSessionId={cashSession?.id ?? null}
+          onClose={() => setCorrectTarget(null)}
+        />
+      )}
 
       {cancelTarget && (
         <CancelTicketModal
