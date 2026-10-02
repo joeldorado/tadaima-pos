@@ -6597,14 +6597,28 @@ export function SellPage() {
                                   es LA puerta al flujo USD (no hay más toggles).
                                   Oculto en Mixto: el split no admite dólares. */}
                               {!isMixto && (
-                              <button
-                                type="button"
-                                onClick={() => setUsdCalcOpen(true)}
-                                data-testid="usd-calc-open"
-                                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[12px] font-black uppercase tracking-wider transition-colors"
-                                style={{ background: 'rgba(16,185,129,0.14)', border: '1px solid rgba(16,185,129,0.45)', color: '#34d399' }}
-                                title={`Calculadora de dólares (TC $${tc.toFixed(2)})`}
-                              >$ Dólares</button>
+                              <div className="flex items-center gap-2">
+                                {/* Preview del total en dólares (pedido Joel 2026-10-02):
+                                    el cajero se lo dice al cliente sin abrir la calculadora. */}
+                                {tc > 0 && currentPayAmount > 0 && (
+                                  <span
+                                    data-testid="usd-total-preview"
+                                    className="text-[14px] font-black tabular-nums whitespace-nowrap"
+                                    style={{ color: '#34d399' }}
+                                    title={`Total en dólares (TC $${tc.toFixed(2)})`}
+                                  >
+                                    ≈ US${(currentPayAmount / tc).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </span>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => setUsdCalcOpen(true)}
+                                  data-testid="usd-calc-open"
+                                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[12px] font-black uppercase tracking-wider transition-colors"
+                                  style={{ background: 'rgba(16,185,129,0.14)', border: '1px solid rgba(16,185,129,0.45)', color: '#34d399' }}
+                                  title={`Calculadora de dólares (TC $${tc.toFixed(2)})`}
+                                >$ Dólares</button>
+                              </div>
                               )}
                             </div>
                             {/* (Los dólares ya ingresados y el faltante se ven en el
