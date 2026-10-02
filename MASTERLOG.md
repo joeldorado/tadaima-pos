@@ -4,6 +4,21 @@
 
 ---
 
+### Sesión 2026-10-02 — Preview del total en dólares en el panel de cobro (Caja) — rev __REV__
+
+**Pedido Joel (captura):** junto a "PESOS RECIBIDOS", al lado del botón "$ Dólares", ver cuánto es el
+total en dólares sin abrir la calculadora.
+
+- `SellPage`: "≈ US$X" en verde (total ÷ TC, 2 decimales) a la izquierda de "$ Dólares". Oculto en
+  Mixto (igual que el botón) y si el total es 0. Solo pantalla.
+
+**Verificado:** vitest 404, tsc y lint = base. QA local: $399 / TC 15.50 → "≈ US$25.74"; tablet 768
+sin desborde.
+
+**Deploy:** __REV__ (rollback `tadaima-00038-tib`). Pedir Ctrl+Shift+R.
+
+---
+
 ### Sesión 2026-10-02 — Total en dólares en la calculadora "Dólares del cliente" (Caja) — rev tadaima-00038-tib
 
 **Pedido de tienda (WhatsApp con foto):** en "Dólares del cliente" solo salía "TOTAL A PAGAR $4,578
