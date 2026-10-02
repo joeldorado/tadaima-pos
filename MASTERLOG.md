@@ -4,7 +4,7 @@
 
 ---
 
-### Sesión 2026-10-01 — Botón global "Actualizar" (traer datos nuevos) en todas las pantallas — rev __REV__
+### Sesión 2026-10-01 — Botón global "Actualizar" (traer datos nuevos) en todas las pantallas — rev tadaima-00030-zeq
 
 **Pedido Joel:** las pantallas cargan y se refrescan solas cada rato, pero no había un botón
 visible para traer los datos nuevos en ese momento. Un solo botón y una función genérica, para
@@ -25,7 +25,7 @@ backend sale el aviso de error; tema claro, menú colapsado y ancho. Revisión i
 sin altos; medios corregidos (sin internet ya no dice "actualizado"; tope de 25 s si la red se
 cuelga) + el botón no roba el foco del campo de código en Caja y Apartados refresca el detalle abierto.
 
-**Deploy:** __REV__ (rollback `tadaima-00028-tam`). Pedir Ctrl+Shift+R.
+**Deploy:** tadaima-00030-zeq (rollback `tadaima-00028-tam`). Pedir Ctrl+Shift+R.
 
 ---
 
