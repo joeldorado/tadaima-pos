@@ -4,6 +4,26 @@
 
 ---
 
+### Sesión 2026-10-02 — El lector de códigos no escribía nada en "Nuevo Producto" — rev __REV__
+
+**Reporte de tienda (video):** en Productos → Nuevo Producto escaneaban con el lector USB y no salía
+nada. Joel sospechaba del borrador de 24 h: no es eso (se restaura una sola vez al abrir y solo
+escribe). Causa: el modal abre con dos clics y el foco queda en `<body>`; el SKU no tenía foco y, a
+diferencia de Caja, en Productos nadie escuchaba el lector → las teclas se perdían. Además, con un SKU
+restaurado del borrador, escanear tras dar clic pegaba el código al final del viejo.
+
+- `ProductModal`: monta `useBarcodeScanner` en la pestaña General → el escaneo REEMPLAZA el SKU esté
+  donde esté el cursor (también el del borrador) y pasa a "Nombre" si está vacío.
+- Alta nueva: el cursor arranca en SKU con lo restaurado seleccionado.
+
+**Verificado:** vitest 401, tsc y lint = base. QA local con ráfaga simulada del lector: sin foco, con
+foco en Nombre, con SKU restaurado del borrador; escribir a mano sigue igual; código repetido sigue
+mostrando el aviso de duplicado.
+
+**Deploy:** __REV__ (rollback `tadaima-00032-naj`). Pedir Ctrl+Shift+R en esa laptop.
+
+---
+
 ### Sesión 2026-10-02 — El Excel del corte no se descargaba en Chrome (en Edge sí) — rev tadaima-00032-naj
 
 **Reporte de tienda:** una cajera en Windows + Chrome, en Caja → Cerrar Caja → "Descargar reporte
