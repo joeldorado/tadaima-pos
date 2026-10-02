@@ -13,7 +13,9 @@ use App\Models\CashMovement;
 use App\Models\CashRegister;
 use App\Models\CashRegisterSession;
 use App\Models\SystemLog;
+use App\Models\User;
 use App\Services\CashRegisterService;
+use App\Services\CashSessionDeletionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -357,5 +359,66 @@ class CashRegisterController extends Controller
                 'last_page'    => $movements->lastPage(),
             ],
         ]);
+    }
+
+    /**
+     * GET /cash/sessions/{session}/delete-preview — solo admin (2026-10-01).
+     * Todo lo que "Borrar corte" quitaría: ventas, stock que regresa, folios de
+     * preventa, movimientos, insumos, avisos y bloqueos.
+     */
+    public function deletePreview(Request $request, CashRegisterSession $session, CashSessionDeletionService $deletion): JsonResponse
+    {
+        if ($resp = $this->adminOnlyDeleteError($request)) {
+            return $resp;
+        }
+
+        return $this->success($deletion->preview($session));
+    }
+
+    /**
+     * DELETE /cash/sessions/{session} — solo admin. Body: { confirm: "BORRAR",
+     * expected: {sales, presales, movements, supplies}, acknowledge_cross? }.
+     * Definitivo: deja el snapshot en system_logs ('cash_session.deleted').
+     */
+    public function destroySession(Request $request, CashRegisterSession $session, CashSessionDeletionService $deletion): JsonResponse
+    {
+        if ($resp = $this->adminOnlyDeleteError($request)) {
+            return $resp;
+        }
+        if ($request->input('confirm') !== CashSessionDeletionService::CONFIRM_WORD) {
+            return $this->error('Escribe BORRAR para confirmar.', 422);
+        }
+        // Conteos que el admin vio en el preview: si el corte cambió, no se borra.
+        $data = $request->validate([
+            'expected'           => ['required', 'array'],
+            'expected.sales'     => ['required', 'integer', 'min:0'],
+            'expected.presales'  => ['required', 'integer', 'min:0'],
+            'expected.movements' => ['required', 'integer', 'min:0'],
+            'expected.supplies'  => ['required', 'integer', 'min:0'],
+            'acknowledge_cross'  => ['nullable', 'boolean'],
+        ]);
+
+        try {
+            $deleted = $deletion->delete($session, $request->user(), $data['expected'], (bool) ($data['acknowledge_cross'] ?? false));
+        } catch (\DomainException $e) {
+            return $this->error($e->getMessage(), 422);
+        }
+
+        return $this->success([
+            'session_id' => $session->id,
+            'sales'      => count($deleted['sales']),
+            'presales'   => count($deleted['presales']),
+            'stock'      => count($deleted['stock']),
+        ], "Corte #{$session->id} borrado.");
+    }
+
+    private function adminOnlyDeleteError(Request $request): ?JsonResponse
+    {
+        $user = $request->user();
+        if (! $user instanceof User || ! $user->isAdminRole()) {
+            return $this->error('Solo un administrador puede borrar cortes.', 403);
+        }
+
+        return null;
     }
 }

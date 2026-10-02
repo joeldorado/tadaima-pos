@@ -148,6 +148,14 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   Recalcula comisión y el esperado del corte; queda en `system_logs` (`sale.payment_changed`).
 - La salida de una cancelación solo va a una caja ABIERTA de quien cancela (admin: cualquiera
   abierta) — `Controller::refundSessionError()`.
+- **Borrar corte (solo admin, 2026-10-01)** — `CashSessionDeletionService`: `GET
+  /cash/sessions/{id}/delete-preview` + `DELETE /cash/sessions/{id}` con `confirm: "BORRAR"`.
+  Borra ventas (regresa el stock neto de cancelaciones), folios de preventa CREADOS en ese corte
+  por ese cajero y sin cobros en otros cortes (si no, BLOQUEA), movimientos e insumos. El DELETE
+  manda los conteos que vio el admin (si cambiaron, no borra) y `acknowledge_cross` si mueve otros
+  cortes (devoluciones cruzadas). Definitivo: renglones completos en `system_logs`
+  (`cash_session.deleted`, auditoría, no restaurable). NUNCA `$session->delete()` a secas:
+  `sales.register_session_id` hace cascade y no regresa stock. Fondo inicial máximo $1,000,000.
 
 ### Productos e inventario
 - **Dos almacenes por tienda:** Exhibición (`warehouses.type='store'`, lo único que se

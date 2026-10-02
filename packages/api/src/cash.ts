@@ -220,3 +220,66 @@ export async function getCashMovements(params?: {
   const response = await apiClient.get<CashMovementsResponse>('/cash/movements', { params })
   return response.data
 }
+
+// ─── Borrar corte (solo admin, 2026-10-01) ───────────────────────────────────
+
+export interface CashSessionDeleteCounts {
+  sales: number
+  presales: number
+  movements: number
+  supplies: number
+}
+
+export interface CashSessionDeletePreview {
+  session: {
+    id: number
+    cashier: string | null
+    store: string | null
+    status: 'open' | 'closed'
+    opened_at: string | null
+    closed_at: string | null
+    opening_cash: number
+    closing_cash: number | null
+  }
+  sales: Array<{ id: number; sold_at: string | null; total: number; status: string; items: number; cashier: string | null }>
+  /** Lo vendido que regresa al inventario (neto de cancelaciones). */
+  stock: Array<{ sale_id: number; product_id: number; product: string | null; quantity: number; warehouse_id: number | null; warehouse: string | null }>
+  presales: Array<{ id: number; code: string; status: string; customer: string | null; paid: number }>
+  movements: Array<{ id: number; type: 'entrada' | 'salida' | 'ajuste'; amount: number; description: string | null; created_at: string | null }>
+  supplies: Array<{ id: number; supply: string | null; quantity: number; amount: number }>
+  /** Lo que el admin vio: el DELETE los manda de vuelta y si cambiaron no borra. */
+  counts: CashSessionDeleteCounts
+  /** El borrado mueve OTROS cortes: hay que confirmarlo (`acknowledge_cross`). */
+  cross: string[]
+  warnings: string[]
+  /** No vacío = no se puede borrar (p. ej. folio con cobros en otros cortes). */
+  blockers: string[]
+}
+
+/** GET /cash/sessions/{id}/delete-preview — todo lo que "Borrar corte" quitaría. */
+export async function getCashSessionDeletePreview(sessionId: number): Promise<CashSessionDeletePreview> {
+  const response = await apiClient.get<CashSessionDeletePreview>(`/cash/sessions/${sessionId}/delete-preview`)
+  return response.data
+}
+
+export interface DeleteCashSessionInput {
+  /** Debe ser "BORRAR". */
+  confirm: string
+  /** Conteos del preview que vio el admin. */
+  expected: CashSessionDeleteCounts
+  /** Confirmación explícita cuando el preview trae `cross`. */
+  acknowledge_cross?: boolean
+}
+
+/**
+ * DELETE /cash/sessions/{id} — borra el corte con sus ventas (el stock regresa),
+ * folios de preventa, movimientos e insumos. Definitivo. 422 si hay bloqueos, si
+ * el corte cambió desde el preview o si mueve otros cortes sin confirmarlo.
+ */
+export async function deleteCashSession(sessionId: number, input: DeleteCashSessionInput): Promise<{ session_id: number; sales: number; presales: number; stock: number }> {
+  const response = await apiClient.delete<{ session_id: number; sales: number; presales: number; stock: number }>(
+    `/cash/sessions/${sessionId}`,
+    { data: input },
+  )
+  return response.data
+}

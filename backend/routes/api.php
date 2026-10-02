@@ -129,6 +129,9 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
         Route::get('movements',       [CashRegisterController::class, 'movements']);
         // Solo admin: cierra una sesión colgada de OTRO usuario.
         Route::post('sessions/{session}/force-close', [CashRegisterController::class, 'forceClose']);
+        // Solo admin: borrar un corte con todo lo suyo (2026-10-01, limpiar pruebas).
+        Route::get('sessions/{session}/delete-preview', [CashRegisterController::class, 'deletePreview']);
+        Route::delete('sessions/{session}', [CashRegisterController::class, 'destroySession']);
     });
 
     // ── Transfers ─────────────────────────────────────────────────────────────

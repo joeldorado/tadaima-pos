@@ -331,6 +331,12 @@
             "text": "Gerentes y cajeros ven los cortes de todos los de su tienda, así cualquiera puede revisar el cierre del día aunque no esté el gerente (solo consultar e imprimir; cada quien cierra su propia caja). El gerente además tiene KPIs (sesiones, ventas, entradas, salidas). El cálculo aplica IVA 16% sobre la comisión de terminal y guarda los dólares físicos + TC de cada sesión."
           },
           {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "Borrar un corte (solo admin)",
+            "text": "En el detalle de un corte, el admin tiene “Borrar corte”: borra el corte con TODO lo suyo (ventas, cobros de preventa, movimientos de caja e insumos pagados de esa caja) y regresa al inventario lo vendido. Antes enseña en tablas todo lo que se va a borrar y hay que escribir BORRAR. Es definitivo — úsalo para cortes de prueba o errores, no para ventas reales. Si un folio de preventa tiene cobros en otros cortes, primero hay que cancelarlo. Además, el fondo inicial al abrir caja no puede pasar de $1,000,000."
+          },
+          {
             "kind": "link",
             "toTopic": "insumos",
             "label": "Salidas de caja por insumos: qué descuenta y qué no"
