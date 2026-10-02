@@ -4,7 +4,7 @@
 
 ---
 
-### Sesión 2026-10-02 — El Excel del corte no se descargaba en Chrome (en Edge sí) — rev __REV__
+### Sesión 2026-10-02 — El Excel del corte no se descargaba en Chrome (en Edge sí) — rev tadaima-00032-naj
 
 **Reporte de tienda:** una cajera en Windows + Chrome, en Caja → Cerrar Caja → "Descargar reporte
 (Excel)", no recibió el archivo; en Edge sí bajó. Causa en el código (`exportExcel.ts`): la descarga
@@ -22,7 +22,7 @@ descargado correctamente". Chrome la trata como descarga automática y la puede 
 **Verificado:** vitest 401 (+2 `downloadFile.test.ts`), tsc y lint = base. QA local: corte turno y
 tienda, "Descargar otra vez" encima del modal (el corte sigue abierto), Reporte del Día.
 
-**Deploy:** __REV__ (rollback `tadaima-00030-zeq`). Pedir Ctrl+Shift+R en esa caja.
+**Deploy:** tadaima-00032-naj (rollback `tadaima-00030-zeq`). Pedir Ctrl+Shift+R en esa caja.
 
 ---
 
