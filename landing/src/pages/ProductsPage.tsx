@@ -34,6 +34,7 @@ import { generateBarcode, generatePlaceholderSku } from "@/lib/barcode";
 import { isSkuMatch, normalizeCode, shouldLookupCode } from "@/lib/productCode";
 import { DuplicateCodeNotice } from "@/components/products/DuplicateCodeNotice";
 import { useFormDraft, draftKeyFor, clearFormDraftStorage, isEmptyDraft } from "@/hooks/useFormDraft";
+import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
 import { saveDraftFiles, loadDraftFiles, clearDraftFiles } from "@/lib/draftFiles";
 import { warehouseTypeLabel } from "@/lib/warehouse";
 import { PRICE_FORM_LABELS, PRICE_LEVEL_LABELS, PRICE_LEVEL_COLORS, PRICE_LEVEL_RGB } from "@/lib/priceLevels";
@@ -699,6 +700,28 @@ function ProductModal({
   // elegidas y handleSaveProduct las asigna después del create (2026-07-25).
   const [pendingPromoIds, setPendingPromoIds] = useState<number[]>(() => (!product && draft ? draft.pendingPromoIds : []));
 
+  // Lector de códigos (fix 2026-10-02): en tienda escaneaban en "Nuevo Producto"
+  // y no salía nada — el modal abre con el foco en <body> y, a diferencia de
+  // Caja, aquí nadie escuchaba el lector. Ahora el escaneo REEMPLAZA el SKU
+  // (también el que restauró el borrador) esté donde esté el cursor.
+  const skuInputRef = useRef<HTMLInputElement>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  useBarcodeScanner({
+    enabled: activeTab === "general",
+    onScan: code => {
+      setFormData(prev => ({ ...prev, sku: code.trim() }));
+      if (!formData.nombre?.trim()) nameInputRef.current?.focus();
+    },
+  });
+  // Alta: el cursor arranca en SKU con lo restaurado seleccionado, para que
+  // escribir o escanear lo reemplace en vez de pegarse al final.
+  useEffect(() => {
+    if (product) return;
+    skuInputRef.current?.focus();
+    skuInputRef.current?.select();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     if (draft) toast.info("Se restauró lo que tenías capturado. Usa \"Limpiar datos\" para empezar de cero.", { id: "draft-restored" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1041,6 +1064,7 @@ function ProductModal({
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>Nombre del Producto</label>
                     <input 
+                      ref={nameInputRef}
                       type="text" value={formData.nombre} 
                       onChange={e => setFormData({...formData, nombre: e.target.value})}
                       className="w-full px-4 py-3 rounded-2xl outline-none" style={T.input}
@@ -1052,6 +1076,7 @@ function ProductModal({
                       <label className="text-[10px] font-black uppercase tracking-widest ml-1" style={{ color: T.textMuted }}>SKU / Código</label>
                       <div className="relative group">
                         <input 
+                          ref={skuInputRef}
                           type="text" value={formData.sku} 
                           onChange={e => setFormData({...formData, sku: e.target.value})}
                           className="w-full pl-4 pr-12 py-3 rounded-2xl outline-none uppercase"
