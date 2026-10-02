@@ -34,6 +34,9 @@ interface UsdCalculatorModalProps {
 const fmtMx = (n: number): string =>
   `$${n.toLocaleString("es-MX", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 
+const fmtUsd = (n: number): string =>
+  `US$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
 const PRESETS = [1, 5, 10, 20, 50, 100];
 
 export function UsdCalculatorModal({ open, tc, totalAPagar, pesosRecibidos, usdInicial, onApply, onClose }: UsdCalculatorModalProps) {
@@ -113,9 +116,24 @@ export function UsdCalculatorModal({ open, tc, totalAPagar, pesosRecibidos, usdI
           <span className="text-3xl font-black tabular-nums" style={{ color: "var(--td-text-hi)" }}>
             {fmtMx(totalAPagar)} <span className="text-base">MXN</span>
           </span>
+          {/* Total en dólares a la vista (pedido tienda 2026-10-02): el cajero ya
+              no hace la cuenta a mano para decírselo al cliente. */}
+          {tc > 0 && (
+            <div className="w-full flex items-center justify-between flex-wrap gap-2" data-testid="usd-calc-total-usd">
+              <span className="text-base font-black uppercase tracking-wider text-emerald-400">
+                En dólares
+              </span>
+              <span className="text-3xl font-black tabular-nums text-emerald-400">
+                {fmtUsd(totalAPagar / tc)}
+              </span>
+            </div>
+          )}
           {pesosRecibidos > 0 && (
             <span className="w-full text-sm font-bold" style={{ color: "var(--td-text-lo)" }}>
-              Ya recibiste {fmtMx(pesosRecibidos)} en pesos — se toman en cuenta.
+              Ya recibiste {fmtMx(pesosRecibidos)} en pesos
+              {tc > 0
+                ? ` — faltan ${fmtUsd(Math.max(0, totalAPagar - pesosRecibidos) / tc)} en dólares.`
+                : " — se toman en cuenta."}
             </span>
           )}
         </div>
