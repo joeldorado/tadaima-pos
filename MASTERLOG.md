@@ -4,6 +4,22 @@
 
 ---
 
+### Sesión 2026-10-02 — Total en dólares en la calculadora "Dólares del cliente" (Caja) — rev __REV__
+
+**Pedido de tienda (WhatsApp con foto):** en "Dólares del cliente" solo salía "TOTAL A PAGAR $4,578
+MXN" y el cajero hacía la cuenta a mano para decirle al cliente cuánto es en dólares.
+
+- `UsdCalculatorModal`: debajo del total, "EN DÓLARES US$269.29" (total ÷ TC, 2 decimales) en verde,
+  mismo tamaño. Con pesos ya recibidos: "faltan US$X en dólares". Solo pantalla; el cobro no cambia.
+- Guía in-app (Caja → dólares) actualizada.
+
+**Verificado:** vitest 404, tsc y lint = base. QA local: $399 / TC 15.50 = US$25.74; con $100
+recibidos, faltan US$19.29; móvil 375 px sin desborde.
+
+**Deploy:** __REV__ (rollback `tadaima-00036-fuy`). Pedir Ctrl+Shift+R.
+
+---
+
 ### Sesión 2026-10-02 — Las pantallas ya no se recargan solas (cargan al entrar y con "Actualizar") — rev tadaima-00036-fuy
 
 **Reporte de tienda (gerente Centro, Reporte de Ventas):** la pantalla se refrescaba sola y perdían
