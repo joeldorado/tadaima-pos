@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { fmt, fmtDate } from "./reportFormat";
 import type { ReportExportParams } from "./reportTypes";
 import { DISCOUNT_REASON_SHORT, SURCHARGE_REASON_SHORT } from "@/lib/discountReasons";
+import { downloadWithRetry } from "@/lib/downloadFile";
 
 export async function exportReportExcel(params: ReportExportParams): Promise<void> {
   const {
@@ -632,13 +633,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
 
       const buffer = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `tadaima_reporte_${activeTab}_${from}_${to}${params.fileSuffix ? `_${params.fileSuffix}` : ""}.xlsx`;
-      a.click();
-      window.URL.revokeObjectURL(url);
-      toast.success("Excel descargado correctamente");
+      downloadWithRetry(blob, `tadaima_reporte_${activeTab}_${from}_${to}${params.fileSuffix ? `_${params.fileSuffix}` : ""}.xlsx`);
     } catch (error) {
       console.error(error);
       toast.error("Error al exportar a Excel");

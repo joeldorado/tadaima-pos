@@ -44,6 +44,7 @@ import { useStoresQuery } from "@/hooks/queries/useStores";
 import { useUsersQuery } from "@/hooks/queries/useUsers";
 import { useExchangeRateQuery } from "@/hooks/queries/useSystemSettings";
 import { invalidateAfterSale } from "@/lib/optimisticSale";
+import { downloadWithRetry } from "@/lib/downloadFile";
 import type { SaleDetail, PreSaleOrder, Product, Store as StoreType } from "@tadaima/api";
 import { useAuth } from "@tadaima/auth";
 import { toast } from "sonner";
@@ -1319,7 +1320,10 @@ function ReporteDelDia({
 
   const handlePrint = () => printDailyReport(report, fromDate, toDate, storeName, isAdmin);
   const handlePdf   = () => exportDailyReportPdf(report, fromDate, toDate, storeName, isAdmin);
-  const handleExcel = () => { void exportDailyReportXlsx(report, fromDate, toDate, storeName, isAdmin, ivaPct); };
+  const handleExcel = () => {
+    exportDailyReportXlsx(report, fromDate, toDate, storeName, isAdmin, ivaPct)
+      .catch(() => toast.error("No se pudo generar el Excel"));
+  };
 
   return (
     <div id="reporte-dia-print" className="space-y-4">
@@ -2145,12 +2149,7 @@ async function exportDailyReportXlsx(r: DailyReport, fromDate: string, toDate: s
 
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf as BlobPart], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `reporte-${fromDate}${isSameDay ? "" : "_" + toDate}.xlsx`;
-  a.click();
-  URL.revokeObjectURL(url);
+  downloadWithRetry(blob, `reporte-${fromDate}${isSameDay ? "" : "_" + toDate}.xlsx`);
 }
 
 // ─── Componente principal ─────────────────────────────────────────────────────
