@@ -15,11 +15,6 @@ export function useProductInventoryQuery(productId: number | null | undefined, e
     enabled: enabled && !!productId,
     staleTime: 30_000,
     gcTime: 5 * 60_000,
-    refetchOnWindowFocus: true,
-    // Ventas/cancelaciones hechas en OTRA máquina no disparan invalidación
-    // local — sin polling, el desglose quedaba congelado mientras la página
-    // siguiera abierta (QA 2026-06-11: vendió 2 y Existencias seguía en 20).
-    // Solo corre mientras el desglose está montado y la pestaña enfocada.
-    refetchInterval: 30_000,
+    refetchOnWindowFocus: false, // Sin auto-recarga (Joel 2026-10-02): carga al entrar y con «Actualizar».
   })
 }

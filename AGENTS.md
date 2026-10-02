@@ -209,6 +209,12 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   del Layout (flotante en Caja sin menú) y vuelve a pedir las queries activas. Toda pantalla
   que cargue SIN React Query debe registrar su `load` con `useScreenRefresh` (modo
   silencioso: sin spinner de pantalla completa y el error sube para que el botón avise).
+- **Sin auto-recarga** (Joel 2026-10-02): las pantallas de datos (Ventas, Reportes,
+  Productos, Preventas, Inventario, Traslados, Insumos, Promos) NO hacen polling ni recargan
+  al volver a la ventana (`refetchOnWindowFocus: false` global). Cargan al entrar y con
+  "Actualizar" (también en la barra de filtros de Ventas y Reportes). Solo siguen en fondo:
+  caja abierta, avisos, carritos de Caja y usuarios conectados. No vuelvas a meter
+  `refetchInterval` en una pantalla de datos.
 
 ---
 

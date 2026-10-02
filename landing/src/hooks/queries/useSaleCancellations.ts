@@ -13,6 +13,6 @@ export function useSaleCancellationsQuery(params?: GetSaleCancellationsParams, o
     enabled: options?.enabled ?? true,
     staleTime: 30_000,
     gcTime: 5 * 60_000,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false, // Sin auto-recarga (Joel 2026-10-02): carga al entrar y con «Actualizar».
   })
 }

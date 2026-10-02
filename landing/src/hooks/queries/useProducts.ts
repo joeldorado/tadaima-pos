@@ -142,7 +142,7 @@ export function useProductsQuery(
     // llega el nuevo → no parpadea a "Cargando" (el skeleton solo sale en la
     // primera carga real, sin datos previos).
     placeholderData: keepPreviousData,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false, // Sin auto-recarga (Joel 2026-10-02): carga al entrar y con «Actualizar».
     // refetchOnMount default (true): si una mutación invalida este query
     // mientras estamos en otra página, al volver a esta vista refetch para
     // ver el dato nuevo. Si el cache sigue fresh (<24h, sin invalidaciones)
@@ -176,7 +176,7 @@ export function useProductStatsQuery(options?: {
     staleTime: 60_000,
     gcTime: ONE_DAY_MS,
     placeholderData: keepPreviousData,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false, // Sin auto-recarga (Joel 2026-10-02): carga al entrar y con «Actualizar».
     refetchOnReconnect: false,
   })
 }
@@ -290,7 +290,7 @@ export function useProductsInfiniteQuery(storeId?: number | null, options?: { en
     },
     staleTime: ONE_DAY_MS,
     gcTime: ONE_DAY_MS,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false, // Sin auto-recarga (Joel 2026-10-02): carga al entrar y con «Actualizar».
     // refetchOnMount default (true) — ver useProductsLightQuery.
     refetchOnReconnect: false,
     enabled: options?.enabled ?? true,

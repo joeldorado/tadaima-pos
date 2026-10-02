@@ -1,7 +1,8 @@
-import type { MouseEvent } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 import { RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { useRefreshScreen } from "@/hooks/useScreenRefresh";
+import { updatedAgoLabel } from "@/lib/screenRefresh";
 
 /**
  * Botón global "Actualizar" del Layout: trae los datos nuevos de la pantalla
@@ -10,14 +11,25 @@ import { useRefreshScreen } from "@/hooks/useScreenRefresh";
  * - `rail`: sidebar colapsado (cuadro + etiqueta chica, como los links).
  * - `wide`: sidebar ancho (renglón con texto).
  * - `floating`: Caja con el sidebar oculto, encima del botón del menú.
+ * - `inline`: pastilla en la barra de filtros de una pantalla (Ventas,
+ *   Reportes — 2026-10-02: ya no se recargan solas y el botón del menú no se
+ *   encontraba). Con `updatedAt` dice hace cuánto se trajeron los datos.
  */
-type Variant = "rail" | "wide" | "floating";
+type Variant = "rail" | "wide" | "floating" | "inline";
+
 
 const TOAST_ID = "screen-refresh";
 const TITLE = "Traer datos nuevos de esta pantalla";
 
-export function RefreshDataButton({ variant }: { variant: Variant }) {
+export function RefreshDataButton({ variant, updatedAt }: { variant: Variant; updatedAt?: number | undefined }) {
   const { refresh, refreshing } = useRefreshScreen();
+  // Reloj de 30 s solo para la etiqueta "hace X min" (no pide datos).
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (variant !== "inline" || !updatedAt) return;
+    const t = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(t);
+  }, [variant, updatedAt]);
 
   const onClick = async () => {
     const res = await refresh();
@@ -54,6 +66,26 @@ export function RefreshDataButton({ variant }: { variant: Variant }) {
         style={{ width: 44, height: 44, background: "var(--td-popup-bg)", border: "1px solid var(--td-popup-border)", boxShadow: "0 6px 16px rgba(0,0,0,0.3)" }}
       >
         {icon(18)}
+      </button>
+    );
+  }
+
+  if (variant === "inline") {
+    return (
+      <button
+        {...common}
+        className="h-[34px] px-3.5 rounded-full flex items-center gap-2 transition-all hover:scale-[1.03] active:scale-95 disabled:opacity-70"
+        style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)" }}
+      >
+        {icon(14)}
+        <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-md)", whiteSpace: "nowrap" }}>
+          {label}
+        </span>
+        {updatedAt ? (
+          <span className="text-[10px] font-bold" style={{ color: "var(--td-text-lo)", whiteSpace: "nowrap" }}>
+            · {updatedAgoLabel(updatedAt, now)}
+          </span>
+        ) : null}
       </button>
     );
   }

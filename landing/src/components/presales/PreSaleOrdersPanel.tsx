@@ -71,7 +71,6 @@ export function PreSaleOrdersPanel() {
   // y la tab enfocada — folios/abonos hechos en otras cajas aparecen solos.
   const ordersQuery = usePreSaleOrdersQuery(
     params as Parameters<typeof usePreSaleOrdersQuery>[0],
-    { refetchIntervalMs: 20_000 },
   );
   const orders: PreSaleOrder[] = ordersQuery.data?.data ?? [];
   const total = ordersQuery.data?.pagination.total ?? 0;

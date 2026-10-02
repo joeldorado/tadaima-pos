@@ -32,6 +32,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import type { SalesReport, InventoryReport, TopProductsReport, CustomersReport } from "@tadaima/api";
 import type { SaleDetail, Store as StoreType, PreSaleOrder } from "@tadaima/api";
 import { DateRangePicker } from "@/components/ui/DateRangePicker";
+import { RefreshDataButton } from "@/components/layout/RefreshDataButton";
 
 // ─── Design tokens ─────────────────────────────────────────────────────────────
 const BG   = "var(--td-page-bg)";
@@ -240,17 +241,12 @@ export function ReportsPage() {
   // sirve del cache (instantáneo) en vez de refetch. El skeleton solo sale
   // cuando de verdad no hay datos para el filtro/tab actual.
   const REPORTS_STALE = 30_000;
-  // Polling live mientras se está EN esta pantalla: cada query solo refetchea
-  // cuando su tab está activo (gate `enabled`) y la pestaña en foco
-  // (refetchIntervalInBackground default false) → al salir de Reportes o pasar
-  // a otra pestaña el poll se detiene solo. 20s = mismo ritmo que Ventas/Caja.
-  const LIVE_POLL_MS = 20_000;
+  // Sin auto-recarga (Joel 2026-10-02): carga al entrar y con «Actualizar».
   const salesReportQuery = useQuery({
     queryKey: queryKeys.reports.sales(baseParams),
     queryFn: () => getSalesReport(baseParams),
     enabled: activeTab === "ventas",
     staleTime: REPORTS_STALE,
-    refetchInterval: LIVE_POLL_MS,
   });
   const salesListParams = { ...baseParams, per_page: 100 };
   const salesListQuery = useQuery({
@@ -259,7 +255,6 @@ export function ReportsPage() {
     queryFn: () => fetchAllSales(salesListParams),
     enabled: activeTab === "ventas",
     staleTime: REPORTS_STALE,
-    refetchInterval: LIVE_POLL_MS,
   });
 
   // Preventa POR FECHA DE PAGO (payment_from/to), no de creación: trae los folios
@@ -278,7 +273,6 @@ export function ReportsPage() {
     queryFn: () => getPreSaleOrders(preSaleOrdersParams),
     enabled: activeTab === "ventas",
     staleTime: REPORTS_STALE,
-    refetchInterval: LIVE_POLL_MS,
   });
   const preSaleOrders: PreSaleOrder[] = preSaleOrdersQuery.data?.data ?? [];
 
@@ -292,7 +286,6 @@ export function ReportsPage() {
     queryFn: () => getInventoryReport(invParams),
     enabled: activeTab === "inventario",
     staleTime: REPORTS_STALE,
-    refetchInterval: LIVE_POLL_MS,
   });
   const topParams = { from, to, limit: 25, ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}) };
   const topQuery = useQuery({
@@ -300,14 +293,12 @@ export function ReportsPage() {
     queryFn: () => getTopProductsReport(topParams),
     enabled: activeTab === "productos",
     staleTime: REPORTS_STALE,
-    refetchInterval: LIVE_POLL_MS,
   });
   const custQuery = useQuery({
     queryKey: queryKeys.reports.customers(topParams),
     queryFn: () => getCustomersReport(topParams),
     enabled: activeTab === "clientes",
     staleTime: REPORTS_STALE,
-    refetchInterval: LIVE_POLL_MS,
   });
   // Compras de insumos (egresos) del mismo rango y tienda que el reporte, con
   // quién las registró. Solo compras (type=purchase). Todo el desglose se deriva
@@ -317,7 +308,6 @@ export function ReportsPage() {
     queryFn: () => getSupplyMovements({ from, to, type: "purchase", ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}), ...(selectedUserId ? { user_id: selectedUserId } : {}) }),
     enabled: activeTab === "ventas",
     staleTime: REPORTS_STALE,
-    refetchInterval: LIVE_POLL_MS,
   });
   const supplyMovements: SupplyMovementRecord[] = supplyMovementsQuery.data ?? [];
   const insumosTotal = supplyMovements.reduce((a, m) => a + (m.amount || 0), 0);
@@ -842,6 +832,9 @@ export function ReportsPage() {
               maxValue={today}
               ariaLabel="Rango de fechas de reporte"
             />
+
+            {/* Ya no se recarga solo (2026-10-02): botón a la vista. */}
+            <RefreshDataButton variant="inline" updatedAt={salesListQuery.dataUpdatedAt || undefined} />
 
             {/* Store select — admin only */}
             {isAdmin && stores.length > 0 && (

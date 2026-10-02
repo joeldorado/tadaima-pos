@@ -86,3 +86,14 @@ async function runRefresh(queryClient: QueryClient): Promise<ScreenRefreshResult
   const failed = failedHandlers + failedQueries;
   return { ok: failed === 0, failed };
 }
+
+/**
+ * Etiqueta "hace X" del botón Actualizar en línea (2026-10-02): las pantallas
+ * ya no se recargan solas, así que se dice qué tan fresco está el dato.
+ */
+export function updatedAgoLabel(updatedAt: number, now: number): string {
+  const min = Math.floor(Math.max(0, now - updatedAt) / 60_000);
+  if (min < 1) return "hace un momento";
+  if (min < 60) return `hace ${min} min`;
+  return `hace ${Math.floor(min / 60)} h`;
+}

@@ -46,7 +46,7 @@ export function useTodayHistorialQuery(storeId?: number | null, options?: { enab
     },
     staleTime: 30_000,
     gcTime: 30 * 60_000,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false, // Sin auto-recarga (Joel 2026-10-02): carga al entrar y con «Actualizar».
     // Al cambiar la key (cambio de tienda o de día) NO blankear: mantener los
     // datos anteriores en pantalla mientras refetchea en background. Así el
     // modal abre instantáneo con lo último y solo muestra el indicador sutil
