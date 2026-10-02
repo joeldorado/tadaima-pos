@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@tadaima/auth";
 import { useActiveStore } from "@/contexts/StoreContext";
+import { useScreenRefresh } from "@/hooks/useScreenRefresh";
 import { getStores, createStore, updateStore } from "@tadaima/api";
 import type { Store as ApiStore } from "@tadaima/api";
 import { toast } from "sonner";
@@ -334,8 +335,9 @@ export function StoresPage() {
   const canEditStores = isAdminUser; // solo admin
   const canSeeAllStores = isAdminUser; // solo admin; gerente y cajero ven solo la suya
 
-  async function load() {
-    setLoading(true);
+  // silent = botón global "Actualizar": sin spinner y el error sube al botón.
+  async function load({ silent = false } = {}) {
+    if (!silent) setLoading(true);
     try {
       const list = await getStores();
       // Cajero solo ve SU tienda asignada. Sin store_id retornamos lista vacía
@@ -344,7 +346,8 @@ export function StoresPage() {
         ? list
         : list.filter(s => user?.store_id != null && s.id === user.store_id);
       setStores(filtered);
-    } catch {
+    } catch (err) {
+      if (silent) throw err;
       toast.error("Error al cargar tiendas");
     } finally {
       setLoading(false);
@@ -352,6 +355,7 @@ export function StoresPage() {
   }
 
   useEffect(() => { void load(); }, []);
+  useScreenRefresh(() => load({ silent: true }));
 
   function handleSaved(saved: ApiStore) {
     setStores(prev => {

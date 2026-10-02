@@ -17,6 +17,7 @@ import {
 } from "@tadaima/api";
 import type { SystemSettingsMap, SystemLog, Company } from "@tadaima/api";
 import { useActiveStore } from "@/contexts/StoreContext";
+import { useScreenRefresh } from "@/hooks/useScreenRefresh";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSystemSettingsQuery } from "@/hooks/queries/useSystemSettings";
 import { queryKeys } from "@/lib/queryKeys";
@@ -117,22 +118,27 @@ export function SettingsPage() {
   const [logSearch, setLogSearch]   = useState("");
 
   // ── Load logs ─────────────────────────────────────────────────────────────
-  const fetchLogs = useCallback((page: number, search: string) => {
+  // silent = botón global "Actualizar": el error sube para que el botón avise.
+  const fetchLogs = useCallback(async (page: number, search: string, { silent = false } = {}) => {
     setLL(true);
-    getSystemLogs({ page, per_page: 30, search: search || undefined })
-      .then(res => {
-        setLogs(res.data);
-        setLTP(res.pagination.last_page);
-        setLogsTotal(res.pagination.total);
-      })
-      .catch(() => toast.error("Error al cargar logs"))
-      .finally(() => setLL(false));
+    try {
+      const res = await getSystemLogs({ page, per_page: 30, search: search || undefined });
+      setLogs(res.data);
+      setLTP(res.pagination.last_page);
+      setLogsTotal(res.pagination.total);
+    } catch (err) {
+      if (silent) throw err;
+      toast.error("Error al cargar logs");
+    } finally {
+      setLL(false);
+    }
   }, []);
 
   useEffect(() => {
     if (activeTab !== "logs") return;
-    fetchLogs(logsPage, logSearch);
+    void fetchLogs(logsPage, logSearch);
   }, [activeTab, logsPage, fetchLogs]);   // intentionally exclude logSearch — refreshed by button
+  useScreenRefresh(() => fetchLogs(logsPage, logSearch, { silent: true }), activeTab === "logs");
 
   // ── Save general settings ─────────────────────────────────────────────────
   const saveSettings = async () => {
@@ -510,13 +516,13 @@ export function SettingsPage() {
                       type="text"
                       value={logSearch}
                       onChange={e => setLogSearch(e.target.value)}
-                      onKeyDown={e => { if (e.key === "Enter") { setLogsPage(1); fetchLogs(1, logSearch); }}}
+                      onKeyDown={e => { if (e.key === "Enter") { setLogsPage(1); void fetchLogs(1, logSearch); }}}
                       placeholder="Buscar acción o descripción..."
                       className="w-full pl-10 pr-4 py-2.5 rounded-2xl bg-white/[0.03] border border-white/5 text-sm font-bold text-white placeholder:text-white/20 outline-none focus:border-white/15 transition-all"
                     />
                   </div>
                   <button
-                    onClick={() => { setLogsPage(1); fetchLogs(1, logSearch); }}
+                    onClick={() => { setLogsPage(1); void fetchLogs(1, logSearch); }}
                     className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-white/[0.04] border border-white/10 text-white/40 hover:text-white text-[10px] font-black uppercase tracking-widest transition-all"
                   >
                     <RefreshCw size={13} className={logsLoading ? "animate-spin" : ""} />

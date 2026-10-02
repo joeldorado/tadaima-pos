@@ -8,6 +8,7 @@ import { TabTadaimaUS } from "@/components/admin/TabTadaimaUS";
 import { UserAvatar } from "@/components/UserAvatar";
 import { AvatarPicker } from "@/components/AvatarPicker";
 import { useActiveStore } from "@/contexts/StoreContext";
+import { useScreenRefresh } from "@/hooks/useScreenRefresh";
 import {
   Store, Warehouse, Users, Shield, Tag,
   Package, CreditCard, Smartphone, Plus, Edit2, Save,
@@ -1316,8 +1317,9 @@ function TabInventario() {
   const [loading, setLoading] = useState(true);
   const [filterWH, setFilterWH] = useState<number | "all">("all");
 
-  const load = async () => {
-    setLoading(true);
+  // silent = botón global "Actualizar": sin spinner y el error sube al botón.
+  const load = async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
       const [inv, prods, whs] = await Promise.all([
         getInventory(),
@@ -1327,7 +1329,8 @@ function TabInventario() {
       setInventory(inv);
       setProducts(prods.data);
       setWarehouses(whs);
-    } catch {
+    } catch (err) {
+      if (silent) throw err;
       toast.error("Error al cargar inventario");
     } finally {
       setLoading(false);
@@ -1335,6 +1338,7 @@ function TabInventario() {
   };
 
   useEffect(() => { void load(); }, []);
+  useScreenRefresh(() => load({ silent: true }));
 
   const getProduct = (pid: number) => products.find(p => p.id === pid);
   const getWarehouse = (wid: number) => warehouses.find(w => w.id === wid);

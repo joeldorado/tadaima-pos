@@ -12,6 +12,7 @@ import {
 } from "@tadaima/api";
 import type { User as ApiUser, Product } from "@tadaima/api";
 import { isEligibleForPermManagement } from "@/lib/permisos";
+import { useScreenRefresh } from "@/hooks/useScreenRefresh";
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const RED = "var(--td-red)";
@@ -138,20 +139,28 @@ export function TabPermisos() {
     canManagePromos !== savedCanManagePromos;
 
   // ── Load data ────────────────────────────────────────────────────────────
-  useEffect(() => {
-    setLoading(true);
-    Promise.all([getUsers(), getProducts(), getSystemSettings()])
-      .then(([u, p, settings]) => {
-        setUsers(u);
-        setProducts(Array.isArray(p) ? p : (p as { data: Product[] }).data ?? []);
-        const raw = settings[SETTINGS_KEY];
-        if (raw) {
-          try { setPermMap(JSON.parse(raw) as PermMap); } catch { /* ignore */ }
-        }
-      })
-      .catch(() => toast.error("Error al cargar datos de permisos"))
-      .finally(() => setLoading(false));
-  }, []);
+  // silent = botón global "Actualizar": sin spinner y el error sube al botón.
+  // No toca el permiso que se está editando (ese se arma al elegir usuario).
+  const load = async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
+    try {
+      const [u, p, settings] = await Promise.all([getUsers(), getProducts(), getSystemSettings()]);
+      setUsers(u);
+      setProducts(Array.isArray(p) ? p : (p as { data: Product[] }).data ?? []);
+      const raw = settings[SETTINGS_KEY];
+      if (raw) {
+        try { setPermMap(JSON.parse(raw) as PermMap); } catch { /* ignore */ }
+      }
+    } catch (err) {
+      if (silent) throw err;
+      toast.error("Error al cargar datos de permisos");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { void load(); }, []);
+  useScreenRefresh(() => load({ silent: true }));
 
   // ── When user is selected, load their perm ────────────────────────────────
   useEffect(() => {

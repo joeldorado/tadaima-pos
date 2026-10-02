@@ -4,6 +4,31 @@
 
 ---
 
+### Sesión 2026-10-01 — Botón global "Actualizar" (traer datos nuevos) en todas las pantallas — rev __REV__
+
+**Pedido Joel:** las pantallas cargan y se refrescan solas cada rato, pero no había un botón
+visible para traer los datos nuevos en ese momento. Un solo botón y una función genérica, para
+todos los usuarios. (Revierte la decisión del 2026-05-21 de quitar el "Actualizar" manual.)
+
+- `lib/screenRefresh.ts`: `refreshScreen()` vuelve a pedir las queries montadas, marca las demás
+  como viejas y corre las cargas manuales registradas; clics repetidos = un solo refresh.
+- `RefreshDataButton` en el sidebar del Layout (arriba de Avisos) y flotante en Caja cuando el
+  menú está oculto. Toast "Datos actualizados" / "No se pudo actualizar. Revisa tu conexión."
+- Pantallas sin React Query enganchadas con `useScreenRefresh` (sin spinner de pantalla
+  completa): Apartados, Tiendas, Admin → Inventario y Permisos, Ajustes → Logs.
+- Se quitaron los botones apagados (`{false && …}`) de Ventas y Productos. Guía in-app
+  (Primeros pasos) y regla en `AGENTS.md`.
+
+**Verificado:** vitest 399 (+9 `screenRefresh.test.ts`, incl. sin red y red colgada), tsc y lint = base. QA local: Ventas,
+Apartados, Admin Inventario y Caja (tablet y móvil, carrito intacto) vuelven a pedir datos; sin
+backend sale el aviso de error; tema claro, menú colapsado y ancho. Revisión independiente:
+sin altos; medios corregidos (sin internet ya no dice "actualizado"; tope de 25 s si la red se
+cuelga) + el botón no roba el foco del campo de código en Caja y Apartados refresca el detalle abierto.
+
+**Deploy:** __REV__ (rollback `tadaima-00028-tam`). Pedir Ctrl+Shift+R.
+
+---
+
 ### Sesión 2026-10-01 — "Borrar corte" (solo admin) para limpiar cortes de prueba — rev tadaima-00028-tam
 
 **Problema:** Ruben prueba en PROD con la tienda "Tadaima Test #2" (id 4) y sus cortes de prueba

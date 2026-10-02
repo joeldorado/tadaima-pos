@@ -12,6 +12,7 @@ import {
 } from "@tadaima/api";
 import type { Layaway, LayawayStatus, PaymentMethod, Product, Customer } from "@tadaima/api";
 import { useActiveStore } from "@/contexts/StoreContext";
+import { useScreenRefresh } from "@/hooks/useScreenRefresh";
 import { getTodayLocal } from "@/lib/date";
 import { SingleDatePicker } from "@/components/ui/SingleDatePicker";
 
@@ -121,8 +122,13 @@ export function LayawaysPage() {
   const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ─── Load ────────────────────────────────────────────────────────────────────
-  const load = async () => {
-    setLoading(true);
+  const selectedIdRef = useRef<number | null>(null);
+  useEffect(() => { selectedIdRef.current = selected?.id ?? null; }, [selected?.id]);
+
+  // silent = botón global "Actualizar": sin spinner de pantalla completa y el
+  // error sube para que el botón avise.
+  const load = async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
       const [res, pms] = await Promise.all([
         getLayaways({ store_id: activeStore?.id, per_page: 100 }),
@@ -130,8 +136,17 @@ export function LayawaysPage() {
       ]);
       setLayaways(res.data);
       setPayMethods(pms);
-      if (pms.length > 0) setPayMethodId(String(pms[0]!.id));
-    } catch {
+      if (pms.length > 0) {
+        setPayMethodId(prev => (prev && pms.some(m => String(m.id) === prev) ? prev : String(pms[0]!.id)));
+      }
+      // Con un apartado abierto, también trae su detalle (saldo y abonos).
+      const openId = selectedIdRef.current;
+      if (silent && openId != null) {
+        const full = await getLayaway(openId);
+        if (selectedIdRef.current === openId) setSelected(full);
+      }
+    } catch (err) {
+      if (silent) throw err;
       toast.error("Error al cargar apartados");
     } finally {
       setLoading(false);
@@ -139,6 +154,7 @@ export function LayawaysPage() {
   };
 
   useEffect(() => { void load(); }, [activeStore?.id]);
+  useScreenRefresh(() => load({ silent: true }));
 
   // ─── Select layaway (fetch full detail) ───────────────────────────────────
   const selectLayaway = async (l: Layaway) => {
