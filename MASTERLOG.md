@@ -4,6 +4,35 @@
 
 ---
 
+### Sesión 2026-10-01 — "Borrar corte" (solo admin) para limpiar cortes de prueba — rev tadaima-00028-tam
+
+**Problema:** Ruben prueba en PROD con la tienda "Tadaima Test #2" (id 4) y sus cortes de prueba
+descuadran Cortes de Caja en "Todas las tiendas". Revisado en prod (solo lectura): cortes #3, #4,
+#7, #13 de la tienda 4 (1 venta de $400); el **#13 abrió con $6,632,262,600** (error al teclear).
+Las tiendas reales no tienen nada mezclado. Joel pide botón de admin para borrar con todo lo que
+conecta + advertencia roja + tabla de lo que se borra. PR joeldorado/tadaima-pos#26 (`8906142`).
+
+- `CashSessionDeletionService`: `GET /cash/sessions/{id}/delete-preview` + `DELETE
+  /cash/sessions/{id}` (solo admin, `confirm: "BORRAR"`). Borra ventas (stock neto de cancelaciones
+  regresa al almacén de donde salió; no duplica las devueltas con /return), folios de preventa
+  creados en ese corte por ese cajero, movimientos de caja e insumos pagados de esa caja.
+- Candados: bloquea folios con cobros en otros cortes o creados en otro momento; confirmar
+  explícito si mueve otros cortes; el DELETE manda los conteos vistos (si cambió, no borra);
+  locks; renglones completos en `system_logs` (`cash_session.deleted`).
+- Fondo inicial al abrir caja: máximo $1,000,000.
+- Cortes: botón rojo "Borrar corte" (solo admin) + modal (portal) con banda roja, tablas y BORRAR.
+
+**Verificado:** backend 651 (+13 `CashSessionDeletionTest`), Postgres local 58, vitest 390, tsc y
+lint = base. Revisión independiente: alto (modal recortado → portal) y medios corregidos. QA local
+como admin: corte con 4 ventas borrado, stock 26→27 / 35→37 / 12→13, log escrito.
+
+**Pendiente (Joel/admin, desde el botón):** borrar los cortes de prueba #3, #4, #7 y #13 de la
+tienda 4. No se borró nada en prod a mano.
+
+**Deploy:** tadaima-00028-tam (rollback `tadaima-00026-yug`). Pedir Ctrl+Shift+R.
+
+---
+
 ### Sesión 2026-10-01 — Clientes: el buscador trae siempre también a los socios Tadaima — rev tadaima-00026-yug
 
 **Reporte de tienda:** en Gestión de Clientes escribían al socio recién dado de alta y no salía.
