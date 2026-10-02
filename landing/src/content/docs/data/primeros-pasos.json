@@ -25,9 +25,14 @@
       "perfil",
       "cerrar sesión",
       "flechas",
-      "teclado"
+      "teclado",
+      "actualizar",
+      "refrescar",
+      "recargar",
+      "sincronizar",
+      "datos nuevos"
     ],
-    "updatedAt": "2026-09-29",
+    "updatedAt": "2026-10-01",
     "sections": [
       {
         "id": "entrar",
@@ -180,6 +185,22 @@
             "kind": "link",
             "toTopic": "cortes-caja",
             "label": "Cómo hacer el corte de caja"
+          }
+        ]
+      },
+      {
+        "id": "actualizar-datos",
+        "heading": "Botón Actualizar (traer datos nuevos)",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "En el menú lateral, arriba de Avisos, está el botón “Actualizar”. Trae otra vez los datos de la pantalla donde estás (ventas, cortes, productos, apartados…) sin recargar la página ni perder lo que llevas en la Caja. Las pantallas también se refrescan solas cada rato; el botón es para cuando quieres ver lo último en ese momento."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "En la Caja con el menú oculto",
+            "text": "En pantalla completa o en pantallas chicas, el botón Actualizar aparece flotando abajo a la izquierda, encima del logo que abre el menú. El carrito no se toca."
           }
         ]
       },

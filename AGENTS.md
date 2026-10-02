@@ -205,6 +205,10 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   cobrar. El checkout escribe optimista en el caché (`lib/optimisticSale.ts`). Sin Redux.
 - Estado de servidor en TanStack Query, persistido en IndexedDB (soporte offline).
 - La lógica de negocio pura va en `landing/src/lib/` con su test al lado.
+- **Botón global "Actualizar"** (2026-10-01, `lib/screenRefresh.ts`): vive en el sidebar
+  del Layout (flotante en Caja sin menú) y vuelve a pedir las queries activas. Toda pantalla
+  que cargue SIN React Query debe registrar su `load` con `useScreenRefresh` (modo
+  silencioso: sin spinner de pantalla completa y el error sube para que el botón avise).
 
 ---
 

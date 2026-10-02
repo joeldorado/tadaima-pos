@@ -43,7 +43,6 @@ import { useProductsQuery } from "@/hooks/queries/useProducts";
 import { useStoresQuery } from "@/hooks/queries/useStores";
 import { useUsersQuery } from "@/hooks/queries/useUsers";
 import { useExchangeRateQuery } from "@/hooks/queries/useSystemSettings";
-import { queryKeys } from "@/lib/queryKeys";
 import { invalidateAfterSale } from "@/lib/optimisticSale";
 import type { SaleDetail, PreSaleOrder, Product, Store as StoreType } from "@tadaima/api";
 import { useAuth } from "@tadaima/auth";
@@ -2965,7 +2964,6 @@ export function SalesPage() {
   // el return de pantalla completa para que el header y los filtros siempre
   // estén visibles mientras se cambia el rango (antes Joel veía un spinner que
   // tapaba todo y no podía corregir el filtro hasta que el fetch acabara).
-  const isFetching = salesQuery.isFetching || preSaleOrdersQuery.isFetching || productsQuery.isFetching;
   // Refetch con data anterior en pantalla (keepPreviousData): la lista vieja
   // sigue visible — sin señal el cambio de fecha parecía "no funcionar".
   // Atenuamos la lista + chip "Cargando…" junto a los presets de período.
@@ -3025,20 +3023,6 @@ export function SalesPage() {
                 ))}
               </select>
             </div>
-          )}
-          {/* Botón 'Actualizar' comentado — React Query refetcha en background
-              + refetchOnWindowFocus + las mutaciones (devolver venta) invalidan
-              ya el cache. No tiene sentido manual. Decisión Joel 2026-05-21.
-              Indicador de fetch en background ahora vive en el subtítulo del header. */}
-          {false && (
-            <button onClick={() => { void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all }); void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all }); }}
-              className="flex items-center justify-center gap-2 px-5 h-[36px] font-black text-[9px] uppercase tracking-widest transition-all hover:scale-105 active:scale-95"
-              style={T.btnRed}>
-              {isFetching && !loading
-                ? <Loader2 size={13} strokeWidth={3} className="animate-spin" />
-                : <TrendingUp size={13} strokeWidth={3} />}
-              {isFetching && !loading ? "Actualizando…" : "Actualizar"}
-            </button>
           )}
         </div>
       </header>

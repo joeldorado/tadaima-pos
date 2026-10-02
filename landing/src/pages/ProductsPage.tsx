@@ -11,7 +11,7 @@ import {
   MessageCircle,
   Upload, Camera, Loader2,
   ArrowUp, ArrowDown, ArrowUpDown,
-  ChevronLeft, ChevronsLeft, ChevronsRight, Trash2, Pencil, RefreshCw, PackageX, TicketPercent,
+  ChevronLeft, ChevronsLeft, ChevronsRight, Trash2, Pencil, PackageX, TicketPercent,
   ChevronDown, SlidersHorizontal, FolderX
 } from "lucide-react";
 import { useActiveStore } from "@/contexts/StoreContext";
@@ -2894,25 +2894,6 @@ export function ProductsPage() {
                 {stats?.valor_invertido !== undefined ? fmt(stats.valor_invertido) : "…"}
               </p>
             </div>
-          )}
-          {/* 'Buscar nuevos' comentado — React Query refetcha en background
-              (refetchOnMount + refetchOnWindowFocus) y las mutaciones invalidan
-              el cache. El cajero/gerente ve productos nuevos sin tener que
-              forzar refresh manual. Decisión Joel 2026-05-21. */}
-          {false && !isAdmin && (
-            <button
-              onClick={() => {
-                void invalidateProducts();
-                void invalidateMangas();
-                toast.success("Buscando productos nuevos…");
-              }}
-              className="flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-bold transition-all hover:scale-[1.02] active:scale-95 shrink-0"
-              style={{ ...T.glassMd, color: T.textMuted, borderRadius: 14 }}
-              title="Forzar refresh para ver productos nuevos cargados por admin"
-            >
-              <RefreshCw size={14} />
-              Buscar nuevos
-            </button>
           )}
           <button
             onClick={handleCreateNew}

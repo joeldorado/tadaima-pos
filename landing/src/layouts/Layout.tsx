@@ -11,6 +11,7 @@ import {
   HelpCircle, Play, Globe,
 } from "lucide-react";
 import { NotificationBadge } from "@/components/notifications/NotificationBadge";
+import { RefreshDataButton } from "@/components/layout/RefreshDataButton";
 import { UserAvatar } from "@/components/UserAvatar";
 import { ChangePasswordModal } from "@/components/ChangePasswordModal";
 // ADR-014: ExpiringDraftsModal desactivado — el carrito vive client-side, no
@@ -580,6 +581,11 @@ function LayoutInner() {
 
         </nav>
 
+        {/* Actualizar: trae los datos nuevos de la pantalla (todos los roles) */}
+        <div className={railCollapsed ? "mb-2" : "w-full mb-2"}>
+          <RefreshDataButton variant={railCollapsed ? "rail" : "wide"} />
+        </div>
+
         {/* Notifications */}
         <NotificationBadge />
 
@@ -729,6 +735,7 @@ function LayoutInner() {
           <img src="/tadaima-logo.jpeg" alt="Menú" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
         </button>
       )}
+      {asideHidden && !drawerOpen && <RefreshDataButton variant="floating" />}
 
       {/* ── Main content ─────────────────────────────────────────────────────── */}
       <main className="flex-1 overflow-y-auto">
