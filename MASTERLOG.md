@@ -4,7 +4,7 @@
 
 ---
 
-### Sesión 2026-10-02 — Preview del total en dólares en el panel de cobro (Caja) — rev __REV__
+### Sesión 2026-10-02 — Preview del total en dólares en el panel de cobro (Caja) — rev tadaima-00040-ceq
 
 **Pedido Joel (captura):** junto a "PESOS RECIBIDOS", al lado del botón "$ Dólares", ver cuánto es el
 total en dólares sin abrir la calculadora.
@@ -15,7 +15,7 @@ total en dólares sin abrir la calculadora.
 **Verificado:** vitest 404, tsc y lint = base. QA local: $399 / TC 15.50 → "≈ US$25.74"; tablet 768
 sin desborde.
 
-**Deploy:** __REV__ (rollback `tadaima-00038-tib`). Pedir Ctrl+Shift+R.
+**Deploy:** tadaima-00040-ceq (rollback `tadaima-00038-tib`). Pedir Ctrl+Shift+R.
 
 ---
 
