@@ -38,12 +38,14 @@ export function RefreshDataButton({ variant, updatedAt }: { variant: Variant; up
   };
 
   const label = refreshing ? "Actualizando…" : "Actualizar";
-  const icon = (size: number) => (
+  // Resaltado en verde (Joel 2026-10-02): la tienda no lo encontraba.
+  const ACCENT = "#10b981";
+  const icon = (size: number, color = "var(--td-icon-inactive)") => (
     <RefreshCw
       size={size}
-      strokeWidth={2}
+      strokeWidth={2.4}
       className={refreshing ? "animate-spin" : ""}
-      style={{ color: "var(--td-icon-inactive)", flexShrink: 0 }}
+      style={{ color, flexShrink: 0 }}
     />
   );
   const common = {
@@ -63,9 +65,9 @@ export function RefreshDataButton({ variant, updatedAt }: { variant: Variant; up
       <button
         {...common}
         className="fixed left-3 z-40 flex items-center justify-center bottom-[68px] max-[767px]:bottom-[148px] rounded-xl transition-all hover:scale-105 active:scale-95 disabled:opacity-70"
-        style={{ width: 44, height: 44, background: "var(--td-popup-bg)", border: "1px solid var(--td-popup-border)", boxShadow: "0 6px 16px rgba(0,0,0,0.3)" }}
+        style={{ width: 44, height: 44, background: "var(--td-popup-bg)", border: `1.5px solid ${ACCENT}`, boxShadow: "0 6px 16px rgba(0,0,0,0.3)" }}
       >
-        {icon(18)}
+        {icon(18, ACCENT)}
       </button>
     );
   }
@@ -74,11 +76,11 @@ export function RefreshDataButton({ variant, updatedAt }: { variant: Variant; up
     return (
       <button
         {...common}
-        className="h-[34px] px-3.5 rounded-full flex items-center gap-2 transition-all hover:scale-[1.03] active:scale-95 disabled:opacity-70"
-        style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)" }}
+        className="h-[34px] px-4 rounded-full flex items-center gap-2 transition-all hover:scale-[1.03] active:scale-95 disabled:opacity-70"
+        style={{ background: "rgba(16,185,129,0.16)", border: `1.5px solid ${ACCENT}`, boxShadow: "0 0 14px rgba(16,185,129,0.25)" }}
       >
-        {icon(14)}
-        <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-md)", whiteSpace: "nowrap" }}>
+        {icon(15, ACCENT)}
+        <span className="text-[11px] font-black uppercase tracking-widest" style={{ color: ACCENT, whiteSpace: "nowrap" }}>
           {label}
         </span>
         {updatedAt ? (
@@ -95,9 +97,9 @@ export function RefreshDataButton({ variant, updatedAt }: { variant: Variant; up
       <button {...common} className="flex flex-col items-center gap-1 shrink-0 disabled:opacity-70">
         <span
           className="w-10 h-10 rounded-xl flex items-center justify-center transition-all hover:bg-[var(--td-hover-bg)]"
-          style={{ border: "1px solid var(--td-panel-border)" }}
+          style={{ background: "rgba(16,185,129,0.10)", border: "1px solid rgba(16,185,129,0.55)" }}
         >
-          {icon(17)}
+          {icon(17, ACCENT)}
         </span>
         <span style={{ fontSize: "9px", fontWeight: 600, color: "var(--td-text-lo)" }}>{label}</span>
       </button>
@@ -108,10 +110,10 @@ export function RefreshDataButton({ variant, updatedAt }: { variant: Variant; up
     <button
       {...common}
       className="flex items-center gap-3 w-full rounded-xl shrink-0 transition-all hover:bg-[var(--td-hover-bg)] disabled:opacity-70"
-      style={{ padding: "9px 12px", border: "1px solid var(--td-panel-border)" }}
+      style={{ padding: "9px 12px", background: "rgba(16,185,129,0.10)", border: "1px solid rgba(16,185,129,0.55)" }}
     >
-      {icon(17)}
-      <span style={{ fontSize: 13, fontWeight: 600, color: "var(--td-text-md)", whiteSpace: "nowrap" }}>{label}</span>
+      {icon(17, ACCENT)}
+      <span style={{ fontSize: 13, fontWeight: 800, color: ACCENT, whiteSpace: "nowrap" }}>{label}</span>
     </button>
   );
 }
