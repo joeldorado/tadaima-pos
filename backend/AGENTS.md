@@ -221,6 +221,8 @@ al dar de alta una tienda (y existe la migración de backfill
 | POST | `/cash/movements` | Entrada/salida/ajuste |
 | GET | `/cash/movements` | Movimientos + balance en vivo |
 | POST | `/cash/sessions/{session}/force-close` | **Solo admin** — cierra sesión colgada de otro |
+| GET | `/cash/sessions/{session}/delete-preview` | **Solo admin** — todo lo que "Borrar corte" quitaría (ventas, stock que regresa, preventas, movimientos, insumos, avisos, bloqueos) |
+| DELETE | `/cash/sessions/{session}` | **Solo admin** — borra el corte con todo lo suyo (`confirm: "BORRAR"`, `CashSessionDeletionService`; snapshot en `system_logs`) |
 
 ### Ventas (`SalesController`) — ADR-014/016
 

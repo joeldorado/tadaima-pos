@@ -1,7 +1,7 @@
 import { useState } from "react";
 import {
   Calendar, ChevronDown, ChevronRight, RefreshCw, Wallet,
-  CheckCircle2, AlertTriangle, Clock, Store, Printer, Loader2,
+  CheckCircle2, AlertTriangle, Clock, Store, Printer, Loader2, Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@tadaima/auth";
@@ -9,6 +9,7 @@ import { getCashReport, getCashSessionDetail } from "@tadaima/api";
 import type { CashReport, CashSessionReport, Store as StoreType } from "@tadaima/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { printCashCut } from "@/components/cash/CashCloseSummaryModal";
+import { DeleteCashSessionModal } from "@/components/cash/DeleteCashSessionModal";
 import { useStoresQuery } from "@/hooks/queries/useStores";
 import { DateRangePicker } from "@/components/ui/DateRangePicker";
 import { getTodayLocal, daysAgoLocal, BUSINESS_TZ } from "@/lib/date";
@@ -83,7 +84,9 @@ function SummaryCell({ label, value, color, tag }: { label: string; value: strin
  * TODOS los tickets con fecha, items y pagos + preventa + movimientos.
  * Reemplaza al modal (Joel 2026-06-12: "que empuje y salga la tabla").
  */
-function CorteDetail({ session: s }: { session: CashSessionReport }) {
+function CorteDetail({ session: s, isAdmin }: { session: CashSessionReport; isAdmin: boolean }) {
+  // "Borrar corte" (solo admin, 2026-10-01): limpiar cortes de prueba.
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const detailQuery = useQuery({
     // Misma key que CashCloseSummaryModal → comparten cache.
     queryKey: ["cash-session-detail", s.id],
@@ -122,6 +125,20 @@ function CorteDetail({ session: s }: { session: CashSessionReport }) {
           <Printer size={12} />
           Imprimir
         </button>
+        {isAdmin && (
+          <button
+            onClick={(e) => { e.stopPropagation(); setConfirmDelete(true); }}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all hover:scale-[1.02] active:scale-95"
+            style={{ background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.45)", color: "#f87171" }}
+            title="Borrar este corte con sus ventas, preventas y movimientos (solo admin)"
+          >
+            <Trash2 size={12} />
+            Borrar corte
+          </button>
+        )}
+        {confirmDelete && (
+          <DeleteCashSessionModal sessionId={s.id} onClose={() => setConfirmDelete(false)} />
+        )}
       </div>
       {/* auto-fill 140px: en vez de 9 columnas fijas (celdas de ~100px donde
           los montos se truncaban y el pill Falta/Sobra se salía), cada tarjeta
@@ -513,7 +530,7 @@ export function CashCutsPage() {
                           ? <ChevronDown size={16} style={{ color: TP }} />
                           : <ChevronRight size={16} style={{ color: TM, opacity: 0.4 }} />}
                       </button>
-                      {expanded && <CorteDetail session={s} />}
+                      {expanded && <CorteDetail session={s} isAdmin={isAdmin} />}
                     </div>
                   );
                 })}
