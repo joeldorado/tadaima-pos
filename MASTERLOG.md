@@ -4,7 +4,7 @@
 
 ---
 
-### Sesión 2026-10-02 — Total en dólares en la calculadora "Dólares del cliente" (Caja) — rev __REV__
+### Sesión 2026-10-02 — Total en dólares en la calculadora "Dólares del cliente" (Caja) — rev tadaima-00038-tib
 
 **Pedido de tienda (WhatsApp con foto):** en "Dólares del cliente" solo salía "TOTAL A PAGAR $4,578
 MXN" y el cajero hacía la cuenta a mano para decirle al cliente cuánto es en dólares.
@@ -16,7 +16,7 @@ MXN" y el cajero hacía la cuenta a mano para decirle al cliente cuánto es en d
 **Verificado:** vitest 404, tsc y lint = base. QA local: $399 / TC 15.50 = US$25.74; con $100
 recibidos, faltan US$19.29; móvil 375 px sin desborde.
 
-**Deploy:** __REV__ (rollback `tadaima-00036-fuy`). Pedir Ctrl+Shift+R.
+**Deploy:** tadaima-00038-tib (rollback `tadaima-00036-fuy`). Pedir Ctrl+Shift+R.
 
 ---
 
