@@ -391,7 +391,7 @@ export function PreSaleCatalogsPanel({ restrictedStoreId = null }: { restrictedS
   // Polling casi-live 20s (solo con la ventana enfocada) — el panel mostraba
   // stock/apartados viejos tras cancelar/vender en Caja, sobre todo multi-ventana
   // (QA 2026-06-15). Mismo patrón que Caja y Ventas.
-  const catalogsQuery = usePreSaleCatalogsQuery({ per_page: 200 }, { refetchIntervalMs: 20_000 });
+  const catalogsQuery = usePreSaleCatalogsQuery({ per_page: 200 });
   const catalogs: PreSaleCatalog[] = catalogsQuery.data?.data ?? [];
   const loading = catalogsQuery.isPending;
   // Refetch en background con data en pantalla (los contadores vendidos /

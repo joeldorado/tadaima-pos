@@ -26,7 +26,7 @@ export function usePreSaleCatalogsQuery(
     staleTime: 2 * 60_000,
     gcTime: ONE_DAY_MS,
     placeholderData: keepPreviousData,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false, // Sin auto-recarga (Joel 2026-10-02): carga al entrar y con «Actualizar».
     refetchOnReconnect: false,
     // Polling casi-live opcional (Joel 2026-06-12): el caller lo prende SOLO
     // mientras la ventana relevante está visible (p.ej. modal de Preventas en
@@ -60,7 +60,7 @@ export function usePreSaleOrdersQuery(
     staleTime: 5 * 60_000,
     gcTime: 30 * 60_000,
     placeholderData: keepPreviousData,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false, // Sin auto-recarga (Joel 2026-10-02): carga al entrar y con «Actualizar».
     refetchOnReconnect: false,
     // Polling casi-live opcional (Joel 2026-06-12) — solo montada + tab
     // enfocada y solo donde el caller lo pide. Cubre el caso cross-máquina

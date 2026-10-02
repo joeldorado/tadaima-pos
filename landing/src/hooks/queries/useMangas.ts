@@ -41,7 +41,7 @@ export function useMangasQuery(
     staleTime: CATALOG_STALE_MS,
     gcTime: ONE_DAY_MS,
     placeholderData: keepPreviousData,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false, // Sin auto-recarga (Joel 2026-10-02): carga al entrar y con «Actualizar».
     refetchOnReconnect: false,
     // Polling casi-live opcional (Joel 2026-06-12) — solo montada + tab enfocada.
     refetchInterval: options?.refetchIntervalMs || false,

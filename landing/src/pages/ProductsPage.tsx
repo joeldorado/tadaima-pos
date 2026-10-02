@@ -1810,11 +1810,7 @@ export function ProductsPage() {
   const [selectedForWhatsapp, setSelectedForWhatsapp] = useState<number[]>([]);
 
   const queryClient = useQueryClient();
-  // Polling casi-live (Joel 2026-06-12): solo mientras el TAB correspondiente
-  // está visible y la tab del browser enfocada — productos/tomos creados en
-  // otra máquina aparecen solos, sin refrescar y sin señal visual (la lista
-  // solo cambia si hay algo nuevo).
-  const LIVE_POLL_MS = 20_000;
+  // Sin auto-recarga (Joel 2026-10-02): carga al entrar y con «Actualizar».
   // Búsqueda SERVER-SIDE (2026-08-03): con el catálogo Macro (~14k) la página
   // default de 100 ya no es "todos". El término viaja al backend con debounce
   // (300ms) y busca sobre TODO el catálogo; el filtro client-side de abajo
@@ -1830,7 +1826,6 @@ export function ProductsPage() {
   // contadores. El chip activo viaja como filtro SQL y combina por AND con
   // búsqueda/tienda.
   const productsQuery = useProductsQuery(selectedStoreId, {
-    refetchIntervalMs: pageSection === 'tomos' ? false : LIVE_POLL_MS,
     search: serverSearch,
     withMeta: true,
     type: 'product',
@@ -1869,7 +1864,6 @@ export function ProductsPage() {
   }, [mangaSearch]);
   const mangasQuery = useMangasQuery(selectedStoreId, {
     enabled: pageSection === 'tomos' || productsQuery.isSuccess,
-    refetchIntervalMs: pageSection === 'tomos' ? LIVE_POLL_MS : false,
     search: serverMangaSearch,
   });
   const storesQuery = useStoresQuery({ active: true, enabled: isAdmin });

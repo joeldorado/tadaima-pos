@@ -23,7 +23,6 @@ export function useSupplyMovementsQuery(params?: {
     queryKey: queryKeys.supplies.movements(params as Record<string, unknown>),
     queryFn: () => getSupplyMovements(params),
     staleTime: 30_000,
-    refetchInterval: 60_000,
   })
 }
 

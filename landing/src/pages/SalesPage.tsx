@@ -50,6 +50,7 @@ import { useAuth } from "@tadaima/auth";
 import { toast } from "sonner";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { RefreshDataButton } from "@/components/layout/RefreshDataButton";
 
 const T = {
   bgGrad: "var(--td-page-bg)",
@@ -2286,13 +2287,11 @@ export function SalesPage() {
   // Cajero: movimientos de preventa de toda su tienda, igual que sus ventas
   // (2026-09-30). Antes `mine` lo limitaba a lo suyo.
 
-  // Polling casi-live (Joel 2026-06-12): SOLO mientras esta pantalla está
-  // montada y la tab enfocada — se ven ventas/folios hechos en OTRAS máquinas
-  // sin tocar nada. Desde 2026-09-30 el cajero también ve las de toda su tienda.
-  const LIVE_POLL_MS = 20_000;
-  const livePoll = { refetchIntervalMs: LIVE_POLL_MS };
-  const salesQuery = useSalesQuery(salesParams as Parameters<typeof useSalesQuery>[0], livePoll);
-  const preSaleOrdersQuery = usePreSaleOrdersQuery(preSaleOrdersParams as Parameters<typeof usePreSaleOrdersQuery>[0], livePoll);
+  // SIN auto-recarga (Joel 2026-10-02): antes se refrescaba sola cada 20 s y
+  // la tienda perdía su lugar. Los datos se cargan al entrar y con el botón
+  // «Actualizar» (barra de filtros o menú lateral).
+  const salesQuery = useSalesQuery(salesParams as Parameters<typeof useSalesQuery>[0]);
+  const preSaleOrdersQuery = usePreSaleOrdersQuery(preSaleOrdersParams as Parameters<typeof usePreSaleOrdersQuery>[0]);
 
   // Expansión de tickets controlada por el PADRE (Set de keys estables
   // `sale-${id}` / `pre-${id}`). Antes vivía dentro de cada fila; al subirla
@@ -3091,6 +3090,9 @@ export function SalesPage() {
           </div>
 
           <div className="flex flex-wrap items-center justify-end gap-2 relative z-50">
+            {/* Ya no se recarga sola (Joel 2026-10-02): el botón va a la vista,
+                junto a los filtros — el del menú lateral no se encontraba. */}
+            <RefreshDataButton variant="inline" updatedAt={salesQuery.dataUpdatedAt || undefined} />
             {(["today", "week", "month"] as const).map(p => {
               const active = activePreset === p;
               return (

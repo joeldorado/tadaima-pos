@@ -12,7 +12,9 @@ export const queryClient = new QueryClient({
       // gcTime must be >= persist maxAge or persisted data is garbage-collected
       // before it can be restored. We persist for 24h, so gcTime matches.
       gcTime: ONE_DAY_MS,
-      refetchOnWindowFocus: true,
+      // Sin recarga al volver a la ventana (Joel 2026-10-02): los datos se
+      // cargan al entrar a la pantalla y con el botón «Actualizar».
+      refetchOnWindowFocus: false,
       refetchOnReconnect: true,
       retry: 1,
     },

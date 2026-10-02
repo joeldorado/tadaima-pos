@@ -194,7 +194,7 @@
         "blocks": [
           {
             "kind": "prose",
-            "text": "En el menú lateral, arriba de Avisos, está el botón “Actualizar”. Trae otra vez los datos de la pantalla donde estás (ventas, cortes, productos, apartados…) sin recargar la página ni perder lo que llevas en la Caja. Las pantallas también se refrescan solas cada rato; el botón es para cuando quieres ver lo último en ese momento."
+            "text": "En el menú lateral, arriba de Avisos, está el botón “Actualizar”; en Ventas y Reportes también está junto a los filtros de fecha y dice hace cuánto se trajeron los datos. Trae otra vez los datos de la pantalla donde estás (ventas, cortes, productos, apartados…) sin recargar la página ni perder lo que llevas en la Caja. Las pantallas ya NO se refrescan solas: cargan al entrar y cuando presionas “Actualizar”, así no pierdes tu lugar mientras revisas."
           },
           {
             "kind": "callout",

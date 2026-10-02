@@ -18,6 +18,5 @@ export function useTransfersQuery(params?: Record<string, unknown>) {
     queryKey: queryKeys.transfers.list(params),
     queryFn: () => getTransfers(params),
     staleTime: 30_000,
-    refetchInterval: 60_000,
   })
 }

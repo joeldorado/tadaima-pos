@@ -577,7 +577,6 @@ export function DashboardPage() {
     queryFn: () => getCashReport({ from: today as string, to: today as string, store_id: activeStore!.id }),
     enabled: isGerente && !!activeStore,
     staleTime: 30_000,
-    refetchOnWindowFocus: true,
   });
 
   // Map user_id → última sesión abierta hoy (para badge "En caja #N")

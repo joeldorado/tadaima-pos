@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryObserver, onlineManager } from "@tanstack/react-query";
-import { isScreenRefreshing, refreshScreen, registerScreenRefresh } from "./screenRefresh";
+import { isScreenRefreshing, refreshScreen, registerScreenRefresh, updatedAgoLabel } from "./screenRefresh";
 
 function makeClient() {
   return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
@@ -126,5 +126,19 @@ describe("refreshScreen sin red o con red colgada", () => {
 
     expect(res).toEqual({ ok: false, failed: 1 });
     expect(isScreenRefreshing()).toBe(false);
+  });
+});
+
+describe("updatedAgoLabel", () => {
+  const t0 = 1_000_000_000_000;
+  it("menos de un minuto → hace un momento", () => {
+    expect(updatedAgoLabel(t0, t0 + 59_000)).toBe("hace un momento");
+  });
+  it("minutos y horas", () => {
+    expect(updatedAgoLabel(t0, t0 + 5 * 60_000)).toBe("hace 5 min");
+    expect(updatedAgoLabel(t0, t0 + 125 * 60_000)).toBe("hace 2 h");
+  });
+  it("reloj atrasado no da negativo", () => {
+    expect(updatedAgoLabel(t0, t0 - 10_000)).toBe("hace un momento");
   });
 });

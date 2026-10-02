@@ -453,7 +453,6 @@ export function PromosPage() {
     queryKey: [...queryKeys.products.all, 'light', 'promos', 'global'],
     queryFn: () => getProductsLight(),
     staleTime: 30_000,
-    refetchInterval: 60_000,
   });
 
   // Nombres de tienda para las etiquetas (solo admin las necesita todas).
