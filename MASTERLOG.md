@@ -4,6 +4,25 @@
 
 ---
 
+### Sesión 2026-10-02 — Las pantallas ya no se recargan solas (cargan al entrar y con "Actualizar") — rev tadaima-00036-fuy
+
+**Reporte de tienda (gerente Centro, Reporte de Ventas):** la pantalla se refrescaba sola y perdían
+su lugar. El botón global del 2026-10-01 solo se AGREGÓ; el polling (Ventas cada 20 s) y la recarga
+al volver a la ventana seguían. PR joeldorado/tadaima-pos#29 (otra sesión), integrado junto con los
+fixes del Excel en Chrome y del lector en Nuevo Producto.
+
+- Sin `refetchInterval` en pantallas de datos: Ventas, Reportes, Productos/Tomos, Preventas,
+  Inventario, Traslados, Insumos, Promos. `refetchOnWindowFocus: false` global.
+- Siguen en fondo sin mover la pantalla: caja abierta, avisos, carritos de Caja, usuarios conectados.
+- Botón "Actualizar" en verde y a la vista en la barra de filtros de Ventas y Reportes, con "hace X
+  min". Regla en `AGENTS.md`: no volver a meter `refetchInterval` en pantallas de datos.
+
+**Verificado:** sobre main integrado: vitest 404, tsc = base, build OK.
+
+**Deploy:** tadaima-00036-fuy (rollback `tadaima-00034-gol`). Pedir Ctrl+Shift+R.
+
+---
+
 ### Sesión 2026-10-02 — El lector de códigos no escribía nada en "Nuevo Producto" — rev tadaima-00034-gol
 
 **Reporte de tienda (video):** en Productos → Nuevo Producto escaneaban con el lector USB y no salía
