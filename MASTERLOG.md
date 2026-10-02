@@ -4,7 +4,7 @@
 
 ---
 
-### Sesión 2026-10-02 — El lector de códigos no escribía nada en "Nuevo Producto" — rev __REV__
+### Sesión 2026-10-02 — El lector de códigos no escribía nada en "Nuevo Producto" — rev tadaima-00034-gol
 
 **Reporte de tienda (video):** en Productos → Nuevo Producto escaneaban con el lector USB y no salía
 nada. Joel sospechaba del borrador de 24 h: no es eso (se restaura una sola vez al abrir y solo
@@ -20,7 +20,7 @@ restaurado del borrador, escanear tras dar clic pegaba el código al final del v
 foco en Nombre, con SKU restaurado del borrador; escribir a mano sigue igual; código repetido sigue
 mostrando el aviso de duplicado.
 
-**Deploy:** __REV__ (rollback `tadaima-00032-naj`). Pedir Ctrl+Shift+R en esa laptop.
+**Deploy:** tadaima-00034-gol (rollback `tadaima-00032-naj`). Pedir Ctrl+Shift+R en esa laptop.
 
 ---
 
