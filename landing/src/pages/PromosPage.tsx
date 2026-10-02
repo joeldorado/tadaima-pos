@@ -15,6 +15,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import { useStoresQuery } from "@/hooks/queries/useStores";
 import { isAdmin as isAdminRole, isManager as isManagerRole } from "@/lib/permisos";
 import { promoBadge, promoBannerCopy, promoShortLabel } from "@/lib/promoLabel";
+import { downloadBlob } from "@/lib/downloadFile";
 import { PromoAdminSection } from "@/components/promos/PromoAdminSection";
 
 // ─── Tokens visuales (convención de páginas glass) ────────────────────────────
@@ -216,10 +217,7 @@ function ShareBannerModal({ product, promo, onClose }: {
   const handleDownload = async () => {
     const file = await exportPng();
     if (!file) return;
-    const url = URL.createObjectURL(file);
-    const a = document.createElement("a");
-    a.href = url; a.download = file.name; a.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(file, file.name);
     toast.success("Imagen descargada");
   };
 

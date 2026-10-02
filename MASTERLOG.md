@@ -4,6 +4,28 @@
 
 ---
 
+### Sesión 2026-10-02 — El Excel del corte no se descargaba en Chrome (en Edge sí) — rev __REV__
+
+**Reporte de tienda:** una cajera en Windows + Chrome, en Caja → Cerrar Caja → "Descargar reporte
+(Excel)", no recibió el archivo; en Edge sí bajó. Causa en el código (`exportExcel.ts`): la descarga
+sale varios segundos después del clic (pide todas las páginas de ventas + genera el Excel), con un
+`<a download>` fuera del DOM y el blob liberado en el mismo instante; además siempre decía "Excel
+descargado correctamente". Chrome la trata como descarga automática y la puede bloquear en silencio
+(icono en la barra de direcciones), según el estado de ese navegador.
+
+- `lib/downloadFile.ts`: `downloadBlob` (anchor en el DOM, blob liberado hasta 60 s después) y
+  `downloadWithRetry` (descarga + aviso "Archivo listo" con botón "Descargar otra vez", que es un
+  clic nuevo y Chrome sí lo deja pasar).
+- Aplicado al Excel del corte (turno y toda la tienda) y Reportes (`exportReportExcel`), Reporte del
+  Día de Ventas (ahora con aviso de error) y descargar imagen en Promos.
+
+**Verificado:** vitest 401 (+2 `downloadFile.test.ts`), tsc y lint = base. QA local: corte turno y
+tienda, "Descargar otra vez" encima del modal (el corte sigue abierto), Reporte del Día.
+
+**Deploy:** __REV__ (rollback `tadaima-00030-zeq`). Pedir Ctrl+Shift+R en esa caja.
+
+---
+
 ### Sesión 2026-10-01 — Botón global "Actualizar" (traer datos nuevos) en todas las pantallas — rev tadaima-00030-zeq
 
 **Pedido Joel:** las pantallas cargan y se refrescan solas cada rato, pero no había un botón
