@@ -4,7 +4,7 @@
 
 ---
 
-### Sesión 2026-10-03 — Reportes y Excel del corte agrupados por categoría A-Z — rev __REV__
+### Sesión 2026-10-03 — Reportes y Excel del corte agrupados por categoría A-Z — rev tadaima-00042-fik
 
 **Pedido Joel:** en Reportes y en el corte de caja, ordenar/agrupar los productos por categoría A-Z,
 con las mismas categorías que tiene cada producto en Productos.
@@ -23,7 +23,7 @@ con las mismas categorías que tiene cada producto en Productos.
 encabezado y subtotal, PDF generado. Revisión independiente sin altos; corregido: "MANGA"/"Manga" =
 un solo grupo (no repite encabezados) y `cancelled_items` ya no consulta productos si no hay cancelaciones.
 
-**Deploy:** __REV__ (rollback `tadaima-00040-ceq`). Pedir Ctrl+Shift+R.
+**Deploy:** tadaima-00042-fik (rollback `tadaima-00040-ceq`). Pedir Ctrl+Shift+R.
 
 ---
 
