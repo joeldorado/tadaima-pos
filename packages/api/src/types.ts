@@ -1062,7 +1062,8 @@ export interface Manga {
   code: string | null
   genre: string | null
   public_price: number
-  profit_margin_percent: number
+  /** Ausente sin permiso de ver costos; null si el tomo no tiene costo. */
+  profit_margin_percent?: number | null
   cost: number
   active: boolean
   price_1: number | null

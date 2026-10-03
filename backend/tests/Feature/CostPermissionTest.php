@@ -92,6 +92,47 @@ class CostPermissionTest extends TestCase
             ->assertJsonPath('data.0.cost', 123.45);
     }
 
+    public function test_tomo_sin_costo_devuelve_margen_null_no_cien(): void
+    {
+        // 2026-10-03: sin costo el API devolvía margen 100 y el modal mostraba
+        // "Margen 100% / Costo real $0.00", como si alguien lo hubiera puesto en 0.
+        $tomo = Product::create([
+            'name' => 'Tomo 1 Naruto', 'sku' => 'T-1', 'cost' => null,
+            'active' => true, 'product_type' => Product::TYPE_MANGA,
+        ]);
+        $tomo->price()->create(['price_1' => 159]);
+
+        $admin = $this->makeUser('admin@test.com', canViewCost: true);
+        $this->assignRole($admin, 'admin');
+
+        $row = $this->actingAs($admin)
+            ->getJson('/api/v1/mangas')
+            ->assertOk()
+            ->json('data.data.0');
+
+        $this->assertArrayHasKey('profit_margin_percent', $row);
+        $this->assertNull($row['profit_margin_percent']);
+    }
+
+    public function test_tomo_con_costo_devuelve_su_margen(): void
+    {
+        $tomo = Product::create([
+            'name' => 'Tomo 19 MHA', 'sku' => 'T-19', 'cost' => 111.30,
+            'active' => true, 'product_type' => Product::TYPE_MANGA,
+        ]);
+        $tomo->price()->create(['price_1' => 159]);
+
+        $admin = $this->makeUser('admin@test.com', canViewCost: true);
+        $this->assignRole($admin, 'admin');
+
+        $margen = $this->actingAs($admin)
+            ->getJson('/api/v1/mangas')
+            ->assertOk()
+            ->json('data.data.0.profit_margin_percent');
+
+        $this->assertEqualsWithDelta(30.0, $margen, 0.001);
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private function makeUser(string $email, bool $canViewCost): User

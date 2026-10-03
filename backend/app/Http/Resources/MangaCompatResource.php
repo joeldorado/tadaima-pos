@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Resources;
 
 use App\Models\Product;
+use App\Support\TomoCost;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -36,11 +37,11 @@ class MangaCompatResource extends JsonResource
         $publicPrice = (float) ($price?->price_1 ?? 0);
 
         // profit_margin_percent: ya no se almacena, lo derivamos de cost vs price
-        // si ambos existen. Solo informativo en UI admin.
+        // si ambos existen. Sin costo va null (antes salía 100 y el modal
+        // mostraba "Margen 100% / Costo real $0.00").
         $cost = (float) ($product->cost ?? 0);
-        $margin = ($publicPrice > 0)
-            ? round((($publicPrice - $cost) / $publicPrice) * 100, 2)
-            : 0;
+        $vigente = TomoCost::margenVigente($product->cost !== null ? $cost : null, $publicPrice);
+        $margin = $vigente !== null ? round($vigente, 2) : null;
 
         return [
             'id'                    => $product->id,

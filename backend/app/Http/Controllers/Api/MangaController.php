@@ -11,6 +11,7 @@ use App\Http\Resources\MangaCompatResource;
 use App\Models\Product;
 use App\Models\ProductMangaDetail;
 use App\Models\SystemLog;
+use App\Support\TomoCost;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -117,6 +118,46 @@ class MangaController extends Controller
     }
 
     /**
+     * Costo a guardar al EDITAR un tomo; null = no tocar el costo.
+     *
+     * Bug 2026-10-03: el modal mandaba `profit_margin_percent: 0` cuando el
+     * campo iba vacío (usuario sin permiso de ver costos, o campo borrado) y
+     * el costo quedaba igual al precio. Las cajas con el bundle viejo en caché
+     * lo siguen mandando, por eso aquí un margen 0/vacío significa "conservar
+     * el margen que ya tiene el tomo":
+     *  - precio A sin cambio  → el costo no se toca;
+     *  - precio A cambia      → el costo sigue al precio con su mismo margen.
+     * La base es el precio A que QUEDA guardado (`price_1`). `public_price` no
+     * se persiste: solo sirve de base en tomos legacy sin precio A.
+     */
+    private function resolveCostForUpdate(Product $manga, array $data): ?float
+    {
+        $precioViejo = $manga->price?->price_1 !== null ? (float) $manga->price->price_1 : null;
+        $precioNuevo = array_key_exists('price_1', $data)
+            ? $data['price_1']
+            : ($precioViejo ?? ($data['public_price'] ?? null));
+        if ($precioNuevo === null || (float) $precioNuevo <= 0) {
+            return null;
+        }
+        $precioNuevo = (float) $precioNuevo;
+
+        $vigente = TomoCost::margenVigente($manga->cost !== null ? (float) $manga->cost : null, $precioViejo);
+        $enviado = TomoCost::margenUtilizable($data['profit_margin_percent'] ?? null);
+
+        // Se compara a 2 decimales (lo que muestra el modal): abrir y guardar
+        // sin cambiar nada no debe mover centavos.
+        $margenCambio = $enviado !== null && ($vigente === null || round($enviado, 2) !== round($vigente, 2));
+        $precioCambio = $precioViejo === null || abs($precioNuevo - $precioViejo) >= 0.005;
+
+        $margen = $margenCambio ? $enviado : $vigente;
+        if ($margen === null || (! $margenCambio && ! $precioCambio)) {
+            return null;
+        }
+
+        return TomoCost::desdePrecio($precioNuevo, $margen);
+    }
+
+    /**
      * POST /mangas — crea un producto con product_type='manga' + manga_details.
      */
     public function store(StoreMangaRequest $request): JsonResponse
@@ -201,16 +242,18 @@ class MangaController extends Controller
         $before = $manga->only(['name', 'sku', 'barcode', 'cost', 'active']);
         $beforeDetail = $manga->mangaDetails?->only(['volume_number', 'editorial', 'genre']) ?? [];
 
-        DB::transaction(function () use ($manga, $data): void {
+        // Se resuelve ANTES de la transacción: compara contra el precio A actual.
+        $cost = $this->resolveCostForUpdate($manga, $data);
+
+        DB::transaction(function () use ($manga, $data, $cost): void {
             $productPayload = array_filter([
                 'name'    => $data['name']    ?? null,
                 'sku'     => $data['code']    ?? null,
                 'barcode' => $data['code']    ?? null,
-                // Costo real derivado del precio público y el margen (la
-                // librería no captura costo directo; se calcula con %). Si el
-                // request no trae precio/margen, queda null y array_filter lo
-                // descarta → no pisa el costo existente.
-                'cost'    => $this->resolveCost($data),
+                // Costo real derivado del precio A y el margen (la librería no
+                // captura costo directo; se calcula con %). null = no tocar:
+                // array_filter lo descarta y no pisa el costo existente.
+                'cost'    => $cost,
                 'active'  => array_key_exists('active', $data) ? $data['active'] : null,
             ], fn ($v) => $v !== null);
 

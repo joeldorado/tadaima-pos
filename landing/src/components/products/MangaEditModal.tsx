@@ -13,6 +13,7 @@ import { isAdmin as isAdminRole } from '@/lib/permisos'
 import { CategoryMultiPicker } from '@/components/products/CategoryMultiPicker'
 import { generateBarcode } from '@/lib/barcode'
 import { PRICE_FORM_LABELS } from '@/lib/priceLevels'
+import { costFromMargin, initialMarginInput, marginPayload, parseMarginPct } from '@/lib/mangaMargin'
 
 // ─── Design tokens (same as MangaBatchModal) ──────────────────────────────────
 const T = {
@@ -108,7 +109,9 @@ export function MangaEditModal({
 
   // ── Prices ────────────────────────────────────────────────────────────────
   const [precioPublico, setPrecioPublico] = useState(String(manga.public_price))
-  const [margenPct,     setMargenPct]     = useState(String(manga.profit_margin_percent))
+  // Vacío si el API no manda margen (usuario sin permiso de costos o tomo sin
+  // costo): así no se manda un 0 que dejaba costo = precio (bug 2026-10-03).
+  const [margenPct,     setMargenPct]     = useState(() => initialMarginInput(manga.profit_margin_percent))
   const [prices, setPrices] = useState({
     price_1: manga.price_1 != null ? String(manga.price_1) : '',
     price_2: manga.price_2 != null ? String(manga.price_2) : '',
@@ -178,10 +181,8 @@ export function MangaEditModal({
   const [deleting,         setDeleting]         = useState(false)
 
   // ── Derived ───────────────────────────────────────────────────────────────
-  const costoReal = (() => {
-    const p = parseFloat(precioPublico), m = parseFloat(margenPct)
-    return (!isNaN(p) && !isNaN(m) && m >= 0 && m < 100) ? p * (1 - m / 100) : null
-  })()
+  // La base del costo es el precio A que se guarda (Precio Normal), igual que el backend.
+  const costoReal = costFromMargin(prices.price_1, margenPct)
 
   const nombreOk = !!nombre.trim()
   const precioOk = !!precioPublico.trim() && parseFloat(precioPublico) > 0
@@ -207,7 +208,7 @@ export function MangaEditModal({
         code:                  isbn.trim() || null,
         genre:                 genero.trim() || null,
         public_price:          parseFloat(precioPublico),
-        profit_margin_percent: parseFloat(margenPct) || 0,
+        ...marginPayload(margenPct),
         active,
         price_1: toPrice(prices.price_1),
         price_2: toPrice(prices.price_2),
@@ -472,17 +473,20 @@ export function MangaEditModal({
                     <input
                       className="w-full px-4 py-3 rounded-2xl outline-none"
                       style={T.input}
-                      type="number" min="0" max="99" step="0.1" placeholder="30"
+                      type="number" min="0" max="99" step="0.1" placeholder="—"
                       value={margenPct}
                       onChange={e => setMargenPct(e.target.value)}
                     />
+                    {parseMarginPct(margenPct) === undefined && (
+                      <p className="text-[10px] ml-1" style={{ color: T.textMuted }}>Vacío o 0 = se conserva el margen actual</p>
+                    )}
                   </div>
                   {costoReal !== null && (
                     <div className="col-span-2 flex items-center gap-2 px-4 py-2.5 rounded-2xl" style={{ background: 'rgba(0,180,100,0.08)', border: '1px solid rgba(0,180,100,0.2)' }}>
                       <CheckCircle2 size={13} style={{ color: '#4ade80' }} />
                       <span className="text-xs" style={{ color: T.textMuted }}>Costo real:</span>
                       <span className="text-sm font-black" style={{ color: '#00CC66' }}>${costoReal.toFixed(2)}</span>
-                      <span className="text-[10px] ml-auto" style={{ color: T.textMuted }}>precio × (1 − {margenPct}%)</span>
+                      <span className="text-[10px] ml-auto" style={{ color: T.textMuted }}>precio normal × (1 − {margenPct}%)</span>
                     </div>
                   )}
                 </div>
