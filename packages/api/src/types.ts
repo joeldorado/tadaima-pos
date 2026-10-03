@@ -380,7 +380,11 @@ export interface SaleItemDetail {
    * como fallback cuando `item.cost` es NULL (ventas pre-migración) — para
    * ventas nuevas SIEMPRE preferir `item.cost`.
    */
-  product: { id: number; name: string; sku: string; cost?: number | null; product_type?: 'product' | 'manga' } | null
+  product: {
+    id: number; name: string; sku: string; cost?: number | null; product_type?: 'product' | 'manga'
+    /** Nombres de sus categorías en orden (solo en el listado `GET /sales`, para reportes). */
+    categories?: string[]
+  } | null
   created_at: string
 }
 
@@ -446,6 +450,8 @@ export interface SaleDetail {
     /** cost_at_sale del item cancelado (snapshot ADR-015). Solo para admin/can_view_cost; null si no. */
     cost?: number | null
     product_type?: 'product' | 'manga'
+    /** Categorías del producto, en orden (2026-10-03, para agrupar el reporte). */
+    categories?: string[]
   }>
   customer: { id: number; name: string; tier: string | null } | null
   /** Usuario que registró la venta (cajero/gerente/admin). Eager-loaded por SalesController. */

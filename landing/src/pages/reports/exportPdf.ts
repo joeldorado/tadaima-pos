@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { fmt, fmtDate } from "./reportFormat";
 import type { ReportExportParams } from "./reportTypes";
 import { DISCOUNT_REASON_SHORT, SURCHARGE_REASON_SHORT } from "@/lib/discountReasons";
+import { categoryOf } from "./reportCategories";
 
 const SUPPLY_SOURCE_LABEL: Record<string, string> = {
   caja: "Caja",
@@ -18,6 +19,9 @@ const DISCOUNT_REASON_LABEL = DISCOUNT_REASON_SHORT;
 const SUR_FILL: [number, number, number] = [255, 204, 128];    // naranja claro (aumento)
 const PROMO_FILL: [number, number, number] = [185, 251, 192];  // verde
 const DESC_FILL: [number, number, number] = [255, 241, 118];   // amarillo
+// Agrupado por categoría A-Z (2026-10-03): encabezado y subtotal de cada una.
+const CAT_FILL: [number, number, number] = [220, 232, 247];
+const CAT_SUBTOTAL_FILL: [number, number, number] = [241, 245, 251];
 
 export function exportReportPdf(params: ReportExportParams): void {
   const {
@@ -105,7 +109,22 @@ export function exportReportPdf(params: ReportExportParams): void {
       const rowFill: Record<number, [number, number, number]> = {};
       const cashTotalCols = canViewCost ? 5 : 3;
       const cashVentaIdx = canViewCost ? 3 : 2;
+      let cashCat: string | null = null;
+      let g = { qty: 0, cost: 0, venta: 0, profit: 0 };
+      const closeCashCategory = () => {
+        if (cashCat === null) return;
+        rowFill[body.length] = CAT_SUBTOTAL_FILL;
+        body.push([`Subtotal ${cashCat}`, Number(g.qty.toFixed(1)), ...(canViewCost ? [fmt(g.cost)] : []), fmt(g.venta), ...(canViewCost ? [fmt(g.profit)] : [])]);
+      };
       cashProducts.forEach((prod) => {
+        const cat = categoryOf(prod);
+        if (cat !== cashCat) {
+          closeCashCategory();
+          cashCat = cat;
+          g = { qty: 0, cost: 0, venta: 0, profit: 0 };
+          rowFill[body.length] = CAT_FILL;
+          body.push([{ content: cat.toUpperCase(), colSpan: cashTotalCols }]);
+        }
         let qty = 0, revenue = 0;
         Object.entries(prod.payment_breakdown).forEach(([m, d]) => { if (isCash(m)) { qty += d.qty; revenue += d.revenue; } });
         // Costo por PIEZAS (costo unitario × piezas en efectivo), no por ingresos.
@@ -113,6 +132,7 @@ export function exportReportPdf(params: ReportExportParams): void {
         const cost = unitCost * qty;
         const profit = revenue - cost;
         tCant += qty; tCost += cost; tVenta += revenue; tProfit += profit;
+        g.qty += qty; g.cost += cost; g.venta += revenue; g.profit += profit;
         body.push([prod.show_cost_tag ? `${prod.name} · Costo ${fmt(prod.cost_tag ?? 0)}` : prod.name, Number(qty.toFixed(1)), ...(canViewCost ? [fmt(cost)] : []), fmt(revenue), ...(canViewCost ? [fmt(profit)] : [])]);
         // Renglones de beneficio (efectivo): uno por promo (verde) y por motivo (amarillo).
         Object.entries(prod.promo_breakdown ?? {}).forEach(([name, amt]) => {
@@ -134,6 +154,7 @@ export function exportReportPdf(params: ReportExportParams): void {
           }
         });
       });
+      closeCashCategory();
       body.push(["TOTAL EFECTIVO", Number(tCant.toFixed(1)), ...(canViewCost ? [fmt(tCost)] : []), fmt(tVenta), ...(canViewCost ? [fmt(tProfit)] : [])]);
       const cashLastIdx = body.length - 1;
       autoTable(doc, {
@@ -167,7 +188,22 @@ export function exportReportPdf(params: ReportExportParams): void {
       const body: any[] = [];
       const rowFill: Record<number, [number, number, number]> = {};
       const cardTotalCols = canViewCost ? 8 : 6;
+      let cardCat: string | null = null;
+      let g = { qty: 0, bruto: 0, cost: 0, com: 0, iva: 0, net: 0, profit: 0 };
+      const closeCardCategory = () => {
+        if (cardCat === null) return;
+        rowFill[body.length] = CAT_SUBTOTAL_FILL;
+        body.push([`Subtotal ${cardCat}`, Number(g.qty.toFixed(1)), fmt(g.bruto), ...(canViewCost ? [fmt(g.cost)] : []), fmt(g.com), fmt(g.iva), fmt(g.net), ...(canViewCost ? [fmt(g.profit)] : [])]);
+      };
       cardProducts.forEach((prod) => {
+        const cat = categoryOf(prod);
+        if (cat !== cardCat) {
+          closeCardCategory();
+          cardCat = cat;
+          g = { qty: 0, bruto: 0, cost: 0, com: 0, iva: 0, net: 0, profit: 0 };
+          rowFill[body.length] = CAT_FILL;
+          body.push([{ content: cat.toUpperCase(), colSpan: cardTotalCols }]);
+        }
         let qty = 0, revenue = 0;
         Object.entries(prod.payment_breakdown).forEach(([m, d]) => { if (isCard(m)) { qty += d.qty; revenue += d.revenue; } });
         const comm = prod.commission_amount || 0;
@@ -178,6 +214,7 @@ export function exportReportPdf(params: ReportExportParams): void {
         const cost = unitCost * qty;
         const profit = net - cost;
         tCant += qty; tBruto += revenue; tCost += cost; tCom += comm; tIva += iva; tNet += net; tProfit += profit;
+        g.qty += qty; g.bruto += revenue; g.cost += cost; g.com += comm; g.iva += iva; g.net += net; g.profit += profit;
         body.push([prod.show_cost_tag ? `${prod.name} · Costo ${fmt(prod.cost_tag ?? 0)}` : prod.name, Number(qty.toFixed(1)), fmt(revenue), ...(canViewCost ? [fmt(cost)] : []), fmt(comm), fmt(iva), fmt(net), ...(canViewCost ? [fmt(profit)] : [])]);
         // Renglones de beneficio (tarjeta): monto en la columna Bruto (índice 2).
         Object.entries(prod.promo_breakdown ?? {}).forEach(([name, amt]) => {
@@ -199,6 +236,7 @@ export function exportReportPdf(params: ReportExportParams): void {
           }
         });
       });
+      closeCardCategory();
       body.push(["TOTAL TARJETA", Number(tCant.toFixed(1)), fmt(tBruto), ...(canViewCost ? [fmt(tCost)] : []), fmt(tCom), fmt(tIva), fmt(tNet), ...(canViewCost ? [fmt(tProfit)] : [])]);
       const cardLastIdx = body.length - 1;
       autoTable(doc, {

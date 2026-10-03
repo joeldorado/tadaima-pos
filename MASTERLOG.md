@@ -4,6 +4,29 @@
 
 ---
 
+### Sesión 2026-10-03 — Reportes y Excel del corte agrupados por categoría A-Z — rev __REV__
+
+**Pedido Joel:** en Reportes y en el corte de caja, ordenar/agrupar los productos por categoría A-Z,
+con las mismas categorías que tiene cada producto en Productos.
+
+- Backend: `GET /sales` trae `items.product.categories` (nombres en el orden del pivote) y
+  `cancelled_items[].categories` (una venta cancelada completa ya no trae el producto en `items`).
+  Sin migraciones.
+- `reports/reportCategories.ts`: grupo = primera categoría (para no contar la venta dos veces);
+  "Sin categoría" y "Preventas" al final. `buildGroupedProducts` ordena por categoría y luego como antes.
+- Pantalla (Ventas por Producto): encabezado por categoría con piezas y venta + las categorías bajo
+  cada producto. Excel (Efectivo y Tarjeta) y PDF: encabezado y "Subtotal {categoría}" por grupo.
+  El Excel del corte usa el mismo armado. Totales sin cambio.
+
+**Verificado:** backend 653 (+2 `SaleItemCategoriesTest`, también en Postgres local), vitest 412
+(+8), tsc y lint = base. QA local: grupos en pantalla, venta cancelada cae en su categoría, Excel con
+encabezado y subtotal, PDF generado. Revisión independiente sin altos; corregido: "MANGA"/"Manga" =
+un solo grupo (no repite encabezados) y `cancelled_items` ya no consulta productos si no hay cancelaciones.
+
+**Deploy:** __REV__ (rollback `tadaima-00040-ceq`). Pedir Ctrl+Shift+R.
+
+---
+
 ### Sesión 2026-10-02 — Preview del total en dólares en el panel de cobro (Caja) — rev tadaima-00040-ceq
 
 **Pedido Joel (captura):** junto a "PESOS RECIBIDOS", al lado del botón "$ Dólares", ver cuánto es el

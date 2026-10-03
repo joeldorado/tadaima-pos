@@ -55,6 +55,9 @@ class SalesController extends Controller
 
         $query = Sale::with([
                 'customer', 'payments.paymentMethod', 'items.product', 'user:id,name',
+                // Categorías del producto (2026-10-03): Reportes y el Excel del
+                // corte agrupan por categoría A-Z, igual que en Productos.
+                'items.product.categories' => fn ($q) => $q->select('product_categories.id', 'product_categories.name'),
                 'registerSession:id,status',
                 // Preventas creadas en el mismo ticket (cobro mixto). Sin esto
                 // el frontend separa el ticket de la nueva preventa como si

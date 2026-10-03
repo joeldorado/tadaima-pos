@@ -77,6 +77,11 @@ class SaleItemResource extends JsonResource
                     $isAdmin
                         ? ['cost' => $this->product->cost !== null ? (float) $this->product->cost : null]
                         : [],
+                    // Nombres de sus categorías en el orden del pivote (solo en el
+                    // listado de ventas, que es lo que usan los reportes).
+                    $this->product->relationLoaded('categories')
+                        ? ['categories' => $this->product->categories->pluck('name')->values()->all()]
+                        : [],
                 ),
             ),
 

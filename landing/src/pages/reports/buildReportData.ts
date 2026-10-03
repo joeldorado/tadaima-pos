@@ -11,6 +11,7 @@ import type { SaleDetail, PreSaleOrder, PreSaleOrderPayment } from "@tadaima/api
 import { toLocalYmd } from "@/lib/date";
 import { isLegacyGlobalDiscountSale, saleItemNet } from "@/lib/saleItemNet";
 import type { GroupedProduct, PresaleRow, ReportPaymentBreakdown } from "./reportTypes";
+import { assignCategories, categoryOf, compareCategories } from "./reportCategories";
 
 // ─── IVA sobre comisión de terminal ──────────────────────────────────────────
 // Configurable por el usuario y guardada en localStorage; vive aquí para que el
@@ -589,6 +590,20 @@ export function buildGroupedProducts(
       }
     }
 
+    // Categoría de cada producto (2026-10-03): viene con la venta (GET /sales).
+    // También de lo cancelado: una venta cancelada completa ya no trae `items`.
+    const categoriesByProduct = new Map<number, string[]>();
+    for (const sale of filteredSales) {
+      for (const item of sale.cancelled_items ?? []) {
+        if (item.product_id != null && item.categories) categoriesByProduct.set(item.product_id, item.categories);
+      }
+      for (const item of sale.items ?? []) {
+        const cats = item.product?.categories;
+        if (item.product_id != null && cats) categoriesByProduct.set(item.product_id, cats);
+      }
+    }
+    assignCategories(arr, categoriesByProduct);
+
     // Cantidad total por producto base → mantiene JUNTAS las variantes de costo.
     const qtyByBase = new Map<number | string, number>();
     for (const p of arr) {
@@ -597,6 +612,9 @@ export function buildGroupedProducts(
     }
 
     return arr.sort((a, b) => {
+      // Primero por categoría A-Z (cada consumidor agrupa con groupProductsByCategory).
+      const byCategory = compareCategories(categoryOf(a), categoryOf(b));
+      if (byCategory !== 0) return byCategory;
       const aIsManga = a.product_type === "manga";
       const bIsManga = b.product_type === "manga";
       if (aIsManga && !bIsManga) return 1;  // Mangas go to the bottom

@@ -49,6 +49,10 @@ export interface GroupedProduct {
   surcharge_breakdown?: Record<string, { cash: number; card: number }>;
   /** Detalle de cada aumento (auditoría: quién, cuándo, por qué). */
   surcharge_entries?: SurchargeEntry[];
+  /** Categorías del producto, en orden (las mismas de Productos — 2026-10-03). */
+  categories?: string[];
+  /** Grupo del reporte: la primera categoría, "Sin categoría" o "Preventas". */
+  category?: string;
 }
 
 export interface SurchargeEntry {

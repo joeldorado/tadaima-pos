@@ -75,9 +75,12 @@
       "imprimir reporte",
       "top productos",
       "descuadre",
-      "sesiones de caja"
+      "sesiones de caja",
+      "categoría",
+      "agrupar",
+      "por categoría"
     ],
-    "updatedAt": "2026-08-06",
+    "updatedAt": "2026-10-03",
     "sections": [
       {
         "id": "que-hay",
@@ -90,6 +93,12 @@
           {
             "kind": "prose",
             "text": "El histórico se consulta por rango de fechas (por defecto hoy → hoy). Todo es imprimible."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Productos agrupados por categoría",
+            "text": "En “Ventas por Producto”, en el Excel/PDF y en el Excel del corte, los productos salen agrupados por categoría de la A a la Z (las mismas de Productos), cada una con su subtotal de piezas y venta. Si un producto tiene varias categorías se agrupa en la primera y abajo de su nombre ves todas. Los que no tienen categoría van al final en “Sin categoría”."
           },
           {
             "kind": "link",

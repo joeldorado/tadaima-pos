@@ -5,6 +5,7 @@ import { fmt, fmtDate } from "./reportFormat";
 import type { ReportExportParams } from "./reportTypes";
 import { DISCOUNT_REASON_SHORT, SURCHARGE_REASON_SHORT } from "@/lib/discountReasons";
 import { downloadWithRetry } from "@/lib/downloadFile";
+import { categoryOf } from "./reportCategories";
 
 export async function exportReportExcel(params: ReportExportParams): Promise<void> {
   const {
@@ -174,11 +175,49 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
             sheet.getRow(row).height = 16;
         };
 
+        // Agrupado por categoría A-Z (Joel 2026-10-03): los productos ya vienen
+        // ordenados por categoría; al cambiar de categoría se cierra la anterior
+        // con su subtotal y se abre un encabezado con el nombre de la nueva.
+        const CAT_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FFDCE8F7" } };
+        const SUBTOTAL_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF1F5FB" } };
+        const categoryHeaderRow = (row: number, colStart: number, colEnd: number, category: string) => {
+            for (let c = colStart; c <= colEnd; c++) setCell(row, c, "", { fill: CAT_FILL });
+            setCell(row, colStart, category.toUpperCase(), { fill: CAT_FILL, font: { name: "Arial", size: 9, bold: true, color: { argb: "FF1F3A5F" } }, alignment: { horizontal: "left", vertical: "middle" } });
+            sheet.getRow(row).height = 18;
+        };
+        const categorySubtotalRow = (row: number, colStart: number, colEnd: number, category: string, qtyCol: number, qty: number, money: Array<[col: number, value: number, argb: string]>) => {
+            for (let c = colStart; c <= colEnd; c++) setCell(row, c, "", { fill: SUBTOTAL_FILL });
+            const font = (argb: string) => ({ name: "Arial", size: 9, bold: true, italic: true, color: { argb } });
+            setCell(row, colStart, `Subtotal ${category}`, { fill: SUBTOTAL_FILL, font: font("FF1F3A5F"), alignment: { horizontal: "left", vertical: "middle" } });
+            setCell(row, qtyCol, Number(qty.toFixed(1)), { fill: SUBTOTAL_FILL, font: font("FF1F3A5F"), alignment: { horizontal: "center", vertical: "middle" } });
+            money.forEach(([col, value, argb]) => setCell(row, col, value, { fill: SUBTOTAL_FILL, numFmt: "$#,##0.00", font: font(argb), alignment: { horizontal: "right", vertical: "middle" } }));
+            sheet.getRow(row).height = 18;
+        };
+
         // TABLE 2: EFECTIVO  →  Producto · Cant · [Costo] · Venta · [Utilidad]
         // Columnas de Costo (T2_COL+2) y Utilidad (T2_COL+4) solo si canViewCost.
         const cashVentaCol = canViewCost ? T2_COL + 3 : T2_COL + 2;
         let totCashQty = 0, totCashCost = 0, totCashRevenue = 0, totCashProfit = 0;
+        let cashCat: string | null = null;
+        let gCash = { qty: 0, cost: 0, revenue: 0, profit: 0 };
+        const closeCashCategory = () => {
+            if (cashCat === null) return;
+            categorySubtotalRow(r2, T2_COL, T2_COL + T2_COLS - 1, cashCat, T2_COL + 1, gCash.qty, [
+                ...(canViewCost ? [[T2_COL + 2, gCash.cost, "FF444444"] as [number, number, string]] : []),
+                [cashVentaCol, gCash.revenue, "FF009944"],
+                ...(canViewCost ? [[T2_COL + 4, gCash.profit, "FF009944"] as [number, number, string]] : []),
+            ]);
+            r2++;
+        };
         cashProducts.forEach((prod) => {
+            const cat = categoryOf(prod);
+            if (cat !== cashCat) {
+                closeCashCategory();
+                cashCat = cat;
+                gCash = { qty: 0, cost: 0, revenue: 0, profit: 0 };
+                categoryHeaderRow(r2, T2_COL, T2_COL + T2_COLS - 1, cat);
+                r2++;
+            }
             let cashQty = 0;
             let cashRevenue = 0;
             Object.entries(prod.payment_breakdown).forEach(([method, data]) => {
@@ -195,6 +234,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
             const cashCost = unitCost * cashQty;
             const cashProfit = cashRevenue - cashCost;
             totCashQty += cashQty; totCashCost += cashCost; totCashRevenue += cashRevenue; totCashProfit += cashProfit;
+            gCash.qty += cashQty; gCash.cost += cashCost; gCash.revenue += cashRevenue; gCash.profit += cashProfit;
 
             setCell(r2, T2_COL, prod.show_cost_tag ? `${prod.name} · Costo ${fmt(prod.cost_tag ?? 0)}` : prod.name, { alignment: { horizontal: "left", vertical: "middle", wrapText: true } });
             setCell(r2, T2_COL + 1, Number(cashQty.toFixed(1)), { alignment: { horizontal: "center", vertical: "middle" } });
@@ -219,6 +259,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
                 if (amt.cash > 0.005) { benefitRow(r2, T2_COL, T2_COL + T2_COLS - 1, cashVentaCol, `   📈 Aumento (${SURCHARGE_REASON_SHORT[reason] ?? reason})`, amt.cash, SUR_FLUO, 1); r2++; }
             });
         });
+        closeCashCategory();
         if (cashProducts.length > 0) {
             setCell(r2, T2_COL, "TOTAL EFECTIVO", totalLabelOpts);
             setCell(r2, T2_COL + 1, Number(totCashQty.toFixed(1)), totalQtyOpts);
@@ -239,7 +280,29 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
         const cardNetCol  = canViewCost ? T3_COL + 6 : T3_COL + 5;
         const cardProfitCol = T3_COL + 7;
         let totCardQty = 0, totCardRevenue = 0, totCardCost = 0, totCardComm = 0, totCardIva = 0, totCardNet = 0, totCardProfit = 0;
+        let cardCat: string | null = null;
+        let gCard = { qty: 0, revenue: 0, cost: 0, comm: 0, iva: 0, net: 0, profit: 0 };
+        const closeCardCategory = () => {
+            if (cardCat === null) return;
+            categorySubtotalRow(r3, T3_COL, T3_COL + T3_COLS - 1, cardCat, T3_COL + 1, gCard.qty, [
+                [T3_COL + 2, gCard.revenue, "FF444444"],
+                ...(canViewCost ? [[cardCostCol, gCard.cost, "FF444444"] as [number, number, string]] : []),
+                [cardCommCol, gCard.comm, "FFFF2200"],
+                [cardIvaCol, gCard.iva, "FFF59E0B"],
+                [cardNetCol, gCard.net, "FF009944"],
+                ...(canViewCost ? [[cardProfitCol, gCard.profit, "FF009944"] as [number, number, string]] : []),
+            ]);
+            r3++;
+        };
         cardProducts.forEach((prod) => {
+            const cat = categoryOf(prod);
+            if (cat !== cardCat) {
+                closeCardCategory();
+                cardCat = cat;
+                gCard = { qty: 0, revenue: 0, cost: 0, comm: 0, iva: 0, net: 0, profit: 0 };
+                categoryHeaderRow(r3, T3_COL, T3_COL + T3_COLS - 1, cat);
+                r3++;
+            }
             let cardQty = 0;
             let cardRevenue = 0;
             Object.entries(prod.payment_breakdown).forEach(([method, data]) => {
@@ -258,6 +321,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
             const cardCost = unitCost * cardQty;
             const cardProfit = netCard - cardCost;
             totCardQty += cardQty; totCardRevenue += cardRevenue; totCardCost += cardCost; totCardComm += prodComm; totCardIva += prodIva; totCardNet += netCard; totCardProfit += cardProfit;
+            gCard.qty += cardQty; gCard.revenue += cardRevenue; gCard.cost += cardCost; gCard.comm += prodComm; gCard.iva += prodIva; gCard.net += netCard; gCard.profit += cardProfit;
 
             setCell(r3, T3_COL, prod.show_cost_tag ? `${prod.name} · Costo ${fmt(prod.cost_tag ?? 0)}` : prod.name, { alignment: { horizontal: "left", vertical: "middle", wrapText: true } });
             setCell(r3, T3_COL + 1, Number(cardQty.toFixed(1)), { alignment: { horizontal: "center", vertical: "middle" } });
@@ -284,6 +348,7 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
                 if (amt.card > 0.005) { benefitRow(r3, T3_COL, T3_COL + T3_COLS - 1, T3_COL + 2, `   📈 Aumento (${SURCHARGE_REASON_SHORT[reason] ?? reason})`, amt.card, SUR_FLUO, 1); r3++; }
             });
         });
+        closeCardCategory();
         if (cardProducts.length > 0) {
             setCell(r3, T3_COL, "TOTAL TARJETA", totalLabelOpts);
             setCell(r3, T3_COL + 1, Number(totCardQty.toFixed(1)), totalQtyOpts);
