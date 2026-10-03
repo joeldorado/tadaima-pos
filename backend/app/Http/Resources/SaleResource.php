@@ -59,8 +59,18 @@ class SaleResource extends JsonResource
                     // las ventas canceladas.
                     $canViewCost = $request->user()?->canViewCost() ?? false;
                     $itemSnapshots = collect($this->cancellations)->flatMap(fn ($c) => $c->items_snapshot ?? [])->all();
+                    if ($itemSnapshots === []) {
+                        return []; // sin cancelaciones: no consulta productos (listado de 100 ventas)
+                    }
                     $productIds = collect($itemSnapshots)->pluck('product_id')->filter()->unique()->all();
-                    $productTypes = \App\Models\Product::whereIn('id', $productIds)->pluck('product_type', 'id')->all();
+                    // Con sus categorías (2026-10-03): una venta cancelada completa ya
+                    // no trae el producto en `items`, y el reporte la agrupa por categoría.
+                    $products = \App\Models\Product::query()
+                        ->with(['categories' => fn ($q) => $q->select('product_categories.id', 'product_categories.name')])
+                        ->whereIn('id', $productIds)
+                        ->get(['id', 'product_type'])
+                        ->keyBy('id');
+                    $productTypes = $products->map(fn ($p) => $p->product_type)->all();
                     return collect($itemSnapshots)->map(fn ($i) => [
                         'product_id'   => $i['product_id'] ?? null,
                         'name'         => $i['name'] ?? '',
@@ -76,6 +86,9 @@ class SaleResource extends JsonResource
                         'surcharge_cancelled' => isset($i['surcharge_cancelled']) ? (float) $i['surcharge_cancelled'] : null,
                         'cost'         => ($canViewCost && isset($i['cost']) && $i['cost'] !== null) ? (float) $i['cost'] : null,
                         'product_type' => isset($i['product_id']) ? ($productTypes[$i['product_id']] ?? 'product') : 'product',
+                        'categories'   => isset($i['product_id'], $products[$i['product_id']])
+                            ? $products[$i['product_id']]->categories->pluck('name')->values()->all()
+                            : [],
                     ])->values()->all();
                 }
             ),

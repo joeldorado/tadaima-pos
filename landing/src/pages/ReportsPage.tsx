@@ -18,6 +18,7 @@ import { ReportsSkeleton } from "@/components/reports/ReportsSkeleton";
 import { exportReportPdf } from "./reports/exportPdf";
 import { exportReportExcel } from "./reports/exportExcel";
 import type { ReportExportParams, PresaleRow, SurchargeEntry } from "./reports/reportTypes";
+import { groupProductsByCategory } from "./reports/reportCategories";
 import { SURCHARGE_REASON_LABELS } from "@/lib/discountReasons";
 import { fetchAllSales } from "@/lib/fetchAllPages";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -146,6 +147,9 @@ interface GroupedProduct {
   surcharge_total?: number;
   surcharge_breakdown?: Record<string, { cash: number; card: number }>;
   surcharge_entries?: SurchargeEntry[];
+  /** Categorías del producto y grupo del reporte (2026-10-03, ver reportCategories). */
+  categories?: string[];
+  category?: string;
 }
 
 const REPORT_TABS: { id: TabId; label: string; icon: React.ElementType }[] = [
@@ -452,6 +456,27 @@ export function ReportsPage() {
   const tdStyle: React.CSSProperties = { padding: "10px 16px", fontSize: 12, color: TS, borderBottom: DIV };
 
   // Reusable row renderer for products and mangas to ensure unified design and clean separation!
+  // Agrupado por categoría A-Z (Joel 2026-10-03): encabezado con subtotal de
+  // piezas e ingresos de cada categoría, y abajo sus productos.
+  const renderByCategory = (list: GroupedProduct[], padX: number, padY: number, fontS: number) =>
+    groupProductsByCategory(list).map(group => {
+      const qty = group.products.reduce((s, p) => s + (p.total_quantity || 0), 0);
+      const revenue = group.products.reduce((s, p) => s + (p.total_revenue || 0), 0);
+      return (
+        <Fragment key={`cat-${group.category}`}>
+          <tr data-testid="report-category-row" style={{ background: "rgba(68,153,255,0.06)" }}>
+            <td colSpan={6} style={{ padding: `6px ${padX}px`, fontSize: 10, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", color: "#4499FF", borderTop: "1px solid rgba(68,153,255,0.18)", borderBottom: "1px solid rgba(68,153,255,0.18)" }}>
+              <div className="flex items-center justify-between gap-3">
+                <span>{group.category}</span>
+                <span style={{ color: TM, letterSpacing: "0.04em" }}>{qty} uds · {fmt(revenue)}</span>
+              </div>
+            </td>
+          </tr>
+          {group.products.map(prod => renderProductRow(prod, padX, padY, fontS))}
+        </Fragment>
+      );
+    });
+
   const renderProductRow = (prod: GroupedProduct, padX = 16, padY = 12, fontS = 12) => {
     const isExpanded = expandedIds.includes(prod.id);
     return (
@@ -471,6 +496,9 @@ export function ReportsPage() {
                 <span>{prod.name}</span>
                 {prod.sku && prod.sku !== "PREVENTA" ? (
                   <span style={{ fontSize: 9, color: TM, fontWeight: 600, letterSpacing: "0.04em" }}>SKU: {prod.sku}</span>
+                ) : null}
+                {(prod.categories?.length ?? 0) > 0 ? (
+                  <span style={{ fontSize: 9, color: "#4499FF", fontWeight: 700 }}>{prod.categories!.join(" · ")}</span>
                 ) : null}
               </div>
               {(prod.promo_total ?? 0) > 0 && (
@@ -979,7 +1007,7 @@ export function ReportsPage() {
                         {(canViewCost ? ["Producto", "Cant. Vendida", "Costo", "Ingresos Totales", "Utilidad Neta"] : ["Producto", "Cant. Vendida", "Ingresos Totales"]).map(h => <th key={h} style={thStyle}>{h}</th>)}
                       </tr></thead>                      <tbody>
                         {/* 1) Render regular products */}
-                        {regularProducts.map(prod => renderProductRow(prod, 16, 10, 12))}
+                        {renderByCategory(regularProducts, 16, 10, 12)}
 
                         {/* 2) Separator row for Tomos (mangas) */}
                         {regularProducts.length > 0 && tomoProducts.length > 0 && (
@@ -1006,7 +1034,7 @@ export function ReportsPage() {
                         )}
 
                         {/* 3) Render tomo products */}
-                        {tomoProducts.map(prod => renderProductRow(prod, 16, 10, 12))}
+                        {renderByCategory(tomoProducts, 16, 10, 12)}
 
                         {/* Empty state fallback */}
                         {groupedProducts.length === 0 && (
@@ -1170,7 +1198,7 @@ export function ReportsPage() {
                         </tr>
                       </thead>                      <tbody>
                         {/* 1) Render regular products */}
-                        {regularProducts.map(prod => renderProductRow(prod, 18, 14, 13))}
+                        {renderByCategory(regularProducts, 18, 14, 13)}
 
                         {/* 2) Separator row for Tomos (mangas) */}
                         {regularProducts.length > 0 && tomoProducts.length > 0 && (
@@ -1197,7 +1225,7 @@ export function ReportsPage() {
                         )}
 
                         {/* 3) Render tomo products */}
-                        {tomoProducts.map(prod => renderProductRow(prod, 18, 14, 13))}
+                        {renderByCategory(tomoProducts, 18, 14, 13)}
 
                         {/* Empty state fallback */}
                         {groupedProducts.length === 0 && (
