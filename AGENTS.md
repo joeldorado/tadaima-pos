@@ -8,7 +8,7 @@
 > Detalle adicional: [`CLAUDE.md`](CLAUDE.md) (comandos y arquitectura del frontend) y
 > [`backend/AGENTS.md`](backend/AGENTS.md) (API, ADRs y referencia de endpoints).
 >
-> Última revisión: 2026-09-30.
+> Última revisión: 2026-10-03.
 
 ---
 
@@ -165,6 +165,13 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   `products.category_id` es solo una caché de compatibilidad.
 - **Regla TOMO** (qué es un tomo de manga): un solo lugar,
   `backend/app/Support/TomoRule.php`.
+- **Costo de tomos (2026-10-03):** el manga nacional va al 30% de margen sobre el precio A
+  (`price_1`, no el de socio): `costo = precio A × 0.70` — `backend/app/Support/TomoCost.php`.
+  El margen no se guarda (se deriva de costo y precio). Al editar un tomo, margen vacío o 0
+  = conservar el margen que ya tiene; nunca debe quedar costo = precio. Los tomos de un
+  import de .bak entran SIN costo: después de cada import corre
+  `php artisan tadaima:homologar-costo-tomos` (primero `--dry-run`; `--revertir=<id del
+  system_log>` regresa al costo anterior). Solo toca `products.cost` de los tomos.
 - **Borrar un producto no borra sus ventas:** usa
   `ProductController::snapshotAndDelete()`. `sale_items` congela nombre, SKU y costo
   al cobrar (ADR-015); solo los apartados bloquean el borrado.

@@ -4,6 +4,53 @@
 
 ---
 
+### Sesión 2026-10-03 — Costo de tomos: fix del modal (costo = precio) + homologación al 30% — rev tadaima-00044-boy
+
+**Pedido Joel:** el equipo vio los "costos reales" de los tomos en 0. Investigar si alguien o un
+update los bajó, arreglar lo que estuviera mal y homologar: costo = precio A × 0.70 (margen 30%;
+ej. Tomo 19 MHA 159 → 111.30) en TODOS los tomos.
+
+**Investigación (solo lectura):** nadie los bajó; los tomos nunca tuvieron costo. El POS viejo trae
+costo 0 en todos (6 extractos) y el import lo deja NULL. Respaldos del 26 y 28 sep: 15-16 tomos
+con costo de ~2,800-2,900; `system_logs` sin ningún tomo que pasara de costo a 0;
+`pg_stat_statements` solo con UPDATE de una fila por id. El modal mostraba "Margen 100% / Costo
+real $0.00" para un tomo sin costo.
+
+**Bug encontrado y arreglado:** "Editar Tomo" con el campo Margen vacío (usuario sin
+`can_view_cost`, o campo borrado) mandaba `profit_margin_percent: 0` → costo = precio (21 tomos).
+- `App\Support\TomoCost`: regla única (`MARGEN_DEFAULT = 30`).
+- `MangaController::update` → `resolveCostForUpdate()`: margen vacío/0 = conservar el margen del
+  tomo (precio A igual → no toca; precio A cambia → el costo lo sigue). Base = `price_1` que queda
+  guardado. Cubre a los bundles viejos en caché. `store()` sin cambio.
+- `MangaCompatResource`: tomo sin costo → margen `null` (antes 100).
+- `lib/mangaMargin.ts` + `MangaEditModal`: sin margen válido no se manda la llave; campo vacío con
+  leyenda "Vacío o 0 = se conserva el margen actual"; badge "Costo real" sobre el precio normal.
+
+**Datos (prod):** comando nuevo `tadaima:homologar-costo-tomos` (`--dry-run`, `--csv`,
+`--revertir=<id del system_log>`; escribe por conjuntos, solo `products.cost` de `manga`).
+Corrida real: 2,886 escritos (2,863 sin costo · 21 costo = precio · 2 otro costo), 39 ya en regla →
+2,925/2,925 tomos en regla. Registro `system_logs` #3786 (guarda el costo anterior de cada tomo).
+Respaldo previo: `~/Documents/JOEL/supabase-catalogo-pre-homologar-costo-2026-10-03.dump`
+(products + product_prices). CSV y log en `MAcro Productos SQL/homologar-costo-tomos-20261003*`.
+
+**Verificado:** backend 683 (SQLite) y los 36 nuevos también en Postgres local; vitest 419 (+7);
+tsc y lint = base; `vite build` OK. QA local: gerente sin permiso de costos guarda un tomo y el
+costo no cambia (también con el payload del bundle viejo). Revisión independiente sin altos;
+corregidos 2 medios. En prod, antes vs después: productos normales, inventario, precios y
+`sale_items` idénticos; únicos productos modificados: 2,886 tomos. `--revertir=3786 --dry-run`:
+2,886 restaurables, 0 omitidos.
+
+**Pendientes / ojo:** (1) después de cada import de .bak, volver a correr el comando (los tomos
+nuevos entran sin costo). (2) El alta de tomos (`store`) aún acepta margen 0. (3) En "Editar Tomo"
+el campo "Precio Público" no se guarda; el precio real es "Precio Normal". (4) En Postgres local
+fallan 5 tests que ya fallaban antes (`PurgeNoStockProductsTest` ×4, `CategoryPivotRepairTest` ×1).
+(5) Reportes de días pasados: las ventas de tomos sin costo congelado ahora toman el costo nuevo.
+
+**Deploy:** tadaima-00044-boy (rollback `tadaima-00042-fik`). Rollback de datos:
+`php artisan tadaima:homologar-costo-tomos --revertir=3786`. Pedir Ctrl+Shift+R.
+
+---
+
 ### Sesión 2026-10-03 — Reportes y Excel del corte agrupados por categoría A-Z — rev tadaima-00042-fik
 
 **Pedido Joel:** en Reportes y en el corte de caja, ordenar/agrupar los productos por categoría A-Z,
