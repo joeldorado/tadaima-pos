@@ -1,13 +1,17 @@
-// Generador del PDF del reporte. Reescrito para empatar con el Excel:
-// mismas 5 tablas, mismo orden y columnas (Efectivo · Tarjeta · Preventas ·
-// Devoluciones · Egresos), IVA dinámico y columnas de Costo/Utilidad gateadas.
+// Generador del PDF del reporte. Mismo formato que el Excel (pedido del equipo
+// 2026-10-03): bloques por método (Efectivo · Tarjeta · Transferencias) con los
+// tomos al final y su subtotal "Manga Nacional", detalle por ticket de
+// descuentos/ofertas y aumentos, Preventas, Devoluciones y Egresos. Los
+// renglones salen de ventasReportRows (los mismos del Excel).
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { toast } from "sonner";
 import { fmt, fmtDate } from "./reportFormat";
 import type { ReportExportParams } from "./reportTypes";
-import { DISCOUNT_REASON_SHORT, SURCHARGE_REASON_SHORT } from "@/lib/discountReasons";
-import { categoryOf } from "./reportCategories";
+import type { PayBucket } from "./paymentBucket";
+import { buildVentasReportRows, sumMethodRows, type AdjustmentRow, type MethodRow } from "./ventasReportRows";
+
+type Rgb = [number, number, number];
 
 const SUPPLY_SOURCE_LABEL: Record<string, string> = {
   caja: "Caja",
@@ -15,34 +19,35 @@ const SUPPLY_SOURCE_LABEL: Record<string, string> = {
   propio: "Dinero propio",
 };
 
-const DISCOUNT_REASON_LABEL = DISCOUNT_REASON_SHORT;
-const SUR_FILL: [number, number, number] = [255, 204, 128];    // naranja claro (aumento)
-const PROMO_FILL: [number, number, number] = [185, 251, 192];  // verde
-const DESC_FILL: [number, number, number] = [255, 241, 118];   // amarillo
-// Agrupado por categoría A-Z (2026-10-03): encabezado y subtotal de cada una.
-const CAT_FILL: [number, number, number] = [220, 232, 247];
-const CAT_SUBTOTAL_FILL: [number, number, number] = [241, 245, 251];
+const MANGA_TEXT: Rgb = [29, 78, 216];
+const MANGA_FILL: Rgb = [219, 234, 254];
 
-export function exportReportPdf(params: ReportExportParams): void {
+interface MethodSection {
+  bucket: PayBucket;
+  number: number;
+  title: string;
+  /** Nombre en los títulos de detalle y totales. */
+  label: string;
+  headFill: Rgb;
+  totalFill: Rgb;
+}
+
+const METHOD_SECTIONS: MethodSection[] = [
+  { bucket: "cash", number: 1, title: "VENTAS EN EFECTIVO", label: "EFECTIVO", headFill: [0, 153, 68], totalFill: [230, 250, 235] },
+  { bucket: "card", number: 2, title: "DESGLOSE DE COBROS CON TARJETA", label: "TARJETA", headFill: [34, 102, 187], totalFill: [230, 240, 255] },
+  { bucket: "transfer", number: 3, title: "TRANSFERENCIAS / DEPÓSITOS", label: "TRANSFERENCIAS", headFill: [17, 153, 153], totalFill: [225, 245, 245] },
+];
+
+/** Arma el PDF (sin toast ni descarga) para poder generarlo en un test. */
+export function buildReportPdf(params: ReportExportParams): jsPDF {
   const {
     groupedProducts, paymentBreakdown, from, to, today, canViewCost, ivaRate,
     effectiveStoreId, selectedUserId, stores, users, supplyMovements, presaleRows,
   } = params;
-  try {
-    toast.info("Generando archivo PDF...");
     const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
     const ivaLabel = `IVA (${Math.round(ivaRate * 100)}%)`;
-
-    const isCard = (m: string) => {
-      const s = m.toLowerCase();
-      // La TRANSFERENCIA se maneja como tarjeta (dinero que no entra al cajón físico).
-      return s.includes("tarjeta") || s.includes("credit") || s.includes("debito") || s.includes("tpv") || s.includes("terminal")
-        || s.includes("transfer") || s.includes("deposit") || s.includes("spei");
-    };
-    const isCash = (m: string) => {
-      const s = m.toLowerCase();
-      return s.includes("efectivo") || s.includes("cash") || s.includes("dolar") || s.includes("dólar") || s.includes("usd") || s.includes("otro") || s.includes("unmapped");
-    };
+    const rows = buildVentasReportRows(groupedProducts);
+    const mangaRevenue = METHOD_SECTIONS.reduce((sum, s) => sum + sumMethodRows(rows.blocks[s.bucket].filter(r => r.isManga)).revenue, 0);
 
     // ── Encabezado ──────────────────────────────────────────────────────────
     doc.setFillColor(204, 34, 0); // Tadaima Red
@@ -73,9 +78,12 @@ export function exportReportPdf(params: ReportExportParams): void {
     doc.setFontSize(9);
     doc.setTextColor(50, 50, 50);
     doc.text(`Total Bruto: ${fmt(paymentBreakdown.total)}`, 14, currentY + 11);
-    doc.text(`Efectivo: ${fmt(paymentBreakdown.cash)}`, 80, currentY + 11);
-    doc.text(`Tarjetas: ${fmt(paymentBreakdown.card)}`, 140, currentY + 11);
-    doc.text(`Depósitos: ${fmt(paymentBreakdown.deposits)}`, 210, currentY + 11);
+    doc.text(`Efectivo: ${fmt(paymentBreakdown.cash)}`, 70, currentY + 11);
+    doc.text(`Tarjetas: ${fmt(paymentBreakdown.card)}`, 120, currentY + 11);
+    doc.text(`Depósitos: ${fmt(paymentBreakdown.deposits)}`, 170, currentY + 11);
+    doc.setTextColor(...MANGA_TEXT);
+    doc.text(`Manga Nacional: ${fmt(mangaRevenue)}`, 225, currentY + 11);
+    doc.setTextColor(50, 50, 50);
     currentY += 21;
 
     const advanceY = () => {
@@ -91,7 +99,7 @@ export function exportReportPdf(params: ReportExportParams): void {
       doc.text(title, 10, currentY);
       currentY += 3;
     };
-    const highlightLastRow = (bodyLen: number, fill: [number, number, number]) =>
+    const highlightLastRow = (bodyLen: number, fill: Rgb) =>
       (data: any) => {
         if (data.row.index === bodyLen - 1) {
           data.cell.styles.fontStyle = "bold";
@@ -99,172 +107,86 @@ export function exportReportPdf(params: ReportExportParams): void {
         }
       };
 
-    // ── 1. VENTAS EN EFECTIVO — Producto · Cant · [Costo] · Venta · [Utilidad] ─
-    const cashProducts = groupedProducts.filter((p) => Object.keys(p.payment_breakdown).some(isCash));
-    if (cashProducts.length > 0) {
+    // ── 1-3. Bloques por método: productos por más vendidos, tomos al final,
+    //         TOTAL y subtotal "MANGA NACIONAL (incluido)" ──────────────────────
+    const isCard = (s: MethodSection) => s.bucket === "card";
+    const methodHead = (s: MethodSection): string[] => isCard(s)
+      ? ["Producto", "Cant.", "Bruto", ...(canViewCost ? ["Costo"] : []), "Comisión TPV", ivaLabel, "Neto", ...(canViewCost ? ["Utilidad"] : [])]
+      : ["Producto", "Cant.", ...(canViewCost ? ["Costo"] : []), "Venta", ...(canViewCost ? ["Utilidad"] : [])];
+    /** Celdas numéricas de un renglón (o de un total) del bloque. */
+    const methodCells = (s: MethodSection, r: Pick<MethodRow, "qty" | "revenue" | "cost" | "commission">): Array<string | number> => {
+      if (!isCard(s)) {
+        return [r.qty, ...(canViewCost ? [fmt(r.cost)] : []), fmt(r.revenue), ...(canViewCost ? [fmt(r.revenue - r.cost)] : [])];
+      }
+      const iva = r.commission * ivaRate;
+      const net = r.revenue - r.commission - iva;
+      return [r.qty, fmt(r.revenue), ...(canViewCost ? [fmt(r.cost)] : []), fmt(r.commission), fmt(iva), fmt(net), ...(canViewCost ? [fmt(net - r.cost)] : [])];
+    };
+
+    const methodTable = (s: MethodSection, blockRows: MethodRow[]) => {
       pageBreak();
-      sectionTitle("1. VENTAS EN EFECTIVO");
-      let tCant = 0, tCost = 0, tVenta = 0, tProfit = 0;
-      const body: any[] = [];
-      const rowFill: Record<number, [number, number, number]> = {};
-      const cashTotalCols = canViewCost ? 5 : 3;
-      const cashVentaIdx = canViewCost ? 3 : 2;
-      let cashCat: string | null = null;
-      let g = { qty: 0, cost: 0, venta: 0, profit: 0 };
-      const closeCashCategory = () => {
-        if (cashCat === null) return;
-        rowFill[body.length] = CAT_SUBTOTAL_FILL;
-        body.push([`Subtotal ${cashCat}`, Number(g.qty.toFixed(1)), ...(canViewCost ? [fmt(g.cost)] : []), fmt(g.venta), ...(canViewCost ? [fmt(g.profit)] : [])]);
-      };
-      cashProducts.forEach((prod) => {
-        const cat = categoryOf(prod);
-        if (cat !== cashCat) {
-          closeCashCategory();
-          cashCat = cat;
-          g = { qty: 0, cost: 0, venta: 0, profit: 0 };
-          rowFill[body.length] = CAT_FILL;
-          body.push([{ content: cat.toUpperCase(), colSpan: cashTotalCols }]);
-        }
-        let qty = 0, revenue = 0;
-        Object.entries(prod.payment_breakdown).forEach(([m, d]) => { if (isCash(m)) { qty += d.qty; revenue += d.revenue; } });
-        // Costo por PIEZAS (costo unitario × piezas en efectivo), no por ingresos.
-        const unitCost = (prod.total_quantity || 0) > 0 ? (prod.total_cost || 0) / prod.total_quantity : 0;
-        const cost = unitCost * qty;
-        const profit = revenue - cost;
-        tCant += qty; tCost += cost; tVenta += revenue; tProfit += profit;
-        g.qty += qty; g.cost += cost; g.venta += revenue; g.profit += profit;
-        body.push([prod.show_cost_tag ? `${prod.name} · Costo ${fmt(prod.cost_tag ?? 0)}` : prod.name, Number(qty.toFixed(1)), ...(canViewCost ? [fmt(cost)] : []), fmt(revenue), ...(canViewCost ? [fmt(profit)] : [])]);
-        // Renglones de beneficio (efectivo): uno por promo (verde) y por motivo (amarillo).
-        Object.entries(prod.promo_breakdown ?? {}).forEach(([name, amt]) => {
-          if (amt.cash > 0.005) {
-            const row = new Array(cashTotalCols).fill(""); row[0] = `   Promo: ${name}`; row[cashVentaIdx] = `-${fmt(amt.cash)}`;
-            rowFill[body.length] = PROMO_FILL; body.push(row);
-          }
-        });
-        Object.entries(prod.discount_breakdown ?? {}).forEach(([reason, amt]) => {
-          if (amt.cash > 0.005) {
-            const row = new Array(cashTotalCols).fill(""); row[0] = `   Descuento (${DISCOUNT_REASON_LABEL[reason] ?? reason})`; row[cashVentaIdx] = `-${fmt(amt.cash)}`;
-            rowFill[body.length] = DESC_FILL; body.push(row);
-          }
-        });
-        Object.entries(prod.surcharge_breakdown ?? {}).forEach(([reason, amt]) => {
-          if (amt.cash > 0.005) {
-            const row = new Array(cashTotalCols).fill(""); row[0] = `   Aumento (${SURCHARGE_REASON_SHORT[reason] ?? reason})`; row[cashVentaIdx] = `+${fmt(amt.cash)}`;
-            rowFill[body.length] = SUR_FILL; body.push(row);
-          }
-        });
-      });
-      closeCashCategory();
-      body.push(["TOTAL EFECTIVO", Number(tCant.toFixed(1)), ...(canViewCost ? [fmt(tCost)] : []), fmt(tVenta), ...(canViewCost ? [fmt(tProfit)] : [])]);
-      const cashLastIdx = body.length - 1;
+      sectionTitle(`${s.number}. ${s.title}`);
+      const manga = blockRows.filter(r => r.isManga);
+      const body: Array<Array<string | number>> = blockRows.map(r => [r.name, ...methodCells(s, r)]);
+      const totalIdx = body.length;
+      body.push([`TOTAL ${s.label}`, ...methodCells(s, sumMethodRows(blockRows))]);
+      if (manga.length > 0) body.push(["MANGA NACIONAL (incluido)", ...methodCells(s, sumMethodRows(manga))]);
       autoTable(doc, {
         startY: currentY,
-        head: [["Producto", "Cant. Efectivo", ...(canViewCost ? ["Costo"] : []), "Venta Efectivo", ...(canViewCost ? ["Utilidad"] : [])]],
+        head: [methodHead(s)],
         body,
         theme: "striped",
-        headStyles: { fillColor: [0, 153, 68], fontSize: 8, fontStyle: "bold" },
+        headStyles: { fillColor: s.headFill, fontSize: 8, fontStyle: "bold" },
         bodyStyles: { fontSize: 7.5 },
-        columnStyles: { 0: { cellWidth: 90 }, 1: { halign: "center" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" } },
+        columnStyles: { 0: { cellWidth: isCard(s) ? 55 : 90 }, 1: { halign: "center" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" }, 6: { halign: "right" }, 7: { halign: "right" } },
         didParseCell: (data) => {
-          const fill = rowFill[data.row.index];
-          if (data.section === "body" && fill) {
-            data.cell.styles.fillColor = fill;
+          if (data.section !== "body") return;
+          if (data.row.index === totalIdx) {
             data.cell.styles.fontStyle = "bold";
-          } else if (data.section === "body" && data.row.index === cashLastIdx) {
+            data.cell.styles.fillColor = s.totalFill;
+          } else if (data.row.index > totalIdx) {
             data.cell.styles.fontStyle = "bold";
-            data.cell.styles.fillColor = [230, 250, 235];
+            data.cell.styles.fillColor = MANGA_FILL;
+            data.cell.styles.textColor = MANGA_TEXT;
+          } else if (data.column.index === 0 && blockRows[data.row.index]?.isManga) {
+            data.cell.styles.fontStyle = "bold";
+            data.cell.styles.textColor = MANGA_TEXT;
           }
         },
       });
       advanceY();
-    }
+    };
 
-    // ── 2. TARJETA — Producto · Cant · Bruto · [Costo] · Comisión · IVA · Neto · [Utilidad] ─
-    const cardProducts = groupedProducts.filter((p) => Object.keys(p.payment_breakdown).some(isCard));
-    if (cardProducts.length > 0) {
+    // Detalle por ticket (x.1 descuentos y ofertas, x.2 aumentos); vacío no se pinta.
+    const detailTable = (title: string, amountHead: string, totalLabel: string, entries: AdjustmentRow[], headFill: Rgb, amountColor: Rgb) => {
+      if (entries.length === 0) return;
       pageBreak();
-      sectionTitle("2. DESGLOSE DE COBROS CON TARJETA");
-      let tCant = 0, tBruto = 0, tCost = 0, tCom = 0, tIva = 0, tNet = 0, tProfit = 0;
-      const body: any[] = [];
-      const rowFill: Record<number, [number, number, number]> = {};
-      const cardTotalCols = canViewCost ? 8 : 6;
-      let cardCat: string | null = null;
-      let g = { qty: 0, bruto: 0, cost: 0, com: 0, iva: 0, net: 0, profit: 0 };
-      const closeCardCategory = () => {
-        if (cardCat === null) return;
-        rowFill[body.length] = CAT_SUBTOTAL_FILL;
-        body.push([`Subtotal ${cardCat}`, Number(g.qty.toFixed(1)), fmt(g.bruto), ...(canViewCost ? [fmt(g.cost)] : []), fmt(g.com), fmt(g.iva), fmt(g.net), ...(canViewCost ? [fmt(g.profit)] : [])]);
-      };
-      cardProducts.forEach((prod) => {
-        const cat = categoryOf(prod);
-        if (cat !== cardCat) {
-          closeCardCategory();
-          cardCat = cat;
-          g = { qty: 0, bruto: 0, cost: 0, com: 0, iva: 0, net: 0, profit: 0 };
-          rowFill[body.length] = CAT_FILL;
-          body.push([{ content: cat.toUpperCase(), colSpan: cardTotalCols }]);
-        }
-        let qty = 0, revenue = 0;
-        Object.entries(prod.payment_breakdown).forEach(([m, d]) => { if (isCard(m)) { qty += d.qty; revenue += d.revenue; } });
-        const comm = prod.commission_amount || 0;
-        const iva = comm * ivaRate;
-        const net = revenue - comm - iva;
-        // Costo por PIEZAS (costo unitario × piezas en tarjeta). Utilidad = Neto − Costo.
-        const unitCost = (prod.total_quantity || 0) > 0 ? (prod.total_cost || 0) / prod.total_quantity : 0;
-        const cost = unitCost * qty;
-        const profit = net - cost;
-        tCant += qty; tBruto += revenue; tCost += cost; tCom += comm; tIva += iva; tNet += net; tProfit += profit;
-        g.qty += qty; g.bruto += revenue; g.cost += cost; g.com += comm; g.iva += iva; g.net += net; g.profit += profit;
-        body.push([prod.show_cost_tag ? `${prod.name} · Costo ${fmt(prod.cost_tag ?? 0)}` : prod.name, Number(qty.toFixed(1)), fmt(revenue), ...(canViewCost ? [fmt(cost)] : []), fmt(comm), fmt(iva), fmt(net), ...(canViewCost ? [fmt(profit)] : [])]);
-        // Renglones de beneficio (tarjeta): monto en la columna Bruto (índice 2).
-        Object.entries(prod.promo_breakdown ?? {}).forEach(([name, amt]) => {
-          if (amt.card > 0.005) {
-            const row = new Array(cardTotalCols).fill(""); row[0] = `   Promo: ${name}`; row[2] = `-${fmt(amt.card)}`;
-            rowFill[body.length] = PROMO_FILL; body.push(row);
-          }
-        });
-        Object.entries(prod.discount_breakdown ?? {}).forEach(([reason, amt]) => {
-          if (amt.card > 0.005) {
-            const row = new Array(cardTotalCols).fill(""); row[0] = `   Descuento (${DISCOUNT_REASON_LABEL[reason] ?? reason})`; row[2] = `-${fmt(amt.card)}`;
-            rowFill[body.length] = DESC_FILL; body.push(row);
-          }
-        });
-        Object.entries(prod.surcharge_breakdown ?? {}).forEach(([reason, amt]) => {
-          if (amt.card > 0.005) {
-            const row = new Array(cardTotalCols).fill(""); row[0] = `   Aumento (${SURCHARGE_REASON_SHORT[reason] ?? reason})`; row[2] = `+${fmt(amt.card)}`;
-            rowFill[body.length] = SUR_FILL; body.push(row);
-          }
-        });
-      });
-      closeCardCategory();
-      body.push(["TOTAL TARJETA", Number(tCant.toFixed(1)), fmt(tBruto), ...(canViewCost ? [fmt(tCost)] : []), fmt(tCom), fmt(tIva), fmt(tNet), ...(canViewCost ? [fmt(tProfit)] : [])]);
-      const cardLastIdx = body.length - 1;
+      sectionTitle(title);
+      const body: string[][] = entries.map(e => [e.product, e.label, e.ticket, e.cashier, e.date, fmt(e.amount)]);
+      body.push([totalLabel, "", "", "", "", fmt(entries.reduce((sum, e) => sum + e.amount, 0))]);
       autoTable(doc, {
         startY: currentY,
-        head: [["Producto", "Cant.", "Bruto", ...(canViewCost ? ["Costo"] : []), "Comisión TPV", ivaLabel, "Neto", ...(canViewCost ? ["Utilidad"] : [])]],
+        head: [["Producto", "Motivo / nota", "Ticket", "Cobró", "Fecha", amountHead]],
         body,
         theme: "striped",
-        headStyles: { fillColor: [34, 102, 187], fontSize: 8, fontStyle: "bold" },
+        headStyles: { fillColor: headFill, fontSize: 8, fontStyle: "bold" },
         bodyStyles: { fontSize: 7.5 },
-        columnStyles: { 0: { cellWidth: 55 }, 1: { halign: "center" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" }, 6: { halign: "right" }, 7: { halign: "right" } },
-        didParseCell: (data) => {
-          const fill = rowFill[data.row.index];
-          if (data.section === "body" && fill) {
-            data.cell.styles.fillColor = fill;
-            data.cell.styles.fontStyle = "bold";
-          } else if (data.section === "body" && data.row.index === cardLastIdx) {
-            data.cell.styles.fontStyle = "bold";
-            data.cell.styles.fillColor = [230, 240, 255];
-          }
-        },
+        columnStyles: { 0: { cellWidth: 70 }, 1: { cellWidth: 85 }, 2: { cellWidth: 28 }, 3: { cellWidth: 40 }, 4: { cellWidth: 26 }, 5: { halign: "right", fontStyle: "bold", textColor: amountColor } },
+        didParseCell: highlightLastRow(body.length, [237, 237, 237]),
       });
       advanceY();
+    };
+
+    for (const s of METHOD_SECTIONS) {
+      if (rows.blocks[s.bucket].length > 0) methodTable(s, rows.blocks[s.bucket]);
+      detailTable(`${s.number}.1 ${s.label} — DESCUENTOS Y OFERTAS`, "Descuento", `TOTAL DESCUENTOS ${s.label}`, rows.discounts[s.bucket], [184, 134, 11], [255, 34, 0]);
+      detailTable(`${s.number}.2 ${s.label} — AUMENTOS DE PRECIO`, "Aumento", `TOTAL AUMENTOS ${s.label}`, rows.surcharges[s.bucket], [204, 119, 34], [204, 119, 34]);
     }
 
-    // ── 3. APARTADOS Y PREVENTAS — un renglón por PRODUCTO + ESTADO (liquidada/apartada) ─
+    // ── 4. APARTADOS Y PREVENTAS — un renglón por PRODUCTO + ESTADO (liquidada/apartada) ─
     if (presaleRows.length > 0) {
       pageBreak();
-      sectionTitle("3. APARTADOS Y PREVENTAS");
+      sectionTitle("4. APARTADOS Y PREVENTAS");
       let tCant = 0, tAp = 0, tDeu = 0, tTot = 0, tCost = 0, tUtil = 0;
       const body = presaleRows.map((row) => {
         tCant += row.qty; tAp += row.apartado; tDeu += row.deuda; tTot += row.pactado; tCost += row.costoNeto; tUtil += row.utilidad;
@@ -284,17 +206,12 @@ export function exportReportPdf(params: ReportExportParams): void {
       advanceY();
     }
 
-    // ── 4. DEVOLUCIONES Y CANCELACIONES — Producto · Cant Devuelta · Monto ────
-    const returnedProducts = groupedProducts.filter((p) => p.returned_quantity && p.returned_quantity > 0);
-    if (returnedProducts.length > 0) {
+    // ── 5. DEVOLUCIONES Y CANCELACIONES — Producto · Cant Devuelta · Monto ────
+    if (rows.returns.length > 0) {
       pageBreak();
-      sectionTitle("4. DEVOLUCIONES Y CANCELACIONES");
-      let tCant = 0, tMonto = 0;
-      const body = returnedProducts.map((prod) => {
-        tCant += prod.returned_quantity || 0; tMonto += prod.returned_revenue || 0;
-        return [prod.show_cost_tag ? `${prod.name} · Costo ${fmt(prod.cost_tag ?? 0)}` : prod.name, prod.returned_quantity || 0, fmt(prod.returned_revenue || 0)];
-      });
-      body.push(["TOTAL DEVOLUCIONES", tCant, fmt(tMonto)]);
+      sectionTitle("5. DEVOLUCIONES Y CANCELACIONES");
+      const body: Array<Array<string | number>> = rows.returns.map((r) => [r.name, r.qty, fmt(r.amount)]);
+      body.push(["TOTAL DEVOLUCIONES", rows.returns.reduce((sum, r) => sum + r.qty, 0), fmt(rows.returns.reduce((sum, r) => sum + r.amount, 0))]);
       autoTable(doc, {
         startY: currentY,
         head: [["Producto", "Cant. Devuelta", "Monto Devuelto"]],
@@ -308,10 +225,10 @@ export function exportReportPdf(params: ReportExportParams): void {
       advanceY();
     }
 
-    // ── 5. EGRESOS — INSUMOS — Insumo · Descripción · Origen · Registró · Tienda · Monto ─
+    // ── 6. EGRESOS — INSUMOS — Insumo · Descripción · Origen · Registró · Tienda · Monto ─
     if (supplyMovements.length > 0) {
       pageBreak();
-      sectionTitle("5. EGRESOS — INSUMOS DE OPERACIÓN");
+      sectionTitle("6. EGRESOS — INSUMOS DE OPERACIÓN");
       let tMonto = 0;
       const body = supplyMovements.map((m) => {
         const origen = SUPPLY_SOURCE_LABEL[m.money_source ?? "caja"] ?? (m.money_source ?? "—");
@@ -334,7 +251,13 @@ export function exportReportPdf(params: ReportExportParams): void {
       advanceY();
     }
 
-    doc.save(`Tadaima_Reporte_Ventas_${from}_${to}.pdf`);
+  return doc;
+}
+
+export function exportReportPdf(params: ReportExportParams): void {
+  try {
+    toast.info("Generando archivo PDF...");
+    buildReportPdf(params).save(`Tadaima_Reporte_Ventas_${params.from}_${params.to}.pdf`);
     toast.success("PDF generado exitosamente!");
   } catch (error) {
     console.error("Error generating PDF:", error);

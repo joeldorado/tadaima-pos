@@ -12,6 +12,7 @@ import { toLocalYmd } from "@/lib/date";
 import { isLegacyGlobalDiscountSale, saleItemNet } from "@/lib/saleItemNet";
 import type { GroupedProduct, PresaleRow, ReportPaymentBreakdown } from "./reportTypes";
 import { assignCategories, categoryOf, compareCategories } from "./reportCategories";
+import { bucketShares } from "./paymentBucket";
 
 // ─── IVA sobre comisión de terminal ──────────────────────────────────────────
 // Configurable por el usuario y guardada en localStorage; vive aquí para que el
@@ -175,6 +176,16 @@ export function buildGroupedProducts(
         ? (sale.payments ?? []).filter(Boolean).reduce((s, p) => s + (isCardOrTransfer((p!.payment_method?.name ?? "").toLowerCase()) ? (p!.amount || 0) : 0), 0) / totalPaid
         : (isCardOrTransfer(payMethodName.toLowerCase()) ? 1 : 0);
 
+      // Reparto en efectivo / tarjeta / transferencia para el detalle por ticket
+      // del Excel/PDF (adjustment_entries). `cardShare` de arriba no cambia. Una
+      // devolución legacy no deja detalle: la venta completa netea a cero.
+      const adjustmentBase = {
+        sale_id: sale.id,
+        date: sale.sold_at ?? sale.created_at ?? "",
+        cashier: sale.user?.name ?? "—",
+        shares: bucketShares(sale.payments, payMethodName),
+      };
+
       const methods = (sale.payments ?? [])
         .map((p) => (p.payment_method?.name ?? "").toLowerCase())
         .filter(Boolean);
@@ -291,6 +302,8 @@ export function buildGroupedProducts(
             pGroup.promo_breakdown[key] = pGroup.promo_breakdown[key] ?? { cash: 0, card: 0 };
             pGroup.promo_breakdown[key].card += promoPart * cardShare;
             pGroup.promo_breakdown[key].cash += promoPart * (1 - cardShare);
+            if (!isLegacyReturnSale) pGroup.adjustment_entries = [...(pGroup.adjustment_entries ?? []),
+              { ...adjustmentBase, kind: "promo", reason: key, note: null, quantity: qty, amount: promoPart }];
           }
           if (manualPart > 0) {
             const key = item.discount_reason || "otro";
@@ -298,6 +311,8 @@ export function buildGroupedProducts(
             pGroup.discount_breakdown[key] = pGroup.discount_breakdown[key] ?? { cash: 0, card: 0 };
             pGroup.discount_breakdown[key].card += manualPart * cardShare;
             pGroup.discount_breakdown[key].cash += manualPart * (1 - cardShare);
+            if (!isLegacyReturnSale) pGroup.adjustment_entries = [...(pGroup.adjustment_entries ?? []),
+              { ...adjustmentBase, kind: "discount", reason: key, note: item.discount_note ?? null, quantity: qty, amount: manualPart }];
           }
         }
 
@@ -324,6 +339,8 @@ export function buildGroupedProducts(
               amount: lineSur,
             },
           ];
+          if (!isLegacyReturnSale) pGroup.adjustment_entries = [...(pGroup.adjustment_entries ?? []),
+            { ...adjustmentBase, kind: "surcharge", reason: key, note: item.surcharge_note ?? null, quantity: qty, amount: lineSur }];
         }
 
         // Desglose por método: se reparte proporcional a cada pago del ticket (mixto).

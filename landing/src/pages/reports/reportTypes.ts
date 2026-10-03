@@ -2,6 +2,8 @@
 // ReportsPage.tsx para poder separar la lógica de exportación en archivos aparte.
 import type { InventoryReport, TopProductsReport, CustomersReport, Store as StoreType, SupplyMovementRecord } from "@tadaima/api";
 
+import type { PayBucket } from "./paymentBucket";
+
 export type TabId = "ventas" | "inventario" | "productos" | "clientes";
 
 export interface GroupedProduct {
@@ -49,6 +51,8 @@ export interface GroupedProduct {
   surcharge_breakdown?: Record<string, { cash: number; card: number }>;
   /** Detalle de cada aumento (auditoría: quién, cuándo, por qué). */
   surcharge_entries?: SurchargeEntry[];
+  /** Detalle por ticket de cada promo, descuento y aumento (Excel/PDF — 2026-10-03). */
+  adjustment_entries?: TicketAdjustment[];
   /** Categorías del producto, en orden (las mismas de Productos — 2026-10-03). */
   categories?: string[];
   /** Grupo del reporte: la primera categoría, "Sin categoría" o "Preventas". */
@@ -64,6 +68,22 @@ export interface SurchargeEntry {
   quantity: number;
   catalog_price: number;
   amount: number;
+}
+
+/** Una promo, un descuento manual o un aumento de UNA línea de UN ticket. */
+export interface TicketAdjustment {
+  kind: "promo" | "discount" | "surcharge";
+  sale_id: number;
+  date: string;
+  cashier: string;
+  /** promo: nombre de la promo; descuento/aumento: código del motivo. */
+  reason: string;
+  note: string | null;
+  quantity: number;
+  /** Monto completo de la línea (sin repartir). */
+  amount: number;
+  /** Parte pagada con cada método (suma 1); una venta mixta se reparte. */
+  shares: Record<PayBucket, number>;
 }
 
 export interface ReportPaymentBreakdown {
