@@ -4,6 +4,42 @@
 
 ---
 
+### Sesión 2026-10-03 — Rediseño de Promos "para abuelitos" + comentario por línea en Caja — rev tadaima-00048-tid
+
+**Pedido Joel:** a las tiendas les cuesta la pantalla de Promos ("según yo ya es por categoría") y
+quieren ver fácil qué productos trae cada promo. Además, en Caja, un comentario corto por línea
+desde el menú ⋮ como recordatorio.
+
+**Hallazgo:** las promos NUNCA fueron por categoría: una promo se cuelga de 1..N productos (pivote
+`product_promotion_assignments`). Joel decidió que "por categoría" sea un **atajo** (marca los
+productos que la categoría tiene hoy; los nuevos NO entran solos). Motor de cobro sin cambios.
+
+- **Promos** (`/promos`, `components/promos/*`, lógica pura `lib/promo*.ts` con tests):
+  - Una sola lista en tarjetas (adiós pestañas Gestión/Asignadas): frase llana, estado
+    (Activa/Programada/Pausada/Terminó), vigencia en español, tienda, buscador y filtros.
+  - "Ver los N productos" despliega por categoría con Compartir/Quitar y "Quitar los N de {cat}".
+  - Asistente de 3 pasos (qué promo → qué productos [por categoría o buscando sin acentos] → cuándo).
+    Agrega por lotes de 100; los que chocan con otra promo se saltan y se listan con su motivo.
+  - Editar una promo terminada con fecha vigente la reactiva. El gerente ya no ve promos de OTRAS
+    tiendas (solo generales + la suya).
+  - Backend aditivo: `POST /promotions/{id}/products/detach` (lote) + `max:500` ids por envío.
+  - `DemoSeeder` con 8 promos (varios productos y estados). Docs in-app y escenas de capturas al día;
+    **pendiente recapturar** las imágenes de Promos (`npm run docs:capture`).
+- **Comentario por línea** (`sale_items.comment`, migración `2026_10_03_000001`, máx. 80, exige
+  `calc_version: 2`): opción "Comentario" en el ⋮, se ve junto al nombre en Caja, Historial y
+  Ventas. **No** toca montos ni se imprime en el ticket (confirmado por Joel). Una pieza escaneada
+  después no lo hereda; al pasar la mesa a preventa se limpia.
+
+**Verificado:** backend 697 (SQLite), vitest 538, tsc igual a la base, `vite build` OK; recorrido
+en local con datos demo (admin, gerente y cajero) y dos revisiones de código aplicadas. Postgres
+local no estaba levantado (la migración es una columna nullable, sin SQL a mano). En la candidata:
+páginas 200, bundle nuevo, y en Supabase la columna `comment` creada y las 15 promos intactas.
+
+**Deploy:** tadaima-00048-tid (rollback `tadaima-00046-vov`; la columna nueva es nullable y la
+revisión vieja la ignora). Pedir Ctrl+Shift+R / incógnito por la caché PWA.
+
+---
+
 ### Sesión 2026-10-03 — Excel de ventas con la estructura de la app (Ruben) + la cancelación exige caja abierta — rev tadaima-00046-vov
 
 **Pedido Joel:** bajar de `develop` los cambios de Ruben ("Reportes estructura para pier", hash
