@@ -55,6 +55,10 @@ class SaleItemResource extends JsonResource
             'surcharge_reason' => $this->surcharge_reason,
             'surcharge_note'   => $this->surcharge_note,
 
+            // Comentario corto del cajero en la línea (2026-10-03). Recordatorio
+            // interno: se ve en Caja y en Ventas, NO se imprime en el ticket.
+            'comment' => $this->comment,
+
             // `cost` snapshot al momento del INSERT (lo que se vendió a ese costo).
             // Solo se expone a admins — gerente/cajero no ven margen. Esta es la
             // verdad histórica; `product.cost` puede mutar después, pero esta

@@ -729,7 +729,11 @@ function SaleRow({
                 <ProductThumb {...(img ? { src: img } : {})} name={name} size={44} rounded="rounded-xl" />
 
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold truncate" style={{ color: "var(--td-text-hi)" }}>{name}</p>
+                  <p className="text-sm font-bold truncate" style={{ color: "var(--td-text-hi)" }}>
+                    {name}
+                    {/* Comentario del cajero en la línea (2026-10-03). No va en el ticket. */}
+                    {item.comment && <span className="ml-2 font-bold" style={{ color: "#60A5FA" }}>· {item.comment}</span>}
+                  </p>
                   {sku && <p className="text-[9px] uppercase tracking-widest mt-0.5 truncate" style={{ color: "var(--td-text-lo)" }}>{sku}</p>}
                   {(parts.promoAmount > 0 || parts.manualAmount > 0 || parts.surchargeAmount > 0) && (
                     <div className="flex items-center gap-1.5 mt-1 flex-wrap">

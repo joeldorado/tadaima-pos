@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  acceptsNewUnits,
   applyLineAdjustment,
   isPlainLine,
   lineAdjustmentOf,
@@ -80,6 +81,47 @@ describe("removeLineAdjustment", () => {
     expect(out).toHaveLength(2);
     expect(out[1]!.discount).toBeUndefined();
     expect(out[0]!.surcharge).toBeDefined();
+  });
+});
+
+describe("comentario de la línea", () => {
+  type Commented = AdjustableLine & { comment?: string };
+  const commented = (over: Partial<Commented> = {}): Commented => ({ ...line(), ...over });
+
+  it("al separar, la línea con ajuste hereda el comentario", () => {
+    const out = applyLineAdjustment([commented({ comment: "promo" })], "L1", 1, descuento, newId);
+    expect(out.map(l => l.comment)).toEqual(["promo", "promo"]);
+  });
+
+  it("al quitar el ajuste se fusiona con la padre si el comentario es el mismo", () => {
+    const partida = applyLineAdjustment([commented({ comment: "promo" })], "L1", 1, descuento, newId);
+    const out = removeLineAdjustment(partida, partida[1]!.lineId);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ quantity: 3, comment: "promo" });
+  });
+
+  it("con comentario distinto NO se fusiona: conserva su comentario y solo pierde el ajuste", () => {
+    const partida = applyLineAdjustment([commented()], "L1", 1, descuento, newId)
+      .map((l, i) => (i === 1 ? { ...l, comment: "regalo" } : l));
+    const out = removeLineAdjustment(partida, partida[1]!.lineId);
+    expect(out).toHaveLength(2);
+    expect(out[1]).toMatchObject({ quantity: 1, comment: "regalo" });
+    expect(out[1]?.discount).toBeUndefined();
+  });
+});
+
+describe("acceptsNewUnits", () => {
+  it("una línea simple recibe la unidad que se escanea de nuevo", () => {
+    expect(acceptsNewUnits(line())).toBe(true);
+  });
+
+  it("una línea con comentario no: el comentario era para las piezas que ya estaban", () => {
+    expect(acceptsNewUnits({ ...line(), comment: "regalo" })).toBe(false);
+  });
+
+  it("una línea con ajuste tampoco", () => {
+    const [conAumento] = applyLineAdjustment([line()], "L1", 3, aumento, newId);
+    expect(acceptsNewUnits(conAumento!)).toBe(false);
   });
 });
 
