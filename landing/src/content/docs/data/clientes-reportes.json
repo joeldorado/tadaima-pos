@@ -98,7 +98,7 @@
             "kind": "callout",
             "tone": "info",
             "title": "Productos agrupados por categoría",
-            "text": "En “Ventas por Producto”, en el Excel/PDF y en el Excel del corte, los productos salen agrupados por categoría de la A a la Z (las mismas de Productos), cada una con su subtotal de piezas y venta. Si un producto tiene varias categorías se agrupa en la primera y abajo de su nombre ves todas. Los que no tienen categoría van al final en “Sin categoría”."
+            "text": "En la pantalla “Ventas por Producto” los productos salen agrupados por categoría de la A a la Z (las mismas de Productos), cada una con su subtotal de piezas y venta. Si un producto tiene varias categorías se agrupa en la primera y abajo de su nombre ves todas. Los que no tienen categoría van al final en “Sin categoría”. El Excel y el PDF van por método de pago, sin encabezados de categoría."
           },
           {
             "kind": "link",
@@ -114,6 +114,12 @@
           {
             "kind": "prose",
             "text": "Los botones “Excel” y “PDF” se llevan el reporte actual con el rango y los filtros que tengas elegidos: el PDF para imprimir o compartir, el Excel para seguir trabajando los números."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Cómo vienen el Excel y el PDF",
+            "text": "Traen una tabla por método: 1. Efectivo, 2. Tarjeta y 3. Transferencias / Depósitos; luego 4. Apartados y Preventas, 5. Devoluciones y 6. Egresos. Los tomos van marcados en azul y, después del TOTAL de cada tabla, la fila “Manga Nacional (incluido)” dice cuánto de ese total fue manga nacional; arriba, en el resumen, está el total de Manga Nacional. Debajo de cada método están los descuentos y ofertas (x.1) y los aumentos de precio (x.2) ticket por ticket: producto, motivo, quién cobró y fecha; una venta pagada con dos métodos aparece en la tabla del pago más grande. En el Excel la utilidad, el IVA de la comisión, el neto y los totales son fórmulas: si corriges un costo en la hoja, lo demás se recalcula. El Excel del corte de caja usa el mismo formato."
           },
           {
             "kind": "image",
