@@ -300,7 +300,7 @@ class PreSaleOrdersController extends Controller
                 reasonCode: $data['reason_code'],
                 reasonText: $data['reason_text'] ?? null,
                 cancelledBy: $request->user(),
-                activeSessionId: $data['cash_session_id'] ?? null,
+                activeSessionId: $this->refundSessionId($request, $data['cash_session_id'] ?? null),
             );
         } catch (\DomainException $e) {
             return $this->error($e->getMessage(), 422);

@@ -138,7 +138,7 @@ function SaleCancelBody({ sale, onClose, onSuccess, cashSessionId, reasonCode, s
       </p>
       {refundSplit.cash > 0 && !cashSessionId && (
         <p className="text-[11px] mb-3 font-bold" style={{ color: '#f59e0b' }}>
-          No tienes caja abierta: la salida de efectivo no quedará en ningún corte.
+          Abre tu caja para cancelar: lo cobrado en efectivo tiene que salir de tu corte.
         </p>
       )}
 
@@ -189,7 +189,8 @@ function SaleCancelBody({ sale, onClose, onSuccess, cashSessionId, reasonCode, s
         submitting={submitting}
         onClose={onClose}
         onSubmit={handleSubmit}
-        disabled={toCancel.length === 0}
+        // Sin caja el backend rechaza (2026-10-03): el efectivo no tendría de dónde salir.
+        disabled={toCancel.length === 0 || (refundSplit.cash > 0 && !cashSessionId)}
       />
     </Shell>
   )

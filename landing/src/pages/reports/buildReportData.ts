@@ -10,7 +10,7 @@
 import type { SaleDetail, PreSaleOrder, PreSaleOrderPayment } from "@tadaima/api";
 import { toLocalYmd } from "@/lib/date";
 import { isLegacyGlobalDiscountSale, saleItemNet } from "@/lib/saleItemNet";
-import type { GroupedProduct, PresaleRow, ReportPaymentBreakdown } from "./reportTypes";
+import type { AdjustmentEntry, BenefitBucket, GroupedProduct, PresaleRow, ReportPaymentBreakdown } from "./reportTypes";
 import { assignCategories, categoryOf, compareCategories } from "./reportCategories";
 
 // ─── IVA sobre comisión de terminal ──────────────────────────────────────────
@@ -276,6 +276,14 @@ export function buildGroupedProducts(
         // Stacking: la promo aplica primero; el manual va sobre el neto-promo, así
         // que promoPart = snapshot de promo y manualPart = lo que reste del beneficio.
         const lineDisc = item.discount_amount ?? 0;
+        // Detalle por ticket (tablas X.1/X.2 del Excel): cae en la tabla del
+        // método PRINCIPAL de la venta, igual que la app (2026-10-03).
+        const methodLc = payMethodName.toLowerCase();
+        const bucket: BenefitBucket = isCardMethod(methodLc) ? "card" : isTransferMethod(methodLc) ? "transfer" : "cash";
+        const entryBase = { bucket, sale_id: sale.id, date: sale.sold_at ?? sale.created_at ?? "", cashier: sale.user?.name ?? "—", quantity: qty };
+        const addDiscountEntry = (entry: AdjustmentEntry) => {
+          pGroup.discount_entries = [...(pGroup.discount_entries ?? []), entry];
+        };
         if (lineDisc > 0) {
           const promoPart = item.benefit_type === "promo"
             ? lineDisc
@@ -291,6 +299,7 @@ export function buildGroupedProducts(
             pGroup.promo_breakdown[key] = pGroup.promo_breakdown[key] ?? { cash: 0, card: 0 };
             pGroup.promo_breakdown[key].card += promoPart * cardShare;
             pGroup.promo_breakdown[key].cash += promoPart * (1 - cardShare);
+            addDiscountEntry({ ...entryBase, kind: "promo", reason: key, note: null, amount: promoPart });
           }
           if (manualPart > 0) {
             const key = item.discount_reason || "otro";
@@ -298,6 +307,7 @@ export function buildGroupedProducts(
             pGroup.discount_breakdown[key] = pGroup.discount_breakdown[key] ?? { cash: 0, card: 0 };
             pGroup.discount_breakdown[key].card += manualPart * cardShare;
             pGroup.discount_breakdown[key].cash += manualPart * (1 - cardShare);
+            addDiscountEntry({ ...entryBase, kind: "manual", reason: key, note: item.discount_note ?? null, amount: manualPart });
           }
         }
 
@@ -314,12 +324,9 @@ export function buildGroupedProducts(
           pGroup.surcharge_entries = [
             ...(pGroup.surcharge_entries ?? []),
             {
-              sale_id: sale.id,
-              date: sale.sold_at ?? sale.created_at ?? "",
-              cashier: sale.user?.name ?? "—",
+              ...entryBase,
               reason: key,
               note: item.surcharge_note ?? null,
-              quantity: qty,
               catalog_price: item.price,
               amount: lineSur,
             },

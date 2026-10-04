@@ -146,4 +146,24 @@ abstract class Controller
 
         return null;
     }
+
+    /**
+     * Caja donde cae la salida de una cancelación: la que manda el cliente o,
+     * si no manda ninguna (la app móvil nunca la manda — 2026-10-03), la caja
+     * ABIERTA de quien cancela. Sin caja, null: el servicio bloquea si hay
+     * efectivo que devolver.
+     */
+    protected function refundSessionId(\Illuminate\Http\Request $request, ?int $sessionId): ?int
+    {
+        if ($sessionId !== null) {
+            return $sessionId;
+        }
+
+        $id = CashRegisterSession::where('user_id', $request->user()?->id)
+            ->where('status', CashRegisterSession::STATUS_OPEN)
+            ->orderByDesc('opened_at')
+            ->value('id');
+
+        return $id !== null ? (int) $id : null;
+    }
 }
