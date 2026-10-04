@@ -147,7 +147,9 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   (si no, un cajero inventaría efectivo en caja ajena y lo sacaría cancelando en la suya).
   Recalcula comisión y el esperado del corte; queda en `system_logs` (`sale.payment_changed`).
 - La salida de una cancelación solo va a una caja ABIERTA de quien cancela (admin: cualquiera
-  abierta) — `Controller::refundSessionError()`.
+  abierta) — `Controller::refundSessionError()`. Si el cliente no manda la caja (la app móvil),
+  se usa la abierta de quien cancela (`refundSessionId()`); con efectivo que devolver y sin caja
+  abierta la cancelación se rechaza completa (2026-10-03).
 - **Borrar corte (solo admin, 2026-10-01)** — `CashSessionDeletionService`: `GET
   /cash/sessions/{id}/delete-preview` + `DELETE /cash/sessions/{id}` con `confirm: "BORRAR"`.
   Borra ventas (regresa el stock neto de cancelaciones), folios de preventa CREADOS en ese corte

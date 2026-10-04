@@ -4,6 +4,38 @@
 
 ---
 
+### Sesión 2026-10-03 — Excel de ventas con la estructura de la app (Ruben) + la cancelación exige caja abierta — rev tadaima-00046-vov
+
+**Pedido Joel:** bajar de `develop` los cambios de Ruben ("Reportes estructura para pier", hash
+`1cf1153`, PR #35) y deployar. En Reportes gana su Excel.
+
+- **Excel de ventas y del corte = réplica del Excel de la app** (`excelVentas`, `excelTopTables`,
+  `excelBottomTables`, `excelSheet`; `exportExcel.ts` quedó delgado): tablas lado a lado 1 Efectivo ·
+  2 Tarjeta · 3 Transferencias / Depósitos · 4 Preventas · 5 Devoluciones; renglón "📘 MANGA
+  NACIONAL (incluido)" bajo cada TOTAL y cuadro "Manga Nacional" en el resumen; fórmulas con su
+  valor guardado; tablas por ticket X.1 Descuentos y ofertas / X.2 Aumentos (el ajuste cae en el
+  método PRINCIPAL de la venta — `discount_entries` / `surcharge_entries` con `bucket`); 6 Egresos.
+  Ya no hay encabezados ni subtotales por categoría en el Excel (la pantalla sí sigue por categoría).
+  El Excel del corte lleva el título "TADAIMA - CORTE DE CAJA".
+- **Cancelaciones:** `Controller::refundSessionId()` — si el cliente no manda `cash_session_id` (la
+  app móvil nunca la manda) la salida cae en la caja ABIERTA de quien cancela. Si hay efectivo que
+  devolver y no hay caja, `SaleCancellationService` lanza y la cancelación entera se revierte
+  ("Abre tu caja para registrar la salida de efectivo de esta cancelación"); el modal web
+  deshabilita el botón. Ojo: un admin sin caja abierta ya no cancela ventas en efectivo desde la web.
+
+**Verificado (antes de fusionar):** backend 687 (SQLite) y 78 de cancelación/ventas/preventas en
+Postgres local; vitest 429; tsc igual a la base; `vite build` OK. El Excel generado se comparó
+contra la muestra del equipo (`Tadaima_Reporte_2026-10-03.xlsx`): encabezados, posiciones,
+combinaciones y fórmulas iguales.
+
+**Nuestro PR #34** (misma función del Excel, hecha en paralelo) se cerró: gana la versión de Ruben.
+De ahí solo se rescató el PDF con el mismo formato y la guía de Reportes → **PR #36, pendiente de
+merge y deploy** (el PDF de prod sigue con el formato viejo, por categoría).
+
+**Deploy:** tadaima-00046-vov (rollback `tadaima-00044-boy`). Sin migraciones. Pedir Ctrl+Shift+R.
+
+---
+
 ### Sesión 2026-10-03 — Costo de tomos: fix del modal (costo = precio) + homologación al 30% — rev tadaima-00044-boy
 
 **Pedido Joel:** el equipo vio los "costos reales" de los tomos en 0. Investigar si alguien o un
