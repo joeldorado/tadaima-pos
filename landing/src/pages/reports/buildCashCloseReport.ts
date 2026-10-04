@@ -112,6 +112,7 @@ export async function buildCashCloseReportParams(
     stores: storeId ? [{ id: storeId, name: storeName }] as ReportExportParams["stores"] : [],
     users: userId !== null ? [{ id: userId, name: userName }] : [],
     fileSuffix: userId !== null ? "turno" : "tienda",
+    title: "TADAIMA - CORTE DE CAJA",
     supplyMovements,
   };
 }

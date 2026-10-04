@@ -49,21 +49,34 @@ export interface GroupedProduct {
   surcharge_breakdown?: Record<string, { cash: number; card: number }>;
   /** Detalle de cada aumento (auditoría: quién, cuándo, por qué). */
   surcharge_entries?: SurchargeEntry[];
+  /** Detalle de cada descuento/promo por ticket (tablas X.1 del Excel). */
+  discount_entries?: AdjustmentEntry[];
   /** Categorías del producto, en orden (las mismas de Productos — 2026-10-03). */
   categories?: string[];
   /** Grupo del reporte: la primera categoría, "Sin categoría" o "Preventas". */
   category?: string;
 }
 
-export interface SurchargeEntry {
+/** Forma de pago de la venta: decide en qué tabla del Excel cae un ajuste. */
+export type BenefitBucket = "cash" | "card" | "transfer";
+
+/** Ajuste de un ticket (descuento/promo o aumento) para las tablas de auditoría. */
+export interface AdjustmentEntry {
+  /** Solo descuentos: promo automática vs descuento manual del cajero. */
+  kind?: "promo" | "manual";
+  /** Método principal de la venta (el pago más grande). */
+  bucket: BenefitBucket;
   sale_id: number;
   date: string;
   cashier: string;
   reason: string;
   note: string | null;
   quantity: number;
-  catalog_price: number;
   amount: number;
+}
+
+export interface SurchargeEntry extends AdjustmentEntry {
+  catalog_price: number;
 }
 
 export interface ReportPaymentBreakdown {
@@ -120,4 +133,8 @@ export interface ReportExportParams {
   supplyMovements: SupplyMovementRecord[];
   /** Sufijo del nombre de archivo (p.ej. "turno" / "tienda" desde el corte). */
   fileSuffix?: string;
+  /** Título del Excel (por defecto "TADAIMA - REPORTE DE AUDITORÍA Y VENTAS"). */
+  title?: string;
+  /** Texto del periodo en el encabezado (por defecto las fechas from/to). */
+  periodLabel?: string;
 }

@@ -505,9 +505,13 @@ class SaleCancellationService
      */
     private function createRefundCashMovement(float $amount, string $description, ?int $sessionId): ?CashMovement
     {
-        if ($amount <= 0 || $sessionId === null) return null;
-        $session = CashRegisterSession::find($sessionId);
-        if (! $session) return null;
+        if ($amount <= 0) return null;
+        // Sin caja no hay salida, pero la venta sí contaría en el corte: el
+        // efectivo devuelto quedaría "en caja" sin estar (2026-10-03). Se
+        // lanza dentro de la transacción → la cancelación entera se revierte.
+        if ($sessionId === null || ! CashRegisterSession::whereKey($sessionId)->exists()) {
+            throw new \DomainException('Abre tu caja para registrar la salida de efectivo de esta cancelación.');
+        }
 
         return CashMovement::create([
             'register_session_id' => $sessionId,

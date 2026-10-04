@@ -396,4 +396,80 @@ class SaleCancellationTest extends TestCase
         $this->assertNotNull($row, 'el folio cancelado aparece en el index');
         $this->assertEquals(100.0, (float) $row['cancelled_amount']);
     }
+
+    // ─── Cancelar sin cash_session_id (app móvil, 2026-10-03) ─────────────────
+    // La app no manda la caja: antes la venta se cancelaba SIN salida y el
+    // efectivo seguía contando en el corte. Ahora se usa la caja abierta de
+    // quien cancela, y sin caja abierta se bloquea.
+
+    public function test_cancel_without_session_uses_cancellers_open_session(): void
+    {
+        $sale = $this->makeSale($this->makeProduct(), qty: 1, price: 200.0);
+        $sale->payments()->create(['payment_method_id' => $this->cashMethod->id, 'amount' => 200.0]);
+
+        $this->actingAs($this->admin)
+            ->postJson("/api/v1/sales/{$sale->id}/cancel", ['reason_code' => 'otro'])
+            ->assertOk();
+
+        $this->assertDatabaseHas('cash_movements', [
+            'register_session_id' => $this->session->id,
+            'type'                => 'salida',
+            'amount'              => 200.0,
+        ]);
+        $this->assertSame($this->session->id, (int) SaleCancellation::where('sale_id', $sale->id)->value('cash_session_id'));
+    }
+
+    public function test_cancel_with_cash_and_no_open_session_is_blocked(): void
+    {
+        $sale = $this->makeSale($this->makeProduct(), qty: 1, price: 200.0);
+        $sale->payments()->create(['payment_method_id' => $this->cashMethod->id, 'amount' => 200.0]);
+        $this->session->update(['status' => 'closed', 'closed_at' => now()]);
+
+        $this->actingAs($this->admin)
+            ->postJson("/api/v1/sales/{$sale->id}/cancel", ['reason_code' => 'otro'])
+            ->assertStatus(422);
+
+        $sale->refresh();
+        $this->assertSame(Sale::STATUS_COMPLETED, $sale->status, 'la venta no se cancela');
+        $this->assertSame(0, SaleCancellation::where('sale_id', $sale->id)->count());
+    }
+
+    public function test_card_cancel_without_open_session_still_allowed(): void
+    {
+        $card = PaymentMethod::create(['name' => 'Tarjeta Débito', 'allow_cash' => false, 'allow_card' => true, 'active' => true]);
+        $sale = $this->makeSale($this->makeProduct(), qty: 1, price: 200.0);
+        $sale->payments()->create(['payment_method_id' => $card->id, 'amount' => 200.0]);
+        $this->session->update(['status' => 'closed', 'closed_at' => now()]);
+
+        $this->actingAs($this->admin)
+            ->postJson("/api/v1/sales/{$sale->id}/cancel", ['reason_code' => 'otro'])
+            ->assertOk();
+
+        $this->assertSame(Sale::STATUS_RETURNED, $sale->refresh()->status);
+    }
+
+    public function test_pre_sale_cancel_with_cash_and_no_open_session_is_blocked(): void
+    {
+        $product = $this->makeProduct();
+        $catalog = PreSaleCatalog::create([
+            'product_name' => 'Test', 'product_id' => $product->id, 'price_1' => 200,
+            'status' => PreSaleCatalog::STATUS_PUBLISHED, 'created_by' => $this->admin->id, 'preorder_limit' => 5,
+        ]);
+        $order = PreSaleOrder::create([
+            'code' => 'PREV-NOSES', 'store_id' => $this->store->id, 'user_id' => $this->admin->id,
+            'customer_id' => Customer::create(['name' => 'C'])->id, 'status' => PreSaleOrder::STATUS_PENDING,
+        ]);
+        $order->items()->create([
+            'pre_sale_catalog_id' => $catalog->id, 'product_id' => $product->id, 'quantity' => 1,
+            'price_level' => 1, 'unit_price' => 200.0, 'status' => 'pending',
+        ]);
+        $order->payments()->create(['amount' => 100.0, 'payment_method_id' => $this->cashMethod->id, 'cashier_id' => $this->admin->id]);
+        $this->session->update(['status' => 'closed', 'closed_at' => now()]);
+
+        $this->actingAs($this->admin)
+            ->postJson("/api/v1/pre-sale-orders/{$order->id}/cancel", ['mode' => 'full', 'reason_code' => 'otro'])
+            ->assertStatus(422);
+
+        $this->assertSame(1, $order->payments()->count(), 'los pagos no se tocan');
+    }
 }
