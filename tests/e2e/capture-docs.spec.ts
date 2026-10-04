@@ -251,8 +251,9 @@ const SCENES: Scene[] = [
     name: 'gestion-de-promos',
     prepare: async (page) => {
       await page.goto(`${BASE_URL}/promos`)
-      await expect(page.getByRole('heading', { name: 'Promos' })).toBeVisible({ timeout: 15_000 })
-      await page.getByTestId('promos-tab-gestion').click()
+      await expect(page.getByRole('heading', { name: 'Promos', exact: true })).toBeVisible({ timeout: 15_000 })
+      // Rediseño 2026-10: una sola lista de promos en tarjetas (sin pestañas).
+      await expect(page.getByTestId('promo-list')).toBeVisible({ timeout: 10_000 })
       await expect(page.getByTestId('new-promo-btn')).toBeVisible({ timeout: 10_000 })
       await page.waitForLoadState('networkidle')
     },
@@ -262,9 +263,10 @@ const SCENES: Scene[] = [
     name: 'promos-asignadas',
     prepare: async (page) => {
       await page.goto(`${BASE_URL}/promos`)
-      await expect(page.getByRole('heading', { name: 'Promos' })).toBeVisible({ timeout: 15_000 })
-      await page.getByTestId('promos-tab-asignadas').click()
-      await expect(page.getByText(/Vigentes por producto/)).toBeVisible({ timeout: 10_000 })
+      await expect(page.getByRole('heading', { name: 'Promos', exact: true })).toBeVisible({ timeout: 15_000 })
+      // Los productos de cada promo se despliegan dentro de su tarjeta.
+      await page.locator('[data-testid^="toggle-products-"]').first().click()
+      await expect(page.locator('[data-testid^="promo-products-"]').first()).toBeVisible({ timeout: 10_000 })
     },
   },
 
@@ -537,8 +539,9 @@ const SCENES: Scene[] = [
     name: 'compartir-promo',
     prepare: async (page) => {
       await page.goto(`${BASE_URL}/promos`)
-      await expect(page.getByRole('heading', { name: 'Promos' })).toBeVisible({ timeout: 15_000 })
-      await page.getByTestId('promos-tab-asignadas').click()
+      await expect(page.getByRole('heading', { name: 'Promos', exact: true })).toBeVisible({ timeout: 15_000 })
+      // Compartir vive junto a cada producto, dentro de la promo desplegada.
+      await page.locator('[data-testid^="toggle-products-"]').first().click()
       const share = page.locator('[data-testid^="share-promo-"]').first()
       await expect(share).toBeVisible({ timeout: 10_000 })
       await share.click()

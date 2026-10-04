@@ -52,7 +52,9 @@ class DemoSeederTest extends TestCase
         // Sanity de los datos ricos.
         // 20 con costo + 2 sin costo (alimentan el modal "Productos sin Costo").
         $this->assertSame(22, DB::table('products')->count());
-        $this->assertSame(3, DB::table('product_promotions')->count());
+        // 3 de un producto + 5 generales de varios productos (pantalla /promos).
+        $this->assertSame(8, DB::table('product_promotions')->count());
+        $this->assertSame(16, DB::table('product_promotion_assignments')->count());
         $this->assertSame(3, DB::table('customers')->count());
         $this->assertSame(1, DB::table('pre_sale_catalogs')->count());
         $this->assertSame(2, DB::table('pre_sale_orders')->count());

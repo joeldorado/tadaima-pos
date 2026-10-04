@@ -368,6 +368,8 @@ export interface SaleItemDetail {
   surcharge_amount?: number
   surcharge_reason?: string | null
   surcharge_note?: string | null
+  /** Comentario corto del cajero en la línea (2026-10-03). Recordatorio interno: no se imprime en el ticket. */
+  comment?: string | null
   /**
    * Cost snapshot al momento EXACTO del checkout. Solo viene cuando el caller
    * es admin (security gate en `SaleItemResource`). NULL para ventas pre-
@@ -588,6 +590,8 @@ export interface SaleDirectItem {
   line_surcharge?: SaleLineSurchargeInput
   /** El cajero renunció a la promo de esta línea (2026-07-24). */
   skip_promotion?: boolean
+  /** Comentario corto de la línea (máx. 80; requiere calc_version: 2). No toca montos. */
+  comment?: string
 }
 export interface CreateSaleInput {
   draft_id?: number

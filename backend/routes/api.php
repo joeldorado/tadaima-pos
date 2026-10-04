@@ -187,6 +187,7 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     Route::put('promotions/{promotion}',                     [PromotionsController::class, 'update']);
     Route::delete('promotions/{promotion}',                  [PromotionsController::class, 'destroy']);
     Route::post('promotions/{promotion}/products',           [PromotionsController::class, 'attachProducts']);
+    Route::post('promotions/{promotion}/products/detach',    [PromotionsController::class, 'detachProducts']);
     Route::delete('promotions/{promotion}/products/{product}', [PromotionsController::class, 'detachProduct']);
 
     // ── Customers ─────────────────────────────────────────────────────────────

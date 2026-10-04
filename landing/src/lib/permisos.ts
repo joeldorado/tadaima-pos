@@ -81,7 +81,7 @@ const PAGE_ACCESS: Record<Role, PageKey[]> = {
   // ve Preventas con un panel adicional de catálogos disponibles + vencidos
   // de su sucursal. SÍ ve "Buscar en Tiendas" para localizar stock.
   // Cajero SÍ ve Promos (consulta + Modo TV en la pantalla de la tienda);
-  // crear/editar promos sigue viviendo en el modal de Producto (admin/gerente).
+  // crear/editar promos es de admin/gerente, en el mismo menú Promos.
   cajero:  ["inicio", "products", "stock_search", "sales", "cash_cuts", "presales", "supplies", "promos", "docs"],
   unknown: ["inicio"],
 };

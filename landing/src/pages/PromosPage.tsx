@@ -1,641 +1,166 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { motion as Motion, AnimatePresence } from "motion/react";
-import { toast } from "sonner";
-import { toBlob } from "html-to-image";
-import {
-  TicketPercent, Tv, Share2, Download, MessageCircle, X, Loader2, ImageOff,
-} from "lucide-react";
-import {
-  getProductsLight, getLightPrice, getProductImageBase64, getProductPromotions,
-  type ProductLight, type Store,
-} from "@tadaima/api";
-import { useAuth } from "@tadaima/auth";
+import { AnimatePresence } from "motion/react";
+import { Plus, RefreshCw, TicketPercent, Tv } from "lucide-react";
+import { getProductsLight, type ProductLight } from "@tadaima/api";
 import { queryKeys } from "@/lib/queryKeys";
+import { useCategoriesQuery } from "@/hooks/queries/useCategories";
+import { usePromoViewer, usePromotionsQuery } from "@/hooks/queries/usePromotions";
 import { useStoresQuery } from "@/hooks/queries/useStores";
-import { isAdmin as isAdminRole, isManager as isManagerRole } from "@/lib/permisos";
-import { promoBadge, promoBannerCopy, promoShortLabel } from "@/lib/promoLabel";
-import { downloadBlob } from "@/lib/downloadFile";
-import { PromoAdminSection } from "@/components/promos/PromoAdminSection";
+import { visiblePromosFor } from "@/lib/promoList";
+import { vigentesPorProducto, type LightPromo } from "@/lib/promoVigentes";
+import { PromoButton } from "@/components/promos/PromoButton";
+import { PromoList } from "@/components/promos/PromoList";
+import { PromoWizard } from "@/components/promos/PromoWizard";
+import { ShareBannerModal } from "@/components/promos/ShareBannerModal";
+import { TvMode } from "@/components/promos/TvMode";
 
-// ─── Tokens visuales (convención de páginas glass) ────────────────────────────
-const PANEL  = "var(--td-panel-bg)";
-const BORDER = "1px solid var(--td-panel-border)";
-const CARD_B = "1px solid var(--td-card-border)";
-const SOFT   = "var(--td-surface-soft)";
-const THI    = "var(--td-text-hi)";
-const TMD    = "var(--td-text-md)";
-const TLO    = "var(--td-text-lo)";
-const GREEN  = "#34d399";
+const NO_PRODUCTS: ProductLight[] = [];
 
-const fmt = (n: number) =>
-  new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", minimumFractionDigits: 0 }).format(n || 0);
-
-type LightPromo = NonNullable<ProductLight["active_promotions"]>[number];
+/** Falla de carga: se dice claro y se ofrece reintentar (nunca "no hay promos"). */
+function LoadError({ message, retrying, onRetry }: { message: string; retrying: boolean; onRetry: () => void }) {
+  return (
+    <div
+      role="alert"
+      className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl px-4 py-3"
+      style={{ background: "rgba(224,34,26,0.10)", border: "1px solid rgba(224,34,26,0.4)" }}
+    >
+      <p className="text-[15px] font-bold" style={{ color: "var(--td-text-hi)" }}>{message}</p>
+      <PromoButton icon={<RefreshCw size={16} aria-hidden />} loading={retrying} onClick={onRetry}>
+        Reintentar
+      </PromoButton>
+    </div>
+  );
+}
 
 /**
- * Piezas de display por TIPO de promo (banner/TV/grid). El badge y el CTA salen
- * de `promoLabel` (fuente única compartida con Caja, el catálogo público y el
- * tab de promos); aquí solo se arma el subtítulo, que sí es propio de esta
- * página porque mezcla el nombre de la promo con el precio ya calculado.
+ * Promos (rediseño 2026-10): UNA lista de promos en tarjetas, con sus
+ * productos desplegables, y un asistente de 3 pasos para crear la promo ya con
+ * productos (por categoría o buscando). Todos los roles ven la misma lista; los
+ * botones de modificar solo salen a quien puede (el server valida igual).
  */
-function promoDisplay(promo: LightPromo, price: number) {
-  const { text: badge, scale: badgeScale } = promoBadge(promo);
-  const cta = promoBannerCopy(promo);
-
-  if (promo.type === "qty_discount") {
-    return { badge, badgeScale, sub: `${promoShortLabel(promo)} · ${promo.name}`, cta };
-  }
-
-  const free = (promo.buy_n ?? 0) - (promo.pay_m ?? 0);
-  return {
-    badge,
-    badgeScale,
-    sub: `${free === 1 ? "1 gratis" : `${free} gratis`} · ${promo.name}`,
-    cta: `${cta} · ${fmt(price * (promo.pay_m ?? 0))}`,
-  };
-}
-
-/** Carga el logo como data-URL (mismo patrón que loadTicketLogo del ticket). */
-async function loadLogoDataUrl(): Promise<string | null> {
-  try {
-    const resp = await fetch("/tadaima-logo.jpeg");
-    if (!resp.ok) return null;
-    const blob = await resp.blob();
-    return await new Promise<string>((resolve, reject) => {
-      const r = new FileReader();
-      r.onload = () => resolve(r.result as string);
-      r.onerror = reject;
-      r.readAsDataURL(blob);
-    });
-  } catch {
-    return null;
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// Banner 1080×1350 (4:5) — el nodo que se exporta a PNG. Todo inline-style y
-// solo imágenes data-URL (logo + foto vía /image-base64) para no taintear canvas.
-// ══════════════════════════════════════════════════════════════════════════════
-function PromoBanner({ product, promo, imgDataUrl, logoDataUrl, endsAt, nodeRef }: {
-  product: ProductLight;
-  promo: LightPromo;
-  imgDataUrl: string | null;
-  logoDataUrl: string | null;
-  endsAt: string | null;
-  nodeRef: React.RefObject<HTMLDivElement | null>;
-}) {
-  const price = getLightPrice(product, 1);
-  const disp = promoDisplay(promo, price);
-  const vigencia = endsAt
-    ? `Válido hasta el ${new Date(endsAt).toLocaleDateString("es-MX", { day: "numeric", month: "long", year: "numeric" })}`
-    : "Promoción por tiempo limitado";
-
-  return (
-    <div
-      ref={nodeRef}
-      style={{
-        width: 1080, height: 1350, position: "relative", overflow: "hidden",
-        background: "radial-gradient(1200px 800px at 20% -10%, #3a0a06 0%, #16090c 45%, #0a0a0f 100%)",
-        fontFamily: "system-ui, 'Segoe UI', Roboto, sans-serif", color: "#fff",
-        display: "flex", flexDirection: "column", alignItems: "center",
-      }}
-    >
-      {/* Glow decorativo */}
-      <div style={{ position: "absolute", top: -180, right: -180, width: 620, height: 620, borderRadius: "50%", background: "radial-gradient(circle, rgba(224,34,26,0.35) 0%, transparent 70%)" }} />
-      <div style={{ position: "absolute", bottom: -220, left: -220, width: 700, height: 700, borderRadius: "50%", background: "radial-gradient(circle, rgba(255,68,34,0.18) 0%, transparent 70%)" }} />
-
-      {/* Header: logo + wordmark */}
-      <div style={{ display: "flex", alignItems: "center", gap: 22, marginTop: 56, zIndex: 1 }}>
-        {logoDataUrl && (
-          <div style={{ width: 84, height: 84, borderRadius: 20, background: "#fff", padding: 8, boxShadow: "0 0 40px rgba(224,34,26,0.5)", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
-            <img src={logoDataUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
-          </div>
-        )}
-        <span style={{ fontSize: 52, fontWeight: 900, letterSpacing: "-0.02em" }}>Tadaima</span>
-      </div>
-
-      {/* Badge NxM gigante */}
-      <div style={{ marginTop: 44, zIndex: 1, textAlign: "center" }}>
-        <div style={{
-          fontSize: Math.round(230 * disp.badgeScale), fontWeight: 900, lineHeight: 0.9, letterSpacing: "-0.04em",
-          background: "linear-gradient(135deg, #FF3322 0%, #FFB199 100%)",
-          WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent",
-          textShadow: "0 0 80px rgba(255,51,34,0.25)",
-        }}>
-          {disp.badge}
-        </div>
-        <div style={{ marginTop: 8, fontSize: 30, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.2em", color: GREEN, padding: "0 60px" }}>
-          {disp.sub}
-        </div>
-      </div>
-
-      {/* Foto del producto */}
-      <div style={{ marginTop: 48, zIndex: 1, width: 500, height: 500, borderRadius: 40, overflow: "hidden", background: "rgba(255,255,255,0.04)", border: "2px solid rgba(255,255,255,0.12)", boxShadow: "0 30px 80px rgba(0,0,0,0.6), 0 0 60px rgba(224,34,26,0.2)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        {imgDataUrl
-          ? <img src={imgDataUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-          : <span style={{ fontSize: 120, fontWeight: 900, color: "rgba(255,255,255,0.15)" }}>Tadaima</span>}
-      </div>
-
-      {/* Nombre + precio */}
-      <div style={{ marginTop: 44, zIndex: 1, textAlign: "center", padding: "0 80px" }}>
-        <div style={{ fontSize: 52, fontWeight: 900, lineHeight: 1.1 }}>{product.name}</div>
-        <div style={{ marginTop: 18, fontSize: 36, fontWeight: 800, color: "rgba(255,255,255,0.85)" }}>
-          {disp.cta}
-        </div>
-      </div>
-
-      {/* Footer vigencia */}
-      <div style={{ position: "absolute", bottom: 48, left: 0, right: 0, textAlign: "center", zIndex: 1 }}>
-        <div style={{ fontSize: 26, fontWeight: 800, color: "#FFB199" }}>{vigencia}</div>
-        <div style={{ marginTop: 6, fontSize: 20, fontWeight: 600, color: "rgba(255,255,255,0.45)" }}>Aplicable en tienda · Tadaima</div>
-      </div>
-    </div>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// Modal Compartir: preview escalado del banner + exportar PNG / share / WhatsApp
-// ══════════════════════════════════════════════════════════════════════════════
-function ShareBannerModal({ product, promo, onClose }: {
-  product: ProductLight;
-  promo: LightPromo;
-  onClose: () => void;
-}) {
-  const nodeRef = useRef<HTMLDivElement | null>(null);
-  const [imgDataUrl, setImgDataUrl] = useState<string | null>(null);
-  const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
-  const [endsAt, setEndsAt] = useState<string | null>(null);
-  const [loadingAssets, setLoadingAssets] = useState(true);
-  const [exporting, setExporting] = useState(false);
-  const canShareFiles = typeof navigator !== "undefined" && !!navigator.canShare;
-
-  useEffect(() => {
-    let alive = true;
-    void (async () => {
-      // Foto same-origin (base64) — si falla, el banner usa placeholder de marca.
-      const [img, logo, promos] = await Promise.all([
-        getProductImageBase64(product.id).catch(() => null),
-        loadLogoDataUrl(),
-        getProductPromotions(product.id).catch(() => []),
-      ]);
-      if (!alive) return;
-      setImgDataUrl(img);
-      setLogoDataUrl(logo);
-      setEndsAt(promos.find(x => x.id === promo.id)?.ends_at ?? null);
-      setLoadingAssets(false);
-    })();
-    return () => { alive = false; };
-  }, [product.id, promo.id]);
-
-  const exportPng = async (): Promise<File | null> => {
-    if (!nodeRef.current) return null;
-    setExporting(true);
-    try {
-      // toBlob directo (canvas.toBlob) — NADA de fetch(dataUrl): el CSP de la
-      // app no permite data: en connect-src y el fetch se bloqueaba (QA Joel
-      // 2026-07-17: "descargar imagen no genera nada").
-      // skipFonts: el banner usa fuentes del sistema; sin esto html-to-image
-      // intenta fetch de los stylesheets de Google Fonts y el CSP lo bloquea.
-      const blob = await toBlob(nodeRef.current, { pixelRatio: 1, cacheBust: false, skipFonts: true });
-      if (!blob) {
-        toast.error("No se pudo generar la imagen");
-        return null;
-      }
-      // slug del tipo de promo, no `buy_n x pay_m`: en mayoreo ambos son null
-      // y el archivo salía "promo-nullxnull-…".
-      const slug = promoShortLabel(promo).replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "");
-      return new File([blob], `promo-${slug}-${product.sku || product.id}.png`, { type: "image/png" });
-    } catch {
-      toast.error("No se pudo generar la imagen");
-      return null;
-    } finally {
-      setExporting(false);
-    }
-  };
-
-  const handleDownload = async () => {
-    const file = await exportPng();
-    if (!file) return;
-    downloadBlob(file, file.name);
-    toast.success("Imagen descargada");
-  };
-
-  const handleShareImage = async () => {
-    const file = await exportPng();
-    if (!file) return;
-    try {
-      if (navigator.canShare?.({ files: [file] })) {
-        // Abre el share sheet del dispositivo → WhatsApp → lista de contactos.
-        await navigator.share({ files: [file], title: `Promo ${promoShortLabel(promo)} — ${product.name}` });
-      } else {
-        toast.info("Este navegador no comparte imágenes — usa Descargar y mándala por WhatsApp.");
-      }
-    } catch {
-      /* usuario canceló el share — no es error */
-    }
-  };
-
-  const handleWhatsAppText = () => {
-    const price = getLightPrice(product, 1);
-    const disp = promoDisplay(promo, price);
-    const lines = [
-      `🔥 *PROMO ${disp.badge}* — ${promo.name}`,
-      `${product.name}`,
-      disp.cta,
-      endsAt ? `Válido hasta el ${new Date(endsAt).toLocaleDateString("es-MX", { day: "numeric", month: "long" })}` : "Por tiempo limitado",
-      `Solo en tienda · Tadaima 🏪`,
-    ];
-    // Sin número: abre WhatsApp con el selector de contactos.
-    window.open(`https://wa.me/?text=${encodeURIComponent(lines.join("\n"))}`, "_blank", "noopener");
-  };
-
-  return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-      <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.85)", backdropFilter: "blur(8px)" }} onClick={onClose} />
-      <div style={{ position: "relative", background: PANEL, border: BORDER, borderRadius: 28, padding: 24, width: "100%", maxWidth: 560, maxHeight: "92vh", overflowY: "auto" }} data-testid="share-banner-modal">
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-          <div>
-            <h3 style={{ margin: 0, fontSize: 16, fontWeight: 900, color: THI }}>Compartir promo</h3>
-            <p style={{ margin: "3px 0 0", fontSize: 10, fontWeight: 700, color: TLO, textTransform: "uppercase", letterSpacing: "0.12em" }}>
-              {promoShortLabel(promo)} · {product.name}
-            </p>
-          </div>
-          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: TLO, padding: 4 }}><X size={18} /></button>
-        </div>
-
-        {/* Preview escalado (el nodo real mide 1080×1350) */}
-        <div style={{ width: "100%", display: "flex", justifyContent: "center" }}>
-          <div style={{ width: 324, height: 405, overflow: "hidden", borderRadius: 16, border: CARD_B, position: "relative" }}>
-            {loadingAssets && (
-              <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2, background: "rgba(0,0,0,0.4)" }}>
-                <Loader2 size={22} className="animate-spin" style={{ color: "#F59E0B" }} />
-              </div>
-            )}
-            <div style={{ transform: "scale(0.3)", transformOrigin: "top left" }}>
-              <PromoBanner product={product} promo={promo} imgDataUrl={imgDataUrl} logoDataUrl={logoDataUrl} endsAt={endsAt} nodeRef={nodeRef} />
-            </div>
-          </div>
-        </div>
-        {!loadingAssets && !imgDataUrl && (
-          <p style={{ margin: "10px 0 0", fontSize: 10, fontWeight: 700, color: "#F59E0B", display: "flex", alignItems: "center", gap: 6, justifyContent: "center" }}>
-            <ImageOff size={12} /> El producto no tiene foto — el banner sale con placeholder de marca.
-          </p>
-        )}
-
-        {/* Acciones */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16 }}>
-          {canShareFiles && (
-            <button onClick={() => { void handleShareImage(); }} disabled={exporting || loadingAssets}
-              data-testid="share-image-btn"
-              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px", borderRadius: 14, fontSize: 12, fontWeight: 900, cursor: "pointer", color: "#fff", background: "linear-gradient(135deg, #128C4A, #25D366)", border: "1px solid rgba(37,211,102,0.4)", opacity: exporting || loadingAssets ? 0.6 : 1 }}>
-              {exporting ? <Loader2 size={14} className="animate-spin" /> : <Share2 size={14} />}
-              Compartir imagen (elige el contacto)
-            </button>
-          )}
-          <button onClick={handleWhatsAppText}
-            data-testid="share-wa-text-btn"
-            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px", borderRadius: 14, fontSize: 12, fontWeight: 900, cursor: "pointer", color: "#25D366", background: "rgba(37,211,102,0.08)", border: "1px solid rgba(37,211,102,0.35)" }}>
-            <MessageCircle size={14} />
-            WhatsApp con texto de la promo
-          </button>
-          <button onClick={() => { void handleDownload(); }} disabled={exporting || loadingAssets}
-            data-testid="download-banner-btn"
-            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px", borderRadius: 14, fontSize: 12, fontWeight: 900, cursor: "pointer", color: TMD, background: SOFT, border: CARD_B, opacity: exporting || loadingAssets ? 0.6 : 1 }}>
-            {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-            Descargar PNG (1080×1350)
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// Modo TV: carrusel fullscreen auto-rotativo para la pantalla de la tienda.
-// ══════════════════════════════════════════════════════════════════════════════
-const TV_ROTATE_MS = 8000;
-
-function TvMode({ items, onExit }: {
-  items: { product: ProductLight; promo: LightPromo }[];
-  onExit: () => void;
-}) {
-  const [idx, setIdx] = useState(0);
-
-  useEffect(() => {
-    if (items.length <= 1) return;
-    const id = window.setInterval(() => setIdx(i => (i + 1) % items.length), TV_ROTATE_MS);
-    return () => window.clearInterval(id);
-  }, [items.length]);
-
-  // Fullscreen + salir con Esc (el browser dispara fullscreenchange al salir).
-  useEffect(() => {
-    const el = document.documentElement;
-    void el.requestFullscreen?.().catch(() => { /* sin fullscreen igual funciona */ });
-    const onFsChange = () => { if (!document.fullscreenElement) onExit(); };
-    document.addEventListener("fullscreenchange", onFsChange);
-    return () => {
-      document.removeEventListener("fullscreenchange", onFsChange);
-      if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const current = items.length ? items[idx % items.length] : null;
-
-  return (
-    <div
-      style={{ position: "fixed", inset: 0, zIndex: 400, cursor: "none", overflow: "hidden", background: "radial-gradient(1400px 900px at 25% -10%, #3a0a06 0%, #16090c 45%, #0a0a0f 100%)", color: "#fff", fontFamily: "system-ui, 'Segoe UI', Roboto, sans-serif" }}
-      onDoubleClick={onExit}
-      data-testid="tv-mode"
-    >
-      {/* Glow */}
-      <div style={{ position: "absolute", top: "-15%", right: "-10%", width: "45vw", height: "45vw", borderRadius: "50%", background: "radial-gradient(circle, rgba(224,34,26,0.3) 0%, transparent 70%)" }} />
-      <div style={{ position: "absolute", bottom: "-20%", left: "-12%", width: "50vw", height: "50vw", borderRadius: "50%", background: "radial-gradient(circle, rgba(255,68,34,0.15) 0%, transparent 70%)" }} />
-
-      {/* Logo esquina */}
-      <div style={{ position: "absolute", top: "3vh", left: "3vw", display: "flex", alignItems: "center", gap: 14, zIndex: 2 }}>
-        <div style={{ width: "5vh", height: "5vh", minWidth: 40, minHeight: 40, borderRadius: 12, background: "#fff", padding: 4, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <img src="/tadaima-logo.jpeg" alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
-        </div>
-        <span style={{ fontSize: "3.2vh", fontWeight: 900 }}>Tadaima</span>
-      </div>
-      <div style={{ position: "absolute", top: "3.6vh", right: "3vw", fontSize: "2vh", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.3em", color: "rgba(255,255,255,0.5)", zIndex: 2 }}>
-        Promociones vigentes
-      </div>
-
-      <AnimatePresence mode="wait">
-        {current ? (
-          <Motion.div
-            key={`${current.product.id}-${current.promo.id}`}
-            initial={{ opacity: 0, scale: 0.96, y: 24 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 1.02, y: -24 }}
-            transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-            style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: "6vw", padding: "0 6vw", zIndex: 1 }}
-          >
-            {/* Foto */}
-            <div style={{ width: "34vw", maxWidth: "58vh", aspectRatio: "1 / 1", borderRadius: "3vh", overflow: "hidden", background: "rgba(255,255,255,0.04)", border: "2px solid rgba(255,255,255,0.12)", boxShadow: "0 30px 90px rgba(0,0,0,0.6), 0 0 80px rgba(224,34,26,0.25)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              {current.product.image
-                ? <img src={current.product.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                : <span style={{ fontSize: "8vh", fontWeight: 900, color: "rgba(255,255,255,0.15)" }}>Tadaima</span>}
-            </div>
-
-            {/* Texto */}
-            <div style={{ maxWidth: "44vw" }}>
-              {(() => {
-                const disp = promoDisplay(current.promo, getLightPrice(current.product, 1));
-                return (
-                  <>
-                    <div style={{
-                      fontSize: `${Math.round(22 * disp.badgeScale)}vh`, fontWeight: 900, lineHeight: 0.9, letterSpacing: "-0.04em",
-                      background: "linear-gradient(135deg, #FF3322 0%, #FFB199 100%)",
-                      WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent",
-                    }}>
-                      {disp.badge}
-                    </div>
-                    <div style={{ marginTop: "1vh", fontSize: "3vh", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.2em", color: GREEN }}>
-                      {disp.sub}
-                    </div>
-                    <div style={{ marginTop: "3vh", fontSize: "5.4vh", fontWeight: 900, lineHeight: 1.1 }}>{current.product.name}</div>
-                    <div style={{ marginTop: "1.6vh", fontSize: "3.4vh", fontWeight: 800, color: "rgba(255,255,255,0.85)" }}>
-                      {disp.cta}
-                    </div>
-                  </>
-                );
-              })()}
-            </div>
-          </Motion.div>
-        ) : (
-          <Motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 1 }}>
-            <div style={{ fontSize: "9vh", fontWeight: 900 }}>Bienvenido a Tadaima</div>
-            <div style={{ marginTop: "2vh", fontSize: "3vh", fontWeight: 700, color: "rgba(255,255,255,0.55)" }}>Pregunta por nuestras promociones</div>
-          </Motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Dots de progreso */}
-      {items.length > 1 && (
-        <div style={{ position: "absolute", bottom: "3.4vh", left: 0, right: 0, display: "flex", justifyContent: "center", gap: 10, zIndex: 2 }}>
-          {items.map((it, i) => (
-            <div key={`${it.product.id}-${it.promo.id}`} style={{ width: i === idx ? 26 : 9, height: 9, borderRadius: 99, background: i === idx ? "#FF3322" : "rgba(255,255,255,0.25)", transition: "all 0.4s" }} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// Página Promos
-// ══════════════════════════════════════════════════════════════════════════════
 export function PromosPage() {
-  const { user } = useAuth();
-  const isAdmin = isAdminRole(user?.roles);
-  // Mismo gate que PromoAdminSection (que además se auto-oculta): decide si
-  // existe la pestaña Gestión. Cajero/sin permiso ven solo las asignadas.
-  const canSeeGestion = (isAdmin || isManagerRole(user?.roles))
-    && (isAdmin || user?.can_manage_promos !== false);
-  // Tabs (pedido Joel 2026-07-24): dos secciones apiladas eran mucho scroll.
-  const [tab, setTab] = useState<"gestion" | "asignadas">(canSeeGestion ? "gestion" : "asignadas");
+  const viewer = usePromoViewer();
+  const promosQuery = usePromotionsQuery();
+  const categoriesQuery = useCategoriesQuery();
+  const storesQuery = useStoresQuery({ enabled: viewer.isAdmin });
 
-  // Sin endpoint global de promos: se enumeran desde los productos light
-  // (active_promotions viene embebido). Refetch 60s → la TV se actualiza sola.
-  //
-  // La key cuelga de queryKeys.products.all para que la invalidación del tab de
-  // Promos la alcance (antes era ["promos-products"], que NO hace match con
-  // ['products'] y solo se refrescaba por el interval de 60s).
-  // El sufijo 'global' NO es decorativo: aquí se pide sin store_id, así que el
-  // embed de promos viene SIN filtrar por tienda y esta página hace su propio
-  // scoping abajo. Colisionar con las keys store-scoped de Caja le daría a la
-  // Caja promos de otras sucursales.
+  // Productos light SIN store_id: el embed de promos viene sin filtrar por
+  // tienda y el scoping se hace aquí. El sufijo 'global' evita chocar con las
+  // keys store-scoped de Caja (le daría promos de otras sucursales). Cuelga de
+  // products.all para que la invalidación de promos la alcance.
   const productsQuery = useQuery({
-    queryKey: [...queryKeys.products.all, 'light', 'promos', 'global'],
+    queryKey: [...queryKeys.products.all, "light", "promos", "global"],
     queryFn: () => getProductsLight(),
     staleTime: 30_000,
   });
 
-  // Nombres de tienda para las etiquetas (solo admin las necesita todas).
-  // Reusa el hook compartido: misma key que el resto de la app, así que la
-  // alcanza la invalidación de tiendas y no duplica el fetcher.
-  const storesQuery = useStoresQuery({ enabled: isAdmin });
-  const storeName = (id: number | null | undefined): string | null => {
-    if (id == null) return null;
-    return (storesQuery.data as Store[] | undefined)?.find(s => s.id === id)?.name ?? `Tienda #${id}`;
-  };
+  const products = productsQuery.data?.data ?? NO_PRODUCTS;
+  const productsById = useMemo(() => new Map(products.map(product => [product.id, product])), [products]);
+  const pickableProducts = useMemo(() => products.filter(product => product.active), [products]);
+  const categories = categoriesQuery.data ?? [];
+  const storeNames = useMemo(
+    () => new Map((storesQuery.data ?? []).map(store => [store.id, store.name])),
+    [storesQuery.data],
+  );
 
-  const promoItems = useMemo(() => {
-    const products = productsQuery.data?.data ?? [];
-    return products
-      .map(p => {
-        // Scoping por tienda: gerente/cajero solo ven promos globales o de SU
-        // tienda; admin ve todas (con etiqueta de tienda).
-        const visible = (p.active_promotions ?? []).filter(pr =>
-          isAdmin || pr.store_id == null || pr.store_id === (user?.store_id ?? null));
-        return { p, visible };
-      })
-      .filter(({ p, visible }) => p.active && visible.length > 0)
-      .map(({ p, visible }) => {
-        // Override local (2026-07-20): para gerente/cajero, si SU tienda tiene
-        // promo local, esa es la que aplica (la global queda opacada ahí).
-        // Admin sin filtro: sigue viendo la de mayor prioridad con etiquetas.
-        const pool = !isAdmin && visible.some(pr => pr.store_id != null)
-          ? visible.filter(pr => pr.store_id != null)
-          : visible;
-        return {
-          product: p,
-          promo: [...pool].sort((a, b) => b.priority - a.priority || a.id - b.id)[0]!,
-        };
-      })
-      .sort((a, b) => a.product.name.localeCompare(b.product.name, "es"));
-  }, [productsQuery.data, isAdmin, user?.store_id]);
+  // "Ahora" se renueva con cada recarga de promos (botón Actualizar o tras
+  // guardar): así una promo programada que ya empezó, o una que ya venció,
+  // cambia de estado sin tener que recargar la pestaña.
+  const [mountedAt] = useState(() => Date.now());
+  const promosUpdatedAt = promosQuery.dataUpdatedAt || mountedAt;
+  const now = useMemo(() => new Date(promosUpdatedAt), [promosUpdatedAt]);
+  const promos = useMemo(
+    () => visiblePromosFor(promosQuery.data ?? [], viewer, now),
+    [promosQuery.data, viewer, now],
+  );
+  // Promo que le toca HOY a cada producto (para el Modo TV).
+  const vigentes = useMemo(() => vigentesPorProducto(products, viewer), [products, viewer]);
 
-  const [shareItem, setShareItem] = useState<{ product: ProductLight; promo: LightPromo } | null>(null);
+  const [wizardOpen, setWizardOpen] = useState(false);
   const [tvMode, setTvMode] = useState(false);
+  const [shareItem, setShareItem] = useState<{ product: ProductLight; promo: LightPromo } | null>(null);
 
   return (
-    <div className="px-6 py-6 max-w-6xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-3 mb-1 flex-wrap">
+    <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
+      <header className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="rounded-2xl p-2.5" style={{ background: "rgba(224,34,26,0.12)", border: "1px solid rgba(224,34,26,0.3)" }}>
-            <TicketPercent size={20} style={{ color: "var(--td-red)" }} />
+          <div className="rounded-2xl p-3" style={{ background: "rgba(224,34,26,0.12)", border: "1px solid rgba(224,34,26,0.3)" }}>
+            <TicketPercent size={24} style={{ color: "var(--td-red)" }} aria-hidden />
           </div>
           <div>
-            <h1 className="text-xl font-black uppercase tracking-wide" style={{ color: THI }}>Promos</h1>
-            <p className="text-[11px] font-bold" style={{ color: TMD }}>
-              Promociones vigentes (2x1 o descuento por cantidad) — comparte el banner o proyecta el Modo TV en tienda.
+            <h1 className="text-[26px] font-black leading-tight" style={{ color: "var(--td-text-hi)" }}>Promos</h1>
+            <p className="text-[15px] font-semibold" style={{ color: "var(--td-text-md)" }}>
+              {viewer.canManage
+                ? "Crea promociones y elige a qué productos aplican."
+                : "Las promociones que aplican en tu tienda."}
             </p>
           </div>
         </div>
-        <button
-          onClick={() => setTvMode(true)}
-          data-testid="tv-mode-btn"
-          className="flex items-center gap-2 rounded-2xl px-5 py-3 text-[11px] font-black uppercase tracking-widest"
-          style={{ background: "var(--td-red-g, linear-gradient(135deg, #BB1100, #FF3322))", border: "1px solid rgba(224,34,26,0.5)", color: "#fff", cursor: "pointer", boxShadow: "0 6px 18px rgba(224,34,26,0.35)" }}
-        >
-          <Tv size={14} /> Modo TV
-        </button>
-      </div>
-
-      {/* Tabs: Gestión (CRUD de promos) · Asignadas a productos (vigentes).
-          Antes iban apiladas y la página se hacía eterna de scroll. */}
-      {canSeeGestion && (
-        <div className="flex gap-2 mt-4 mb-4">
-          {([
-            ["gestion", "Gestión de promos"],
-            ["asignadas", `Asignadas a productos${promoItems.length > 0 ? ` (${promoItems.length})` : ""}`],
-          ] as const).map(([key, label]) => (
-            <button
-              key={key}
-              onClick={() => setTab(key)}
-              data-testid={`promos-tab-${key}`}
-              className="rounded-xl px-4 py-2 text-[11px] font-black uppercase tracking-widest transition-colors"
-              style={tab === key
-                ? { background: "rgba(224,34,26,0.14)", border: "1px solid rgba(224,34,26,0.45)", color: "var(--td-red)" }
-                : { background: "var(--td-card-bg)", border: CARD_B, color: TLO, cursor: "pointer" }}
+        <div className="flex flex-wrap gap-2">
+          <PromoButton icon={<Tv size={18} aria-hidden />} onClick={() => setTvMode(true)} data-testid="tv-mode-btn">
+            Modo TV
+          </PromoButton>
+          {viewer.canManage && (
+            <PromoButton
+              variant="primary"
+              className="px-5 text-[16px]"
+              icon={<Plus size={20} aria-hidden />}
+              onClick={() => setWizardOpen(true)}
+              data-testid="new-promo-btn"
             >
-              {label}
-            </button>
-          ))}
+              Nueva promoción
+            </PromoButton>
+          )}
         </div>
+      </header>
+
+      {productsQuery.isError && (
+        <LoadError
+          message="No se pudieron cargar los productos. Sin ellos no se pueden elegir productos para una promo."
+          retrying={productsQuery.isFetching}
+          onRetry={() => void productsQuery.refetch()}
+        />
       )}
 
-      {/* Tab Gestión — el section se auto-oculta sin permiso */}
-      {tab === "gestion" && canSeeGestion && (
-        <>
-          <PromoAdminSection />
-          <p className="text-[10px] font-bold mt-3" style={{ color: TLO }}>
-            Las promos se crean aquí y se asignan a uno o varios productos.
-            También puedes asignarlas desde <b>Productos → editar → tab Promos</b>.
-          </p>
-        </>
-      )}
-
-      {/* Tab Asignadas a productos (vigentes) */}
-      {(tab === "asignadas" || !canSeeGestion) && (<>
-      {productsQuery.isLoading ? (
-        <div className="flex items-center justify-center py-24"><Loader2 size={22} className="animate-spin" style={{ color: TLO }} /></div>
-      ) : promoItems.length === 0 ? (
-        <div className="rounded-3xl p-12 text-center" style={{ background: PANEL, border: BORDER }}>
-          <TicketPercent size={34} className="mx-auto mb-3" style={{ color: TLO, opacity: 0.5 }} />
-          <p className="text-sm font-black uppercase tracking-widest" style={{ color: THI }}>Sin promos vigentes</p>
-          <p className="text-[11px] font-bold mt-1" style={{ color: TMD }}>Crea una en la pestaña "Gestión de promos" y asígnale productos (2x1, 3x2, mayoreo…).</p>
-          <p className="text-[10px] font-bold mt-2" style={{ color: TLO }}>
-            ¿Creaste una y no sale? Revisa que no esté <b>Programada</b> (fecha de inicio futura), <b>Pausada</b> o <b>Vencida</b>, que el producto esté activo, y que la promo sea de tu tienda (o de todas).
-          </p>
-        </div>
+      {promosQuery.isError ? (
+        <LoadError
+          message="No se pudieron cargar las promociones. Revisa tu conexión."
+          retrying={promosQuery.isFetching}
+          onRetry={() => void promosQuery.refetch()}
+        />
       ) : (
-        /* Tabla compacta de vigentes por producto (pedido Joel 2026-07-24: las
-           tarjetas gigantes hacían la página tosca — mucho scroll teniendo la
-           Gestión arriba). Una fila por producto con su promo; Compartir por
-           fila abre el mismo banner de siempre; el Modo TV no cambia. */
-        <div className="rounded-3xl overflow-hidden" style={{ background: PANEL, border: BORDER }}>
-          <div className="px-4 py-3" style={{ borderBottom: CARD_B }}>
-            <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: TLO }}>
-              Vigentes por producto ({promoItems.length})
-            </p>
-          </div>
-          {promoItems.map(({ product, promo }, i) => {
-            const disp = promoDisplay(promo, getLightPrice(product, 1));
-            return (
-              <div
-                key={`${product.id}-${promo.id}`}
-                className="flex items-center gap-3 px-4 py-2.5 flex-wrap"
-                style={i > 0 ? { borderTop: CARD_B } : undefined}
-              >
-                {/* Miniatura chica — no un banner */}
-                <div className="shrink-0 rounded-lg overflow-hidden flex items-center justify-center" style={{ width: 40, height: 40, background: SOFT }}>
-                  {product.image
-                    ? <img src={product.image} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                    : <span style={{ fontSize: 9, fontWeight: 900, color: "rgba(255,255,255,0.18)" }}>TDM</span>}
-                </div>
-
-                {/* Badge de la promo (2x1 / −$100 c/u) */}
-                <span className="shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-black text-white tabular-nums" style={{ background: "linear-gradient(135deg, #BB1100, #FF3322)" }}>
-                  {disp.badge}
-                </span>
-
-                {/* Producto + promo */}
-                <div className="flex-1 min-w-[180px]">
-                  <p className="text-[12px] font-black leading-tight truncate" style={{ color: THI }}>{product.name}</p>
-                  <p className="text-[9px] font-bold uppercase tracking-widest mt-0.5" style={{ color: TLO }}>
-                    {promo.name}
-                    {promo.store_id != null && (
-                      <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 6, fontSize: 8, fontWeight: 900, color: "#60A5FA", background: "rgba(96,165,250,0.12)", border: "1px solid rgba(96,165,250,0.3)" }}>
-                        {isAdmin ? (storeName(promo.store_id) ?? "Solo una tienda") : "Solo tu tienda"}
-                      </span>
-                    )}
-                    {promo.priority > 0 && <span style={{ marginLeft: 6 }}>· Prioridad {promo.priority}</span>}
-                  </p>
-                </div>
-
-                {/* CTA (qué gana el cliente) — se oculta en pantallas chicas */}
-                <p className="hidden md:block text-[11px] font-black shrink-0" style={{ color: GREEN }}>
-                  {disp.cta}
-                </p>
-
-                <button
-                  onClick={() => setShareItem({ product, promo })}
-                  data-testid={`share-promo-${product.id}`}
-                  className="shrink-0 flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-[10px] font-black uppercase tracking-widest"
-                  style={{ background: "rgba(37,211,102,0.08)", border: "1px solid rgba(37,211,102,0.35)", color: "#25D366", cursor: "pointer" }}
-                >
-                  <Share2 size={11} /> Compartir
-                </button>
-              </div>
-            );
-          })}
-        </div>
+      <PromoList
+        promos={promos}
+        loading={promosQuery.isLoading}
+        now={now}
+        viewer={viewer}
+        storeNames={storeNames}
+        productsById={productsById}
+        pickableProducts={pickableProducts}
+        loadingProducts={productsQuery.isLoading}
+        categories={categories}
+        onNew={() => setWizardOpen(true)}
+        onShare={(product, promo) => setShareItem({ product, promo })}
+      />
       )}
-      </>)}
+
+      {wizardOpen && (
+        <PromoWizard
+          products={pickableProducts}
+          categories={categories}
+          loadingProducts={productsQuery.isLoading}
+          storeNames={storeNames}
+          onClose={() => setWizardOpen(false)}
+        />
+      )}
 
       <AnimatePresence>
         {shareItem && (
           <ShareBannerModal product={shareItem.product} promo={shareItem.promo} onClose={() => setShareItem(null)} />
         )}
       </AnimatePresence>
-      {tvMode && <TvMode items={promoItems} onExit={() => setTvMode(false)} />}
+      {tvMode && <TvMode items={vigentes} onExit={() => setTvMode(false)} />}
     </div>
   );
 }

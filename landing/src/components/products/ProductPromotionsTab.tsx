@@ -15,7 +15,7 @@ import { getTodayLocal } from "@/lib/date";
 import { isAdmin as isAdminRole } from "@/lib/permisos";
 import { isPromoSinConfigurar, promoDetailLabel, promoShortLabel } from "@/lib/promoLabel";
 import { toDateInput } from "@/lib/promoInput";
-import { PromoFormModal } from "@/components/promos/PromoForm";
+import { PromoEditDialog } from "@/components/promos/PromoEditDialog";
 
 interface Props {
   /** null = producto nuevo sin guardar → el tab BUFFEREA las selecciones. */
@@ -304,7 +304,7 @@ export function ProductPromotionsTab({ productId, pendingPromoIds = [], onPendin
           <div className="rounded-2xl p-6 text-center" style={{ background: "var(--td-surface-soft)", border: "1px solid var(--td-card-border)" }}>
             <TicketPercent size={22} className="mx-auto mb-2" style={{ color: TLO }} />
             <p className="text-[12px] font-bold" style={{ color: TMD }}>
-              Sin promos elegidas — asigna una existente o crea una nueva; se aplicarán en cuanto guardes el producto.
+              Sin promos elegidas — asigna una existente; se aplicará en cuanto guardes el producto. Las promos nuevas se crean en el menú Promos.
             </p>
           </div>
         ) : (
@@ -339,7 +339,7 @@ export function ProductPromotionsTab({ productId, pendingPromoIds = [], onPendin
         <div className="flex justify-center py-8"><Loader2 size={18} className="animate-spin" style={{ color: TLO }} /></div>
       ) : promotions.length === 0 ? (
         <p className="py-6 text-center text-[11px] font-bold" style={{ color: TLO }}>
-          Este producto no tiene promociones — asigna una existente o crea una nueva.
+          Este producto no tiene promociones — asigna una existente. Las promos nuevas se crean en el menú Promos.
         </p>
       ) : (
         <div className="space-y-2">
@@ -419,9 +419,9 @@ export function ProductPromotionsTab({ productId, pendingPromoIds = [], onPendin
         </div>
       )}
 
-      {/* Modal crear/personalizar (PromoForm compartido con PromosPage) */}
+      {/* Modal "Personalizar para mi tienda" (mismo formulario que Promos → Editar) */}
       {formState && (
-        <PromoFormModal
+        <PromoEditDialog
           title={formState.title}
           {...(formState.subtitle ? { subtitle: formState.subtitle } : {})}
           {...(formState.initial ? { initial: formState.initial } : {})}

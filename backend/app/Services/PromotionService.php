@@ -86,7 +86,7 @@ final class PromotionService
             ? "{$existing->buy_n}x{$existing->pay_m}"
             : 'de mayoreo';
 
-        return "El producto \"{$product->name}\" ya tiene la promo \"{$existing->name}\" ({$existingLabel}) vigente en esas fechas. No pueden convivir una NxM y una de mayoreo — pausa o elimina esa primero.";
+        return "El producto \"{$product->name}\" ya tiene la promo \"{$existing->name}\" ({$existingLabel}) vigente en esas fechas. Un producto no puede tener al mismo tiempo una promo tipo 2x1 y una de descuento por cantidad: pausa o borra esa primero.";
     }
 
     /**

@@ -95,7 +95,7 @@ const NAV_BY_ROLE: Record<string, PageKey[]> = {
   gerente: ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers", "supplies", "promos", "reports", "docs"],
   // Cajero: sin Tiendas, con Preventas para ver catálogos disponibles +
   // difusión + vencidos de su sucursal. "Buscar en Tiendas" para localizar stock.
-  // Promos: consulta + Modo TV (crear promos sigue en el modal de Producto).
+  // Promos: consulta + Modo TV (crear/editar promos es de admin/gerente, en el mismo menú Promos).
   cajero:  ["inicio", "products", "stock_search", "sales", "cash_cuts", "presales", "supplies", "promos", "docs"],
   unknown: ["inicio"],
 };

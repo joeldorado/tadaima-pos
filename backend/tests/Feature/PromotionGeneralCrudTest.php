@@ -226,6 +226,90 @@ class PromotionGeneralCrudTest extends TestCase
         $this->assertNull($promo->fresh()->product_id);
     }
 
+    public function test_detach_en_lote_quita_solo_los_dados_y_anula_el_puntero_legacy(): void
+    {
+        $promo = ProductPromotion::create([
+            'product_id' => $this->productA->id, 'name' => '2x1 Lote', 'buy_n' => 2, 'pay_m' => 1,
+        ]);
+        $productC = Product::create([
+            'company_id' => $this->admin->company_id, 'name' => 'Manga C', 'sku' => 'MGC-1', 'active' => true,
+        ]);
+        $promo->products()->syncWithoutDetaching([$this->productB->id, $productC->id]);
+
+        $this->actingAs($this->admin)
+            ->postJson("/api/v1/promotions/{$promo->id}/products/detach", [
+                'product_ids' => [$this->productA->id, $this->productB->id],
+            ])
+            ->assertStatus(200)
+            ->assertJsonPath('data.products_count', 1)
+            ->assertJsonPath('data.products.0.id', $productC->id);
+
+        $this->assertNull($promo->fresh()->product_id);
+    }
+
+    public function test_detach_en_lote_ignora_los_que_no_estaban_asignados(): void
+    {
+        $promo = ProductPromotion::create(['name' => '2x1 Idempotente', 'buy_n' => 2, 'pay_m' => 1]);
+        $promo->products()->syncWithoutDetaching([$this->productA->id]);
+
+        // productB nunca estuvo y 999999 ni existe: no es error, solo no hay nada que quitar.
+        $this->actingAs($this->admin)
+            ->postJson("/api/v1/promotions/{$promo->id}/products/detach", [
+                'product_ids' => [$this->productB->id, 999999],
+            ])
+            ->assertStatus(200)
+            ->assertJsonPath('data.products_count', 1);
+    }
+
+    public function test_detach_en_lote_respeta_los_permisos(): void
+    {
+        $otherStore = Store::create(['company_id' => $this->admin->company_id, 'name' => 'Otra Tienda']);
+        $global = ProductPromotion::create(['name' => 'Global', 'buy_n' => 2, 'pay_m' => 1]);
+        $ajena = ProductPromotion::create([
+            'name' => 'De otra tienda', 'buy_n' => 2, 'pay_m' => 1, 'store_id' => $otherStore->id,
+        ]);
+        $propia = ProductPromotion::create([
+            'name' => 'De mi tienda', 'buy_n' => 3, 'pay_m' => 2, 'store_id' => $this->store->id,
+        ]);
+        foreach ([$global, $ajena, $propia] as $promo) {
+            $promo->products()->syncWithoutDetaching([$this->productA->id]);
+        }
+        $body = ['product_ids' => [$this->productA->id]];
+
+        $this->actingAs($this->cashier)
+            ->postJson("/api/v1/promotions/{$propia->id}/products/detach", $body)
+            ->assertStatus(403);
+        $this->actingAs($this->manager)
+            ->postJson("/api/v1/promotions/{$global->id}/products/detach", $body)
+            ->assertStatus(403);
+        $this->actingAs($this->manager)
+            ->postJson("/api/v1/promotions/{$ajena->id}/products/detach", $body)
+            ->assertStatus(403);
+        $this->actingAs($this->manager)
+            ->postJson("/api/v1/promotions/{$propia->id}/products/detach", $body)
+            ->assertStatus(200)
+            ->assertJsonPath('data.products_count', 0);
+
+        $this->assertSame(1, $global->products()->count());
+        $this->assertSame(1, $ajena->products()->count());
+    }
+
+    public function test_lotes_de_productos_validan_su_tamano(): void
+    {
+        $promo = ProductPromotion::create(['name' => '2x1 Topes', 'buy_n' => 2, 'pay_m' => 1]);
+        $demasiados = range(1, 501);
+
+        $this->actingAs($this->admin)
+            ->postJson("/api/v1/promotions/{$promo->id}/products/detach", ['product_ids' => []])
+            ->assertStatus(422);
+        $this->actingAs($this->admin)
+            ->postJson("/api/v1/promotions/{$promo->id}/products/detach", ['product_ids' => $demasiados])
+            ->assertStatus(422);
+        $this->actingAs($this->admin)
+            ->postJson("/api/v1/promotions/{$promo->id}/products", ['product_ids' => $demasiados])
+            ->assertStatus(422);
+    }
+
     public function test_gerente_no_muta_promo_global_pero_si_la_suya(): void
     {
         $globalId = $this->actingAs($this->admin)

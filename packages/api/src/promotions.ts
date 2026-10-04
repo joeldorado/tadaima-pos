@@ -81,6 +81,17 @@ export async function detachPromotionProduct(id: number, productId: number): Pro
   return response.data
 }
 
+/**
+ * Quita VARIOS productos de un jalón (p. ej. toda una categoría). Idempotente:
+ * los que no estaban asignados se ignoran. Máx. 500 ids por envío.
+ */
+export async function detachPromotionProducts(id: number, productIds: number[]): Promise<Promotion> {
+  const response = await apiClient.post<Promotion>(`/promotions/${id}/products/detach`, {
+    product_ids: productIds,
+  })
+  return response.data
+}
+
 // ─── Shim anidado legacy (/products/{id}/promotions) ──────────────────────────
 
 /** Promos asignadas a UN producto (sigue siendo el GET canónico del tab). */
