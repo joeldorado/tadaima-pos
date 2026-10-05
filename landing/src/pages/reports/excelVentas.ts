@@ -1,126 +1,196 @@
-// Hoja "Ventas" del Excel de Reportes y de los cortes de caja (tienda / cajero).
-// Réplica del Excel de la app (Joel 2026-10-03): tablas lado a lado
-// (Efectivo · Tarjeta · Transferencias · Preventas · Devoluciones); debajo de cada
-// método sus descuentos/ofertas y aumentos por ticket; al final Egresos.
-// Totales, IVA, neto y utilidad son fórmulas de Excel.
+// Pestañas del Excel de Reportes y de los cortes de caja (tienda / cajero).
+// Una pestaña por tabla (Ruben 2026-10-05); los tomos (Manga Nacional) van en
+// pestañas propias, separados de los productos regulares:
+//   Resumen (+ descuentos, aumentos y egresos) · Efectivo (+ Devoluciones) ·
+//   Efectivo Manga · Tarjeta · Tarjeta Manga · Transferencias ·
+//   Transferencias Manga · Preventas.
+// Totales, IVA, neto y utilidad son fórmulas; el Resumen se liga a los TOTAL de
+// cada pestaña con fórmulas entre pestañas.
 import type { Workbook } from "exceljs";
 import type { GroupedProduct, ReportExportParams } from "./reportTypes";
 import { fmtDate } from "./reportFormat";
 import {
-  MONEY_FMT, align, createSheet, fill, font, sectionHeader, type CellStyle, type SheetBuilder,
+  EGRESO, MONEY_FMT, align, cellRef, createSheet, fill, font, sectionHeader, type CellStyle, type SheetBuilder,
 } from "./excelSheet";
 import {
-  FIRST_TABLE_ROW, cardTable, drawPresales, drawProductTable, drawReturns, drawTableHeaders, isCashLike,
-  isTransferMethod, isCardMethod, methodTable, tableWidth, withMethod, type MangaSubtotal,
+  FIRST_TABLE_ROW, PRESALE_COLS, RETURN_COLS, cardTable, drawPresales, drawProductTable, drawReturns, drawTableHeaders,
+  isCardMethod, isCashLike, isManga, isTransferMethod, methodTable, tableWidth, withMethod, type TableResult,
 } from "./excelTopTables";
 import { bottomLayout, drawEgresos, drawMethodAdjustments } from "./excelBottomTables";
 
-// 4 columnas entre tablas: las de descuentos/aumentos de abajo usan 3 de ellas para caber.
-const TABLE_GAP = 4;
-const MANGA_BLUE = "1D4ED8";
-const MANGA_FILL = fill("DBEAFE");
+/** Columnas vacías entre dos tablas de la misma pestaña. */
+const GAP = 1;
+/** Ancho de las tablas de descuentos/aumentos/egresos (Producto · Motivo×3 · Ticket · Cobró · Fecha · Monto). */
+const BLOCK_WIDTH = 8;
+/** Filas vacías entre tablas apiladas. */
+const STACK_GAP = 2;
 
 const isPresale = (g: GroupedProduct) => g.pre_sale_apartado !== undefined;
 
-function drawTitle(sh: SheetBuilder, p: ReportExportParams): void {
+/** Título y periodo arriba de cada pestaña (filas 1-2). */
+function drawTitle(sh: SheetBuilder, p: ReportExportParams, width: number): void {
   const store = !p.effectiveStoreId ? "Todas" : p.stores.find((s) => s.id === p.effectiveStoreId)?.name ?? "Todas";
   const user = !p.selectedUserId ? "Todos" : p.users.find((u) => u.id === p.selectedUserId)?.name ?? "Todos";
   const period = p.periodLabel ?? (p.from === p.to ? fmtDate(p.from) : `${fmtDate(p.from)} al ${fmtDate(p.to)}`);
-
-  sh.merge(1, 1, 7);
+  const w = Math.max(width, 5);
+  sh.merge(1, 1, w);
   sh.set(1, 1, p.title ?? "TADAIMA - REPORTE DE AUDITORÍA Y VENTAS", { font: font({ sz: 14, bold: true, color: "FFFFFF" }), fill: fill("CC2200"), alignment: align("center") });
   sh.height(1, 35);
-  sh.merge(2, 1, 7);
+  sh.merge(2, 1, w);
   sh.set(2, 1, `Periodo: ${period}  |  Tienda: ${store}  |  Usuario: ${user}`, { font: font({ sz: 10, italic: true }), alignment: align("center") });
   sh.height(2, 20);
-  sh.merge(4, 1, 7);
-  sh.set(4, 1, "INGRESOS COBRADOS EN CAJA (CONCEPTO VS MONTO NETO REAL DEL PERIODO)", { font: font({ bold: true, color: "666666" }), fill: fill("F8F8F8"), alignment: align("center") });
-  sh.height(4, 24);
+}
 
-  // Lo cobrado (ventas + anticipos de preventa, neto de cancelaciones) por método.
+/** Anchos: nombre ancho, cantidad mediana, montos iguales. */
+function tableWidths(sh: SheetBuilder, col: number, n: number): void {
+  sh.width(col, 34);
+  sh.width(col + 1, 14);
+  for (let c = col + 2; c < col + n; c++) sh.width(c, 15);
+}
+
+interface ProductSheet {
+  name: string;
+  /** Columna de lo cobrado (Venta / Bruto) y de la utilidad, para el Resumen. */
+  ventaKey: string;
+  result: TableResult;
+}
+
+/** Pestaña con una tabla por producto (método normal o solo Manga). */
+function productSheet(
+  wb: Workbook, p: ReportExportParams, name: string, title: string, colors: [string, string],
+  table: ReturnType<typeof methodTable>, groups: GroupedProduct[], ventaKey: string,
+): ProductSheet & { sh: SheetBuilder } {
+  const sh = createSheet(wb.addWorksheet(name));
+  const w = tableWidth(table);
+  drawTitle(sh, p, w);
+  sectionHeader(sh, FIRST_TABLE_ROW, 1, w, title, colors[0]);
+  drawTableHeaders(sh, table, colors[1]);
+  const result = drawProductTable(sh, table, groups, false);
+  tableWidths(sh, 1, w);
+  return { sh, name, ventaKey, result };
+}
+
+/** Anchos de un bloque de descuentos/aumentos/egresos. */
+function blockWidths(sh: SheetBuilder, col: number): void {
+  const L = bottomLayout(col, BLOCK_WIDTH);
+  sh.width(L.ins, 30);
+  for (let c = L.desc; c <= L.descEnd; c++) sh.width(c, 14);
+  sh.width(L.orig, 10);
+  sh.width(L.reg, 18);
+  sh.width(L.tienda, 14);
+  sh.width(L.monto, 14);
+}
+
+/** Ref a la celda de otra pestaña: 'Efectivo Manga'!D12. */
+const xref = (sheet: string, ref: string) => `'${sheet}'!${ref}`;
+
+/**
+ * Pestaña Resumen: lo vendido por pestaña (ligado a sus TOTAL), Total Bruto,
+ * Egresos y Total Final; abajo descuentos/aumentos por método y Egresos.
+ */
+function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedProduct[], tabs: ProductSheet[]): void {
+  // Abajo: izquierda Efectivo (1.1/1.2) y Egresos; derecha Tarjeta y Transferencias.
+  const blocksTop = FIRST_TABLE_ROW + tabs.length + 12; // debajo del resumen, con aire
+  const leftL = bottomLayout(1, BLOCK_WIDTH);
+  const rightCol = 1 + BLOCK_WIDTH + GAP;
+  const cashEnd = drawMethodAdjustments(sh, blocksTop, leftL, groups, "cash", "EFECTIVO", 1);
+  const egTop = cashEnd + STACK_GAP + 1;
+  const egEnd = drawEgresos(sh, egTop, leftL, p.supplyMovements, p.stores, 6);
+  const cardEnd = drawMethodAdjustments(sh, blocksTop, bottomLayout(rightCol, BLOCK_WIDTH), groups, "card", "TARJETA", 2);
+  drawMethodAdjustments(sh, cardEnd + STACK_GAP + 1, bottomLayout(rightCol, BLOCK_WIDTH), groups, "transfer", "TRANSFERENCIAS", 3);
+  blockWidths(sh, 1);
+  blockWidths(sh, rightCol);
+
+  // Arriba: el resumen.
+  const header: CellStyle = { font: font({ sz: 10, bold: true, color: "FFFFFF" }), fill: fill("B8732E"), alignment: align("left") };
+  sh.merge(FIRST_TABLE_ROW, 1, 4);
+  sh.set(FIRST_TABLE_ROW, 1, "RESUMEN DE VENTAS", header);
   const label: CellStyle = { font: font({ sz: 10, bold: true, color: "333333" }), alignment: align("right") };
-  const amount: CellStyle = { numFmt: MONEY_FMT, font: font({ sz: 10, bold: true, color: "333333" }), alignment: align("left") };
-  const { total, cash, card, deposits } = p.paymentBreakdown;
-  sh.set(5, 1, "Total Bruto:", label);
-  sh.set(5, 3, "Efectivo:", label);
-  sh.set(5, 4, cash, amount);
-  sh.set(5, 5, "Tarjetas:", label);
-  sh.set(5, 6, card, amount);
-  sh.set(5, 7, "Depósitos:", label);
-  sh.set(5, 8, deposits, amount);
-  // Un método no reconocido entra al total pero a ninguna columna: ahí va como valor.
-  if (Math.abs(total - (cash + card + deposits)) < 0.005) sh.setF(5, 2, "D5+F5+H5", total, amount);
-  else sh.set(5, 2, total, amount);
-  sh.height(5, 20);
+  const money: CellStyle = { numFmt: MONEY_FMT, font: font({ sz: 10, bold: true, color: "333333" }), alignment: align("left") };
+  const sep = fill("DDDDDD");
+
+  let r = FIRST_TABLE_ROW + 2;
+  const ventaRows: number[] = [];
+  tabs.forEach((t, i) => {
+    if (i > 0 && i % 2 === 0) { // separador gris entre métodos (cada método = normal + Manga)
+      for (let c = 1; c <= 4; c++) sh.set(r, c, "", { fill: sep });
+      r++;
+    }
+    const total = t.result.totals[t.ventaKey];
+    sh.set(r, 2, `${t.name}:`, label);
+    if (total) sh.setF(r, 3, xref(t.name, total.ref), total.value, money);
+    else sh.set(r, 3, 0, money);
+    ventaRows.push(r);
+    r++;
+  });
+  for (let c = 1; c <= 4; c++) sh.set(r, c, "", { fill: sep });
+  r++;
+
+  const bruto = tabs.reduce((a, t) => a + (t.result.totals[t.ventaKey]?.value ?? 0), 0);
+  const brutoRow = r;
+  sh.set(r, 2, "Total Bruto:", label);
+  sh.setF(r, 3, ventaRows.map((x) => `C${x}`).join("+"), bruto, money);
+  r++;
+
+  const egresos = p.supplyMovements.reduce((a, m) => a + (m.amount || 0), 0);
+  const egRow = r;
+  const red: CellStyle = { font: font({ sz: 10, bold: true, color: EGRESO }), alignment: align("right") };
+  sh.set(r, 2, "Egresos:", red);
+  if (p.supplyMovements.length > 0) sh.setF(r, 3, cellRef(egEnd, leftL.monto), egresos, { ...money, font: font({ sz: 10, bold: true, color: EGRESO }) });
+  else sh.set(r, 3, 0, { ...money, font: font({ sz: 10, bold: true, color: EGRESO }) });
+  const what = [...new Set(p.supplyMovements.map((m) => m.supply?.name).filter(Boolean))].join(", ");
+  if (what) sh.set(r, 4, `(${what})`, { font: font({ sz: 10, bold: true, color: EGRESO }), alignment: align("left") });
+  r += 2;
+
+  // Total Final: con costos = utilidades − egresos; sin costos = bruto − egresos.
+  const finalStyle: CellStyle = { ...money, fill: fill("F8D9B8") };
+  sh.set(r, 2, "TOTAL FINAL:", label);
+  if (p.canViewCost) {
+    const utils = tabs.flatMap((t) => (t.result.totals.util ? [{ sheet: t.name, ...t.result.totals.util }] : []));
+    const util = utils.reduce((a, x) => a + x.value, 0);
+    const parts = utils.map((x) => xref(x.sheet, x.ref));
+    sh.setF(r, 3, `${parts.length > 0 ? parts.join("+") : "0"}-C${egRow}`, util - egresos, finalStyle);
+  } else {
+    sh.setF(r, 3, `C${brutoRow}-C${egRow}`, bruto - egresos, finalStyle);
+  }
 }
 
-/** Cuadro "Manga Nacional" del resumen: suma los subtotales azules (efectivo + tarjeta bruto + transferencias). */
-function drawMangaSummary(sh: SheetBuilder, parts: readonly (MangaSubtotal | null)[]): void {
-  const present = parts.filter((x): x is MangaSubtotal => x !== null);
-  const style: CellStyle = { numFmt: MONEY_FMT, font: font({ sz: 10, bold: true, color: MANGA_BLUE }), fill: MANGA_FILL, alignment: align("left") };
-  sh.set(5, 9, "📘 Manga Nacional:", { font: font({ sz: 10, bold: true, color: MANGA_BLUE }), fill: MANGA_FILL, alignment: align("right") });
-  if (present.length > 0) sh.setF(5, 10, present.map((x) => x.ref).join("+"), present.reduce((a, x) => a + x.value, 0), style);
-  else sh.set(5, 10, 0, style);
-}
-
-export function addVentasSheet(workbook: Workbook, p: ReportExportParams): void {
+export function addVentasSheets(workbook: Workbook, p: ReportExportParams): void {
   const { canViewCost, ivaRate } = p;
-  const sh = createSheet(workbook.addWorksheet("Ventas"));
   const groups = p.groupedProducts.filter((g) => !isPresale(g));
-  drawTitle(sh, p);
+  const regular = groups.filter((g) => !isManga(g));
+  const manga = groups.filter(isManga);
 
+  // El Resumen va primero, pero se llena al final (se liga a las demás pestañas).
+  const resumen = createSheet(workbook.addWorksheet("Resumen"));
+
+  // Efectivo (regulares) con Devoluciones a la derecha; Efectivo Manga.
   const cashT = methodTable(1, isCashLike, "Efectivo", "TOTAL EFECTIVO", canViewCost);
-  const cardT = cardTable(cashT.col + tableWidth(cashT) + TABLE_GAP, canViewCost, ivaRate);
-  const transferT = methodTable(cardT.col + tableWidth(cardT) + TABLE_GAP, isTransferMethod, "Transferencia", "TOTAL TRANSFERENCIAS", canViewCost);
-  const T4 = transferT.col + tableWidth(transferT) + TABLE_GAP;
-  const T4N = canViewCost ? 7 : 5;
-  const T5 = T4 + T4N + TABLE_GAP;
-  const T5N = 3;
-  const hr = FIRST_TABLE_ROW + 1;
+  const cash = productSheet(workbook, p, "Efectivo", " 1. VENTAS EN EFECTIVO", ["33BB66", "55CC77"], cashT, withMethod(regular, isCashLike), "venta");
+  const retCol = tableWidth(cashT) + GAP + 1;
+  drawReturns(cash.sh, groups, retCol);
+  tableWidths(cash.sh, retCol, RETURN_COLS);
+  const cashManga = productSheet(workbook, p, "Efectivo Manga", " 1. EFECTIVO — MANGA NACIONAL", ["1D4ED8", "4F7FE6"],
+    methodTable(1, isCashLike, "Efectivo", "📘 MANGA NACIONAL", canViewCost), withMethod(manga, isCashLike), "venta");
 
-  sectionHeader(sh, FIRST_TABLE_ROW, cashT.col, cashT.col + tableWidth(cashT) - 1, " 1. VENTAS EN EFECTIVO", "33BB66");
-  sectionHeader(sh, FIRST_TABLE_ROW, cardT.col, cardT.col + tableWidth(cardT) - 1, " 2. DESGLOSE DE COBROS CON TARJETA", "2266BB");
-  sectionHeader(sh, FIRST_TABLE_ROW, transferT.col, transferT.col + tableWidth(transferT) - 1, " 3. TRANSFERENCIAS / DEPÓSITOS", "119999");
-  sectionHeader(sh, FIRST_TABLE_ROW, T4, T4 + T4N - 1, " 4. APARTADOS Y PREVENTAS", "AA66FF");
-  sectionHeader(sh, FIRST_TABLE_ROW, T5, T5 + T5N - 1, " 5. DEVOLUCIONES Y CANCELACIONES", "FF7755");
-  drawTableHeaders(sh, cashT, "55CC77");
-  drawTableHeaders(sh, cardT, "4488DD");
-  drawTableHeaders(sh, transferT, "33BBBB");
-  ["Producto", "Cant. Preventa", "Abonado", "Pendiente", "Pactado", ...(canViewCost ? ["Costo Producto", "Utilidad"] : [])]
-    .forEach((h, i) => sh.set(hr, T4 + i, h, { font: font({ bold: true, color: "FFFFFF" }), fill: fill("CC88FF"), alignment: align("center", "middle", true) }));
-  ["Producto", "Cant. Devuelta", "Monto Devuelto"]
-    .forEach((h, i) => sh.set(hr, T5 + i, h, { font: font({ bold: true, color: "FFFFFF" }), fill: fill("FF8866"), alignment: align("center", "middle", true) }));
+  // Tarjeta y Tarjeta Manga (al Resumen va el BRUTO cobrado).
+  const card = productSheet(workbook, p, "Tarjeta", " 2. DESGLOSE DE COBROS CON TARJETA", ["2266BB", "4488DD"],
+    cardTable(1, canViewCost, ivaRate), withMethod(regular, isCardMethod), "bruto");
+  const cardManga = productSheet(workbook, p, "Tarjeta Manga", " 2. TARJETA — MANGA NACIONAL", ["1D4ED8", "4F7FE6"],
+    cardTable(1, canViewCost, ivaRate, "TOTAL TARJETA MANGA"), withMethod(manga, isCardMethod), "bruto");
 
-  const cash = drawProductTable(sh, cashT, withMethod(groups, isCashLike));
-  const card = drawProductTable(sh, cardT, withMethod(groups, isCardMethod));
-  const transfer = drawProductTable(sh, transferT, withMethod(groups, isTransferMethod));
-  drawMangaSummary(sh, [cash.manga, card.manga, transfer.manga]);
-  const r4 = drawPresales(sh, p.presaleRows, T4, canViewCost);
-  const r5 = drawReturns(sh, groups, T5);
+  // Transferencias y Transferencias Manga.
+  const transfer = productSheet(workbook, p, "Transferencias", " 3. TRANSFERENCIAS / DEPÓSITOS", ["119999", "33BBBB"],
+    methodTable(1, isTransferMethod, "Transferencia", "TOTAL TRANSFERENCIAS", canViewCost), withMethod(regular, isTransferMethod), "venta");
+  const transferManga = productSheet(workbook, p, "Transferencias Manga", " 3. TRANSFERENCIAS — MANGA NACIONAL", ["1D4ED8", "4F7FE6"],
+    methodTable(1, isTransferMethod, "Transferencia", "TOTAL TRANSFERENCIAS MANGA", canViewCost), withMethod(manga, isTransferMethod), "venta");
 
-  // Debajo de cada método, sus descuentos/ofertas y aumentos (ancho = tabla + 3 columnas del hueco).
-  const adjWidth = (n: number) => n + TABLE_GAP - 1;
-  const adjStart = Math.max(cash.next, card.next, transfer.next) + 2;
-  const a1 = drawMethodAdjustments(sh, adjStart, bottomLayout(cashT.col, adjWidth(tableWidth(cashT))), groups, "cash", "EFECTIVO", 1);
-  const a2 = drawMethodAdjustments(sh, adjStart, bottomLayout(cardT.col, adjWidth(tableWidth(cardT))), groups, "card", "TARJETA", 2);
-  const a3 = drawMethodAdjustments(sh, adjStart, bottomLayout(transferT.col, adjWidth(tableWidth(transferT))), groups, "transfer", "TRANSFERENCIAS", 3);
-  const egresos = bottomLayout(1, 8);
-  drawEgresos(sh, Math.max(a1, a2, a3, r4, r5) + 3, egresos, p.supplyMovements, p.stores, 6);
+  // Preventas: última pestaña.
+  const pre = createSheet(workbook.addWorksheet("Preventas"));
+  drawTitle(pre, p, PRESALE_COLS(canViewCost));
+  drawPresales(pre, p.presaleRows, 1, canViewCost);
+  tableWidths(pre, 1, PRESALE_COLS(canViewCost));
 
-  // Orden de anchos: huecos → columnas de Egresos → tablas de arriba (estas mandan).
-  const tables: Array<[number, number]> = [
-    [cashT.col, tableWidth(cashT)], [cardT.col, tableWidth(cardT)], [transferT.col, tableWidth(transferT)], [T4, T4N], [T5, T5N],
-  ];
-  for (const [start, n] of tables.slice(0, 3)) {
-    for (let c = start + n; c < start + adjWidth(n); c++) sh.width(c, 14);
-  }
-  sh.width(9, 18); // etiqueta del cuadro Manga Nacional (si es columna de tabla, la tabla la sobrescribe)
-  sh.width(egresos.reg, 20);
-  sh.width(egresos.tienda, 16);
-  sh.width(egresos.monto, 15);
-  for (const [start, n] of tables) {
-    sh.width(start, 28);
-    sh.width(start + 1, 14);
-    for (let c = start + 2; c < start + n; c++) sh.width(c, 15);
-  }
+  drawTitle(resumen, p, BLOCK_WIDTH * 2 + GAP);
+  drawResumen(resumen, p, groups, [cash, cashManga, card, cardManga, transfer, transferManga]);
 }

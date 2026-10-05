@@ -11,7 +11,7 @@ vi.mock("@tadaima/api", () => ({
 }));
 
 const { buildCashCloseReportParams } = await import("./buildCashCloseReport");
-const { addVentasSheet } = await import("./excelVentas");
+const { addVentasSheets } = await import("./excelVentas");
 
 const SALE = {
   id: 1, store_id: 1, user_id: 7, subtotal: 100, discount: 0, surcharge: 0, total: 100, commission_amount: 0,
@@ -21,19 +21,20 @@ const SALE = {
   sold_at: "2026-10-03T18:00:00Z", created_at: "2026-10-03T18:00:00Z",
 };
 
-async function sheetFor(userId: number | null): Promise<ExcelJS.Worksheet> {
+async function bookFor(userId: number | null): Promise<ExcelJS.Workbook> {
   fetchAllSales.mockResolvedValueOnce({ data: [SALE] });
   const params = await buildCashCloseReportParams({
     day: "2026-10-03", storeId: 1, userId, userName: "Ana", storeName: "Centro", canViewCost: false, ivaRate: 0.16,
   });
   const wb = new ExcelJS.Workbook();
-  addVentasSheet(wb, params);
-  return wb.getWorksheet("Ventas")!;
+  addVentasSheets(wb, params);
+  return wb;
 }
 
-const allText = (ws: ExcelJS.Worksheet): string[] => {
+/** Todo el texto de todas las pestañas. */
+const allText = (wb: ExcelJS.Workbook): string[] => {
   const out: string[] = [];
-  ws.eachRow((row) => row.eachCell((cell) => { if (typeof cell.value === "string") out.push(cell.value); }));
+  wb.eachSheet((ws) => ws.eachRow((row) => row.eachCell((cell) => { if (typeof cell.value === "string") out.push(cell.value); })));
   return out;
 };
 
@@ -42,11 +43,12 @@ describe("Excel del cierre de caja", () => {
     ["turno (cajero)", 7, "Usuario: Ana", { user_id: 7 }],
     ["toda la tienda", null, "Usuario: Todos", { whole_store: true }],
   ] as const)("%s usa el formato nuevo", async (_label, userId, userLine, scope) => {
-    const ws = await sheetFor(userId);
-    const text = allText(ws);
-    expect(ws.getCell(1, 1).value).toBe("TADAIMA - CORTE DE CAJA");
+    const wb = await bookFor(userId);
+    const text = allText(wb);
+    expect(wb.worksheets[0]!.getCell(1, 1).value).toBe("TADAIMA - CORTE DE CAJA");
     expect(text.some((t) => t.includes(userLine) && t.includes("Tienda: Centro"))).toBe(true);
-    for (const title of [" 1. VENTAS EN EFECTIVO", " 2. DESGLOSE DE COBROS CON TARJETA", " 3. TRANSFERENCIAS / DEPÓSITOS", " 4. APARTADOS Y PREVENTAS", " 5. DEVOLUCIONES Y CANCELACIONES"]) {
+    expect(wb.worksheets.map((w) => w.name)).toContain("Resumen");
+    for (const title of ["RESUMEN DE VENTAS", " 1. VENTAS EN EFECTIVO", " 2. DESGLOSE DE COBROS CON TARJETA", " 3. TRANSFERENCIAS / DEPÓSITOS", " 4. APARTADOS Y PREVENTAS", " 5. DEVOLUCIONES Y CANCELACIONES"]) {
       expect(text).toContain(title);
     }
     expect(text).toContain("TOTAL TRANSFERENCIAS");

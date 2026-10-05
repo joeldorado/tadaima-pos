@@ -1,14 +1,15 @@
-// Tablas de arriba del Excel de Ventas (réplica de la app, 2026-10-03):
-// Efectivo · Tarjeta · Transferencias (por producto) · Preventas · Devoluciones.
-// TOTAL, IVA, neto y utilidad van como FÓRMULAS de Excel (con el valor ya calculado).
+// Tablas por producto del Excel de Ventas (Efectivo, Tarjeta, Transferencias,
+// cada una normal o solo Manga) · Preventas · Devoluciones. TOTAL, IVA, neto y
+// utilidad van como FÓRMULAS de Excel (con el valor ya calculado).
 import type { GroupedProduct, PresaleRow } from "./reportTypes";
 import { fmt } from "./reportFormat";
 import {
-  AMBER, GRAY, GREEN, MONEY_FMT, RED, align, cellMoney, cellName, cellQty, cellRef, fill, font, rowRange, sumFormula,
+  AMBER, GRAY, GREEN, MONEY_FMT, RED, align, cellMoney, sectionHeader, subHeader, cellName, cellQty, cellRef, fill, font, rowRange, sumFormula,
   totalLabel, totalMoney, totalQty, type CellStyle, type SheetBuilder,
 } from "./excelSheet";
 
-export const FIRST_TABLE_ROW = 8;
+/** Fila del encabezado de las tablas en cada pestaña (abajo del título y periodo). */
+export const FIRST_TABLE_ROW = 4;
 const FIRST_DATA_ROW = FIRST_TABLE_ROW + 2;
 
 const lc = (n: string) => n.toLowerCase();
@@ -23,7 +24,7 @@ export const isCashLike = (n: string): boolean =>
 // Manga Nacional = productos dados de alta como tomo (product_type 'manga').
 const MANGA_BLUE = "1D4ED8";
 const MANGA_FILL = fill("DBEAFE");
-const isManga = (g: GroupedProduct) => g.product_type === "manga";
+export const isManga = (g: GroupedProduct): boolean => g.product_type === "manga";
 const cellNameManga: CellStyle = { font: font({ bold: true, color: MANGA_BLUE }), alignment: align("left", "middle", true) };
 
 const displayName = (g: GroupedProduct) => (g.show_cost_tag ? `${g.name} · Costo ${fmt(g.cost_tag ?? 0)}` : g.name);
@@ -74,6 +75,8 @@ export interface TableResult {
   /** Siguiente fila libre. */
   next: number;
   manga: MangaSubtotal | null;
+  /** Celda del TOTAL de cada columna (por `key`) y su valor; vacío si la tabla no tiene renglones. */
+  totals: Record<string, MangaSubtotal>;
 }
 
 export const tableWidth = (t: Pick<ProductTable, "columns">): number => t.columns.length + 1;
@@ -110,13 +113,13 @@ const mangaStyles = {
 };
 
 /**
- * Tabla por producto, TOTAL y renglón azul de Manga Nacional. Los productos ya
- * vienen ordenados por categoría A-Z, pero sin encabezado ni subtotal por
- * categoría: el orden queda implícito (Ruben 2026-10-03).
- * `groups` ya viene filtrado a los productos con movimiento en este método.
+ * Tabla por producto y TOTAL; con `mangaRow`, además el renglón azul "Manga
+ * Nacional (incluido)". Los productos ya vienen ordenados por categoría A-Z,
+ * sin encabezado ni subtotal por categoría: el orden queda implícito (Ruben
+ * 2026-10-03). `groups` ya viene filtrado a los productos de la tabla.
  */
-export function drawProductTable(sh: SheetBuilder, t: ProductTable, groups: readonly GroupedProduct[]): TableResult {
-  if (groups.length === 0) return { next: FIRST_DATA_ROW, manga: null };
+export function drawProductTable(sh: SheetBuilder, t: ProductTable, groups: readonly GroupedProduct[], mangaRow = true): TableResult {
+  if (groups.length === 0) return { next: FIRST_DATA_ROW, manga: null, totals: {} };
   const colOf = (key: string) => t.col + 1 + t.columns.findIndex((c) => c.key === key);
   const ref = (key: string, r: number) => cellRef(r, colOf(key));
 
@@ -139,12 +142,17 @@ export function drawProductTable(sh: SheetBuilder, t: ProductTable, groups: read
   }
 
   sumRow(sh, r, t, t.totalText, productRows, groups, totalStyles);
-  const mangaRow = r + 1;
-  sumRow(sh, mangaRow, t, "📘 MANGA NACIONAL (incluido)", mangaRows, groups.filter(isManga), mangaStyles);
+  const totals = Object.fromEntries(t.columns.map((c) => [
+    c.key, { ref: ref(c.key, r), value: groups.reduce((a, g) => a + c.value(g), 0) },
+  ]));
+  if (!mangaRow) return { next: r + 1, manga: null, totals };
+  const mRow = r + 1;
+  sumRow(sh, mRow, t, "📘 MANGA NACIONAL (incluido)", mangaRows, groups.filter(isManga), mangaStyles);
   const mangaCol = t.columns.find((c) => c.key === t.mangaKey)!;
   return {
-    next: mangaRow + 1,
-    manga: { ref: ref(t.mangaKey, mangaRow), value: groups.filter(isManga).reduce((a, g) => a + mangaCol.value(g), 0) },
+    next: mRow + 1,
+    manga: { ref: ref(t.mangaKey, mRow), value: groups.filter(isManga).reduce((a, g) => a + mangaCol.value(g), 0) },
+    totals,
   };
 }
 
@@ -171,14 +179,14 @@ export function methodTable(col: number, pred: (n: string) => boolean, label: st
 }
 
 /** Tarjeta: IVA = Comisión × tasa; Neto = Bruto − Comisión − IVA; Utilidad = Neto − Costo. */
-export function cardTable(col: number, canViewCost: boolean, ivaRate: number): ProductTable {
+export function cardTable(col: number, canViewCost: boolean, ivaRate: number, totalText = "TOTAL TARJETA"): ProductTable {
   const part = (g: GroupedProduct) => methodPart(g, isCardMethod);
   const comm = (g: GroupedProduct) => g.commission_amount || 0;
   const net = (g: GroupedProduct) => part(g).revenue - comm(g) * (1 + ivaRate);
   const cost = (g: GroupedProduct) => costByPieces(g, part(g).qty);
   return {
     col,
-    totalText: "TOTAL TARJETA",
+    totalText,
     mangaKey: "bruto",
     columns: [
       { key: "qty", header: "Cant. Tarjeta", qty: true, color: GRAY, value: (g) => part(g).qty },
@@ -209,9 +217,17 @@ export const withMethod = (groups: readonly GroupedProduct[], pred: (n: string) 
     return qty !== 0 || revenue !== 0;
   });
 
-/** Preventas: Producto · Cant · Abonado · Pendiente · Pactado(=Abonado+Pendiente) · [Costo · Utilidad(=Abonado−Costo)]. */
-export function drawPresales(sh: SheetBuilder, rows: readonly PresaleRow[], col: number, canViewCost: boolean): number {
-  let r = FIRST_DATA_ROW;
+export const PRESALE_COLS = (canViewCost: boolean): number => (canViewCost ? 7 : 5);
+
+/**
+ * Preventas (con su encabezado en la fila `top`): Producto · Cant · Abonado ·
+ * Pendiente · Pactado(=Abonado+Pendiente) · [Costo · Utilidad(=Abonado−Costo)].
+ */
+export function drawPresales(sh: SheetBuilder, rows: readonly PresaleRow[], col: number, canViewCost: boolean, top = FIRST_TABLE_ROW): number {
+  sectionHeader(sh, top, col, col + PRESALE_COLS(canViewCost) - 1, " 4. APARTADOS Y PREVENTAS", "AA66FF");
+  subHeader(sh, top + 1, col, ["Producto", "Cant. Preventa", "Abonado", "Pendiente", "Pactado", ...(canViewCost ? ["Costo Producto", "Utilidad"] : [])], "CC88FF");
+  const first = top + 2;
+  let r = first;
   for (const p of rows) {
     sh.set(r, col, p.name, cellName);
     sh.set(r, col + 1, p.qty, cellQty);
@@ -227,7 +243,7 @@ export function drawPresales(sh: SheetBuilder, rows: readonly PresaleRow[], col:
     r++;
   }
   if (rows.length === 0) return r;
-  const all = rowRange(FIRST_DATA_ROW, r - 1);
+  const all = rowRange(first, r - 1);
   const sum = (pick: (p: PresaleRow) => number) => rows.reduce((a, p) => a + pick(p), 0);
   const tUtil = sum((p) => p.utilidad);
   sh.set(r, col, "TOTAL PREVENTAS", totalLabel);
@@ -243,10 +259,15 @@ export function drawPresales(sh: SheetBuilder, rows: readonly PresaleRow[], col:
   return r + 1;
 }
 
-/** Devoluciones: Producto · Cant. Devuelta · Monto Devuelto. */
-export function drawReturns(sh: SheetBuilder, groups: readonly GroupedProduct[], col: number): number {
+export const RETURN_COLS = 3;
+
+/** Devoluciones (con su encabezado en la fila `top`): Producto · Cant. Devuelta · Monto Devuelto. */
+export function drawReturns(sh: SheetBuilder, groups: readonly GroupedProduct[], col: number, top = FIRST_TABLE_ROW): number {
+  sectionHeader(sh, top, col, col + RETURN_COLS - 1, " 5. DEVOLUCIONES Y CANCELACIONES", "FF7755");
+  subHeader(sh, top + 1, col, ["Producto", "Cant. Devuelta", "Monto Devuelto"], "FF8866");
   const returned = groups.filter((g) => (g.returned_quantity || 0) > 0 || (g.returned_revenue || 0) > 0);
-  let r = FIRST_DATA_ROW;
+  const first = top + 2;
+  let r = first;
   for (const g of returned) {
     sh.set(r, col, displayName(g), cellName);
     sh.set(r, col + 1, g.returned_quantity || 0, { font: font({ bold: true, color: RED }), alignment: align("center") });
@@ -255,7 +276,7 @@ export function drawReturns(sh: SheetBuilder, groups: readonly GroupedProduct[],
     r++;
   }
   if (returned.length === 0) return r;
-  const all = rowRange(FIRST_DATA_ROW, r - 1);
+  const all = rowRange(first, r - 1);
   sh.set(r, col, "TOTAL DEVOLUCIONES", totalLabel);
   sh.setF(r, col + 1, sumFormula(col + 1, all), returned.reduce((a, g) => a + (g.returned_quantity || 0), 0), totalQty);
   sh.setF(r, col + 2, sumFormula(col + 2, all), returned.reduce((a, g) => a + (g.returned_revenue || 0), 0), totalMoney(RED));

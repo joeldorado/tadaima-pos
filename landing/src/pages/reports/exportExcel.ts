@@ -1,11 +1,11 @@
 // Generador del Excel del reporte. Extraído de ReportsPage.tsx (handleExportExcel)
-// para separar la lógica de exportación del componente de página. La hoja de
-// Ventas (también la de los cortes de caja) vive en excelVentas.ts.
+// para separar la lógica de exportación del componente de página. Las pestañas
+// de Ventas (también las de los cortes de caja) viven en excelVentas.ts.
 import { toast } from "sonner";
 import { fmtDate } from "./reportFormat";
 import type { ReportExportParams } from "./reportTypes";
 import { downloadWithRetry } from "@/lib/downloadFile";
-import { addVentasSheet } from "./excelVentas";
+import { addVentasSheets } from "./excelVentas";
 
 export async function exportReportExcel(params: ReportExportParams): Promise<void> {
   const { invReport, topReport, custReport, from, to, today, activeTab } = params;
@@ -21,8 +21,8 @@ export async function exportReportExcel(params: ReportExportParams): Promise<voi
       workbook.modified = new Date();
       
       if (activeTab === "ventas") {
-        // Réplica del Excel de la app (2026-10-03): ver excelVentas.ts.
-        addVentasSheet(workbook, params);
+        // Una pestaña por tabla (2026-10-05): ver excelVentas.ts.
+        addVentasSheets(workbook, params);
       } else if (activeTab === "inventario") {
         const sheet = workbook.addWorksheet("Inventario");
         sheet.mergeCells("A1:E1");
