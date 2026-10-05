@@ -4,6 +4,34 @@
 
 ---
 
+### Sesión 2026-10-04 — Promos con varios productos sueltos + flechas de orden visibles — rev tadaima-00050-haq
+
+**Pedido Joel:** poder crear promos eligiendo varios productos (solo esos), no solo por categoría.
+Y en Productos, las flechitas de orden del stock "apenas se ven".
+
+**Hallazgo:** elegir productos sueltos ya se podía desde la rev 00048 (pestaña "Buscar producto"),
+pero no se notaba: abría en "Por categoría" y al cambiar la búsqueda no se veía lo elegido.
+
+- **Promos — selector del paso 2 y "Agregar productos"** (`ProductPicker.tsx`, nuevos
+  `PickerSearchPane.tsx` / `PickerChosenPane.tsx`, `resolveEnterPick` en `lib/promoProductPicker.ts`):
+  tres pestañas "Elegir productos" (default), "Categoría completa" y "Elegidos (N)".
+  - Enter / lector agrega por código de barras o SKU EXACTO, o por el único NOMBRE que coincide;
+    nunca por código parcial y nunca desmarca. Avisa "Agregado", "Ya estaba elegido", "Ya está en la
+    promo", "Hay N productos…" o "No encontramos". Con mouse el foco regresa al buscador.
+  - El resumen nombra hasta 3 productos sueltos; con uno solo el nombre sugerido es "2x1 en {producto}".
+  - Solo frontend: motor de cobro y backend sin cambios.
+- **Productos / Tomos:** flecha de orden en píldora roja con flecha blanca + encabezado en claro
+  cuando la columna está ordenada; ícono sin ordenar más grande (`SortIndicator` en `ProductsPage.tsx`).
+
+**Verificado:** vitest 551, sin errores nuevos de tsc ni eslint en lo tocado; recorrido en local
+(crear promo con 2 sueltos, lector, Elegidos, Agregar productos, 375 px) + revisión de código
+aplicada. No se probó cobro en Caja local (caja demo vencida); el motor no cambió. En la candidata:
+index y `/tadaimaus/` 200, API 401 sin sesión, bundle con ambos cambios.
+
+**Deploy:** tadaima-00050-haq (rollback `tadaima-00048-tid`). Pedir Ctrl+Shift+R / incógnito por la caché PWA.
+
+---
+
 ### Sesión 2026-10-03 — Rediseño de Promos "para abuelitos" + comentario por línea en Caja — rev tadaima-00048-tid
 
 **Pedido Joel:** a las tiendas les cuesta la pantalla de Promos ("según yo ya es por categoría") y
