@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\AssignPromotionProductsRequest;
+use App\Http\Requests\DetachPromotionProductsRequest;
 use App\Http\Requests\StoreProductPromotionRequest;
 use App\Models\Product;
 use App\Models\ProductPromotion;
@@ -241,6 +242,37 @@ class PromotionsController extends Controller
         return $this->success(
             $promotion->fresh()->loadCount('products')->load('products:products.id,name'),
             'Producto quitado de la promoción.',
+        );
+    }
+
+    /**
+     * POST /promotions/{promotion}/products/detach — quitar VARIOS de un jalón
+     * (p. ej. toda una categoría). Idempotente: los que no estaban se ignoran.
+     */
+    public function detachProducts(DetachPromotionProductsRequest $request, ProductPromotion $promotion): JsonResponse
+    {
+        if ($resp = $this->adminOrManagerGateError()) {
+            return $resp;
+        }
+        if ($resp = $this->promoManageError()) {
+            return $resp;
+        }
+        if ($resp = $this->promoMutationGateError($request, $promotion)) {
+            return $resp;
+        }
+
+        $ids = array_values(array_unique(array_map('intval', $request->input('product_ids'))));
+
+        $promotion->products()->detach($ids);
+
+        // Mismo null-out del puntero legacy que detachProduct().
+        if ($promotion->product_id !== null && in_array((int) $promotion->product_id, $ids, true)) {
+            $promotion->update(['product_id' => null]);
+        }
+
+        return $this->success(
+            $promotion->fresh()->loadCount('products')->load('products:products.id,name'),
+            'Productos quitados de la promoción.',
         );
     }
 

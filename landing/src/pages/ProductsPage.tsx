@@ -240,6 +240,27 @@ function apiProductToProducto(p: Product): Producto {
   }
 }
 
+/**
+ * Flecha de orden en el encabezado de las tablas. Ordenada: píldora roja con
+ * flecha blanca (en la tienda "apenas se veía" la de 11 px). Sin ordenar: el
+ * ícono doble, más claro, para que se note que la columna se puede ordenar.
+ */
+function SortIndicator({ sorted }: { sorted: false | 'asc' | 'desc' }) {
+  if (!sorted) {
+    return <ArrowUpDown size={14} strokeWidth={2.5} aria-hidden style={{ opacity: 0.55 }} />;
+  }
+  const Icon = sorted === 'asc' ? ArrowUp : ArrowDown;
+  return (
+    <span
+      className="inline-flex shrink-0 items-center justify-center rounded-full"
+      style={{ width: 20, height: 20, background: T.redBright, color: '#ffffff', boxShadow: `0 0 10px ${T.redGlow}` }}
+      aria-label={sorted === 'asc' ? 'Orden ascendente' : 'Orden descendente'}
+    >
+      <Icon size={14} strokeWidth={3} aria-hidden />
+    </span>
+  );
+}
+
 function ProductThumb({ src, alt }: { src: string; alt: string }) {
   const [failed, setFailed] = React.useState(false);
   React.useEffect(() => { setFailed(false); }, [src]);
@@ -3224,7 +3245,7 @@ export function ProductsPage() {
                         key={header.id}
                         className="px-6 py-5 text-[10px] font-black uppercase tracking-widest select-none whitespace-nowrap"
                         style={{
-                          color: T.textMuted,
+                          color: header.column.getIsSorted() ? T.textPrimary : T.textMuted,
                           cursor: header.column.getCanSort() ? 'pointer' : 'default',
                           background: PRODUCT_THEME.tableHead,
                         }}
@@ -3232,15 +3253,7 @@ export function ProductsPage() {
                       >
                         <div className="flex items-center gap-1.5">
                           {flexRender(header.column.columnDef.header, header.getContext())}
-                          {header.column.getCanSort() && (
-                            header.column.getIsSorted() === 'asc' ? (
-                              <ArrowUp size={11} style={{ color: T.redBright }} />
-                            ) : header.column.getIsSorted() === 'desc' ? (
-                              <ArrowDown size={11} style={{ color: T.redBright }} />
-                            ) : (
-                              <ArrowUpDown size={11} style={{ opacity: 0.3 }} />
-                            )
-                          )}
+                          {header.column.getCanSort() && <SortIndicator sorted={header.column.getIsSorted()} />}
                         </div>
                       </th>
                     ))}
@@ -3461,16 +3474,12 @@ export function ProductsPage() {
                           <th
                             key={header.id}
                             className="px-6 py-5 text-[10px] font-black uppercase tracking-widest select-none whitespace-nowrap"
-                            style={{ color: T.textMuted, cursor: header.column.getCanSort() ? 'pointer' : 'default', background: PRODUCT_THEME.tableHead }}
+                            style={{ color: header.column.getIsSorted() ? T.textPrimary : T.textMuted, cursor: header.column.getCanSort() ? 'pointer' : 'default', background: PRODUCT_THEME.tableHead }}
                             onClick={header.column.getToggleSortingHandler()}
                           >
                             <div className="flex items-center gap-1.5">
                               {flexRender(header.column.columnDef.header, header.getContext())}
-                              {header.column.getCanSort() && (
-                                header.column.getIsSorted() === 'asc' ? <ArrowUp size={11} style={{ color: T.redBright }} />
-                                : header.column.getIsSorted() === 'desc' ? <ArrowDown size={11} style={{ color: T.redBright }} />
-                                : <ArrowUpDown size={11} style={{ opacity: 0.3 }} />
-                              )}
+                              {header.column.getCanSort() && <SortIndicator sorted={header.column.getIsSorted()} />}
                             </div>
                           </th>
                         ))}

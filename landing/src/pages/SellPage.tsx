@@ -9,7 +9,7 @@ import {
   Mail,
   TriangleAlert, PackageX, Bookmark, Calendar, PackageCheck, ClipboardList, Banknote,
   Truck, CheckCircle2, Printer, History, Receipt, RefreshCw,
-  ShoppingCart, Crown, Circle, Trash2, XCircle, Clock, Bell, Scissors, MoreVertical,
+  ShoppingCart, Crown, Circle, Trash2, XCircle, Clock, Bell, Scissors, MoreVertical, MessageSquare,
   Split,
 } from "lucide-react";
 import type { Product, PriceLevel } from "@/types/pos";
@@ -63,9 +63,11 @@ import { buildPaymentSummary } from "@/lib/paymentSummary";
 import { computeMixedSplit } from "@/lib/mixedPayment";
 import { computeRegularChargeAmount, discountPct } from "@/lib/promo";
 import { newLineId, recalculateSale, type LineDiscount, type LineSurcharge } from "@/lib/saleCalc";
-import { applyLineAdjustment, isPlainLine, lineAdjustmentOf, removeLineAdjustment, type LineAdjustment } from "@/lib/lineAdjustments";
+import { acceptsNewUnits, applyLineAdjustment, lineAdjustmentOf, removeLineAdjustment, type LineAdjustment } from "@/lib/lineAdjustments";
 import { finalPriceLine } from "@/lib/ticketLines";
 import { LineDiscountModal } from "@/components/sell/LineDiscountModal";
+import { LineCommentModal } from "@/components/sell/LineCommentModal";
+import { lineCommentPayload, withLineComment } from "@/lib/lineComment";
 import { DISCOUNT_REASON_LABELS, SURCHARGE_REASON_LABELS } from "@/lib/discountReasons";
 import type { HistorialEntry } from "@/hooks/queries/useHistorial";
 import { useCartDraftStore } from "@/stores/cartDraftStore";
@@ -140,6 +142,9 @@ interface CartItem {
    *  Es la salida cuando la promo restringe el método de pago: sin esto, ese
    *  producto simplemente no se le puede vender al cliente. */
   skipPromo?: boolean;
+  /** Comentario corto del cajero en ESTA línea (2026-10-03): recordatorio que se
+   *  ve junto al nombre y se guarda con la venta. No toca montos ni el ticket. */
+  comment?: string;
   /** lineId de la línea origen cuando esta línea nació de un split por
    *  descuento parcial. Solo carrito (permite merge-back); NO viaja al backend. */
   parentLineId?: string;
@@ -780,6 +785,8 @@ export function SellPage() {
   const [selectedCat, setSelectedCat] = useState("Todo");
   // Línea del carrito con el modal de descuento abierto (Descuentos v2).
   const [discountModalLineId, setDiscountModalLineId] = useState<string | null>(null);
+  // Comentario por línea (2026-10-03): se abre desde el menú ⋮ o tocando el comentario.
+  const [commentModalLineId, setCommentModalLineId] = useState<string | null>(null);
   const [customerSearch, setCustomerSearch] = useState("");
   const [showCustDrop, setShowCustDrop]     = useState(false);
   const [requireCustomerFlash, setRequireCustomerFlash] = useState(false);
@@ -1781,10 +1788,10 @@ export function SellPage() {
       priceLevel = "b";
     }
     // Con Descuentos v2 el mismo producto puede vivir en 2+ líneas (split).
-    // Solo se fusiona en una línea "plana" (sin descuento/dañado/preventa) del
-    // mismo nivel; el guard de stock suma TODAS las líneas del producto.
+    // Solo se fusiona en una línea "plana" (sin descuento/dañado/preventa/
+    // comentario) del mismo nivel; el guard de stock suma TODAS las líneas.
     const isMergeable = (i: CartItem) =>
-      i.product.id === product.id && i.priceLevel === priceLevel && isPlainLine(i);
+      i.product.id === product.id && i.priceLevel === priceLevel && acceptsNewUnits(i);
     const productQtyInMesa = activeMesa.items
       .filter(i => i.product.id === product.id)
       .reduce((s, i) => s + i.quantity, 0);
@@ -2058,9 +2065,13 @@ export function SellPage() {
     updMesa(activeMesa.id, m => {
       const nextVal = !m.isPreventa;
       const nextPayment: PaymentMethod = (nextVal && m.paymentMethod === "Tarjeta") ? "Efectivo" : m.paymentMethod;
-      // Reset items that don't have preventa stock if turning ON
+      // Reset items that don't have preventa stock if turning ON. El cobro de
+      // preventa no guarda sale_items: el comentario de la línea se perdería en
+      // silencio, así que se limpia aquí (y el menú ⋮ ya no lo ofrece).
       const nextItems = nextVal
-        ? m.items.filter(i => (i.product.stock_details?.preventa || 0) > 0)
+        ? m.items
+            .filter(i => (i.product.stock_details?.preventa || 0) > 0)
+            .map(i => withLineComment(i, ""))
         : m.items;
 
       return {
@@ -3621,6 +3632,7 @@ export function SellPage() {
               // Descuento o aumento por línea (v2): viaja la captura, el monto lo recomputa el server.
               ...lineAdjustmentPayload(ci),
               ...(ci.skipPromo ? { skip_promotion: true } : {}),
+              ...lineCommentPayload(ci),
             }))
             .filter(i => !Number.isNaN(i.product_id));
           // Neto regular (con descuentos por línea) — el pago debe cuadrar con
@@ -3879,6 +3891,7 @@ export function SellPage() {
               // Descuento o aumento por línea (v2): viaja la captura, el monto lo recomputa el server.
               ...lineAdjustmentPayload(ci),
               ...(ci.skipPromo ? { skip_promotion: true } : {}),
+              ...lineCommentPayload(ci),
             }))
             .filter(i => !Number.isNaN(i.product_id));
           // Neto regular (con descuentos por línea) — debe cuadrar con el
@@ -4086,7 +4099,8 @@ export function SellPage() {
           ...(ci.isDamaged ? { is_damaged: true } : {}),
           // Descuento por línea (v2): viaja la captura, el monto lo recomputa el server.
           ...lineAdjustmentPayload(ci),
-              ...(ci.skipPromo ? { skip_promotion: true } : {}),
+          ...(ci.skipPromo ? { skip_promotion: true } : {}),
+          ...lineCommentPayload(ci),
         }))
         .filter(i => !Number.isNaN(i.product_id));
 
@@ -5684,7 +5698,27 @@ export function SellPage() {
                     <div className="flex-1 min-w-0">
                       {/* Compacto = nombre MÁS grande (Joel: letras grandes para
                           quien le entiende poco a la tecnología), menos chrome. */}
-                      <h3 className={`${compactCart ? "text-lg" : "text-base"} font-black truncate leading-tight`} style={{ color: THI }}>{item.product.name}</h3>
+                      {/* flex-wrap: el comentario va a lado del nombre si cabe; en filas
+                          angostas baja justo debajo en vez de comerse el nombre. */}
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
+                        <h3 className={`${compactCart ? "text-lg" : "text-base"} font-black truncate leading-tight min-w-0 max-w-full`} style={{ color: THI }}>{item.product.name}</h3>
+                        {/* Comentario de la línea (2026-10-03): recordatorio del cajero, a
+                            lado del nombre. Tocarlo lo edita. No sale en el ticket. */}
+                        {item.comment && (
+                          <button
+                            type="button"
+                            onClick={() => setCommentModalLineId(item.lineId)}
+                            title={`${item.comment} — toca para editar`}
+                            data-testid={`line-comment-${item.lineId}`}
+                            className="min-w-0 max-w-full inline-flex items-start gap-1 rounded-lg px-2 py-0.5 text-left text-[12px] font-bold leading-snug"
+                            style={{ color: "#60A5FA", background: "rgba(96,165,250,0.12)", border: "1px solid rgba(96,165,250,0.35)", cursor: "pointer" }}
+                          >
+                            <MessageSquare size={12} className="shrink-0 mt-[3px]" />
+                            {/* Hasta 2 renglones: es un recordatorio, tiene que poder leerse. */}
+                            <span className="line-clamp-2 break-words">{item.comment}</span>
+                          </button>
+                        )}
+                      </div>
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
                         <p className="text-[11px] font-bold uppercase tracking-widest" style={{ color: TLO }}>{item.product.sku}</p>
                         {item.isFromPreSale && !item.preSaleItemDelivered && (
@@ -6080,7 +6114,7 @@ export function SellPage() {
                         <div className="relative self-center shrink-0" data-rowmenu>
                           <button
                             onClick={() => setRowMenuLineId(prev => prev === item.lineId ? null : item.lineId)}
-                            title="Opciones de esta línea (descuento o aumento / eliminar)"
+                            title="Opciones de esta línea (descuento o aumento / comentario / eliminar)"
                             data-testid={`row-menu-btn-${item.lineId}`}
                             className={`relative inline-flex ${compactCart ? "h-10 w-10" : "h-[54px] w-12"} items-center justify-center rounded-2xl transition-colors`}
                             style={rowMenuLineId === item.lineId
@@ -6106,6 +6140,18 @@ export function SellPage() {
                                 >
                                   <Tag size={14} />
                                   {item.discount ? "Editar descuento ✓" : item.surcharge ? "Editar aumento ✓" : "Descuento / aumento"}
+                                </button>
+                              )}
+                              {/* Solo en venta regular: las preventas no guardan sale_items. */}
+                              {!activeMesa?.isPreventa && !item.isFromPreSale && item.sellingCatalogId == null && (
+                                <button
+                                  onClick={() => { setRowMenuLineId(null); setCommentModalLineId(item.lineId); }}
+                                  data-testid={`row-menu-comment-${item.lineId}`}
+                                  className="flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-[12px] font-black text-left transition-colors hover:bg-white/8"
+                                  style={{ color: item.comment ? "#60A5FA" : "var(--td-text-hi)" }}
+                                >
+                                  <MessageSquare size={14} />
+                                  {item.comment ? "Editar comentario ✓" : "Comentario"}
                                 </button>
                               )}
                               <button
@@ -7283,6 +7329,30 @@ export function SellPage() {
             onConfirm={(units, adj) => applyLineAdjustmentTo(line.lineId, units, adj)}
             onRemove={line.discount || line.surcharge ? () => removeLineAdjustmentFrom(line.lineId) : undefined}
             onClose={() => setDiscountModalLineId(null)}
+          />
+        );
+      })()}
+
+      {/* Modal de comentario por LÍNEA (2026-10-03) */}
+      {(() => {
+        const mesa = activeMesa;
+        const line = commentModalLineId && mesa
+          ? mesa.items.find(i => i.lineId === commentModalLineId)
+          : undefined;
+        if (!mesa || !line) return null;
+        return (
+          <LineCommentModal
+            key={line.lineId}
+            productName={line.product.name}
+            existing={line.comment}
+            onConfirm={comment => {
+              updMesa(mesa.id, m => ({
+                ...m,
+                items: m.items.map(i => (i.lineId === line.lineId ? withLineComment(i, comment) : i)),
+              }));
+              setCommentModalLineId(null);
+            }}
+            onClose={() => setCommentModalLineId(null)}
           />
         );
       })()}
@@ -8908,7 +8978,10 @@ export function SellPage() {
                                   return (
                                   <div key={idx} style={{ padding: "3px 0", borderBottom: idx < (sale.items || []).length - 1 ? "1px solid var(--td-divider)" : "none" }}>
                                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                      <span style={{ flex: 1, fontSize: 11, fontWeight: 700, color: "var(--td-text-hi)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.product?.name || `#${item.product_id}`}</span>
+                                      <span style={{ flex: 1, fontSize: 11, fontWeight: 700, color: "var(--td-text-hi)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                        {item.product?.name || `#${item.product_id}`}
+                                        {item.comment && <span style={{ marginLeft: 6, fontWeight: 700, color: "#60A5FA" }}>· {item.comment}</span>}
+                                      </span>
                                       {item.product?.sku && <span style={{ fontSize: 8, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.1em", flexShrink: 0 }}>{item.product.sku}</span>}
                                       <span style={{ fontSize: 10, color: "var(--td-text-ghost)", flexShrink: 0 }}>×{item.quantity}</span>
                                       <span style={{ fontSize: 10, fontWeight: 700, color: "var(--td-text-md)", flexShrink: 0, width: 52, textAlign: "right" }}>{fmt(item.price)}</span>

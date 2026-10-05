@@ -148,6 +148,9 @@ class CheckoutService
                         'surcharge_reason'        => is_array($sc) ? ($sc['reason'] ?? null) : null,
                         'surcharge_note'          => is_array($sc) ? ($sc['note'] ?? null) : null,
                         'surcharge_authorized_by' => is_array($sc) ? $userId : null,
+                        // Comentario corto de la línea (2026-10-03): recordatorio
+                        // interno, no participa en ningún monto.
+                        'comment'                 => trim((string) ($item['comment'] ?? '')) ?: null,
                         // Llaves extra inertes: los SaleItem::create enumeran
                         // sus columnas explícitamente y las ignoran.
                         'promo_allow_cash'       => $promo !== null ? (bool) $promo->allow_cash : true,
@@ -338,6 +341,7 @@ class CheckoutService
                     'surcharge_reason'        => $meta['surcharge_reason'] ?? null,
                     'surcharge_note'          => $meta['surcharge_note'] ?? null,
                     'surcharge_authorized_by' => $meta['surcharge_authorized_by'] ?? null,
+                    'comment'                 => $meta['comment'] ?? null,
                 ]);
             }
 

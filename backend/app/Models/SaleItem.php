@@ -9,6 +9,9 @@ class SaleItem extends Model
 {
     public $timestamps = false;
 
+    /** Largo máximo del comentario por línea (recordatorio corto del cajero). */
+    public const COMMENT_MAX = 80;
+
     protected $table = 'sale_items';
 
     protected $fillable = [
@@ -45,6 +48,7 @@ class SaleItem extends Model
         'surcharge_reason',
         'surcharge_note',
         'surcharge_authorized_by',
+        'comment',
     ];
 
     protected $casts = [

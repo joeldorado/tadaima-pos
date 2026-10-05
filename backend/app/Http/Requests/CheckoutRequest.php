@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests;
 
+use App\Models\SaleItem;
 use App\Services\SaleCalculator;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -84,6 +85,10 @@ class CheckoutRequest extends FormRequest
             'items.*.line_surcharge.value'  => ['required_with:items.*.line_surcharge', 'numeric', 'min:0.01', 'max:999999'],
             'items.*.line_surcharge.reason' => ['required_with:items.*.line_surcharge', 'string', Rule::in(SaleCalculator::SURCHARGE_REASONS)],
             'items.*.line_surcharge.note'   => ['nullable', 'string', 'max:255'],
+            // Comentario corto de la línea (2026-10-03): recordatorio interno del
+            // cajero, no toca montos ni se imprime. Solo en v2, igual que el
+            // aumento: sin calc_version las columnas por línea no se llenan.
+            'items.*.comment'               => [$isV2 ? 'nullable' : 'prohibited', 'string', 'max:' . SaleItem::COMMENT_MAX],
             'store_id'                      => [$hasItems ? 'required' : 'nullable', 'integer', 'exists:stores,id'],
             'register_session_id'           => [$hasItems ? 'required' : 'nullable', 'integer', 'exists:cash_register_sessions,id'],
             'customer_id'                   => ['nullable', 'integer', 'exists:customers,id'],

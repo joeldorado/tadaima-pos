@@ -24,6 +24,8 @@ export interface AdjustableLine {
   isDamaged?: boolean;
   isFromPreSale?: boolean;
   sellingCatalogId?: number | null;
+  /** Comentario corto del cajero (2026-10-03). Viaja con la línea al separarla. */
+  comment?: string;
 }
 
 export type LineAdjustment =
@@ -33,6 +35,16 @@ export type LineAdjustment =
 /** Línea "simple": sin ajuste, no dañada, no preventa. Solo estas se fusionan. */
 export function isPlainLine(l: AdjustableLine): boolean {
   return !l.discount && !l.surcharge && !l.isDamaged && !l.isFromPreSale && l.sellingCatalogId == null;
+}
+
+/**
+ * ¿Escanear otra unidad del mismo producto se suma a ESTA línea? Solo si es
+ * simple y sin comentario: el comentario se anotó para las piezas que ya
+ * estaban ("regalo"), no para la que llega después — esa abre su propia línea.
+ * (El botón + de la línea sí la aumenta: ahí el cajero la eligió a propósito.)
+ */
+export function acceptsNewUnits(l: AdjustableLine): boolean {
+  return isPlainLine(l) && !l.comment;
 }
 
 /** Ajuste actual de la línea (para precargar el modal en modo edición). */
@@ -98,6 +110,8 @@ export function removeLineAdjustment<T extends AdjustableLine>(items: readonly T
     i.lineId !== lineId &&
     i.product.id === line.product.id &&
     i.priceLevel === line.priceLevel &&
+    // Con comentario distinto no se fusiona: se perdería uno de los dos.
+    (i.comment ?? "") === (line.comment ?? "") &&
     isPlainLine(i);
   const target =
     (line.parentLineId ? items.find(i => i.lineId === line.parentLineId && isPlainSibling(i)) : undefined)

@@ -140,6 +140,7 @@ en cada deploy**. DB de producción: PostgreSQL en Supabase (MySQL/Cloud SQL ya 
 | `surcharge_kind/basis/value` | Captura del aumento (`fixed/percent`, `unit/line`, valor) |
 | `surcharge_reason` / `surcharge_note` | Motivo (`precio_especial, escasez, envio, otro`) + nota |
 | `surcharge_authorized_by` | User que cobró el aumento |
+| `comment` | Comentario corto del cajero en la línea (desde 2026-10-03, máx. 80 caracteres), puesto desde el menú ⋮ de Caja. Recordatorio interno: se ve junto al nombre en Caja y Ventas; **no** toca montos ni se imprime en el ticket. NULL en ventas anteriores |
 
 **Regla de STACKING (desde 2026-07-17):** la promo NxM aplica PRIMERO y el descuento
 manual se calcula sobre el resultado. Cuando conviven, `benefit_type='discount'` pero

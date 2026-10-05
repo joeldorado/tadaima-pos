@@ -519,7 +519,7 @@
     "category": "Catálogo y precios",
     "icon": "ticket-percent",
     "summary": "El clásico “se lleva N y paga M”: 2x1, 3x2, etc. — asignable a uno o varios productos.",
-    "updatedAt": "2026-08-06",
+    "updatedAt": "2026-10-03",
     "keywords": [
       "2x1",
       "3x2",
@@ -542,7 +542,7 @@
         "blocks": [
           {
             "kind": "prose",
-            "text": "En el menú Promos, pestaña “Gestión de promos”, botón “Nueva promoción”. La promo es independiente del producto: la creas UNA vez y la asignas a uno o varios productos (desde la misma Gestión, o desde Productos → editar → tab Promos, que funciona como selector de promos existentes)."
+            "text": "En el menú Promos, botón verde “Nueva promoción”. Un asistente de 3 pasos te pregunta: ¿qué promo? (2x1, 3x2, 4x3, otra o descuento por cantidad), ¿qué productos entran? y ¿cuándo? La promo se crea YA con sus productos. Desde Productos → editar → tab Promos solo se asignan promos que ya existen."
           },
           {
             "kind": "callout",
@@ -565,24 +565,20 @@
             "kind": "steps",
             "items": [
               {
-                "title": "Nueva promoción → tipo “NxM (2x1, 3x2…)”",
-                "detail": "Descripción: “Se lleva N y paga M”."
+                "title": "Paso 1 · ¿Qué promo?",
+                "detail": "Toca la tarjeta 2x1, 3x2 o 4x3. Para otra combinación toca “Otra” y escribe cuántas se lleva y cuántas paga (lo que paga debe ser menos)."
               },
               {
-                "title": "Ponle Nombre",
-                "detail": "Ej. “Buen Fin 2x1”."
+                "title": "Paso 2 · ¿Qué productos entran?",
+                "detail": "“Elegir productos”: escribe nombre o código, sin importar acentos, y marca solo los que quieras; con el lector de código cada producto escaneado se agrega solo. La promo aplica únicamente a los productos elegidos. “Categoría completa”: marca la casilla y entran TODOS los productos que esa categoría tiene hoy (con “Ver productos” quitas los que no). “Elegidos”: revisa la lista de lo que va a entrar y quita la palomita a lo que no va."
               },
               {
-                "title": "Llena “Se lleva (N)” y “Paga (M)”",
-                "detail": "N mínimo 2; M debe ser menor que N. Para un 2x1: N=2, M=1."
+                "title": "Paso 3 · ¿Cuándo?",
+                "detail": "“Desde hoy, sin fecha de fin” o “Elegir fechas”. El nombre se sugiere solo (ej. “2x1 en Mangas”) y lo puedes cambiar. Tienda, forma de pago y prioridad están en “Más opciones”."
               },
               {
-                "title": "Opcional: fechas, prioridad y tienda",
-                "detail": "Inicia/Vence, prioridad (desempate) y la tienda (admin puede elegir “Todas las tiendas”)."
-              },
-              {
-                "title": "Asígnale productos",
-                "detail": "Con el botón de asignar de la fila. Una promo sin productos asignados no aplica en Caja."
+                "title": "Revisa el resumen y “Crear promoción”",
+                "detail": "Si algún producto ya tiene otra promo que choca, se salta y te dice cuál y por qué; los demás sí entran."
               }
             ]
           },
@@ -591,6 +587,12 @@
             "tone": "info",
             "title": "Vista rápida",
             "text": "El formulario muestra en vivo: “el cliente se lleva N y paga M → X gratis por cada N”. Así confirmas antes de guardar."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "La categoría es un atajo",
+            "text": "Elegir una categoría agrega los productos que tiene en ese momento. Si después das de alta otro producto en esa categoría, NO entra solo: agrégalo con “Agregar productos” en la tarjeta de la promo."
           }
         ]
       },
@@ -651,7 +653,7 @@
     "category": "Catálogo y precios",
     "icon": "layers",
     "summary": "“A partir de 3 piezas, −$50 a CADA una”. Un mínimo y un descuento por pieza — nada más.",
-    "updatedAt": "2026-08-06",
+    "updatedAt": "2026-10-03",
     "keywords": [
       "mayoreo",
       "descuento por cantidad",
@@ -677,20 +679,20 @@
             "kind": "steps",
             "items": [
               {
-                "title": "Nueva promoción → tipo “Mayoreo”",
-                "detail": "En Promos → Gestión de promos, igual que la NxM."
+                "title": "Nueva promoción → “Descuento por cantidad”",
+                "detail": "En el menú Promos, mismo asistente que el 2x1."
               },
               {
-                "title": "“A partir de (pzas)”",
-                "detail": "Desde cuántas piezas aplica. Mínimo 2."
+                "title": "“¿Desde cuántas piezas?”",
+                "detail": "Mínimo 2."
               },
               {
-                "title": "“Descuento c/pieza”",
-                "detail": "Cuánto baja CADA pieza — no el total. El formulario te enseña la cuenta hecha en vivo: “Llevar 5 pzas descuenta $250; 7 pzas descuenta $350…”."
+                "title": "“¿Cuánto baja cada pieza?”",
+                "detail": "Cuánto baja CADA pieza — no el total. Abajo te enseña la cuenta hecha: “Llevando 5 piezas ahorra $250…”."
               },
               {
-                "title": "Fechas, prioridad, tienda y asignación de productos",
-                "detail": "Igual que la NxM: la promo se asigna a uno o varios productos."
+                "title": "Productos y fechas",
+                "detail": "Pasos 2 y 3 del asistente, igual que el 2x1."
               }
             ]
           }
@@ -889,7 +891,7 @@
     "category": "Catálogo y precios",
     "icon": "ticket-percent",
     "summary": "Consultar las promos vigentes, proyectarlas en la TV de la tienda y compartirlas por WhatsApp.",
-    "updatedAt": "2026-08-06",
+    "updatedAt": "2026-10-03",
     "keywords": [
       "modo tv",
       "pantalla",
@@ -909,25 +911,26 @@
         "blocks": [
           {
             "kind": "prose",
-            "text": "La página Promos del menú tiene dos pestañas: “Gestión de promos” (crear, editar, pausar, eliminar y asignar productos — para admin y gerente con el permiso “Gestionar Promociones”) y “Asignadas a productos” (la lista de vigentes, con lo que gana el cliente en cada una). Los cajeros entran directo a la lista de vigentes: consultan, comparten y proyectan, pero no gestionan."
+            "text": "La página Promos muestra una tarjeta por promo: qué es en palabras (“Llévate 2, paga 1”), si está Activa, Pausada, Programada o Terminó, sus fechas y en qué tiendas aplica. Arriba hay un buscador (por nombre de la promo o de un producto) y filtros Todas / Activas / Pausadas / Terminadas."
           },
           {
-            "kind": "image",
-            "src": "promos/01-gestion-de-promos.png",
-            "alt": "Pestaña Gestión de promos con la lista de promociones, sus estados y el botón Nueva promoción",
-            "caption": "Gestión de promos: la promo se crea aquí y se asigna a uno o varios productos."
-          },
-          {
-            "kind": "image",
-            "src": "promos/02-promos-asignadas.png",
-            "alt": "Pestaña Asignadas a productos con las promos vigentes por producto y el botón Compartir por fila",
-            "caption": "Asignadas a productos: qué promo tiene cada producto y qué gana el cliente."
+            "kind": "steps",
+            "items": [
+              {
+                "title": "“Ver los N productos”",
+                "detail": "Despliega los productos de la promo agrupados por categoría, con foto y precio normal. Ahí mismo puedes Compartir o Quitar cada uno, o “Quitar los N de una categoría”."
+              },
+              {
+                "title": "Botones de la tarjeta",
+                "detail": "Agregar productos · Editar · Pausar/Reanudar · Borrar. Solo aparecen a quien puede modificar esa promo (admin, o gerente con el permiso “Gestionar Promociones” en las promos de SU tienda)."
+              }
+            ]
           },
           {
             "kind": "callout",
             "tone": "info",
             "title": "Cada quien ve las suyas",
-            "text": "Gerentes y cajeros ven las promos globales y las de SU tienda. El admin las ve todas, con etiqueta de sucursal."
+            "text": "Gerentes y cajeros ven las promos generales (las de todas las tiendas) y las de SU tienda; el cajero solo las que aplican o van a aplicar. El admin las ve todas. Si en tu tienda otra promo le gana a una general, junto al producto dice “En tu tienda aplica «…» en vez de esta”."
           }
         ]
       },
@@ -944,7 +947,7 @@
               },
               {
                 "title": "Conéctala a la TV de la tienda",
-                "detail": "Déjala andando — se actualiza sola: crea o pausa una promo y la TV la refleja en un minuto aproximadamente."
+                "detail": "Muestra las promos vigentes al momento de abrirla. Si creas o pausas una promo, sal del Modo TV, pulsa “Actualizar” y vuelve a entrar."
               },
               {
                 "title": "Para salir: Esc o doble clic",
@@ -962,7 +965,7 @@
             "kind": "steps",
             "items": [
               {
-                "title": "Botón “Compartir” en la fila de la promo",
+                "title": "“Ver los N productos” → “Compartir” junto al producto",
                 "detail": "Se genera un banner vertical (1080×1350) con logo, foto del producto, badge y vigencia — listo para redes."
               },
               {

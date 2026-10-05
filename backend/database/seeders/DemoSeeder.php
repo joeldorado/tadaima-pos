@@ -277,6 +277,40 @@ class DemoSeeder extends Seeder
             ],
         );
 
+        // ── Promos GENERALES de varios productos (pantalla /promos) ───────────
+        // Una de cada estado para que la lista se vea completa: vigente,
+        // pausada, programada, vencida y una local que le gana a la global.
+        // Ninguna ACTIVA toca ELE-001, MAN-001 ni ACC-003: son el carrito de las
+        // capturas de Caja y una promo nueva les movería los totales.
+        // [nombre, atributos, skus]
+        $promosGenerales = [
+            ['2x1 en Figuras', [
+                'type' => 'nxm', 'buy_n' => 2, 'pay_m' => 1, 'status' => 'active', 'store_id' => null,
+            ], ['DEMO-FIG-001', 'DEMO-FIG-002', 'DEMO-FIG-003', 'DEMO-FIG-004']],
+            ['Mayoreo accesorios 3+', [
+                'type' => 'qty_discount', 'min_qty' => 3, 'discount_per_unit' => 30.00,
+                'status' => 'paused', 'store_id' => null,
+            ], ['DEMO-ACC-001', 'DEMO-ACC-003', 'DEMO-ACC-004']],
+            ['3x2 Regreso a clases', [
+                'type' => 'nxm', 'buy_n' => 3, 'pay_m' => 2, 'status' => 'active', 'store_id' => null,
+                'starts_at' => now()->addDays(10)->startOfDay(), 'ends_at' => now()->addDays(40)->endOfDay(),
+            ], ['DEMO-COL-001', 'DEMO-COL-002', 'DEMO-ELE-006']],
+            ['2x1 Liquidación de verano', [
+                'type' => 'nxm', 'buy_n' => 2, 'pay_m' => 1, 'status' => 'expired', 'store_id' => null,
+                'starts_at' => now()->subDays(50)->startOfDay(), 'ends_at' => now()->subDays(20)->endOfDay(),
+            ], ['DEMO-MAN-002', 'DEMO-MAN-003']],
+            // Local de Tienda 2: en esa sucursal le gana al "2x1 Llaveros Pikachu" global.
+            ['3x2 Llaveros (solo esta tienda)', [
+                'type' => 'nxm', 'buy_n' => 3, 'pay_m' => 2, 'status' => 'active', 'store_id' => $tienda2->id,
+            ], ['DEMO-ACC-002']],
+        ];
+        foreach ($promosGenerales as [$name, $attrs, $skus]) {
+            $promo = ProductPromotion::updateOrCreate(['name' => $name], array_merge(['priority' => 0], $attrs));
+            $promo->products()->syncWithoutDetaching(
+                array_map(fn (string $sku) => $products[$sku]->id, $skus),
+            );
+        }
+
         // ── Clientes (uno socio Tadaima con external_member_id ficticio) ──────
         $carlos = Customer::updateOrCreate(
             ['email' => 'carlos.demo@tadaima.mx'],

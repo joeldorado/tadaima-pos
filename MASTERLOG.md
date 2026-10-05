@@ -4,6 +4,102 @@
 
 ---
 
+### Sesión 2026-10-04 — Promos con varios productos sueltos + flechas de orden visibles — rev tadaima-00050-haq
+
+**Pedido Joel:** poder crear promos eligiendo varios productos (solo esos), no solo por categoría.
+Y en Productos, las flechitas de orden del stock "apenas se ven".
+
+**Hallazgo:** elegir productos sueltos ya se podía desde la rev 00048 (pestaña "Buscar producto"),
+pero no se notaba: abría en "Por categoría" y al cambiar la búsqueda no se veía lo elegido.
+
+- **Promos — selector del paso 2 y "Agregar productos"** (`ProductPicker.tsx`, nuevos
+  `PickerSearchPane.tsx` / `PickerChosenPane.tsx`, `resolveEnterPick` en `lib/promoProductPicker.ts`):
+  tres pestañas "Elegir productos" (default), "Categoría completa" y "Elegidos (N)".
+  - Enter / lector agrega por código de barras o SKU EXACTO, o por el único NOMBRE que coincide;
+    nunca por código parcial y nunca desmarca. Avisa "Agregado", "Ya estaba elegido", "Ya está en la
+    promo", "Hay N productos…" o "No encontramos". Con mouse el foco regresa al buscador.
+  - El resumen nombra hasta 3 productos sueltos; con uno solo el nombre sugerido es "2x1 en {producto}".
+  - Solo frontend: motor de cobro y backend sin cambios.
+- **Productos / Tomos:** flecha de orden en píldora roja con flecha blanca + encabezado en claro
+  cuando la columna está ordenada; ícono sin ordenar más grande (`SortIndicator` en `ProductsPage.tsx`).
+
+**Verificado:** vitest 551, sin errores nuevos de tsc ni eslint en lo tocado; recorrido en local
+(crear promo con 2 sueltos, lector, Elegidos, Agregar productos, 375 px) + revisión de código
+aplicada. No se probó cobro en Caja local (caja demo vencida); el motor no cambió. En la candidata:
+index y `/tadaimaus/` 200, API 401 sin sesión, bundle con ambos cambios.
+
+**Deploy:** tadaima-00050-haq (rollback `tadaima-00048-tid`). Pedir Ctrl+Shift+R / incógnito por la caché PWA.
+
+---
+
+### Sesión 2026-10-03 — Rediseño de Promos "para abuelitos" + comentario por línea en Caja — rev tadaima-00048-tid
+
+**Pedido Joel:** a las tiendas les cuesta la pantalla de Promos ("según yo ya es por categoría") y
+quieren ver fácil qué productos trae cada promo. Además, en Caja, un comentario corto por línea
+desde el menú ⋮ como recordatorio.
+
+**Hallazgo:** las promos NUNCA fueron por categoría: una promo se cuelga de 1..N productos (pivote
+`product_promotion_assignments`). Joel decidió que "por categoría" sea un **atajo** (marca los
+productos que la categoría tiene hoy; los nuevos NO entran solos). Motor de cobro sin cambios.
+
+- **Promos** (`/promos`, `components/promos/*`, lógica pura `lib/promo*.ts` con tests):
+  - Una sola lista en tarjetas (adiós pestañas Gestión/Asignadas): frase llana, estado
+    (Activa/Programada/Pausada/Terminó), vigencia en español, tienda, buscador y filtros.
+  - "Ver los N productos" despliega por categoría con Compartir/Quitar y "Quitar los N de {cat}".
+  - Asistente de 3 pasos (qué promo → qué productos [por categoría o buscando sin acentos] → cuándo).
+    Agrega por lotes de 100; los que chocan con otra promo se saltan y se listan con su motivo.
+  - Editar una promo terminada con fecha vigente la reactiva. El gerente ya no ve promos de OTRAS
+    tiendas (solo generales + la suya).
+  - Backend aditivo: `POST /promotions/{id}/products/detach` (lote) + `max:500` ids por envío.
+  - `DemoSeeder` con 8 promos (varios productos y estados). Docs in-app y escenas de capturas al día;
+    **pendiente recapturar** las imágenes de Promos (`npm run docs:capture`).
+- **Comentario por línea** (`sale_items.comment`, migración `2026_10_03_000001`, máx. 80, exige
+  `calc_version: 2`): opción "Comentario" en el ⋮, se ve junto al nombre en Caja, Historial y
+  Ventas. **No** toca montos ni se imprime en el ticket (confirmado por Joel). Una pieza escaneada
+  después no lo hereda; al pasar la mesa a preventa se limpia.
+
+**Verificado:** backend 697 (SQLite), vitest 538, tsc igual a la base, `vite build` OK; recorrido
+en local con datos demo (admin, gerente y cajero) y dos revisiones de código aplicadas. Postgres
+local no estaba levantado (la migración es una columna nullable, sin SQL a mano). En la candidata:
+páginas 200, bundle nuevo, y en Supabase la columna `comment` creada y las 15 promos intactas.
+
+**Deploy:** tadaima-00048-tid (rollback `tadaima-00046-vov`; la columna nueva es nullable y la
+revisión vieja la ignora). Pedir Ctrl+Shift+R / incógnito por la caché PWA.
+
+---
+
+### Sesión 2026-10-03 — Excel de ventas con la estructura de la app (Ruben) + la cancelación exige caja abierta — rev tadaima-00046-vov
+
+**Pedido Joel:** bajar de `develop` los cambios de Ruben ("Reportes estructura para pier", hash
+`1cf1153`, PR #35) y deployar. En Reportes gana su Excel.
+
+- **Excel de ventas y del corte = réplica del Excel de la app** (`excelVentas`, `excelTopTables`,
+  `excelBottomTables`, `excelSheet`; `exportExcel.ts` quedó delgado): tablas lado a lado 1 Efectivo ·
+  2 Tarjeta · 3 Transferencias / Depósitos · 4 Preventas · 5 Devoluciones; renglón "📘 MANGA
+  NACIONAL (incluido)" bajo cada TOTAL y cuadro "Manga Nacional" en el resumen; fórmulas con su
+  valor guardado; tablas por ticket X.1 Descuentos y ofertas / X.2 Aumentos (el ajuste cae en el
+  método PRINCIPAL de la venta — `discount_entries` / `surcharge_entries` con `bucket`); 6 Egresos.
+  Ya no hay encabezados ni subtotales por categoría en el Excel (la pantalla sí sigue por categoría).
+  El Excel del corte lleva el título "TADAIMA - CORTE DE CAJA".
+- **Cancelaciones:** `Controller::refundSessionId()` — si el cliente no manda `cash_session_id` (la
+  app móvil nunca la manda) la salida cae en la caja ABIERTA de quien cancela. Si hay efectivo que
+  devolver y no hay caja, `SaleCancellationService` lanza y la cancelación entera se revierte
+  ("Abre tu caja para registrar la salida de efectivo de esta cancelación"); el modal web
+  deshabilita el botón. Ojo: un admin sin caja abierta ya no cancela ventas en efectivo desde la web.
+
+**Verificado (antes de fusionar):** backend 687 (SQLite) y 78 de cancelación/ventas/preventas en
+Postgres local; vitest 429; tsc igual a la base; `vite build` OK. El Excel generado se comparó
+contra la muestra del equipo (`Tadaima_Reporte_2026-10-03.xlsx`): encabezados, posiciones,
+combinaciones y fórmulas iguales.
+
+**Nuestro PR #34** (misma función del Excel, hecha en paralelo) se cerró: gana la versión de Ruben.
+De ahí solo se rescató el PDF con el mismo formato y la guía de Reportes → **PR #36, pendiente de
+merge y deploy** (el PDF de prod sigue con el formato viejo, por categoría).
+
+**Deploy:** tadaima-00046-vov (rollback `tadaima-00044-boy`). Sin migraciones. Pedir Ctrl+Shift+R.
+
+---
+
 ### Sesión 2026-10-03 — Costo de tomos: fix del modal (costo = precio) + homologación al 30% — rev tadaima-00044-boy
 
 **Pedido Joel:** el equipo vio los "costos reales" de los tomos en 0. Investigar si alguien o un
