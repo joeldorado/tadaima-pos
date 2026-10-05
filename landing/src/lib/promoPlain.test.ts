@@ -84,6 +84,11 @@ describe("suggestPromoName", () => {
     expect(suggestPromoName("2x1", [])).toBe("2x1");
     expect(suggestPromoName("2x1", ["A", "B", "C"])).toBe("2x1");
   });
+
+  it("con un solo producto suelto usa su nombre", () => {
+    expect(suggestPromoName("2x1", [], "Funko Goku")).toBe("2x1 en Funko Goku");
+    expect(suggestPromoName("2x1", ["Mangas"], "Funko Goku")).toBe("2x1 en Mangas");
+  });
 });
 
 describe("promoSummarySentence", () => {
@@ -99,6 +104,22 @@ describe("promoSummarySentence", () => {
       label: "3x2", productCount: 1, fullCategories: [], looseCount: 1,
       vigencia: "Del 3 al 15 de octubre", scope: "Solo tu tienda",
     })).toBe("3x2 en 1 producto. Del 3 al 15 de octubre. Solo tu tienda.");
+  });
+
+  it("nombra los productos sueltos cuando son pocos", () => {
+    expect(promoSummarySentence({
+      label: "2x1", productCount: 3, fullCategories: [], looseCount: 3,
+      looseNames: ["Funko Goku", "Funko Vegeta", "Funko Gohan"],
+      vigencia: "Sin fecha de fin", scope: "Todas las tiendas",
+    })).toBe("2x1 en 3 productos (Funko Goku, Funko Vegeta, Funko Gohan). Sin fecha de fin. Todas las tiendas.");
+  });
+
+  it("con más de 3 sueltos nombra 3 y cuenta el resto", () => {
+    expect(promoSummarySentence({
+      label: "2x1", productCount: 5, fullCategories: [], looseCount: 5,
+      looseNames: ["A", "B", "C", "D", "E"],
+      vigencia: "Sin fecha de fin", scope: "Todas las tiendas",
+    })).toBe("2x1 en 5 productos (A, B, C + 2 más). Sin fecha de fin. Todas las tiendas.");
   });
 
   it("avisa si todavía no hay productos", () => {

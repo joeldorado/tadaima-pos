@@ -103,8 +103,14 @@ export function paymentRestrictionLabel(promo: { allow_cash?: boolean; allow_car
 
 const MAX_CATEGORIES_IN_NAME = 2;
 
-/** Nombre sugerido para una promo nueva: "2x1 en Mangas". */
-export function suggestPromoName(label: string, fullCategories: readonly string[]): string {
+const MAX_LOOSE_NAMES = 3;
+
+/**
+ * Nombre sugerido para una promo nueva: "2x1 en Mangas", o "2x1 en Funko Goku"
+ * cuando se eligió un solo producto suelto.
+ */
+export function suggestPromoName(label: string, fullCategories: readonly string[], singleProductName?: string): string {
+  if (fullCategories.length === 0 && singleProductName) return `${label} en ${singleProductName}`;
   if (fullCategories.length === 0 || fullCategories.length > MAX_CATEGORIES_IN_NAME) return label;
   return `${label} en ${fullCategories.join(" y ")}`;
 }
@@ -114,12 +120,21 @@ interface SummaryInput {
   productCount: number;
   fullCategories: readonly string[];
   looseCount: number;
+  /** Nombres de los productos sueltos (sin categoría completa), para nombrarlos si son pocos. */
+  looseNames?: readonly string[];
   vigencia: string;
   scope: string;
 }
 
-function selectionDetail(fullCategories: readonly string[], looseCount: number): string {
-  if (fullCategories.length === 0) return "";
+/** "Funko Goku, Funko Vegeta, Funko Gohan + 2 más". */
+function looseNamesDetail(names: readonly string[]): string {
+  const shown = names.slice(0, MAX_LOOSE_NAMES).join(", ");
+  const rest = names.length - MAX_LOOSE_NAMES;
+  return rest > 0 ? `${shown} + ${rest} más` : shown;
+}
+
+function selectionDetail(fullCategories: readonly string[], looseCount: number, looseNames: readonly string[]): string {
+  if (fullCategories.length === 0) return looseNames.length > 0 ? ` (${looseNamesDetail(looseNames)})` : "";
   const categories = fullCategories.length === 1
     ? `toda la categoría ${fullCategories[0]}`
     : `las categorías ${fullCategories.join(", ")} completas`;
@@ -129,10 +144,10 @@ function selectionDetail(fullCategories: readonly string[], looseCount: number):
 
 /** El resumen del asistente antes de guardar, en una frase. */
 export function promoSummarySentence(input: SummaryInput): string {
-  const { label, productCount, fullCategories, looseCount, vigencia, scope } = input;
+  const { label, productCount, fullCategories, looseCount, looseNames = [], vigencia, scope } = input;
   const products = productCount === 0
     ? `${label} sin productos todavía`
     : `${label} en ${productCount.toLocaleString("es-MX")} producto${productCount === 1 ? "" : "s"}`
-      + selectionDetail(fullCategories, looseCount);
+      + selectionDetail(fullCategories, looseCount, looseNames);
   return `${products}. ${vigencia}. ${scope}.`;
 }

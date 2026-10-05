@@ -570,7 +570,7 @@
               },
               {
                 "title": "Paso 2 · ¿Qué productos entran?",
-                "detail": "“Por categoría”: marca la casilla y entran TODOS los productos que esa categoría tiene hoy (con “Ver productos” quitas los que no). “Buscar producto”: escribe nombre o código, sin importar acentos, y marca los que quieras. Abajo ves cuántos llevas."
+                "detail": "“Elegir productos”: escribe nombre o código, sin importar acentos, y marca solo los que quieras; con el lector de código cada producto escaneado se agrega solo. La promo aplica únicamente a los productos elegidos. “Categoría completa”: marca la casilla y entran TODOS los productos que esa categoría tiene hoy (con “Ver productos” quitas los que no). “Elegidos”: revisa la lista de lo que va a entrar y quita la palomita a lo que no va."
               },
               {
                 "title": "Paso 3 · ¿Cuándo?",

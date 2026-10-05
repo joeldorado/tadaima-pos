@@ -95,6 +95,10 @@ export function PromoWizard({ products, categories, loadingProducts = false, sto
   const buckets = useMemo(() => buildCategoryBuckets(products, categories), [products, categories]);
   const summary = useMemo(() => selectionSummary(selected, buckets), [selected, buckets]);
   const names = useMemo(() => new Map(products.map(product => [product.id, product.name])), [products]);
+  const looseNames = useMemo(
+    () => summary.looseIds.flatMap(id => names.get(id) ?? []).sort((a, b) => a.localeCompare(b, "es")),
+    [summary.looseIds, names],
+  );
 
   const patch = (changes: Partial<PromoDraft>) => {
     if ("name" in changes) setNameTouched(true);
@@ -107,6 +111,7 @@ export function PromoWizard({ products, categories, loadingProducts = false, sto
     productCount: summary.total,
     fullCategories: summary.fullCategories,
     looseCount: summary.looseCount,
+    looseNames,
     vigencia: formatVigenciaYmd(draft.startsAt, draft.endsAt, getTodayLocal()),
     scope: promoScopeLabel(viewer.isAdmin ? draft.storeId : viewer.storeId, viewer, storeNames),
   });
@@ -114,7 +119,8 @@ export function PromoWizard({ products, categories, loadingProducts = false, sto
   const goToDetails = () => {
     // El nombre se sugiere solo mientras el usuario no haya escrito uno.
     if (!nameTouched) {
-      setDraft(current => ({ ...current, name: suggestPromoName(draftNamePrefix(current), summary.fullCategories) }));
+      const singleName = summary.total === 1 ? looseNames[0] : undefined;
+      setDraft(current => ({ ...current, name: suggestPromoName(draftNamePrefix(current), summary.fullCategories, singleName) }));
     }
     setStep(3);
   };

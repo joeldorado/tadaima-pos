@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  addMany, bucketSelectionState, buildCategoryBuckets, filterProductsByText,
-  productCategoryKeys, removeMany, selectionSummary, toggleBucket, toggleProduct,
-  type PickerProduct,
+  addMany, bucketSelectionState, buildCategoryBuckets, filterProductsByText, findScannedProduct,
+  productCategoryKeys, removeMany, resolveEnterPick, selectedProducts, selectionSummary,
+  toggleBucket, toggleProduct, type PickerProduct,
 } from "./promoProductPicker";
 
 const CATS = [
@@ -120,16 +120,87 @@ describe("selectionSummary", () => {
 
   it("distingue categorías completas de productos sueltos", () => {
     const resumen = selectionSummary(new Set([1, 2, 3]), buckets);
-    expect(resumen).toEqual({ total: 3, fullCategories: ["Mangas"], looseCount: 1 });
+    expect(resumen).toEqual({ total: 3, fullCategories: ["Mangas"], looseCount: 1, looseIds: [3] });
   });
 
   it("un producto de dos categorías no cuenta como suelto si una está completa", () => {
     // Figuras completa = 3 y 4; el 4 también es de Accesorios (incompleta).
     const resumen = selectionSummary(new Set([3, 4]), buckets);
-    expect(resumen).toEqual({ total: 2, fullCategories: ["Figuras"], looseCount: 0 });
+    expect(resumen).toEqual({ total: 2, fullCategories: ["Figuras"], looseCount: 0, looseIds: [] });
   });
 
   it("sin selección", () => {
-    expect(selectionSummary(new Set(), buckets)).toEqual({ total: 0, fullCategories: [], looseCount: 0 });
+    expect(selectionSummary(new Set(), buckets)).toEqual({ total: 0, fullCategories: [], looseCount: 0, looseIds: [] });
+  });
+});
+
+describe("findScannedProduct", () => {
+  const scanned = [
+    prod(10, "Funko Goku", { sku: "FUN-010", barcode: "7501234567890" }),
+    prod(11, "Funko Vegeta", { sku: "fun-011", barcode: null }),
+  ];
+
+  it("encuentra por código de barras o SKU exacto, sin mayúsculas ni espacios", () => {
+    expect(findScannedProduct(scanned, "7501234567890")?.id).toBe(10);
+    expect(findScannedProduct(scanned, " FUN-011 ")?.id).toBe(11);
+    expect(findScannedProduct(scanned, "fun-010")?.id).toBe(10);
+  });
+
+  it("no adivina con un código parcial", () => {
+    expect(findScannedProduct(scanned, "750123")).toBeNull();
+    expect(findScannedProduct(scanned, "")).toBeNull();
+  });
+});
+
+describe("resolveEnterPick", () => {
+  const none = new Set<number>();
+
+  it("agrega el producto del código exacto sin tocar la selección original", () => {
+    const selected = new Set([1]);
+    const result = resolveEnterPick(PRODUCTS, "SKU-3", selected, none);
+    expect(result?.kind).toBe("added");
+    expect(result?.product?.id).toBe(3);
+    expect([...result!.selected].sort()).toEqual([1, 3]);
+    expect([...selected]).toEqual([1]);
+  });
+
+  it("si la búsqueda deja uno solo, lo agrega", () => {
+    expect(resolveEnterPick(PRODUCTS, "goku", none, none)?.product?.id).toBe(3);
+  });
+
+  it("escanear dos veces no lo quita", () => {
+    const result = resolveEnterPick(PRODUCTS, "SKU-3", new Set([3]), none);
+    expect(result?.kind).toBe("already");
+    expect([...result!.selected]).toEqual([3]);
+  });
+
+  it("avisa cuando ya está en la promo", () => {
+    const result = resolveEnterPick(PRODUCTS, "SKU-3", none, new Set([3]));
+    expect(result?.kind).toBe("locked");
+    expect(result?.selected.size).toBe(0);
+  });
+
+  it("con varias coincidencias no elige: avisa cuántas son", () => {
+    const result = resolveEnterPick(PRODUCTS, "manga", none, none);
+    expect(result?.kind).toBe("ambiguous");
+    expect(result?.matchCount).toBe(2);
+    expect(result?.selected.size).toBe(0);
+  });
+
+  it("un código a medias nunca agrega por coincidencia", () => {
+    const withBarcode = [...PRODUCTS, prod(7, "Funko Goku", { barcode: "7501234567890" })];
+    expect(resolveEnterPick(withBarcode, "7501", none, none)?.kind).toBe("not_found");
+  });
+
+  it("no encuentra nada; nada con texto vacío", () => {
+    expect(resolveEnterPick(PRODUCTS, "zzz", none, none)?.kind).toBe("not_found");
+    expect(resolveEnterPick(PRODUCTS, "   ", none, none)).toBeNull();
+  });
+});
+
+describe("selectedProducts", () => {
+  it("devuelve los elegidos A-Z y omite los que ya no están en caché", () => {
+    const byId = new Map(PRODUCTS.map(p => [p.id, p]));
+    expect(selectedProducts(byId, new Set([4, 1, 99])).map(p => p.id)).toEqual([4, 1]);
   });
 });

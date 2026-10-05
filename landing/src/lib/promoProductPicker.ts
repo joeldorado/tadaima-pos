@@ -29,6 +29,7 @@ export interface SelectionSummary {
   fullCategories: string[];
   /** Elegidos que no pertenecen a ninguna categoría completa. */
   looseCount: number;
+  looseIds: number[];
 }
 
 const NO_CATEGORY_NAME = "Sin categoría";
@@ -130,9 +131,87 @@ export function selectionSummary(selected: ReadonlySet<number>, buckets: readonl
   const fullBuckets = buckets.filter(bucket =>
     bucket.key !== "none" && bucket.productIds.every(id => selected.has(id)));
   const covered = new Set(fullBuckets.flatMap(bucket => bucket.productIds));
+  const looseIds = [...selected].filter(id => !covered.has(id));
   return {
     total: selected.size,
     fullCategories: fullBuckets.map(bucket => bucket.name),
-    looseCount: [...selected].filter(id => !covered.has(id)).length,
+    looseCount: looseIds.length,
+    looseIds,
   };
+}
+
+/** Código tal como lo manda el lector o lo teclean: sin espacios ni mayúsculas. */
+function normalizeCode(code: string): string {
+  return normalizeCategoryText(code).replace(/\s+/g, "");
+}
+
+/** Producto cuyo código de barras o SKU es EXACTAMENTE el escaneado. */
+export function findScannedProduct<T extends Pick<PickerProduct, "sku" | "barcode">>(
+  products: readonly T[],
+  code: string,
+): T | null {
+  const wanted = normalizeCode(code);
+  if (wanted === "") return null;
+  return products.find(product =>
+    (product.barcode != null && normalizeCode(product.barcode) === wanted)
+    || (product.sku != null && normalizeCode(product.sku) === wanted)) ?? null;
+}
+
+export type EnterPickKind = "added" | "already" | "locked" | "ambiguous" | "not_found";
+
+export interface EnterPickResult<T> {
+  kind: EnterPickKind;
+  product: T | null;
+  /** Con `ambiguous`: cuántos productos coinciden con el texto. */
+  matchCount: number;
+  /** Selección resultante (nueva si se agregó; la misma si no cambió). */
+  selected: ReadonlySet<number>;
+}
+
+/** Busca solo en el NOMBRE: un código a medias no debe elegir nada solo. */
+function filterByName<T extends Pick<PickerProduct, "name">>(products: readonly T[], query: string): T[] {
+  const tokens = normalizeCategoryText(query).split(/\s+/).filter(Boolean);
+  return products.filter(product => {
+    const name = normalizeCategoryText(product.name);
+    return tokens.every(token => name.includes(token));
+  });
+}
+
+/**
+ * Enter en el buscador (o el lector de código): agrega el producto del código
+ * EXACTO o, si no, el ÚNICO cuyo nombre coincide. Un código parcial (lector que
+ * leyó mal) nunca agrega por coincidencia. Nunca quita: escanear dos veces el
+ * mismo no lo desmarca. `null` con el buscador vacío.
+ */
+export function resolveEnterPick<T extends PickerProduct>(
+  products: readonly T[],
+  query: string,
+  selected: ReadonlySet<number>,
+  locked: ReadonlySet<number>,
+): EnterPickResult<T> | null {
+  if (query.trim() === "") return null;
+  const scanned = findScannedProduct(products, query);
+  const byName = scanned ? [] : filterByName(products, query);
+  const product = scanned ?? (byName.length === 1 ? byName[0]! : null);
+  if (!product) {
+    const matchCount = filterProductsByText(products, query).length;
+    return { kind: matchCount > 1 ? "ambiguous" : "not_found", product: null, matchCount, selected };
+  }
+  const base = { product, matchCount: 1 };
+  if (locked.has(product.id)) return { ...base, kind: "locked", selected };
+  if (selected.has(product.id)) return { ...base, kind: "already", selected };
+  return { ...base, kind: "added", selected: addMany(selected, [product.id], locked) };
+}
+
+/** Los elegidos, A-Z. Los que ya no están en la lista de productos se omiten. */
+export function selectedProducts<T extends Pick<PickerProduct, "id" | "name">>(
+  productsById: ReadonlyMap<number, T>,
+  selected: ReadonlySet<number>,
+): T[] {
+  return [...selected]
+    .flatMap(id => {
+      const product = productsById.get(id);
+      return product ? [product] : [];
+    })
+    .sort((a, b) => a.name.localeCompare(b.name, "es"));
 }
