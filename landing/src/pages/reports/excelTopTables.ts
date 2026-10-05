@@ -23,10 +23,10 @@ export const isCashLike = (n: string): boolean =>
 // Manga Nacional = productos dados de alta como tomo (product_type 'manga').
 const MANGA_BLUE = "1D4ED8";
 const MANGA_FILL = fill("DBEAFE");
-const isManga = (g: GroupedProduct) => g.product_type === "manga";
+export const isManga = (g: GroupedProduct) => g.product_type === "manga";
 const cellNameManga: CellStyle = { font: font({ bold: true, color: MANGA_BLUE }), alignment: align("left", "middle", true) };
 
-const displayName = (g: GroupedProduct) => (g.show_cost_tag ? `${g.name} · Costo ${fmt(g.cost_tag ?? 0)}` : g.name);
+export const displayName = (g: GroupedProduct) => (g.show_cost_tag ? `${g.name} · Costo ${fmt(g.cost_tag ?? 0)}` : g.name);
 
 /** Piezas y venta del producto cobradas con los métodos que cumplen `pred`. */
 function methodPart(g: GroupedProduct, pred: (name: string) => boolean): { qty: number; revenue: number } {
