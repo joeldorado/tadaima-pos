@@ -4,6 +4,23 @@
 
 ---
 
+### Sesión 2026-10-05 — Excel de Ventas en pestañas (Ruben, PR #37) — rev tadaima-00052-jin
+
+**Pedido Joel:** subir a prod lo que Ruben dejó en `develop`.
+
+- **PR #37 `develop → main`** (fast-forward, commit `d5c438a` de Ruben): el Excel de Ventas / corte
+  ahora va en pestañas — Resumen · Efectivo · Efectivo Manga · Tarjeta · Tarjeta Manga ·
+  Transferencias · Transferencias Manga · Preventas. Devoluciones a la derecha de Efectivo;
+  descuentos/aumentos y Egresos en Resumen, que liga los totales de cada pestaña con fórmulas.
+  Solo frontend (`landing/src/pages/reports/*`), sin migraciones.
+
+**Verificado:** vitest 553/553. En la candidata: index y `/tadaimaus/` 200, API 401 sin sesión,
+bundle con las pestañas nuevas. Pendiente: el PR #36 (PDF) toca reportes, puede pedir rebase.
+
+**Deploy:** tadaima-00052-jin (rollback `tadaima-00050-haq`). Pedir Ctrl+Shift+R / incógnito por la caché PWA.
+
+---
+
 ### Sesión 2026-10-04 — Promos con varios productos sueltos + flechas de orden visibles — rev tadaima-00050-haq
 
 **Pedido Joel:** poder crear promos eligiendo varios productos (solo esos), no solo por categoría.
