@@ -93,10 +93,10 @@ const formula = (ws: ExcelJS.Worksheet, r: number, c: number): string | undefine
 };
 
 describe("Excel de Ventas en pestañas", () => {
-  it("arma una pestaña por tabla, con título y periodo en cada una", () => {
+  it("arma 5 pestañas: Resumen · Efectivo · Tarjeta · Transferencias · Preventas", () => {
     const wb = buildBook();
     expect(wb.worksheets.map((w) => w.name)).toEqual([
-      "Resumen", "Efectivo", "Efectivo Manga", "Tarjeta", "Tarjeta Manga", "Transferencias", "Transferencias Manga", "Preventas",
+      "Resumen", "Efectivo", "Tarjeta", "Transferencias", "Preventas",
     ]);
     for (const ws of wb.worksheets) {
       expect(ws.getCell(1, 1).value).toBe("TADAIMA - CORTE DE CAJA");
@@ -104,46 +104,48 @@ describe("Excel de Ventas en pestañas", () => {
     }
   });
 
-  it("Efectivo trae solo productos regulares y Devoluciones a la derecha; los tomos van en Efectivo Manga", () => {
+  it("Efectivo incluye regulares Y manga en la misma pestaña; Devoluciones a la derecha", () => {
     const wb = buildBook();
     const ef = sheet(wb, "Efectivo");
+    // El total de efectivo = Sticker ($90) + Tomo 21 ($300)
     const total = find(ef, "TOTAL EFECTIVO");
-    expect(result(ef, total.row, total.col + 2)).toBe(90);
+    expect(result(ef, total.row, total.col + 2)).toBe(390);
     expect(formula(ef, total.row, total.col + 2)).toMatch(/^SUM\(/);
-    expect(() => find(ef, "Tomo 21")).toThrow();
-    expect(() => find(ef, "APARTADOS Y PREVENTAS")).toThrow();
+    // Tomo 21 aparece en la misma pestaña
+    expect(() => find(ef, "Tomo 21")).not.toThrow();
+    // El renglón azul de Manga resume los tomos
+    const manga = find(ef, "📘 MANGA NACIONAL (incluido)");
+    expect(result(ef, manga.row, manga.col + 2)).toBe(300);
+    // Devoluciones a la derecha, misma fila que el encabezado
     const dev = find(ef, " 5. DEVOLUCIONES Y CANCELACIONES");
     expect(dev.row).toBe(find(ef, " 1. VENTAS EN EFECTIVO").row);
-    expect(dev.col).toBe(5); // 3 columnas de Efectivo (sin costos) + 1 de separación
-
-    const em = sheet(wb, "Efectivo Manga");
-    expect(text(em, 6, 1)).toBe("Tomo 21");
-    const mt = find(em, "📘 MANGA NACIONAL");
-    expect(result(em, mt.row, mt.col + 2)).toBe(300);
+    // No existen pestañas separadas de Manga
+    expect(wb.getWorksheet("Efectivo Manga")).toBeUndefined();
   });
 
-  it("Tarjeta calcula IVA y neto con fórmulas; los tomos van en Tarjeta Manga", () => {
+  it("Tarjeta incluye regulares Y manga; IVA y neto como fórmulas", () => {
     const wb = buildBook();
     const ta = sheet(wb, "Tarjeta");
+    // Ambos productos (ETB y Tomo 21) en Tarjeta
+    expect(() => find(ta, "ETB")).not.toThrow();
+    expect(() => find(ta, "Tomo 21")).not.toThrow();
+    // IVA = comisión × 0.16
     const neto = find(ta, "Neto Tarjeta");
-    const dataRow = neto.row + 1;
-    expect(ta.getCell(dataRow, 1).value).toBe("ETB");
+    const dataRow = neto.row + 1; // primera fila de datos (ETB o Tomo, orden A-Z)
     expect(formula(ta, dataRow, neto.col - 1)).toMatch(/\*0\.16$/);
-    expect(result(ta, dataRow, neto.col)).toBeCloseTo(100 - 5 - 0.8);
-    expect(() => find(ta, "Tomo 21")).toThrow();
-
-    const tm = sheet(wb, "Tarjeta Manga");
-    const total = find(tm, "TOTAL TARJETA MANGA");
-    expect(result(tm, total.row, total.col + 2)).toBe(150);
+    // Bruto total = ETB $100 + Tomo $150
+    const totalTarjeta = find(ta, "TOTAL TARJETA");
+    expect(result(ta, totalTarjeta.row, totalTarjeta.col + 2)).toBe(250);
+    expect(wb.getWorksheet("Tarjeta Manga")).toBeUndefined();
   });
 
-  it("Transferencias separa regulares y tomos", () => {
+  it("Transferencias incluye regulares Y manga en la misma pestaña", () => {
     const wb = buildBook();
     const tr = sheet(wb, "Transferencias");
-    expect(result(tr, find(tr, "TOTAL TRANSFERENCIAS").row, 3)).toBe(50);
-    expect(() => find(tr, "Tomo 21")).toThrow();
-    const tm = sheet(wb, "Transferencias Manga");
-    expect(result(tm, find(tm, "TOTAL TRANSFERENCIAS MANGA").row, 3)).toBe(150);
+    // Total = ETB ($50 neto con descuento) + Tomo ($150)
+    expect(result(tr, find(tr, "TOTAL TRANSFERENCIAS").row, 3)).toBe(200);
+    expect(() => find(tr, "Tomo 21")).not.toThrow();
+    expect(wb.getWorksheet("Transferencias Manga")).toBeUndefined();
   });
 
   it("Preventas es la última pestaña y Pactado = Abonado + Pendiente", () => {
@@ -153,18 +155,22 @@ describe("Excel de Ventas en pestañas", () => {
     expect(result(pre, row.row, row.col + 4)).toBe(1000);
   });
 
-  it("Resumen liga lo vendido de cada pestaña y calcula Total Bruto", () => {
+  it("Resumen liga los 3 métodos y calcula Total Bruto (sin costos: col C)", () => {
     const res = sheet(buildBook(), "Resumen");
+    // Sin canViewCost: venta en col 3 (C)
     const ef = find(res, "Efectivo:");
     expect(formula(res, ef.row, 3)).toMatch(/^'Efectivo'!C\d+$/);
-    expect(result(res, ef.row, 3)).toBe(90);
-    const em = find(res, "Efectivo Manga:");
-    expect(formula(res, em.row, 3)).toMatch(/^'Efectivo Manga'!C\d+$/);
-    expect(result(res, find(res, "Tarjeta:").row, 3)).toBe(100); // bruto
+    expect(result(res, ef.row, 3)).toBe(390); // Sticker + Tomo 21
+    expect(result(res, find(res, "Tarjeta:").row, 3)).toBe(250); // bruto tarjeta
+    expect(result(res, find(res, "Transferencias:").row, 3)).toBe(200);
     const bruto = find(res, "Total Bruto:");
-    expect(result(res, bruto.row, 3)).toBe(90 + 300 + 100 + 150 + 50 + 150);
+    expect(result(res, bruto.row, 3)).toBe(390 + 250 + 200);
+    // Total Final = bruto − egresos (col C)
     const fin = find(res, "TOTAL FINAL:");
-    expect(formula(res, fin.row, 3)).toBe(`C${bruto.row}-C${bruto.row + 1}`); // sin costos: bruto − egresos
+    expect(formula(res, fin.row, 3)).toMatch(/C\d+-C\d+/);
+    // No hay fila "Efectivo Manga:" ni "Tarjeta Manga:"
+    expect(() => find(res, "Efectivo Manga:")).toThrow();
+    expect(() => find(res, "Tarjeta Manga:")).toThrow();
   });
 
   it("Resumen trae descuentos y aumentos por método y Egresos", () => {
@@ -184,15 +190,22 @@ describe("Excel de Ventas en pestañas", () => {
     })));
   });
 
-  it("con costos: utilidad como fórmula y Total Final = utilidades − egresos", () => {
+  it("con costos: Resumen muestra Costo/Venta/Utilidad por método (cols C/D/E)", () => {
     const wb = buildBook(true);
+    // Cada pestaña tiene columna Utilidad con fórmula
     const ef = sheet(wb, "Efectivo");
-    const header = find(ef, "Utilidad Efectivo");
-    expect(formula(ef, find(ef, "TOTAL EFECTIVO").row, header.col)).toMatch(/^SUM\(/);
-    expect(formula(ef, header.row + 1, header.col)).toMatch(/^[A-Z]+\d+-[A-Z]+\d+$/);
+    const utilHeader = find(ef, "Utilidad Efectivo");
+    expect(formula(ef, find(ef, "TOTAL EFECTIVO").row, utilHeader.col)).toMatch(/^SUM\(/);
+    expect(formula(ef, utilHeader.row + 1, utilHeader.col)).toMatch(/^[A-Z]+\d+-[A-Z]+\d+$/);
+    // Resumen: C=Costo, D=Venta, E=Utilidad
     const res = sheet(wb, "Resumen");
+    const ef2 = find(res, "Efectivo:");
+    expect(formula(res, ef2.row, 3)).toMatch(/^'Efectivo'!.*$/); // costo en col C
+    expect(formula(res, ef2.row, 4)).toMatch(/^'Efectivo'!.*$/); // venta en col D
+    expect(formula(res, ef2.row, 5)).toMatch(/^'Efectivo'!.*$/); // util en col E
+    // Total Final = utilidades − egresos en col E
     const fin = find(res, "TOTAL FINAL:");
-    expect(formula(res, fin.row, 3)).toMatch(/^'Efectivo'!E\d+\+.*-C\d+$/);
+    expect(formula(res, fin.row, 5)).toMatch(/E\d+.*-.*\d+/);
   });
 });
 

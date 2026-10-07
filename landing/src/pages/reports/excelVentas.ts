@@ -14,7 +14,7 @@ import {
 } from "./excelSheet";
 import {
   FIRST_TABLE_ROW, PRESALE_COLS, RETURN_COLS, cardTable, drawPresales, drawProductTable, drawReturns, drawTableHeaders,
-  isCardMethod, isCashLike, isManga, isTransferMethod, methodTable, tableWidth, withMethod, type TableResult,
+  isCardMethod, isCashLike, isTransferMethod, methodTable, tableWidth, withMethod, type TableResult,
 } from "./excelTopTables";
 import { bottomLayout, drawEgresos, drawMethodAdjustments } from "./excelBottomTables";
 
@@ -65,7 +65,7 @@ function productSheet(
   drawTitle(sh, p, w);
   sectionHeader(sh, FIRST_TABLE_ROW, 1, w, title, colors[0]);
   drawTableHeaders(sh, table, colors[1]);
-  const result = drawProductTable(sh, table, groups, false);
+  const result = drawProductTable(sh, table, groups, true);
   tableWidths(sh, 1, w);
   return { sh, name, ventaKey, result };
 }
@@ -87,10 +87,19 @@ const xref = (sheet: string, ref: string) => `'${sheet}'!${ref}`;
 /**
  * Pestaña Resumen: lo vendido por pestaña (ligado a sus TOTAL), Total Bruto,
  * Egresos y Total Final; abajo descuentos/aumentos por método y Egresos.
+ * Con canViewCost muestra además Costo y Utilidad por método.
  */
 function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedProduct[], tabs: ProductSheet[]): void {
+  const { canViewCost } = p;
+  // Con costo: cols B=label C=Costo D=Venta E=Utilidad → 5 cols total (A-E)
+  // Sin costo: cols B=label C=Venta → 4 cols total (A-D)
+  const totalCols = canViewCost ? 5 : 4;
+  const ventaCol  = canViewCost ? 4 : 3;  // columna "Venta"
+  const costoCol  = 3;                     // columna "Costo" (solo canViewCost)
+  const utilCol   = 5;                     // columna "Utilidad" (solo canViewCost)
+
   // Abajo: izquierda Efectivo (1.1/1.2) y Egresos; derecha Tarjeta y Transferencias.
-  const blocksTop = FIRST_TABLE_ROW + tabs.length + 12; // debajo del resumen, con aire
+  const blocksTop = FIRST_TABLE_ROW + tabs.length + 14;
   const leftL = bottomLayout(1, BLOCK_WIDTH);
   const rightCol = 1 + BLOCK_WIDTH + GAP;
   const cashEnd = drawMethodAdjustments(sh, blocksTop, leftL, groups, "cash", "EFECTIVO", 1);
@@ -101,89 +110,122 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
   blockWidths(sh, 1);
   blockWidths(sh, rightCol);
 
-  // Arriba: el resumen.
+  // Encabezado "RESUMEN DE VENTAS"
   const header: CellStyle = { font: font({ sz: 10, bold: true, color: "FFFFFF" }), fill: fill("B8732E"), alignment: align("left") };
-  sh.merge(FIRST_TABLE_ROW, 1, 4);
+  sh.merge(FIRST_TABLE_ROW, 1, totalCols);
   sh.set(FIRST_TABLE_ROW, 1, "RESUMEN DE VENTAS", header);
+
+  // Sub-encabezados de columnas (solo con canViewCost)
+  if (canViewCost) {
+    const subH: CellStyle = { font: font({ sz: 9, bold: true, color: "FFFFFF" }), fill: fill("CC9944"), alignment: align("center") };
+    const hRow = FIRST_TABLE_ROW + 1;
+    sh.set(hRow, costoCol, "Costo", subH);
+    sh.set(hRow, ventaCol, "Venta", subH);
+    sh.set(hRow, utilCol,  "Utilidad", subH);
+    sh.height(hRow, 18);
+  }
+
   const label: CellStyle = { font: font({ sz: 10, bold: true, color: "333333" }), alignment: align("right") };
   const money: CellStyle = { numFmt: MONEY_FMT, font: font({ sz: 10, bold: true, color: "333333" }), alignment: align("left") };
+  const green: CellStyle = { ...money, font: font({ sz: 10, bold: true, color: "059669" }) };
   const sep = fill("DDDDDD");
 
   let r = FIRST_TABLE_ROW + 2;
   const ventaRows: number[] = [];
+  const costoRows: number[] = [];
+  const utilRows:  number[] = [];
+
   tabs.forEach((t, i) => {
-    if (i > 0 && i % 2 === 0) { // separador gris entre métodos (cada método = normal + Manga)
-      for (let c = 1; c <= 4; c++) sh.set(r, c, "", { fill: sep });
+    if (i > 0) {
+      for (let c = 1; c <= totalCols; c++) sh.set(r, c, "", { fill: sep });
       r++;
     }
-    const total = t.result.totals[t.ventaKey];
+    const venta = t.result.totals[t.ventaKey];
+    const costo = t.result.totals["costo"];
+    const util  = t.result.totals["util"];
+
     sh.set(r, 2, `${t.name}:`, label);
-    if (total) sh.setF(r, 3, xref(t.name, total.ref), total.value, money);
-    else sh.set(r, 3, 0, money);
+
+    if (canViewCost) {
+      if (costo) sh.setF(r, costoCol, xref(t.name, costo.ref), costo.value, money);
+      else sh.set(r, costoCol, 0, money);
+      costoRows.push(r);
+    }
+
+    if (venta) sh.setF(r, ventaCol, xref(t.name, venta.ref), venta.value, money);
+    else sh.set(r, ventaCol, 0, money);
     ventaRows.push(r);
+
+    if (canViewCost) {
+      if (util) sh.setF(r, utilCol, xref(t.name, util.ref), util.value, green);
+      else sh.set(r, utilCol, 0, green);
+      utilRows.push(r);
+    }
     r++;
   });
-  for (let c = 1; c <= 4; c++) sh.set(r, c, "", { fill: sep });
+
+  for (let c = 1; c <= totalCols; c++) sh.set(r, c, "", { fill: sep });
   r++;
 
+  // Fila "Total Bruto"
   const bruto = tabs.reduce((a, t) => a + (t.result.totals[t.ventaKey]?.value ?? 0), 0);
   const brutoRow = r;
   sh.set(r, 2, "Total Bruto:", label);
-  sh.setF(r, 3, ventaRows.map((x) => `C${x}`).join("+"), bruto, money);
+  sh.setF(r, ventaCol, ventaRows.map((x) => cellRef(x, ventaCol)).join("+"), bruto, money);
+  if (canViewCost) {
+    const tc = tabs.reduce((a, t) => a + (t.result.totals["costo"]?.value ?? 0), 0);
+    const tu = tabs.reduce((a, t) => a + (t.result.totals["util"]?.value ?? 0), 0);
+    sh.setF(r, costoCol, costoRows.map((x) => cellRef(x, costoCol)).join("+"), tc, money);
+    sh.setF(r, utilCol,  utilRows.map((x)  => cellRef(x, utilCol)).join("+"),  tu, green);
+  }
   r++;
 
+  // Fila "Egresos"
   const egresos = p.supplyMovements.reduce((a, m) => a + (m.amount || 0), 0);
   const egRow = r;
   const red: CellStyle = { font: font({ sz: 10, bold: true, color: EGRESO }), alignment: align("right") };
   sh.set(r, 2, "Egresos:", red);
-  if (p.supplyMovements.length > 0) sh.setF(r, 3, cellRef(egEnd, leftL.monto), egresos, { ...money, font: font({ sz: 10, bold: true, color: EGRESO }) });
-  else sh.set(r, 3, 0, { ...money, font: font({ sz: 10, bold: true, color: EGRESO }) });
+  const egresoStyle: CellStyle = { ...money, font: font({ sz: 10, bold: true, color: EGRESO }) };
+  if (p.supplyMovements.length > 0) sh.setF(r, ventaCol, cellRef(egEnd, leftL.monto), egresos, egresoStyle);
+  else sh.set(r, ventaCol, 0, egresoStyle);
   const what = [...new Set(p.supplyMovements.map((m) => m.supply?.name).filter(Boolean))].join(", ");
-  if (what) sh.set(r, 4, `(${what})`, { font: font({ sz: 10, bold: true, color: EGRESO }), alignment: align("left") });
+  if (what) sh.set(r, ventaCol + 1, `(${what})`, { font: font({ sz: 10, bold: true, color: EGRESO }), alignment: align("left") });
   r += 2;
 
-  // Total Final: con costos = utilidades − egresos; sin costos = bruto − egresos.
+  // Fila "TOTAL FINAL"
   const finalStyle: CellStyle = { ...money, fill: fill("F8D9B8") };
   sh.set(r, 2, "TOTAL FINAL:", label);
-  if (p.canViewCost) {
-    const utils = tabs.flatMap((t) => (t.result.totals.util ? [{ sheet: t.name, ...t.result.totals.util }] : []));
-    const util = utils.reduce((a, x) => a + x.value, 0);
-    const parts = utils.map((x) => xref(x.sheet, x.ref));
-    sh.setF(r, 3, `${parts.length > 0 ? parts.join("+") : "0"}-C${egRow}`, util - egresos, finalStyle);
+  if (canViewCost) {
+    const util = tabs.reduce((a, t) => a + (t.result.totals["util"]?.value ?? 0), 0);
+    sh.setF(r, utilCol, `${utilRows.map((x) => cellRef(x, utilCol)).join("+")}-${cellRef(egRow, ventaCol)}`, util - egresos, { ...finalStyle, font: font({ sz: 10, bold: true, color: "059669" }) });
   } else {
-    sh.setF(r, 3, `C${brutoRow}-C${egRow}`, bruto - egresos, finalStyle);
+    sh.setF(r, ventaCol, `${cellRef(brutoRow, ventaCol)}-${cellRef(egRow, ventaCol)}`, bruto - egresos, finalStyle);
   }
 }
 
 export function addVentasSheets(workbook: Workbook, p: ReportExportParams): void {
   const { canViewCost, ivaRate } = p;
+  // Todos los productos (regulares + manga) van en la misma pestaña por método.
+  // El renglón "📘 MANGA NACIONAL (incluido)" aparece al pie de cada tabla.
   const groups = p.groupedProducts.filter((g) => !isPresale(g));
-  const regular = groups.filter((g) => !isManga(g));
-  const manga = groups.filter(isManga);
 
   // El Resumen va primero, pero se llena al final (se liga a las demás pestañas).
   const resumen = createSheet(workbook.addWorksheet("Resumen"));
 
-  // Efectivo (regulares) con Devoluciones a la derecha; Efectivo Manga.
+  // Efectivo (regulares + manga) con Devoluciones a la derecha.
   const cashT = methodTable(1, isCashLike, "Efectivo", "TOTAL EFECTIVO", canViewCost);
-  const cash = productSheet(workbook, p, "Efectivo", " 1. VENTAS EN EFECTIVO", ["33BB66", "55CC77"], cashT, withMethod(regular, isCashLike), "venta");
+  const cash = productSheet(workbook, p, "Efectivo", " 1. VENTAS EN EFECTIVO", ["33BB66", "55CC77"], cashT, withMethod(groups, isCashLike), "venta");
   const retCol = tableWidth(cashT) + GAP + 1;
   drawReturns(cash.sh, groups, retCol);
   tableWidths(cash.sh, retCol, RETURN_COLS);
-  const cashManga = productSheet(workbook, p, "Efectivo Manga", " 1. EFECTIVO — MANGA NACIONAL", ["1D4ED8", "4F7FE6"],
-    methodTable(1, isCashLike, "Efectivo", "📘 MANGA NACIONAL", canViewCost), withMethod(manga, isCashLike), "venta");
 
-  // Tarjeta y Tarjeta Manga (al Resumen va el BRUTO cobrado).
+  // Tarjeta (regulares + manga). Al Resumen va el BRUTO cobrado.
   const card = productSheet(workbook, p, "Tarjeta", " 2. DESGLOSE DE COBROS CON TARJETA", ["2266BB", "4488DD"],
-    cardTable(1, canViewCost, ivaRate), withMethod(regular, isCardMethod), "bruto");
-  const cardManga = productSheet(workbook, p, "Tarjeta Manga", " 2. TARJETA — MANGA NACIONAL", ["1D4ED8", "4F7FE6"],
-    cardTable(1, canViewCost, ivaRate, "TOTAL TARJETA MANGA"), withMethod(manga, isCardMethod), "bruto");
+    cardTable(1, canViewCost, ivaRate), withMethod(groups, isCardMethod), "bruto");
 
-  // Transferencias y Transferencias Manga.
+  // Transferencias (regulares + manga).
   const transfer = productSheet(workbook, p, "Transferencias", " 3. TRANSFERENCIAS / DEPÓSITOS", ["119999", "33BBBB"],
-    methodTable(1, isTransferMethod, "Transferencia", "TOTAL TRANSFERENCIAS", canViewCost), withMethod(regular, isTransferMethod), "venta");
-  const transferManga = productSheet(workbook, p, "Transferencias Manga", " 3. TRANSFERENCIAS — MANGA NACIONAL", ["1D4ED8", "4F7FE6"],
-    methodTable(1, isTransferMethod, "Transferencia", "TOTAL TRANSFERENCIAS MANGA", canViewCost), withMethod(manga, isTransferMethod), "venta");
+    methodTable(1, isTransferMethod, "Transferencia", "TOTAL TRANSFERENCIAS", canViewCost), withMethod(groups, isTransferMethod), "venta");
 
   // Preventas: última pestaña.
   const pre = createSheet(workbook.addWorksheet("Preventas"));
@@ -192,5 +234,5 @@ export function addVentasSheets(workbook: Workbook, p: ReportExportParams): void
   tableWidths(pre, 1, PRESALE_COLS(canViewCost));
 
   drawTitle(resumen, p, BLOCK_WIDTH * 2 + GAP);
-  drawResumen(resumen, p, groups, [cash, cashManga, card, cardManga, transfer, transferManga]);
+  drawResumen(resumen, p, groups, [cash, card, transfer]);
 }
