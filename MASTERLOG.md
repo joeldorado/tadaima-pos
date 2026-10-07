@@ -83,6 +83,43 @@ regresiones en lo tocado (la base tiene ~450 errores preexistentes).
 
 ---
 
+### Sesión 2026-10-07 — Existencias por Tienda: listado cross-tienda (Ruben, PR #38) — rev tadaima-00054-sev
+
+**Pedido Joel:** subir a prod lo que Ruben dejó en `develop`, con cuidado y con rollback.
+
+- **PR #38 `develop → main`** (merge commit; commits `7c18b71`, `65a897a` de Ruben):
+  - Backend: `GET /inventory/products-stock` (paginado, máx 200, `?search=`) y
+    `GET /inventory/by-product/{id}`. Solo lectura y **cross-tienda a propósito**: cantidades
+    Exhibición/Bodega + nombre y teléfono de la tienda, sin costos; cualquier rol autenticado.
+  - Frontend: `StockSearchPage` lista todos los productos con su stock por tienda sin elegir uno primero.
+  - Sin migraciones.
+
+**Verificado:** SQLite 709/709; Postgres 17 local: `InventoryByProductTest` 12/12 (las fallas de
+CashReportRange / PurgeNoStock / CategoryPivotRepair ya fallan igual en `main`, preexistentes);
+vitest 553/553. Candidata sin tráfico: index y `/tadaimaus/` 200, endpoints nuevos 401 sin sesión,
+bundle con la pantalla nueva. Luego se promovió al 100%.
+
+**Deploy:** tadaima-00054-sev (rollback `tadaima-00052-jin`). Pedir Ctrl+Shift+R / incógnito por la caché PWA.
+
+---
+
+### Sesión 2026-10-05 — Excel de Ventas en pestañas (Ruben, PR #37) — rev tadaima-00052-jin
+
+**Pedido Joel:** subir a prod lo que Ruben dejó en `develop`.
+
+- **PR #37 `develop → main`** (fast-forward, commit `d5c438a` de Ruben): el Excel de Ventas / corte
+  ahora va en pestañas — Resumen · Efectivo · Efectivo Manga · Tarjeta · Tarjeta Manga ·
+  Transferencias · Transferencias Manga · Preventas. Devoluciones a la derecha de Efectivo;
+  descuentos/aumentos y Egresos en Resumen, que liga los totales de cada pestaña con fórmulas.
+  Solo frontend (`landing/src/pages/reports/*`), sin migraciones.
+
+**Verificado:** vitest 553/553. En la candidata: index y `/tadaimaus/` 200, API 401 sin sesión,
+bundle con las pestañas nuevas. Pendiente: el PR #36 (PDF) toca reportes, puede pedir rebase.
+
+**Deploy:** tadaima-00052-jin (rollback `tadaima-00050-haq`). Pedir Ctrl+Shift+R / incógnito por la caché PWA.
+
+---
+
 ### Sesión 2026-10-04 — Promos con varios productos sueltos + flechas de orden visibles — rev tadaima-00050-haq
 
 **Pedido Joel:** poder crear promos eligiendo varios productos (solo esos), no solo por categoría.
