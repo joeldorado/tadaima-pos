@@ -300,9 +300,11 @@ al dar de alta una tienda (y existe la migración de backfill
 
 | Método | Path | Notas |
 |---|---|---|
-| GET | `/inventory` | Existencias (eager-load warehouse.store) |
+| GET | `/inventory` | Existencias scoped por tienda del usuario (eager-load warehouse.store) |
 | GET/POST | `/inventory/movements` | Historial / registrar movimiento |
 | PUT | `/inventory/{productId}/{warehouseId}` | Ajuste de stock (registra movimiento) |
+| GET | `/inventory/products-stock` | **Cross-tienda.** Lista paginada de productos con existencias por tienda embebidas. Cualquier rol autenticado; sin filtro de tienda; sin costos. `?search=&page=&per_page=` (máx 200). Respuesta: `{ data: [{ id, name, sku, image, stock: [{ store_id, store_name, phone, exhibicion, bodega }] }], pagination }`. Exclusivo de la pantalla "Existencias por Tienda". |
+| GET | `/inventory/by-product/{productId}` | **Cross-tienda.** Existencias de UN producto en todas las tiendas. Mismo alcance que `products-stock`. Respuesta: array de `InventoryItem` con warehouse.store. |
 
 ### Traslados (`TransferController`)
 
