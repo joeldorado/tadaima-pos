@@ -28,22 +28,48 @@ class InventoryController extends Controller
      * sin que el usuario tenga que seleccionar un producto primero.
      *
      * Query params:
-     *   ?search=    filtro por nombre / SKU / código de barras
-     *   ?per_page=  registros por página (default 50, max 200)
-     *   ?page=      página
+     *   ?search=              filtro por nombre / SKU / código de barras
+     *   ?per_page=            registros por página (default 50, max 200)
+     *   ?page=                página
+     *   ?primary_store_id=    ordena por el stock de exhibición de esta tienda
+     *   ?compare_store_id=    segunda tienda para ordenar por diferencia (primary - compare)
+     *   ?sort_dir=desc|asc    desc = primary tiene más primero (default), asc = compare tiene más
      */
     public function productsStock(Request $request): JsonResponse
     {
-        $perPage = min((int) $request->get('per_page', 50), 200);
+        $perPage        = min((int) $request->get('per_page', 50), 200);
+        $primaryStoreId = $request->integer('primary_store_id') ?: null;
+        $compareStoreId = $request->integer('compare_store_id') ?: null;
+        $sortDir        = $request->get('sort_dir', 'desc') === 'asc' ? 'asc' : 'desc';
 
-        $products = Product::query()
-            ->when($request->filled('search'), fn ($q) => $q->search($request->search))
+        $query = Product::query()
+            ->when($request->filled('search'), fn ($q) => $q->search($request->search));
+
+        // Ordenar por stock de una o dos tiendas usando subqueries con COALESCE.
+        // Productos sin registro en esa tienda cuentan como 0 (no se excluyen).
+        if ($primaryStoreId && $compareStoreId) {
+            $stockSql = 'SELECT COALESCE(SUM(i.quantity), 0) FROM inventory i
+                         JOIN warehouses w ON w.id = i.warehouse_id
+                         WHERE i.product_id = products.id AND w.store_id = ? AND w.type != \'bodega\'';
+            $query->orderByRaw(
+                "({$stockSql}) - ({$stockSql}) {$sortDir}",
+                [$primaryStoreId, $compareStoreId]
+            )->orderBy('name');
+        } elseif ($primaryStoreId) {
+            $stockSql = 'SELECT COALESCE(SUM(i.quantity), 0) FROM inventory i
+                         JOIN warehouses w ON w.id = i.warehouse_id
+                         WHERE i.product_id = products.id AND w.store_id = ? AND w.type != \'bodega\'';
+            $query->orderByRaw("({$stockSql}) {$sortDir}", [$primaryStoreId])->orderBy('name');
+        } else {
+            $query->orderBy('name');
+        }
+
+        $products = $query
             ->with([
                 'inventory' => fn ($q) => $q->with('warehouse:id,name,type,store_id'),
                 'inventory.warehouse.store:id,name,phone',
                 'images' => fn ($q) => $q->orderBy('sort_order')->limit(1),
             ])
-            ->orderBy('name')
             ->paginate($perPage);
 
         $data = $products->getCollection()->map(function (Product $product): array {
