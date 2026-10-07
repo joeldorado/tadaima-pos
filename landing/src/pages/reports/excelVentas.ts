@@ -90,7 +90,8 @@ function productSheet(
     const mangaHdrRow = r1.next + STACK_GAP;
     sectionHeader(sh, mangaHdrRow, 1, w, titles.manga, MANGA_HDR_COLOR);
     drawTableHeaders(sh, table, MANGA_SUB_COLOR, "Producto", mangaHdrRow + 1);
-    const r2 = drawProductTable(sh, table, mangaGroups, false, mangaHdrRow + 2);
+    const mangaTable = { ...table, totalText: `${table.totalText} MANGA` };
+    const r2 = drawProductTable(sh, mangaTable, mangaGroups, false, mangaHdrRow + 2);
 
     // Renglón "TOTAL FINAL" que combina ambas sub-tablas
     const grandRow = r2.next + 1;
