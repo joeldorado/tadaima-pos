@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Models\CashRegisterSession;
 use App\Models\Inventory;
 use App\Models\Sale;
+use App\Support\DateRange;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -61,8 +63,8 @@ class ReportsController extends Controller
 
         $base = Sale::query()
             ->where('status', Sale::STATUS_COMPLETED)
-            ->whereDate('sold_at', '>=', $from)
-            ->whereDate('sold_at', '<=', $to)
+            ->where('sold_at', '>=', DateRange::fromUtc($from))
+            ->where('sold_at', '<=', DateRange::toUtc($to))
             ->when($storeId, fn ($q) => $q->where('store_id', $storeId))
             ->when($userId,  fn ($q) => $q->where('user_id',  $userId));
 
@@ -80,8 +82,8 @@ class ReportsController extends Controller
             ->join('sales', 'sales.id', '=', 'payments.sale_id')
             ->join('payment_methods', 'payment_methods.id', '=', 'payments.payment_method_id')
             ->where('sales.status', Sale::STATUS_COMPLETED)
-            ->whereDate('sales.sold_at', '>=', $from)
-            ->whereDate('sales.sold_at', '<=', $to)
+            ->where('sales.sold_at', '>=', DateRange::fromUtc($from))
+            ->where('sales.sold_at', '<=', DateRange::toUtc($to))
             ->when($storeId, fn ($q) => $q->where('sales.store_id', $storeId))
             ->when($userId,  fn ($q) => $q->where('sales.user_id',  $userId))
             ->selectRaw('payment_methods.name as payment_method, COUNT(DISTINCT payments.sale_id) as count, COALESCE(SUM(payments.amount), 0) as amount')
@@ -90,11 +92,18 @@ class ReportsController extends Controller
             ->get();
 
         // ── Daily breakdown ───────────────────────────────────────────────────
-        $byDay = (clone $base)->selectRaw(
-            "date(sold_at) as date, COUNT(*) as count, COALESCE(SUM(total), 0) as amount"
-        )->groupByRaw('date(sold_at)')
-         ->orderBy('date')
-         ->get();
+        $byDayRaw = (clone $base)->selectRaw(
+            "sold_at, total"
+        )->get();
+        $tz = DateRange::timezone();
+        $byDay = $byDayRaw->groupBy(fn ($r) => Carbon::parse($r->sold_at)->setTimezone($tz)->toDateString())
+            ->map(fn ($rows, $date) => (object)[
+                'date'   => $date,
+                'count'  => $rows->count(),
+                'amount' => $rows->sum('total'),
+            ])
+            ->sortKeys()
+            ->values();
 
         // ── By store (only when no store filter) ──────────────────────────────
         $byStore = null;
@@ -110,21 +119,28 @@ class ReportsController extends Controller
         // ── Pre-sale payments (esquema nuevo) ───────────────────────────────
         $preSaleSummary = DB::table('pre_sale_order_payments')
             ->join('pre_sale_orders', 'pre_sale_orders.id', '=', 'pre_sale_order_payments.pre_sale_order_id')
-            ->whereDate('pre_sale_order_payments.created_at', '>=', $from)
-            ->whereDate('pre_sale_order_payments.created_at', '<=', $to)
+            ->where('pre_sale_order_payments.created_at', '>=', DateRange::fromUtc($from))
+            ->where('pre_sale_order_payments.created_at', '<=', DateRange::toUtc($to))
             ->when($storeId, fn ($q) => $q->where('pre_sale_orders.store_id', $storeId))
             ->selectRaw('COUNT(*) as total_count, COALESCE(SUM(pre_sale_order_payments.amount), 0) as total_amount')
             ->first();
 
-        $preSaleByDay = DB::table('pre_sale_order_payments')
+        $preSaleByDayRaw = DB::table('pre_sale_order_payments')
             ->join('pre_sale_orders', 'pre_sale_orders.id', '=', 'pre_sale_order_payments.pre_sale_order_id')
-            ->whereDate('pre_sale_order_payments.created_at', '>=', $from)
-            ->whereDate('pre_sale_order_payments.created_at', '<=', $to)
+            ->where('pre_sale_order_payments.created_at', '>=', DateRange::fromUtc($from))
+            ->where('pre_sale_order_payments.created_at', '<=', DateRange::toUtc($to))
             ->when($storeId, fn ($q) => $q->where('pre_sale_orders.store_id', $storeId))
-            ->selectRaw("date(pre_sale_order_payments.created_at) as date, COUNT(*) as count, COALESCE(SUM(pre_sale_order_payments.amount), 0) as amount")
-            ->groupByRaw('date(pre_sale_order_payments.created_at)')
-            ->orderBy('date')
+            ->selectRaw("pre_sale_order_payments.created_at, pre_sale_order_payments.amount")
             ->get();
+        $preSaleByDay = $preSaleByDayRaw
+            ->groupBy(fn ($r) => Carbon::parse($r->created_at)->setTimezone($tz)->toDateString())
+            ->map(fn ($rows, $date) => (object)[
+                'date'   => $date,
+                'count'  => $rows->count(),
+                'amount' => $rows->sum('amount'),
+            ])
+            ->sortKeys()
+            ->values();
 
         return $this->success([
             'period'  => ['from' => $from, 'to' => $to],
@@ -251,8 +267,8 @@ class ReportsController extends Controller
         // Rango en zona del NEGOCIO → UTC (mismo patrón que ventas). Antes
         // whereDate comparaba la fecha UTC del timestamp: una caja abierta a
         // las 7pm Tijuana (= 02:00 UTC del día sig.) se salía del filtro.
-        $fromUtc = \App\Support\DateRange::fromUtc($from);
-        $toUtc   = \App\Support\DateRange::toUtc($to);
+        $fromUtc = DateRange::fromUtc($from);
+        $toUtc   = DateRange::toUtc($to);
 
         $sessions = CashRegisterSession::with(['register.store', 'user'])
             // Cortes con `local_date` (fecha del dispositivo del cajero,
