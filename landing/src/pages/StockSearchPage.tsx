@@ -291,41 +291,38 @@ export function StockSearchPage() {
 
       {/* Filtros de comparación entre tiendas */}
       {stores.length > 1 && (
-        <div className="flex flex-wrap items-center gap-2 mb-4 p-3 rounded-2xl"
-          style={{ background: 'var(--td-card-bg)', border: '1px solid var(--td-card-border)' }}>
-          <span className="text-[10px] font-black uppercase tracking-wider shrink-0" style={{ color: 'var(--td-text-lo)' }}>Ordenar por tienda</span>
+        <div className="flex flex-wrap items-center gap-1.5 mb-4">
           <select
             value={primaryStoreId}
             onChange={e => { setPrimaryStoreId(e.target.value ? Number(e.target.value) : ''); setCompareStoreId('') }}
-            className="flex-1 min-w-[120px] rounded-xl px-3 py-1.5 text-xs outline-none"
+            className="rounded-xl px-2.5 py-1.5 text-xs outline-none"
             style={{ background: 'var(--td-input-bg)', border: '1px solid var(--td-input-border)', color: primaryStoreId ? 'var(--td-text-hi)' : 'var(--td-text-lo)' }}>
-            <option value="">— Tienda A</option>
-            {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            <option value="">Ordenar por tienda…</option>
+            {stores.map(s => <option key={s.id} value={s.id}>Tienda {s.name}</option>)}
           </select>
           {primaryStoreId && (
             <select
               value={compareStoreId}
               onChange={e => setCompareStoreId(e.target.value ? Number(e.target.value) : '')}
-              className="flex-1 min-w-[120px] rounded-xl px-3 py-1.5 text-xs outline-none"
+              className="rounded-xl px-2.5 py-1.5 text-xs outline-none"
               style={{ background: 'var(--td-input-bg)', border: '1px solid var(--td-input-border)', color: compareStoreId ? 'var(--td-text-hi)' : 'var(--td-text-lo)' }}>
-              <option value="">— Comparar con (opcional)</option>
-              {stores.filter(s => s.id !== primaryStoreId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              <option value="">vs. otra tienda…</option>
+              {stores.filter(s => s.id !== primaryStoreId).map(s => <option key={s.id} value={s.id}>Tienda {s.name}</option>)}
             </select>
           )}
           {primaryStoreId && (
             <button
               onClick={() => setSortDir(d => d === 'desc' ? 'asc' : 'desc')}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors shrink-0"
-              style={{ background: 'var(--td-surface-muted)', border: '1px solid var(--td-panel-border)', color: 'var(--td-text-md)' }}
-              title={sortDir === 'desc' ? 'Mostrando: Tienda A tiene más primero' : 'Mostrando: Tienda A tiene menos primero'}>
-              {sortDir === 'desc' ? <ArrowDown size={13} /> : <ArrowUp size={13} />}
-              {sortDir === 'desc' ? 'Mayor primero' : 'Menor primero'}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-colors"
+              style={{ background: 'var(--td-surface-muted)', border: '1px solid var(--td-panel-border)', color: 'var(--td-text-md)' }}>
+              {sortDir === 'desc' ? <ArrowDown size={12} /> : <ArrowUp size={12} />}
+              {sortDir === 'desc' ? 'Mayor' : 'Menor'}
             </button>
           )}
           {primaryStoreId && (
             <button onClick={() => { setPrimaryStoreId(''); setCompareStoreId(''); setSortDir('desc') }}
-              className="p-1.5 rounded-lg transition-colors hover:bg-[var(--td-hover-bg)]" title="Quitar filtro de tienda">
-              <X size={13} style={{ color: 'var(--td-text-lo)' }} />
+              className="p-1.5 rounded-lg transition-colors hover:bg-[var(--td-hover-bg)]" title="Quitar filtro">
+              <X size={12} style={{ color: 'var(--td-text-lo)' }} />
             </button>
           )}
         </div>
