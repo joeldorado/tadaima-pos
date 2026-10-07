@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { Search, PackageSearch, Loader2, ChevronRight, X, Scan, Store, Phone, MessageCircle, Package, ArrowDown, ArrowUp } from 'lucide-react'
+import { Search, PackageSearch, Loader2, ChevronRight, X, Scan, Store, Phone, MessageCircle, Package, ArrowDown } from 'lucide-react'
 import { useAuth } from '@tadaima/auth'
 import type { PreSaleCatalog } from '@tadaima/api'
 import type { ProductStockItem } from '@tadaima/api'
@@ -210,9 +210,12 @@ export function StockSearchPage() {
 
   const myStoreId = user?.store_id ?? undefined
 
-  // Lista de tiendas para los selectores (extraída de los datos ya cargados o del hook)
+  // Lista de tiendas para los selectores
   const { data: storesData } = useStoresQuery({ active: true })
   const stores = storesData ?? []
+
+  const primaryStoreName = stores.find(s => s.id === primaryStoreId)?.name ?? ''
+  const compareStoreName = stores.find(s => s.id === compareStoreId)?.name ?? ''
 
   // Lista paginada con stock embebido (endpoint nuevo)
   const stockParams = {
@@ -314,9 +317,12 @@ export function StockSearchPage() {
             <button
               onClick={() => setSortDir(d => d === 'desc' ? 'asc' : 'desc')}
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-colors"
-              style={{ background: 'var(--td-surface-muted)', border: '1px solid var(--td-panel-border)', color: 'var(--td-text-md)' }}>
-              {sortDir === 'desc' ? <ArrowDown size={12} /> : <ArrowUp size={12} />}
-              {sortDir === 'desc' ? 'Mayor' : 'Menor'}
+              style={{ background: 'var(--td-surface-muted)', border: '1px solid var(--td-panel-border)', color: 'var(--td-text-md)' }}
+              title={sortDir === 'desc' ? `Primero los que más tiene ${primaryStoreName}` : `Primero los que más tiene ${compareStoreName || primaryStoreName}`}>
+              <ArrowDown size={12} />
+              {sortDir === 'desc'
+                ? `Más en ${primaryStoreName}`
+                : `Más en ${compareStoreName || primaryStoreName}`}
             </button>
           )}
           {primaryStoreId && (
