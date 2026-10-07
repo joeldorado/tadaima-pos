@@ -9,6 +9,7 @@ use App\Models\Transfer;
 use App\Models\User;
 use App\Models\Warehouse;
 use App\Services\TransferService;
+use App\Support\DateRange;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -74,8 +75,8 @@ class TransferController extends Controller
             ->when($request->filled('from_warehouse_id'), fn ($q) => $q->where('from_warehouse_id', $request->from_warehouse_id))
             ->when($request->filled('to_warehouse_id'),   fn ($q) => $q->where('to_warehouse_id',   $request->to_warehouse_id))
             ->when($request->filled('status'),             fn ($q) => $q->where('status',             $request->status))
-            ->when($request->filled('from'),               fn ($q) => $q->whereDate('created_at', '>=', $request->from))
-            ->when($request->filled('to'),                 fn ($q) => $q->whereDate('created_at', '<=', $request->to))
+            ->when($request->filled('from'),               fn ($q) => $q->where('created_at', '>=', DateRange::fromUtc((string) $request->from)))
+            ->when($request->filled('to'),                 fn ($q) => $q->where('created_at', '<=', DateRange::toUtc((string) $request->to)))
             ->latest();
 
         // RBAC por tienda — gerente/cajero solo ven transferencias que tocan su tienda.
