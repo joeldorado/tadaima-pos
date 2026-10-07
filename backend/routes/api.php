@@ -296,11 +296,15 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     // ── Inventory ─────────────────────────────────────────────────────────────
     // IMPORTANTE: rutas fijas antes del patrón wildcard {productId}/{warehouseId}
     Route::prefix('inventory')->group(function () {
-        Route::get('/',                         [InventoryController::class, 'index']);
-        Route::get('movements',                 [InventoryController::class, 'movements']);
-        Route::post('movements',                [InventoryController::class, 'storeMovement']);
-        Route::post('move',                     [InventoryController::class, 'move']);
-        Route::put('{productId}/{warehouseId}', [InventoryController::class, 'update']);
+        Route::get('/',                            [InventoryController::class, 'index']);
+        Route::get('movements',                    [InventoryController::class, 'movements']);
+        // Cross-tienda sin filtro de rol — solo cantidades + contacto (sin costos).
+        // Usados por la pantalla "Existencias por Tienda"; no afectan otros flujos.
+        Route::get('products-stock',               [InventoryController::class, 'productsStock']);
+        Route::get('by-product/{productId}',       [InventoryController::class, 'byProduct']);
+        Route::post('movements',                   [InventoryController::class, 'storeMovement']);
+        Route::post('move',                        [InventoryController::class, 'move']);
+        Route::put('{productId}/{warehouseId}',    [InventoryController::class, 'update']);
     });
 
     // ── Terminals ─────────────────────────────────────────────────────────────

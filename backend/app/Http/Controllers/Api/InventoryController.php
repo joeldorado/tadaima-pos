@@ -10,6 +10,7 @@ use App\Http\Resources\InventoryMovementResource;
 use App\Http\Resources\InventoryResource;
 use App\Models\Inventory;
 use App\Models\InventoryMovement;
+use App\Models\Product;
 use App\Models\SystemLog;
 use App\Models\Warehouse;
 use Illuminate\Http\JsonResponse;
@@ -18,6 +19,128 @@ use Illuminate\Support\Facades\DB;
 
 class InventoryController extends Controller
 {
+    /**
+     * GET /inventory/products-stock
+     *
+     * Lista paginada de productos con sus existencias desglosadas por tienda.
+     * Cualquier usuario autenticado — sin filtro de tienda del usuario ni costos.
+     * Pensado para la pantalla "Existencias por Tienda": carga el listado completo
+     * sin que el usuario tenga que seleccionar un producto primero.
+     *
+     * Query params:
+     *   ?search=    filtro por nombre / SKU / código de barras
+     *   ?per_page=  registros por página (default 50, max 200)
+     *   ?page=      página
+     */
+    public function productsStock(Request $request): JsonResponse
+    {
+        $perPage = min((int) $request->get('per_page', 50), 200);
+
+        $products = Product::query()
+            ->when($request->filled('search'), fn ($q) => $q->search($request->search))
+            ->with([
+                'inventory' => fn ($q) => $q->with('warehouse:id,name,type,store_id'),
+                'inventory.warehouse.store:id,name,phone',
+                'images' => fn ($q) => $q->orderBy('sort_order')->limit(1),
+            ])
+            ->orderBy('name')
+            ->paginate($perPage);
+
+        $data = $products->getCollection()->map(function (Product $product): array {
+            // Agrupa bodegas por tienda, suma exhibición y bodega por separado.
+            $byStore = [];
+            foreach ($product->inventory as $inv) {
+                $wh    = $inv->warehouse;
+                $store = $wh?->store;
+                if (! $store) {
+                    continue;
+                }
+                $sid = $store->id;
+                if (! isset($byStore[$sid])) {
+                    $byStore[$sid] = [
+                        'store_id'   => $sid,
+                        'store_name' => $store->name,
+                        'phone'      => $store->phone,
+                        'exhibicion' => 0,
+                        'bodega'     => 0,
+                    ];
+                }
+                if ($wh->type === 'bodega') {
+                    $byStore[$sid]['bodega'] += (float) $inv->quantity;
+                } else {
+                    $byStore[$sid]['exhibicion'] += (float) $inv->quantity;
+                }
+            }
+
+            // Ordena por total descendente (la tienda con más stock primero).
+            usort($byStore, fn ($a, $b) => ($b['exhibicion'] + $b['bodega']) <=> ($a['exhibicion'] + $a['bodega']));
+
+            return [
+                'id'    => $product->id,
+                'name'  => $product->name,
+                'sku'   => $product->sku,
+                'image' => $product->images->first()?->url ?? null,
+                'stock' => array_values($byStore),
+            ];
+        });
+
+        return $this->success([
+            'data'       => $data,
+            'pagination' => [
+                'total'        => $products->total(),
+                'per_page'     => $products->perPage(),
+                'current_page' => $products->currentPage(),
+                'last_page'    => $products->lastPage(),
+            ],
+        ]);
+    }
+
+    /**
+     * GET /inventory/by-product/{productId}
+     *
+     * Existencias cross-tienda de un producto para la pantalla "Buscar en Tiendas".
+     * Cualquier usuario autenticado puede consultar — NO se filtra por tienda del
+     * usuario. Solo devuelve cantidad, bodega y datos de contacto de la tienda:
+     * sin costos ni información financiera.
+     */
+    public function byProduct(Request $request, int $productId): JsonResponse
+    {
+        if (! Product::whereKey($productId)->exists()) {
+            return $this->error('Producto no encontrado.', 404);
+        }
+
+        $items = Inventory::query()
+            ->with(['product:id,name,sku', 'warehouse:id,name,type,store_id', 'warehouse.store:id,name,phone'])
+            ->where('product_id', $productId)
+            ->orderBy('warehouse_id')
+            ->get();
+
+        // Devuelve solo los campos que necesita la UI (sin costo, sin datos internos).
+        $data = $items->map(fn ($inv) => [
+            'id'           => $inv->id,
+            'product_id'   => $inv->product_id,
+            'warehouse_id' => $inv->warehouse_id,
+            'quantity'     => $inv->quantity,
+            'product' => $inv->product ? [
+                'id'  => $inv->product->id,
+                'name' => $inv->product->name,
+                'sku'  => $inv->product->sku,
+            ] : null,
+            'warehouse' => $inv->warehouse ? [
+                'id'   => $inv->warehouse->id,
+                'name' => $inv->warehouse->name,
+                'type' => $inv->warehouse->type,
+                'store' => $inv->warehouse->store ? [
+                    'id'    => $inv->warehouse->store->id,
+                    'name'  => $inv->warehouse->store->name,
+                    'phone' => $inv->warehouse->store->phone,
+                ] : null,
+            ] : null,
+        ]);
+
+        return $this->success($data);
+    }
+
     /**
      * GET /inventory
      *
