@@ -4,6 +4,28 @@
 
 ---
 
+### Sesión 2026-10-07 (2) — Reportes por día-negocio + Excel 5 pestañas + comparar stock (Ruben, PR #39) — rev tadaima-00056-siw
+
+**Pedido Joel:** subir a prod los cambios nuevos de Ruben en `develop`, con rollback.
+
+- **PR #39 `develop → main`** (10 commits de Ruben, sin migraciones):
+  - **Fechas en día-negocio Tijuana:** `GET /reports/sales` (ventas, pagos, preventas y desglose
+    diario), traslados y apartados usan `DateRange::fromUtc/toUtc` en vez de `whereDate` (UTC).
+    Antes una venta de la tarde-noche caía en el día siguiente del reporte.
+  - **Excel de ventas:** 5 pestañas, sub-tabla Manga en Efectivo/Tarjeta/Transferencias
+    ("TOTAL XX MANGA"), Costo/Utilidad en Resumen.
+  - **Existencias por Tienda:** comparar stock entre dos tiendas (`primary_store_id`,
+    `compare_store_id`, `sort_dir`; orden por exhibición con bindings).
+
+**Verificado:** SQLite 712/712; Postgres 17 local: pruebas nuevas OK (las 7 fallas de
+CashReportRange / PurgeNoStock / CategoryPivotRepair son preexistentes, fallan igual en `main`);
+vitest 553/553. Candidata sin tráfico: index y `/tadaimaus/` 200, endpoints 401 sin sesión, bundle
+con los cambios. Luego se promovió al 100%.
+
+**Deploy:** tadaima-00056-siw (rollback `tadaima-00054-sev`). Pedir Ctrl+Shift+R / incógnito por la caché PWA.
+
+---
+
 ### Sesión 2026-10-07 (2) — Existencias por Tienda: filtros de comparación entre tiendas — pendiente deploy
 
 **Pedido Ruben:** poder ver qué productos tiene una tienda con mucho stock mientras la otra tiene poco
