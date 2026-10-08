@@ -431,8 +431,8 @@ export function StockSearchPage() {
             ))
           )}
 
-          {/* Preventas al final */}
-          {matchedCatalogs.map(cat => {
+          {/* Preventas al final — solo cuando no hay filtro de stock activo */}
+          {!primaryStoreId && matchedCatalogs.map(cat => {
             const isSel = selectedId?.type === 'presale' && selectedId.id === cat.id
             return (
               <button key={`presale-${cat.id}`} onClick={() => setSelectedId({ type: 'presale', id: cat.id })}
