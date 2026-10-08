@@ -71,6 +71,28 @@ class SalesController extends Controller
             ->when($request->status,  fn ($q) => $q->where('status', $request->status))
             ->when($fromUtc, fn ($q) => $q->where('sold_at', '>=', $fromUtc))
             ->when($toUtc,   fn ($q) => $q->where('sold_at', '<=', $toUtc))
+            ->when($request->payment_method_filter, function ($q) use ($request) {
+                // Filtra por método de pago server-side. La clasificación
+                // espeja classifyMethodName() del frontend (paymentFilter.ts).
+                // whereHas usa el nombre de la tabla sin alias.
+                $f = $request->payment_method_filter;
+                $col = "LOWER(COALESCE(payment_methods.name, ''))";
+                $cashCond = "({$col} LIKE '%efectivo%' OR {$col} LIKE '%dolar%' OR {$col} LIKE '%dólar%')";
+                $cardCond = "{$col} LIKE '%tarjeta%'";
+                $transferCond = "{$col} LIKE '%transfer%'";
+                match ($f) {
+                    'efectivo'      => $q->whereHas('payments.paymentMethod', fn ($p) => $p->whereRaw($cashCond)),
+                    'tarjeta'       => $q->whereHas('payments.paymentMethod', fn ($p) => $p->whereRaw($cardCond)),
+                    'transferencia' => $q->whereHas('payments.paymentMethod', fn ($p) => $p->whereRaw($transferCond)),
+                    'dolares'       => $q->where(fn ($dq) =>
+                        $dq->where('cash_received_usd', '>', 0)
+                           ->orWhereHas('payments.paymentMethod', fn ($p) => $p->whereRaw("{$col} LIKE '%dolar%' OR {$col} LIKE '%dólar%'"))
+                    ),
+                    'mixto' => $q->whereHas('payments', fn ($p) => $p->whereHas('paymentMethod', fn ($m) => $m->whereRaw($cashCond)))
+                                 ->whereHas('payments', fn ($p) => $p->whereHas('paymentMethod', fn ($m) => $m->whereRaw("NOT ($cashCond)"))),
+                    default => null,
+                };
+            })
             ->latest('sold_at');
 
         // Scope por rol — no permitir que un cajero/gerente vea más de lo suyo.

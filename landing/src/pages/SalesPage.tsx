@@ -2278,6 +2278,12 @@ export function SalesPage() {
   // otros cajeros). Sin whole_store el backend lo forzaría a sus propias ventas.
   if (isCashier) salesParams.whole_store = true;
   if (filterCashierId) salesParams.user_id = filterCashierId;
+  // Filtro de método de pago server-side (2026-10-08): antes era client-side
+  // sobre los primeros 100 resultados, así que con rangos grandes los métodos
+  // como Transferencia parecían no tener ventas. "varios" no filtra ventas.
+  if (filterMethod !== "all" && filterMethod !== "varios") {
+    salesParams.payment_method_filter = filterMethod;
+  }
 
   // Incluimos delivered+expired (además de pending/ready) para alimentar las
   // tablas "Preventa liquidación" y "Preventa vencidas" del Reporte del Día, y
