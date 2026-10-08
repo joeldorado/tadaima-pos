@@ -164,20 +164,25 @@ describe("Excel de Ventas en pestañas", () => {
     expect(result(pre, row.row, row.col + 4)).toBe(1000);
   });
 
-  it("Resumen liga los TOTAL FINAL de cada método y calcula Total Bruto (sin costos: col C)", () => {
+  it("Resumen muestra desglose regular+manga por método con totales y TOTALES FINALES (sin costos)", () => {
     const res = sheet(buildBook(), "Resumen");
-    // Sin canViewCost: venta en col 3 (C); referencia al TOTAL FINAL de cada pestaña
+    // Encabezados de bloque por método
+    expect(() => find(res, "EFECTIVO")).not.toThrow();
+    expect(() => find(res, "TARJETA")).not.toThrow();
+    expect(() => find(res, "TRANSFERENCIAS")).not.toThrow();
+    // Filas de regular y manga desglosadas
+    expect(() => find(res, "Efectivo:")).not.toThrow();
+    expect(() => find(res, "Efectivo Manga:")).not.toThrow();
+    expect(() => find(res, "Tarjeta:")).not.toThrow();
+    expect(() => find(res, "Tarjeta Manga:")).not.toThrow();
+    // Egresos y Total efectivo bajo el bloque de Efectivo
+    expect(() => find(res, "Egresos")).not.toThrow();
+    expect(() => find(res, "Total efectivo")).not.toThrow();
+    // TOTALES FINALES al pie
+    expect(() => find(res, "TOTALES FINALES:")).not.toThrow();
+    // Sin costos: col 3 (C) es Venta, cols Costo/Utilidad no aparecen
     const ef = find(res, "Efectivo:");
-    expect(formula(res, ef.row, 3)).toMatch(/^'Efectivo'!C\d+$/);
-    expect(result(res, ef.row, 3)).toBe(390); // TOTAL FINAL EFECTIVO (regulares + manga)
-    expect(result(res, find(res, "Tarjeta:").row, 3)).toBe(250); // TOTAL FINAL TARJETA
-    expect(result(res, find(res, "Transferencias:").row, 3)).toBe(200);
-    const bruto = find(res, "Total Bruto:");
-    expect(result(res, bruto.row, 3)).toBe(390 + 250 + 200);
-    const fin = find(res, "TOTAL FINAL:");
-    expect(formula(res, fin.row, 3)).toMatch(/C\d+-C\d+/);
-    expect(() => find(res, "Efectivo Manga:")).toThrow();
-    expect(() => find(res, "Tarjeta Manga:")).toThrow();
+    expect(result(res, ef.row, 3)).toBe(90); // regulares efectivo (manga va en su propia fila)
   });
 
   it("Resumen trae descuentos y aumentos por método y Egresos", () => {
@@ -197,7 +202,7 @@ describe("Excel de Ventas en pestañas", () => {
     })));
   });
 
-  it("con costos: Resumen muestra Costo/Venta/Utilidad por método (cols C/D/E) referenciando TOTAL FINAL", () => {
+  it("con costos: Resumen muestra Costo/Venta/Utilidad por método con desglose regular+manga", () => {
     const wb = buildBook(true);
     // Cada pestaña tiene columna Utilidad con fórmula en sub-tabla de regulares
     const ef = sheet(wb, "Efectivo");
@@ -206,14 +211,23 @@ describe("Excel de Ventas en pestañas", () => {
     expect(formula(ef, utilHeader.row + 1, utilHeader.col)).toMatch(/^[A-Z]+\d+-[A-Z]+\d+$/);
     // TOTAL FINAL EFECTIVO existe (combina regulares + manga)
     expect(() => find(ef, "TOTAL FINAL EFECTIVO")).not.toThrow();
-    // Resumen: C=Costo, D=Venta, E=Utilidad → referencias al TOTAL FINAL de cada pestaña
+    // Resumen: filas desglosadas por método (regular + manga) y totales finales
     const res = sheet(wb, "Resumen");
-    const ef2 = find(res, "Efectivo:");
-    expect(formula(res, ef2.row, 3)).toMatch(/^'Efectivo'!.*$/); // costo en col C
-    expect(formula(res, ef2.row, 4)).toMatch(/^'Efectivo'!.*$/); // venta en col D
-    expect(formula(res, ef2.row, 5)).toMatch(/^'Efectivo'!.*$/); // util en col E
-    const fin = find(res, "TOTAL FINAL:");
-    expect(formula(res, fin.row, 5)).toMatch(/E\d+.*-.*\d+/);
+    // Encabezados de bloque presentes
+    expect(() => find(res, "EFECTIVO")).not.toThrow();
+    expect(() => find(res, "TARJETA")).not.toThrow();
+    expect(() => find(res, "TRANSFERENCIAS")).not.toThrow();
+    // Filas de método regular y manga presentes
+    expect(() => find(res, "Efectivo:")).not.toThrow();
+    expect(() => find(res, "Efectivo Manga:")).not.toThrow();
+    // Egresos y Total efectivo presentes
+    expect(() => find(res, "Egresos")).not.toThrow();
+    expect(() => find(res, "Total efectivo")).not.toThrow();
+    // TOTALES FINALES al pie
+    expect(() => find(res, "TOTALES FINALES:")).not.toThrow();
+    // Utilidad Total efectivo tiene fórmula que resta el total de egresos
+    const totalEf = find(res, "Total efectivo");
+    expect(formula(res, totalEf.row, 5)).toMatch(/E\d+-[A-Z]\d+/);
   });
 });
 
