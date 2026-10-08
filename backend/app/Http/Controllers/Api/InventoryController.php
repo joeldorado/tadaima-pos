@@ -34,6 +34,8 @@ class InventoryController extends Controller
      *   ?primary_store_id=    ordena por el stock de exhibición de esta tienda
      *   ?compare_store_id=    segunda tienda para ordenar por diferencia (primary - compare)
      *   ?sort_dir=desc|asc    desc = primary tiene más primero (default), asc = compare tiene más
+     *   ?primary_stock=0|1    0 = solo sin stock en tienda primaria, 1 = solo con stock ≥ 1
+     *   ?compare_stock=0|1|2|3+  filtra por stock exacto en tienda de comparación (3+ = ≥ 3)
      */
     public function productsStock(Request $request): JsonResponse
     {
@@ -41,25 +43,40 @@ class InventoryController extends Controller
         $primaryStoreId = $request->integer('primary_store_id') ?: null;
         $compareStoreId = $request->integer('compare_store_id') ?: null;
         $sortDir        = $request->get('sort_dir', 'desc') === 'asc' ? 'asc' : 'desc';
+        $primaryStock   = $request->filled('primary_stock') ? $request->get('primary_stock') : null;
+        $compareStock   = $request->filled('compare_stock') ? $request->get('compare_stock') : null;
+
+        // Subquery reutilizable: stock de exhibición de un producto en una tienda dada.
+        $stockSubSql = 'SELECT COALESCE(SUM(i.quantity), 0) FROM inventory i
+                        JOIN warehouses w ON w.id = i.warehouse_id
+                        WHERE i.product_id = products.id AND w.store_id = ? AND w.type != \'bodega\'';
 
         $query = Product::query()
-            ->when($request->filled('search'), fn ($q) => $q->search($request->search));
+            ->when($request->filled('search'), fn ($q) => $q->search($request->search))
+            ->when($primaryStoreId && $primaryStock !== null, function ($q) use ($stockSubSql, $primaryStoreId, $primaryStock) {
+                if ($primaryStock === '0') {
+                    $q->whereRaw("({$stockSubSql}) = 0", [$primaryStoreId]);
+                } else {
+                    $q->whereRaw("({$stockSubSql}) >= 1", [$primaryStoreId]);
+                }
+            })
+            ->when($compareStoreId && $compareStock !== null, function ($q) use ($stockSubSql, $compareStoreId, $compareStock) {
+                if ($compareStock === '3+') {
+                    $q->whereRaw("({$stockSubSql}) >= 3", [$compareStoreId]);
+                } else {
+                    $q->whereRaw("({$stockSubSql}) = ?", [$compareStoreId, (int) $compareStock]);
+                }
+            });
 
         // Ordenar por stock de una o dos tiendas usando subqueries con COALESCE.
         // Productos sin registro en esa tienda cuentan como 0 (no se excluyen).
         if ($primaryStoreId && $compareStoreId) {
-            $stockSql = 'SELECT COALESCE(SUM(i.quantity), 0) FROM inventory i
-                         JOIN warehouses w ON w.id = i.warehouse_id
-                         WHERE i.product_id = products.id AND w.store_id = ? AND w.type != \'bodega\'';
             $query->orderByRaw(
-                "({$stockSql}) - ({$stockSql}) {$sortDir}",
+                "({$stockSubSql}) - ({$stockSubSql}) {$sortDir}",
                 [$primaryStoreId, $compareStoreId]
             )->orderBy('name');
         } elseif ($primaryStoreId) {
-            $stockSql = 'SELECT COALESCE(SUM(i.quantity), 0) FROM inventory i
-                         JOIN warehouses w ON w.id = i.warehouse_id
-                         WHERE i.product_id = products.id AND w.store_id = ? AND w.type != \'bodega\'';
-            $query->orderByRaw("({$stockSql}) {$sortDir}", [$primaryStoreId])->orderBy('name');
+            $query->orderByRaw("({$stockSubSql}) {$sortDir}", [$primaryStoreId])->orderBy('name');
         } else {
             $query->orderBy('name');
         }

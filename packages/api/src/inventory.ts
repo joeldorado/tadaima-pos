@@ -47,6 +47,10 @@ export interface ProductsStockParams {
   compare_store_id?: number
   /** desc = primary tiene más primero (default), asc = compare tiene más primero. */
   sort_dir?: 'asc' | 'desc'
+  /** Filtra por stock en la tienda primaria: '0' = sin stock, '1' = con stock ≥ 1. */
+  primary_stock?: '0' | '1'
+  /** Filtra por stock exacto en la tienda de comparación: '0'|'1'|'2'|'3+'. */
+  compare_stock?: '0' | '1' | '2' | '3+'
 }
 
 export interface ProductsStockResponse {

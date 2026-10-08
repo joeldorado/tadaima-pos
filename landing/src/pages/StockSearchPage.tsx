@@ -198,6 +198,8 @@ export function StockSearchPage() {
   const [primaryStoreId, setPrimaryStoreId] = useState<number | ''>('')
   const [compareStoreId, setCompareStoreId] = useState<number | ''>('')
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
+  const [primaryStock, setPrimaryStock] = useState<'0' | '1' | ''>('')
+  const [compareStock, setCompareStock] = useState<'0' | '1' | '2' | '3+' | ''>('')
 
   // Debounce 300ms para el API de lista
   useEffect(() => {
@@ -206,7 +208,7 @@ export function StockSearchPage() {
   }, [search])
 
   // Resetear página al cambiar filtros de tienda
-  useEffect(() => { setPage(1) }, [primaryStoreId, compareStoreId, sortDir])
+  useEffect(() => { setPage(1) }, [primaryStoreId, compareStoreId, sortDir, primaryStock, compareStock])
 
   const myStoreId = user?.store_id ?? undefined
 
@@ -225,6 +227,8 @@ export function StockSearchPage() {
     ...(primaryStoreId ? { primary_store_id: primaryStoreId as number } : {}),
     ...(primaryStoreId && compareStoreId ? { compare_store_id: compareStoreId as number } : {}),
     ...(primaryStoreId ? { sort_dir: sortDir } : {}),
+    ...(primaryStoreId && primaryStock !== '' ? { primary_stock: primaryStock as '0' | '1' } : {}),
+    ...(compareStoreId && compareStock !== '' ? { compare_stock: compareStock as '0' | '1' | '2' | '3+' } : {}),
   }
   const { data: listData, isFetching: isFetchingList } = useProductsStockQuery(stockParams)
 
@@ -297,7 +301,7 @@ export function StockSearchPage() {
         <div className="flex flex-wrap items-center gap-1.5 mb-4">
           <select
             value={primaryStoreId}
-            onChange={e => { setPrimaryStoreId(e.target.value ? Number(e.target.value) : ''); setCompareStoreId('') }}
+            onChange={e => { setPrimaryStoreId(e.target.value ? Number(e.target.value) : ''); setCompareStoreId(''); setPrimaryStock(''); setCompareStock('') }}
             className="rounded-xl px-2.5 py-1.5 text-xs outline-none"
             style={{ background: 'var(--td-input-bg)', border: '1px solid var(--td-input-border)', color: primaryStoreId ? 'var(--td-text-hi)' : 'var(--td-text-lo)' }}>
             <option value="">Ordenar por tienda…</option>
@@ -305,12 +309,36 @@ export function StockSearchPage() {
           </select>
           {primaryStoreId && (
             <select
+              value={primaryStock}
+              onChange={e => setPrimaryStock(e.target.value as '0' | '1' | '')}
+              className="rounded-xl px-2.5 py-1.5 text-xs outline-none"
+              style={{ background: 'var(--td-input-bg)', border: '1px solid var(--td-input-border)', color: primaryStock !== '' ? 'var(--td-text-hi)' : 'var(--td-text-lo)' }}>
+              <option value="">Stock {primaryStoreName}…</option>
+              <option value="0">Sin stock (= 0)</option>
+              <option value="1">Con stock (≥ 1)</option>
+            </select>
+          )}
+          {primaryStoreId && (
+            <select
               value={compareStoreId}
-              onChange={e => setCompareStoreId(e.target.value ? Number(e.target.value) : '')}
+              onChange={e => { setCompareStoreId(e.target.value ? Number(e.target.value) : ''); setCompareStock('') }}
               className="rounded-xl px-2.5 py-1.5 text-xs outline-none"
               style={{ background: 'var(--td-input-bg)', border: '1px solid var(--td-input-border)', color: compareStoreId ? 'var(--td-text-hi)' : 'var(--td-text-lo)' }}>
               <option value="">vs. otra tienda…</option>
               {stores.filter(s => s.id !== primaryStoreId).map(s => <option key={s.id} value={s.id}>Tienda {s.name}</option>)}
+            </select>
+          )}
+          {compareStoreId && (
+            <select
+              value={compareStock}
+              onChange={e => setCompareStock(e.target.value as '0' | '1' | '2' | '3+' | '')}
+              className="rounded-xl px-2.5 py-1.5 text-xs outline-none"
+              style={{ background: 'var(--td-input-bg)', border: '1px solid var(--td-input-border)', color: compareStock !== '' ? 'var(--td-text-hi)' : 'var(--td-text-lo)' }}>
+              <option value="">Stock {compareStoreName}…</option>
+              <option value="0">= 0</option>
+              <option value="1">= 1</option>
+              <option value="2">= 2</option>
+              <option value="3+">≥ 3</option>
             </select>
           )}
           {primaryStoreId && (
@@ -326,7 +354,7 @@ export function StockSearchPage() {
             </button>
           )}
           {primaryStoreId && (
-            <button onClick={() => { setPrimaryStoreId(''); setCompareStoreId(''); setSortDir('desc') }}
+            <button onClick={() => { setPrimaryStoreId(''); setCompareStoreId(''); setSortDir('desc'); setPrimaryStock(''); setCompareStock('') }}
               className="p-1.5 rounded-lg transition-colors hover:bg-[var(--td-hover-bg)]" title="Quitar filtro">
               <X size={12} style={{ color: 'var(--td-text-lo)' }} />
             </button>

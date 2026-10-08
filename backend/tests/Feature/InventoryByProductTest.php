@@ -276,4 +276,77 @@ class InventoryByProductTest extends TestCase
         $posProduct = array_search($this->product->id, $ids);
         $this->assertLessThan($posExtra, $posProduct, 'Producto con diferencia menor debe aparecer primero en asc');
     }
+
+    public function test_products_stock_filtra_primary_stock_0(): void
+    {
+        // this->product tiene stock en storeA (5 uds). Crear otro sin stock.
+        $sinStock = \App\Models\Product::create([
+            'name' => 'Sin Stock A', 'sku' => 'SS-001', 'active' => true, 'product_type' => 'product',
+        ]);
+
+        $res = $this->actingAs($this->cajero)
+            ->getJson("/api/v1/inventory/products-stock?primary_store_id={$this->storeA->id}&primary_stock=0&per_page=50");
+
+        $res->assertOk();
+        $ids = collect($res->json('data.data'))->pluck('id')->toArray();
+
+        $this->assertContains($sinStock->id, $ids, 'Producto sin stock debe aparecer con primary_stock=0');
+        $this->assertNotContains($this->product->id, $ids, 'Producto con stock no debe aparecer con primary_stock=0');
+    }
+
+    public function test_products_stock_filtra_primary_stock_1(): void
+    {
+        $sinStock = \App\Models\Product::create([
+            'name' => 'Sin Stock B', 'sku' => 'SS-002', 'active' => true, 'product_type' => 'product',
+        ]);
+
+        $res = $this->actingAs($this->cajero)
+            ->getJson("/api/v1/inventory/products-stock?primary_store_id={$this->storeA->id}&primary_stock=1&per_page=50");
+
+        $res->assertOk();
+        $ids = collect($res->json('data.data'))->pluck('id')->toArray();
+
+        $this->assertContains($this->product->id, $ids, 'Producto con stock debe aparecer con primary_stock=1');
+        $this->assertNotContains($sinStock->id, $ids, 'Producto sin stock no debe aparecer con primary_stock=1');
+    }
+
+    public function test_products_stock_filtra_compare_stock_exacto(): void
+    {
+        // this->product tiene 12 uds en storeB. Crear otro con 2 uds en storeB.
+        $prod2 = \App\Models\Product::create([
+            'name' => 'Compare Exacto', 'sku' => 'CE-001', 'active' => true, 'product_type' => 'product',
+        ]);
+        \Illuminate\Support\Facades\DB::table('inventory')->insert([
+            ['product_id' => $prod2->id, 'warehouse_id' => $this->whB->id, 'quantity' => 2, 'created_at' => now(), 'updated_at' => now()],
+        ]);
+
+        $res = $this->actingAs($this->cajero)
+            ->getJson("/api/v1/inventory/products-stock?primary_store_id={$this->storeA->id}&compare_store_id={$this->storeB->id}&compare_stock=2&per_page=50");
+
+        $res->assertOk();
+        $ids = collect($res->json('data.data'))->pluck('id')->toArray();
+
+        $this->assertContains($prod2->id, $ids, 'Producto con 2 uds en storeB debe aparecer con compare_stock=2');
+        $this->assertNotContains($this->product->id, $ids, 'Producto con 12 uds en storeB no debe aparecer con compare_stock=2');
+    }
+
+    public function test_products_stock_filtra_compare_stock_3_mas(): void
+    {
+        // this->product tiene 12 uds en storeB — debe aparecer con compare_stock=3+
+        $prod2 = \App\Models\Product::create([
+            'name' => 'Poco Stock B', 'sku' => 'PS-001', 'active' => true, 'product_type' => 'product',
+        ]);
+        \Illuminate\Support\Facades\DB::table('inventory')->insert([
+            ['product_id' => $prod2->id, 'warehouse_id' => $this->whB->id, 'quantity' => 1, 'created_at' => now(), 'updated_at' => now()],
+        ]);
+
+        $res = $this->actingAs($this->cajero)
+            ->getJson("/api/v1/inventory/products-stock?primary_store_id={$this->storeA->id}&compare_store_id={$this->storeB->id}&compare_stock=3%2B&per_page=50");
+
+        $res->assertOk();
+        $ids = collect($res->json('data.data'))->pluck('id')->toArray();
+
+        $this->assertContains($this->product->id, $ids, 'Producto con 12 uds debe aparecer con compare_stock=3+');
+        $this->assertNotContains($prod2->id, $ids, 'Producto con 1 ud no debe aparecer con compare_stock=3+');
+    }
 }
