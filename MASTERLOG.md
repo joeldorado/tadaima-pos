@@ -4,6 +4,35 @@
 
 ---
 
+### Sesión 2026-10-08 — Filtros en Existencias por Tienda y Productos + reporte #7 + canceladas al cerrar caja (Ruben, PR #40) — rev tadaima-00058-bek
+
+**Pedido Joel:** subir a prod lo nuevo de Ruben en `develop` sin tocar el módulo Paquetes. Paquetes
+sigue en `feat/paquetes` (guardado como commit local `wip(paquetes)`, sin push); nada de Paquetes
+entró a prod, ni migraciones ni endpoints ni menú.
+
+- **PR #40 `develop → main`** (13 commits de Ruben, sin migraciones):
+  - **Existencias por Tienda** (`StockSearchPage`, `InventoryController::productsStock`): filtro de
+    stock por tienda con operador y cantidad libre (`<`, `=`, `>`) para la tienda primaria y la de
+    comparación (`primary_stock_op/qty`, `compare_stock_op/qty`); filtro de categoría con buscador
+    (`category_id`); preventas al final, ocultas con filtro de tienda activo y filtradas por cupo
+    disponible; filtros rediseñados con estilos del sistema; se quitó "Más en tienda" y `sortDir`.
+  - **Productos** (`ProductsPage`): filtro de categoría con buscador.
+  - **Reportes** (`ReportsController`, `excelVentas.ts`, `excelTopTables.ts`): fix del filtro de
+    ventas y Excel para Pier; reporte #7.
+  - **Cerrar caja** (`CloseCashModal`): ventas canceladas en el resumen del día.
+
+**Verificado:** SQLite 718/718 (712 base + 6 de Ruben); Postgres 17 local: tests de Ruben verdes
+(`InventoryByProductTest`, `CashReportRangeTest`), las 5 fallas restantes son las preexistentes de
+`PurgeNoStockProductsTest` / `CategoryPivotRepairTest` (harness de test, ya fallaban en `main`);
+vitest 553/553. Candidata sin tráfico: index y `/tadaimaus/` 200, endpoints 401 sin sesión, login
+carga sin errores de consola, bundle con `primary_stock_op`/`compare_stock_op` y CERO menciones de
+Paquetes. Luego se promovió al 100%. Falta la revisión con sesión (Joel/equipo): Existencias por
+Tienda, Productos y Cerrar caja.
+
+**Deploy:** tadaima-00058-bek (rollback `tadaima-00056-siw`). Pedir Ctrl+Shift+R / incógnito por la caché PWA.
+
+---
+
 ### Sesión 2026-10-07 (2) — Reportes por día-negocio + Excel 5 pestañas + comparar stock (Ruben, PR #39) — rev tadaima-00056-siw
 
 **Pedido Joel:** subir a prod los cambios nuevos de Ruben en `develop`, con rollback.
