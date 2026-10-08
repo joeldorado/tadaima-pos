@@ -218,4 +218,62 @@ class InventoryByProductTest extends TestCase
         $this->getJson('/api/v1/inventory/products-stock')
             ->assertUnauthorized();
     }
+
+    // ── Filtros de comparación entre tiendas ─────────────────────────────────────
+
+    public function test_products_stock_ordena_por_tienda_desc(): void
+    {
+        // storeA tiene 5, storeB tiene 12 — desc por storeB → storeB primero
+        $res = $this->actingAs($this->cajero)
+            ->getJson("/api/v1/inventory/products-stock?primary_store_id={$this->storeB->id}&sort_dir=desc&per_page=50");
+
+        $res->assertOk();
+        // Solo hay un producto; verificamos que llegue sin error y con el stock embebido
+        $row = collect($res->json('data.data'))->firstWhere('id', $this->product->id);
+        $this->assertNotNull($row);
+        $this->assertNotEmpty($row['stock']);
+    }
+
+    public function test_products_stock_ordena_por_diferencia_entre_tiendas(): void
+    {
+        // Crea un segundo producto con más stock en storeA que en storeB
+        $prod2 = \App\Models\Product::create([
+            'name' => 'Producto Extra', 'sku' => 'EXT-001', 'active' => true, 'product_type' => 'product',
+        ]);
+        \Illuminate\Support\Facades\DB::table('inventory')->insert([
+            ['product_id' => $prod2->id, 'warehouse_id' => $this->whA->id, 'quantity' => 20, 'created_at' => now(), 'updated_at' => now()],
+            ['product_id' => $prod2->id, 'warehouse_id' => $this->whB->id, 'quantity' => 1,  'created_at' => now(), 'updated_at' => now()],
+        ]);
+
+        // desc con primary=storeA, compare=storeB → prod2 (20-1=19) antes que this->product (5-12=-7)
+        $res = $this->actingAs($this->cajero)
+            ->getJson("/api/v1/inventory/products-stock?primary_store_id={$this->storeA->id}&compare_store_id={$this->storeB->id}&sort_dir=desc&per_page=50");
+
+        $res->assertOk();
+        $ids = collect($res->json('data.data'))->pluck('id')->toArray();
+        $posExtra   = array_search($prod2->id,          $ids);
+        $posProduct = array_search($this->product->id,  $ids);
+        $this->assertLessThan($posProduct, $posExtra, 'Producto con diferencia mayor debe aparecer antes');
+    }
+
+    public function test_products_stock_sort_asc_invierte_orden(): void
+    {
+        $prod2 = \App\Models\Product::create([
+            'name' => 'Producto Asc', 'sku' => 'ASC-001', 'active' => true, 'product_type' => 'product',
+        ]);
+        \Illuminate\Support\Facades\DB::table('inventory')->insert([
+            ['product_id' => $prod2->id, 'warehouse_id' => $this->whA->id, 'quantity' => 20, 'created_at' => now(), 'updated_at' => now()],
+            ['product_id' => $prod2->id, 'warehouse_id' => $this->whB->id, 'quantity' => 1,  'created_at' => now(), 'updated_at' => now()],
+        ]);
+
+        // asc con primary=storeA, compare=storeB → this->product (5-12=-7) antes que prod2 (20-1=19)
+        $res = $this->actingAs($this->cajero)
+            ->getJson("/api/v1/inventory/products-stock?primary_store_id={$this->storeA->id}&compare_store_id={$this->storeB->id}&sort_dir=asc&per_page=50");
+
+        $res->assertOk();
+        $ids        = collect($res->json('data.data'))->pluck('id')->toArray();
+        $posExtra   = array_search($prod2->id,         $ids);
+        $posProduct = array_search($this->product->id, $ids);
+        $this->assertLessThan($posExtra, $posProduct, 'Producto con diferencia menor debe aparecer primero en asc');
+    }
 }

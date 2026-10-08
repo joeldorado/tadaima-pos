@@ -10,7 +10,7 @@ import {
 
 /** Fila del encabezado de las tablas en cada pestaña (abajo del título y periodo). */
 export const FIRST_TABLE_ROW = 4;
-const FIRST_DATA_ROW = FIRST_TABLE_ROW + 2;
+export const FIRST_DATA_ROW = FIRST_TABLE_ROW + 2;
 
 const lc = (n: string) => n.toLowerCase();
 export const isCardMethod = (n: string): boolean =>
@@ -81,12 +81,11 @@ export interface TableResult {
 
 export const tableWidth = (t: Pick<ProductTable, "columns">): number => t.columns.length + 1;
 
-export function drawTableHeaders(sh: SheetBuilder, t: ProductTable, subBg: string, nameHeader = "Producto"): void {
+export function drawTableHeaders(sh: SheetBuilder, t: ProductTable, subBg: string, nameHeader = "Producto", headerRow = FIRST_TABLE_ROW + 1): void {
   const style: CellStyle = { font: font({ bold: true, color: "FFFFFF" }), fill: fill(subBg), alignment: align("center", "middle", true) };
-  const r = FIRST_TABLE_ROW + 1;
-  sh.set(r, t.col, nameHeader, style);
-  t.columns.forEach((c, i) => sh.set(r, t.col + 1 + i, c.header, style));
-  sh.height(r, 20);
+  sh.set(headerRow, t.col, nameHeader, style);
+  t.columns.forEach((c, i) => sh.set(headerRow, t.col + 1 + i, c.header, style));
+  sh.height(headerRow, 20);
 }
 
 /** Renglón de resumen (TOTAL / Manga): SUM de cada columna sobre `rows`. */
@@ -118,12 +117,12 @@ const mangaStyles = {
  * sin encabezado ni subtotal por categoría: el orden queda implícito (Ruben
  * 2026-10-03). `groups` ya viene filtrado a los productos de la tabla.
  */
-export function drawProductTable(sh: SheetBuilder, t: ProductTable, groups: readonly GroupedProduct[], mangaRow = true): TableResult {
-  if (groups.length === 0) return { next: FIRST_DATA_ROW, manga: null, totals: {} };
+export function drawProductTable(sh: SheetBuilder, t: ProductTable, groups: readonly GroupedProduct[], mangaRow = true, dataStartRow = FIRST_DATA_ROW): TableResult {
+  if (groups.length === 0) return { next: dataStartRow, manga: null, totals: {} };
   const colOf = (key: string) => t.col + 1 + t.columns.findIndex((c) => c.key === key);
   const ref = (key: string, r: number) => cellRef(r, colOf(key));
 
-  let r = FIRST_DATA_ROW;
+  let r = dataStartRow;
   const productRows: number[] = [];
   const mangaRows: number[] = [];
   for (const g of groups) {

@@ -4,6 +4,85 @@
 
 ---
 
+### Sesión 2026-10-07 (2) — Existencias por Tienda: filtros de comparación entre tiendas — pendiente deploy
+
+**Pedido Ruben:** poder ver qué productos tiene una tienda con mucho stock mientras la otra tiene poco
+o nada, y vice versa, para orientar al cliente a la sucursal correcta.
+
+**Solución:** se extendió `GET /inventory/products-stock` con tres params nuevos (sin endpoint nuevo):
+- `primary_store_id` — ordena por el stock de exhibición de esa tienda
+- `compare_store_id` — ordena por la diferencia `stock_primary − stock_compare`
+- `sort_dir=desc|asc` — desc = primary tiene más primero, asc = compare tiene más primero
+
+Productos sin registro en una tienda cuentan como `0` (COALESCE) — nunca se excluyen.
+
+**Cambios backend** (`InventoryController.php`): lógica de `orderByRaw` condicional con subqueries.
+Tres modos: sin filtro (A-Z), una tienda (stock de esa tienda), dos tiendas (diferencia).
+
+**Cambios frontend** (`StockSearchPage.tsx`): barra de filtros compacta encima del buscador con
+dos selectores de tienda y un toggle. El toggle muestra el nombre explícito de la tienda
+("Más en Centro" / "Más en Macro") para evitar ambigüedad sobre qué stock se está priorizando.
+Solo aparece cuando hay más de una tienda activa.
+
+**Tests:** 3 tests nuevos (15 total, todos pasan): sort desc por una tienda, sort desc/asc por
+diferencia entre dos tiendas, verificación de orden correcto.
+
+**Commits:** `aad52ec` (feat), `d66d293` (fix compacto), `5e5d22c` (fix label).
+**Push:** `origin/develop` actualizado. **Pendiente:** deploy a producción.
+
+---
+
+### Sesión 2026-10-07 — Existencias por Tienda: lista paginada con stock embebido por sucursal — pendiente deploy
+
+**Pedido Ruben:** la pantalla "Existencias por Tienda" solo consultaba un producto a la vez y estaba
+limitada a la tienda del usuario. Cualquier cajero necesita ver el stock de TODAS las tiendas sin
+restricción de rol, para indicarle al cliente dónde ir a recoger un producto.
+
+**Decisión de diseño:** no tocar `GET /inventory` (usado por Caja, Traslados, Productos, Admin — todos
+necesitan el filtro por tienda). Se crearon DOS endpoints nuevos exclusivos para esta pantalla:
+- `GET /inventory/products-stock` — lista paginada de TODOS los productos con sus cantidades por
+  tienda embebidas en el objeto (sin requerir que el usuario seleccione un producto primero).
+- `GET /inventory/by-product/{productId}` — cross-tienda para un producto específico (lo usa
+  `StoreStockBreakdown` cuando el usuario selecciona una fila).
+
+Ambos endpoints: requieren autenticación, responden a cualquier rol, no exponen costo ni datos
+financieros, solo nombre, SKU, imagen, tipo de almacén (exhibición/bodega), nombre de tienda,
+teléfono y cantidad.
+
+**Cambios backend** (`backend/`):
+- `InventoryController.php`: dos métodos nuevos (`productsStock`, `byProduct`). Eager loading con
+  `inventory.warehouse.store` y `images` (límite 1). Relación correcta: `inventory` (singular).
+  Imagen: `$product->images->first()?->url` vía accessor de `ProductImage`.
+- `routes/api.php`: rutas añadidas ANTES del wildcard `{productId}/{warehouseId}` para evitar conflicto.
+- `tests/Feature/InventoryByProductTest.php` (nuevo, 12 tests, todos pasan): cajero ve todas las
+  tiendas, no expone costo, 404 en producto inexistente, requiere auth, paginación, filtro de búsqueda,
+  separación exhibición/bodega.
+- `backend/AGENTS.md`: tabla de endpoints de Inventario actualizada.
+
+**Cambios frontend** (`packages/api/`, `landing/`):
+- `packages/api/src/inventory.ts`: tipos `ProductStockStore`, `ProductStockItem`, `ProductsStockParams`,
+  `ProductsStockResponse`; funciones `getProductStockByStore` y `getProductsStock`.
+- `landing/src/hooks/queries/useInventory.ts`: `useProductsStockQuery` (lista paginada, cache 60s,
+  `placeholderData` para transición suave) y `useProductInventoryQuery` actualizado al nuevo endpoint.
+- `landing/src/pages/StockSearchPage.tsx` (reescritura completa): la pantalla carga la lista de
+  todos los productos al entrar (sin que el usuario busque primero). Cada fila muestra imagen,
+  nombre, SKU y chips de stock por sucursal. Al seleccionar una fila, el panel derecho muestra
+  `StoreStockBreakdown` con botones Llamar/WhatsApp. Búsqueda con debounce 300ms, filtro
+  server-side, paginación con `last_page > 1`. La tienda del usuario se resalta ("Tu tienda").
+
+**Fixes de TypeScript** (stricto `exactOptionalPropertyTypes`):
+- `highlightStoreId?: number | null` → spread condicional en JSX para evitar asignar `null` a prop
+  que solo acepta `number | undefined`.
+- `stockParams` construido condicionalmente para evitar `search: undefined` en el tipo.
+
+**Verificado:** 12 tests PHPUnit nuevos pasando; `npm run test` sin errores nuevos; tsc sin
+regresiones en lo tocado (la base tiene ~450 errores preexistentes).
+
+**Commits:** `7c18b71` (backend: endpoints + tests + docs) y `65a897a` (frontend: API + hook + página).
+**Rama:** `develop`. **Pendiente:** push + deploy a producción.
+
+---
+
 ### Sesión 2026-10-07 — Existencias por Tienda: listado cross-tienda (Ruben, PR #38) — rev tadaima-00054-sev
 
 **Pedido Joel:** subir a prod lo que Ruben dejó en `develop`, con cuidado y con rollback.

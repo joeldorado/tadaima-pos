@@ -41,6 +41,12 @@ export interface ProductsStockParams {
   search?: string
   page?: number
   per_page?: number
+  /** Ordena por el stock de exhibición de esta tienda. */
+  primary_store_id?: number
+  /** Segunda tienda para ordenar por diferencia (primary − compare). */
+  compare_store_id?: number
+  /** desc = primary tiene más primero (default), asc = compare tiene más primero. */
+  sort_dir?: 'asc' | 'desc'
 }
 
 export interface ProductsStockResponse {

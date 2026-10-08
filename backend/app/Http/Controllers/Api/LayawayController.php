@@ -12,6 +12,7 @@ use App\Http\Resources\LayawayResource;
 use App\Http\Resources\SaleResource;
 use App\Models\Layaway;
 use App\Services\LayawayService;
+use App\Support\DateRange;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -45,8 +46,8 @@ class LayawayController extends Controller
                 $request->filled('status') && $request->get('status') !== 'open',
                 fn ($q) => $q->where('status', $request->status)
             )
-            ->when($request->filled('from'), fn ($q) => $q->whereDate('created_at', '>=', $request->from))
-            ->when($request->filled('to'),   fn ($q) => $q->whereDate('created_at', '<=', $request->to))
+            ->when($request->filled('from'), fn ($q) => $q->where('created_at', '>=', DateRange::fromUtc((string) $request->from)))
+            ->when($request->filled('to'),   fn ($q) => $q->where('created_at', '<=', DateRange::toUtc((string) $request->to)))
             ->latest();
 
         $perPage = min((int) ($request->per_page ?? 25), 100);
