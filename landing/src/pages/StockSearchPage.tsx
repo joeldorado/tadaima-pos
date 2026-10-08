@@ -305,7 +305,7 @@ export function StockSearchPage() {
             className="rounded-xl px-2.5 py-1.5 text-xs outline-none"
             style={{ background: 'var(--td-input-bg)', border: '1px solid var(--td-input-border)', color: primaryStoreId ? 'var(--td-text-hi)' : 'var(--td-text-lo)' }}>
             <option value="">Ordenar por tienda…</option>
-            {stores.map(s => <option key={s.id} value={s.id}>Tienda {s.name}</option>)}
+            {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
           {primaryStoreId && (
             <div className="flex items-center gap-1">
@@ -336,7 +336,7 @@ export function StockSearchPage() {
               className="rounded-xl px-2.5 py-1.5 text-xs outline-none"
               style={{ background: 'var(--td-input-bg)', border: '1px solid var(--td-input-border)', color: compareStoreId ? 'var(--td-text-hi)' : 'var(--td-text-lo)' }}>
               <option value="">vs. otra tienda…</option>
-              {stores.filter(s => s.id !== primaryStoreId).map(s => <option key={s.id} value={s.id}>Tienda {s.name}</option>)}
+              {stores.filter(s => s.id !== primaryStoreId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           )}
           {compareStoreId && (
