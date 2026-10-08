@@ -144,7 +144,7 @@ function blockWidths(sh: SheetBuilder, col: number): void {
 
 /** Ref a la celda de otra pestaña: 'Efectivo'!D12. */
 const xref = (sheet: string, ref: string) => `'${sheet}'!${ref}`;
-void xref; // usado en versiones anteriores, se mantiene por si se reactiva
+// xref: referencia cross-tab usada en drawResumen para conectar con cada pestaña
 
 /**
  * Pestaña Resumen: lo vendido por pestaña (ligado a su TOTAL FINAL), Total Bruto,
@@ -226,31 +226,31 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
     const mangTotals = t.mangaTotals;
     const hasManga   = Object.keys(mangTotals).length > 0;
 
-    // Fila regular
+    // Fila regular — referencia cross-tab a la pestaña del método
     sh.set(r, 2, nameReg, label);
     const regVenta = regTotals[t.ventaKey];
     const regCosto = regTotals["costo"];
     const regUtil  = regTotals["util"];
+    if (regVenta) sh.setF(r, ventaCol, xref(t.name, regVenta.ref), regVenta.value, money);
     if (canViewCost) {
-      sh.set(r, costoCol, regCosto?.value ?? 0, money);
-      sh.set(r, utilCol,  regUtil?.value  ?? 0, green);
+      if (regCosto) sh.setF(r, costoCol, xref(t.name, regCosto.ref), regCosto.value, money);
+      if (regUtil)  sh.setF(r, utilCol,  xref(t.name, regUtil.ref),  regUtil.value,  green);
     }
-    sh.set(r, ventaCol, regVenta?.value ?? 0, money);
     const regRow = r;
     r++;
 
-    // Fila manga (si existe)
+    // Fila manga (si existe) — referencia cross-tab a la pestaña del método
     let mangaRow = -1;
     if (hasManga) {
       sh.set(r, 2, nameManga, label);
       const mVenta = mangTotals[t.ventaKey];
       const mCosto = mangTotals["costo"];
       const mUtil  = mangTotals["util"];
+      if (mVenta) sh.setF(r, ventaCol, xref(t.name, mVenta.ref), mVenta.value, money);
       if (canViewCost) {
-        sh.set(r, costoCol, mCosto?.value ?? 0, money);
-        sh.set(r, utilCol,  mUtil?.value  ?? 0, green);
+        if (mCosto) sh.setF(r, costoCol, xref(t.name, mCosto.ref), mCosto.value, money);
+        if (mUtil)  sh.setF(r, utilCol,  xref(t.name, mUtil.ref),  mUtil.value,  green);
       }
-      sh.set(r, ventaCol, mVenta?.value ?? 0, money);
       mangaRow = r;
       r++;
     }

@@ -130,8 +130,12 @@ export interface CashSessionReport {
   total_pre_sale_payments: number
   /** Parte de las preventas cobradas que sí entró a caja (no tarjeta). */
   total_cash_pre_sale_payments: number
-  /** Dinero físico esperado por cobros (ventas + preventas no-tarjeta). */
+  /** Dinero físico esperado por cobros (ventas + preventas no-tarjeta) — BRUTO, incluye canceladas. Usado internamente en expected_cash. */
   cash_collected: number
+  /** Efectivo neto del turno (cash_collected − efectivo de ventas canceladas). Usar para mostrar en "Cobrado en el turno". */
+  cash_collected_net?: number
+  /** Efectivo devuelto por cancelaciones de este turno. */
+  cash_refunded?: number
   sales_count: number
   expected_cash: number
   /** closing_cash - expected_cash. null si caja aún abierta. */

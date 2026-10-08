@@ -59,8 +59,9 @@ export function CloseCashModal({ session, title, reason, onClosed, onCancel }: C
 
   const fmt = (v: number) => `${v < 0 ? "−" : ""}$${Math.abs(v).toLocaleString("es-MX", { maximumFractionDigits: 2 })}`;
   const pv = preview;
-  // Parte en PESOS de lo cobrado (lo demás entró como billetes americanos).
-  const pesosCobrados = pv ? Math.round((Number(pv.cash_collected ?? 0) - Number(pv.usd_mxn_equiv ?? 0)) * 100) / 100 : 0;
+  // Efectivo NETO en pesos (descuenta cancelaciones y dólares).
+  const cashNet = pv ? Number(pv.cash_collected_net ?? pv.cash_collected ?? 0) : 0;
+  const pesosCobrados = pv ? Math.round((cashNet - Number(pv.usd_mxn_equiv ?? 0)) * 100) / 100 : 0;
   const debeMxn = pv ? Number(pv.expected_cash_mxn ?? pv.expected_cash ?? 0) : 0;
   const debeUsd = pv ? Number(pv.expected_usd ?? 0) : 0;
   const entradas = pv ? Number(pv.total_entradas ?? 0) : 0;
