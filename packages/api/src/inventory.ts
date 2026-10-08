@@ -47,10 +47,14 @@ export interface ProductsStockParams {
   compare_store_id?: number
   /** desc = primary tiene más primero (default), asc = compare tiene más primero. */
   sort_dir?: 'asc' | 'desc'
-  /** Filtra por stock en la tienda primaria: '0' = sin stock, '1' = con stock ≥ 1. */
-  primary_stock?: '0' | '1'
-  /** Filtra por stock exacto en la tienda de comparación: '0'|'1'|'2'|'3+'. */
-  compare_stock?: '0' | '1' | '2' | '3+'
+  /** Operador para filtrar stock de la tienda primaria: '<' | '=' | '>'. */
+  primary_stock_op?: '<' | '=' | '>'
+  /** Cantidad a comparar para la tienda primaria (entero ≥ 0). */
+  primary_stock_qty?: number
+  /** Operador para filtrar stock de la tienda de comparación: '<' | '=' | '>'. */
+  compare_stock_op?: '<' | '=' | '>'
+  /** Cantidad a comparar para la tienda de comparación (entero ≥ 0). */
+  compare_stock_qty?: number
 }
 
 export interface ProductsStockResponse {

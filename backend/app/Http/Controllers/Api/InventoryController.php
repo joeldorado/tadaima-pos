@@ -34,8 +34,10 @@ class InventoryController extends Controller
      *   ?primary_store_id=    ordena por el stock de exhibición de esta tienda
      *   ?compare_store_id=    segunda tienda para ordenar por diferencia (primary - compare)
      *   ?sort_dir=desc|asc    desc = primary tiene más primero (default), asc = compare tiene más
-     *   ?primary_stock=0|1    0 = solo sin stock en tienda primaria, 1 = solo con stock ≥ 1
-     *   ?compare_stock=0|1|2|3+  filtra por stock exacto en tienda de comparación (3+ = ≥ 3)
+     *   ?primary_stock_op=<|=|>   operador para filtrar stock en tienda primaria
+     *   ?primary_stock_qty=N       cantidad a comparar (entero ≥ 0)
+     *   ?compare_stock_op=<|=|>   operador para filtrar stock en tienda de comparación
+     *   ?compare_stock_qty=N       cantidad a comparar (entero ≥ 0)
      */
     public function productsStock(Request $request): JsonResponse
     {
@@ -43,8 +45,14 @@ class InventoryController extends Controller
         $primaryStoreId = $request->integer('primary_store_id') ?: null;
         $compareStoreId = $request->integer('compare_store_id') ?: null;
         $sortDir        = $request->get('sort_dir', 'desc') === 'asc' ? 'asc' : 'desc';
-        $primaryStock   = $request->filled('primary_stock') ? $request->get('primary_stock') : null;
-        $compareStock   = $request->filled('compare_stock') ? $request->get('compare_stock') : null;
+
+        $primaryOp  = in_array($request->get('primary_stock_op'), ['<', '=', '>']) ? $request->get('primary_stock_op') : null;
+        $primaryQty = $request->filled('primary_stock_qty') ? max(0, (int) $request->get('primary_stock_qty')) : null;
+        $compareOp  = in_array($request->get('compare_stock_op'), ['<', '=', '>']) ? $request->get('compare_stock_op') : null;
+        $compareQty = $request->filled('compare_stock_qty') ? max(0, (int) $request->get('compare_stock_qty')) : null;
+
+        $hasPrimaryFilter = $primaryStoreId && $primaryOp !== null && $primaryQty !== null;
+        $hasCompareFilter = $compareStoreId && $compareOp !== null && $compareQty !== null;
 
         // Subquery reutilizable: stock de exhibición de un producto en una tienda dada.
         $stockSubSql = 'SELECT COALESCE(SUM(i.quantity), 0) FROM inventory i
@@ -53,20 +61,8 @@ class InventoryController extends Controller
 
         $query = Product::query()
             ->when($request->filled('search'), fn ($q) => $q->search($request->search))
-            ->when($primaryStoreId && $primaryStock !== null, function ($q) use ($stockSubSql, $primaryStoreId, $primaryStock) {
-                if ($primaryStock === '0') {
-                    $q->whereRaw("({$stockSubSql}) = 0", [$primaryStoreId]);
-                } else {
-                    $q->whereRaw("({$stockSubSql}) >= 1", [$primaryStoreId]);
-                }
-            })
-            ->when($compareStoreId && $compareStock !== null, function ($q) use ($stockSubSql, $compareStoreId, $compareStock) {
-                if ($compareStock === '3+') {
-                    $q->whereRaw("({$stockSubSql}) >= 3", [$compareStoreId]);
-                } else {
-                    $q->whereRaw("({$stockSubSql}) = ?", [$compareStoreId, (int) $compareStock]);
-                }
-            });
+            ->when($hasPrimaryFilter, fn ($q) => $q->whereRaw("({$stockSubSql}) {$primaryOp} ?", [$primaryStoreId, $primaryQty]))
+            ->when($hasCompareFilter, fn ($q) => $q->whereRaw("({$stockSubSql}) {$compareOp} ?", [$compareStoreId, $compareQty]));
 
         // Ordenar por stock de una o dos tiendas usando subqueries con COALESCE.
         // Productos sin registro en esa tienda cuentan como 0 (no se excluyen).

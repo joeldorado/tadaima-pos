@@ -198,8 +198,10 @@ export function StockSearchPage() {
   const [primaryStoreId, setPrimaryStoreId] = useState<number | ''>('')
   const [compareStoreId, setCompareStoreId] = useState<number | ''>('')
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
-  const [primaryStock, setPrimaryStock] = useState<'0' | '1' | ''>('')
-  const [compareStock, setCompareStock] = useState<'0' | '1' | '2' | '3+' | ''>('')
+  const [primaryOp, setPrimaryOp] = useState<'<' | '=' | '>'>('=')
+  const [primaryQty, setPrimaryQty] = useState<string>('')
+  const [compareOp, setCompareOp] = useState<'<' | '=' | '>'>('=')
+  const [compareQty, setCompareQty] = useState<string>('')
 
   // Debounce 300ms para el API de lista
   useEffect(() => {
@@ -208,7 +210,7 @@ export function StockSearchPage() {
   }, [search])
 
   // Resetear página al cambiar filtros de tienda
-  useEffect(() => { setPage(1) }, [primaryStoreId, compareStoreId, sortDir, primaryStock, compareStock])
+  useEffect(() => { setPage(1) }, [primaryStoreId, compareStoreId, sortDir, primaryOp, primaryQty, compareOp, compareQty])
 
   const myStoreId = user?.store_id ?? undefined
 
@@ -227,8 +229,8 @@ export function StockSearchPage() {
     ...(primaryStoreId ? { primary_store_id: primaryStoreId as number } : {}),
     ...(primaryStoreId && compareStoreId ? { compare_store_id: compareStoreId as number } : {}),
     ...(primaryStoreId ? { sort_dir: sortDir } : {}),
-    ...(primaryStoreId && primaryStock !== '' ? { primary_stock: primaryStock as '0' | '1' } : {}),
-    ...(compareStoreId && compareStock !== '' ? { compare_stock: compareStock as '0' | '1' | '2' | '3+' } : {}),
+    ...(primaryStoreId && primaryQty !== '' ? { primary_stock_op: primaryOp, primary_stock_qty: Number(primaryQty) } : {}),
+    ...(compareStoreId && compareQty !== '' ? { compare_stock_op: compareOp, compare_stock_qty: Number(compareQty) } : {}),
   }
   const { data: listData, isFetching: isFetchingList } = useProductsStockQuery(stockParams)
 
@@ -301,27 +303,38 @@ export function StockSearchPage() {
         <div className="flex flex-wrap items-center gap-1.5 mb-4">
           <select
             value={primaryStoreId}
-            onChange={e => { setPrimaryStoreId(e.target.value ? Number(e.target.value) : ''); setCompareStoreId(''); setPrimaryStock(''); setCompareStock('') }}
+            onChange={e => { setPrimaryStoreId(e.target.value ? Number(e.target.value) : ''); setCompareStoreId(''); setPrimaryQty(''); setCompareQty('') }}
             className="rounded-xl px-2.5 py-1.5 text-xs outline-none"
             style={{ background: 'var(--td-input-bg)', border: '1px solid var(--td-input-border)', color: primaryStoreId ? 'var(--td-text-hi)' : 'var(--td-text-lo)' }}>
             <option value="">Ordenar por tienda…</option>
             {stores.map(s => <option key={s.id} value={s.id}>Tienda {s.name}</option>)}
           </select>
           {primaryStoreId && (
-            <select
-              value={primaryStock}
-              onChange={e => setPrimaryStock(e.target.value as '0' | '1' | '')}
-              className="rounded-xl px-2.5 py-1.5 text-xs outline-none"
-              style={{ background: 'var(--td-input-bg)', border: '1px solid var(--td-input-border)', color: primaryStock !== '' ? 'var(--td-text-hi)' : 'var(--td-text-lo)' }}>
-              <option value="">Stock {primaryStoreName}…</option>
-              <option value="0">Sin stock (= 0)</option>
-              <option value="1">Con stock (≥ 1)</option>
-            </select>
+            <div className="flex items-center gap-1">
+              <input
+                type="number"
+                min={0}
+                value={primaryQty}
+                onChange={e => setPrimaryQty(e.target.value)}
+                placeholder={primaryStoreName ? `Stock ${primaryStoreName}` : 'Cantidad…'}
+                className="rounded-xl px-2.5 py-1.5 text-xs outline-none w-28"
+                style={{ background: 'var(--td-input-bg)', border: '1px solid var(--td-input-border)', color: 'var(--td-input-text)' }}
+              />
+              <select
+                value={primaryOp}
+                onChange={e => setPrimaryOp(e.target.value as '<' | '=' | '>')}
+                className="rounded-xl px-2 py-1.5 text-xs outline-none font-bold"
+                style={{ background: 'var(--td-input-bg)', border: '1px solid var(--td-input-border)', color: 'var(--td-text-hi)' }}>
+                <option value="=">=</option>
+                <option value=">">&gt;</option>
+                <option value="<">&lt;</option>
+              </select>
+            </div>
           )}
           {primaryStoreId && (
             <select
               value={compareStoreId}
-              onChange={e => { setCompareStoreId(e.target.value ? Number(e.target.value) : ''); setCompareStock('') }}
+              onChange={e => { setCompareStoreId(e.target.value ? Number(e.target.value) : ''); setCompareQty('') }}
               className="rounded-xl px-2.5 py-1.5 text-xs outline-none"
               style={{ background: 'var(--td-input-bg)', border: '1px solid var(--td-input-border)', color: compareStoreId ? 'var(--td-text-hi)' : 'var(--td-text-lo)' }}>
               <option value="">vs. otra tienda…</option>
@@ -329,17 +342,26 @@ export function StockSearchPage() {
             </select>
           )}
           {compareStoreId && (
-            <select
-              value={compareStock}
-              onChange={e => setCompareStock(e.target.value as '0' | '1' | '2' | '3+' | '')}
-              className="rounded-xl px-2.5 py-1.5 text-xs outline-none"
-              style={{ background: 'var(--td-input-bg)', border: '1px solid var(--td-input-border)', color: compareStock !== '' ? 'var(--td-text-hi)' : 'var(--td-text-lo)' }}>
-              <option value="">Stock {compareStoreName}…</option>
-              <option value="0">= 0</option>
-              <option value="1">= 1</option>
-              <option value="2">= 2</option>
-              <option value="3+">≥ 3</option>
-            </select>
+            <div className="flex items-center gap-1">
+              <input
+                type="number"
+                min={0}
+                value={compareQty}
+                onChange={e => setCompareQty(e.target.value)}
+                placeholder={compareStoreName ? `Stock ${compareStoreName}` : 'Cantidad…'}
+                className="rounded-xl px-2.5 py-1.5 text-xs outline-none w-28"
+                style={{ background: 'var(--td-input-bg)', border: '1px solid var(--td-input-border)', color: 'var(--td-input-text)' }}
+              />
+              <select
+                value={compareOp}
+                onChange={e => setCompareOp(e.target.value as '<' | '=' | '>')}
+                className="rounded-xl px-2 py-1.5 text-xs outline-none font-bold"
+                style={{ background: 'var(--td-input-bg)', border: '1px solid var(--td-input-border)', color: 'var(--td-text-hi)' }}>
+                <option value="=">=</option>
+                <option value=">">&gt;</option>
+                <option value="<">&lt;</option>
+              </select>
+            </div>
           )}
           {primaryStoreId && (
             <button
@@ -354,7 +376,7 @@ export function StockSearchPage() {
             </button>
           )}
           {primaryStoreId && (
-            <button onClick={() => { setPrimaryStoreId(''); setCompareStoreId(''); setSortDir('desc'); setPrimaryStock(''); setCompareStock('') }}
+            <button onClick={() => { setPrimaryStoreId(''); setCompareStoreId(''); setSortDir('desc'); setPrimaryQty(''); setCompareQty('') }}
               className="p-1.5 rounded-lg transition-colors hover:bg-[var(--td-hover-bg)]" title="Quitar filtro">
               <X size={12} style={{ color: 'var(--td-text-lo)' }} />
             </button>
