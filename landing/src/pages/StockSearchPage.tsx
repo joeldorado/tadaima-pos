@@ -239,13 +239,28 @@ export function StockSearchPage() {
   const { data: catalogsData, isFetching: isFetchingCatalogs } = usePreSaleCatalogsQuery({ per_page: 200 })
   const catalogs = catalogsData?.data ?? []
   const matchedCatalogs = useMemo(() => {
-    if (debounced.length < 2) return []
+    if (debounced.length < 2 && !primaryStoreId) return []
     const q = debounced.toLowerCase()
     return catalogs.filter(c => {
       if (c.status === 'draft' || c.status === 'cancelled') return false
-      return c.product_name.toLowerCase().includes(q) || (c.category?.name ?? '').toLowerCase().includes(q)
+      // Filtro de texto (solo si hay búsqueda)
+      if (debounced.length >= 2) {
+        const matchText = c.product_name.toLowerCase().includes(q) || (c.category?.name ?? '').toLowerCase().includes(q)
+        if (!matchText) return false
+      }
+      // Filtro de cupo por tienda primaria
+      if (primaryStoreId && primaryQty !== '') {
+        const sl = c.store_limits?.find((x: { store_id: number }) => x.store_id === primaryStoreId)
+        const limit = sl?.limit_qty ?? 0
+        const reserved = c.reserved_by_store?.[String(primaryStoreId)] ?? 0
+        const remaining = Math.max(0, limit - reserved)
+        if (primaryOp === '=' && remaining !== Number(primaryQty)) return false
+        if (primaryOp === '>' && remaining <= Number(primaryQty)) return false
+        if (primaryOp === '<' && remaining >= Number(primaryQty)) return false
+      }
+      return true
     })
-  }, [catalogs, debounced])
+  }, [catalogs, debounced, primaryStoreId, primaryOp, primaryQty])
 
   // Para la búsqueda exacta por scanner (necesita acceder al producto completo)
   const { data: scanResults } = useProductsSearchQuery(lastScanRef.current ?? '', undefined)
@@ -431,8 +446,8 @@ export function StockSearchPage() {
             ))
           )}
 
-          {/* Preventas al final — solo cuando no hay filtro de stock activo */}
-          {!primaryStoreId && matchedCatalogs.map(cat => {
+          {/* Preventas al final, filtradas por cupo de la tienda seleccionada */}
+          {matchedCatalogs.map(cat => {
             const isSel = selectedId?.type === 'presale' && selectedId.id === cat.id
             return (
               <button key={`presale-${cat.id}`} onClick={() => setSelectedId({ type: 'presale', id: cat.id })}
