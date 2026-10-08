@@ -414,7 +414,24 @@ export function StockSearchPage() {
             )}
           </div>
 
-          {/* Preventas que coinciden con la búsqueda */}
+          {/* Lista de productos con stock embebido */}
+          {products.length === 0 && !isFetchingList ? (
+            <p className="text-sm py-6 text-center" style={{ color: 'var(--td-text-lo)' }}>
+              {debounced ? `Sin resultados para "${debounced}".` : 'Sin productos registrados.'}
+            </p>
+          ) : (
+            products.map(item => (
+              <ProductStockRow
+                key={item.id}
+                item={item}
+                {...(myStoreId !== undefined ? { highlightStoreId: myStoreId } : {})}
+                isSelected={selectedId?.type === 'product' && selectedId.id === item.id}
+                onSelect={() => setSelectedId(s => s?.type === 'product' && s.id === item.id ? null : { type: 'product', id: item.id })}
+              />
+            ))
+          )}
+
+          {/* Preventas al final */}
           {matchedCatalogs.map(cat => {
             const isSel = selectedId?.type === 'presale' && selectedId.id === cat.id
             return (
@@ -439,23 +456,6 @@ export function StockSearchPage() {
               </button>
             )
           })}
-
-          {/* Lista de productos con stock embebido */}
-          {products.length === 0 && !isFetchingList ? (
-            <p className="text-sm py-6 text-center" style={{ color: 'var(--td-text-lo)' }}>
-              {debounced ? `Sin resultados para "${debounced}".` : 'Sin productos registrados.'}
-            </p>
-          ) : (
-            products.map(item => (
-              <ProductStockRow
-                key={item.id}
-                item={item}
-                {...(myStoreId !== undefined ? { highlightStoreId: myStoreId } : {})}
-                isSelected={selectedId?.type === 'product' && selectedId.id === item.id}
-                onSelect={() => setSelectedId(s => s?.type === 'product' && s.id === item.id ? null : { type: 'product', id: item.id })}
-              />
-            ))
-          )}
         </div>
 
         {/* Panel de detalle al seleccionar un producto */}
