@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { Search, PackageSearch, Loader2, ChevronRight, X, Scan, Store, Phone, MessageCircle, Package, ArrowDown } from 'lucide-react'
+import { Search, PackageSearch, Loader2, ChevronRight, X, Scan, Store, Phone, MessageCircle, Package } from 'lucide-react'
 import { useAuth } from '@tadaima/auth'
 import type { PreSaleCatalog } from '@tadaima/api'
 import type { ProductStockItem } from '@tadaima/api'
@@ -197,7 +197,6 @@ export function StockSearchPage() {
   // Filtros de comparación entre tiendas
   const [primaryStoreId, setPrimaryStoreId] = useState<number | ''>('')
   const [compareStoreId, setCompareStoreId] = useState<number | ''>('')
-  const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
   const [primaryOp, setPrimaryOp] = useState<'<' | '=' | '>'>('=')
   const [primaryQty, setPrimaryQty] = useState<string>('')
   const [compareOp, setCompareOp] = useState<'<' | '=' | '>'>('=')
@@ -210,7 +209,7 @@ export function StockSearchPage() {
   }, [search])
 
   // Resetear página al cambiar filtros de tienda
-  useEffect(() => { setPage(1) }, [primaryStoreId, compareStoreId, sortDir, primaryOp, primaryQty, compareOp, compareQty])
+  useEffect(() => { setPage(1) }, [primaryStoreId, compareStoreId, primaryOp, primaryQty, compareOp, compareQty])
 
   const myStoreId = user?.store_id ?? undefined
 
@@ -228,7 +227,6 @@ export function StockSearchPage() {
     ...(debounced ? { search: debounced } : {}),
     ...(primaryStoreId ? { primary_store_id: primaryStoreId as number } : {}),
     ...(primaryStoreId && compareStoreId ? { compare_store_id: compareStoreId as number } : {}),
-    ...(primaryStoreId ? { sort_dir: sortDir } : {}),
     ...(primaryStoreId && primaryQty !== '' ? { primary_stock_op: primaryOp, primary_stock_qty: Number(primaryQty) } : {}),
     ...(compareStoreId && compareQty !== '' ? { compare_stock_op: compareOp, compare_stock_qty: Number(compareQty) } : {}),
   }
@@ -364,19 +362,7 @@ export function StockSearchPage() {
             </div>
           )}
           {primaryStoreId && (
-            <button
-              onClick={() => setSortDir(d => d === 'desc' ? 'asc' : 'desc')}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-colors"
-              style={{ background: 'var(--td-surface-muted)', border: '1px solid var(--td-panel-border)', color: 'var(--td-text-md)' }}
-              title={sortDir === 'desc' ? `Primero los que más tiene ${primaryStoreName}` : `Primero los que más tiene ${compareStoreName || primaryStoreName}`}>
-              <ArrowDown size={12} />
-              {sortDir === 'desc'
-                ? `Más en ${primaryStoreName}`
-                : `Más en ${compareStoreName || primaryStoreName}`}
-            </button>
-          )}
-          {primaryStoreId && (
-            <button onClick={() => { setPrimaryStoreId(''); setCompareStoreId(''); setSortDir('desc'); setPrimaryQty(''); setCompareQty('') }}
+            <button onClick={() => { setPrimaryStoreId(''); setCompareStoreId(''); setPrimaryQty(''); setCompareQty('') }}
               className="p-1.5 rounded-lg transition-colors hover:bg-[var(--td-hover-bg)]" title="Quitar filtro">
               <X size={12} style={{ color: 'var(--td-text-lo)' }} />
             </button>
