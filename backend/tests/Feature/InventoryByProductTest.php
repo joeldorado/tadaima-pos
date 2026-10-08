@@ -276,4 +276,73 @@ class InventoryByProductTest extends TestCase
         $posProduct = array_search($this->product->id, $ids);
         $this->assertLessThan($posExtra, $posProduct, 'Producto con diferencia menor debe aparecer primero en asc');
     }
+
+    public function test_products_stock_filtra_primary_stock_igual_0(): void
+    {
+        $sinStock = \App\Models\Product::create([
+            'name' => 'Sin Stock A', 'sku' => 'SS-001', 'active' => true, 'product_type' => 'product',
+        ]);
+
+        $res = $this->actingAs($this->cajero)
+            ->getJson("/api/v1/inventory/products-stock?primary_store_id={$this->storeA->id}&primary_stock_op=%3D&primary_stock_qty=0&per_page=50");
+
+        $res->assertOk();
+        $ids = collect($res->json('data.data'))->pluck('id')->toArray();
+        $this->assertContains($sinStock->id, $ids);
+        $this->assertNotContains($this->product->id, $ids);
+    }
+
+    public function test_products_stock_filtra_primary_stock_mayor_a(): void
+    {
+        $sinStock = \App\Models\Product::create([
+            'name' => 'Sin Stock B', 'sku' => 'SS-002', 'active' => true, 'product_type' => 'product',
+        ]);
+
+        // this->product tiene 5 uds en storeA → mayor a 0 debe incluirlo
+        $res = $this->actingAs($this->cajero)
+            ->getJson("/api/v1/inventory/products-stock?primary_store_id={$this->storeA->id}&primary_stock_op=%3E&primary_stock_qty=0&per_page=50");
+
+        $res->assertOk();
+        $ids = collect($res->json('data.data'))->pluck('id')->toArray();
+        $this->assertContains($this->product->id, $ids);
+        $this->assertNotContains($sinStock->id, $ids);
+    }
+
+    public function test_products_stock_filtra_compare_stock_igual(): void
+    {
+        // this->product tiene 12 uds en storeB. Crear otro con 2 uds.
+        $prod2 = \App\Models\Product::create([
+            'name' => 'Compare Exacto', 'sku' => 'CE-001', 'active' => true, 'product_type' => 'product',
+        ]);
+        \Illuminate\Support\Facades\DB::table('inventory')->insert([
+            ['product_id' => $prod2->id, 'warehouse_id' => $this->whB->id, 'quantity' => 2, 'created_at' => now(), 'updated_at' => now()],
+        ]);
+
+        $res = $this->actingAs($this->cajero)
+            ->getJson("/api/v1/inventory/products-stock?primary_store_id={$this->storeA->id}&compare_store_id={$this->storeB->id}&compare_stock_op=%3D&compare_stock_qty=2&per_page=50");
+
+        $res->assertOk();
+        $ids = collect($res->json('data.data'))->pluck('id')->toArray();
+        $this->assertContains($prod2->id, $ids);
+        $this->assertNotContains($this->product->id, $ids);
+    }
+
+    public function test_products_stock_filtra_compare_stock_menor_a(): void
+    {
+        // Menor a 10 → prod con 1 ud sí, this->product con 12 no
+        $prod2 = \App\Models\Product::create([
+            'name' => 'Poco Stock B', 'sku' => 'PS-001', 'active' => true, 'product_type' => 'product',
+        ]);
+        \Illuminate\Support\Facades\DB::table('inventory')->insert([
+            ['product_id' => $prod2->id, 'warehouse_id' => $this->whB->id, 'quantity' => 1, 'created_at' => now(), 'updated_at' => now()],
+        ]);
+
+        $res = $this->actingAs($this->cajero)
+            ->getJson("/api/v1/inventory/products-stock?primary_store_id={$this->storeA->id}&compare_store_id={$this->storeB->id}&compare_stock_op=%3C&compare_stock_qty=10&per_page=50");
+
+        $res->assertOk();
+        $ids = collect($res->json('data.data'))->pluck('id')->toArray();
+        $this->assertContains($prod2->id, $ids);
+        $this->assertNotContains($this->product->id, $ids);
+    }
 }

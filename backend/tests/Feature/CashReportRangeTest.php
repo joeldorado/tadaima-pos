@@ -426,4 +426,154 @@ class CashReportRangeTest extends TestCase
         // El desconocido cae al resto no-efectivo no-tarjeta.
         $this->assertEquals(150.0, (float) $row['total_transfer']);
     }
+
+    /**
+     * Una venta con tarjeta cancelada (status='returned') NO debe aparecer
+     * en total_card ni total_transfer del corte (bug 2026-10-08).
+     * El reembolso va por terminal/banco — no hay cash_movement de por medio.
+     */
+    public function test_venta_cancelada_con_tarjeta_no_aparece_en_cobrado_turno(): void
+    {
+        $card     = PaymentMethod::create(['name' => 'Tarjeta Débito', 'active' => true]);
+        $transfer = PaymentMethod::create(['name' => 'Transferencia', 'active' => true]);
+
+        $session = CashRegisterSession::create([
+            'register_id'  => $this->register->id,
+            'user_id'      => $this->admin->id,
+            'opening_cash' => 0,
+            'status'       => CashRegisterSession::STATUS_OPEN,
+            'opened_at'    => now()->subHour(),
+        ]);
+
+        // Venta tarjeta $300 — completada (debe aparecer)
+        $saleCompleted = Sale::create([
+            'store_id'            => $this->store->id,
+            'register_session_id' => $session->id,
+            'user_id'             => $this->admin->id,
+            'customer_id'         => null,
+            'subtotal'            => 300,
+            'discount'            => 0,
+            'total'               => 300,
+            'status'              => Sale::STATUS_COMPLETED,
+        ]);
+        Payment::create([
+            'sale_id'           => $saleCompleted->id,
+            'payment_method_id' => $card->id,
+            'amount'            => 300,
+            'commission_amount' => 0,
+        ]);
+
+        // Venta tarjeta $200 — cancelada (NO debe aparecer en total_card)
+        $saleCancelled = Sale::create([
+            'store_id'            => $this->store->id,
+            'register_session_id' => $session->id,
+            'user_id'             => $this->admin->id,
+            'customer_id'         => null,
+            'subtotal'            => 200,
+            'discount'            => 0,
+            'total'               => 200,
+            'status'              => Sale::STATUS_RETURNED,
+        ]);
+        Payment::create([
+            'sale_id'           => $saleCancelled->id,
+            'payment_method_id' => $card->id,
+            'amount'            => 200,
+            'commission_amount' => 0,
+        ]);
+
+        // Venta transferencia $150 — cancelada (NO debe aparecer en total_transfer)
+        $saleCancelledTransfer = Sale::create([
+            'store_id'            => $this->store->id,
+            'register_session_id' => $session->id,
+            'user_id'             => $this->admin->id,
+            'customer_id'         => null,
+            'subtotal'            => 150,
+            'discount'            => 0,
+            'total'               => 150,
+            'status'              => Sale::STATUS_RETURNED,
+        ]);
+        Payment::create([
+            'sale_id'           => $saleCancelledTransfer->id,
+            'payment_method_id' => $transfer->id,
+            'amount'            => 150,
+            'commission_amount' => 0,
+        ]);
+
+        $row = collect($this->actingAs($this->admin)
+            ->getJson('/api/v1/reports/cash?from=' . now()->toDateString() . '&to=' . now()->toDateString())
+            ->assertOk()
+            ->json('data.sessions'))->firstWhere('id', $session->id);
+
+        $this->assertNotNull($row);
+        // Solo la venta completada ($300) debe aparecer en total_card.
+        $this->assertEquals(300.0, (float) $row['total_card']);
+        // La transferencia cancelada no debe aparecer.
+        $this->assertEquals(0.0, (float) $row['total_transfer']);
+    }
+
+    /**
+     * Cancelación de venta en efectivo: cash_collected_net descuenta el
+     * efectivo devuelto; expected_cash sigue correcto (cash_movement lo
+     * compensa). Bug 2026-10-08: el modal mostraba el bruto.
+     */
+    public function test_cancelacion_efectivo_descuenta_cash_collected_net(): void
+    {
+        $cash = PaymentMethod::create(['name' => 'Efectivo', 'active' => true]);
+
+        $session = CashRegisterSession::create([
+            'register_id'  => $this->register->id,
+            'user_id'      => $this->admin->id,
+            'opening_cash' => 0,
+            'status'       => CashRegisterSession::STATUS_OPEN,
+            'opened_at'    => now()->subHour(),
+        ]);
+
+        // Venta $800 efectivo completada.
+        $saleOk = Sale::create([
+            'store_id'            => $this->store->id,
+            'register_session_id' => $session->id,
+            'user_id'             => $this->admin->id,
+            'customer_id'         => null,
+            'subtotal'            => 800,
+            'discount'            => 0,
+            'total'               => 800,
+            'status'              => Sale::STATUS_COMPLETED,
+        ]);
+        Payment::create(['sale_id' => $saleOk->id, 'payment_method_id' => $cash->id, 'amount' => 800, 'commission_amount' => 0]);
+
+        // Venta $490 efectivo cancelada (status=returned).
+        $saleCancelled = Sale::create([
+            'store_id'            => $this->store->id,
+            'register_session_id' => $session->id,
+            'user_id'             => $this->admin->id,
+            'customer_id'         => null,
+            'subtotal'            => 490,
+            'discount'            => 0,
+            'total'               => 490,
+            'status'              => Sale::STATUS_RETURNED,
+        ]);
+        Payment::create(['sale_id' => $saleCancelled->id, 'payment_method_id' => $cash->id, 'amount' => 490, 'commission_amount' => 0]);
+        // La cancelación registra cash_movement salida por $490.
+        DB::table('cash_movements')->insert([
+            'register_session_id' => $session->id,
+            'type'                => 'salida',
+            'amount'              => 490,
+            'description'         => 'Cancelación',
+            'created_at'          => now(),
+        ]);
+
+        $row = collect($this->actingAs($this->admin)
+            ->getJson('/api/v1/reports/cash?from=' . now()->toDateString() . '&to=' . now()->toDateString())
+            ->assertOk()
+            ->json('data.sessions'))->firstWhere('id', $session->id);
+
+        $this->assertNotNull($row);
+        // cash_collected (bruto) = $800 + $490 = $1290; usado en expected_cash.
+        $this->assertEquals(1290.0, (float) $row['cash_collected']);
+        // cash_collected_net = $800 (solo la completada); esto muestra el modal.
+        $this->assertEquals(800.0, (float) $row['cash_collected_net']);
+        $this->assertEquals(490.0, (float) $row['cash_refunded']);
+        // expected_cash neto = 0 + 0(entradas) - 490(salida) + 0(ajustes) + 1290 = 800.
+        $this->assertEquals(800.0, (float) $row['expected_cash']);
+    }
 }

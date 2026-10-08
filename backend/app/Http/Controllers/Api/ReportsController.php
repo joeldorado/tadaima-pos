@@ -323,13 +323,13 @@ class ReportsController extends Controller
             ->get()
             ->keyBy('register_session_id');
 
-        // Cobros que ENTRARON al cajón: se cuentan también los de ventas
-        // canceladas por completo ('returned'). La cancelación NO borra los
-        // `payments` y SÍ registra su reverso como cash_movement 'salida'
-        // (SaleCancellationService) — si aquí se excluyera la venta, el
-        // efectivo se restaría DOS veces (bug Mario/Macro 2026-08-17: venta
-        // $188 efectivo cancelada → esperado −188 en vez de 0). La parcial ya
-        // funcionaba así porque la venta sigue 'completed'.
+        // cash_paid incluye 'returned' para evitar doble resta: la cancelación
+        // ya registra su reverso como cash_movement 'salida'. Si se excluyera
+        // la venta, el efectivo se restaría dos veces (bug Mario/Macro
+        // 2026-08-17: venta $188 efectivo cancelada → esperado −188 en vez de
+        // 0). card_paid y other_paid excluyen 'returned': el reembolso va por
+        // terminal/banco, no por cash_movement, así que la venta cancelada no
+        // debería aparecer en "Cobrado en el turno" (bug 2026-10-08).
         $salePaymentTotals = DB::table('payments')
             ->join('sales', 'sales.id', '=', 'payments.sale_id')
             ->leftJoin('payment_methods as pm', 'pm.id', '=', 'payments.payment_method_id')
@@ -339,8 +339,9 @@ class ReportsController extends Controller
                 sales.register_session_id,
                 COALESCE(SUM(payments.amount), 0) as total_paid,
                 COALESCE(SUM(CASE WHEN {$cashCond} THEN payments.amount ELSE 0 END), 0) as cash_paid,
-                COALESCE(SUM(CASE WHEN {$cardCond} THEN payments.amount ELSE 0 END), 0) as card_paid,
-                COALESCE(SUM(CASE WHEN {$cashCond} OR {$cardCond} THEN 0 ELSE payments.amount END), 0) as other_paid
+                COALESCE(SUM(CASE WHEN {$cashCond} AND sales.status = 'returned' THEN payments.amount ELSE 0 END), 0) as cash_returned,
+                COALESCE(SUM(CASE WHEN {$cardCond} AND sales.status != 'returned' THEN payments.amount ELSE 0 END), 0) as card_paid,
+                COALESCE(SUM(CASE WHEN ({$cashCond} OR {$cardCond} OR sales.status = 'returned') THEN 0 ELSE payments.amount END), 0) as other_paid
             ")
             ->groupBy('sales.register_session_id')
             ->get()
@@ -390,9 +391,14 @@ class ReportsController extends Controller
             $salesAmt  = (float) ($sales?->amount ?? 0);
             $salesCnt  = (int)   ($sales?->count  ?? 0);
             $cashSales = (float) ($salePay?->cash_paid ?? 0);
+            $cashSalesReturned = (float) ($salePay?->cash_returned ?? 0);
             $preSaleAmt = (float) ($preSales?->total_paid ?? 0);
             $cashPreSales = (float) ($preSales?->cash_paid ?? 0);
             $cashCollected = round($cashSales + $cashPreSales, 2);
+            // Efectivo NETO (para mostrar en "Cobrado en el turno"): descuenta
+            // el efectivo de ventas canceladas. El expected_cash sigue usando
+            // el bruto porque la cancelación ya creó su cash_movement salida.
+            $cashCollectedNet = round($cashSales - $cashSalesReturned + $cashPreSales, 2);
             // Fuera del cajón (informativo, ventas + anticipos). `transfer`
             // agrupa TODO lo no-efectivo no-tarjeta: hoy en la práctica son
             // transferencias; un método futuro cae aquí (nunca al esperado).
@@ -451,7 +457,9 @@ class ReportsController extends Controller
                 'total_usd_received' => round((float) ($sales?->usd_received ?? 0), 2),
                 'total_pre_sale_payments' => round($preSaleAmt, 2),
                 'total_cash_pre_sale_payments' => round($cashPreSales, 2),
-                'cash_collected'  => $cashCollected,
+                'cash_collected'      => $cashCollected,
+                'cash_collected_net' => $cashCollectedNet,
+                'cash_refunded'      => round($cashSalesReturned, 2),
                 'sales_count'     => $salesCnt,
                 // Insumos comprados con efectivo de esta caja (ya incluidos en
                 // total_salidas — informativo, no volver a restar).

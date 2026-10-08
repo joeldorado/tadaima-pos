@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { Search, PackageSearch, Loader2, ChevronRight, X, Scan, Store, Phone, MessageCircle, Package, ArrowDown } from 'lucide-react'
+import { Search, PackageSearch, Loader2, ChevronRight, X, Scan, Store, Phone, MessageCircle, Package } from 'lucide-react'
 import { useAuth } from '@tadaima/auth'
 import type { PreSaleCatalog } from '@tadaima/api'
 import type { ProductStockItem } from '@tadaima/api'
 import { useProductsSearchQuery } from '@/hooks/queries/useProducts'
 import { usePreSaleCatalogsQuery } from '@/hooks/queries/usePreSales'
 import { useStoresQuery } from '@/hooks/queries/useStores'
+import { useCategoriesQuery } from '@/hooks/queries/useCategories'
 import { useBarcodeScanner } from '@/hooks/useBarcodeScanner'
 import { StoreStockBreakdown } from '@/components/inventory/StoreStockBreakdown'
 import { useProductsStockQuery } from '@/hooks/queries/useInventory'
@@ -197,7 +198,12 @@ export function StockSearchPage() {
   // Filtros de comparación entre tiendas
   const [primaryStoreId, setPrimaryStoreId] = useState<number | ''>('')
   const [compareStoreId, setCompareStoreId] = useState<number | ''>('')
-  const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
+  const [primaryOp, setPrimaryOp] = useState<'<' | '=' | '>'>('=')
+  const [primaryQty, setPrimaryQty] = useState<string>('')
+  const [compareOp, setCompareOp] = useState<'<' | '=' | '>'>('=')
+  const [compareQty, setCompareQty] = useState<string>('')
+  const [categoryId, setCategoryId] = useState<number | ''>('')
+  const [categorySearch, setCategorySearch] = useState('')
 
   // Debounce 300ms para el API de lista
   useEffect(() => {
@@ -206,7 +212,7 @@ export function StockSearchPage() {
   }, [search])
 
   // Resetear página al cambiar filtros de tienda
-  useEffect(() => { setPage(1) }, [primaryStoreId, compareStoreId, sortDir])
+  useEffect(() => { setPage(1) }, [primaryStoreId, compareStoreId, primaryOp, primaryQty, compareOp, compareQty, categoryId])
 
   const myStoreId = user?.store_id ?? undefined
 
@@ -214,17 +220,24 @@ export function StockSearchPage() {
   const { data: storesData } = useStoresQuery({ active: true })
   const stores = storesData ?? []
 
-  const primaryStoreName = stores.find(s => s.id === primaryStoreId)?.name ?? ''
-  const compareStoreName = stores.find(s => s.id === compareStoreId)?.name ?? ''
+  const { data: categoriesData } = useCategoriesQuery()
+  const allCategories = categoriesData ?? []
+  const filteredCategories = useMemo(() => {
+    if (!categorySearch.trim()) return allCategories
+    const q = categorySearch.toLowerCase()
+    return allCategories.filter(c => c.name.toLowerCase().includes(q))
+  }, [allCategories, categorySearch])
 
-  // Lista paginada con stock embebido (endpoint nuevo)
+// Lista paginada con stock embebido (endpoint nuevo)
   const stockParams = {
     page,
     per_page: PER_PAGE,
     ...(debounced ? { search: debounced } : {}),
     ...(primaryStoreId ? { primary_store_id: primaryStoreId as number } : {}),
     ...(primaryStoreId && compareStoreId ? { compare_store_id: compareStoreId as number } : {}),
-    ...(primaryStoreId ? { sort_dir: sortDir } : {}),
+    ...(categoryId ? { category_id: categoryId as number } : {}),
+    ...(primaryStoreId && primaryQty !== '' ? { primary_stock_op: primaryOp, primary_stock_qty: Number(primaryQty) } : {}),
+    ...(compareStoreId && compareQty !== '' ? { compare_stock_op: compareOp, compare_stock_qty: Number(compareQty) } : {}),
   }
   const { data: listData, isFetching: isFetchingList } = useProductsStockQuery(stockParams)
 
@@ -235,13 +248,28 @@ export function StockSearchPage() {
   const { data: catalogsData, isFetching: isFetchingCatalogs } = usePreSaleCatalogsQuery({ per_page: 200 })
   const catalogs = catalogsData?.data ?? []
   const matchedCatalogs = useMemo(() => {
-    if (debounced.length < 2) return []
+    if (debounced.length < 2 && !primaryStoreId) return []
     const q = debounced.toLowerCase()
     return catalogs.filter(c => {
       if (c.status === 'draft' || c.status === 'cancelled') return false
-      return c.product_name.toLowerCase().includes(q) || (c.category?.name ?? '').toLowerCase().includes(q)
+      // Filtro de texto (solo si hay búsqueda)
+      if (debounced.length >= 2) {
+        const matchText = c.product_name.toLowerCase().includes(q) || (c.category?.name ?? '').toLowerCase().includes(q)
+        if (!matchText) return false
+      }
+      // Filtro de cupo por tienda primaria
+      if (primaryStoreId && primaryQty !== '') {
+        const sl = c.store_limits?.find((x: { store_id: number }) => x.store_id === primaryStoreId)
+        const limit = sl?.limit_qty ?? 0
+        const reserved = c.reserved_by_store?.[String(primaryStoreId)] ?? 0
+        const remaining = Math.max(0, limit - reserved)
+        if (primaryOp === '=' && remaining !== Number(primaryQty)) return false
+        if (primaryOp === '>' && remaining <= Number(primaryQty)) return false
+        if (primaryOp === '<' && remaining >= Number(primaryQty)) return false
+      }
+      return true
     })
-  }, [catalogs, debounced])
+  }, [catalogs, debounced, primaryStoreId, primaryOp, primaryQty])
 
   // Para la búsqueda exacta por scanner (necesita acceder al producto completo)
   const { data: scanResults } = useProductsSearchQuery(lastScanRef.current ?? '', undefined)
@@ -292,43 +320,134 @@ export function StockSearchPage() {
         </div>
       </div>
 
-      {/* Filtros de comparación entre tiendas */}
-      {stores.length > 1 && (
-        <div className="flex flex-wrap items-center gap-1.5 mb-4">
-          <select
-            value={primaryStoreId}
-            onChange={e => { setPrimaryStoreId(e.target.value ? Number(e.target.value) : ''); setCompareStoreId('') }}
-            className="rounded-xl px-2.5 py-1.5 text-xs outline-none"
-            style={{ background: 'var(--td-input-bg)', border: '1px solid var(--td-input-border)', color: primaryStoreId ? 'var(--td-text-hi)' : 'var(--td-text-lo)' }}>
-            <option value="">Ordenar por tienda…</option>
-            {stores.map(s => <option key={s.id} value={s.id}>Tienda {s.name}</option>)}
-          </select>
+      {/* Filtros: categoría + tiendas */}
+      {(stores.length > 1 || allCategories.length > 0) && (
+        <div className="rounded-2xl p-3 mb-4 flex flex-wrap items-center gap-2"
+          style={{ background: 'var(--td-panel-bg)', border: '1px solid var(--td-panel-border)' }}>
+
+          {/* Buscador de categoría */}
+          {allCategories.length > 0 && (
+            <div className="relative">
+              <input
+                type="text"
+                value={categorySearch}
+                onChange={e => { setCategorySearch(e.target.value); setCategoryId('') }}
+                placeholder="Categoría…"
+                className="rounded-lg px-2.5 py-1.5 text-xs outline-none w-36"
+                style={{ background: 'var(--td-input-bg)', border: `1px solid ${categoryId ? 'rgba(99,102,241,0.4)' : 'var(--td-input-border)'}`, color: categoryId ? '#6366F1' : 'var(--td-input-text)' }}
+              />
+              {categorySearch && !categoryId && (
+                <div className="absolute z-20 top-full left-0 mt-1 w-56 rounded-xl overflow-hidden shadow-xl"
+                  style={{ background: 'var(--td-panel-bg)', border: '1px solid var(--td-panel-border)' }}>
+                  <div className="max-h-48 overflow-y-auto">
+                    {filteredCategories.length === 0
+                      ? <p className="px-3 py-3 text-xs" style={{ color: 'var(--td-text-lo)' }}>Sin resultados</p>
+                      : filteredCategories.map(c => (
+                          <button key={c.id}
+                            onClick={() => { setCategoryId(c.id); setCategorySearch(c.name) }}
+                            className="w-full text-left px-3 py-2 text-xs font-semibold transition-colors hover:bg-[var(--td-hover-bg)]"
+                            style={{ color: 'var(--td-text-hi)' }}>
+                            {c.name}
+                          </button>
+                        ))
+                    }
+                  </div>
+                </div>
+              )}
+              {categoryId && (
+                <button onClick={() => { setCategoryId(''); setCategorySearch('') }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-[var(--td-hover-bg)]">
+                  <X size={11} style={{ color: '#6366F1' }} />
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Tienda primaria */}
+          <div className="flex items-center gap-1.5">
+            <Store size={13} style={{ color: 'var(--td-text-lo)' }} />
+            <select
+              value={primaryStoreId}
+              onChange={e => { setPrimaryStoreId(e.target.value ? Number(e.target.value) : ''); setCompareStoreId(''); setPrimaryQty(''); setCompareQty('') }}
+              className="rounded-lg px-2.5 py-1.5 text-xs font-semibold outline-none"
+              style={{ background: 'var(--td-input-bg)', border: `1px solid ${primaryStoreId ? STOCK_ACCENT.blueBorder : 'var(--td-input-border)'}`, color: primaryStoreId ? STOCK_ACCENT.blueText : 'var(--td-text-lo)' }}>
+              <option value="">Tienda…</option>
+              {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+
+          {/* Filtro de cantidad tienda primaria */}
+          {primaryStoreId && (
+            <div className="flex items-center gap-1.5">
+              <select
+                value={primaryOp}
+                onChange={e => setPrimaryOp(e.target.value as '<' | '=' | '>')}
+                className="rounded-lg px-2 py-1.5 text-xs font-black outline-none"
+                style={{ background: 'var(--td-input-bg)', border: `1px solid ${primaryQty !== '' ? STOCK_ACCENT.blueBorder : 'var(--td-input-border)'}`, color: primaryQty !== '' ? STOCK_ACCENT.blueText : 'var(--td-text-md)' }}>
+                <option value="=">=</option>
+                <option value=">">&gt;</option>
+                <option value="<">&lt;</option>
+              </select>
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={primaryQty}
+                onChange={e => setPrimaryQty(e.target.value.replace(/\D/g, ''))}
+                placeholder="0"
+                className="rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none w-16 tabular-nums"
+                style={{ background: 'var(--td-input-bg)', border: `1px solid ${primaryQty !== '' ? STOCK_ACCENT.blueBorder : 'var(--td-input-border)'}`, color: primaryQty !== '' ? STOCK_ACCENT.blueText : 'var(--td-text-lo)' }}
+              />
+            </div>
+          )}
+
+          {/* Separador vs. */}
+          {primaryStoreId && (
+            <span className="text-[10px] font-black uppercase tracking-wider px-1" style={{ color: 'var(--td-text-lo)' }}>vs.</span>
+          )}
+
+          {/* Tienda de comparación */}
           {primaryStoreId && (
             <select
               value={compareStoreId}
-              onChange={e => setCompareStoreId(e.target.value ? Number(e.target.value) : '')}
-              className="rounded-xl px-2.5 py-1.5 text-xs outline-none"
-              style={{ background: 'var(--td-input-bg)', border: '1px solid var(--td-input-border)', color: compareStoreId ? 'var(--td-text-hi)' : 'var(--td-text-lo)' }}>
-              <option value="">vs. otra tienda…</option>
-              {stores.filter(s => s.id !== primaryStoreId).map(s => <option key={s.id} value={s.id}>Tienda {s.name}</option>)}
+              onChange={e => { setCompareStoreId(e.target.value ? Number(e.target.value) : ''); setCompareQty('') }}
+              className="rounded-lg px-2.5 py-1.5 text-xs font-semibold outline-none"
+              style={{ background: 'var(--td-input-bg)', border: `1px solid ${compareStoreId ? 'rgba(245,158,11,0.4)' : 'var(--td-input-border)'}`, color: compareStoreId ? '#D97706' : 'var(--td-text-lo)' }}>
+              <option value="">Tienda…</option>
+              {stores.filter(s => s.id !== primaryStoreId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           )}
-          {primaryStoreId && (
-            <button
-              onClick={() => setSortDir(d => d === 'desc' ? 'asc' : 'desc')}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-colors"
-              style={{ background: 'var(--td-surface-muted)', border: '1px solid var(--td-panel-border)', color: 'var(--td-text-md)' }}
-              title={sortDir === 'desc' ? `Primero los que más tiene ${primaryStoreName}` : `Primero los que más tiene ${compareStoreName || primaryStoreName}`}>
-              <ArrowDown size={12} />
-              {sortDir === 'desc'
-                ? `Más en ${primaryStoreName}`
-                : `Más en ${compareStoreName || primaryStoreName}`}
-            </button>
+
+          {/* Filtro de cantidad tienda comparación */}
+          {compareStoreId && (
+            <div className="flex items-center gap-1.5">
+              <select
+                value={compareOp}
+                onChange={e => setCompareOp(e.target.value as '<' | '=' | '>')}
+                className="rounded-lg px-2 py-1.5 text-xs font-black outline-none"
+                style={{ background: 'var(--td-input-bg)', border: `1px solid ${compareQty !== '' ? 'rgba(245,158,11,0.4)' : 'var(--td-input-border)'}`, color: compareQty !== '' ? '#D97706' : 'var(--td-text-md)' }}>
+                <option value="=">=</option>
+                <option value=">">&gt;</option>
+                <option value="<">&lt;</option>
+              </select>
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={compareQty}
+                onChange={e => setCompareQty(e.target.value.replace(/\D/g, ''))}
+                placeholder="0"
+                className="rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none w-16 tabular-nums"
+                style={{ background: 'var(--td-input-bg)', border: `1px solid ${compareQty !== '' ? 'rgba(245,158,11,0.4)' : 'var(--td-input-border)'}`, color: compareQty !== '' ? '#D97706' : 'var(--td-text-lo)' }}
+              />
+            </div>
           )}
+
+          {/* Limpiar tiendas */}
           {primaryStoreId && (
-            <button onClick={() => { setPrimaryStoreId(''); setCompareStoreId(''); setSortDir('desc') }}
-              className="p-1.5 rounded-lg transition-colors hover:bg-[var(--td-hover-bg)]" title="Quitar filtro">
-              <X size={12} style={{ color: 'var(--td-text-lo)' }} />
+            <button onClick={() => { setPrimaryStoreId(''); setCompareStoreId(''); setPrimaryQty(''); setCompareQty('') }}
+              className="ml-auto p-1.5 rounded-lg transition-colors hover:bg-[var(--td-hover-bg)]" title="Quitar filtros de tienda">
+              <X size={13} style={{ color: 'var(--td-text-lo)' }} />
             </button>
           )}
         </div>
@@ -378,7 +497,24 @@ export function StockSearchPage() {
             )}
           </div>
 
-          {/* Preventas que coinciden con la búsqueda */}
+          {/* Lista de productos con stock embebido */}
+          {products.length === 0 && !isFetchingList ? (
+            <p className="text-sm py-6 text-center" style={{ color: 'var(--td-text-lo)' }}>
+              {debounced ? `Sin resultados para "${debounced}".` : 'Sin productos registrados.'}
+            </p>
+          ) : (
+            products.map(item => (
+              <ProductStockRow
+                key={item.id}
+                item={item}
+                {...(myStoreId !== undefined ? { highlightStoreId: myStoreId } : {})}
+                isSelected={selectedId?.type === 'product' && selectedId.id === item.id}
+                onSelect={() => setSelectedId(s => s?.type === 'product' && s.id === item.id ? null : { type: 'product', id: item.id })}
+              />
+            ))
+          )}
+
+          {/* Preventas al final, filtradas por cupo de la tienda seleccionada */}
           {matchedCatalogs.map(cat => {
             const isSel = selectedId?.type === 'presale' && selectedId.id === cat.id
             return (
@@ -403,23 +539,6 @@ export function StockSearchPage() {
               </button>
             )
           })}
-
-          {/* Lista de productos con stock embebido */}
-          {products.length === 0 && !isFetchingList ? (
-            <p className="text-sm py-6 text-center" style={{ color: 'var(--td-text-lo)' }}>
-              {debounced ? `Sin resultados para "${debounced}".` : 'Sin productos registrados.'}
-            </p>
-          ) : (
-            products.map(item => (
-              <ProductStockRow
-                key={item.id}
-                item={item}
-                {...(myStoreId !== undefined ? { highlightStoreId: myStoreId } : {})}
-                isSelected={selectedId?.type === 'product' && selectedId.id === item.id}
-                onSelect={() => setSelectedId(s => s?.type === 'product' && s.id === item.id ? null : { type: 'product', id: item.id })}
-              />
-            ))
-          )}
         </div>
 
         {/* Panel de detalle al seleccionar un producto */}

@@ -55,6 +55,8 @@ interface ColumnSpec {
   /** Valor ya calculado del renglón (también es el `cached` de la fórmula). */
   value: (g: GroupedProduct) => number;
   formula?: (r: number, ref: (key: string, r: number) => string) => string;
+  /** Si true, la fila de TOTAL deja esta celda vacía (ej. Costo Unitario no se suma). */
+  noSum?: boolean;
 }
 
 interface ProductTable {
@@ -95,6 +97,7 @@ function sumRow(
 ): void {
   sh.set(r, t.col, label, styles.label);
   t.columns.forEach((c, i) => {
+    if (c.noSum) return; // columnas informativas (ej. Costo Unitario) no se suman
     const value = groups.reduce((a, g) => a + c.value(g), 0);
     const cached = c.qty ? Number(value.toFixed(1)) : value;
     const style = c.qty ? styles.qty : styles.money(c.color);
@@ -166,6 +169,7 @@ export function methodTable(col: number, pred: (n: string) => boolean, label: st
     mangaKey: "venta",
     columns: [
       { key: "qty", header: `Cant. ${label}`, qty: true, color: GRAY, value: qty },
+      ...(canViewCost ? [{ key: "costoUnit", header: "Costo Unitario", color: GRAY, noSum: true, value: (g: GroupedProduct) => g.cost_tag ?? 0 }] : []),
       ...(canViewCost ? [{ key: "costo", header: "Costo Producto", color: GRAY, value: cost }] : []),
       { key: "venta", header: `Venta ${label}`, color: GREEN, bold: true, value: revenue },
       ...(canViewCost ? [{
@@ -190,6 +194,7 @@ export function cardTable(col: number, canViewCost: boolean, ivaRate: number, to
     columns: [
       { key: "qty", header: "Cant. Tarjeta", qty: true, color: GRAY, value: (g) => part(g).qty },
       { key: "bruto", header: "Bruto Tarjeta", color: GRAY, value: (g) => part(g).revenue },
+      ...(canViewCost ? [{ key: "costoUnit", header: "Costo Unitario", color: GRAY, noSum: true, value: (g: GroupedProduct) => g.cost_tag ?? 0 }] : []),
       ...(canViewCost ? [{ key: "costo", header: "Costo Producto", color: GRAY, value: cost }] : []),
       { key: "comm", header: "Comisión TPV", color: RED, value: comm },
       {

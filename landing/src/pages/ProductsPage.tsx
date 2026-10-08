@@ -26,6 +26,7 @@ import type { ApiError } from "@tadaima/api";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useProductsQuery, useProductStatsQuery, type ProductsCatalogFilter } from "@/hooks/queries/useProducts";
 import { useMangasQuery } from "@/hooks/queries/useMangas";
+import { useCategoriesQuery } from "@/hooks/queries/useCategories";
 import { ProductsSkeleton } from "@/components/products/ProductsSkeleton";
 import { useStoresQuery } from "@/hooks/queries/useStores";
 import { useWarehousesQuery } from "@/hooks/queries/useWarehouses";
@@ -1767,9 +1768,8 @@ function FilterDropdown({ activeFilter, onSelect, isProductos, canViewCost, coun
 export function ProductsPage() {
   const [pageSection, setPageSection] = useState<'productos' | 'tomos'>('productos');
   const [search, setSearch] = useState("");
-  // Nota: sin selector de categoría en esta página — el filtro server-side
-  // (?category_id) ya está soportado por el backend, listo para cuando exista
-  // esa UI.
+  const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
+  const [categorySearch, setCategorySearch] = useState("");
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<"grid" | "list">(
     () => (localStorage.getItem('tadaima-products-view') ?? 'list') as "grid" | "list"
@@ -1854,10 +1854,9 @@ export function ProductsPage() {
     threshold: 10,
     page: pagination.pageIndex + 1,
     perPage: pagination.pageSize,
-    // categoryId: el backend ya soporta ?category_id, pero esta página no
-    // tiene selector de categoría (selectedCat es un useState sin setter,
-    // siempre "Todo") — se cablea cuando exista la UI.
+    categoryId: selectedCategoryId,
   });
+  const { data: categoriesData } = useCategoriesQuery();
   // Contadores REALES del catálogo completo (GET /products/stats) para los
   // chips — independientes de la página cargada. En el tab Tomos cuentan
   // mangas; en Productos, productos normales.
@@ -1872,7 +1871,7 @@ export function ProductsPage() {
   // manualPagination + autoResetPageIndex:false nadie más la regresa a 1).
   useEffect(() => {
     setPagination(p => (p.pageIndex === 0 ? p : { ...p, pageIndex: 0 }));
-  }, [serverSearch, activeFilter, selectedStoreId]);
+  }, [serverSearch, activeFilter, selectedStoreId, selectedCategoryId]);
   // Librerías: se cargan al entrar a su tab, PERO también en background una vez
   // que el catálogo de productos terminó de cargar → al dar clic en "Tomos" ya
   // están en cache (instantáneo). El spinner de tomos sigue gateado a su tab,
@@ -2912,6 +2911,67 @@ export function ProductsPage() {
           {/* Los demás filtros viven en el dropdown (la fila de 8 chips se
               amontonaba). Contadores reales de stats; en el tab Tomos cuentan
               tomos (stats con type=manga). */}
+          {/* Filtro de categoría — solo en tab Productos (tomos no lo usan) */}
+          {pageSection === 'productos' && (() => {
+            const allCategories = categoriesData ?? [];
+            const selectedCat = allCategories.find(c => c.id === selectedCategoryId);
+            const filtered = allCategories.filter(c =>
+              c.name.toLowerCase().includes(categorySearch.toLowerCase())
+            );
+            return (
+              <div className="relative shrink-0">
+                {selectedCat ? (
+                  <button
+                    onClick={() => { setSelectedCategoryId(null); setCategorySearch(""); }}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-2xl text-xs font-black transition-all hover:scale-[1.02] active:scale-95"
+                    style={{
+                      background: "rgba(139,92,246,0.12)",
+                      border: "1px solid rgba(139,92,246,0.4)",
+                      color: "#A78BFA",
+                    }}
+                  >
+                    <BookOpen size={12} />
+                    {selectedCat.name}
+                    <X size={11} />
+                  </button>
+                ) : (
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="Categoría…"
+                      value={categorySearch}
+                      onChange={e => setCategorySearch(e.target.value)}
+                      className="pl-3 pr-8 py-2 rounded-2xl text-xs font-semibold outline-none w-32 transition-all"
+                      style={{
+                        background: "var(--td-input-bg)",
+                        border: "1px solid var(--td-input-border)",
+                        color: T.textPrimary,
+                      }}
+                    />
+                    <BookOpen size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: T.textMuted }} />
+                    {categorySearch.length > 0 && filtered.length > 0 && (
+                      <div
+                        className="absolute left-0 top-full mt-1 z-50 rounded-xl overflow-hidden shadow-xl min-w-[180px] max-h-52 overflow-y-auto"
+                        style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)" }}
+                      >
+                        {filtered.map(cat => (
+                          <button
+                            key={cat.id}
+                            onClick={() => { setSelectedCategoryId(cat.id); setCategorySearch(""); }}
+                            className="w-full text-left px-3 py-2 text-xs font-semibold hover:bg-white/5 transition-colors"
+                            style={{ color: T.textPrimary }}
+                          >
+                            {cat.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
           <FilterDropdown
             activeFilter={activeFilter}
             onSelect={f => { setActiveFilter(f); if (f !== 'low_stock') setSelectedForWhatsapp([]); }}
