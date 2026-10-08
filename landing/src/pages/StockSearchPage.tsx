@@ -217,10 +217,7 @@ export function StockSearchPage() {
   const { data: storesData } = useStoresQuery({ active: true })
   const stores = storesData ?? []
 
-  const primaryStoreName = stores.find(s => s.id === primaryStoreId)?.name ?? ''
-  const compareStoreName = stores.find(s => s.id === compareStoreId)?.name ?? ''
-
-  // Lista paginada con stock embebido (endpoint nuevo)
+// Lista paginada con stock embebido (endpoint nuevo)
   const stockParams = {
     page,
     per_page: PER_PAGE,
@@ -331,25 +328,25 @@ export function StockSearchPage() {
 
           {/* Filtro de cantidad tienda primaria */}
           {primaryStoreId && (
-            <div className="flex items-center gap-1 rounded-lg overflow-hidden"
-              style={{ border: `1px solid ${primaryQty !== '' ? STOCK_ACCENT.blueBorder : 'var(--td-input-border)'}`, background: 'var(--td-input-bg)' }}>
+            <div className="flex items-center gap-1.5">
               <select
                 value={primaryOp}
                 onChange={e => setPrimaryOp(e.target.value as '<' | '=' | '>')}
-                className="px-2 py-1.5 text-xs font-black outline-none border-r"
-                style={{ background: 'transparent', borderColor: 'var(--td-input-border)', color: primaryQty !== '' ? STOCK_ACCENT.blueText : 'var(--td-text-md)', minWidth: 36 }}>
+                className="rounded-lg px-2 py-1.5 text-xs font-black outline-none"
+                style={{ background: 'var(--td-input-bg)', border: `1px solid ${primaryQty !== '' ? STOCK_ACCENT.blueBorder : 'var(--td-input-border)'}`, color: primaryQty !== '' ? STOCK_ACCENT.blueText : 'var(--td-text-md)' }}>
                 <option value="=">=</option>
                 <option value=">">&gt;</option>
                 <option value="<">&lt;</option>
               </select>
               <input
-                type="number"
-                min={0}
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 value={primaryQty}
-                onChange={e => setPrimaryQty(e.target.value)}
-                placeholder="cant."
-                className="px-2 py-1.5 text-xs outline-none w-14 tabular-nums"
-                style={{ background: 'transparent', color: primaryQty !== '' ? STOCK_ACCENT.blueText : 'var(--td-text-lo)' }}
+                onChange={e => setPrimaryQty(e.target.value.replace(/\D/g, ''))}
+                placeholder="0"
+                className="rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none w-16 tabular-nums"
+                style={{ background: 'var(--td-input-bg)', border: `1px solid ${primaryQty !== '' ? STOCK_ACCENT.blueBorder : 'var(--td-input-border)'}`, color: primaryQty !== '' ? STOCK_ACCENT.blueText : 'var(--td-text-lo)' }}
               />
             </div>
           )}
@@ -373,25 +370,25 @@ export function StockSearchPage() {
 
           {/* Filtro de cantidad tienda comparación */}
           {compareStoreId && (
-            <div className="flex items-center gap-1 rounded-lg overflow-hidden"
-              style={{ border: `1px solid ${compareQty !== '' ? 'rgba(245,158,11,0.4)' : 'var(--td-input-border)'}`, background: 'var(--td-input-bg)' }}>
+            <div className="flex items-center gap-1.5">
               <select
                 value={compareOp}
                 onChange={e => setCompareOp(e.target.value as '<' | '=' | '>')}
-                className="px-2 py-1.5 text-xs font-black outline-none border-r"
-                style={{ background: 'transparent', borderColor: 'var(--td-input-border)', color: compareQty !== '' ? '#D97706' : 'var(--td-text-md)', minWidth: 36 }}>
+                className="rounded-lg px-2 py-1.5 text-xs font-black outline-none"
+                style={{ background: 'var(--td-input-bg)', border: `1px solid ${compareQty !== '' ? 'rgba(245,158,11,0.4)' : 'var(--td-input-border)'}`, color: compareQty !== '' ? '#D97706' : 'var(--td-text-md)' }}>
                 <option value="=">=</option>
                 <option value=">">&gt;</option>
                 <option value="<">&lt;</option>
               </select>
               <input
-                type="number"
-                min={0}
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 value={compareQty}
-                onChange={e => setCompareQty(e.target.value)}
-                placeholder="cant."
-                className="px-2 py-1.5 text-xs outline-none w-14 tabular-nums"
-                style={{ background: 'transparent', color: compareQty !== '' ? '#D97706' : 'var(--td-text-lo)' }}
+                onChange={e => setCompareQty(e.target.value.replace(/\D/g, ''))}
+                placeholder="0"
+                className="rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none w-16 tabular-nums"
+                style={{ background: 'var(--td-input-bg)', border: `1px solid ${compareQty !== '' ? 'rgba(245,158,11,0.4)' : 'var(--td-input-border)'}`, color: compareQty !== '' ? '#D97706' : 'var(--td-text-lo)' }}
               />
             </div>
           )}
