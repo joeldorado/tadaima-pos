@@ -313,73 +313,94 @@ export function StockSearchPage() {
 
       {/* Filtros de comparación entre tiendas */}
       {stores.length > 1 && (
-        <div className="flex flex-wrap items-center gap-1.5 mb-4">
-          <select
-            value={primaryStoreId}
-            onChange={e => { setPrimaryStoreId(e.target.value ? Number(e.target.value) : ''); setCompareStoreId(''); setPrimaryQty(''); setCompareQty('') }}
-            className="rounded-xl px-2.5 py-1.5 text-xs outline-none"
-            style={{ background: 'var(--td-input-bg)', border: '1px solid var(--td-input-border)', color: primaryStoreId ? 'var(--td-text-hi)' : 'var(--td-text-lo)' }}>
-            <option value="">Ordenar por tienda…</option>
-            {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
+        <div className="rounded-2xl p-3 mb-4 flex flex-wrap items-center gap-2"
+          style={{ background: 'var(--td-panel-bg)', border: '1px solid var(--td-panel-border)' }}>
+
+          {/* Tienda primaria */}
+          <div className="flex items-center gap-1.5">
+            <Store size={13} style={{ color: 'var(--td-text-lo)' }} />
+            <select
+              value={primaryStoreId}
+              onChange={e => { setPrimaryStoreId(e.target.value ? Number(e.target.value) : ''); setCompareStoreId(''); setPrimaryQty(''); setCompareQty('') }}
+              className="rounded-lg px-2.5 py-1.5 text-xs font-semibold outline-none"
+              style={{ background: 'var(--td-input-bg)', border: `1px solid ${primaryStoreId ? STOCK_ACCENT.blueBorder : 'var(--td-input-border)'}`, color: primaryStoreId ? STOCK_ACCENT.blueText : 'var(--td-text-lo)' }}>
+              <option value="">Tienda…</option>
+              {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+
+          {/* Filtro de cantidad tienda primaria */}
           {primaryStoreId && (
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1 rounded-lg overflow-hidden"
+              style={{ border: `1px solid ${primaryQty !== '' ? STOCK_ACCENT.blueBorder : 'var(--td-input-border)'}`, background: 'var(--td-input-bg)' }}>
+              <select
+                value={primaryOp}
+                onChange={e => setPrimaryOp(e.target.value as '<' | '=' | '>')}
+                className="px-2 py-1.5 text-xs font-black outline-none border-r"
+                style={{ background: 'transparent', borderColor: 'var(--td-input-border)', color: primaryQty !== '' ? STOCK_ACCENT.blueText : 'var(--td-text-md)', minWidth: 36 }}>
+                <option value="=">=</option>
+                <option value=">">&gt;</option>
+                <option value="<">&lt;</option>
+              </select>
               <input
                 type="number"
                 min={0}
                 value={primaryQty}
                 onChange={e => setPrimaryQty(e.target.value)}
-                placeholder={primaryStoreName ? `Stock ${primaryStoreName}` : 'Cantidad…'}
-                className="rounded-xl px-2.5 py-1.5 text-xs outline-none w-28"
-                style={{ background: 'var(--td-input-bg)', border: '1px solid var(--td-input-border)', color: 'var(--td-input-text)' }}
+                placeholder="cant."
+                className="px-2 py-1.5 text-xs outline-none w-14 tabular-nums"
+                style={{ background: 'transparent', color: primaryQty !== '' ? STOCK_ACCENT.blueText : 'var(--td-text-lo)' }}
               />
-              <select
-                value={primaryOp}
-                onChange={e => setPrimaryOp(e.target.value as '<' | '=' | '>')}
-                className="rounded-xl px-2 py-1.5 text-xs outline-none font-bold"
-                style={{ background: 'var(--td-input-bg)', border: '1px solid var(--td-input-border)', color: 'var(--td-text-hi)' }}>
-                <option value="=">=</option>
-                <option value=">">&gt;</option>
-                <option value="<">&lt;</option>
-              </select>
             </div>
           )}
+
+          {/* Separador vs. */}
+          {primaryStoreId && (
+            <span className="text-[10px] font-black uppercase tracking-wider px-1" style={{ color: 'var(--td-text-lo)' }}>vs.</span>
+          )}
+
+          {/* Tienda de comparación */}
           {primaryStoreId && (
             <select
               value={compareStoreId}
               onChange={e => { setCompareStoreId(e.target.value ? Number(e.target.value) : ''); setCompareQty('') }}
-              className="rounded-xl px-2.5 py-1.5 text-xs outline-none"
-              style={{ background: 'var(--td-input-bg)', border: '1px solid var(--td-input-border)', color: compareStoreId ? 'var(--td-text-hi)' : 'var(--td-text-lo)' }}>
-              <option value="">vs. otra tienda…</option>
+              className="rounded-lg px-2.5 py-1.5 text-xs font-semibold outline-none"
+              style={{ background: 'var(--td-input-bg)', border: `1px solid ${compareStoreId ? 'rgba(245,158,11,0.4)' : 'var(--td-input-border)'}`, color: compareStoreId ? '#D97706' : 'var(--td-text-lo)' }}>
+              <option value="">Tienda…</option>
               {stores.filter(s => s.id !== primaryStoreId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           )}
+
+          {/* Filtro de cantidad tienda comparación */}
           {compareStoreId && (
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1 rounded-lg overflow-hidden"
+              style={{ border: `1px solid ${compareQty !== '' ? 'rgba(245,158,11,0.4)' : 'var(--td-input-border)'}`, background: 'var(--td-input-bg)' }}>
+              <select
+                value={compareOp}
+                onChange={e => setCompareOp(e.target.value as '<' | '=' | '>')}
+                className="px-2 py-1.5 text-xs font-black outline-none border-r"
+                style={{ background: 'transparent', borderColor: 'var(--td-input-border)', color: compareQty !== '' ? '#D97706' : 'var(--td-text-md)', minWidth: 36 }}>
+                <option value="=">=</option>
+                <option value=">">&gt;</option>
+                <option value="<">&lt;</option>
+              </select>
               <input
                 type="number"
                 min={0}
                 value={compareQty}
                 onChange={e => setCompareQty(e.target.value)}
-                placeholder={compareStoreName ? `Stock ${compareStoreName}` : 'Cantidad…'}
-                className="rounded-xl px-2.5 py-1.5 text-xs outline-none w-28"
-                style={{ background: 'var(--td-input-bg)', border: '1px solid var(--td-input-border)', color: 'var(--td-input-text)' }}
+                placeholder="cant."
+                className="px-2 py-1.5 text-xs outline-none w-14 tabular-nums"
+                style={{ background: 'transparent', color: compareQty !== '' ? '#D97706' : 'var(--td-text-lo)' }}
               />
-              <select
-                value={compareOp}
-                onChange={e => setCompareOp(e.target.value as '<' | '=' | '>')}
-                className="rounded-xl px-2 py-1.5 text-xs outline-none font-bold"
-                style={{ background: 'var(--td-input-bg)', border: '1px solid var(--td-input-border)', color: 'var(--td-text-hi)' }}>
-                <option value="=">=</option>
-                <option value=">">&gt;</option>
-                <option value="<">&lt;</option>
-              </select>
             </div>
           )}
+
+          {/* Limpiar */}
           {primaryStoreId && (
             <button onClick={() => { setPrimaryStoreId(''); setCompareStoreId(''); setPrimaryQty(''); setCompareQty('') }}
-              className="p-1.5 rounded-lg transition-colors hover:bg-[var(--td-hover-bg)]" title="Quitar filtro">
-              <X size={12} style={{ color: 'var(--td-text-lo)' }} />
+              className="ml-auto p-1.5 rounded-lg transition-colors hover:bg-[var(--td-hover-bg)]" title="Quitar filtros">
+              <X size={13} style={{ color: 'var(--td-text-lo)' }} />
             </button>
           )}
         </div>
