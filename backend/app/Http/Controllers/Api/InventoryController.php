@@ -46,6 +46,8 @@ class InventoryController extends Controller
         $compareStoreId = $request->integer('compare_store_id') ?: null;
         $sortDir        = $request->get('sort_dir', 'desc') === 'asc' ? 'asc' : 'desc';
 
+        $categoryId = $request->integer('category_id') ?: null;
+
         $primaryOp  = in_array($request->get('primary_stock_op'), ['<', '=', '>']) ? $request->get('primary_stock_op') : null;
         $primaryQty = $request->filled('primary_stock_qty') ? max(0, (int) $request->get('primary_stock_qty')) : null;
         $compareOp  = in_array($request->get('compare_stock_op'), ['<', '=', '>']) ? $request->get('compare_stock_op') : null;
@@ -61,6 +63,7 @@ class InventoryController extends Controller
 
         $query = Product::query()
             ->when($request->filled('search'), fn ($q) => $q->search($request->search))
+            ->when($categoryId, fn ($q) => $q->whereHas('categories', fn ($c) => $c->where('product_categories.id', $categoryId)))
             ->when($hasPrimaryFilter, fn ($q) => $q->whereRaw("({$stockSubSql}) {$primaryOp} ?", [$primaryStoreId, $primaryQty]))
             ->when($hasCompareFilter, fn ($q) => $q->whereRaw("({$stockSubSql}) {$compareOp} ?", [$compareStoreId, $compareQty]));
 
