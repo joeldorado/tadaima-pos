@@ -335,12 +335,13 @@ class ProductController extends Controller
             ->selectRaw(
                 'COUNT(*) as total,
                  SUM(CASE WHEN p.product_type = ? THEN 1 ELSE 0 END) as total_mangas,
+                 SUM(CASE WHEN p.product_type = ? THEN 1 ELSE 0 END) as total_bundles,
                  SUM(CASE WHEN (p.cost IS NULL OR p.cost <= 0) AND COALESCE(inv.qty, 0) > 0 THEN 1 ELSE 0 END) as sin_costo,
                  SUM(CASE WHEN COALESCE(inv.qty, 0) = 0 THEN 1 ELSE 0 END) as agotados,
                  SUM(CASE WHEN COALESCE(inv.qty, 0) > 0 AND COALESCE(inv.qty, 0) <= ? THEN 1 ELSE 0 END) as por_agotarse,
                  SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM product_category_assignments pca WHERE pca.product_id = p.id) THEN 1 ELSE 0 END) as sin_categoria,
                  SUM(CASE WHEN p.cost > 0 THEN p.cost * COALESCE(inv.qty, 0) ELSE 0 END) as valor_invertido',
-                [Product::TYPE_MANGA, $threshold]
+                [Product::TYPE_MANGA, Product::TYPE_BUNDLE, $threshold]
             )
             ->first();
 
@@ -352,7 +353,9 @@ class ProductController extends Controller
         $data = [
             'total' => (int) $row->total,
             'total_mangas' => (int) $row->total_mangas,
-            'total_productos' => (int) $row->total - (int) $row->total_mangas,
+            // Paquetes (2026-10-07): viven en products pero NO son "productos" de la lista.
+            'total_bundles' => (int) $row->total_bundles,
+            'total_productos' => (int) $row->total - (int) $row->total_mangas - (int) $row->total_bundles,
             'agotados' => (int) $row->agotados,
             'por_agotarse' => (int) $row->por_agotarse,
             'sin_categoria' => (int) $row->sin_categoria,
@@ -525,7 +528,7 @@ class ProductController extends Controller
             // category_id solo (clientes viejos) equivale a [category_id].
             $product->syncCategories(self::categoryIdsFrom($request));
 
-            $this->syncPrices($product, $request->input('prices', []));
+            self::syncPrices($product, $request->input('prices', []));
             $this->syncPaymentMethod($product, $request);
             $this->syncMangaDetails($product, $request);
 
@@ -581,7 +584,7 @@ class ProductController extends Controller
             }
 
             if ($request->has('prices')) {
-                $this->syncPrices($product, $request->input('prices', []));
+                self::syncPrices($product, $request->input('prices', []));
             }
 
             if ($request->hasAny(['allow_cash', 'allow_card'])) {
@@ -671,6 +674,12 @@ class ProductController extends Controller
             );
         }
 
+        // Paquetes (2026-10-07): un componente no se borra (FK restrict) y un
+        // paquete con armados tampoco (se borra desde /bundles tras desarmar).
+        if ($resp = $this->bundleDeleteGuardError($product)) {
+            return $resp;
+        }
+
         // Delete images from default storage (gcs en prod, public/local en dev)
         foreach ($product->images as $image) {
             Storage::delete($image->image_path);
@@ -731,6 +740,9 @@ class ProductController extends Controller
     {
         // Borrado TOTAL (mata ventas históricas/apartados): solo admin.
         if ($resp = $this->adminOnlyError()) {
+            return $resp;
+        }
+        if ($resp = $this->bundleDeleteGuardError($product)) {
             return $resp;
         }
 
@@ -1012,7 +1024,27 @@ class ProductController extends Controller
 
     // ─── Helpers privados ─────────────────────────────────────────────────────
 
-    private function syncPrices(Product $product, array $prices): void
+    /**
+     * Paquetes (2026-10-07): 422 si el producto es componente de un paquete o
+     * si es un paquete con armados. Compartido con MangaController::destroy.
+     */
+    public static function bundleDeleteGuardError(Product $product): ?JsonResponse
+    {
+        $service = app(\App\Services\BundleService::class);
+        try {
+            $service->assertNotComponent($product);
+            if ($product->isBundle() && $service->totalStock($product) > 0) {
+                throw new \DomainException('No se puede eliminar: hay paquetes armados. Desármalos primero desde Paquetes.');
+            }
+        } catch (\DomainException $e) {
+            return response()->json(['success' => false, 'error' => $e->getMessage()], 422);
+        }
+
+        return null;
+    }
+
+    /** Público/estático desde 2026-10-07: BundleService lo reutiliza para los paquetes. */
+    public static function syncPrices(Product $product, array $prices): void
     {
         if (empty($prices)) {
             return;

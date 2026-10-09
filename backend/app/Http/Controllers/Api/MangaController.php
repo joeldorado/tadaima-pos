@@ -380,6 +380,11 @@ class MangaController extends Controller
             );
         }
 
+        // Paquetes (2026-10-07): un tomo que es componente de un paquete no se borra.
+        if ($resp = ProductController::bundleDeleteGuardError($manga)) {
+            return $resp;
+        }
+
         $snapshot = ['id' => $manga->id, 'name' => $manga->name, 'sku' => $manga->sku];
 
         $manga->images()->each(function ($img) {

@@ -37,7 +37,10 @@ return new class extends Migration {
         // ── 1. Schema: tipo discriminador en products ─────────────────────────
         if (! Schema::hasColumn('products', 'product_type')) {
             Schema::table('products', function (Blueprint $table): void {
-                $table->enum('product_type', ['product', 'manga'])
+                // 'bundle' (Paquetes, 2026-10-07): aquí solo para instalaciones
+                // frescas / tests. En prod la columna ya existía y el CHECK se
+                // extiende en 2026_10_07_000001_add_bundle_to_products_product_type.
+                $table->enum('product_type', ['product', 'manga', 'bundle'])
                     ->default('product')
                     ->after('active');
                 $table->index('product_type', 'idx_products_type');

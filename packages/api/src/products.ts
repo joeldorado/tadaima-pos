@@ -1,5 +1,5 @@
 import { apiClient } from './client'
-import type { CreateProductInput, UpdateProductInput, PaginatedResponse, Product } from './types'
+import type { CreateProductInput, UpdateProductInput, PaginatedResponse, Product, ProductType } from './types'
 
 export interface GetProductsParams {
   page?: number
@@ -163,7 +163,7 @@ export interface ProductLight {
    * ("No asignado"). undefined en la vista global (sin store_id).
    */
   is_assigned?: boolean
-  product_type?: 'product' | 'manga'
+  product_type?: ProductType
   /** Número de tomo (solo mangas) — distingue tomos de la misma serie en Caja. */
   volume_number?: number | null
   /** Promos NxM vigentes (Descuentos v2 Fase 3) — el backend ya las embebe.

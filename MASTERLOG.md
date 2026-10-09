@@ -91,6 +91,100 @@ Tienda, Productos y Cerrar caja.
 
 ---
 
+### Sesión 2026-10-07 (3) — Módulo Paquetes (combos de productos con stock propio) — pendiente deploy
+
+**Pedido Joel:** módulo nuevo en el menú para armar "paquetes" de 2+ productos (con cantidad), con su
+propio nombre, foto, precio, SKU corto y código de barras imprimible; se vende en Caja como un producto;
+armar consume stock de los componentes (ya no se venden sueltos) y el sistema dice cuántos se pueden
+armar por tienda (admin ve todas; gerente/cajero la suya). Decisiones: nombre **Paquetes**, precio
+manual con referencia (suma de sueltos + % de ahorro), origen Exhibición **o** Bodega por componente
+(default Automático = Exhibición primero), etiqueta por ventana de impresión. Revisado en LOCAL.
+
+**Decisión de diseño (ADR-018):** un paquete es una fila de `products` con `product_type='bundle'`
+(como los tomos) + tablas nuevas `product_bundle_items` (composición) y `bundle_assemblies`
+(bitácora). Así Caja, cobro, cancelaciones, reportes, imágenes y traslados funcionan sin tocarse: vender
+descuenta solo el stock del paquete. Movimientos de armado = `inventory_movements` tipo
+`transferencia` con `reference PAQ-{id}` (no se altera el CHECK de movimientos).
+
+**Cambios backend** (`backend/`): migraciones `2026_10_07_000001` (extiende el CHECK de
+`products.product_type` en Postgres; en SQLite recrea la tabla si el archivo es viejo; la base
+`2026_05_19_000002` ya nace con 'bundle'), `000002` y `000003` (tablas nuevas);
+`Services/BundleService` (CRUD, armar, desarmar, costo = Σ costo componente × qty),
+`Services/BundleAvailability` ("puedes armar N" = min floor((exh+bod)/qty)), `Support/BundleCodes`
+(SKU `PAQ-0001`, EAN-13 prefijo 200); `BundlesController` + 5 FormRequests + 2 Resources +
+rutas `/bundles` (index, store, preview, show, update, destroy, assemble, disassemble, assemblies).
+Toques: `ProductController` (`syncPrices` público, `stats.total_bundles`, candado de borrar
+componente/paquete con stock), `MangaController::destroy`, `InventoryController` (rechaza ajustar
+stock de paquetes a mano), `UpdateProductRequest` (no se re-tipa un paquete), purga de sin-stock
+conserva paquetes. Docs: `backend/AGENTS.md` (tabla Paquetes + ADR-018) y `AGENTS.md` §5.
+
+**Cambios frontend** (`landing/`, `packages/api`): `packages/api/src/bundles.ts` + `ProductType`
+union; `hooks/queries/useBundles.ts`; libs puras con tests `lib/bundleMath.ts`, `lib/bundleDraft.ts`,
+`lib/bundleLabel.ts`, `lib/barcode.ts` (+EAN-13 válido); `pages/BundlesPage.tsx` y
+`components/bundles/*` (lista en tarjetas con semáforo "Puedes armar", asistente de 3 pasos con
+lector y vista previa por tienda, diálogos Armar (origen por componente) / Desarmar (destino) /
+Detalle con historial / Editar / Etiqueta con `jsbarcode`); menú "Paquetes" (`permisos.ts`,
+`Layout.tsx`, router `/paquetes`); Caja: pill "Paquete" y guard de "Agregar stock"; tema de docs
+`paquetes`. Dependencia nueva: `jsbarcode`.
+
+**Tests (cierre 2026-10-08):** backend 5 archivos nuevos (`BundleCreateTest`, `BundleAssembleTest`,
+`BundleStoreScopeTest`, `BundleCheckoutTest`, `BundleSearchTest`) → suite completa 755 verdes
+(SQLite, 3,233 aserciones). Landing: 646 vitest verdes (52 archivos); `tsc -b` 459 errores (base de
+`main` 460, cero en archivos de paquetes); eslint limpio; `vite build` OK; sin secretos ni
+`console.log` en el diff.
+
+**Verificado en local** (backend SQLite :8000 + landing :5174): crear paquete por lector/teclado,
+"puedes armar" por tienda, crear y armar 2, armar 1 forzando Bodega, desarmar a Bodega, detalle con
+historial, etiqueta EAN-13, Caja encuentra `PAQ-0001` con pill "Paquete" y lo mete al carrito.
+Probado también como gerente (solo su tienda, 403 en tienda ajena) y en móvil (375 px). Lo que falta
+para subir está al final de esta entrada ("Pendientes para la sesión de deploy").
+
+**Revisión (agentes code-reviewer/typescript-reviewer) aplicada:** lock `FOR NO KEY UPDATE` en Postgres (evitaba
+deadlock con el cobro), editar paquetes = admin/gerente, borrado atómico bajo lock, `components[].cost`
+ya no sale como `{}` sin permiso, purga/depurar respetan componentes, `/inventory/move` rechaza paquetes;
+front: menú ⋮ ya no se corta, detalle con clave de query por tienda, `parseMoney` estricto, lector
+sin cierres obsoletos, borrador no se marca "restaurado" en falso.
+
+**Iteración 2 (2026-10-08, feedback de Joel en local):** el paso 1 del asistente confundía
+"piezas por paquete" con "cuántos paquetes armar" y pedía una tabla con checks. Ahora el paso 1
+tiene dos zonas: "1. Elige los productos" (tabla con check, buscador que filtra en vivo, filtro de
+categoría, switch "Solo con stock en {tienda}" por default, lector que marca o suma piezas) y
+"2. Cada paquete lleva" (contador etiquetado **Piezas por paquete**, "Hay en tienda", "alcanza
+para N"); el pie dice "Cada paquete: 1 × A + 2 × B" y "Con el stock de hoy: puedes armar N".
+El paso 3 se renombró "¿Cuántos armar?" con el bloque "¿Cuántos paquetes armar ahora?" primero.
+Archivos: `components/bundles/BundleProductTable.tsx` (nuevo), `BundleComponentPicker.tsx`
+(reescrito), `lib/bundlePicker.ts` (+test), `lib/bundleDraft.ts` (`toggleComponent`,
+`componentsSentence`), `useBundlePickerPoolQuery` en `hooks/queries/useBundles.ts`;
+`BundlePickerResults.tsx` eliminado.
+
+**Iteración 3 (2026-10-08, feedback de Joel):** borrar con armados mostraba "Sí, borrar" sin hacer nada →
+ahora sale "Primero hay que desarmarlo" con botón "Ir a desarmar"; sin armados pide confirmación y borra.
+Vista **Tabla** además de tarjetas (toggle persistido en `tadaima-bundles-view`, `BundleTable.tsx` con
+encabezado fijo) y la barra de búsqueda/vista queda fija al hacer scroll.
+
+**Cierre 2026-10-08 — aprobado por Joel en local ("me gusta, para mandar").** Se apagaron los
+servidores locales, se borró la base SQLite local (`backend/database/local.sqlite`; se recrea con
+`APP_ENV=sqlitelocal php artisan migrate:fresh --seed`); el WIP `ad27a46`, el merge `9fec3ab` y un
+segundo merge de `main` (PR #41/#43, sin conflictos; suites re-verificadas sobre lo mezclado) se
+aplanaron (`git reset --soft main`) en **un solo commit `feat(paquetes)` sobre `main`** en la rama
+`feat/paquetes`, sin push. Revisión no aplicada (opcional, no bloquea): los diálogos Armar / Desarmar /
+Editar reciben el paquete congelado en el estado `dialog` en vez de leerlo vivo de la lista por id, y
+`bundlesQuery.isError` esconde la lista cacheada si falla un refetch (usar `isError && !data`).
+
+**Pendientes para la sesión de deploy:**
+1. `cd backend && vendor/bin/phpunit -c phpunit.pgsql.xml` en Postgres 17 local (`brew services start
+   postgresql@17`): la rama pgsql de la migración del CHECK no la ve SQLite. En `main` la suite pgsql
+   ya quedó verde (`6b45282`, solo tests), así que cualquier falla es nueva.
+2. Merge `feat/paquetes` → `main` (fast-forward: la rama ya trae `main` hasta PR #43 / rev 00060-viz) y push.
+3. `gcloud run deploy tadaima --source . --project tadaimapos --region us-east1 --no-traffic --tag candidate`;
+   probar en la URL `candidate---…` (login, Caja, `/paquetes`: crear, armar, etiqueta, vender en Caja)
+   y promover con `update-traffic --to-latest`. La migración del CHECK corre sola al arrancar.
+4. Avisar a Ruben: `products.product_type` ahora puede ser `bundle` (la app móvil lo tipa
+   `'product'|'manga'`; en runtime lo trata como producto normal).
+5. Registrar aquí la revisión y el rollback.
+
+---
+
 ### Sesión 2026-10-07 (2) — Reportes por día-negocio + Excel 5 pestañas + comparar stock (Ruben, PR #39) — rev tadaima-00056-siw
 
 **Pedido Joel:** subir a prod los cambios nuevos de Ruben en `develop`, con rollback.

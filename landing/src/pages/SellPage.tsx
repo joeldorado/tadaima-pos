@@ -18,6 +18,8 @@ import { ImageWithFallback } from "@/components/figma/ImageWithFallback";
 import { UserAvatar } from "@/components/UserAvatar";
 import { ProductCatalogModal } from "@/components/ProductCatalogModal";
 import { QuickStockModal } from "@/components/products/QuickStockModal";
+import { BundleBadge } from "@/components/bundles/BundleBadge";
+import { BUNDLE_NO_STOCK_IN_CAJA } from "@/components/bundles/bundleTokens";
 import { PreSaleDifusionPanel } from "@/components/presales/PreSaleDifusionPanel";
 import { CameraScannerModal } from "@/components/CameraScannerModal";
 import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
@@ -1691,11 +1693,15 @@ export function SellPage() {
   }, [reservedInOtherMesas]);
 
   // Abre el modal "Agregar stock" para un producto/tomo no asignado a esta tienda.
-  const openStockFor = (p: Product) => setStockModalProduct({
-    id: Number(p.id),
-    name: p.name + (p.volume_number != null ? ` Vol. ${p.volume_number}` : ""),
-    kind: p.product_type === "manga" ? "manga" : "product",
-  });
+  // Paquetes (2026-10-07): su stock se ARMA desde el menú Paquetes, no se captura aquí.
+  const openStockFor = (p: Product) => {
+    if (p.product_type === "bundle") { toast.info(BUNDLE_NO_STOCK_IN_CAJA); return; }
+    setStockModalProduct({
+      id: Number(p.id),
+      name: p.name + (p.volume_number != null ? ` Vol. ${p.volume_number}` : ""),
+      kind: p.product_type === "manga" ? "manga" : "product",
+    });
+  };
 
   const removeMesa = (id: string) => {
     if (mesas.length <= 1) return;
@@ -5475,6 +5481,7 @@ export function SellPage() {
                                   Tomo {p.volume_number}
                                 </span>
                               )}
+                              {p.product_type === "bundle" && <BundleBadge />}
                               {/* Promo NxM vigente — el cajero la ve ANTES de agregar (QA Joel 2026-07-16) */}
                               {(p.active_promotions?.length ?? 0) > 0 && (() => {
                                 const pool = (p.active_promotions ?? []);
@@ -5547,10 +5554,12 @@ export function SellPage() {
                                 style={{ background: "rgba(245,158,11,0.10)", borderColor: "rgba(245,158,11,0.35)", color: "#f59e0b" }}
                                 onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(245,158,11,0.18)"; }}
                                 onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(245,158,11,0.10)"; }}
-                                title="Sin stock en esta tienda — agrégalo para poder venderlo"
+                                title={p.product_type === "bundle" ? "Este paquete no está armado en esta tienda — ármalo desde Paquetes" : "Sin stock en esta tienda — agrégalo para poder venderlo"}
                               >
                                 <Plus size={14} />
-                                <span className="text-[11px] font-black uppercase tracking-widest">No asignado · Agregar stock</span>
+                                <span className="text-[11px] font-black uppercase tracking-widest">
+                                  {p.product_type === "bundle" ? "Sin armar · ve a Paquetes" : "No asignado · Agregar stock"}
+                                </span>
                               </button>
                             ) : getPriceLevels(p).map(lvl => {
                               // Color de identidad por nivel (Normal=verde,
@@ -5738,6 +5747,7 @@ export function SellPage() {
                           angostas baja justo debajo en vez de comerse el nombre. */}
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
                         <h3 className={`${compactCart ? "text-lg" : "text-base"} font-black truncate leading-tight min-w-0 max-w-full`} style={{ color: THI }}>{item.product.name}</h3>
+                        {item.product.product_type === "bundle" && <BundleBadge small />}
                         {/* Comentario de la línea (2026-10-03): recordatorio del cajero, a
                             lado del nombre. Tocarlo lo edita. No sale en el ticket. */}
                         {item.comment && (
@@ -8087,11 +8097,14 @@ export function SellPage() {
             toast.success("Actualizando catálogo…");
           }}
           isRefreshing={productsQuery.isFetching}
-          onAddStock={(p) => setStockModalProduct({
-            id: Number(p.id),
-            name: p.name + (p.volume_number != null ? ` Vol. ${p.volume_number}` : ""),
-            kind: p.product_type === "manga" ? "manga" : "product",
-          })}
+          onAddStock={(p) => {
+            if (p.product_type === "bundle") { toast.info(BUNDLE_NO_STOCK_IN_CAJA); return; }
+            setStockModalProduct({
+              id: Number(p.id),
+              name: p.name + (p.volume_number != null ? ` Vol. ${p.volume_number}` : ""),
+              kind: p.product_type === "manga" ? "manga" : "product",
+            });
+          }}
         />
       )}
 

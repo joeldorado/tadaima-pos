@@ -1,6 +1,6 @@
 // Tipos compartidos por los generadores de reporte (Excel y PDF), extraídos de
 // ReportsPage.tsx para poder separar la lógica de exportación en archivos aparte.
-import type { InventoryReport, TopProductsReport, CustomersReport, Store as StoreType, SupplyMovementRecord } from "@tadaima/api";
+import type { InventoryReport, TopProductsReport, CustomersReport, Store as StoreType, SupplyMovementRecord, ProductType } from "@tadaima/api";
 
 export type TabId = "ventas" | "inventario" | "productos" | "clientes";
 
@@ -34,7 +34,7 @@ export interface GroupedProduct {
   /** Utilidad a mostrar en Preventas: entregada → pactado − costo; en abono → el abono. */
   pre_sale_utilidad?: number;
   commission_amount?: number;
-  product_type?: 'product' | 'manga';
+  product_type?: ProductType;
   /** Descuentos v2: total descontado por PROMO (NxM/mayoreo) del producto en el rango. */
   promo_total?: number;
   /** Descuentos v2: total descontado por DESCUENTO MANUAL del producto en el rango. */

@@ -30,6 +30,7 @@ use App\Http\Controllers\Api\SalesDraftController;
 use App\Http\Controllers\Api\SaleCancellationsController;
 use App\Http\Controllers\Api\SalesController;
 use App\Http\Controllers\Api\StoreController;
+use App\Http\Controllers\Api\BundlesController;
 use App\Http\Controllers\Api\SuppliesController;
 use App\Http\Controllers\Api\TerminalController;
 use App\Http\Controllers\Api\UserController;
@@ -396,6 +397,19 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
         Route::get('movements',  [SuppliesController::class, 'movements']);
         Route::post('movements', [SuppliesController::class, 'storeMovement']);
         Route::put('{supply}',   [SuppliesController::class, 'update']);
+    });
+
+    // ── Paquetes (2026-10-07) — definición global, stock por tienda ──────────
+    Route::prefix('bundles')->group(function () {
+        Route::get('/',                 [BundlesController::class, 'index']);
+        Route::post('/',                [BundlesController::class, 'store']);
+        Route::post('preview',          [BundlesController::class, 'preview']); // ANTES de {id}
+        Route::get('{id}',              [BundlesController::class, 'show'])->whereNumber('id');
+        Route::put('{id}',              [BundlesController::class, 'update'])->whereNumber('id');
+        Route::delete('{id}',           [BundlesController::class, 'destroy'])->whereNumber('id');
+        Route::post('{id}/assemble',    [BundlesController::class, 'assemble'])->whereNumber('id');
+        Route::post('{id}/disassemble', [BundlesController::class, 'disassemble'])->whereNumber('id');
+        Route::get('{id}/assemblies',   [BundlesController::class, 'assemblies'])->whereNumber('id');
     });
 
     // ── TadaimaUS (módulo admin — cada método gatea con adminOnlyError) ───────

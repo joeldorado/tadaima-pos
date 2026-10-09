@@ -228,5 +228,96 @@
         ]
       }
     ]
+  },
+  {
+    "slug": "paquetes",
+    "title": "Paquetes (combos de productos)",
+    "category": "Inventario",
+    "icon": "package",
+    "summary": "Junta 2 o más productos en un paquete con su propio precio y código; se arma con piezas de Exhibición o Bodega y se vende en Caja.",
+    "keywords": [
+      "paquete",
+      "paquetes",
+      "combo",
+      "kit",
+      "armar",
+      "desarmar",
+      "puedes armar",
+      "etiqueta",
+      "código de barras"
+    ],
+    "updatedAt": "2026-10-07",
+    "sections": [
+      {
+        "heading": "Qué es un paquete",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Un paquete junta 2 o más productos distintos (por ejemplo 2 figuras de Goku + 1 de Vegeta) y se vende como UN solo producto, con su propio nombre, precio y código. El paquete tiene stock físico: para venderlo primero hay que armarlo, y al armarlo las piezas salen del inventario de la tienda. Así el stock de las piezas sueltas y el de los paquetes siempre cuadran."
+          }
+        ]
+      },
+      {
+        "heading": "Crear un paquete",
+        "blocks": [
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Elige los productos",
+                "detail": "Busca por nombre, SKU o con el lector y agrega cada producto con las piezas que lleva por paquete. Se necesitan al menos 2 productos distintos."
+              },
+              {
+                "title": "Nombre, precio y código",
+                "detail": "El sistema sugiere un nombre y un SKU (PAQ-0001…); puedes cambiarlos. Escribe el precio normal del paquete (verás la suma de las piezas sueltas y el ahorro) y, si quieres etiqueta, genera un código de barras de 13 dígitos."
+              },
+              {
+                "title": "¿Cuántos armar?",
+                "detail": "Revisa cuántos puedes armar por tienda y, si quieres, arma algunos en ese momento (o solo crea el paquete y ármalo después desde la lista)."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "heading": "Armar y desarmar",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Armar descuenta las piezas de la tienda y suma paquetes a Exhibición. Desarmar hace lo contrario: resta paquetes y regresa las piezas a Exhibición o a Bodega, según elijas. Cada movimiento queda en el historial del paquete con quién lo hizo, cuándo y de dónde salieron las piezas."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "¿Cuántos puedo armar?",
+            "text": "Es el mínimo entre los componentes. Ejemplo: el paquete lleva 2 Goku + 1 Vegeta y en la tienda hay 10 Goku y 3 Vegeta → con Goku alcanzaría para 5, con Vegeta solo para 3: puedes armar 3. En “Automático” las piezas se toman de Exhibición y lo que falte sale de Bodega; también puedes forzar que un producto salga solo de Exhibición o solo de Bodega."
+          }
+        ]
+      },
+      {
+        "heading": "Vender y etiquetar",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "En Caja el paquete se cobra como cualquier producto: tecleas su SKU, lo escaneas o lo buscas por nombre. Solo se vende lo que esté armado en Exhibición. Desde la pantalla de Paquetes puedes imprimir su etiqueta (nombre, precio, código de barras y SKU) en la impresora térmica de 58 mm, con las copias que necesites."
+          }
+        ]
+      },
+      {
+        "heading": "Editar, desactivar o borrar",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Puedes cambiar nombre, precios, código y foto en cualquier momento. Desactivar un paquete lo esconde de Caja sin perder su historial; borrarlo solo se permite cuando no hay paquetes armados en ninguna tienda."
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "Con paquetes armados no se cambian los productos",
+            "text": "Mientras haya paquetes armados en alguna tienda, la lista de productos y sus cantidades queda bloqueada: si cambiara, las piezas que regresan al desarmar ya no coincidirían con las que salieron. Desarma todos primero y después edita los componentes."
+          }
+        ]
+      }
+    ]
   }
 ]

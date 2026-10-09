@@ -62,6 +62,17 @@ class UpdateProductRequest extends FormRequest
                 && ! $this->boolean('allow_cash') && ! $this->boolean('allow_card')) {
                 $v->errors()->add('allow_cash', 'El producto necesita aceptar al menos un método de pago (efectivo o tarjeta).');
             }
+            // Paquetes (2026-10-07): un paquete no se re-tipa a producto/manga
+            // (dejaría huérfana su composición). Se edita desde /bundles.
+            $product = $this->route('product');
+            if ($product instanceof \App\Models\Product && $product->isBundle()) {
+                if ($this->filled('product_type')) {
+                    $v->errors()->add('product_type', 'El tipo de un paquete no se puede cambiar.');
+                }
+                if ($this->has('cost')) {
+                    $v->errors()->add('cost', 'El costo de un paquete se calcula solo (suma de sus componentes).');
+                }
+            }
         });
     }
 

@@ -63,26 +63,27 @@ export type PageKey =
   | "transfers"
   | "supplies"
   | "promos"      // Promos NxM: lista + banner compartible + Modo TV
+  | "bundles"     // Paquetes: combos de productos con stock propio por tienda
   | "reports"
   | "settings"
   | "docs"        // Centro de Documentación — tutoriales del sistema (todos los roles)
   | "admin";      // AdminPage (sucursales, usuarios, permisos…)
 
 const PAGE_ACCESS: Record<Role, PageKey[]> = {
-  admin:   ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers", "supplies", "promos", "reports", "settings", "docs", "admin"],
+  admin:   ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers", "supplies", "promos", "bundles", "reports", "settings", "docs", "admin"],
   // Gerente: NO ve "Tiendas" — gestiona solo la suya, el switcher del header
   // basta para alternar entre las que tiene asignadas. La página /stores es
   // CRUD de tiendas (solo admin). Reportes ahora habilitado para gerente (restringido en backend).
   // SÍ ve "Buscar en Tiendas" (existencias por sucursal, sin datos financieros).
   // "Cajas" (cortes de caja) visible a los 3 roles — el backend acota:
   // cajero → solo sus cortes, gerente → su tienda, admin → todo.
-  gerente: ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers", "supplies", "promos", "reports", "docs"],
+  gerente: ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers", "supplies", "promos", "bundles", "reports", "docs"],
   // Cajero: NO ve Tiendas (lo confunde — su tienda es fija). En su lugar
   // ve Preventas con un panel adicional de catálogos disponibles + vencidos
   // de su sucursal. SÍ ve "Buscar en Tiendas" para localizar stock.
   // Cajero SÍ ve Promos (consulta + Modo TV en la pantalla de la tienda);
   // crear/editar promos es de admin/gerente, en el mismo menú Promos.
-  cajero:  ["inicio", "products", "stock_search", "sales", "cash_cuts", "presales", "supplies", "promos", "docs"],
+  cajero:  ["inicio", "products", "stock_search", "sales", "cash_cuts", "presales", "supplies", "promos", "bundles", "docs"],
   unknown: ["inicio"],
 };
 

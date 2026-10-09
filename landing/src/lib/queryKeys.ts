@@ -15,6 +15,15 @@ export const queryKeys = {
     all: ['promotions'] as const,
     admin: () => ['promotions', 'admin'] as const,
   },
+  // Paquetes (2026-10-07): combos con stock propio por tienda. Al armar/
+  // desarmar invalida TAMBIÉN products.all, inventory.all y mangas.all — las
+  // piezas salen/regresan de Exhibición/Bodega y Caja y Productos lo ven ahí.
+  bundles: {
+    all: ['bundles'] as const,
+    list: (params?: Record<string, unknown>) => ['bundles', 'list', params ?? {}] as const,
+    detail: (id: number, storeId?: number | null) => ['bundles', 'detail', id, storeId ?? 'all'] as const,
+    preview: (signature: string) => ['bundles', 'preview', signature] as const,
+  },
   customers: {
     all: ['customers'] as const,
     list: (params?: Record<string, unknown>) => ['customers', 'list', params ?? {}] as const,
