@@ -203,8 +203,12 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
 
 ### Preventas
 - Catálogo de proveedor → folios con anticipo → liquidación al recoger.
-- Límites: tope global (`preorder_limit`), por tienda y **por cliente**
-  (`limit_per_customer`; identifica a la persona por id, teléfono o tarjeta de socio).
+- Límites: **por tienda** (`store_limits`, el cupo real: sin entrada = esa tienda no
+  vende) y **por cliente** (`limit_per_customer`; identifica a la persona por id,
+  teléfono o tarjeta de socio). `preorder_limit` ("Límite de unidades") es un tope global
+  viejo que el backend ya NO aplica: no lo uses como cupo ni como límite por cliente
+  (2026-10-09: Caja mostraba "Reservados 24 / 1" con 12+12 por tienda). En Caja el cupo
+  sale de `lib/presaleAvailability.ts`.
 - No se entrega/liquida una partida sin **costo real** capturado.
 - Las preventas no tocan el stock de Exhibición/Bodega.
 
