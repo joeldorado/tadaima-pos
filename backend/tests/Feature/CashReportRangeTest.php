@@ -92,6 +92,28 @@ class CashReportRangeTest extends TestCase
         ]);
     }
 
+    /**
+     * Anticipo cobrado a media sesión. `created_at` va explícito y NO en
+     * `now()`: su default es el CURRENT_TIMESTAMP de la base, que en Postgres
+     * queda congelado al inicio de la transacción del test (RefreshDatabase) y
+     * se guarda redondeado al segundo — si redondea hacia arriba queda
+     * "después" del CURRENT_TIMESTAMP del reporte y el anticipo se sale del
+     * corte (fallaba ~la mitad de las corridas).
+     */
+    private function anticipo(PreSaleOrder $order, PaymentMethod $method, float $amount): PreSaleOrderPayment
+    {
+        $payment = new PreSaleOrderPayment([
+            'pre_sale_order_id' => $order->id,
+            'amount'            => $amount,
+            'payment_method_id' => $method->id,
+            'cashier_id'        => $this->admin->id,
+        ]);
+        $payment->created_at = now()->subMinutes(30);
+        $payment->save();
+
+        return $payment;
+    }
+
     private function sessionIdsFor(string $from, string $to): array
     {
         $res = $this->actingAs($this->admin)
@@ -262,13 +284,7 @@ class CashReportRangeTest extends TestCase
             'customer_id' => $customer->id,
             'status'      => PreSaleOrder::STATUS_PENDING,
         ]);
-        PreSaleOrderPayment::create([
-            'pre_sale_order_id' => $order->id,
-            'amount'            => 80,
-            'payment_method_id' => $cash->id,
-            'cashier_id'        => $this->admin->id,
-            'notes'             => 'Anticipo de prueba',
-        ]);
+        $this->anticipo($order, $cash, 80);
 
         DB::table('cash_movements')->insert([
             'register_session_id' => $session->id,
@@ -338,18 +354,8 @@ class CashReportRangeTest extends TestCase
             'customer_id' => $customer->id,
             'status'      => PreSaleOrder::STATUS_PENDING,
         ]);
-        PreSaleOrderPayment::create([
-            'pre_sale_order_id' => $order->id,
-            'amount'            => 80,
-            'payment_method_id' => $cash->id,
-            'cashier_id'        => $this->admin->id,
-        ]);
-        PreSaleOrderPayment::create([
-            'pre_sale_order_id' => $order->id,
-            'amount'            => 90,
-            'payment_method_id' => $transfer->id,
-            'cashier_id'        => $this->admin->id,
-        ]);
+        $this->anticipo($order, $cash, 80);
+        $this->anticipo($order, $transfer, 90);
 
         DB::table('cash_movements')->insert([
             'register_session_id' => $session->id,

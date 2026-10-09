@@ -61,6 +61,15 @@ class PurgeNoStockProductsTest extends TestCase
         return $p;
     }
 
+    /** La pregunta nombra el host del destino (o la conexión si no tiene host, como SQLite). */
+    private function confirmQuestion(int $borrar, int $desactivar): string
+    {
+        $conn = config('database.default');
+        $destino = config("database.connections.{$conn}.host") ?: $conn;
+
+        return sprintf('¿Borrar %d y desactivar %d productos en %s?', $borrar, $desactivar, $destino);
+    }
+
     private function runPurge(array $extra = [], bool $confirm = true, ?string $confirmMsg = null)
     {
         $pending = $this->artisan('tadaima:purge-no-stock', array_merge([
@@ -90,7 +99,7 @@ class PurgeNoStockProductsTest extends TestCase
         $figuraCon = $this->makeProduct(['category_id' => $catFiguras->id], stock: 3);   // con stock → se queda
         $sinCategoria = $this->makeProduct();                                            // sin stock, sin categoría → BORRAR
 
-        $this->runPurge(confirmMsg: sprintf('¿Borrar %d y desactivar %d productos en %s?', 4, 0, config('database.default')))
+        $this->runPurge(confirmMsg: $this->confirmQuestion(4, 0))
             ->assertExitCode(0);
 
         $this->assertDatabaseHas('products', ['id' => $manga->id]);
@@ -114,7 +123,7 @@ class PurgeNoStockProductsTest extends TestCase
         ]);
         $limpio = $this->makeProduct(); // sin stock, sin historial
 
-        $this->runPurge(confirmMsg: sprintf('¿Borrar %d y desactivar %d productos en %s?', 1, 1, config('database.default')))
+        $this->runPurge(confirmMsg: $this->confirmQuestion(1, 1))
             ->assertExitCode(0);
 
         // El vendido sobrevive desactivado — el histórico conserva su nombre.
@@ -131,7 +140,7 @@ class PurgeNoStockProductsTest extends TestCase
             'status' => 'active', 'created_at' => now(), 'updated_at' => now(),
         ]);
 
-        $this->runPurge(confirmMsg: sprintf('¿Borrar %d y desactivar %d productos en %s?', 1, 0, config('database.default')))
+        $this->runPurge(confirmMsg: $this->confirmQuestion(1, 0))
             ->assertExitCode(0);
 
         $this->assertDatabaseMissing('products', ['id' => $conPromo->id]);
@@ -156,7 +165,7 @@ class PurgeNoStockProductsTest extends TestCase
         $this->makeProduct();
         $this->makeProduct();
 
-        $this->runPurge(confirmMsg: sprintf('¿Borrar %d y desactivar %d productos en %s?', 2, 0, config('database.default')))
+        $this->runPurge(confirmMsg: $this->confirmQuestion(2, 0))
             ->assertExitCode(0);
 
         $this->assertSame(1, DB::table('system_logs')->where('action', 'products.purged_no_stock')->count());
