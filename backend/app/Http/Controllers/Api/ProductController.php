@@ -1026,15 +1026,17 @@ class ProductController extends Controller
 
     /**
      * Paquetes (2026-10-07): 422 si el producto es componente de un paquete o
-     * si es un paquete con armados. Compartido con MangaController::destroy.
+     * si es un paquete con alguna fila de inventory ≠ 0 (armados o un ajuste
+     * negativo: mismo candado que BundleService::delete, 2026-10-08).
+     * Compartido con MangaController::destroy.
      */
     public static function bundleDeleteGuardError(Product $product): ?JsonResponse
     {
         $service = app(\App\Services\BundleService::class);
         try {
             $service->assertNotComponent($product);
-            if ($product->isBundle() && $service->totalStock($product) > 0) {
-                throw new \DomainException('No se puede eliminar: hay paquetes armados. Desármalos primero desde Paquetes.');
+            if ($product->isBundle() && $service->hasStock($product)) {
+                throw new \DomainException('No se puede eliminar: el paquete tiene inventario (armados o un ajuste negativo). Desármalo o corrígelo desde Paquetes.');
             }
         } catch (\DomainException $e) {
             return response()->json(['success' => false, 'error' => $e->getMessage()], 422);

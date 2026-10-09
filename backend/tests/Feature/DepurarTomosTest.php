@@ -6,6 +6,7 @@ namespace Tests\Feature;
 
 use App\Models\Company;
 use App\Models\Product;
+use App\Models\ProductBundleItem;
 use App\Models\ProductCategory;
 use App\Models\Sale;
 use App\Models\SaleItem;
@@ -195,5 +196,49 @@ class DepurarTomosTest extends TestCase
         $this->runDepurar()->assertExitCode(0);
 
         $this->assertSame($total, Product::count());
+    }
+
+    /**
+     * Paquetes (2026-10-08): un paquete con categoría de librería y sin stock
+     * NUNCA se borra ni se re-tipa (su composición quedaría huérfana), y sus
+     * componentes sin stock tampoco se borran (FK restrict: las piezas están
+     * armadas y vuelven al desarmar) — siguen la ruta "con stock".
+     */
+    public function test_paquetes_y_sus_componentes_quedan_intactos(): void
+    {
+        // Componentes: un manga no-tomo (saldría de Tomos → producto) y un comic.
+        $compManga = $this->make('Art book Zelda', $this->catExtranjero, Product::TYPE_MANGA);
+        $compComic = $this->make('Spider-Man #3', $this->catComics, Product::TYPE_PRODUCT);
+        // Paquete en categoría librería, sin stock y sin historial → antes: BORRAR.
+        $bundle = $this->make('Combo Zelda + Spidey', $this->catManga, Product::TYPE_BUNDLE);
+        // Paquete sin stock pero CON ventas → antes: desactivar + product.
+        $bundleVendido = $this->make('Combo Naruto', $this->catExtranjero, Product::TYPE_BUNDLE);
+        $sale = Sale::create([
+            'store_id' => $this->store->id, 'user_id' => $this->admin->id,
+            'subtotal' => 300, 'discount' => 0, 'total' => 300, 'status' => Sale::STATUS_COMPLETED,
+        ]);
+        SaleItem::create(['sale_id' => $sale->id, 'product_id' => $bundleVendido->id, 'quantity' => 1, 'price' => 300, 'total' => 300]);
+        foreach ([$bundle, $bundleVendido] as $i => $b) {
+            ProductBundleItem::create(['bundle_product_id' => $b->id, 'component_product_id' => $compManga->id, 'quantity' => 1, 'position' => 0]);
+            ProductBundleItem::create(['bundle_product_id' => $b->id, 'component_product_id' => $compComic->id, 'quantity' => 2, 'position' => 1]);
+        }
+        $sinStock = $this->make('Box set Bleach', $this->catManga, Product::TYPE_MANGA); // control: sí se borra
+
+        $this->runDepurar()->assertExitCode(0);
+
+        foreach ([$bundle, $bundleVendido] as $b) {
+            $b->refresh();
+            $this->assertSame(Product::TYPE_BUNDLE, $b->product_type, 'el paquete no se re-tipa');
+            $this->assertTrue((bool) $b->active, 'el paquete no se desactiva');
+            $this->assertSame(2, ProductBundleItem::where('bundle_product_id', $b->id)->count(), 'composición intacta');
+        }
+
+        $compManga->refresh();
+        $this->assertSame(Product::TYPE_PRODUCT, $compManga->product_type, 'componente manga no-tomo sale de Tomos como producto');
+        $this->assertTrue((bool) $compManga->active, 'un componente no se desactiva');
+        $this->assertNotNull(Product::find($compComic->id), 'un componente sin stock no se borra');
+        $this->assertTrue((bool) $compComic->fresh()->active);
+
+        $this->assertNull(Product::find($sinStock->id), 'el resto sigue depurándose igual');
     }
 }

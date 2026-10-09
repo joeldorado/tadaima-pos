@@ -130,7 +130,7 @@ delgados → `app/Services/`). Decisiones load-bearing:
 | **ADR-015** | **`cost_at_sale` (snapshot de costo).** `sale_items.cost`, `pre_sale_order_items.cost` y `layaways.cost` se congelan al INSERT. Re-preciar un producto NO altera reportes históricos. `cost` se expone solo a admin (o rol con `can_view_cost`). Desde 2026-08-18 también se congela la IDENTIDAD: `sale_items.product_name`/`product_sku` — eliminar un producto (ventas ya NO bloquean el DELETE; solo apartados) deja `product_id` NULL pero la venta conserva nombre/SKU en historial, reportes, top-products y ticket (`product_deleted: true` en el Resource). |
 | **ADR-016** | **Cancelaciones con log + reverso de caja.** `POST /sales/{id}/cancel` y `POST /pre-sale-orders/{id}/cancel`: editan in-place, restauran stock (`InventoryMovement` type `devolucion`), reversan efectivo (`cash_movements` type `salida`) y guardan snapshot en `sale_cancellations`. Desde 2026-09-29 se devuelve lo **cobrado** (neto con descuento/aumento prorrateado por cantidad): `amount_refunded = total antes − total después`. Desde 2026-09-30 las ventas con **tarjeta** también se cancelan (del cajón sale solo la porción en efectivo; preventas con tarjeta y el `/return` viejo siguen bloqueados). |
 | **ADR-017** | **Una caja por persona.** Cada usuario opera su propia sesión/corte; la caja se nombra `"{usuario} · {tienda}"`. Varios usuarios pueden tener caja abierta en la misma tienda a la vez. Corte = por persona (mismo user en 2 devices = 1 corte). |
-| **ADR-018** | **Paquetes como productos (2026-10-07).** Un paquete es `products.product_type='bundle'` + `product_bundle_items` + `bundle_assemblies`. Armar consume componentes (Exhibición y/o Bodega) y crea stock del paquete en Exhibición; vender descuenta solo el paquete. Costo del paquete = Σ costo componente × qty (null si falta alguno), refrescado al armar. La composición se bloquea mientras haya stock. Ver tabla "Paquetes" en §5. |
+| **ADR-018** | **Paquetes como productos (2026-10-07).** Un paquete es `products.product_type='bundle'` + `product_bundle_items` + `bundle_assemblies`. Armar consume componentes (Exhibición y/o Bodega) y crea stock del paquete en Exhibición; vender descuenta solo el paquete. Costo del paquete = Σ costo componente × qty (null si falta alguno), refrescado al armar. La composición y el borrado se bloquean mientras alguna fila de `inventory` del paquete sea ≠ 0. No se trasladan entre tiendas (2026-10-08). Ver tabla "Paquetes" en §5. |
 | Guard de precios | `CheckoutService` valida server-side que cada `price` coincida (±$0.01) con un nivel del catálogo del producto para esa tienda. Items `is_damaged=true` permiten precio manual. Para cobrar ARRIBA del catálogo existe el aumento por línea (`items.*.line_surcharge`, 2026-09-29): el `price` sigue siendo el de catálogo y el aumento va en `sale_items.surcharge_*`. |
 
 **Regla de negocio crítica:** la **comisión de terminal NUNCA se cobra al
@@ -292,8 +292,9 @@ al dar de alta una tienda (y existe la migración de backfill
 
 > Un paquete es una fila de `products` con `product_type='bundle'` (como los tomos con
 > `'manga'`): composición en `product_bundle_items`, bitácora en `bundle_assemblies`, stock
-> en `inventory`. Por eso Caja, cobro, cancelaciones, reportes, imágenes y traslados lo
-> tratan como un producto más. Lógica en `App\Services\BundleService` (CRUD, armar,
+> en `inventory`. Por eso Caja, cobro, cancelaciones, reportes e imágenes lo tratan como
+> un producto más (los **traslados NO**: ver "Reglas que lo protegen"). Lógica en
+> `App\Services\BundleService` (CRUD, armar,
 > desarmar) y `BundleAvailability` ("puedes armar N" por tienda); códigos en
 > `App\Support\BundleCodes` (SKU `PAQ-0001`, EAN-13 interno prefijo 200).
 > Definición global (todas las tiendas la ven), stock por tienda. Cualquier rol crea y arma/
@@ -303,12 +304,12 @@ al dar de alta una tienda (y existe la migración de backfill
 
 | Método | Path | Notas |
 |---|---|---|
-| GET | `/bundles` | `?store_id=&search=&active=&page=&per_page=` (máx 200). Cada paquete trae `availability[]` por tienda permitida: `max_buildable`, stock del paquete (`stock_exhibicion`/`stock_bodega`) y por componente `stock_exhibicion`, `stock_bodega`, `max_from_combined`, `limiting` |
+| GET | `/bundles` | `?store_id=&search=&active=&page=&per_page=` (máx 200). Cada paquete trae `availability[]` por tienda permitida: `max_buildable`, stock del paquete (`stock_exhibicion`/`stock_bodega`) y por componente `stock_exhibicion`, `stock_bodega`, `max_from_combined`, `limiting`. Un stock negativo de un componente (ajuste viejo) se reporta como 0 y no presta piezas — exactamente lo que `assemble` acepta (2026-10-08) |
 | POST | `/bundles` | `{ name, description?, sku?, barcode?, prices{price_1 requerido}, components[{product_id, quantity}] (≥2 distintos, sin paquetes anidados ni inactivos), catalog_visible? }`. SKU/barcode se generan si no vienen |
 | POST | `/bundles/preview` | `{ components[], store_id?, bundle_id? }` → `suggested_price_sum`, `cost_sum` (gateado), `availability[]`. Acepta desde 1 componente (el asistente lo consulta en vivo) |
 | GET | `/bundles/{id}` | Detalle + `availability` + últimas 20 `assemblies` |
-| PUT | `/bundles/{id}` | Admin/gerente. Datos/precios siempre; `components` solo con stock 0 en todos los almacenes (`composition_locked`) |
-| DELETE | `/bundles/{id}` | Solo con stock 0 y sin apartados; `snapshotAndDelete` (las ventas quedan) |
+| PUT | `/bundles/{id}` | Admin/gerente. Datos/precios siempre; `components` solo si NINGUNA fila de `inventory` del paquete es ≠ 0 (`composition_locked`; una fila negativa en otra tienda también bloquea — `BundleService::stockLock`, 2026-10-08) |
+| DELETE | `/bundles/{id}` | Solo si ninguna fila de `inventory` es ≠ 0 (no la suma: +2 en A y −2 en B sigue bloqueando) y sin apartados; `snapshotAndDelete` (las ventas quedan) |
 | POST | `/bundles/{id}/assemble` | `{ store_id, quantity, notes?, sources?[{product_id, source: auto\|store\|bodega}] }`. `auto` (default) toma primero de Exhibición y lo que falte de Bodega; el paquete siempre cae en Exhibición. Movimientos `transferencia` con `reference PAQ-{id}` |
 | POST | `/bundles/{id}/disassemble` | `{ store_id, quantity, notes?, destination?: store\|bodega }` (default Exhibición) |
 | GET | `/bundles/{id}/assemblies` | Historial paginado (no-admin: su tienda) |
@@ -316,8 +317,13 @@ al dar de alta una tienda (y existe la migración de backfill
 Reglas que lo protegen: `InventoryController::update`/`storeMovement`/`move` rechazan paquetes (su
 stock solo cambia armando/desarmando y vive en Exhibición); `ProductController::destroy`/`forceDestroy` y
 `MangaController::destroy` rechazan borrar un producto que es **componente** de un paquete
-(FK `restrictOnDelete`) o un paquete con armados; `/products` no crea ni re-tipa paquetes;
-`PurgeNoStockProductsCommand` los conserva; `/products/stats` los separa en `total_bundles`.
+(FK `restrictOnDelete`) o un paquete con alguna fila de `inventory` ≠ 0 (`BundleService::hasStock`);
+**`TransferService::create`/`complete` rechazan paquetes con 422** ("Los paquetes no se trasladan:
+desármalo aquí y ármalo en la otra tienda" — su stock vive en Exhibición y solo cambia armando/
+desarmando; un traslado lo dejaría atorado en Bodega u otra tienda; cancelar la solicitud sigue
+permitido); `/products` no crea ni re-tipa paquetes; `PurgeNoStockProductsCommand` los conserva;
+`tadaima:depurar-tomos` los deja fuera del universo y nunca borra ni desactiva un componente
+(2026-10-08); `/products/stats` los separa en `total_bundles`.
 
 ### Mangas / Tomos (`MangaController`, `MangaInventoryController`)
 
@@ -342,9 +348,9 @@ stock solo cambia armando/desarmando y vive en Exhibición); `ProductController:
 
 | Método | Path | Notas |
 |---|---|---|
-| GET | `/transfers` · POST `/transfers` | Listar / solicitar |
+| GET | `/transfers` · POST `/transfers` | Listar / solicitar. **Paquetes → 422** (no se trasladan; ver "Paquetes", 2026-10-08) |
 | GET | `/transfers/{transfer}` · GET `/transfers/{transfer}/items` | Detalle / items |
-| PUT | `/transfers/{transfer}/complete` | Recibir: mueve el stock (admin o gerente de la tienda DESTINO, desde 2026-09-30) |
+| PUT | `/transfers/{transfer}/complete` | Recibir: mueve el stock (admin o gerente de la tienda DESTINO, desde 2026-09-30). Una solicitud con paquetes tampoco se recibe (422): cancélala |
 | PUT | `/transfers/{transfer}/cancel` | Cancelar |
 
 ### Clientes (`CustomerController`)
