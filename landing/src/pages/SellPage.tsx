@@ -64,6 +64,7 @@ import type { CashSession, CashRegisterInfo, PaymentMethod as ApiPaymentMethod, 
 import { buildPaymentSummary } from "@/lib/paymentSummary";
 import { HISTORIAL_METHOD_OPTIONS, historialEntryMatchesPaymentFilter, type HistorialMethodFilter } from "@/lib/paymentFilter";
 import { computeMixedSplit } from "@/lib/mixedPayment";
+import { readFavoritePayment, saveFavoritePayment, startingPayment, toggleFavorite, withFavoriteTerminal, type StartingPayment } from "@/lib/favoritePaymentMethod";
 import { computeRegularChargeAmount, discountPct } from "@/lib/promo";
 import { newLineId, recalculateSale, type LineDiscount, type LineSurcharge } from "@/lib/saleCalc";
 import { acceptsNewUnits, applyLineAdjustment, lineAdjustmentOf, removeLineAdjustment, type LineAdjustment } from "@/lib/lineAdjustments";
@@ -198,7 +199,7 @@ interface Mesa {
   paymentMethod: PaymentMethod;
   isPreventa: boolean;
   depositAmount: number;
-  selectedTerminalId?: number;
+  selectedTerminalId?: number | undefined;
   // La tienda SIEMPRE absorbe la comisión de tarjeta — campo conservado
   // por compatibilidad con código viejo, pero ya no se usa en cálculos.
   absorbCommission?: boolean;
@@ -392,13 +393,15 @@ let _mc = 2;
 // Tab 1 → "Caja Principal" (el turno del cajero), tabs 2..5 → "Venta N"
 // (ventas paralelas para atender múltiples clientes a la vez).
 const mesaLabel = (n: number): string => (n === 1 ? "Caja Principal" : `Venta ${n}`);
-const makeMesa = (n?: number): Mesa => {
+// `start` = método con el que arranca (el favorito del cajero, o Efectivo).
+const makeMesa = (n?: number, start: StartingPayment = startingPayment(null)): Mesa => {
   const num = n !== undefined ? n : _mc++;
   return {
     id: `mesa-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     name: mesaLabel(num),
     items: [],
-    paymentMethod: "Efectivo",
+    paymentMethod: start.paymentMethod,
+    selectedTerminalId: start.selectedTerminalId,
     isPreventa: false,
     depositAmount: 0,
     absorbCommission: true, // tienda siempre absorbe — nunca se cobra al cliente
@@ -435,6 +438,12 @@ export function SellPage() {
   const isAdmin = isAdminRole(user?.roles);
   const { activeStore, stores, setActiveStore, isLoading: storeLoading } = useActiveStore();
 
+  // Método de pago favorito del cajero en esta PC (2026-10-09): cada venta y
+  // mesa nueva arranca con él. Ver lib/favoritePaymentMethod.ts. Se lee al
+  // montar: ProtectedRoute garantiza `user` y cambiar de usuario pasa por
+  // /login (Caja se desmonta), así que no hace falta re-leerlo.
+  const [favoritePayment, setFavoritePayment] = useState(() => readFavoritePayment(user?.id));
+
   const draftStore = useCartDraftStore();
   // Hidratar mesas desde snapshot persistido (sobrevive navegación entre páginas).
   // Si el snapshot está vacío/corrupto, arrancar con una mesa nueva.
@@ -445,13 +454,20 @@ export function SellPage() {
         // Normaliza labels antiguos ("Caja 1..5") al nuevo esquema
         // ("Caja Principal" / "Venta 2..5"). Asigna lineId a items de snapshots
         // previos a Descuentos v2 (carritos persistidos sin lineId).
-        return (snap as Mesa[]).map((m, idx) => ({
-          ...m,
-          name: mesaLabel(idx + 1),
-          items: (m.items ?? []).map(i => (i.lineId ? i : { ...i, lineId: newLineId() })),
-        }));
+        // Las mesas vacías (sin preventa ni folio) arrancan en el favorito; las
+        // que traen productos conservan el método que ya tenían.
+        return (snap as Mesa[]).map((m, idx) => {
+          const items = (m.items ?? []).map(i => (i.lineId ? i : { ...i, lineId: newLineId() }));
+          const isBlank = items.length === 0 && !m.isPreventa && m.loadedPreSaleOrderId == null;
+          return {
+            ...m,
+            ...(isBlank ? startingPayment(favoritePayment) : {}),
+            name: mesaLabel(idx + 1),
+            items,
+          };
+        });
       }
-      return [makeMesa(1)];
+      return [makeMesa(1, startingPayment(favoritePayment))];
     })()
   );
   const initialActiveId = useRef<string>(
@@ -1668,7 +1684,7 @@ export function SellPage() {
       });
       return;
     }
-    const m = makeMesa();
+    const m = makeMesa(undefined, startingPayment(favoritePayment));
     setMesas(prev => [...prev, m]);
     setActiveMesaId(m.id);
   };
@@ -2080,6 +2096,21 @@ export function SellPage() {
     }
   };
 
+  // Check de favorito en el menú de método: uno solo; tocar el actual lo quita.
+  // No cambia la venta en curso — aplica desde la siguiente.
+  const toggleFavoritePayment = (pm: PaymentMethod) => {
+    if (pm === "Dólares") return;
+    const terminalId = activeMesa?.paymentMethod === "Tarjeta" ? activeMesa.selectedTerminalId : undefined;
+    const next = toggleFavorite(favoritePayment, pm, terminalId);
+    saveFavoritePayment(user?.id, next);
+    setFavoritePayment(next);
+    if (next) {
+      toast.success(`${pm} quedó como favorito: cada venta nueva arranca así.`, { duration: 3500 });
+    } else {
+      toast.info("Sin método favorito: cada venta nueva arranca en Efectivo.", { duration: 3500 });
+    }
+  };
+
   const selectTerminal = (terminalId: number) => {
     const wasSocio = !!activeMesa?.customerSocioEligible;
     updMesa(activeMesa.id, m => ({
@@ -2091,6 +2122,12 @@ export function SellPage() {
       items: repriceForSocio(m.items, "a"),
     }));
     setShowTerminalModal(false);
+    // Favorito = Tarjeta: recuerda la última terminal para la siguiente venta.
+    const nextFav = withFavoriteTerminal(favoritePayment, terminalId);
+    if (nextFav !== favoritePayment) {
+      saveFavoritePayment(user?.id, nextFav);
+      setFavoritePayment(nextFav);
+    }
     if (wasSocio) {
       toast.info("Con tarjeta se cobra precio normal (la tienda absorbe la comisión).", { duration: 4000 });
     }
@@ -2281,7 +2318,7 @@ export function SellPage() {
     updMesa(mesaId, m => ({
       ...m, items: [], customerId: undefined, customerName: undefined,
       customerPhone: "", customerEmail: "", customerIsSocio: false, customerSocioEligible: false, isNewCustomer: false, depositAmount: 0,
-      selectedTerminalId: undefined, absorbCommission: true,
+      absorbCommission: true,
       isPreventa: false, loadedPreSaleOrderId: undefined, loadedPreSaleOrderCode: undefined,
       cashReceived: "",
       cashReceivedUsd: "",
@@ -2289,10 +2326,10 @@ export function SellPage() {
       usdPrimaryMode: false,
       usdApplied: false,
       payLog: [],
-      // Tras cada cobro el método vuelve SIEMPRE a Efectivo (pedido Joel):
-      // si la venta anterior fue con Tarjeta, la siguiente no debe arrancar en
-      // Tarjeta por inercia.
-      paymentMethod: "Efectivo",
+      // Tras cada cobro el método vuelve SIEMPRE al favorito del cajero, o a
+      // Efectivo si no marcó ninguno (pedido Joel): la siguiente venta no
+      // arranca en Tarjeta por inercia de la anterior, solo si así lo eligió.
+      ...startingPayment(favoritePayment),
     }));
     // Defensa contra fuga de cliente entre ventas consecutivas (bug reportado
     // Joel 2026-05-27 en prod): reseteamos también todo el estado del popup
@@ -6942,10 +6979,21 @@ export function SellPage() {
                           <div className="flex w-full h-[52px] rounded-2xl overflow-hidden" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", color: "var(--td-text-hi)" }}>
                             <button
                               onClick={() => setPaymentMenuOpen(o => !o)}
-                              className="flex-1 min-w-0 flex items-center justify-center gap-1.5 transition-colors"
+                              className="relative flex-1 min-w-0 flex items-center justify-center gap-1.5 transition-colors"
                               onMouseEnter={e => { e.currentTarget.style.background = "var(--td-hover-bg)"; }}
                               onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+                              {...(active === favoritePayment?.method ? { title: `${active} es tu método favorito` } : {})}
                             >
+                              {/* Insignia de favorito en la esquina: no le quita ancho al label. */}
+                              {active === favoritePayment?.method && (
+                                <span
+                                  aria-hidden
+                                  className="absolute top-1 right-1 w-3 h-3 rounded-full flex items-center justify-center"
+                                  style={{ background: "var(--td-red)" }}
+                                >
+                                  <Check size={8} strokeWidth={4} className="text-white" />
+                                </span>
+                              )}
                               {renderLabel(active, false)}
                               {/* Menú abre HACIA ARRIBA porque vive al fondo del sidebar.
                                   Chevron: cerrado = ↑ (apunta hacia arriba indicando
@@ -7000,10 +7048,15 @@ export function SellPage() {
                                 animate={{ opacity: 1, y: 0 }}
                                 exit={{ opacity: 0, y: 8 }}
                                 transition={{ duration: 0.12 }}
-                                className="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-2xl overflow-hidden"
-                                style={{ background: "var(--td-popup-bg)", backdropFilter: "blur(20px)", border: "1px solid var(--td-popup-border)" }}
+                                className="absolute bottom-full left-0 mb-2 z-50 rounded-2xl overflow-hidden"
+                                // Más ancho que el botón: cabe el label + la columna del check de favorito.
+                                style={{ width: "max(100%, 17.5rem)", background: "var(--td-popup-bg)", backdropFilter: "blur(20px)", border: "1px solid var(--td-popup-border)" }}
                               >
-                                {allOptions.filter(pm => pm !== active).map(pm => {
+                                {/* Los 4 métodos, también el activo (resaltado, sin acción)
+                                    para poder marcarlo como favorito. */}
+                                {allOptions.map(pm => {
+                                  const isActive = pm === active;
+                                  const isFavorite = favoritePayment?.method === pm;
                                   // Bloquea la opción si ALGÚN item del carrito no acepta ese
                                   // método (preventa/cash_only → no Tarjeta; allow_cash=false →
                                   // no Efectivo). Mismo criterio que payBlocked y el guard del
@@ -7036,29 +7089,68 @@ export function SellPage() {
                                     const promoNombre = promoId != null ? promoFlagsById[promoId]?.name : null;
                                     return `No disponible: la promo "${promoNombre ?? "aplicada"}" de "${primero.product.name}" no se cobra con ${pm}. Puedes cobrar esa línea sin la promo.${resto}`;
                                   })();
-                                  const isHovered = hoveredPayPm === pm && !isBlocked;
+                                  const canSwitch = !isActive && !isBlocked;
+                                  const isHovered = hoveredPayPm === pm && canSwitch;
                                   return (
-                                    <button
+                                    <div
                                       key={pm}
-                                      onClick={() => { if (!isBlocked) { setPayment(pm); setPaymentMenuOpen(false); setHoveredPayPm(null); } }}
-                                      disabled={isBlocked}
-                                      {...(blockedTitle ? { title: blockedTitle } : {})}
-                                      className={`w-full px-3 flex items-center justify-center border-b last:border-b-0 transition-all duration-150 ${
-                                        isBlocked ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'
-                                      }`}
+                                      className="flex items-stretch border-b last:border-b-0 transition-all duration-150"
                                       style={{
                                         // Crece al hover (60px) para leer bien; vuelve a 44px al salir.
                                         height: isHovered ? 60 : 44,
                                         borderBottomColor: "var(--td-divider)",
-                                        color: isBlocked ? "var(--td-text-ghost)" : isHovered ? "var(--td-text-hi)" : "var(--td-text-md)",
-                                        background: isHovered ? "var(--td-red-dim)" : "transparent",
+                                        background: isHovered ? "var(--td-red-dim)" : isActive ? "var(--td-hover-bg)" : "transparent",
                                       }}
-                                      onMouseEnter={() => { if (!isBlocked) setHoveredPayPm(pm); }}
-                                      onMouseLeave={() => setHoveredPayPm(null)}
                                     >
-                                      {isBlocked && <AlertTriangle size={11} className="text-amber-500 mr-1.5" />}
-                                      {renderLabel(pm, false, isHovered)}
-                                    </button>
+                                      <button
+                                        onClick={() => { if (canSwitch) { setPayment(pm); setPaymentMenuOpen(false); setHoveredPayPm(null); } }}
+                                        disabled={!canSwitch}
+                                        {...(blockedTitle && !isActive ? { title: blockedTitle } : {})}
+                                        className={`flex-1 min-w-0 pl-3 flex items-center justify-center transition-colors duration-150 ${
+                                          isActive ? 'cursor-default' : isBlocked ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'
+                                        }`}
+                                        style={{
+                                          color: isActive || isHovered ? "var(--td-text-hi)" : isBlocked ? "var(--td-text-ghost)" : "var(--td-text-md)",
+                                        }}
+                                        onMouseEnter={() => { if (canSwitch) setHoveredPayPm(pm); }}
+                                        onMouseLeave={() => setHoveredPayPm(null)}
+                                      >
+                                        {isBlocked && !isActive && <AlertTriangle size={11} className="text-amber-500 mr-1.5" />}
+                                        {renderLabel(pm, false, isHovered)}
+                                        {isActive && (
+                                          <span className="ml-1.5 text-[9px] font-bold uppercase tracking-wider whitespace-nowrap shrink-0" style={{ color: "var(--td-text-lo)" }}>
+                                            · actual
+                                          </span>
+                                        )}
+                                      </button>
+                                      {/* Check de favorito: uno solo, se queda fijo (por usuario en
+                                          esta PC). Disponible aunque el método esté bloqueado para
+                                          ESTE carrito — es una preferencia, no un cobro. */}
+                                      <button
+                                        type="button"
+                                        onClick={e => { e.stopPropagation(); toggleFavoritePayment(pm); }}
+                                        aria-pressed={isFavorite}
+                                        aria-label={isFavorite ? `Quitar ${pm} como método favorito` : `Fijar ${pm} como método favorito`}
+                                        title={isFavorite ? "Método favorito — clic para quitarlo" : "Fijar como favorito: cada venta nueva arranca con este método"}
+                                        className="group w-11 shrink-0 flex items-center justify-center transition-colors"
+                                        onMouseEnter={e => { e.currentTarget.style.background = "var(--td-hover-bg)"; }}
+                                        onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+                                      >
+                                        <span
+                                          className="w-5 h-5 rounded-full flex items-center justify-center transition-all duration-150 group-active:scale-90"
+                                          style={isFavorite
+                                            ? { background: "var(--td-red)", border: "1.5px solid var(--td-red)" }
+                                            : { background: "transparent", border: "1.5px solid var(--td-text-ghost)" }}
+                                        >
+                                          <Check
+                                            size={11}
+                                            strokeWidth={3.5}
+                                            className={isFavorite ? "text-white" : "opacity-0 group-hover:opacity-50 transition-opacity"}
+                                            style={isFavorite ? undefined : { color: "var(--td-text-md)" }}
+                                          />
+                                        </span>
+                                      </button>
+                                    </div>
                                   );
                                 })}
                               </Motion.div>
