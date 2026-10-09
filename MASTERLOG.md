@@ -4,6 +4,34 @@
 
 ---
 
+### Sesión 2026-10-08 (3) — `CashReportRangeTest` determinista en Postgres (solo tests, SIN deploy)
+
+**Pedido Joel:** la suite pgsql fallaba "de noche" en `test_expected_cash_usa_solo_dinero_fisico_y_no_tarjeta`
+(`total_pre_sale_payments` 0 en vez de 80) y a veces en `test_transferencia_no_entra_al_esperado_del_cajon`.
+
+- **Causa real (no era la hora):** `pre_sale_order_payments.created_at` quedaba al default `CURRENT_TIMESTAMP`.
+  `RefreshDatabase` corre cada test en UNA transacción y en Postgres `CURRENT_TIMESTAMP` es la hora de inicio
+  de la transacción (la misma para el INSERT y para el tope `COALESCE(closed_at, CURRENT_TIMESTAMP)` de
+  `/reports/cash`); al guardarse en `timestamp(0)` Postgres REDONDEA (`…:17.6` → `…:18`), así que ~la mitad
+  de las corridas el anticipo quedaba 1 s después del tope y no contaba. SQLite no lo sufre (reloj real,
+  truncado). Reproducido: 2 de 6 corridas rojas a cualquier hora; con `setTestNow` a las 03:20 UTC SQLite
+  sigue verde.
+- **Fix (solo `backend/tests/Feature/CashReportRangeTest.php`):** reloj congelado en `setUp` a
+  2026-06-11 20:20 Tijuana (03:20 UTC del 12, pasado fijo), rango con `hoy()` = día de NEGOCIO, y
+  `makePreSalePayment()` con `created_at` explícito dentro de la ventana del corte (`forceCreate`, no es
+  fillable). Docblock con la regla: misma trampa para cualquier columna `useCurrent()` en pgsql.
+- **Sin cambios en prod.** Prod también deja el default, pero sin transacción envolvente el redondeo mueve
+  ≤ 0.5 s (teórico: anticipo en el mismo segundo del cierre). No se tocó.
+- Ojo: dos sesiones corriendo `phpunit.pgsql.xml` a la vez chocan en `tadaima_test` (`migrate:fresh`
+  doble → "relation migrations already exists", 11 errores con 0 aserciones). PHPUnit no pisa variables ya
+  exportadas: `DB_DATABASE=tadaima_test_b50b79 vendor/bin/phpunit -c phpunit.pgsql.xml` usa una base propia.
+
+**Verificado:** SQLite 718/718; Postgres 17 local (base propia): `CashReportRangeTest` 22/22 corridas
+verdes, suite completa 718 con SOLO las 5 fallas preexistentes (`PurgeNoStockProductsTest` ×4,
+`CategoryPivotRepairTest` ×1). Sin commit (rama `claude/beautiful-liskov-b50b79`).
+
+---
+
 ### Sesión 2026-10-08 (2) — Filtro de método de pago server-side en Ventas (Ruben, PR #41) — rev tadaima-00060-viz
 
 **Pedido Joel:** revisar si Ruben subió algo nuevo a `develop` y deployarlo. Paquetes sigue en
