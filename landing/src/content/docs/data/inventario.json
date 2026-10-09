@@ -246,7 +246,7 @@
       "etiqueta",
       "código de barras"
     ],
-    "updatedAt": "2026-10-07",
+    "updatedAt": "2026-10-08",
     "sections": [
       {
         "heading": "Qué es un paquete",
@@ -291,6 +291,12 @@
             "tone": "info",
             "title": "¿Cuántos puedo armar?",
             "text": "Es el mínimo entre los componentes. Ejemplo: el paquete lleva 2 Goku + 1 Vegeta y en la tienda hay 10 Goku y 3 Vegeta → con Goku alcanzaría para 5, con Vegeta solo para 3: puedes armar 3. En “Automático” las piezas se toman de Exhibición y lo que falte sale de Bodega; también puedes forzar que un producto salga solo de Exhibición o solo de Bodega."
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "¿Lo necesitas en otra tienda? Los paquetes no se trasladan",
+            "text": "Traslados no acepta paquetes (te avisa al guardar). El stock de un paquete solo cambia armando o desarmando y siempre vive en Exhibición: desármalo aquí, traslada las piezas sueltas como cualquier producto y ármalo en la otra tienda."
           }
         ]
       },

@@ -4,6 +4,56 @@
 
 ---
 
+### Sesión 2026-10-08 (4) — Paquetes: endurecimientos (depurar-tomos, traslados, candado de stock) — PR #45 abierto, SIN deploy
+
+**Pedido Joel:** cerrar tres follow-ups de la entrada de Paquetes (rev `tadaima-00064-yec`) dejando la
+rama lista para PR, sin deployar. Rama `claude/keen-murdock-c92ea5` desde `main` (worktree), un
+commit `863ad39`, **PR #45 abierto contra `main`**. Prod sigue en `tadaima-00064-yec`; nada de esto
+está en producción. Sin migraciones.
+
+**Cambios** (solo backend + docs):
+- `tadaima:depurar-tomos` deja los `product_type='bundle'` fuera del universo (un paquete con categoría
+  de librería y sin stock ya no se borra ni se re-tipa: su composición quedaría huérfana). Hallazgo: la
+  "exclusión de componentes" que ya existía solo los sacaba de la búsqueda de historial, no de la lista
+  de borrado; el test nuevo reventó con `FOREIGN KEY constraint failed` (rollback total del comando).
+  Ahora un componente con stock 0 nunca se borra ni se desactiva: sigue la ruta "con stock" (manga
+  no-tomo → producto). Es un comando manual que no ha corrido en prod con paquetes.
+- **Los paquetes no se trasladan**: `TransferService::assertNoBundles` (en el service, así cubre la app
+  móvil) rechaza paquetes al solicitar y al recibir con 422 "Los paquetes no se trasladan («X»
+  PAQ-0001): desármalo aquí y ármalo en la otra tienda". Una solicitud vieja con paquete no se recibe
+  pero sí se cancela. Motivo: su stock solo cambia armando/desarmando y vive en Exhibición.
+- **Candado de borrar / editar composición por fila**: `BundleService::stockLock()` / `hasStock()`
+  bloquean si CUALQUIER fila de `inventory` del paquete es ≠ 0 (antes era suma > 0: +2 en una tienda y
+  −2 en otra colaba el borrado); una sola fila negativa bloquea con mensaje propio. `composition_locked`
+  usa el mismo candado (`withExists` en el listado). `BundleAvailability` trata el stock negativo de un
+  componente como 0, igual que `assemble`, así "puedes armar N" vuelve a ser exactamente lo que acepta
+  el armado (la UI suma esos campos).
+- Docs: `backend/AGENTS.md` (ADR-018, tabla Paquetes, tabla Traslados), `AGENTS.md` §5 y un callout
+  en la guía in-app de Paquetes. Tests nuevos: `TransferBundleTest`, `BundleStockLockTest`, caso en
+  `DepurarTomosTest`.
+
+**Verificado:** SQLite 763/763; Postgres 17 local 761/763 (los 2 son `CashReportRangeTest`,
+preexistentes y por la hora: usa `now()->toDateString()` en UTC contra el día de Tijuana, falla de
+17:00 a 24:00); vitest guías 26/26; `vite build` OK; Pint marca 4 archivos con las mismas reglas que
+ya fallaban en `main` (no se reformateó).
+
+**Estado de prod al cierre (23:50 Tijuana):** `tadaima-00064-yec` al 100%; logs sin errores ni 5xx
+desde el deploy (06:21Z); nadie ha usado `/bundles` con sesión todavía (solo las llamadas del smoke
+test). Rollback si algo falla mañana: `gcloud run services update-traffic tadaima --to-revisions
+tadaima-00062-kof=100 --project tadaimapos --region us-east1` (con paquetes armados: desarmar antes y
+no borrar productos ni ajustar stock de paquetes desde la versión vieja).
+
+**Para la prueba del equipo (mañana):** crear paquete (SKU `PAQ-0001` + código de barras) → armar N
+en su tienda (Automático y forzando Bodega; el "Puedes armar" debe coincidir) → imprimir etiqueta →
+vender en Caja (ticket; baja el stock del paquete, no el de las piezas) → cancelar esa venta (regresa el
+paquete) → desarmar (piezas vuelven a Exhibición o Bodega, según se elija) → intentar borrar con armados
+(debe negarse y mandar a desarmar). Reportar pantalla, tienda, qué esperaban y qué pasó. Pendientes
+conocidos: cajero ve Editar/Borrar que dan 403; avisar a Ruben (`product_type` puede ser `bundle`);
+revisar/mergear PR #45 y deployar (anotar aquí su revisión); follow-up frontend: `TransfersPage` muestra
+un toast genérico en vez del mensaje del 422 y su buscador lista paquetes.
+
+---
+
 ### Sesión 2026-10-08 (3) — Caja: filtro por método de pago en el Historial del Día (PR #43) — rev tadaima-00062-kof
 
 **Pedido Joel:** "revisa que los tipos de pago tengan filtros apropiados en Caja". La tienda pidió

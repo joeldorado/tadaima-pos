@@ -19,7 +19,10 @@ use Illuminate\Support\Collection;
  * (Exhibición primero, lo que falte de Bodega). Lee las MISMAS filas de
  * `inventory` que BundleService::assemble (Exhibición = primer
  * warehouses.type='store' activo por id; Bodega = primer type='bodega'), así el
- * número que ve el usuario es exactamente el que el armado acepta.
+ * número que ve el usuario es exactamente el que el armado acepta. Un stock
+ * NEGATIVO de un componente (ajuste viejo) cuenta como 0 y así se reporta en
+ * `stock_exhibicion`/`stock_bodega` (2026-10-08): la UI suma esos campos y
+ * `assemble` tampoco "presta" piezas de una fila negativa.
  */
 final class BundleAvailability
 {
@@ -256,8 +259,9 @@ final class BundleAvailability
             foreach ($components as $c) {
                 $pid = $c['product_id'];
                 $qty = max(1, $c['quantity']);
-                $e = (float) ($exhStock[$pid] ?? 0);
-                $b = (float) ($bodStock[$pid] ?? 0);
+                // Igual que BundleService::assemble: una fila negativa no presta piezas.
+                $e = max(0.0, (float) ($exhStock[$pid] ?? 0));
+                $b = max(0.0, (float) ($bodStock[$pid] ?? 0));
                 $combined[$pid] = $e + $b;
                 $rows[] = [
                     'product_id' => $pid,

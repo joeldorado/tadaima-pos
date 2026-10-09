@@ -8,7 +8,7 @@
 > Detalle adicional: [`CLAUDE.md`](CLAUDE.md) (comandos y arquitectura del frontend) y
 > [`backend/AGENTS.md`](backend/AGENTS.md) (API, ADRs y referencia de endpoints).
 >
-> Última revisión: 2026-10-07.
+> Última revisión: 2026-10-08.
 
 ---
 
@@ -192,6 +192,14 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   la composición no se edita mientras haya armados; un producto que es componente no se
   borra (primero quítalo del paquete). Definición global, stock por tienda; cualquier rol crea y
   arma en su tienda; editar = admin/gerente (como productos); borrar = permiso de borrar productos.
+- **No se trasladan entre tiendas** (2026-10-08): `POST /transfers` y recibir un traslado con un
+  paquete responden 422 ("desármalo aquí y ármalo en la otra tienda"). Un traslado lo dejaría
+  atorado en Bodega u otra tienda sin forma de moverlo.
+- **Candado de borrar / editar composición** (2026-10-08): bloquea si CUALQUIER fila de
+  `inventory` del paquete es ≠ 0, no la suma (+2 en una tienda y −2 en otra sigue bloqueando;
+  una sola fila negativa también, con su propio mensaje). Al calcular "puedes armar N", el stock
+  negativo de un componente cuenta como 0 — igual que `assemble`. `tadaima:depurar-tomos` deja
+  los paquetes fuera y nunca borra ni desactiva un componente.
 
 ### Preventas
 - Catálogo de proveedor → folios con anticipo → liquidación al recoger.

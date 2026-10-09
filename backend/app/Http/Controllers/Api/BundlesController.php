@@ -300,7 +300,9 @@ class BundlesController extends Controller
                 'images',
                 'bundleItems.component' => fn ($q) => $q->with(['price', 'images']),
             ])
-            ->withSum('inventory', 'quantity');
+            ->withSum('inventory', 'quantity')
+            // Candado real de composición: alguna fila de inventory ≠ 0 (no la suma).
+            ->withExists(['inventory as has_nonzero_stock' => fn ($q) => $q->where('quantity', '!=', 0)]);
     }
 
     /** @return array<string,mixed> */
@@ -312,7 +314,8 @@ class BundlesController extends Controller
 
         $resource = (new BundleResource($bundle))
             ->withAvailability($this->availability->availabilityFor($bundle, $storeIds))
-            ->withStockTotal($this->service->totalStock($bundle));
+            ->withStockTotal($this->service->totalStock($bundle))
+            ->withCompositionLocked($this->service->hasStock($bundle));
 
         if ($withHistory) {
             $history = BundleAssembly::query()
