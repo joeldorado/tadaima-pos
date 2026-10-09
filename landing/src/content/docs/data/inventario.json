@@ -224,6 +224,12 @@
             "tone": "info",
             "title": "Nivel bodega",
             "text": "Los traslados se manejan a nivel de bodega entre tiendas, de modo que el stock cuadre en origen y destino."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "¿Qué productos van en el traslado?",
+            "text": "La tarjeta solo enseña el primer producto. Toca “Ver N productos” y se abre el detalle: quién lo pidió, la nota, cada producto con su SKU y cuántas piezas van, y el total de piezas (con muchos productos aparece un buscador). Si está pendiente y te toca, puedes Recibir o Cancelar desde ahí mismo después de revisar la lista."
           }
         ]
       }
