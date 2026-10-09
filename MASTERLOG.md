@@ -4,6 +4,34 @@
 
 ---
 
+### Sesión 2026-10-08 (2) — Filtro de método de pago server-side en Ventas (Ruben, PR #41) — rev tadaima-00060-viz
+
+**Pedido Joel:** revisar si Ruben subió algo nuevo a `develop` y deployarlo. Paquetes sigue en
+`feat/paquetes` sin tocar (Joel estaba editando `BundleList`/`BundlesPage`; el merge se hizo en un
+worktree temporal de `main`, así que `feat/paquetes` todavía no trae este merge).
+
+- **PR #41 `develop → main`** (1 commit de Ruben, sin migraciones): el filtro de método de pago de
+  la lista de Ventas (`SalesController::index`, `SalesPage.tsx`) ahora viaja al backend como
+  `payment_method_filter` y filtra en SQL antes de paginar (efectivo, tarjeta, transferencia,
+  dólares, mixto). Antes se aplicaba en el cliente sobre las primeras 100 ventas: con rangos largos,
+  las de Transferencia o Tarjeta en páginas no cargadas parecían no existir.
+- Revisión: `whereRaw` con cadenas constantes y `LOWER()` (seguro e igual en Postgres); el valor del
+  filtro solo entra por un `match` de casos fijos. Detalle sin efecto visible: el backend cuenta
+  "dólar" como efectivo y el frontend lo separa, pero el filtro del cliente se sigue aplicando
+  encima. Sin test propio.
+
+**Verificado:** SQLite 718/718; Postgres 17 local: 5 fallas preexistentes (`PurgeNoStockProductsTest`
+×4, `CategoryPivotRepairTest` ×1) + `CashReportRangeTest::test_expected_cash_usa_solo_dinero_fisico_y_no_tarjeta`,
+que falla igual SIN este PR a esta hora (20:20 Tijuana = ya es otro día en UTC) y pasaba en la
+mañana: depende de la hora, no de Ruben. Candidata sin tráfico: index y `/tadaimaus/` 200, `/sales`
+401 sin sesión, login sin errores de consola, bundle con `payment_method_filter` y cero menciones de
+Paquetes. Luego se promovió al 100%. Falta la revisión con sesión: Ventas → filtro de método con un
+rango largo de fechas.
+
+**Deploy:** tadaima-00060-viz (rollback `tadaima-00058-bek`). Pedir Ctrl+Shift+R / incógnito por la caché PWA.
+
+---
+
 ### Sesión 2026-10-08 — Filtros en Existencias por Tienda y Productos + reporte #7 + canceladas al cerrar caja (Ruben, PR #40) — rev tadaima-00058-bek
 
 **Pedido Joel:** subir a prod lo nuevo de Ruben en `develop` sin tocar el módulo Paquetes. Paquetes
