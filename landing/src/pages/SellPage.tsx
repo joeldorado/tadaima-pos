@@ -78,6 +78,7 @@ import { useCartDraftStore } from "@/stores/cartDraftStore";
 import { useActiveStore } from "@/contexts/StoreContext";
 import { useAuth } from "@tadaima/auth";
 import { isAdmin as isAdminRole } from "@/lib/permisos";
+import { cartUnitLimit, storeAvailability } from "@/lib/presaleAvailability";
 import { CancelTicketModal } from "@/components/cancel/CancelTicketModal";
 import { CorrectPaymentModal } from "@/components/sales/CorrectPaymentModal";
 import { motion as Motion, AnimatePresence } from "motion/react";
@@ -162,7 +163,7 @@ interface CartItem {
   preSaleOrderItemId?: number; // id del PreSaleOrderItem en backend
   preSaleItemDelivered?: boolean;
   sellingCatalogId?: number; // ID del PreSaleCatalog que se está reservando
-  unitLimit?: number; // límite de unidades por cliente (catálogo.preorder_limit)
+  unitLimit?: number; // límite de unidades por cliente (catálogo.limit_per_customer)
   syncError?: boolean; // true si addDraftItem/updateDraftItem falló — bloquea checkout
 }
 
@@ -2979,8 +2980,9 @@ export function SellPage() {
       // en lugar de duplicar la fila (bug típico al doble-click en la card del modal).
       const existing = m.items.find(i => i.sellingCatalogId === catalog.id);
       if (existing) {
-        // Respeta el unitLimit del catálogo si está definido
-        const limit = catalog.preorder_limit ?? Infinity;
+        // Respeta el límite por cliente del catálogo si está definido
+        // (limit_per_customer — nunca preorder_limit, que es el tope global viejo).
+        const limit = cartUnitLimit(catalog) ?? Infinity;
         if (existing.quantity + 1 > limit) {
           toast.error(`Límite por cliente alcanzado: ${limit} unidad(es)`);
           return m;
@@ -2995,6 +2997,7 @@ export function SellPage() {
         };
       }
 
+      const unitLimit = cartUnitLimit(catalog);
       const item: CartItem = {
         lineId: newLineId(),
         product: {
@@ -3013,7 +3016,7 @@ export function SellPage() {
         priceLevel,
         depositAmount: anticipo,
         sellingCatalogId: catalog.id,
-        ...(catalog.preorder_limit != null ? { unitLimit: catalog.preorder_limit } : {}),
+        ...(unitLimit !== undefined ? { unitLimit } : {}),
       };
       return {
         ...m,
@@ -3585,7 +3588,7 @@ export function SellPage() {
     }
 
     // Preventa: el backend devuelve "'X' solo tiene N unidades disponibles (límite: M)."
-    // cuando el preorder_limit del catálogo ya se alcanzó. Auto-ajusta el item de
+    // cuando se llenó el cupo de la tienda (store_limits). Auto-ajusta el item de
     // preventa-catálogo en el carrito al disponible real, igual que con productos.
     const presaleMatch = msg.match(/'([^']+)' solo tiene (\d+) unidades disponibles \(límite: \d+\)/);
     if (presaleMatch) {
@@ -7525,16 +7528,9 @@ export function SellPage() {
             // Cambio Joel 2026-05-20: si la tienda activa no tiene entrada en
             // store_limits, NO se vende en esa tienda (antes había fallback al
             // preorder_limit global, lo que abría el catálogo en todas las tiendas
-            // sin querer).
-            const storeLimitRow = catalog.store_limits?.find(sl => sl.store_id === activeStore?.id);
-            const limit = storeLimitRow?.limit_qty ?? 0;
-            const reserved = activeStore?.id != null
-              ? (catalog.reserved_by_store?.[String(activeStore.id)] ?? 0)
-              : 0;
-            const remaining = Math.max(0, limit - reserved);
-            // Sin entrada en store_limits = el gerente/admin aún no habilita esta
-            // tienda → "Sin asignar" (no es lo mismo que agotado: nunca tuvo cupo).
-            const isSinAsignar = storeLimitRow === undefined;
+            // sin querer). Sin entrada = "Sin asignar" (no es lo mismo que
+            // agotado: nunca tuvo cupo). Ver lib/presaleAvailability.
+            const { unassigned: isSinAsignar, limit, reserved, remaining } = storeAvailability(catalog, activeStore?.id);
             const isAgotado = !isSinAsignar && remaining <= 0;
             // Bloqueo por LÍMITE POR CLIENTE: el cliente asignado ya alcanzó su
             // tope de por vida en este catálogo (se llenó al intentar agregar).
@@ -7654,7 +7650,9 @@ export function SellPage() {
                     {catalog.advance_payment > 0 ? fmt(catalog.advance_payment) : "Sin anticipo"}
                   </span>
                 </div>
-                {catalog.preorder_limit != null && (
+                {/* Reservados de ESTA tienda sobre su cupo (store_limits). Antes
+                    salía reserved_count global / preorder_limit → "24 / 1". */}
+                {!isSinAsignar && (
                   <div
                     style={{
                       display: "flex",
@@ -7668,7 +7666,24 @@ export function SellPage() {
                       Reservados
                     </span>
                     <span style={{ fontSize: 17, fontWeight: 900, color: "var(--td-text-hi)" }}>
-                      {catalog.reserved_count ?? 0} / {catalog.preorder_limit}
+                      {reserved} / {limit}
+                    </span>
+                  </div>
+                )}
+                {catalog.limit_per_customer != null && (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 10,
+                    }}
+                  >
+                    <span style={{ fontSize: 10, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--td-text-ghost)" }}>
+                      Máx. por cliente
+                    </span>
+                    <span style={{ fontSize: 13, fontWeight: 900, color: "var(--td-text-md)" }}>
+                      {catalog.limit_per_customer}
                     </span>
                   </div>
                 )}
