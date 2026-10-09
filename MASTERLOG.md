@@ -4,6 +4,35 @@
 
 ---
 
+### Sesión 2026-10-09 (3) — Preventas: tarjeta de Caja "Reservados 24 / 1" (PR #48) — rev tadaima-00070-yuv
+
+**Reporte (Ruben, app móvil; lo mismo en la Caja web):** "PREVENTA Booster bundle 30th" (catálogo id 1)
+decía **Reservados 24 / 1**. Datos de prod: `preorder_limit=1`, `limit_per_customer=1`, `store_limits`
+CENTRO 12 + MACRO 12, reservados 12 + 12 → el "Agotado" era correcto. El `24` sumaba todas las tiendas y
+el `1` era `preorder_limit` ("Límite de unidades"), tope global viejo que el backend ya no aplica desde
+2026-05-20. **No** era el límite por cliente. Cupo real = `store_limits`; por persona = `limit_per_customer`.
+
+**Fix (solo frontend, sin migraciones)** — rama `fix/preventa-reservados-tienda`, commit `d24e338`, PR #48
+mergeado a `main` (`fa80caf`):
+- `landing/src/lib/presaleAvailability.ts` (+ pruebas): `storeAvailability()` (cupo de la tienda activa,
+  "Sin asignar" si no tiene entrada) y `cartUnitLimit()` (`limit_per_customer`).
+- `SellPage`: la tarjeta dice "Reservados {de esta tienda} / {cupo de la tienda}" + "Máx. por cliente N";
+  el tope del carrito por línea usa `limit_per_customer` (antes `preorder_limit` con el aviso "Límite por
+  cliente", que bloqueaba de más).
+- `AGENTS.md` §5 Preventas.
+
+**Pendiente:** la app móvil (`tadaima-app-pos`, `ExistenciasScreen` / `VentaScreen`) tiene el mismo bug
+(`preorder_limit ?? …`); Ruben la corrige con la misma regla. Nunca usar `preorder_limit` como cupo.
+
+**Verificado:** vitest 677, tsc sin errores nuevos en `SellPage` (383 = 383 contra main), lint limpio,
+QA local (0/12, Máx. 2, tercera unidad bloqueada).
+
+**Deploy (2026-10-09 ~14:30 Tijuana) — rev tadaima-00070-yuv (rollback `tadaima-00068-yil`).** Candidato
+sin tráfico desde un worktree en `main` (Dockerfile): `Nothing to migrate`, `/`, `/caja`, `/transfers` y
+`/tadaimaus/` 200, API 401 sin sesión, el bundle trae "Máx. por cliente". Promovido al 100%;
+`tadaimamexico.com` sirve `index-nFPfvQfq.js`. Rollback:
+`gcloud run services update-traffic tadaima --to-revisions tadaima-00068-yil=100 --project tadaimapos --region us-east1`.
+
 ### Sesión 2026-10-09 (2) — Caja: método de pago favorito + Traslados: detalle de productos (PR #46 y #47) — rev tadaima-00068-yil
 
 **Pedido Joel:** (1) en Caja poder fijar UN método de pago favorito con un check, que se quede fijo;
