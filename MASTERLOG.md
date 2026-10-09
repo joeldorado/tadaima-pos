@@ -4,12 +4,12 @@
 
 ---
 
-### Sesión 2026-10-08 (4) — Paquetes: endurecimientos (depurar-tomos, traslados, candado de stock) — PR #45 abierto, SIN deploy
+### Sesión 2026-10-08 (4) — Paquetes: endurecimientos (depurar-tomos, traslados, candado de stock, PR #45) — rev tadaima-00066-map
 
 **Pedido Joel:** cerrar tres follow-ups de la entrada de Paquetes (rev `tadaima-00064-yec`) dejando la
-rama lista para PR, sin deployar. Rama `claude/keen-murdock-c92ea5` desde `main` (worktree), un
-commit `863ad39`, **PR #45 abierto contra `main`**. Prod sigue en `tadaima-00064-yec`; nada de esto
-está en producción. Sin migraciones.
+rama lista para PR; después (00:00) decidió mergear y deployar esta misma noche. Rama
+`claude/keen-murdock-c92ea5` desde `main` (worktree), commit `863ad39` + MASTERLOG `334dd23`, PR #45
+mergeado a `main` con `--no-ff` (`0366c5b`). Sin migraciones.
 
 **Cambios** (solo backend + docs):
 - `tadaima:depurar-tomos` deja los `product_type='bundle'` fuera del universo (un paquete con categoría
@@ -37,11 +37,15 @@ preexistentes y por la hora: usa `now()->toDateString()` en UTC contra el día d
 17:00 a 24:00); vitest guías 26/26; `vite build` OK; Pint marca 4 archivos con las mismas reglas que
 ya fallaban en `main` (no se reformateó).
 
-**Estado de prod al cierre (23:50 Tijuana):** `tadaima-00064-yec` al 100%; logs sin errores ni 5xx
-desde el deploy (06:21Z); nadie ha usado `/bundles` con sesión todavía (solo las llamadas del smoke
-test). Rollback si algo falla mañana: `gcloud run services update-traffic tadaima --to-revisions
-tadaima-00062-kof=100 --project tadaimapos --region us-east1` (con paquetes armados: desarmar antes y
-no borrar productos ni ajustar stock de paquetes desde la versión vieja).
+**Deploy (2026-10-09 00:10 Tijuana) — rev tadaima-00066-map (rollback `tadaima-00064-yec`).**
+Candidato sin tráfico desde un worktree temporal de `main` (Dockerfile): `Nothing to migrate`, index y
+`/tadaimaus/` 200, `/bundles` y `/transfers` 401 sin sesión, login sin errores de consola, cero 5xx;
+SELECT en prod sin cambios (0 paquetes / 0 componentes / 0 armados, 4,891 productos, 982 ventas, 144
+migraciones). Promovido al 100%; `tadaimamexico.com` ya sirve el bundle nuevo. Antes de este deploy
+prod estuvo en `00064-yec` (Paquetes) desde las 23:21 sin errores ni 5xx y sin que nadie usara
+`/bundles` con sesión. Si Paquetes completo tuviera que salir: `--to-revisions tadaima-00062-kof=100`
+(con paquetes armados: desarmar antes y no borrar productos ni ajustar stock de paquetes desde la
+versión vieja).
 
 **Para la prueba del equipo (mañana):** crear paquete (SKU `PAQ-0001` + código de barras) → armar N
 en su tienda (Automático y forzando Bodega; el "Puedes armar" debe coincidir) → imprimir etiqueta →
@@ -49,8 +53,8 @@ vender en Caja (ticket; baja el stock del paquete, no el de las piezas) → canc
 paquete) → desarmar (piezas vuelven a Exhibición o Bodega, según se elija) → intentar borrar con armados
 (debe negarse y mandar a desarmar). Reportar pantalla, tienda, qué esperaban y qué pasó. Pendientes
 conocidos: cajero ve Editar/Borrar que dan 403; avisar a Ruben (`product_type` puede ser `bundle`);
-revisar/mergear PR #45 y deployar (anotar aquí su revisión); follow-up frontend: `TransfersPage` muestra
-un toast genérico en vez del mensaje del 422 y su buscador lista paquetes.
+follow-up frontend: `TransfersPage` muestra un toast genérico en vez del mensaje del 422 y su buscador
+lista paquetes. Pedir Ctrl+Shift+R / incógnito por la caché PWA.
 
 ---
 
