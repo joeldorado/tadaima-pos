@@ -235,6 +235,11 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
 ### Frontend
 - **Carrito client-authoritative** (zustand + localStorage): se manda completo al
   cobrar. El checkout escribe optimista en el caché (`lib/optimisticSale.ts`). Sin Redux.
+- **Método de pago favorito** (2026-10-09, `lib/favoritePaymentMethod.ts`): el cajero marca
+  uno con el check del menú de método; cada venta y mesa nueva arranca con él (sin favorito,
+  Efectivo). Es por usuario en esa PC (localStorage `tadaima-caja-metodo-fav:{userId}`, sin
+  backend); con Tarjeta recuerda la última terminal. Solo decide el método de ARRANQUE: las
+  reglas de preventa, productos solo efectivo/tarjeta y precio socio siguen mandando.
 - Estado de servidor en TanStack Query, persistido en IndexedDB (soporte offline).
 - La lógica de negocio pura va en `landing/src/lib/` con su test al lado.
 - **Botón global "Actualizar"** (2026-10-01, `lib/screenRefresh.ts`): vive en el sidebar
