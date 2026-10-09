@@ -486,7 +486,9 @@ class InventoryController extends Controller
     /**
      * Paquetes (2026-10-07): el stock de un paquete solo cambia armando o
      * desarmando (si se ajustara a mano, los componentes no se descontarían).
-     * Mover Exhibición↔Bodega y Traslados sí se permiten.
+     * Aplica a ajustes, movimientos manuales y también a mover Exhibición↔Bodega
+     * (los paquetes viven en Exhibición). Los traslados entre tiendas aún no
+     * tienen este candado.
      */
     private function bundleStockGuardError(int $productId): ?JsonResponse
     {

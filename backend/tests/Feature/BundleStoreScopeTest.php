@@ -87,6 +87,16 @@ class BundleStoreScopeTest extends TestCase
         $this->actingAs($this->cajeroA)->postJson('/api/v1/bundles', $this->bundlePayload([
             ['product_id' => $a->id, 'quantity' => 1], ['product_id' => $b->id, 'quantity' => 1],
         ]))->assertStatus(201);
+
+        // Crear YA visible en la tienda online exige el flag de catálogo (igual que al editar).
+        $components = [['product_id' => $a->id, 'quantity' => 2], ['product_id' => $b->id, 'quantity' => 1]];
+        $this->actingAs($this->cajeroA)
+            ->postJson('/api/v1/bundles', $this->bundlePayload($components, 300, ['catalog_visible' => true]))
+            ->assertStatus(403);
+        $this->actingAs($this->admin)
+            ->postJson('/api/v1/bundles', $this->bundlePayload($components, 300, ['catalog_visible' => true]))
+            ->assertStatus(201)
+            ->assertJsonPath('data.catalog_visible', true);
     }
 
     public function test_costo_oculto_sin_permiso(): void

@@ -81,6 +81,11 @@ class BundlesController extends Controller
     /** POST /bundles */
     public function store(StoreBundleRequest $request): JsonResponse
     {
+        // Misma política que update(): publicar en la tienda online exige el flag
+        // de catálogo. Sin esto un cajero podía crear el paquete ya visible.
+        if ($request->boolean('catalog_visible') && ($resp = $this->catalogEditError())) {
+            return $resp;
+        }
         try {
             $bundle = $this->service->create($request->validated(), $request->user());
         } catch (\DomainException $e) {
