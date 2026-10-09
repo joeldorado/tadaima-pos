@@ -60,6 +60,7 @@ import { isValidEmail, isValidPhone } from "@/lib/validation";
 import { PRICE_LEVEL_LABELS, PRICE_LEVEL_COLORS, PRICE_LEVEL_RGB } from "@/lib/priceLevels";
 import type { CashSession, CashRegisterInfo, PaymentMethod as ApiPaymentMethod, PreSaleCatalog, PreSaleOrder, PreSaleOrderItem, SaleDetail, Terminal, ExternalCardLookup } from "@tadaima/api";
 import { buildPaymentSummary } from "@/lib/paymentSummary";
+import { HISTORIAL_METHOD_OPTIONS, historialEntryMatchesPaymentFilter, type HistorialMethodFilter } from "@/lib/paymentFilter";
 import { computeMixedSplit } from "@/lib/mixedPayment";
 import { computeRegularChargeAmount, discountPct } from "@/lib/promo";
 import { newLineId, recalculateSale, type LineDiscount, type LineSurcharge } from "@/lib/saleCalc";
@@ -854,6 +855,10 @@ export function SellPage() {
   // ADR-016 Fase 1 — filtro del historial. 'all' default; 'cancelled' muestra
   // solo ventas con status='returned' y preventas con status='cancelled'.
   const [historialFilter, setHistorialFilter] = useState<'all' | 'cancelled'>('all');
+  // Filtro por método de pago (2026-10-08): la tienda quiere ver "las
+  // transferencias de hoy" sin salir de Caja. Mismos criterios que en Ventas
+  // (lib/paymentFilter); las preventas se clasifican por cómo se pagó el anticipo.
+  const [historialMethod, setHistorialMethod] = useState<HistorialMethodFilter>("all");
   // Buscador del historial full-screen: ticket #, folio, cliente, producto o método.
   const [historialSearch, setHistorialSearch] = useState("");
   const [expandedEntryKey, setExpandedEntryKey]     = useState<string | null>(null);
@@ -894,6 +899,37 @@ export function SellPage() {
   const [addingExternalId, setAddingExternalId]     = useState<string | null>(null);
   // Tracks mixed-checkout pairs: presale order + regular sale created in the same transaction
   const [mixedPairs, setMixedPairs] = useState<Array<{ preSaleOrderId: number; saleId: number }>>([]);
+
+  // Historial: pestaña (Todas/Canceladas) + método de pago (2026-10-08), calculado
+  // una vez por render para la fila de filtros (contadores) y para la lista. Va
+  // después de `mixedPairs` porque lo usa: el par preventa+venta cobrado junto se
+  // pinta como UN bloque (la venta emparejada se salta) y se clasifica por los
+  // pagos de los dos.
+  const historialView = useMemo(() => {
+    const isCancelled = (e: HistorialEntry): boolean => e.type === 'sale'
+      ? (e.data.status === 'returned' || e.data.cancellation_status === 'partial')
+      : (e.data.status === 'cancelled' || e.data.cancellation_status === 'partial');
+    const pairedSaleIds = new Set(mixedPairs.map(p => p.saleId));
+    const saleById = new Map<number, SaleDetail>();
+    for (const e of historialEntries) {
+      if (e.type === 'sale' && e.data.id != null) saleById.set(e.data.id, e.data);
+    }
+    const pairedSaleFor = (e: HistorialEntry): SaleDetail | undefined => {
+      if (e.type !== 'presale') return undefined;
+      const pair = mixedPairs.find(p => p.preSaleOrderId === e.data.id);
+      return pair ? saleById.get(pair.saleId) : undefined;
+    };
+    const tabEntries = historialFilter === 'cancelled' ? historialEntries.filter(isCancelled) : historialEntries;
+    // Las ventas emparejadas no se cuentan aparte: ya van dentro de su preventa.
+    const countable = tabEntries.filter(e => !(e.type === 'sale' && pairedSaleIds.has(e.data.id!)));
+    const methodCounts = Object.fromEntries(
+      HISTORIAL_METHOD_OPTIONS.map(o => [o.value, countable.filter(e => historialEntryMatchesPaymentFilter(e, o.value, pairedSaleFor(e))).length]),
+    ) as Record<HistorialMethodFilter, number>;
+    const methodEntries = historialMethod === 'all'
+      ? tabEntries
+      : tabEntries.filter(e => historialEntryMatchesPaymentFilter(e, historialMethod, pairedSaleFor(e)));
+    return { cancelledCount: historialEntries.filter(isCancelled).length, pairedSaleIds, methodCounts, methodEntries };
+  }, [historialEntries, mixedPairs, historialFilter, historialMethod]);
 
   // ── Modal unificado de Preventas ──
   // showPreSalesModal se declara arriba (junto a las queries) para condicionar el polling.
@@ -8717,49 +8753,57 @@ export function SellPage() {
             <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", justifyContent: "center" }}>
             <div style={{ width: "100%", maxWidth: 1000, height: "100%", padding: "16px 20px 20px", boxSizing: "border-box", display: "flex", flexDirection: "column", minHeight: 0 }}>
 
-            {/* ADR-016 Fase 1 — Tabs/filtros del historial */}
+            {/* ADR-016 Fase 1 — Tabs/filtros del historial + método de pago (2026-10-08).
+                Los contadores salen de historialView (misma lógica que la lista). */}
             {(() => {
-              const cancelledCount = historialEntries.filter(e => {
-                if (e.type === 'sale') {
-                  const s = e.data as SaleDetail;
-                  return s.status === 'returned' || s.cancellation_status === 'partial';
-                }
-                return e.data.status === 'cancelled' || e.data.cancellation_status === 'partial';
-              }).length;
+              const chip = (isActive: boolean, tone: 'red' | 'danger'): React.CSSProperties => ({
+                padding: '6px 12px',
+                borderRadius: 10,
+                fontSize: 10,
+                fontWeight: 900,
+                textTransform: 'uppercase',
+                letterSpacing: '0.1em',
+                cursor: 'pointer',
+                background: isActive ? (tone === 'danger' ? 'rgba(239,68,68,0.15)' : 'rgba(224,34,26,0.12)') : 'var(--td-card-bg)',
+                border: `1px solid ${isActive ? (tone === 'danger' ? 'rgba(239,68,68,0.35)' : 'rgba(224,34,26,0.30)') : 'var(--td-card-border)'}`,
+                color: isActive ? (tone === 'danger' ? '#f87171' : '#E0221A') : 'var(--td-text-lo)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                transition: 'all 0.15s',
+              });
+              const countStyle = (isActive: boolean): React.CSSProperties => ({
+                background: isActive ? "var(--td-surface-strong)" : "var(--td-surface-soft)",
+                borderRadius: 999,
+                padding: '1px 6px',
+                fontSize: 9,
+              });
               return (
-                <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginBottom: 10 }}>
                   {(['all', 'cancelled'] as const).map(f => {
                     const isActive = historialFilter === f;
                     const label = f === 'all' ? 'Todas' : 'Canceladas';
-                    const count = f === 'all' ? historialEntries.length : cancelledCount;
+                    const count = f === 'all' ? historialEntries.length : historialView.cancelledCount;
+                    return (
+                      <button key={f} onClick={() => setHistorialFilter(f)} style={chip(isActive, f === 'cancelled' ? 'danger' : 'red')}>
+                        {label}
+                        <span style={countStyle(isActive)}>{count}</span>
+                      </button>
+                    );
+                  })}
+                  {/* Método de pago: "¿cuáles fueron las transferencias de hoy?" */}
+                  <span aria-hidden style={{ width: 1, alignSelf: 'stretch', background: 'var(--td-card-border)', margin: '0 4px' }} />
+                  {HISTORIAL_METHOD_OPTIONS.map(opt => {
+                    const isActive = historialMethod === opt.value;
                     return (
                       <button
-                        key={f}
-                        onClick={() => setHistorialFilter(f)}
-                        style={{
-                          padding: '6px 12px',
-                          borderRadius: 10,
-                          fontSize: 10,
-                          fontWeight: 900,
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.1em',
-                          cursor: 'pointer',
-                          background: isActive ? (f === 'cancelled' ? 'rgba(239,68,68,0.15)' : 'rgba(224,34,26,0.12)') : 'var(--td-card-bg)',
-                          border: `1px solid ${isActive ? (f === 'cancelled' ? 'rgba(239,68,68,0.35)' : 'rgba(224,34,26,0.30)') : 'var(--td-card-border)'}`,
-                          color: isActive ? (f === 'cancelled' ? '#f87171' : '#E0221A') : 'var(--td-text-lo)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 6,
-                          transition: 'all 0.15s',
-                        }}
+                        key={opt.value}
+                        onClick={() => setHistorialMethod(opt.value)}
+                        title={opt.value === 'all' ? 'Todos los métodos de pago' : `Solo lo pagado con ${opt.label}`}
+                        style={chip(isActive, 'red')}
                       >
-                        {label}
-                        <span style={{
-                          background: isActive ? "var(--td-surface-strong)" : "var(--td-surface-soft)",
-                          borderRadius: 999,
-                          padding: '1px 6px',
-                          fontSize: 9,
-                        }}>{count}</span>
+                        {opt.label}
+                        <span style={countStyle(isActive)}>{historialView.methodCounts[opt.value]}</span>
                       </button>
                     );
                   })}
@@ -8783,23 +8827,13 @@ export function SellPage() {
                 </div>
               ) : (
                 (() => {
-                  // Build set of saleIds that are part of a mixed pair so we skip them as standalone
-                  const pairedSaleIds = new Set(mixedPairs.map(p => p.saleId));
-
-                  // ADR-016 Fase 1: aplica filtro de tab.
-                  const tabEntries = historialFilter === 'cancelled'
-                    ? historialEntries.filter(e => {
-                        if (e.type === 'sale') {
-                          const s = e.data as SaleDetail;
-                          return s.status === 'returned' || s.cancellation_status === 'partial';
-                        }
-                        return e.data.status === 'cancelled' || e.data.cancellation_status === 'partial';
-                      })
-                    : historialEntries;
+                  // Pestaña + método ya aplicados en historialView. Par mixto: la
+                  // venta emparejada se pinta dentro de su preventa, no suelta.
+                  const { pairedSaleIds, methodEntries } = historialView;
 
                   // Buscador: ticket #, folio, cliente, producto, SKU o método de pago.
                   const q = historialSearch.trim().toLowerCase();
-                  const filteredEntries = !q ? tabEntries : tabEntries.filter(e => {
+                  const filteredEntries = !q ? methodEntries : methodEntries.filter(e => {
                     if (e.type === 'sale') {
                       const s = e.data as SaleDetail;
                       return String(s.id ?? '').includes(q)
@@ -8821,7 +8855,11 @@ export function SellPage() {
                       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 40, opacity: 0.3 }}>
                         <Receipt size={36} style={{ marginBottom: 8 }} />
                         <p style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em" }}>
-                          {q ? `Sin resultados para "${historialSearch.trim()}"` : historialFilter === 'cancelled' ? 'No hay cancelaciones hoy' : 'Sin eventos registrados hoy'}
+                          {q
+                            ? `Sin resultados para "${historialSearch.trim()}"`
+                            : historialMethod !== 'all'
+                              ? `Sin ${historialFilter === 'cancelled' ? 'cancelaciones' : 'ventas'} con ${HISTORIAL_METHOD_OPTIONS.find(o => o.value === historialMethod)?.label ?? ''} hoy`
+                              : historialFilter === 'cancelled' ? 'No hay cancelaciones hoy' : 'Sin eventos registrados hoy'}
                         </p>
                       </div>
                     );

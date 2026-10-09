@@ -568,7 +568,7 @@
       "no. ticket",
       "método de pago"
     ],
-    "updatedAt": "2026-09-30",
+    "updatedAt": "2026-10-08",
     "sections": [
       {
         "id": "lista-ventas",
@@ -589,6 +589,12 @@
             "tone": "info",
             "title": "El detalle de cada venta",
             "text": "Clic en la fila y se despliegan los artículos y el bloque “Cómo se pagó”: método, recibido (pesos y dólares con su tipo de cambio) y cambio. Las ventas con pago mixto dicen “Mixto” con el desglose de cada método."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Sin salir de Caja: el botón “Historial”",
+            "text": "En Caja, el botón “Historial” abre las ventas de HOY de toda la tienda con los mismos filtros de método (Efectivo, Tarjeta, Transferencia, Dólares, Mixto) y un contador en cada uno; se combinan con la pestaña Canceladas y con el buscador. Las preventas del día se clasifican por cómo se pagó el anticipo, así que una preventa pagada por transferencia aparece bajo Transferencia."
           }
         ]
       },
