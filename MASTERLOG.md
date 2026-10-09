@@ -91,7 +91,7 @@ Tienda, Productos y Cerrar caja.
 
 ---
 
-### Sesión 2026-10-07 (3) — Módulo Paquetes (combos de productos con stock propio) — pendiente deploy
+### Sesión 2026-10-07 (3) — Módulo Paquetes (combos de productos con stock propio, PR #44) — rev tadaima-00064-yec
 
 **Pedido Joel:** módulo nuevo en el menú para armar "paquetes" de 2+ productos (con cantidad), con su
 propio nombre, foto, precio, SKU corto y código de barras imprimible; se vende en Caja como un producto;
@@ -171,17 +171,26 @@ aplanaron (`git reset --soft main`) en **un solo commit `feat(paquetes)` sobre `
 Editar reciben el paquete congelado en el estado `dialog` en vez de leerlo vivo de la lista por id, y
 `bundlesQuery.isError` esconde la lista cacheada si falla un refetch (usar `isError && !data`).
 
-**Pendientes para la sesión de deploy:**
-1. `cd backend && vendor/bin/phpunit -c phpunit.pgsql.xml` en Postgres 17 local (`brew services start
-   postgresql@17`): la rama pgsql de la migración del CHECK no la ve SQLite. En `main` la suite pgsql
-   ya quedó verde (`6b45282`, solo tests), así que cualquier falla es nueva.
-2. Merge `feat/paquetes` → `main` (fast-forward: la rama ya trae `main` hasta PR #43 / rev 00060-viz) y push.
-3. `gcloud run deploy tadaima --source . --project tadaimapos --region us-east1 --no-traffic --tag candidate`;
-   probar en la URL `candidate---…` (login, Caja, `/paquetes`: crear, armar, etiqueta, vender en Caja)
-   y promover con `update-traffic --to-latest`. La migración del CHECK corre sola al arrancar.
-4. Avisar a Ruben: `products.product_type` ahora puede ser `bundle` (la app móvil lo tipa
-   `'product'|'manga'`; en runtime lo trata como producto normal).
-5. Registrar aquí la revisión y el rollback.
+**Deploy (2026-10-08 noche) — rev tadaima-00064-yec (rollback `tadaima-00062-kof`).** PR #44
+`feat/paquetes → main` (merge `f56fa01`). Antes de subir, Joel pidió un check general: tres revisiones
+de solo lectura (backend/migraciones, frontend/packages, pipeline de deploy) sin bloqueantes, más
+SELECTs en prod: `product_type` solo `manga` 2,971 / `product` 1,920, CHECK exactamente
+`('product','manga')`, sin tablas ni índices con los nombres nuevos. Fix previo `b15df57`:
+`POST /bundles` con `catalog_visible=true` exige el flag de catálogo (un cajero podía crear el paquete
+ya publicado en la tienda online); docblock de `InventoryController::bundleStockGuardError` corregido.
+Suites sobre la rama: SQLite 755, **Postgres 17 local completa verde** (incluye la rama pgsql de la
+migración del CHECK y el lock `FOR NO KEY UPDATE`), vitest 646. Candidato sin tráfico: las 3
+migraciones `2026_10_07_*` en DONE (214 / 374 / 430 ms); en prod quedaron las 2 tablas y el CHECK con
+`bundle` y los conteos no cambiaron (0 paquetes, 982 ventas); index y `/tadaimaus/` 200, `/bundles`
+401 sin sesión, bundle con Paquetes, login sin errores de consola. Promovido al 100%.
+
+**Pendiente:** prueba con sesión en prod (crear, armar, etiqueta, vender en Caja, desarmar); avisar a
+Ruben (`products.product_type` ahora puede ser `bundle`; la app móvil lo tipa `'product'|'manga'` y
+en runtime lo trata como producto normal). Follow-ups (chips): el cajero ve Editar/Borrar que el
+backend rechaza con 403; `DepurarTomosCommand` no excluye `bundle` del conjunto que revisa; traslados
+de paquetes sin candado; `lock_timeout` en migraciones futuras. **Rollback solo con `update-traffic`
+(nunca `migrate:rollback`)**: si ya hay paquetes armados, desarmarlos antes y no borrar productos ni
+ajustar stock de paquetes desde la versión vieja (no tiene los candados).
 
 ---
 
