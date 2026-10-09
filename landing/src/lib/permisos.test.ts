@@ -1,10 +1,24 @@
 import { describe, it, expect } from "vitest";
 import {
+  canAccessPage,
   canSeeCost,
   canDeleteProducts,
   isMasterAdmin,
   isEligibleForPermManagement,
 } from "./permisos";
+
+// ─── canAccessPage: Paquetes (2026-10-07) ─────────────────────────────────────
+describe("canAccessPage — Paquetes visible para los 3 roles", () => {
+  it("admin, gerente y cajero entran a 'bundles'", () => {
+    expect(canAccessPage(["admin"], "bundles")).toBe(true);
+    expect(canAccessPage(["gerente"], "bundles")).toBe(true);
+    expect(canAccessPage(["cajero"], "bundles")).toBe(true);
+  });
+  it("sin rol conocido NO entra", () => {
+    expect(canAccessPage(["visitante"], "bundles")).toBe(false);
+    expect(canAccessPage(undefined, "bundles")).toBe(false);
+  });
+});
 
 // ─── canDeleteProducts ───────────────────────────────────────────────────────
 describe("canDeleteProducts — eliminar = permiso de ver costo (2026-08-17)", () => {

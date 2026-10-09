@@ -1,3 +1,10 @@
+// ─── Tipos de producto ───────────────────────────────────────────────────────
+/**
+ * `products.product_type`: 'product' (genérico), 'manga' (tomo, módulo Tomos)
+ * o 'bundle' (Paquete: combo de productos con stock propio — ver bundles.ts).
+ */
+export type ProductType = 'product' | 'manga' | 'bundle'
+
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
 export interface User {
@@ -75,7 +82,7 @@ export interface Product {
   is_assigned?: boolean
   images: Array<{ id: number; image_path: string; url: string; sort_order: number }>
   /** Discriminador producto normal vs tomo de librería (default 'product'). */
-  product_type?: 'product' | 'manga'
+  product_type?: ProductType
   /** Promos NxM VIGENTES (Fase 3) — el motor de Caja elige la mejor por línea. */
   active_promotions?: ActiveProductPromotion[]
   created_at: string
@@ -383,7 +390,7 @@ export interface SaleItemDetail {
    * ventas nuevas SIEMPRE preferir `item.cost`.
    */
   product: {
-    id: number; name: string; sku: string; cost?: number | null; product_type?: 'product' | 'manga'
+    id: number; name: string; sku: string; cost?: number | null; product_type?: ProductType
     /** Nombres de sus categorías en orden (solo en el listado `GET /sales`, para reportes). */
     categories?: string[]
   } | null
@@ -451,7 +458,7 @@ export interface SaleDetail {
     surcharge_cancelled?: number | null
     /** cost_at_sale del item cancelado (snapshot ADR-015). Solo para admin/can_view_cost; null si no. */
     cost?: number | null
-    product_type?: 'product' | 'manga'
+    product_type?: ProductType
     /** Categorías del producto, en orden (2026-10-03, para agrupar el reporte). */
     categories?: string[]
   }>
@@ -947,7 +954,7 @@ export interface PreSaleOrderItem {
    *  lo ven todos los roles, a diferencia de `cost`. */
   has_real_cost?: boolean
   catalog: { id: number; product_name: string; image_path: string | null; status: PreSaleCatalogStatus | null; pickup_deadline: string | null } | null
-  product_type?: 'product' | 'manga'
+  product_type?: ProductType
 }
 
 export interface PreSaleOrderPayment {

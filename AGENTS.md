@@ -8,7 +8,7 @@
 > Detalle adicional: [`CLAUDE.md`](CLAUDE.md) (comandos y arquitectura del frontend) y
 > [`backend/AGENTS.md`](backend/AGENTS.md) (API, ADRs y referencia de endpoints).
 >
-> Última revisión: 2026-10-03.
+> Última revisión: 2026-10-07.
 
 ---
 
@@ -177,6 +177,21 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
 - **Borrar un producto no borra sus ventas:** usa
   `ProductController::snapshotAndDelete()`. `sale_items` congela nombre, SKU y costo
   al cobrar (ADR-015); solo los apartados bloquean el borrado.
+
+### Paquetes (2026-10-07)
+- Un **paquete** es un producto (`products.product_type='bundle'`) hecho de 2+ productos con
+  cantidad (`product_bundle_items`). Se vende en Caja como cualquier producto (SKU `PAQ-0001`
+  y EAN-13 interno). Vender un paquete descuenta **solo** el stock del paquete.
+- **Armar** N en una tienda saca N×qty de cada componente (Exhibición primero y lo que falte
+  de Bodega, o el almacén que se fuerce por componente) y mete N paquetes en Exhibición.
+  **Desarmar** lo regresa (a Exhibición o a Bodega). Todo queda en `bundle_assemblies` y en
+  `inventory_movements` tipo `transferencia` con `reference PAQ-{id}`.
+- "Puedes armar N" por tienda = `min_i floor((exh_i + bod_i) / qty_i)`; lo calcula solo el
+  backend (`BundleAvailability`) y es exactamente lo que `assemble` acepta.
+- El stock de un paquete **no se ajusta a mano** (QuickStock / `PUT /inventory` lo rechazan);
+  la composición no se edita mientras haya armados; un producto que es componente no se
+  borra (primero quítalo del paquete). Definición global, stock por tienda; cualquier rol crea y
+  arma en su tienda; editar = admin/gerente (como productos); borrar = permiso de borrar productos.
 
 ### Preventas
 - Catálogo de proveedor → folios con anticipo → liquidación al recoger.

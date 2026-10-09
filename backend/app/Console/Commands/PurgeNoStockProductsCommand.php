@@ -79,8 +79,14 @@ class PurgeNoStockProductsCommand extends Command
         // ── Candidatos: sin stock global, no manga, categoría no protegida ───
         $stockSql = 'COALESCE((SELECT SUM(i.quantity) FROM inventory i WHERE i.product_id = products.id), 0)';
         $query = $db->table('products')
-            ->where('product_type', '!=', 'manga')
-            ->whereRaw("{$stockSql} <= 0");
+            ->whereNotIn('product_type', ['manga', 'bundle']) // paquetes sin armar tienen stock 0: no son basura
+            ->whereRaw("{$stockSql} <= 0")
+            // Un componente de paquete puede quedar en 0 porque sus piezas están
+            // armadas: no es basura y además la FK (restrict) abortaría la purga.
+            ->whereNotExists(function ($sub) {
+                $sub->selectRaw('1')->from('product_bundle_items as pbi')
+                    ->whereColumn('pbi.component_product_id', 'products.id');
+            });
         if ($catsProtegidas !== []) {
             // Categorías múltiples (2026-08-17): protegido si CUALQUIERA de sus
             // categorías (pivote) está en la lista.

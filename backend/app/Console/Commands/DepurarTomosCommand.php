@@ -98,7 +98,9 @@ class DepurarTomosCommand extends Command
 
         // ── Historial (solo de los que podrían borrarse) ─────────────────────
         $conHistorial = [];
-        $candidatosBorrar = $universo->filter(fn ($p) => ! TomoRule::esNombreTomo((string) $p->name) && (float) $p->stock <= 0)
+        // Paquetes (2026-10-07): un componente con stock 0 (sus piezas están armadas) no se borra (FK restrict).
+        $componentIds = array_flip($db->table('product_bundle_items')->pluck('component_product_id')->map(fn ($id) => (int) $id)->all());
+        $candidatosBorrar = $universo->filter(fn ($p) => ! TomoRule::esNombreTomo((string) $p->name) && (float) $p->stock <= 0 && ! isset($componentIds[(int) $p->id]))
             ->pluck('id')->all();
         foreach (array_chunk($candidatosBorrar, 1000) as $lote) {
             foreach (['sale_items', 'pre_sale_order_items', 'layaways'] as $tabla) {

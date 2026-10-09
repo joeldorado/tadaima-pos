@@ -15,6 +15,9 @@ class Product extends Model
 
     public const TYPE_MANGA = 'manga';
 
+    /** Paquete (2026-10-07): producto compuesto; composición en product_bundle_items. */
+    public const TYPE_BUNDLE = 'bundle';
+
     protected $fillable = [
         'category_id',
         'supplier_id',
@@ -95,6 +98,35 @@ class Product extends Model
     public function supplier(): BelongsTo
     {
         return $this->belongsTo(Supplier::class, 'supplier_id');
+    }
+
+    // ─── Paquetes (2026-10-07) ────────────────────────────────────────────────
+
+    /** Componentes de ESTE paquete (solo product_type='bundle'). */
+    public function bundleItems(): HasMany
+    {
+        return $this->hasMany(ProductBundleItem::class, 'bundle_product_id')->orderBy('position')->orderBy('id');
+    }
+
+    /** Paquetes donde este producto ES componente. */
+    public function bundleOf(): HasMany
+    {
+        return $this->hasMany(ProductBundleItem::class, 'component_product_id');
+    }
+
+    public function bundleAssemblies(): HasMany
+    {
+        return $this->hasMany(BundleAssembly::class, 'bundle_product_id');
+    }
+
+    public function isBundle(): bool
+    {
+        return $this->product_type === self::TYPE_BUNDLE;
+    }
+
+    public function scopeBundles(Builder $query): Builder
+    {
+        return $query->where('product_type', self::TYPE_BUNDLE);
     }
 
     public function price(): HasOne

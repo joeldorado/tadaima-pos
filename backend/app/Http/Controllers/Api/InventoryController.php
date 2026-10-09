@@ -230,6 +230,9 @@ class InventoryController extends Controller
         if ($resp = $this->storeScopeError($request, $warehouse->store_id)) {
             return $resp;
         }
+        if ($resp = $this->bundleStockGuardError($productId)) {
+            return $resp;
+        }
 
         $newQty = (float) $request->quantity;
 
@@ -302,6 +305,9 @@ class InventoryController extends Controller
             return $this->error('Bodega no encontrada.', 404);
         }
         if ($resp = $this->storeScopeError($request, $warehouse->store_id)) {
+            return $resp;
+        }
+        if ($resp = $this->bundleStockGuardError((int) $request->product_id)) {
             return $resp;
         }
 
@@ -377,6 +383,10 @@ class InventoryController extends Controller
 
         // Guard cross-tienda: gerente/cajero solo mueven dentro de su tienda.
         if ($resp = $this->storeScopeError($request, $from->store_id)) {
+            return $resp;
+        }
+        // Paquetes: viven solo en Exhibición (se arman y desarman ahí).
+        if ($resp = $this->bundleStockGuardError((int) $request->product_id)) {
             return $resp;
         }
 
@@ -471,5 +481,20 @@ class InventoryController extends Controller
         return $this->success(
             InventoryMovementResource::collection($perPage > 0 ? $results->items() : $results)
         );
+    }
+
+    /**
+     * Paquetes (2026-10-07): el stock de un paquete solo cambia armando o
+     * desarmando (si se ajustara a mano, los componentes no se descontarían).
+     * Mover Exhibición↔Bodega y Traslados sí se permiten.
+     */
+    private function bundleStockGuardError(int $productId): ?JsonResponse
+    {
+        $type = \App\Models\Product::query()->whereKey($productId)->value('product_type');
+        if ($type === \App\Models\Product::TYPE_BUNDLE) {
+            return $this->error('El stock de un paquete se cambia armando o desarmando desde Paquetes.', 422);
+        }
+
+        return null;
     }
 }

@@ -30,7 +30,7 @@ import {
   buildPaymentBreakdown, readIvaRate,
 } from "./reports/buildReportData";
 import { queryKeys } from "@/lib/queryKeys";
-import type { SalesReport, InventoryReport, TopProductsReport, CustomersReport } from "@tadaima/api";
+import type { SalesReport, InventoryReport, TopProductsReport, CustomersReport, ProductType } from "@tadaima/api";
 import type { SaleDetail, Store as StoreType, PreSaleOrder } from "@tadaima/api";
 import { DateRangePicker } from "@/components/ui/DateRangePicker";
 import { RefreshDataButton } from "@/components/layout/RefreshDataButton";
@@ -127,7 +127,7 @@ interface GroupedProduct {
    *  (lógica actual); en abono → el abono directo. */
   pre_sale_utilidad?: number;
   commission_amount?: number;
-  product_type?: 'product' | 'manga';
+  product_type?: ProductType;
   /** Split por costo: producto base (para reagrupar variantes del mismo producto). */
   base_product_id?: number | string;
   /** Split por costo: el costo unitario de ESTE renglón (para el badge). */

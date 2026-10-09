@@ -22,6 +22,7 @@ import { LayawaysPage } from '@/pages/LayawaysPage'
 import { OnlineCatalogPage } from '@/pages/OnlineCatalogPage'
 import { SuppliesPage } from '@/pages/SuppliesPage'
 import { PromosPage } from '@/pages/PromosPage'
+import { BundlesPage } from '@/pages/BundlesPage'
 import { DocsPage } from '@/pages/DocsPage'
 import { TadaimaUsPage } from '@/pages/TadaimaUsPage'
 
@@ -81,6 +82,8 @@ export const router = createBrowserRouter([
       { path: 'transfers', element: <ProtectedRoute requiresPage="transfers"><TransfersPage /></ProtectedRoute> },
       { path: 'insumos', element: <ProtectedRoute requiresPage="supplies"><SuppliesPage /></ProtectedRoute> },
       { path: 'promos',  element: <ProtectedRoute requiresPage="promos"><PromosPage /></ProtectedRoute> },
+      // Paquetes: combos de productos con stock propio por tienda (los 3 roles).
+      { path: 'paquetes', element: <ProtectedRoute requiresPage="bundles"><BundlesPage /></ProtectedRoute> },
       { path: 'clients',   element: <ProtectedRoute requiresPage="clients"><ClientsPage /></ProtectedRoute> },
       { path: 'pre-sales', element: <ProtectedRoute requiresPage="presales"><PreSalesPage /></ProtectedRoute> },
       { path: 'reports',   element: <ProtectedRoute requiresPage="reports"><ReportsPage /></ProtectedRoute> },
