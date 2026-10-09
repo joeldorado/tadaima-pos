@@ -4,6 +4,49 @@
 
 ---
 
+### Sesión 2026-10-09 (2) — Caja: método de pago favorito + Traslados: detalle de productos (PR #46 y #47) — rev tadaima-00068-yil
+
+**Pedido Joel:** (1) en Caja poder fijar UN método de pago favorito con un check, que se quede fijo;
+(2) en Traslados la tarjeta solo decía "+12 más (13 SKUs)" sin decir cuáles productos van. Dos ramas
+desde `main` en worktrees aparte (la de vista previa de borrado sigue sin commit en el checkout
+principal): `feat/metodo-pago-favorito` (PR #46, `42727ee`) y `feat/traslados-detalle-productos`
+(PR #47, `74be250`), mergeadas a `main` con `--no-ff`. **Solo frontend, sin migraciones.**
+
+**Método de pago favorito** (decisión Joel: por usuario en esa PC, sin backend):
+- `lib/favoritePaymentMethod.ts` (+14 pruebas): llave localStorage `tadaima-caja-metodo-fav:{userId}`,
+  lectura tolerante a basura, `startingPayment`, `toggleFavorite`, `withFavoriteTerminal`.
+- `SellPage`: el menú de método lista los 4 métodos (el activo "· actual") con un círculo-check a la
+  derecha; insignia roja en la esquina del botón cuando el activo es el favorito. `clearCart` (tras
+  cada cobro), `makeMesa` (mesa inicial y "+") y la hidratación de mesas vacías arrancan en el
+  favorito. **Cambia la regla vieja** "tras cobrar SIEMPRE vuelve a Efectivo": ahora vuelve al
+  favorito (Efectivo si no hay). Con Tarjeta guarda la terminal y `selectTerminal` la actualiza; si la
+  terminal ya no existe, el efecto de terminal zombie la limpia y sale el aviso ámbar. Marcarlo no
+  cambia la venta en curso; preventa / solo efectivo / precio socio siguen mandando.
+- Guía in-app de Caja (callout) y `AGENTS.md` §5.
+
+**Traslados — detalle de productos** (`GET /transfers` ya traía `items.product`):
+- La tarjeta enseña "Ver N productos" (botón) → `components/transfers/TransferDetailModal.tsx`:
+  origen/destino, quién lo pidió, fecha, nota, "N productos · M piezas", cada producto con foto, SKU y
+  ×cantidad, buscador si hay más de 8. Pendiente + permiso: Recibir / Cancelar desde el popup
+  (reusa `handleComplete`/`handleCancel`, que ahora regresan boolean y cierran el popup).
+- `lib/transferItems.ts` (+9 pruebas), `getStatusInfo` movido a `components/transfers/transferStatus.ts`.
+- Callout en la guía in-app de Inventario (Traslados). Ruta de la pantalla: `/transfers`.
+
+**Verificado:** vitest 669 en `main` mergeado, tsc = base (459, sin errores nuevos), `vite build` OK.
+QA local (SQLite): favorito Transferencia/Tarjeta+terminal en venta siguiente y mesa nueva, recarga,
+desmarcar; popup de traslado, Escape, Recibir desde el popup, 375px sin scroll horizontal. Pendiente
+en prod: probar con un cajero real y con un traslado de muchos productos (buscador).
+
+**Deploy (2026-10-09 ~14:00 Tijuana) — rev tadaima-00068-yil (rollback `tadaima-00066-map`).**
+Candidato sin tráfico desde un worktree de `main` (Dockerfile): `Nothing to migrate`, `/`, `/caja`,
+`/transfers` y `/tadaimaus/` 200, API 401 sin sesión, cero 5xx; el bundle trae las dos mejoras.
+Promovido al 100%; `tadaimamexico.com` sirve el mismo bundle (`index-Ina84SVe.js`). Rollback:
+`gcloud run services update-traffic tadaima --to-revisions tadaima-00066-map=100 --project tadaimapos --region us-east1`.
+
+**Limpieza:** worktrees viejos `beautiful-liskov-b50b79` y `friendly-dubinsky-bff8af` (limpios, ya en
+`main`) borrados, igual que los de esta sesión y las ramas mergeadas; configs de dev de prueba
+quitadas de `.claude/launch.json`.
+
 ### Sesión 2026-10-08 (4) — Paquetes: endurecimientos (depurar-tomos, traslados, candado de stock, PR #45) — rev tadaima-00066-map
 
 **Pedido Joel:** cerrar tres follow-ups de la entrada de Paquetes (rev `tadaima-00064-yec`) dejando la
