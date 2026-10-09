@@ -4,6 +4,36 @@
 
 ---
 
+### Sesión 2026-10-08 (3) — Caja: filtro por método de pago en el Historial del Día (PR #43) — rev tadaima-00062-kof
+
+**Pedido Joel:** "revisa que los tipos de pago tengan filtros apropiados en Caja". La tienda pidió
+filtrar transferencias el 2026-10-01 y se hizo solo en Ventas; el Historial del Día de Caja (botón
+"Historial") solo tenía Todas/Canceladas y el buscador. Decisión (Joel): los mismos filtros de
+Ventas en el Historial, con las preventas clasificadas por cómo se pagó el anticipo.
+
+**Cambios** (solo frontend; rama `feat/historial-filtro-metodo` desde `main`, trabajada en un
+worktree para no tocar `feat/paquetes`):
+- `lib/paymentFilter.ts`: `historialEntryMatchesPaymentFilter` + `HISTORIAL_METHOD_OPTIONS` (sin
+  "Varios"). Venta = igual que en Ventas; preventa = pagos del anticipo unidos a los de la venta
+  emparejada cuando es un par mixto; sin anticipo solo entra en "Todos los pagos".
+- `SellPage.tsx` (Historial): chips Efectivo / Tarjeta / Transferencia / Dólares / Mixto con contador.
+  `historialView` (useMemo) aplica pestaña + método una sola vez para contadores y lista; las ventas
+  emparejadas no se cuentan aparte (van dentro de su preventa). Combinables con Canceladas y con el
+  buscador; estado vacío "Sin ventas con X hoy".
+- Guía in-app "Historial de ventas": callout del botón Historial de Caja.
+- Entró también `6b45282 test(backend)` (solo tests: suite Postgres determinista; sin cambios en app/).
+
+**Verificado:** vitest 557 (+4 casos), eslint y tsc = base, `vite build` OK; backend SQLite 718 y
+Postgres 17 local TODO verde (0 fallas). QA local con 5 ventas (Efectivo, Tarjeta, Transferencia,
+Mixto E+T, Dólares) y una preventa con anticipo por Transferencia: Transferencia 3, Dólares 1, Mixto 2,
+Tarjeta 1, Efectivo 3; Canceladas + Tarjeta → "Sin cancelaciones con Tarjeta hoy"; el buscador
+filtra encima del método. Candidata sin tráfico: index y `/tadaimaus/` 200, API 401 sin sesión, login
+sin errores de consola, bundle con el filtro y cero menciones de Paquetes. Luego se promovió al 100%.
+
+**Deploy:** tadaima-00062-kof (rollback `tadaima-00060-viz`). Pedir Ctrl+Shift+R / incógnito por la caché PWA.
+
+---
+
 ### Sesión 2026-10-08 (2) — Filtro de método de pago server-side en Ventas (Ruben, PR #41) — rev tadaima-00060-viz
 
 **Pedido Joel:** revisar si Ruben subió algo nuevo a `develop` y deployarlo. Paquetes sigue en
