@@ -4,6 +4,54 @@
 
 ---
 
+### Sesión 2026-10-10 — Reportes: Excel de preventas por método de pago (Ruben, PR #49) — rev tadaima-00072-wol
+
+**Qué subió Ruben** (`develop`, commit `abdc11a` "exel preventas"; solo frontend de Reportes, sin backend ni
+migraciones). Cambia el Excel de Ventas y el Excel del Corte:
+- Cada pestaña Efectivo / Tarjeta / Transferencias lleva abajo su tabla de preventas abonadas con ese
+  método (`buildPresaleRowsByMethod`; "Costo Unitario" para quien ve costos).
+- La pestaña Preventas pasa a ser por folio (Folio · Cliente · Total · Anticipo · Pendiente · Estado ·
+  Tienda · Fecha · Método), en 3 tablas por método y agrupada por producto (`buildPresaleFolioRows`,
+  `drawPresaleFolios`).
+- El Resumen agrega la fila "Preventas:" por método y la suma al subtotal y a TOTALES FINALES.
+- El PDF y la pantalla de Reportes no cambian (siguen con `buildPresaleRows`).
+
+**Fix encima (`3607001`, decisión de Joel antes del deploy).** `buildPresaleRowsByMethod` cargaba el costo
+completo de una preventa liquidada en cada pestaña donde tuvo abonos: con apartado y liquidación en el
+mismo rango y métodos distintos ($300 efectivo + $700 tarjeta, costo $800) el Resumen marcaba costo $1,600
+y utilidad −$600 en vez de $800 y +$200. Ahora el costo real y los abonos previos se reparten según lo
+abonado con cada método en el rango (`methodShare`); la suma de las tres pestañas da lo mismo que
+`buildPresaleRows`. Con un solo método, o con el apartado antes del rango, no cambia nada. Pruebas en
+`landing/src/pages/reports/buildReportData.presaleMethod.test.ts` (7 casos).
+
+**Cómo entró:** rama `feat/excel-preventas-ruben` desde `main` = merge de `develop` (sin conflictos) + el
+fix; PR #49 mergeado con merge commit (`0d73e54`), así `abdc11a` queda en la historia de `main`. Ruben
+tiene que bajar `main` a `develop`.
+
+**Pendientes para Ruben (no se tocaron):**
+- Una preventa pagada completa ANTES del rango y entregada dentro del rango no sale en ninguna tabla por
+  método (`if (paidInRange <= 0) continue`), así que su utilidad no llega al Resumen del Excel; el PDF sí
+  la muestra. Falta decidir a qué método se asigna.
+- El reparto es proporcional a lo abonado: el apartado en efectivo de una preventa liquidada con tarjeta en
+  el mismo rango sale como "(Liquidada)" con parte de la utilidad. Alternativa: que la liquidación cargue
+  todo el costo y el apartado quede en utilidad $0. Los totales son iguales con las dos.
+- Pestaña Preventas: "Total" y "Pendiente" del TOTAL PREVENTAS se repiten si un folio tiene dos pagos del
+  mismo método en el rango.
+- `buildPresaleFolioRows` duplica los clasificadores de método de `excelTopTables.ts`; "Depósito" con
+  acento no entra a Transferencias (`isTransferMethod` busca "deposit").
+- "Costo Unitario" de una apartada muestra el abono entre la cantidad.
+
+**Verificado:** vitest 686 (main 677; +2 de Ruben, +7 del fix), `tsc` 455 = 455 contra `main`, `vite build`
+OK, lint limpio en el fix (el commit de Ruben suma 2 `!` innecesarios en `buildReportData.ts`, 50 → 52),
+revisión de código del fix sin hallazgos críticos ni altos. **No** se revisó el Excel con datos reales:
+falta abrir Reportes en prod (incógnito) y exportar un rango con preventas.
+
+**Deploy (2026-10-10 ~02:40 Tijuana) — rev tadaima-00072-wol (rollback `tadaima-00070-yuv`).** Candidato
+sin tráfico desde un worktree en `main` (Dockerfile): `Nothing to migrate`, `/`, `/login`, `/caja`,
+`/reports` y `/tadaimaus/` 200, API 401 sin sesión, el bundle trae "EFECTIVO — APARTADOS Y PREVENTAS".
+Promovido al 100%; `tadaimamexico.com` sirve `index-Clq3BxYM.js`. Rollback:
+`gcloud run services update-traffic tadaima --to-revisions tadaima-00070-yuv=100 --project tadaimapos --region us-east1`.
+
 ### Sesión 2026-10-09 (3) — Preventas: tarjeta de Caja "Reservados 24 / 1" (PR #48) — rev tadaima-00070-yuv
 
 **Reporte (Ruben, app móvil; lo mismo en la Caja web):** "PREVENTA Booster bundle 30th" (catálogo id 1)
