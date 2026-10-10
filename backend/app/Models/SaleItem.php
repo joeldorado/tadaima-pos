@@ -23,6 +23,9 @@ class SaleItem extends Model
         // la línea conserva nombre/SKU para historial, reportes y ticket.
         'product_name',
         'product_sku',
+        // Snapshot de la imagen del producto (2026-10-10, mismo espíritu que
+        // product_name/product_sku): `image_path` crudo, congelado al checkout.
+        'product_image',
         'quantity',
         'price',
         'total',
