@@ -89,26 +89,53 @@ function productSheet(
   const regular = groups.filter((g) => !isManga(g));
   const mangaGroups = groups.filter(isManga);
 
-  // Sub-tabla 1: productos regulares
+  // Sub-tabla 1: productos regulares (Ventas)
   sectionHeader(sh, FIRST_TABLE_ROW, 1, w, titles.main, colors[0]);
   drawTableHeaders(sh, table, colors[1]);
   const r1 = drawProductTable(sh, table, regular, false);
 
+  // Sub-tabla 2: Preventas de este método, apilada justo debajo de Ventas y
+  // ANTES de Manga (orden pedido: Ventas → Preventas → Manga). Sus totales se
+  // exponen para que el Resumen agregue una fila "Preventas:" por método.
+  let presaleTotals: PresaleTotals | null = null;
+  let afterPresale = r1.next;
+  if (presaleRows.length > 0) {
+    const presaleTop = r1.next + STACK_GAP;
+    const pr = drawPresales(sh, presaleRows, 1, p.canViewCost, presaleTop, titles.presale);
+    presaleTotals = pr.totals;
+    afterPresale = pr.next;
+  }
+
+  // A qué columna de `table` va cada total de Preventas (mismo venta/costo/util
+  // que usan Manga y el Resumen).
+  const presaleFor = (key: string): { ref: string; value: number } | undefined => {
+    if (!presaleTotals) return undefined;
+    if (key === ventaKey) return presaleTotals.apartado;
+    if (key === "costo") return presaleTotals.costoNeto;
+    if (key === "util") return presaleTotals.utilidad;
+    return undefined;
+  };
+
   let result: TableResult;
   let mangaTotals: Record<string, { ref: string; value: number }> = {};
+  const hasManga = mangaGroups.length > 0;
 
-  if (mangaGroups.length > 0) {
-    // Sub-tabla 2: Manga Nacional — con su propio título de encabezado
-    const titleRow = r1.next + STACK_GAP;
-    drawTitle(sh, p, w, titleRow);
-    const mangaHdrRow = titleRow + 3; // título (2 filas) + 1 fila de espacio
-    sectionHeader(sh, mangaHdrRow, 1, w, titles.manga, MANGA_HDR_COLOR);
-    drawTableHeaders(sh, table, MANGA_SUB_COLOR, "Producto", mangaHdrRow + 1);
-    const mangaTable = { ...table, totalText: `${table.totalText} MANGA` };
-    const r2 = drawProductTable(sh, mangaTable, mangaGroups, false, mangaHdrRow + 2);
+  if (hasManga || presaleTotals) {
+    let r2: TableResult | null = null;
+    if (hasManga) {
+      // Sub-tabla 3: Manga Nacional — con su propio título de encabezado
+      const titleRow = afterPresale + STACK_GAP;
+      drawTitle(sh, p, w, titleRow);
+      const mangaHdrRow = titleRow + 3; // título (2 filas) + 1 fila de espacio
+      sectionHeader(sh, mangaHdrRow, 1, w, titles.manga, MANGA_HDR_COLOR);
+      drawTableHeaders(sh, table, MANGA_SUB_COLOR, "Producto", mangaHdrRow + 1);
+      const mangaTable = { ...table, totalText: `${table.totalText} MANGA` };
+      r2 = drawProductTable(sh, mangaTable, mangaGroups, false, mangaHdrRow + 2);
+      mangaTotals = r2.totals;
+    }
 
-    // Renglón "TOTAL FINAL" que combina ambas sub-tablas
-    const grandRow = r2.next + 1;
+    // Renglón "TOTAL FINAL" que combina Ventas + Preventas + Manga.
+    const grandRow = (hasManga && r2 ? r2.next : afterPresale) + 1;
     sh.set(grandRow, 1, `TOTAL FINAL ${name.toUpperCase()}`, { ...totalLabel, fill: fill(colors[0]) });
     sh.height(grandRow, 22);
 
@@ -117,11 +144,13 @@ function productSheet(
       const colN = table.col + 1 + ci;
       if (c.noSum) { grandTotals[c.key] = { ref: cellRef(grandRow, colN), value: 0 }; return; }
       const v1 = r1.totals[c.key];
-      const v2 = r2.totals[c.key];
-      const combined = (v1?.value ?? 0) + (v2?.value ?? 0);
+      const v2 = r2?.totals[c.key];
+      const vp = presaleFor(c.key);
+      const combined = (v1?.value ?? 0) + (v2?.value ?? 0) + (vp?.value ?? 0);
       const style = c.qty ? totalQty : totalMoney(c.color);
-      if (v1 && v2) {
-        sh.setF(grandRow, colN, `${v1.ref}+${v2.ref}`, combined, style);
+      const parts = [v1?.ref, v2?.ref, vp?.ref].filter((ref): ref is string => !!ref);
+      if (parts.length > 0) {
+        sh.setF(grandRow, colN, parts.join("+"), combined, style);
       } else {
         sh.set(grandRow, colN, combined, style);
       }
@@ -129,21 +158,9 @@ function productSheet(
     });
 
     result = { next: grandRow + 1, manga: null, totals: grandTotals };
-    mangaTotals = r2.totals;
   } else {
-    // Sin manga: una sola sub-tabla, sin renglón TOTAL FINAL
-    result = r1;
-  }
-
-  // Sub-tabla 3: Preventas liquidadas/apartadas con abono de este método —
-  // mismo diseño que la pestaña Preventas general, apilada abajo. Sus totales
-  // se exponen para que el Resumen agregue una fila "Preventas:" por método.
-  let presaleTotals: PresaleTotals | null = null;
-  if (presaleRows.length > 0) {
-    const presaleTop = result.next + STACK_GAP;
-    const pr = drawPresales(sh, presaleRows, 1, p.canViewCost, presaleTop, titles.presale);
-    result = { ...result, next: pr.next };
-    presaleTotals = pr.totals;
+    // Sin manga ni preventas: solo Ventas, sin renglón TOTAL FINAL
+    result = { ...r1, next: afterPresale };
   }
 
   tableWidths(sh, 1, Math.max(w, PRESALE_COLS(p.canViewCost)), 48);
@@ -348,11 +365,13 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
   for (let c = 1; c <= totalCols; c++) sh.set(r, c, "", { fill: sepDark });
   r++;
 
-  // TOTALES FINALES
+  // TOTALES FINALES — t.result.totals ya trae Ventas + Preventas + Manga
+  // combinados (el "TOTAL FINAL {TAB}" de cada pestaña), no hay que sumar
+  // t.presaleTotals aparte aquí (se contaría dos veces).
   const finalStyle: CellStyle = { ...money, fill: fill("B8732E"), font: font({ sz: 11, bold: true, color: "FFFFFF" }) };
-  const totalVenta = tabs.reduce((a, t) => a + (t.result.totals[t.ventaKey]?.value ?? 0) + (t.presaleTotals?.apartado.value ?? 0), 0);
-  const totalCosto = tabs.reduce((a, t) => a + (t.result.totals["costo"]?.value ?? 0) + (t.presaleTotals?.costoNeto?.value ?? 0), 0);
-  const totalUtil  = tabs.reduce((a, t) => a + (t.result.totals["util"]?.value ?? 0) + (t.presaleTotals?.utilidad?.value ?? 0), 0) - egresos;
+  const totalVenta = tabs.reduce((a, t) => a + (t.result.totals[t.ventaKey]?.value ?? 0), 0);
+  const totalCosto = tabs.reduce((a, t) => a + (t.result.totals["costo"]?.value ?? 0), 0);
+  const totalUtil  = tabs.reduce((a, t) => a + (t.result.totals["util"]?.value ?? 0), 0) - egresos;
 
   sh.set(r, 2, "TOTALES FINALES:", { font: font({ sz: 11, bold: true, color: "FFFFFF" }), fill: fill("B8732E"), alignment: align("right") });
   sh.set(r, 1, "", { fill: fill("B8732E") });
@@ -422,7 +441,7 @@ export function addVentasSheets(workbook: Workbook, p: ReportExportParams): void
   // Tarjeta: regulares arriba + Manga abajo + Preventas abonadas con tarjeta + TOTAL FINAL TARJETA
   const card = productSheet(workbook, p, "Tarjeta",
     { main: " 2. DESGLOSE DE COBROS CON TARJETA", manga: "2. TARJETA — MANGA NACIONAL", presale: "2. TARJETA — APARTADOS Y PREVENTAS" },
-    ["2266BB", "4488DD"], cardTable(1, canViewCost, ivaRate), withMethod(groups, isCardMethod), "bruto", p.presaleRowsByMethod.card);
+    ["2266BB", "4488DD"], cardTable(1, canViewCost, ivaRate), withMethod(groups, isCardMethod), "neto", p.presaleRowsByMethod.card);
 
   // Transferencias: regulares arriba + Manga abajo + Preventas abonadas por transferencia + TOTAL FINAL TRANSFERENCIAS
   const transfer = productSheet(workbook, p, "Transferencias",
