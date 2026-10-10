@@ -686,9 +686,14 @@ export function buildPresaleRows(
  * Renglones de Preventas de UN SOLO método de pago (para la tabla que vive
  * dentro de cada pestaña Efectivo/Tarjeta/Transferencias). La tienda solo
  * maneja 2 abonos por folio (apartado y liquidación), nunca intermedios, y
- * cada uno tiene su propio método — por eso basta filtrar los `payments` en
- * rango por `matchesMethod` antes de prorratear, sin tocar el resto del
- * modelo (apartada vs liquidada) de `buildPresaleRows`.
+ * cada uno tiene su propio método — por eso se filtran los `payments` en
+ * rango por `matchesMethod` antes de prorratear, con el mismo modelo
+ * (apartada vs liquidada) de `buildPresaleRows`.
+ *
+ * El costo de una liquidada se reparte entre métodos según lo abonado con
+ * cada uno dentro del rango (decisión 2026-10-10): la suma de las tablas de
+ * Efectivo + Tarjeta + Transferencias da el mismo costo y utilidad que
+ * `buildPresaleRows`.
  */
 export function buildPresaleRowsByMethod(
   filteredPreSaleOrders: PreSaleOrder[],
@@ -698,12 +703,20 @@ export function buildPresaleRowsByMethod(
 ): PresaleRow[] {
     const map = new Map<string, { productId: number; baseName: string; entregado: boolean; qty: number; apartado: number; deuda: number; costoReal: number; paidBefore: number }>();
     for (const order of filteredPreSaleOrders) {
-      const paymentsInRange = presalePaymentsInRange(order.payments, from, to)
+      const allPaymentsInRange = presalePaymentsInRange(order.payments, from, to);
+      const paymentsInRange = allPaymentsInRange
         .filter((p) => matchesMethod((p.payment_method?.name ?? "").toLowerCase()));
       const paidInRange = paymentsInRange.reduce((sum, p) => sum + (p.amount || 0), 0);
       if (paidInRange <= 0) continue; // sin abonos de este método en el rango
+      // Parte del folio que se abonó con ESTE método dentro del rango. Si el
+      // apartado y la liquidación caen en el mismo rango con métodos distintos,
+      // el costo se reparte con esta proporción; si no, cada pestaña cargaría
+      // el costo completo y el Resumen lo contaría doble.
+      const paidInRangeAll = allPaymentsInRange.reduce((sum, p) => sum + (p.amount || 0), 0);
+      const methodShare = paidInRangeAll > 0 ? Math.min(1, paidInRange / paidInRangeAll) : 1;
       // Abonos previos al rango (created_at < desde): lo que ya se había cobrado antes,
-      // sin filtrar por método (es neteo de costo, no desglose de caja).
+      // de cualquier método (es neteo de costo, no desglose de caja); a cada
+      // método le toca su `methodShare`, igual que al costo.
       const paidBeforeTotal = (order.payments ?? [])
         .filter((p) => toLocalYmd(new Date(p.created_at)) < from)
         .reduce((sum, p) => sum + (p.amount || 0), 0);
@@ -715,9 +728,9 @@ export function buildPresaleRowsByMethod(
         const itemTotal = item.unit_price * item.quantity;
         const ratio = orderItemsTotal > 0 ? (itemTotal / orderItemsTotal) : (1 / (order.items?.length || 1));
         const itemApartado = paidInRange * ratio;
-        const itemPaidBefore = paidBeforeTotal * ratio;
+        const itemPaidBefore = paidBeforeTotal * ratio * methodShare;
         const itemDeuda = (order.balance || 0) * ratio;
-        const itemCostoReal = (item.cost ?? 0) * qty;
+        const itemCostoReal = (item.cost ?? 0) * qty * methodShare;
         const deliveredInRange = item.status === "delivered" && !!item.delivered_at &&
           (() => { const d = toLocalYmd(new Date(item.delivered_at!)); return d >= from && d <= to; })();
         const key = `${prodId}__${deliveredInRange ? "liq" : "abono"}`;
