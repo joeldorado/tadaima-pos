@@ -10,7 +10,7 @@
 import type { SaleDetail, PreSaleOrder, PreSaleOrderPayment } from "@tadaima/api";
 import { toLocalYmd } from "@/lib/date";
 import { isLegacyGlobalDiscountSale, saleItemNet } from "@/lib/saleItemNet";
-import type { AdjustmentEntry, BenefitBucket, GroupedProduct, PresaleRow, ReportPaymentBreakdown } from "./reportTypes";
+import type { AdjustmentEntry, BenefitBucket, GroupedProduct, PresaleFolioRow, PresaleRow, ReportPaymentBreakdown } from "./reportTypes";
 import { assignCategories, categoryOf, compareCategories } from "./reportCategories";
 
 // ─── IVA sobre comisión de terminal ──────────────────────────────────────────
@@ -680,6 +680,141 @@ export function buildPresaleRows(
         pactado, costoReal: g.costoReal, costoNeto, utilidad,
       };
     }).sort((a, b) => (a.productId - b.productId) || (a.entregado === b.entregado ? 0 : a.entregado ? -1 : 1));
+}
+
+/**
+ * Renglones de Preventas de UN SOLO método de pago (para la tabla que vive
+ * dentro de cada pestaña Efectivo/Tarjeta/Transferencias). La tienda solo
+ * maneja 2 abonos por folio (apartado y liquidación), nunca intermedios, y
+ * cada uno tiene su propio método — por eso basta filtrar los `payments` en
+ * rango por `matchesMethod` antes de prorratear, sin tocar el resto del
+ * modelo (apartada vs liquidada) de `buildPresaleRows`.
+ */
+export function buildPresaleRowsByMethod(
+  filteredPreSaleOrders: PreSaleOrder[],
+  from: string,
+  to: string,
+  matchesMethod: (name: string) => boolean,
+): PresaleRow[] {
+    const map = new Map<string, { productId: number; baseName: string; entregado: boolean; qty: number; apartado: number; deuda: number; costoReal: number; paidBefore: number }>();
+    for (const order of filteredPreSaleOrders) {
+      const paymentsInRange = presalePaymentsInRange(order.payments, from, to)
+        .filter((p) => matchesMethod((p.payment_method?.name ?? "").toLowerCase()));
+      const paidInRange = paymentsInRange.reduce((sum, p) => sum + (p.amount || 0), 0);
+      if (paidInRange <= 0) continue; // sin abonos de este método en el rango
+      // Abonos previos al rango (created_at < desde): lo que ya se había cobrado antes,
+      // sin filtrar por método (es neteo de costo, no desglose de caja).
+      const paidBeforeTotal = (order.payments ?? [])
+        .filter((p) => toLocalYmd(new Date(p.created_at)) < from)
+        .reduce((sum, p) => sum + (p.amount || 0), 0);
+      const orderItemsTotal = order.items ? order.items.reduce((sum, it) => sum + (it.unit_price * it.quantity), 0) : 0;
+      for (const item of order.items ?? []) {
+        const prodId = item.product_id ?? (item.catalog ? item.catalog.id * -1 : -999);
+        const baseName = item.catalog?.product_name ?? `Preventa #${item.id}`;
+        const qty = item.quantity;
+        const itemTotal = item.unit_price * item.quantity;
+        const ratio = orderItemsTotal > 0 ? (itemTotal / orderItemsTotal) : (1 / (order.items?.length || 1));
+        const itemApartado = paidInRange * ratio;
+        const itemPaidBefore = paidBeforeTotal * ratio;
+        const itemDeuda = (order.balance || 0) * ratio;
+        const itemCostoReal = (item.cost ?? 0) * qty;
+        const deliveredInRange = item.status === "delivered" && !!item.delivered_at &&
+          (() => { const d = toLocalYmd(new Date(item.delivered_at!)); return d >= from && d <= to; })();
+        const key = `${prodId}__${deliveredInRange ? "liq" : "abono"}`;
+        const g = map.get(key) ?? { productId: prodId, baseName, entregado: deliveredInRange, qty: 0, apartado: 0, deuda: 0, costoReal: 0, paidBefore: 0 };
+        g.qty += qty; g.apartado += itemApartado; g.deuda += itemDeuda; g.costoReal += itemCostoReal; g.paidBefore += itemPaidBefore;
+        map.set(key, g);
+      }
+    }
+    return Array.from(map.values()).map((g) => {
+      const pactado = g.apartado + g.deuda;
+      const costoNeto = g.entregado ? (g.costoReal - g.paidBefore) : g.apartado;
+      const utilidad = g.apartado - costoNeto;
+      return {
+        productId: g.productId,
+        name: `${g.baseName} ${g.entregado ? "(Liquidada)" : "(Apartada)"}`,
+        entregado: g.entregado, qty: g.qty, apartado: g.apartado, deuda: g.deuda,
+        pactado, costoReal: g.costoReal, costoNeto, utilidad,
+      };
+    }).sort((a, b) => (a.productId - b.productId) || (a.entregado === b.entregado ? 0 : a.entregado ? -1 : 1));
+}
+
+const METHOD_ORDER: Record<PresaleFolioRow["method"], number> = { cash: 0, card: 1, transfer: 2, other: 3 };
+
+/**
+ * Renglones de Preventas POR FOLIO (pestaña "Preventas" rediseñada): un
+ * renglón por cada producto de un folio Y cada pago suyo en el rango (un
+ * folio solo maneja 2 pagos, apartado y liquidación, nunca intermedios —
+ * "modelo del dueño" ya usado por `buildPresaleRows`). Pensado para agrupar
+ * por producto y, dentro de cada producto, ordenar Efectivo → Tarjeta →
+ * Transferencia con `sortPresaleFolioRows`.
+ */
+export function buildPresaleFolioRows(
+  filteredPreSaleOrders: PreSaleOrder[],
+  from: string,
+  to: string,
+): PresaleFolioRow[] {
+    const isCardMethod = (name: string) =>
+      name.includes("tarjeta") || name.includes("credit") || name.includes("debito") || name.includes("tpv") || name.includes("terminal");
+    const isCashMethod = (name: string) =>
+      name.includes("efectivo") || name.includes("cash") || name.includes("dolar") || name.includes("dólar") || name.includes("usd");
+    const isTransferMethod = (name: string) =>
+      name.includes("transfer") || name.includes("deposit") || name.includes("spei");
+    const methodOf = (name: string): PresaleFolioRow["method"] =>
+      isCashMethod(name) ? "cash" : isCardMethod(name) ? "card" : isTransferMethod(name) ? "transfer" : "other";
+
+    const rows: PresaleFolioRow[] = [];
+    for (const order of filteredPreSaleOrders) {
+      const paymentsInRange = presalePaymentsInRange(order.payments, from, to);
+      if (paymentsInRange.length === 0) continue;
+      // Último pago del folio (orden cronológico): es el que liquida, si el item
+      // se entregó en el rango. Los pagos anteriores son siempre abono.
+      const sortedPayments = [...(order.payments ?? [])].sort(
+        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+      );
+      const lastPaymentId = sortedPayments[sortedPayments.length - 1]?.id ?? null;
+      const orderItemsTotal = order.items ? order.items.reduce((sum, it) => sum + (it.unit_price * it.quantity), 0) : 0;
+      const folio = order.code;
+      const cliente = order.customer?.name ?? "Cliente mostrador";
+      const tienda = order.store?.name ?? "—";
+
+      for (const item of order.items ?? []) {
+        const prodId = item.product_id ?? (item.catalog ? item.catalog.id * -1 : -999);
+        const prodName = item.catalog?.product_name ?? `Preventa #${item.id}`;
+        const itemTotal = item.unit_price * item.quantity;
+        const ratio = orderItemsTotal > 0 ? (itemTotal / orderItemsTotal) : (1 / (order.items?.length || 1));
+        const itemDeuda = (order.balance || 0) * ratio;
+        const deliveredInRange = item.status === "delivered" && !!item.delivered_at &&
+          (() => { const d = toLocalYmd(new Date(item.delivered_at!)); return d >= from && d <= to; })();
+
+        for (const payment of paymentsInRange) {
+          const estado: PresaleFolioRow["estado"] = (payment.id === lastPaymentId && deliveredInRange) ? "Liquidada" : "Apartada";
+          rows.push({
+            productId: prodId,
+            productName: prodName,
+            folio,
+            cliente,
+            total: itemTotal,
+            anticipo: (payment.amount || 0) * ratio,
+            pendiente: itemDeuda,
+            estado,
+            tienda,
+            fecha: payment.created_at,
+            method: methodOf((payment.payment_method?.name ?? "").toLowerCase()),
+          });
+        }
+      }
+    }
+    return rows;
+}
+
+/** Orden de exhibición: por producto (nombre) y, dentro de cada producto, Efectivo → Tarjeta → Transferencia → Otro. */
+export function sortPresaleFolioRows(rows: readonly PresaleFolioRow[]): PresaleFolioRow[] {
+  return [...rows].sort((a, b) =>
+    a.productName.localeCompare(b.productName) ||
+    (METHOD_ORDER[a.method] - METHOD_ORDER[b.method]) ||
+    (new Date(a.fecha).getTime() - new Date(b.fecha).getTime()),
+  );
 }
 
 /** Totales cobrados por método (efectivo / tarjeta / depósitos / dólares). */

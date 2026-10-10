@@ -3,7 +3,7 @@ import ExcelJS from "exceljs";
 import type { SaleDetail } from "@tadaima/api";
 import { buildGroupedProducts, buildPaymentBreakdown } from "./buildReportData";
 import { addVentasSheets } from "./excelVentas";
-import type { PresaleRow, ReportExportParams } from "./reportTypes";
+import type { PresaleFolioRow, PresaleRow, ReportExportParams } from "./reportTypes";
 
 // Excel de Ventas en pestañas (2026-10-05): una tabla por pestaña, los tomos
 // (Manga Nacional) en pestañas propias y los totales como fórmulas.
@@ -48,10 +48,23 @@ const PRESALE: PresaleRow = {
   apartado: 300, deuda: 700, pactado: 1000, costoReal: 800, costoNeto: 300, utilidad: 0,
 };
 
+const PRESALE_CASH: PresaleRow = {
+  productId: 11, name: "Figura Y (Liquidada)", entregado: true, qty: 1,
+  apartado: 400, deuda: 0, pactado: 400, costoReal: 250, costoNeto: 250, utilidad: 150,
+};
+
+const PRESALE_FOLIO: PresaleFolioRow = {
+  productId: 9, productName: "Preventa X", folio: "PREV-00001", cliente: "Jorge González",
+  total: 1000, anticipo: 300, pendiente: 700, estado: "Apartada", tienda: "Tadaima MACRO",
+  fecha: "2026-10-03T18:00:00Z", method: "cash",
+};
+
 function buildBook(canViewCost = false): ExcelJS.Workbook {
   const groupedProducts = buildGroupedProducts(SALES, [], ["all"], "2026-10-03", "2026-10-03", canViewCost);
   const params: ReportExportParams = {
     presaleRows: [PRESALE],
+    presaleFolioRows: [PRESALE_FOLIO],
+    presaleRowsByMethod: { cash: [PRESALE_CASH], card: [], transfer: [] },
     groupedProducts,
     regularProducts: groupedProducts,
     tomoProducts: [],
@@ -157,11 +170,44 @@ describe("Excel de Ventas en pestañas", () => {
     expect(wb.getWorksheet("Transferencias Manga")).toBeUndefined();
   });
 
-  it("Preventas es la última pestaña y Pactado = Abonado + Pendiente", () => {
-    const pre = sheet(buildBook(), "Preventas");
-    const row = find(pre, "Preventa X (Apartada)");
-    expect(formula(pre, row.row, row.col + 4)).toBe(`${pre.getCell(row.row, row.col + 2).address}+${pre.getCell(row.row, row.col + 3).address}`);
-    expect(result(pre, row.row, row.col + 4)).toBe(1000);
+  it("Efectivo: incluye su propia tabla de Preventas abonadas en efectivo, debajo de Manga", () => {
+    const wb = buildBook();
+    const ef = sheet(wb, "Efectivo");
+    const presTitle = find(ef, "1. EFECTIVO — APARTADOS Y PREVENTAS");
+    const finalTotal = find(ef, "TOTAL FINAL EFECTIVO");
+    expect(presTitle.row).toBeGreaterThan(finalTotal.row);
+    const row = find(ef, "Figura Y (Liquidada)");
+    expect(result(ef, row.row, row.col + 2)).toBe(400); // Abonado
+    // Tarjeta y Transferencias no tienen preventas este rango: sin tabla de preventas
+    expect(wb.getWorksheet("Tarjeta")!.getCell(1, 1)).toBeDefined();
+    expect(() => find(sheet(wb, "Tarjeta"), "APARTADOS Y PREVENTAS")).toThrow();
+    expect(() => find(sheet(wb, "Transferencias"), "APARTADOS Y PREVENTAS")).toThrow();
+  });
+
+  it("Preventas es la última pestaña, con 3 tablas separadas por método (Efectivo · Tarjeta · Transferencias)", () => {
+    const wb = buildBook();
+    expect(wb.worksheets.map((w) => w.name)).toEqual([
+      "Resumen", "Efectivo", "Tarjeta", "Transferencias", "Preventas",
+    ]);
+    const pre = sheet(wb, "Preventas");
+    const efHeader = find(pre, "1. EFECTIVO — APARTADOS Y PREVENTAS");
+    const taHeader = find(pre, "2. TARJETA — APARTADOS Y PREVENTAS");
+    const trHeader = find(pre, "3. TRANSFERENCIAS — APARTADOS Y PREVENTAS");
+    expect(taHeader.row).toBeGreaterThan(efHeader.row);
+    expect(trHeader.row).toBeGreaterThan(taHeader.row);
+    // El folio PREV-00001 (efectivo) cae dentro de la tabla de Efectivo
+    const group = find(pre, "Preventa X"); // encabezado del grupo de producto
+    expect(group.row).toBeGreaterThan(efHeader.row);
+    expect(group.row).toBeLessThan(taHeader.row);
+    const row = { row: group.row + 1, col: group.col };
+    expect(text(pre, row.row, row.col)).toBe("PREV-00001");
+    expect(text(pre, row.row, row.col + 1)).toBe("Jorge González");
+    expect(result(pre, row.row, row.col + 3)).toBe(300); // Anticipo
+    expect(result(pre, row.row, row.col + 4)).toBe(700); // Pendiente
+    expect(text(pre, row.row, row.col + 5)).toBe("Apartada");
+    expect(text(pre, row.row, row.col + 8)).toBe("Efectivo");
+    // No hay preventas de tarjeta/transferencia en el fixture: no aparece "4. OTRO MÉTODO"
+    expect(() => find(pre, "OTRO MÉTODO")).toThrow();
   });
 
   it("Resumen muestra desglose regular+manga por método con totales y TOTALES FINALES (sin costos)", () => {
@@ -229,7 +275,33 @@ describe("Excel de Ventas en pestañas", () => {
     const totalEf = find(res, "Total efectivo");
     expect(formula(res, totalEf.row, 5)).toMatch(/E\d+-[A-Z]\d+/);
   });
+
+  it("Resumen suma las Preventas al subtotal y a TOTALES FINALES (Efectivo tiene preventa de $400 / costo $250 / utilidad $150)", () => {
+    const wb = buildBook(true);
+    const res = sheet(wb, "Resumen");
+    const preRow = find(res, "Preventas:");
+    expect(result(res, preRow.row, 3)).toBe(250); // Costo
+    expect(result(res, preRow.row, 4)).toBe(400); // Venta (Abonado)
+    expect(result(res, preRow.row, 5)).toBe(150); // Utilidad
+    // Tarjeta y Transferencias no tienen preventas en el fixture: sin fila "Preventas:" en esos bloques
+    const efBlock = find(res, "EFECTIVO");
+    const taBlock = find(res, "TARJETA");
+    expect(preRow.row).toBeGreaterThan(efBlock.row);
+    expect(preRow.row).toBeLessThan(taBlock.row);
+    // Total efectivo (utilidad) ya incluye la utilidad de la preventa ($150)
+    const totalEf = find(res, "Total efectivo");
+    const egresos = find(res, "Egresos");
+    expect(formula(res, totalEf.row, 5)).toContain(cellRefLike(res, egresos.row - 1, 5));
+    // TOTALES FINALES incluye la preventa en Venta/Costo/Utilidad
+    const finalRow = find(res, "TOTALES FINALES:");
+    expect(result(res, finalRow.row, 4)).toBeGreaterThanOrEqual(400);
+  });
 });
+
+/** Dirección de celda (ej. "E12") para comparar contra una fórmula que la referencia. */
+function cellRefLike(ws: ExcelJS.Worksheet, row: number, col: number): string {
+  return ws.getCell(row, col).address;
+}
 
 describe("buildGroupedProducts — detalle de descuentos por ticket", () => {
   it("guarda el ticket, el método principal y el motivo", () => {
