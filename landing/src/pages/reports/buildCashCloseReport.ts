@@ -16,9 +16,10 @@ import {
 } from "@tadaima/api";
 import { fetchAllSales } from "@/lib/fetchAllPages";
 import {
-  filterSales, filterPreSaleOrders, buildGroupedProducts, buildPresaleRows,
-  buildPaymentBreakdown,
+  filterSales, filterPreSaleOrders, buildGroupedProducts, buildPresaleRows, buildPresaleRowsByMethod,
+  buildPresaleFolioRows, buildPaymentBreakdown,
 } from "./buildReportData";
+import { isCardMethod, isCashLike, isTransferMethod } from "./excelTopTables";
 import type { ReportExportParams } from "./reportTypes";
 
 export interface CashCloseReportInput {
@@ -95,6 +96,12 @@ export async function buildCashCloseReportParams(
     regularProducts: groupedProducts.filter(p => p.product_type !== "manga"),
     tomoProducts:    groupedProducts.filter(p => p.product_type === "manga"),
     presaleRows:     buildPresaleRows(filteredPreSaleOrders, day, day),
+    presaleFolioRows: buildPresaleFolioRows(filteredPreSaleOrders, day, day),
+    presaleRowsByMethod: {
+      cash:     buildPresaleRowsByMethod(filteredPreSaleOrders, day, day, isCashLike),
+      card:     buildPresaleRowsByMethod(filteredPreSaleOrders, day, day, isCardMethod),
+      transfer: buildPresaleRowsByMethod(filteredPreSaleOrders, day, day, isTransferMethod),
+    },
     paymentBreakdown: buildPaymentBreakdown(filteredSales, filteredPreSaleOrders, [...ALL], day, day),
     // El corte solo reporta ventas — inventario, top productos y clientes son
     // otras pestañas de Reportes y no aplican a un turno.

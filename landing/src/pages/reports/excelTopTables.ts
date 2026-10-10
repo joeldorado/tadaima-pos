@@ -1,8 +1,8 @@
 // Tablas por producto del Excel de Ventas (Efectivo, Tarjeta, Transferencias,
 // cada una normal o solo Manga) · Preventas · Devoluciones. TOTAL, IVA, neto y
 // utilidad van como FÓRMULAS de Excel (con el valor ya calculado).
-import type { GroupedProduct, PresaleRow } from "./reportTypes";
-import { fmt } from "./reportFormat";
+import type { GroupedProduct, PresaleFolioRow, PresaleRow } from "./reportTypes";
+import { fmt, fmtDate } from "./reportFormat";
 import {
   AMBER, GRAY, GREEN, MONEY_FMT, RED, align, cellMoney, sectionHeader, subHeader, cellName, cellQty, cellRef, fill, font, rowRange, sumFormula,
   totalLabel, totalMoney, totalQty, type CellStyle, type SheetBuilder,
@@ -221,44 +221,149 @@ export const withMethod = (groups: readonly GroupedProduct[], pred: (n: string) 
     return qty !== 0 || revenue !== 0;
   });
 
-export const PRESALE_COLS = (canViewCost: boolean): number => (canViewCost ? 7 : 5);
+export const PRESALE_COLS = (canViewCost: boolean): number => (canViewCost ? 8 : 5);
+
+/** Totales de la fila "TOTAL PREVENTAS" (para enlazar con el Resumen). `null` si la tabla vino vacía. */
+export interface PresaleTotals {
+  apartado: MangaSubtotal;
+  costoNeto?: MangaSubtotal;
+  utilidad?: MangaSubtotal;
+}
+
+export interface PresaleResult {
+  /** Siguiente fila libre. */
+  next: number;
+  totals: PresaleTotals | null;
+}
 
 /**
- * Preventas (con su encabezado en la fila `top`): Producto · Cant · Abonado ·
- * Pendiente · Pactado(=Abonado+Pendiente) · [Costo · Utilidad(=Abonado−Costo)].
+ * Preventas (con su encabezado en la fila `top`): Producto · Cant ·
+ * [Costo Unitario] · Abonado · Pendiente · Pactado(=Abonado+Pendiente) ·
+ * [Costo · Utilidad(=Abonado−Costo)]. Costo Unitario va justo después de la
+ * cantidad, igual que en las tablas de productos regulares (methodTable/cardTable).
  */
-export function drawPresales(sh: SheetBuilder, rows: readonly PresaleRow[], col: number, canViewCost: boolean, top = FIRST_TABLE_ROW): number {
-  sectionHeader(sh, top, col, col + PRESALE_COLS(canViewCost) - 1, " 4. APARTADOS Y PREVENTAS", "AA66FF");
-  subHeader(sh, top + 1, col, ["Producto", "Cant. Preventa", "Abonado", "Pendiente", "Pactado", ...(canViewCost ? ["Costo Producto", "Utilidad"] : [])], "CC88FF");
+export function drawPresales(
+  sh: SheetBuilder, rows: readonly PresaleRow[], col: number, canViewCost: boolean,
+  top = FIRST_TABLE_ROW, label = " 4. APARTADOS Y PREVENTAS",
+): PresaleResult {
+  sectionHeader(sh, top, col, col + PRESALE_COLS(canViewCost) - 1, label, "AA66FF");
+  subHeader(sh, top + 1, col, ["Producto", "Cant. Preventa", ...(canViewCost ? ["Costo Unitario"] : []), "Abonado", "Pendiente", "Pactado", ...(canViewCost ? ["Costo Producto", "Utilidad"] : [])], "CC88FF");
   const first = top + 2;
+  const costCol = canViewCost ? col + 3 : col + 2; // columna de "Abonado" (se recorre 1 si hay Costo Unitario)
   let r = first;
   for (const p of rows) {
     sh.set(r, col, p.name, cellName);
     sh.set(r, col + 1, p.qty, cellQty);
-    sh.set(r, col + 2, p.apartado, cellMoney(GREEN, true));
-    sh.set(r, col + 3, p.deuda, cellMoney(RED, true));
-    sh.setF(r, col + 4, `${cellRef(r, col + 2)}+${cellRef(r, col + 3)}`, p.pactado, cellMoney(GRAY));
     if (canViewCost) {
-      sh.set(r, col + 5, p.costoNeto, cellMoney(GRAY));
+      const costoUnit = p.qty !== 0 ? p.costoNeto / p.qty : 0;
+      sh.set(r, col + 2, costoUnit, cellMoney(GRAY)); // informativo: no entra a TOTAL PREVENTAS
+    }
+    sh.set(r, costCol, p.apartado, cellMoney(GREEN, true));
+    sh.set(r, costCol + 1, p.deuda, cellMoney(RED, true));
+    sh.setF(r, costCol + 2, `${cellRef(r, costCol)}+${cellRef(r, costCol + 1)}`, p.pactado, cellMoney(GRAY));
+    if (canViewCost) {
+      sh.set(r, costCol + 3, p.costoNeto, cellMoney(GRAY));
       // Modelo del dueño: apartada → costo = abono (utilidad $0); liquidada → venta − costo.
-      sh.setF(r, col + 6, `${cellRef(r, col + 2)}-${cellRef(r, col + 5)}`, p.utilidad, cellMoney(p.utilidad < 0 ? RED : GREEN, true));
+      sh.setF(r, costCol + 4, `${cellRef(r, costCol)}-${cellRef(r, costCol + 3)}`, p.utilidad, cellMoney(p.utilidad < 0 ? RED : GREEN, true));
     }
     sh.height(r, 20);
     r++;
   }
-  if (rows.length === 0) return r;
+  if (rows.length === 0) return { next: r, totals: null };
   const all = rowRange(first, r - 1);
   const sum = (pick: (p: PresaleRow) => number) => rows.reduce((a, p) => a + pick(p), 0);
+  const tApartado = sum((p) => p.apartado);
+  const tCostoNeto = sum((p) => p.costoNeto);
   const tUtil = sum((p) => p.utilidad);
   sh.set(r, col, "TOTAL PREVENTAS", totalLabel);
   sh.setF(r, col + 1, sumFormula(col + 1, all), sum((p) => p.qty), totalQty);
-  sh.setF(r, col + 2, sumFormula(col + 2, all), sum((p) => p.apartado), totalMoney(GREEN));
-  sh.setF(r, col + 3, sumFormula(col + 3, all), sum((p) => p.deuda), totalMoney(RED));
-  sh.setF(r, col + 4, sumFormula(col + 4, all), sum((p) => p.pactado), totalMoney(GRAY));
+  // Costo Unitario no se suma: es informativo, igual que en las demás tablas.
+  sh.setF(r, costCol, sumFormula(costCol, all), tApartado, totalMoney(GREEN));
+  sh.setF(r, costCol + 1, sumFormula(costCol + 1, all), sum((p) => p.deuda), totalMoney(RED));
+  sh.setF(r, costCol + 2, sumFormula(costCol + 2, all), sum((p) => p.pactado), totalMoney(GRAY));
+  const totals: PresaleTotals = { apartado: { ref: cellRef(r, costCol), value: tApartado } };
   if (canViewCost) {
-    sh.setF(r, col + 5, sumFormula(col + 5, all), sum((p) => p.costoNeto), totalMoney(GRAY));
-    sh.setF(r, col + 6, sumFormula(col + 6, all), tUtil, totalMoney(tUtil < 0 ? RED : GREEN));
+    sh.setF(r, costCol + 3, sumFormula(costCol + 3, all), tCostoNeto, totalMoney(GRAY));
+    sh.setF(r, costCol + 4, sumFormula(costCol + 4, all), tUtil, totalMoney(tUtil < 0 ? RED : GREEN));
+    totals.costoNeto = { ref: cellRef(r, costCol + 3), value: tCostoNeto };
+    totals.utilidad = { ref: cellRef(r, costCol + 4), value: tUtil };
   }
+  sh.height(r, 20);
+  return { next: r + 1, totals };
+}
+
+export const PRESALE_FOLIO_COLS = 9;
+const METHOD_LABEL: Record<PresaleFolioRow["method"], string> = { cash: "Efectivo", card: "Tarjeta", transfer: "Transferencia", other: "Otro" };
+const METHOD_COLOR: Record<PresaleFolioRow["method"], string> = { cash: GREEN, card: "3388CC", transfer: "CC9944", other: GRAY };
+const PRODUCT_HDR_FILL = fill("3D2A5C");
+const cellFolio: CellStyle = { font: font({ bold: true }), alignment: align("left") };
+const cellPlain: CellStyle = { alignment: align("left") };
+const cellEstado = (liquidada: boolean): CellStyle => ({ font: font({ bold: true, color: liquidada ? GREEN : AMBER }), alignment: align("center") });
+const cellMethod = (m: PresaleFolioRow["method"]): CellStyle => ({ font: font({ bold: true, color: METHOD_COLOR[m] }), alignment: align("center") });
+
+/**
+ * Preventas POR FOLIO (rediseño 2026-10-09): un renglón por folio+producto+pago,
+ * agrupado por PRODUCTO y, dentro de cada producto, por método de pago
+ * (Efectivo → Tarjeta → Transferencia — ya vienen ordenados por
+ * `sortPresaleFolioRows`). Columnas: Folio · Cliente · Total · Anticipo ·
+ * Pendiente · Estado · Tienda · Fecha · Método.
+ */
+export function drawPresaleFolios(sh: SheetBuilder, rows: readonly PresaleFolioRow[], col: number, top = FIRST_TABLE_ROW, label = " 4. APARTADOS Y PREVENTAS"): number {
+  const w = PRESALE_FOLIO_COLS;
+  sectionHeader(sh, top, col, col + w - 1, label, "AA66FF");
+  subHeader(sh, top + 1, col, ["Folio", "Cliente", "Total", "Anticipo", "Pendiente", "Estado", "Tienda", "Fecha", "Método"], "CC88FF");
+
+  let r = top + 2;
+  let lastProduct: string | null = null;
+  let productRows: number[] = [];
+  let productAnticipo = 0;
+  const allAnticipoRows: number[] = [];
+
+  const closeProductGroup = () => {
+    if (lastProduct === null || productRows.length === 0) return;
+    sh.set(r, col, `Total ${lastProduct}`, totalLabel);
+    sh.setF(r, col + 3, sumFormula(col + 3, productRows), productAnticipo, totalMoney(GREEN));
+    sh.height(r, 18);
+    r++;
+  };
+
+  for (const row of rows) {
+    if (row.productName !== lastProduct) {
+      closeProductGroup();
+      sh.merge(r, col, col + w - 1);
+      sh.set(r, col, row.productName, { font: font({ bold: true, color: "FFFFFF" }), fill: PRODUCT_HDR_FILL, alignment: align("left") });
+      sh.height(r, 20);
+      r++;
+      lastProduct = row.productName;
+      productRows = [];
+      productAnticipo = 0;
+    }
+    sh.set(r, col, row.folio, cellFolio);
+    sh.set(r, col + 1, row.cliente, cellPlain);
+    sh.set(r, col + 2, row.total, cellMoney(GRAY));
+    sh.set(r, col + 3, row.anticipo, cellMoney(GREEN, true));
+    sh.set(r, col + 4, row.pendiente, cellMoney(RED));
+    sh.set(r, col + 5, row.estado, cellEstado(row.estado === "Liquidada"));
+    sh.set(r, col + 6, row.tienda, cellPlain);
+    sh.set(r, col + 7, fmtDate(row.fecha), cellPlain);
+    sh.set(r, col + 8, METHOD_LABEL[row.method], cellMethod(row.method));
+    sh.height(r, 20);
+    productRows.push(r);
+    productAnticipo += row.anticipo;
+    allAnticipoRows.push(r);
+    r++;
+  }
+  closeProductGroup();
+
+  if (allAnticipoRows.length === 0) return r;
+  r++; // separa el total general del último subtotal de producto
+  sh.set(r, col, "TOTAL PREVENTAS", totalLabel);
+  const totalTotal = rows.reduce((a, p) => a + p.total, 0);
+  const totalAnticipo = rows.reduce((a, p) => a + p.anticipo, 0);
+  const totalPendiente = rows.reduce((a, p) => a + p.pendiente, 0);
+  sh.set(r, col + 2, totalTotal, totalMoney(GRAY));
+  sh.setF(r, col + 3, sumFormula(col + 3, allAnticipoRows), totalAnticipo, totalMoney(GREEN));
+  sh.set(r, col + 4, totalPendiente, totalMoney(RED));
   sh.height(r, 20);
   return r + 1;
 }
