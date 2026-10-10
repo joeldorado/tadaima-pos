@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef, useLayoutEffect } from "react";
+import { createPortal } from "react-dom";
 import {
   TrendingUp, DollarSign, ShoppingBag, BarChart3, Loader2,
   CreditCard, CalendarDays, ChevronDown, X, ChevronRight, ChevronLeft,
@@ -579,10 +580,11 @@ function SaleRow({
         <div className="flex items-center -space-x-2 flex-shrink-0">
           {previewItems.map((item, i) => {
             const info = productMap[String(item.product_id)];
+            const img  = item.product_image || item.product?.image || info?.imagen;
             return (
               <div key={i} className="rounded-lg border-2 overflow-hidden" style={{ width: 32, height: 32, borderColor: "var(--td-page-bg)" }}>
                 <ProductThumb
-                  {...(info?.imagen ? { src: info.imagen } : {})}
+                  {...(img ? { src: img } : {})}
                   {...((info?.name || item.product?.name || item.product_name) ? { name: info?.name || item.product?.name || item.product_name || undefined } : {})}
                   size={32}
                   rounded="rounded-none"
@@ -713,7 +715,11 @@ function SaleRow({
             const baseName = item.product?.name || item.product_name || info?.name || String(item.product_id);
             const name = deleted ? `${baseName} (eliminado)` : baseName;
             const sku  = item.product?.sku  || item.product_sku || info?.sku  || "";
-            const img  = info?.imagen;
+            // Preferimos el snapshot congelado de la venta (2026-10-10,
+            // mismo espíritu que product_name/product_sku): `product_image`
+            // es la imagen que se vendió, inmutable aunque el producto cambie
+            // de foto o se borre después. Fallbacks solo para líneas legacy.
+            const img  = item.product_image || item.product?.image || info?.imagen;
             // Beneficios de la línea (QA Joel 2026-07-17: "la promo no se ve en
             // Ventas/Historial") — badges de promo/descuento + neto real.
             const parts = lineBenefitParts(item);
@@ -2197,6 +2203,7 @@ export function SalesPage() {
   const [filterMethod, setFilterMethod]       = useState<PaymentFilter>("all");
   const [filterCashierId, setFilterCashierId] = useState<number | null>(null);
   const [isMethodOpen, setIsMethodOpen]       = useState(false);
+  const [isListMaximized, setIsListMaximized] = useState(false);
   const [activeTab, setActiveTab]             = useState<"ventas" | "productos" | "flujo" | "reporte">("ventas");
   const [searchSale, setSearchSale]           = useState("");
   const [searchProduct, setSearchProduct]     = useState("");
@@ -2399,6 +2406,15 @@ export function SalesPage() {
     preSaleOrdersQuery.isError, preSaleOrdersQuery.error, preSaleOrdersQuery.data,
     productsQuery.isError, productsQuery.error, productsQuery.data,
   ]);
+
+  useEffect(() => {
+    if (!isListMaximized) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setIsListMaximized(false);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isListMaximized]);
 
   // Cancelación de venta desde Ventas: usa el MISMO flujo que Caja (ADR-016) vía
   // CancelTicketModal — motivo, parcial/total, reversa de caja y registro. La
@@ -2947,7 +2963,7 @@ export function SalesPage() {
         const info = productMap[pid];
         const name = item.product?.name || (item.product_name ? `${item.product_name} (eliminado)` : info?.name || pid);
         const sku  = item.product?.sku  || item.product_sku || info?.sku  || "";
-        const img  = info?.imagen || "";
+        const img  = item.product_image || item.product?.image || info?.imagen || "";
         if (!map.has(pid)) map.set(pid, { product_id: pid, name, sku, imagen: img, timesAppeared: 0, totalUnits: 0, totalRevenue: 0, avgPrice: 0 });
         const st = map.get(pid)!;
         if (!st.imagen && img) st.imagen = img;
@@ -3199,16 +3215,9 @@ export function SalesPage() {
         <div className="p-6 space-y-4">
 
           {/* ══ Tab: Lista de Ventas ══ */}
-          {activeTab === "ventas" && (
-            <>
-              <div
-                className="rounded-[26px] overflow-hidden flex flex-col"
-                style={{
-                  height: ventasPanelHeight,
-                  background: T.surfaceStrong,
-                  border: "1px solid var(--td-panel-border)",
-                }}
-              >
+          {activeTab === "ventas" && (() => {
+            const ventasPanelBody = (
+              <>
                 <div className="p-4 pb-3">
                   <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5"
                     style={{ background: T.surfaceMuted, border: "1px solid var(--td-panel-border)" }}>
@@ -3218,6 +3227,15 @@ export function SalesPage() {
                       className="flex-1 bg-transparent outline-none text-xs"
                       style={{ color: "var(--td-text-hi)" }} />
                     {searchSale && <button onClick={() => setSearchSale("")} className="hover:opacity-70 transition-opacity" style={{ color: "var(--td-text-lo)" }}><X size={12} /></button>}
+                    <button
+                      onClick={() => setIsListMaximized(v => !v)}
+                      className="flex items-center gap-1.5 h-[26px] px-2.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all hover:scale-105 active:scale-95 flex-shrink-0"
+                      style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)", color: "var(--td-text-md)" }}
+                      title={isListMaximized ? "Volver a tamaño normal" : "Ampliar lista a pantalla completa"}
+                    >
+                      {isListMaximized ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
+                      {isListMaximized ? "Reducir" : "Ampliar"}
+                    </button>
                   </div>
                 </div>
 
@@ -3308,9 +3326,36 @@ export function SalesPage() {
                     </div>
                   </div>
                 </div>
+              </>
+            );
+
+            return isListMaximized ? createPortal(
+              <div
+                className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md transition-all duration-300"
+                onClick={() => setIsListMaximized(false)}
+              >
+                <div
+                  onClick={e => e.stopPropagation()}
+                  className="w-full max-w-7xl h-[90vh] rounded-3xl flex flex-col shadow-[0_32px_96px_rgba(0,0,0,0.85)] overflow-hidden"
+                  style={{ background: "#0c0c0c", border: "1px solid rgba(255,255,255,0.08)" }}
+                >
+                  {ventasPanelBody}
+                </div>
+              </div>,
+              document.body
+            ) : (
+              <div
+                className="rounded-[26px] overflow-hidden flex flex-col"
+                style={{
+                  height: ventasPanelHeight,
+                  background: T.surfaceStrong,
+                  border: "1px solid var(--td-panel-border)",
+                }}
+              >
+                {ventasPanelBody}
               </div>
-            </>
-          )}
+            );
+          })()}
 
           {/* ══ Tab: Por Producto ══ */}
           {activeTab === "productos" && (

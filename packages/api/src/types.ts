@@ -336,6 +336,11 @@ export interface SaleItemDetail {
    */
   product_name?: string | null
   product_sku?: string | null
+  /**
+   * Imagen de la línea (2026-10-10, mismo espíritu que product_name/sku):
+   * congelada al checkout. Preferir sobre `product.image`/catálogo en vivo.
+   */
+  product_image?: string | null
   /** true = la línea vendió un producto que YA NO existe en el catálogo. */
   product_deleted?: boolean
   quantity: number
@@ -386,6 +391,8 @@ export interface SaleItemDetail {
     id: number; name: string; sku: string; cost?: number | null; product_type?: 'product' | 'manga'
     /** Nombres de sus categorías en orden (solo en el listado `GET /sales`, para reportes). */
     categories?: string[]
+    /** Primera imagen del producto, snapshot de la venta (2026-10-10). */
+    image?: string | null
   } | null
   created_at: string
 }
