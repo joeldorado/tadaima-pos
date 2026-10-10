@@ -48,7 +48,11 @@ describe("Excel del cierre de caja", () => {
     expect(wb.worksheets[0]!.getCell(1, 1).value).toBe("TADAIMA - CORTE DE CAJA");
     expect(text.some((t) => t.includes(userLine) && t.includes("Tienda: Centro"))).toBe(true);
     expect(wb.worksheets.map((w) => w.name)).toContain("Resumen");
-    for (const title of ["RESUMEN DE VENTAS", " 1. VENTAS EN EFECTIVO", " 2. DESGLOSE DE COBROS CON TARJETA", " 3. TRANSFERENCIAS / DEPÓSITOS", " 4. APARTADOS Y PREVENTAS", " 5. DEVOLUCIONES Y CANCELACIONES"]) {
+    for (const title of [
+      "RESUMEN DE VENTAS", " 1. VENTAS EN EFECTIVO", " 2. DESGLOSE DE COBROS CON TARJETA", " 3. TRANSFERENCIAS / DEPÓSITOS",
+      " 1. EFECTIVO — APARTADOS Y PREVENTAS", " 2. TARJETA — APARTADOS Y PREVENTAS", " 3. TRANSFERENCIAS — APARTADOS Y PREVENTAS",
+      " 5. DEVOLUCIONES Y CANCELACIONES",
+    ]) {
       expect(text).toContain(title);
     }
     expect(text).toContain("TOTAL TRANSFERENCIAS");

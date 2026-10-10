@@ -26,9 +26,10 @@ import { useStoresQuery } from "@/hooks/queries/useStores";
 import { useUsersQuery } from "@/hooks/queries/useUsers";
 import { getTodayLocal, daysAgoLocal, BUSINESS_TZ } from "@/lib/date";
 import {
-  filterSales, filterPreSaleOrders, buildGroupedProducts, buildPresaleRows,
-  buildPaymentBreakdown, readIvaRate,
+  filterSales, filterPreSaleOrders, buildGroupedProducts, buildPresaleRows, buildPresaleRowsByMethod,
+  buildPresaleFolioRows, buildPaymentBreakdown, readIvaRate,
 } from "./reports/buildReportData";
+import { isCardMethod, isCashLike, isTransferMethod } from "./reports/excelTopTables";
 import { queryKeys } from "@/lib/queryKeys";
 import type { SalesReport, InventoryReport, TopProductsReport, CustomersReport } from "@tadaima/api";
 import type { SaleDetail, Store as StoreType, PreSaleOrder } from "@tadaima/api";
@@ -358,6 +359,24 @@ export function ReportsPage() {
     [filteredPreSaleOrders, from, to],
   );
 
+  // Mismas filas, desglosadas por el método del abono (apartado/liquidación) —
+  // para la tabla de Preventas que vive dentro de cada pestaña de pago.
+  const presaleRowsByMethod = useMemo(
+    () => ({
+      cash: buildPresaleRowsByMethod(filteredPreSaleOrders, from, to, isCashLike),
+      card: buildPresaleRowsByMethod(filteredPreSaleOrders, from, to, isCardMethod),
+      transfer: buildPresaleRowsByMethod(filteredPreSaleOrders, from, to, isTransferMethod),
+    }),
+    [filteredPreSaleOrders, from, to],
+  );
+
+  // Pestaña "Preventas" rediseñada (2026-10-09): un renglón por folio + producto
+  // + pago, para agrupar por producto y ordenar Efectivo → Tarjeta → Transferencia.
+  const presaleFolioRows = useMemo(
+    () => buildPresaleFolioRows(filteredPreSaleOrders, from, to),
+    [filteredPreSaleOrders, from, to],
+  );
+
   const uiTotals = useMemo(() => {
     let bruto = 0;
     let comision = 0;
@@ -443,7 +462,7 @@ export function ReportsPage() {
     invReport, topReport, custReport, from, to, today, activeTab,
     canViewCost, ivaRate, effectiveStoreId, selectedUserId, stores, users,
     supplyMovements,
-    presaleRows,
+    presaleRows, presaleRowsByMethod, presaleFolioRows,
   });
 
   const handleExportPDF = () => exportReportPdf(buildExportParams());

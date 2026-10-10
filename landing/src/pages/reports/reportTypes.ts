@@ -109,9 +109,38 @@ export interface PresaleRow {
   utilidad: number;
 }
 
+/** Método del pago que generó el renglón de folio (decide en qué bloque cae). */
+export type PresaleFolioMethod = "cash" | "card" | "transfer" | "other";
+
+/**
+ * Un renglón de Preventas POR FOLIO (pestaña "Preventas" rediseñada, 2026-10-09):
+ * un producto de un folio, por CADA pago suyo dentro del rango (un folio tiene
+ * como máximo 2: apartado y liquidación, nunca intermedios). Agrupado por
+ * producto y, dentro de cada producto, ordenado por el método DE ESE pago
+ * (Efectivo → Tarjeta → Transferencia).
+ */
+export interface PresaleFolioRow {
+  productId: number;
+  productName: string;
+  folio: string;
+  cliente: string;
+  total: number;
+  anticipo: number;
+  pendiente: number;
+  estado: "Apartada" | "Liquidada";
+  tienda: string;
+  fecha: string;
+  method: PresaleFolioMethod;
+}
+
 /** Todo lo que los generadores de Excel/PDF necesitan del componente ReportsPage. */
 export interface ReportExportParams {
   presaleRows: PresaleRow[];
+  /** Preventas por folio para la pestaña "Preventas" (agrupada por producto y método). */
+  presaleFolioRows: PresaleFolioRow[];
+  /** Preventas desglosadas por método (abono/liquidación), para la tabla
+   *  que vive dentro de cada pestaña Efectivo/Tarjeta/Transferencias. */
+  presaleRowsByMethod: { cash: PresaleRow[]; card: PresaleRow[]; transfer: PresaleRow[] };
   groupedProducts: GroupedProduct[];
   regularProducts: GroupedProduct[];
   tomoProducts: GroupedProduct[];
