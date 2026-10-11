@@ -25,6 +25,8 @@ class BundleResource extends JsonResource
 
     private ?float $stockTotal = null;
 
+    private ?bool $compositionLocked = null;
+
     /** @param list<array<string,mixed>> $rows */
     public function withAvailability(array $rows): self
     {
@@ -47,6 +49,14 @@ class BundleResource extends JsonResource
         return $this;
     }
 
+    /** Candado de composición = alguna fila de inventory ≠ 0 (BundleService::hasStock). */
+    public function withCompositionLocked(bool $locked): self
+    {
+        $this->compositionLocked = $locked;
+
+        return $this;
+    }
+
     public function toArray(Request $request): array
     {
         $user = $request->user();
@@ -55,6 +65,9 @@ class BundleResource extends JsonResource
         $items = $this->relationLoaded('bundleItems') ? $this->bundleItems : collect();
         $firstImage = $this->relationLoaded('images') ? $this->images->first() : null;
         $stockTotal = $this->stockTotal ?? (float) ($this->inventory_sum_quantity ?? 0);
+        // El candado mira filas ≠ 0, no la suma (una negativa en otra tienda
+        // también bloquea); `has_nonzero_stock` lo trae withExists() del listado.
+        $compositionLocked = $this->compositionLocked ?? (bool) ($this->has_nonzero_stock ?? ($stockTotal != 0.0));
 
         $suggested = 0.0;
         $components = $items->map(function (ProductBundleItem $item) use ($canViewCost, &$suggested) {
@@ -108,7 +121,7 @@ class BundleResource extends JsonResource
             'suggested_price_sum' => round($suggested, 2),
             'components' => $components,
             'stock_total' => $stockTotal,
-            'composition_locked' => $stockTotal > 0,
+            'composition_locked' => $compositionLocked,
             'availability' => $this->availability ?? [],
             'assemblies' => $this->assemblies !== null
                 ? BundleAssemblyResource::collection($this->assemblies)->resolve($request)

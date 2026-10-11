@@ -28,6 +28,12 @@ use Illuminate\Support\Facades\DB;
  * reclasificados se dejan (todo el módulo Tomos filtra por product_type;
  * borrarlos perdería volumen/editorial capturados y no es reversible).
  *
+ * Paquetes (2026-10-08): los paquetes (product_type='bundle') quedan FUERA
+ * del universo aunque tengan categoría de librería (borrarlos o re-tiparlos
+ * dejaría su composición huérfana), y un componente de paquete nunca se
+ * borra ni se desactiva (FK restrict; sus piezas están armadas y vuelven al
+ * desarmar): sigue la ruta "con stock" (manga no-tomo → producto).
+ *
  * Corre LOCAL contra Supabase (mismos guards que tadaima:import-macro).
  * Idempotente: una segunda corrida no encuentra nada.
  */
@@ -83,6 +89,8 @@ class DepurarTomosCommand extends Command
                     });
                 }
             })
+            // Paquetes (2026-10-08): fuera del universo — nunca se borran ni se re-tipan.
+            ->where('products.product_type', '<>', 'bundle')
             ->selectRaw("id, name, product_type, category_id, active, {$stockSql} as stock")
             ->get();
         // Etiqueta de reporte: sus categorías librería (todas) o "(sin categoría)".
@@ -98,7 +106,7 @@ class DepurarTomosCommand extends Command
 
         // ── Historial (solo de los que podrían borrarse) ─────────────────────
         $conHistorial = [];
-        // Paquetes (2026-10-07): un componente con stock 0 (sus piezas están armadas) no se borra (FK restrict).
+        // Componentes de paquete: nunca son candidatos a borrar (ver clasificación), así que no se les busca historial.
         $componentIds = array_flip($db->table('product_bundle_items')->pluck('component_product_id')->map(fn ($id) => (int) $id)->all());
         $candidatosBorrar = $universo->filter(fn ($p) => ! TomoRule::esNombreTomo((string) $p->name) && (float) $p->stock <= 0 && ! isset($componentIds[(int) $p->id]))
             ->pluck('id')->all();
@@ -127,13 +135,18 @@ class DepurarTomosCommand extends Command
 
                 continue;
             }
-            if ((float) $p->stock > 0) {
+            // Componentes de paquete (2026-10-08): nunca se borran (FK restrict) ni
+            // se desactivan — aunque estén en 0 sus piezas están armadas y vuelven
+            // al desarmar. Siguen la ruta "con stock".
+            $esComponente = isset($componentIds[(int) $p->id]);
+            if ((float) $p->stock > 0 || $esComponente) {
+                $etiqueta = $esComponente && (float) $p->stock <= 0 ? 'no-tomo componente de paquete' : 'no-tomo CON stock';
                 if ($p->product_type === 'manga') {
                     $aProducto[] = (int) $p->id;
-                    $porCat[$cat]['no-tomo CON stock → producto'] = ($porCat[$cat]['no-tomo CON stock → producto'] ?? 0) + 1;
+                    $porCat[$cat]["{$etiqueta} → producto"] = ($porCat[$cat]["{$etiqueta} → producto"] ?? 0) + 1;
                 } else {
                     $quedan[] = (int) $p->id;
-                    $porCat[$cat]['no-tomo CON stock (ya producto)'] = ($porCat[$cat]['no-tomo CON stock (ya producto)'] ?? 0) + 1;
+                    $porCat[$cat]["{$etiqueta} (ya producto)"] = ($porCat[$cat]["{$etiqueta} (ya producto)"] ?? 0) + 1;
                 }
 
                 continue;

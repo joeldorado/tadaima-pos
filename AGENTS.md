@@ -8,7 +8,7 @@
 > Detalle adicional: [`CLAUDE.md`](CLAUDE.md) (comandos y arquitectura del frontend) y
 > [`backend/AGENTS.md`](backend/AGENTS.md) (API, ADRs y referencia de endpoints).
 >
-> Última revisión: 2026-10-07.
+> Última revisión: 2026-10-08.
 
 ---
 
@@ -200,11 +200,23 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   la composición no se edita mientras haya armados; un producto que es componente no se
   borra (primero quítalo del paquete). Definición global, stock por tienda; cualquier rol crea y
   arma en su tienda; editar = admin/gerente (como productos); borrar = permiso de borrar productos.
+- **No se trasladan entre tiendas** (2026-10-08): `POST /transfers` y recibir un traslado con un
+  paquete responden 422 ("desármalo aquí y ármalo en la otra tienda"). Un traslado lo dejaría
+  atorado en Bodega u otra tienda sin forma de moverlo.
+- **Candado de borrar / editar composición** (2026-10-08): bloquea si CUALQUIER fila de
+  `inventory` del paquete es ≠ 0, no la suma (+2 en una tienda y −2 en otra sigue bloqueando;
+  una sola fila negativa también, con su propio mensaje). Al calcular "puedes armar N", el stock
+  negativo de un componente cuenta como 0 — igual que `assemble`. `tadaima:depurar-tomos` deja
+  los paquetes fuera y nunca borra ni desactiva un componente.
 
 ### Preventas
 - Catálogo de proveedor → folios con anticipo → liquidación al recoger.
-- Límites: tope global (`preorder_limit`), por tienda y **por cliente**
-  (`limit_per_customer`; identifica a la persona por id, teléfono o tarjeta de socio).
+- Límites: **por tienda** (`store_limits`, el cupo real: sin entrada = esa tienda no
+  vende) y **por cliente** (`limit_per_customer`; identifica a la persona por id,
+  teléfono o tarjeta de socio). `preorder_limit` ("Límite de unidades") es un tope global
+  viejo que el backend ya NO aplica: no lo uses como cupo ni como límite por cliente
+  (2026-10-09: Caja mostraba "Reservados 24 / 1" con 12+12 por tienda). En Caja el cupo
+  sale de `lib/presaleAvailability.ts`.
 - No se entrega/liquida una partida sin **costo real** capturado.
 - Las preventas no tocan el stock de Exhibición/Bodega.
 - **Cancelar catálogo (2026-10-09):** NO existe "eliminar catálogo"; cancelar cancela TODOS sus
@@ -242,6 +254,11 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
 ### Frontend
 - **Carrito client-authoritative** (zustand + localStorage): se manda completo al
   cobrar. El checkout escribe optimista en el caché (`lib/optimisticSale.ts`). Sin Redux.
+- **Método de pago favorito** (2026-10-09, `lib/favoritePaymentMethod.ts`): el cajero marca
+  uno con el check del menú de método; cada venta y mesa nueva arranca con él (sin favorito,
+  Efectivo). Es por usuario en esa PC (localStorage `tadaima-caja-metodo-fav:{userId}`, sin
+  backend); con Tarjeta recuerda la última terminal. Solo decide el método de ARRANQUE: las
+  reglas de preventa, productos solo efectivo/tarjeta y precio socio siguen mandando.
 - Estado de servidor en TanStack Query, persistido en IndexedDB (soporte offline).
 - La lógica de negocio pura va en `landing/src/lib/` con su test al lado.
 - **Botón global "Actualizar"** (2026-10-01, `lib/screenRefresh.ts`): vive en el sidebar

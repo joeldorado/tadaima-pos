@@ -224,6 +224,12 @@
             "tone": "info",
             "title": "Nivel bodega",
             "text": "Los traslados se manejan a nivel de bodega entre tiendas, de modo que el stock cuadre en origen y destino."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "¿Qué productos van en el traslado?",
+            "text": "La tarjeta solo enseña el primer producto. Toca “Ver N productos” y se abre el detalle: quién lo pidió, la nota, cada producto con su SKU y cuántas piezas van, y el total de piezas (con muchos productos aparece un buscador). Si está pendiente y te toca, puedes Recibir o Cancelar desde ahí mismo después de revisar la lista."
           }
         ]
       }
@@ -246,7 +252,7 @@
       "etiqueta",
       "código de barras"
     ],
-    "updatedAt": "2026-10-07",
+    "updatedAt": "2026-10-08",
     "sections": [
       {
         "heading": "Qué es un paquete",
@@ -291,6 +297,12 @@
             "tone": "info",
             "title": "¿Cuántos puedo armar?",
             "text": "Es el mínimo entre los componentes. Ejemplo: el paquete lleva 2 Goku + 1 Vegeta y en la tienda hay 10 Goku y 3 Vegeta → con Goku alcanzaría para 5, con Vegeta solo para 3: puedes armar 3. En “Automático” las piezas se toman de Exhibición y lo que falte sale de Bodega; también puedes forzar que un producto salga solo de Exhibición o solo de Bodega."
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "¿Lo necesitas en otra tienda? Los paquetes no se trasladan",
+            "text": "Traslados no acepta paquetes (te avisa al guardar). El stock de un paquete solo cambia armando o desarmando y siempre vive en Exhibición: desármalo aquí, traslada las piezas sueltas como cualquier producto y ármalo en la otra tienda."
           }
         ]
       },

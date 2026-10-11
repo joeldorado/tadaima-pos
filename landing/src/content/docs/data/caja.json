@@ -128,6 +128,12 @@
           {
             "kind": "callout",
             "tone": "info",
+            "title": "Tu método favorito",
+            "text": "Si casi todo lo cobras igual (por ejemplo con Tarjeta o Transferencia), abre el menú del método y toca el círculo a la derecha del que quieras: queda marcado como favorito y cada venta nueva (y cada caja nueva) arranca con él en lugar de Efectivo. Solo hay un favorito; tocarlo otra vez lo quita. Si es Tarjeta, recuerda la última terminal que elegiste. Es tuyo y de esa computadora: otro cajero tiene el suyo, y en otra caja lo vuelves a marcar. Las reglas siguen mandando: con preventas o productos solo efectivo el método cambia solo, como siempre."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
             "title": "¿El cliente trae dólares? Usa la calculadora",
             "text": "Con Efectivo, el botón “$ Dólares” abre la calculadora: arriba ves el total en pesos y en dólares (para decírselo al cliente), tecleas los billetes americanos, ves el tipo de cambio y en vivo te dice “LE ALCANZA — CAMBIO $X” o “FALTAN $X”. Nada cuenta hasta presionar “✓ Sí paga con dólares”; si solo era pregunta, cierras con “✗ Solo era pregunta” y no pasa nada. El sistema guarda los dólares físicos recibidos y el tipo de cambio de esa venta para el corte y los reportes. Si el tipo de cambio del día no es el que usas, el botón de ajustes junto a “Efectivo” lo cambia para tu caja (solo en tu pantalla; la referencia global la pone el admin en Configuración)."
           },

@@ -26,7 +26,8 @@ use Illuminate\Support\Facades\Storage;
  * bloqueos viven aquí una sola vez.
  *
  * - Bloquean: apartados (solo el borrado normal; "Borrar TODO" los borra),
- *   ser componente de un paquete (FK restrict) y ser un paquete con armados.
+ *   ser componente de un paquete (FK restrict) y ser un paquete con alguna
+ *   fila de inventory ≠ 0 (armados o un ajuste negativo).
  * - `expected` (opcional): los conteos que el usuario vio en la vista previa.
  *   Si vienen y cambiaron (entró stock, un apartado, un traslado) no se borra.
  *   La app móvil y los bundles viejos del PWA no lo mandan → siguen igual.
@@ -155,8 +156,10 @@ final class ProductDeletionService
             $blockers[] = $e->getMessage();
         }
 
-        if ($product->isBundle() && $this->bundles->totalStock($product) > 0) {
-            $blockers[] = 'No se puede eliminar: hay paquetes armados. Desármalos primero desde Paquetes.';
+        // Mismo candado que BundleService::delete (2026-10-08): bloquea cualquier
+        // fila de inventory ≠ 0, no la suma (+2 en una tienda y −2 en otra bloquea).
+        if ($product->isBundle() && $this->bundles->hasStock($product)) {
+            $blockers[] = 'No se puede eliminar: el paquete tiene inventario (armados o un ajuste negativo). Desármalo o corrígelo desde Paquetes.';
         }
 
         return $blockers;

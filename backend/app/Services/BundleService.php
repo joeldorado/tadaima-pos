@@ -187,7 +187,7 @@ final class BundleService
         });
     }
 
-    /** Borra el paquete (stock 0 y sin apartados). Devuelve cuántas ventas lo referencian. */
+    /** Borra el paquete (ninguna fila de inventory ≠ 0 y sin apartados). Devuelve cuántas ventas lo referencian. */
     public function delete(Product $bundle, User $user): int
     {
         $this->assertIsBundle($bundle);
@@ -198,10 +198,10 @@ final class BundleService
         $salesCount = DB::transaction(function () use ($bundle, $user) {
             $locked = $this->lockProduct($bundle->id);
 
-            $stock = $this->totalStock($locked);
-            if ($stock > 0) {
-                $n = $this->fmtQty($stock);
-                throw new \DomainException("No se puede eliminar: hay {$n} paquete(s) armados. Desármalos primero.");
+            if ($lock = $this->stockLock($locked)) {
+                throw new \DomainException('No se puede eliminar: '.($lock['assembled'] > 0
+                    ? "hay {$this->fmtQty($lock['assembled'])} paquete(s) armados. Desármalos primero."
+                    : "el paquete tiene inventario negativo ({$this->fmtQty($lock['negative'])}) en alguna tienda. Corrige ese ajuste primero."));
             }
 
             $layaways = DB::table('layaways')->where('product_id', $locked->id)->count();
@@ -256,16 +256,53 @@ final class BundleService
 
     public function assertCompositionEditable(Product $bundle): void
     {
-        $stock = $this->totalStock($bundle);
-        if ($stock > 0) {
-            $n = $this->fmtQty($stock);
+        $lock = $this->stockLock($bundle);
+        if ($lock === null) {
+            return;
+        }
+        if ($lock['assembled'] > 0) {
+            $n = $this->fmtQty($lock['assembled']);
             throw new \DomainException("No puedes cambiar los componentes mientras haya paquetes armados (stock: {$n}). Desarma primero.");
         }
+        $n = $this->fmtQty($lock['negative']);
+        throw new \DomainException("No puedes cambiar los componentes: el paquete tiene inventario negativo ({$n}) en alguna tienda. Corrige ese ajuste primero.");
     }
 
+    /** Suma de todas las filas de inventory del paquete (para mostrar `stock_total`; NO es el candado). */
     public function totalStock(Product $bundle): float
     {
         return (float) Inventory::query()->where('product_id', $bundle->id)->sum('quantity');
+    }
+
+    /**
+     * Candado de stock para borrar / editar la composición (2026-10-08). Mira
+     * CADA fila de `inventory` del paquete (≠ 0), no la suma: una fila negativa
+     * en otra tienda (ajuste viejo) podía dejar la suma en 0 y colar el borrado
+     * con paquetes armados. Devuelve null si todas las filas están en 0.
+     *
+     * @return array{assembled: float, negative: float}|null  Σ filas > 0 y Σ filas < 0
+     */
+    public function stockLock(Product $bundle): ?array
+    {
+        $qtys = Inventory::query()
+            ->where('product_id', $bundle->id)
+            ->where('quantity', '!=', 0)
+            ->pluck('quantity')
+            ->map(fn ($q) => (float) $q);
+        if ($qtys->isEmpty()) {
+            return null;
+        }
+
+        return [
+            'assembled' => (float) $qtys->filter(fn (float $q) => $q > 0)->sum(),
+            'negative' => (float) $qtys->filter(fn (float $q) => $q < 0)->sum(),
+        ];
+    }
+
+    /** True si alguna fila de `inventory` del paquete es ≠ 0 (una negativa también cuenta). */
+    public function hasStock(Product $bundle): bool
+    {
+        return Inventory::query()->where('product_id', $bundle->id)->where('quantity', '!=', 0)->exists();
     }
 
     /**

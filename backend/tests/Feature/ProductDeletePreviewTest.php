@@ -176,7 +176,7 @@ class ProductDeletePreviewTest extends TestCase
         $data = $this->preview($bundle)->assertOk()->json('data');
 
         $this->assertSame(1.0, (float) $data['bundles']['assembled_stock']);
-        $this->assertContains('No se puede eliminar: hay paquetes armados. Desármalos primero desde Paquetes.', $data['force_blockers']);
+        $this->assertContains('No se puede eliminar: el paquete tiene inventario (armados o un ajuste negativo). Desármalo o corrígelo desde Paquetes.', $data['force_blockers']);
     }
 
     public function test_traslado_pendiente_avisa_y_el_completado_no(): void
