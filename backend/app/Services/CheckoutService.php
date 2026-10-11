@@ -233,7 +233,7 @@ class CheckoutService
             // ── 2. Cargar items y validar que no esté vacío ───────────────────
             // orderBy(id) explícito: el zip posicional con $v2Lines (Descuentos
             // v2) depende de releer los draft items en su orden de inserción.
-            $draftItems = $draft->items()->with('product.paymentMethod')->orderBy('id')->get();
+            $draftItems = $draft->items()->with(['product.paymentMethod', 'product.images'])->orderBy('id')->get();
 
             if ($draftItems->isEmpty()) {
                 throw new \DomainException('No hay productos en la venta.');
@@ -318,6 +318,12 @@ class CheckoutService
                     // conserva su nombre/SKU en historial/reportes/ticket.
                     'product_name' => $draftItem->product?->name,
                     'product_sku'  => $draftItem->product?->sku,
+                    // Snapshot de imagen (2026-10-10): congelada al checkout,
+                    // igual que nombre/SKU — si el producto cambia de foto o se
+                    // borra después, esta línea conserva la que se vendió.
+                    'product_image' => $draftItem->product?->images
+                        ?->first(fn ($img) => $img->image_path && $img->image_path !== '0')
+                        ?->image_path,
                     'quantity'   => $draftItem->quantity,
                     'price'      => $draftItem->price,
                     'total'      => $draftItem->total,
@@ -376,7 +382,7 @@ class CheckoutService
             // ── 9. Cerrar draft ───────────────────────────────────────────────
             $draft->update(['status' => SalesDraft::STATUS_COMPLETED]);
 
-            return $sale->load(['items.product', 'payments.paymentMethod', 'customer']);
+            return $sale->load(['items.product', 'items.product.images', 'payments.paymentMethod', 'customer']);
         });
     }
 

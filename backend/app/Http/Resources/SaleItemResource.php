@@ -13,6 +13,17 @@ class SaleItemResource extends JsonResource
         // Permisos; los gerentes ya NO la traen por default desde 2026-06-24).
         $isAdmin = $request->user()?->canViewCost() ?? false;
 
+        // Imagen de la línea (2026-10-10): mismo espíritu que product_name/
+        // product_sku — `product_image` (path crudo) se congela al checkout y
+        // es la verdad histórica; si el producto cambia de foto o se borra
+        // después, la línea conserva la que se vendió. Fallback a la imagen
+        // ACTUAL del catálogo solo para líneas pre-migración sin snapshot.
+        $image = $this->product_image
+            ? \App\Models\ProductImage::resolveUrl($this->product_image)
+            : (($this->relationLoaded('product') && $this->product?->relationLoaded('images'))
+                ? $this->product->images->first(fn ($img) => $img->url !== '')?->url
+                : null);
+
         return [
             'id'         => $this->id,
             'product_id' => $this->product_id,
@@ -24,6 +35,7 @@ class SaleItemResource extends JsonResource
                 ?? ($this->relationLoaded('product') ? $this->product?->name : null),
             'product_sku' => $this->product_sku
                 ?? ($this->relationLoaded('product') ? $this->product?->sku : null),
+            'product_image' => $image ?: null,
             // Flag "producto eliminado": la línea vendió un producto que ya no
             // existe en el catálogo (nullOnDelete). Las líneas legacy de mangas
             // (manga_id) no cuentan.
@@ -73,6 +85,11 @@ class SaleItemResource extends JsonResource
                         'name' => $this->product->name,
                         'sku'  => $this->product->sku,
                         'product_type' => $this->product->product_type,
+                        // Mismo valor que `product_image` arriba (snapshot
+                        // congelado, con fallback a la imagen actual del
+                        // catálogo) — se repite aquí para no romper a quien
+                        // ya consume `item.product.image`.
+                        'image' => $image ?: null,
                     ],
                     // Legacy fallback: `product.cost` actual del producto.
                     // El frontend prefiere `sale_items.cost` (snapshot histórico);

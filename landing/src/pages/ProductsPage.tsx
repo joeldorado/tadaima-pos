@@ -24,7 +24,7 @@ import { toast } from "sonner";
 import { lookupProductByCode, createProduct, updateProduct, deleteProduct, forceDeleteProduct, uploadProductImage, removeProductImage, getInventory, updateInventory, getPrice, sendStockAlert, getCategories, getSuppliers, createSupplier, attachPromotionProducts } from "@tadaima/api";
 import type { ApiError } from "@tadaima/api";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
-import { useProductsQuery, useProductStatsQuery, type ProductsCatalogFilter } from "@/hooks/queries/useProducts";
+import { useProductsQuery, useProductStatsQuery, type ProductsCatalogFilter, type ProductsSortOption } from "@/hooks/queries/useProducts";
 import { useMangasQuery } from "@/hooks/queries/useMangas";
 import { useCategoriesQuery } from "@/hooks/queries/useCategories";
 import { ProductsSkeleton } from "@/components/products/ProductsSkeleton";
@@ -1764,12 +1764,129 @@ function FilterDropdown({ activeFilter, onSelect, isProductos, canViewCost, coun
   );
 }
 
+// ─── Dropdown de orden (2026-10-10) ──────────────────────────────────────────
+// Independiente del FilterDropdown: ahí se elige QUÉ productos se ven, aquí
+// en QUÉ ORDEN. "Más vendidos" (chip top) fija su propio orden server-side y
+// pisa cualquier opción de aquí (ver isTop en buildProductsListParams), así
+// que el botón se deshabilita mientras ese chip esté activo.
+const SORT_META: Record<Exclude<ProductsSortOption, null>, { label: string; icon: React.ComponentType<{ size?: number | string }> }> = {
+  stock_desc: { label: "Stock: mayor a menor", icon: ArrowDown },
+  stock_asc:  { label: "Stock: menor a mayor", icon: ArrowUp },
+  price_desc: { label: "Precio: mayor a menor", icon: ArrowDown },
+  price_asc:  { label: "Precio: menor a mayor", icon: ArrowUp },
+  newest:     { label: "Recientes primero", icon: ArrowDown },
+  oldest:     { label: "Antiguos primero", icon: ArrowUp },
+};
+const SORT_GROUPS: { title: string; options: Exclude<ProductsSortOption, null>[] }[] = [
+  { title: "Stock", options: ["stock_desc", "stock_asc"] },
+  { title: "Precio", options: ["price_desc", "price_asc"] },
+  { title: "Fecha de alta", options: ["newest", "oldest"] },
+];
+
+function SortDropdown({ sortBy, onSelect, disabled }: {
+  sortBy: ProductsSortOption;
+  onSelect: (s: ProductsSortOption) => void;
+  /** true mientras el chip "Más vendidos" esté activo (pisa el orden). */
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const active = sortBy ? SORT_META[sortBy] : null;
+  const pick = (s: ProductsSortOption) => { onSelect(s); setOpen(false); };
+
+  return (
+    <div ref={rootRef} className="relative shrink-0">
+      <button
+        onClick={() => !disabled && setOpen(v => !v)}
+        disabled={disabled}
+        className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-40 disabled:hover:scale-100"
+        data-testid="sort-dropdown"
+        style={active
+          ? { background: "rgba(68,153,255,0.12)", border: "1px solid rgba(68,153,255,0.5)", color: "#4499FF" }
+          : { background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", color: T.textSecondary }}
+        title={disabled ? "No disponible con «Más vendidos» activo" : "Ordenar catálogo"}
+      >
+        {active ? <active.icon size={13} /> : <ArrowUpDown size={13} />}
+        {active ? active.label : "Ordenar"}
+        <ChevronDown size={13} style={{ transform: open ? "rotate(180deg)" : undefined, transition: "transform 150ms ease" }} />
+      </button>
+
+      {open && (
+        <div
+          className="absolute right-0 top-full mt-2 z-[120] min-w-[230px] rounded-2xl p-1.5 shadow-2xl"
+          style={{ background: "var(--td-popup-bg, var(--td-panel-bg))", border: "1px solid var(--td-card-border)" }}
+        >
+          <button
+            onClick={() => pick(null)}
+            disabled={!sortBy}
+            data-testid="sort-clear"
+            className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-black transition-colors disabled:opacity-40 hover:bg-white/5"
+            style={{ color: T.textSecondary }}
+          >
+            <X size={13} />
+            Orden por defecto
+          </button>
+          {SORT_GROUPS.map(group => (
+            <div key={group.title}>
+              <div className="my-1" style={{ borderTop: "1px solid var(--td-card-border)" }} />
+              <p className="px-3 pt-1.5 pb-0.5 text-[9px] font-black uppercase tracking-widest" style={{ color: T.textMuted }}>
+                {group.title}
+              </p>
+              {group.options.map(key => {
+                const meta = SORT_META[key];
+                const isActive = sortBy === key;
+                return (
+                  <button
+                    key={key}
+                    onClick={() => pick(isActive ? null : key)}
+                    data-testid={`sort-${key}`}
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-black transition-colors hover:bg-white/5"
+                    style={{ color: isActive ? "#4499FF" : T.textPrimary, background: isActive ? "rgba(68,153,255,0.1)" : undefined }}
+                  >
+                    <meta.icon size={13} />
+                    <span className="flex-1 text-left">{meta.label}</span>
+                    {isActive && <CheckCircle2 size={13} />}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── App Principal ────────────────────────────────────────────────────────────
 export function ProductsPage() {
   const [pageSection, setPageSection] = useState<'productos' | 'tomos'>('productos');
   const [search, setSearch] = useState("");
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
   const [categorySearch, setCategorySearch] = useState("");
+  // Dropdown de categoría abierto con el listado completo al hacer clic
+  // (2026-10-10), no solo al escribir — antes había que teclear para verlo.
+  const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
+  const categoryDropdownRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!categoryDropdownOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (categoryDropdownRef.current && !categoryDropdownRef.current.contains(e.target as Node)) {
+        setCategoryDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [categoryDropdownOpen]);
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<"grid" | "list">(
     () => (localStorage.getItem('tadaima-products-view') ?? 'list') as "grid" | "list"
@@ -1820,6 +1937,8 @@ export function ProductsPage() {
   // apagar Promos). Las constantes derivadas conservan los nombres históricos
   // para no tocar los ~20 sitios de lectura.
   const [activeFilter, setActiveFilter] = useState<ProductsCatalogFilter>(null);
+  // Orden de la lista (2026-10-10) — independiente del chip de filtro.
+  const [sortBy, setSortBy] = useState<ProductsSortOption>(null);
   const showTopSellers = activeFilter === 'top';
   const showLowStock = activeFilter === 'low_stock';
   const showOutStock = activeFilter === 'out_of_stock';
@@ -1851,6 +1970,7 @@ export function ProductsPage() {
     withMeta: true,
     type: 'product',
     filter: activeFilter,
+    sortBy,
     threshold: 10,
     page: pagination.pageIndex + 1,
     perPage: pagination.pageSize,
@@ -1871,7 +1991,7 @@ export function ProductsPage() {
   // manualPagination + autoResetPageIndex:false nadie más la regresa a 1).
   useEffect(() => {
     setPagination(p => (p.pageIndex === 0 ? p : { ...p, pageIndex: 0 }));
-  }, [serverSearch, activeFilter, selectedStoreId, selectedCategoryId]);
+  }, [serverSearch, activeFilter, sortBy, selectedStoreId, selectedCategoryId]);
   // Librerías: se cargan al entrar a su tab, PERO también en background una vez
   // que el catálogo de productos terminó de cargar → al dar clic en "Tomos" ya
   // están en cache (instantáneo). El spinner de tomos sigue gateado a su tab,
@@ -2935,12 +3055,13 @@ export function ProductsPage() {
                     <X size={11} />
                   </button>
                 ) : (
-                  <div className="relative">
+                  <div className="relative" ref={categoryDropdownRef}>
                     <input
                       type="text"
                       placeholder="Categoría…"
                       value={categorySearch}
-                      onChange={e => setCategorySearch(e.target.value)}
+                      onFocus={() => setCategoryDropdownOpen(true)}
+                      onChange={e => { setCategorySearch(e.target.value); setCategoryDropdownOpen(true); }}
                       className="pl-3 pr-8 py-2 rounded-2xl text-xs font-semibold outline-none w-32 transition-all"
                       style={{
                         background: "var(--td-input-bg)",
@@ -2949,15 +3070,17 @@ export function ProductsPage() {
                       }}
                     />
                     <BookOpen size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: T.textMuted }} />
-                    {categorySearch.length > 0 && filtered.length > 0 && (
+                    {categoryDropdownOpen && (
                       <div
                         className="absolute left-0 top-full mt-1 z-50 rounded-xl overflow-hidden shadow-xl min-w-[180px] max-h-52 overflow-y-auto"
                         style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)" }}
                       >
-                        {filtered.map(cat => (
+                        {filtered.length === 0 ? (
+                          <p className="px-3 py-3 text-xs" style={{ color: T.textMuted }}>Sin resultados</p>
+                        ) : filtered.map(cat => (
                           <button
                             key={cat.id}
-                            onClick={() => { setSelectedCategoryId(cat.id); setCategorySearch(""); }}
+                            onClick={() => { setSelectedCategoryId(cat.id); setCategorySearch(""); setCategoryDropdownOpen(false); }}
                             className="w-full text-left px-3 py-2 text-xs font-semibold hover:bg-white/5 transition-colors"
                             style={{ color: T.textPrimary }}
                           >
@@ -2985,6 +3108,10 @@ export function ProductsPage() {
             }}
             storeName={selectedStoreId ? (stores.find(s => s.id === selectedStoreId)?.name ?? null) : null}
           />
+
+          {pageSection === 'productos' && (
+            <SortDropdown sortBy={sortBy} onSelect={setSortBy} disabled={showTopSellers} />
+          )}
 
           {/* Valor invertido = Σ costo × stock del catálogo COMPLETO (stats). */}
           {canViewCost && pageSection === 'productos' && (

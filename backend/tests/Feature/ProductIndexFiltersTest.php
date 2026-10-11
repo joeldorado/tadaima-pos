@@ -346,6 +346,80 @@ class ProductIndexFiltersTest extends TestCase
         );
     }
 
+    public function test_sort_stock_asc_tambien_manda_sin_stock_al_final(): void
+    {
+        // Menos piezas primero (entre los que SÍ tienen stock), agotado al
+        // final igual que en default/top/stock_desc.
+        $this->assertSame(
+            [
+                $this->sinCostoConStock->id,   // stock 3
+                $this->conCostoPocoStock->id,  // stock 5
+                $this->conCostoMuchoStock->id, // stock 50
+                $this->sinCostoAgotado->id,    // 0 — siempre al final
+            ],
+            $this->orderedIds('&sort=stock_asc'),
+        );
+    }
+
+    public function test_sort_price_desc_y_asc(): void
+    {
+        // El setup deja a los 4 con price_1=100; dos productos extra con
+        // precios distintos para probar el orden sin empate.
+        $barato = $this->makeProduct('Llavero Barato', 2.0, 5);
+        $barato->price()->update(['price_1' => 20]);
+        $caro = $this->makeProduct('Figura Premium', 50.0, 2);
+        $caro->price()->update(['price_1' => 500]);
+
+        $desc = $this->orderedIds('&sort=price_desc');
+        $this->assertSame($caro->id, $desc[0], 'El más caro va primero en price_desc');
+        $this->assertLessThan(
+            array_search($this->sinCostoAgotado->id, $desc, true),
+            array_search($barato->id, $desc, true),
+            'El agotado sigue al final aunque sea el más barato',
+        );
+
+        $asc = $this->orderedIds('&sort=price_asc');
+        // Entre los que SÍ tienen stock, el más barato va primero.
+        $conStockAsc = array_values(array_diff($asc, [$this->sinCostoAgotado->id]));
+        $this->assertSame($barato->id, $conStockAsc[0], 'El más barato (con stock) va primero en price_asc');
+        $this->assertSame($this->sinCostoAgotado->id, end($asc), 'El agotado sigue al final en price_asc');
+    }
+
+    public function test_sort_newest_y_oldest(): void
+    {
+        // created_at explícito y distinto por producto — el orden de creación
+        // en setUp() no garantiza timestamps distintos (misma transacción).
+        $base = now();
+        DB::table('products')->where('id', $this->sinCostoAgotado->id)->update(['created_at' => $base->copy()->subDays(3)]);
+        DB::table('products')->where('id', $this->sinCostoConStock->id)->update(['created_at' => $base->copy()->subDays(2)]);
+        DB::table('products')->where('id', $this->conCostoPocoStock->id)->update(['created_at' => $base->copy()->subDay()]);
+        DB::table('products')->where('id', $this->conCostoMuchoStock->id)->update(['created_at' => $base]);
+
+        // newest: más reciente primero — AUNQUE el agotado sea el más viejo,
+        // sigue mandándose al final (misma regla que los demás sorts).
+        $this->assertSame(
+            [
+                $this->conCostoMuchoStock->id,
+                $this->conCostoPocoStock->id,
+                $this->sinCostoConStock->id,
+                $this->sinCostoAgotado->id,
+            ],
+            $this->orderedIds('&sort=newest'),
+        );
+
+        // oldest: más viejo primero entre los que SÍ tienen stock; el agotado
+        // (el más viejo de todos) igual queda al final.
+        $this->assertSame(
+            [
+                $this->sinCostoConStock->id,
+                $this->conCostoPocoStock->id,
+                $this->conCostoMuchoStock->id,
+                $this->sinCostoAgotado->id,
+            ],
+            $this->orderedIds('&sort=oldest'),
+        );
+    }
+
     private function makeAdmin(): User
     {
         $user = User::create([

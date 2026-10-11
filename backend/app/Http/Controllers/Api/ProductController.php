@@ -34,7 +34,9 @@ class ProductController extends Controller
      *   ?no_cost=1     sin costo real (cost NULL o <= 0) Y con stock > 0
      *     + ?no_cost_stock=con_stock|exhibicion|bodega|todos (default con_stock;
      *       todos = incluye agotados)
-     *   ?sort=top|stock_desc  más vendidos 30d / más piezas primero
+     *   ?sort=top|stock_desc|stock_asc|price_desc|price_asc|newest|oldest
+     *     más vendidos 30d / piezas desc / piezas asc / precio A desc / precio
+     *     A asc / alta desc (recientes primero) / alta asc (2026-10-10)
      *   ?out_of_stock=1 / ?low_stock=1 (+?threshold=, default 10) por stock
      *   ?has_promo=1   con promo vigente (scoped a ?store_id si viene)
      *   ?no_category=1 sin NINGUNA categoría (pivote vacío)
@@ -233,21 +235,47 @@ class ProductController extends Controller
         // that count, then by id desc as a stable tie-breaker (newest wins).
         // Useful for warming the cache with the most-likely-needed products
         // before the cashier opens Caja.
-        if ($request->get('sort') === 'top') {
-            $since = now()->subDays(30);
-            $query->withCount(['saleItems as recent_sales_count' => function ($q) use ($since) {
-                $q->whereHas('sale', fn ($sq) => $sq->where('created_at', '>=', $since));
-            }])->orderByDesc('recent_sales_count')->orderByDesc('id');
-        } elseif ($request->get('sort') === 'stock_desc') {
-            // Más piezas primero (modal sin costo, 2026-09-25): capturar primero
-            // el costo de lo que más pesa en inventario. Desempate estable por id.
-            $query->orderByRaw("{$stockSql} DESC", $bind)->orderBy('id', 'asc');
-        } else {
-            // Tiebreak estable (2026-08-05): antes no había NINGÚN orden
-            // secundario en el listado default, lo que hacía la paginación
-            // server-side no determinística con 10k+ filas (una fila podía
-            // repetirse o saltarse entre páginas).
-            $query->orderBy('id', 'asc');
+        $priceSql = '(SELECT price_1 FROM product_prices WHERE product_prices.product_id = products.id)';
+
+        switch ($request->get('sort')) {
+            case 'top':
+                $since = now()->subDays(30);
+                $query->withCount(['saleItems as recent_sales_count' => function ($q) use ($since) {
+                    $q->whereHas('sale', fn ($sq) => $sq->where('created_at', '>=', $since));
+                }])->orderByDesc('recent_sales_count')->orderByDesc('id');
+                break;
+            case 'stock_desc':
+                // Más piezas primero (modal sin costo, 2026-09-25): capturar primero
+                // el costo de lo que más pesa en inventario. Desempate estable por id.
+                $query->orderByRaw("{$stockSql} DESC", $bind)->orderBy('id', 'asc');
+                break;
+            case 'stock_asc':
+                // Menos piezas primero (filtro "Productos", 2026-10-10). Los
+                // agotados (0) ya quedan al final por el orderByRaw de arriba
+                // — aquí ordenamos lo que SÍ tiene piezas, de menos a más.
+                $query->orderByRaw("{$stockSql} ASC", $bind)->orderBy('id', 'asc');
+                break;
+            case 'price_desc':
+                // Precio normal (nivel A, price_1) de mayor a menor. NULLS LAST
+                // portable: el CASE manda los NULL al final en cualquier motor.
+                $query->orderByRaw("({$priceSql}) IS NULL")->orderByRaw("{$priceSql} DESC")->orderBy('id', 'asc');
+                break;
+            case 'price_asc':
+                $query->orderByRaw("({$priceSql}) IS NULL")->orderByRaw("{$priceSql} ASC")->orderBy('id', 'asc');
+                break;
+            case 'newest':
+                // Más recientes primero (alta al catálogo).
+                $query->orderByDesc('created_at')->orderByDesc('id');
+                break;
+            case 'oldest':
+                $query->orderBy('created_at', 'asc')->orderBy('id', 'asc');
+                break;
+            default:
+                // Tiebreak estable (2026-08-05): antes no había NINGÚN orden
+                // secundario en el listado default, lo que hacía la paginación
+                // server-side no determinística con 10k+ filas (una fila podía
+                // repetirse o saltarse entre páginas).
+                $query->orderBy('id', 'asc');
         }
 
         $perPage = (int) $request->get('per_page', 100);

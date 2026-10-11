@@ -22,7 +22,7 @@ class SalesController extends Controller
 {
     /** Relaciones del detalle de una venta (show y respuestas de mutaciones). */
     private const DETAIL_RELATIONS = [
-        'items.product', 'payments.paymentMethod', 'customer', 'user:id,name',
+        'items.product', 'items.product.images', 'payments.paymentMethod', 'customer', 'user:id,name',
         'preSaleOrders.items.catalog:id,product_name',
         'cancellations', 'registerSession:id,status',
     ];
@@ -55,6 +55,11 @@ class SalesController extends Controller
 
         $query = Sale::with([
                 'customer', 'payments.paymentMethod', 'items.product', 'user:id,name',
+                // Thumbnail de la línea en Ventas/Reportes (2026-10-10): antes
+                // dependía de un fetch aparte y limitado del catálogo (solo
+                // 100 productos), así que la mayoría de las filas no traían
+                // imagen. Viene en el propio snapshot de la venta.
+                'items.product.images',
                 // Categorías del producto (2026-10-03): Reportes y el Excel del
                 // corte agrupan por categoría A-Z, igual que en Productos.
                 'items.product.categories' => fn ($q) => $q->select('product_categories.id', 'product_categories.name'),
@@ -299,7 +304,7 @@ class SalesController extends Controller
             }
         });
 
-        $sale->load(['items.product', 'payments.paymentMethod', 'customer']);
+        $sale->load(['items.product', 'items.product.images', 'payments.paymentMethod', 'customer']);
 
         return $this->success(new SaleResource($sale), 'Devolución registrada correctamente.');
     }
@@ -345,7 +350,7 @@ class SalesController extends Controller
             return $this->error($e->getMessage(), 422);
         }
 
-        $sale->refresh()->load(['items.product', 'payments.paymentMethod', 'customer', 'registerSession:id,status']);
+        $sale->refresh()->load(['items.product', 'items.product.images', 'payments.paymentMethod', 'customer', 'registerSession:id,status']);
         return $this->success([
             'sale'         => new SaleResource($sale),
             'cancellation' => [
