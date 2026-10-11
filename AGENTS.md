@@ -259,6 +259,14 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   Efectivo). Es por usuario en esa PC (localStorage `tadaima-caja-metodo-fav:{userId}`, sin
   backend); con Tarjeta recuerda la última terminal. Solo decide el método de ARRANQUE: las
   reglas de preventa, productos solo efectivo/tarjeta y precio socio siguen mandando.
+- **Aviso promo vs método de pago** (2026-10-10, `lib/promoPaymentAlert.ts` +
+  `components/sell/PromoPaymentAlertModal.tsx`): cuando la promo que ganó una línea no se
+  cobra con el método actual (p. ej. favorito Tarjeta y promo solo efectivo), Caja abre un
+  aviso y el cajero decide: cambiar al método que acepta la promo, seguir con el método y
+  cobrar sin la promo, o "Decidir después". Caja NO cambia el método sola por una promo
+  (decisión de Joel); el cambio automático con aviso sigue siendo solo para restricciones
+  del PRODUCTO y de preventa. El modal no roba el foco ni tiene botón por defecto: el
+  lector sigue activo y un Enter no elige por el cajero.
 - Estado de servidor en TanStack Query, persistido en IndexedDB (soporte offline).
 - La lógica de negocio pura va en `landing/src/lib/` con su test al lado.
 - **Botón global "Actualizar"** (2026-10-01, `lib/screenRefresh.ts`): vive en el sidebar

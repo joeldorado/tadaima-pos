@@ -170,7 +170,10 @@ export function methodTable(col: number, pred: (n: string) => boolean, label: st
     columns: [
       { key: "qty", header: `Cant. ${label}`, qty: true, color: GRAY, value: qty },
       ...(canViewCost ? [{ key: "costoUnit", header: "Costo Unitario", color: GRAY, noSum: true, value: (g: GroupedProduct) => g.cost_tag ?? 0 }] : []),
-      ...(canViewCost ? [{ key: "costo", header: "Costo Producto", color: GRAY, value: cost }] : []),
+      ...(canViewCost ? [{
+        key: "costo", header: "Costo Producto", color: GRAY, value: cost,
+        formula: (r: number, ref: (k: string, r: number) => string) => `${ref("qty", r)}*${ref("costoUnit", r)}`,
+      }] : []),
       { key: "venta", header: `Venta ${label}`, color: GREEN, bold: true, value: revenue },
       ...(canViewCost ? [{
         key: "util", header: `Utilidad ${label}`, color: GREEN, bold: true,
@@ -195,7 +198,10 @@ export function cardTable(col: number, canViewCost: boolean, ivaRate: number, to
       { key: "qty", header: "Cant. Tarjeta", qty: true, color: GRAY, value: (g) => part(g).qty },
       { key: "bruto", header: "Bruto Tarjeta", color: GRAY, value: (g) => part(g).revenue },
       ...(canViewCost ? [{ key: "costoUnit", header: "Costo Unitario", color: GRAY, noSum: true, value: (g: GroupedProduct) => g.cost_tag ?? 0 }] : []),
-      ...(canViewCost ? [{ key: "costo", header: "Costo Producto", color: GRAY, value: cost }] : []),
+      ...(canViewCost ? [{
+        key: "costo", header: "Costo Producto", color: GRAY, value: cost,
+        formula: (r: number, ref: (k: string, r: number) => string) => `${ref("qty", r)}*${ref("costoUnit", r)}`,
+      }] : []),
       { key: "comm", header: "Comisión TPV", color: RED, value: comm },
       {
         key: "iva", header: `IVA (${Math.round(ivaRate * 100)}%)`, color: AMBER, value: (g) => comm(g) * ivaRate,
@@ -262,7 +268,7 @@ export function drawPresales(
     sh.set(r, costCol + 1, p.deuda, cellMoney(RED, true));
     sh.setF(r, costCol + 2, `${cellRef(r, costCol)}+${cellRef(r, costCol + 1)}`, p.pactado, cellMoney(GRAY));
     if (canViewCost) {
-      sh.set(r, costCol + 3, p.costoNeto, cellMoney(GRAY));
+      sh.setF(r, costCol + 3, `${cellRef(r, col + 1)}*${cellRef(r, col + 2)}`, p.costoNeto, cellMoney(GRAY));
       // Modelo del dueño: apartada → costo = abono (utilidad $0); liquidada → venta − costo.
       sh.setF(r, costCol + 4, `${cellRef(r, costCol)}-${cellRef(r, costCol + 3)}`, p.utilidad, cellMoney(p.utilidad < 0 ? RED : GREEN, true));
     }

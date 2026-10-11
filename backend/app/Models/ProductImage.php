@@ -16,14 +16,25 @@ class ProductImage extends Model
 
     public function getUrlAttribute(): string
     {
-        if (!$this->image_path || $this->image_path === '0') {
+        return self::resolveUrl($this->image_path);
+    }
+
+    /**
+     * Resuelve un `image_path` crudo a URL pública. Extraído de
+     * `getUrlAttribute()` (2026-10-10) para que snapshots de imagen fuera de
+     * este modelo (p.ej. `sale_items.product_image`) resuelvan la URL con la
+     * MISMA lógica de storage, sin duplicarla.
+     */
+    public static function resolveUrl(?string $imagePath): string
+    {
+        if (!$imagePath || $imagePath === '0') {
             return '';
         }
         if (config('filesystems.default') === 'gcs') {
             $bucket = config('filesystems.disks.gcs.bucket', 'tadaima-media');
-            return "https://storage.googleapis.com/{$bucket}/{$this->image_path}";
+            return "https://storage.googleapis.com/{$bucket}/{$imagePath}";
         }
-        return Storage::url($this->image_path);
+        return Storage::url($imagePath);
     }
 
     public function product(): BelongsTo
