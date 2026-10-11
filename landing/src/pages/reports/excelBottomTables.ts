@@ -101,7 +101,7 @@ export function drawEgresos(
   return totalRow;
 }
 
-type ProductEntry = AdjustmentEntry & { product: string };
+export type ProductEntry = AdjustmentEntry & { product: string };
 
 interface AdjustmentTable {
   title: string;
@@ -139,7 +139,7 @@ function drawAdjustments(sh: SheetBuilder, startRow: number, L: BottomLayout, t:
   return totalRow;
 }
 
-const entriesFor = (
+export const entriesFor = (
   groups: readonly GroupedProduct[], pick: (g: GroupedProduct) => readonly AdjustmentEntry[] | undefined, bucket: BenefitBucket,
 ): ProductEntry[] =>
   groups.flatMap((g) => (pick(g) ?? []).filter((e) => e.bucket === bucket).map((e) => ({ ...e, product: g.name })));
