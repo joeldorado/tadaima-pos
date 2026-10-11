@@ -1,4 +1,5 @@
 import { apiClient } from './client'
+import { deleteRequestConfig, type DeleteProductOptions } from './products'
 import type { Manga, CreateMangaInput, UpdateMangaInput, MangaInventoryItem } from './types'
 
 export interface GetMangasParams {
@@ -35,8 +36,13 @@ export async function updateManga(id: number, input: UpdateMangaInput): Promise<
   return response.data
 }
 
-export async function deleteManga(id: number): Promise<void> {
-  await apiClient.delete(`/mangas/${id}`)
+/**
+ * DELETE /mangas/{id}. Misma puerta que /products: la vista previa es
+ * GET /products/{id}/delete-preview (un tomo es un producto) y `expected`
+ * hace el mismo cross-check (2026-10-09).
+ */
+export async function deleteManga(id: number, opts?: DeleteProductOptions): Promise<void> {
+  await apiClient.delete(`/mangas/${id}`, deleteRequestConfig(opts))
 }
 
 export async function uploadMangaImage(

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreProductRequest;
+use App\Http\Requests\DeleteProductRequest;
 use App\Http\Requests\UpdateProductRequest;
 use App\Http\Resources\ProductLightResource;
 use App\Http\Resources\ProductResource;
@@ -12,6 +13,7 @@ use App\Models\ProductImage;
 use App\Models\ProductStorePrice;
 use App\Models\Store;
 use App\Models\SystemLog;
+use App\Services\ProductDeletionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -687,41 +689,31 @@ class ProductController extends Controller
      * el historial, los reportes y el ticket siguen completos. Solo bloquean
      * los APARTADOS (FK restrict: son un contrato vivo ligado al producto).
      */
-    public function destroy(Product $product): JsonResponse
+    public function destroy(DeleteProductRequest $request, Product $product, ProductDeletionService $deletion): JsonResponse
     {
         // Eliminar = permiso de ver costo (admin o gerente con can_view_cost).
         if ($resp = $this->canDeleteProductsError()) {
             return $resp;
         }
 
-        $layawaysCount = DB::table('layaways')->where('product_id', $product->id)->count();
-        if ($layawaysCount > 0) {
-            return $this->error(
-                "No se puede eliminar: el producto tiene {$layawaysCount} apartado(s). Puedes desactivarlo.",
-                422
-            );
-        }
-
-        // Paquetes (2026-10-07): un componente no se borra (FK restrict) y un
-        // paquete con armados tampoco (se borra desde /bundles tras desarmar).
-        if ($resp = $this->bundleDeleteGuardError($product)) {
-            return $resp;
-        }
-
-        // Delete images from default storage (gcs en prod, public/local en dev)
-        foreach ($product->images as $image) {
-            Storage::delete($image->image_path);
-        }
-
         $productSnapshot = ['id' => $product->id, 'name' => $product->name, 'sku' => $product->sku];
-        $salesCount = $this->snapshotAndDelete($product);
+
+        // Bloqueos (apartados, componente de paquete, paquete armado) y el
+        // cross-check `expected` de la vista previa viven en el servicio
+        // (2026-10-09). Un DomainException es un 422 con el mensaje tal cual.
+        try {
+            $result = $deletion->delete($product, $request->user(), force: false, expected: $request->expected());
+        } catch (\DomainException $e) {
+            return $this->error($e->getMessage(), 422);
+        }
+        $salesCount = $result['sales_kept'];
 
         SystemLog::write(
             action: 'product.deleted',
             description: "Producto eliminado: {$productSnapshot['name']} (SKU: {$productSnapshot['sku']})",
             entityType: 'product',
             entityId: $productSnapshot['id'],
-            meta: ['mode' => 'soft', 'snapshot' => $productSnapshot, 'sales_kept' => $salesCount],
+            meta: ['mode' => 'soft', 'snapshot' => $productSnapshot, 'sales_kept' => $salesCount, 'audit' => $result['audit']],
         );
 
         return $this->success(null, $salesCount > 0
@@ -733,8 +725,8 @@ class ProductController extends Controller
      * Congela el snapshot en las líneas de venta que aún no lo tengan (ventas
      * pre-migración), protege las promos generales compartidas y borra el
      * producto. Devuelve cuántas líneas de venta lo referencian (quedan con
-     * product_id NULL — nullOnDelete). Compartido por destroy/forceDestroy y
-     * MangaController::destroy.
+     * product_id NULL — nullOnDelete). Lo llama
+     * ProductDeletionService::delete (productos y tomos) y BundleService::delete.
      */
     public static function snapshotAndDelete(Product $product): int
     {
@@ -760,42 +752,46 @@ class ProductController extends Controller
     }
 
     /**
-     * DELETE /products/{product}/force
-     * Elimina el producto sin importar ventas ni apartados.
-     * Limpia manualmente las tablas sin cascade antes de borrar.
+     * GET /products/{product}/delete-preview
+     *
+     * Vista previa antes de eliminar (2026-10-09): stock por tienda, ventas,
+     * apartados, preventas, traslados, paquetes, promos, avisos y bloqueos.
+     * Mismo gate que el DELETE. Sirve también para tomos (mismo modelo).
      */
-    public function forceDestroy(Product $product): JsonResponse
+    public function deletePreview(Request $request, Product $product, ProductDeletionService $deletion): JsonResponse
     {
-        // Borrado TOTAL (mata ventas históricas/apartados): solo admin.
-        if ($resp = $this->adminOnlyError()) {
+        if ($resp = $this->canDeleteProductsError()) {
             return $resp;
         }
-        if ($resp = $this->bundleDeleteGuardError($product)) {
+
+        return $this->success($deletion->preview($product, $request->user()));
+    }
+
+    /**
+     * DELETE /products/{product}/force
+     * Elimina el producto sin importar ventas ni apartados (borra los apartados).
+     */
+    public function forceDestroy(DeleteProductRequest $request, Product $product, ProductDeletionService $deletion): JsonResponse
+    {
+        // Borrado TOTAL (mata apartados): solo admin.
+        if ($resp = $this->adminOnlyError()) {
             return $resp;
         }
 
         $productSnapshot = ['id' => $product->id, 'name' => $product->name, 'sku' => $product->sku];
 
-        DB::transaction(function () use ($product) {
-            // Delete images from default storage (gcs en prod, public/local en dev)
-            foreach ($product->images as $image) {
-                Storage::delete($image->image_path);
-            }
-
-            // Manually handle tables without cascade
-            DB::table('layaways')->where('product_id', $product->id)->delete();
-
-            // Snapshot + null-out de promos compartidas + delete (las ventas
-            // conservan nombre/SKU también en el borrado total).
-            self::snapshotAndDelete($product);
-        });
+        try {
+            $result = $deletion->delete($product, $request->user(), force: true, expected: $request->expected());
+        } catch (\DomainException $e) {
+            return $this->error($e->getMessage(), 422);
+        }
 
         SystemLog::write(
             action: 'product.force_deleted',
             description: "Producto eliminado forzosamente: {$productSnapshot['name']} (SKU: {$productSnapshot['sku']})",
             entityType: 'product',
             entityId: $productSnapshot['id'],
-            meta: ['mode' => 'force', 'snapshot' => $productSnapshot],
+            meta: ['mode' => 'force', 'snapshot' => $productSnapshot, 'sales_kept' => $result['sales_kept'], 'audit' => $result['audit']],
         );
 
         return $this->success(null, 'Producto eliminado forzosamente.');
@@ -1051,27 +1047,6 @@ class ProductController extends Controller
     }
 
     // ─── Helpers privados ─────────────────────────────────────────────────────
-
-    /**
-     * Paquetes (2026-10-07): 422 si el producto es componente de un paquete o
-     * si es un paquete con alguna fila de inventory ≠ 0 (armados o un ajuste
-     * negativo: mismo candado que BundleService::delete, 2026-10-08).
-     * Compartido con MangaController::destroy.
-     */
-    public static function bundleDeleteGuardError(Product $product): ?JsonResponse
-    {
-        $service = app(\App\Services\BundleService::class);
-        try {
-            $service->assertNotComponent($product);
-            if ($product->isBundle() && $service->hasStock($product)) {
-                throw new \DomainException('No se puede eliminar: el paquete tiene inventario (armados o un ajuste negativo). Desármalo o corrígelo desde Paquetes.');
-            }
-        } catch (\DomainException $e) {
-            return response()->json(['success' => false, 'error' => $e->getMessage()], 422);
-        }
-
-        return null;
-    }
 
     /** Público/estático desde 2026-10-07: BundleService lo reutiliza para los paquetes. */
     public static function syncPrices(Product $product, array $prices): void

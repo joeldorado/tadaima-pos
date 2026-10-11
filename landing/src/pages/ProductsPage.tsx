@@ -21,7 +21,7 @@ import { isAdmin as isAdminRole, isManager as isManagerRole, canDeleteProducts }
 import { CategoryMultiPicker } from "@/components/products/CategoryMultiPicker";
 import { joinCategoryNames } from "@/lib/categoryPicker";
 import { toast } from "sonner";
-import { lookupProductByCode, createProduct, updateProduct, deleteProduct, forceDeleteProduct, uploadProductImage, removeProductImage, getInventory, updateInventory, getPrice, sendStockAlert, getCategories, getSuppliers, createSupplier, attachPromotionProducts } from "@tadaima/api";
+import { lookupProductByCode, createProduct, updateProduct, uploadProductImage, removeProductImage, getInventory, updateInventory, getPrice, sendStockAlert, getCategories, getSuppliers, createSupplier, attachPromotionProducts } from "@tadaima/api";
 import type { ApiError } from "@tadaima/api";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useProductsQuery, useProductStatsQuery, type ProductsCatalogFilter, type ProductsSortOption } from "@/hooks/queries/useProducts";
@@ -54,6 +54,7 @@ import { ProductTypeSelectorModal } from "@/components/products/ProductTypeSelec
 import { StoreStockBreakdown } from "@/components/inventory/StoreStockBreakdown";
 import { MangaBatchModal } from "@/components/products/MangaBatchModal";
 import { MangaEditModal } from "@/components/products/MangaEditModal";
+import { DeleteProductModal } from "@/components/products/DeleteProductModal";
 import { QuickStockModal } from "@/components/products/QuickStockModal";
 import { MissingCostModal } from "@/components/products/MissingCostModal";
 import { ProductPromotionsTab } from "@/components/products/ProductPromotionsTab";
@@ -2261,42 +2262,7 @@ export function ProductsPage() {
   };
 
   const [deleteTarget, setDeleteTarget] = React.useState<Producto | null>(null);
-  const [deleteLoading, setDeleteLoading] = React.useState(false);
-  // Modo del delete (2026-08-18): "soft" = borrar el producto; sus VENTAS se
-  //   conservan en historial/reportes vía snapshot (solo apartados bloquean).
-  //   "force" (admin) = además borra los apartados.
-  const [deleteMode, setDeleteMode] = React.useState<"soft" | "force">("soft");
-  // Confirmación extra para force: el cajero debe tipear el nombre del producto.
-  const [forceConfirmText, setForceConfirmText] = React.useState("");
-
-  const handleDeleteProduct = async (): Promise<void> => {
-    if (!deleteTarget) return;
-    setDeleteLoading(true);
-    try {
-      if (deleteMode === "force") {
-        await forceDeleteProduct(deleteTarget.id);
-      } else {
-        await deleteProduct(deleteTarget.id);
-      }
-      void invalidateProducts();
-      setIsModalOpen(false);
-      setEditingProduct(undefined);
-      setDeleteTarget(null);
-      setDeleteMode("soft");
-      setForceConfirmText("");
-      toast.success(deleteMode === "force"
-        ? 'Producto y sus apartados eliminados. Las ventas quedan en el historial.'
-        : 'Producto eliminado. Sus ventas quedan en el historial y reportes.');
-      void refreshProductCount();
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
-        ?? 'No se pudo eliminar el producto.';
-      // En modo soft, si el backend rechaza por relaciones, sugerimos cambiar a force.
-      toast.error(msg + (deleteMode === "soft" ? " Cambia a 'Borrar TODO' si quieres eliminarlo de todos modos." : ""));
-    } finally {
-      setDeleteLoading(false);
-    }
-  };
+  // El modo (soft/force), la vista previa y el borrado viven en DeleteProductModal (2026-10-09).
 
   const handleToggleWhatsappSelection = (id: number) => {
     setSelectedForWhatsapp(prev => 
@@ -3486,112 +3452,25 @@ export function ProductsPage() {
         </div>
       )}
 
-      {deleteTarget && (() => {
-        const close = () => { if (!deleteLoading) { setDeleteTarget(null); setDeleteMode("soft"); setForceConfirmText(""); } };
-        const isForce = deleteMode === "force";
-        const forceConfirmed = !isForce || forceConfirmText.trim().toLowerCase() === deleteTarget.nombre.trim().toLowerCase();
-        return (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/85 backdrop-blur-md" onClick={close} />
-            <div className="relative w-full max-w-md rounded-2xl p-6 shadow-2xl transition-all" style={{ background: "var(--td-panel-bg)", border: `1px solid ${isForce ? 'rgba(239,68,68,0.7)' : 'rgba(239,68,68,0.3)'}` }}>
-              <div className="flex items-start gap-3 mb-4">
-                <div className="w-12 h-12 rounded-full flex items-center justify-center shrink-0 animate-pulse" style={{ background: isForce ? 'rgba(239,68,68,0.25)' : 'rgba(239,68,68,0.12)' }}>
-                  <AlertTriangle size={26} className="text-red-400" />
-                </div>
-                <div>
-                  <h3 className="font-black text-lg uppercase tracking-wider" style={{ color: T.textPrimary }}>
-                    {isForce ? '⚠️ Borrado total' : 'Eliminar producto'}
-                  </h3>
-                  <p className="text-xs mt-1" style={{ color: T.textSecondary }}>Esta acción <span className="text-red-400 font-bold">NO se puede deshacer</span>.</p>
-                </div>
-              </div>
-
-              <div className="rounded-xl p-3 mb-4" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
-                <p className="font-bold text-sm" style={{ color: T.textPrimary }}>{deleteTarget.nombre}</p>
-                <p className="text-[10px] mt-0.5" style={{ color: T.textSecondary }}>SKU: {deleteTarget.sku || "—"}</p>
-              </div>
-
-              {/* Radio: elegir modo */}
-              <div className="space-y-2 mb-4">
-                <label className={`flex items-start gap-3 p-3 rounded-xl cursor-pointer transition-all ${!isForce ? 'bg-amber-500/10 border border-amber-500/30' : ''}`} style={!isForce ? undefined : { background: PRODUCT_THEME.surfaceMuted, border: PRODUCT_THEME.borderSubtle }}>
-                  <input
-                    type="radio"
-                    name="deleteMode"
-                    checked={!isForce}
-                    onChange={() => { setDeleteMode("soft"); setForceConfirmText(""); }}
-                    disabled={deleteLoading}
-                    className="mt-0.5 accent-amber-500"
-                  />
-                  <div className="flex-1">
-                    <p className="font-black text-sm" style={{ color: T.textPrimary }}>Solo el producto</p>
-                    <p className="text-[11px] mt-0.5" style={{ color: T.textSecondary }}>
-                      Elimina el producto con sus imágenes, inventario y precios. <strong className="text-amber-400">Sus ventas NO se tocan</strong>: quedan en historial y reportes con el nombre marcado como “(eliminado)”. Si tiene apartados, fallará — desactívalo (Baja) o resuelve los apartados primero.
-                    </p>
-                  </div>
-                </label>
-
-                {/* Borrar TODO (mata ventas históricas): solo admin — el API
-                    también lo exige (adminOnlyError en /products/{id}/force). */}
-                {isAdmin && (
-                <label className={`flex items-start gap-3 p-3 rounded-xl cursor-pointer transition-all ${isForce ? 'bg-red-500/10 border border-red-500/40' : ''}`} style={isForce ? undefined : { background: PRODUCT_THEME.surfaceMuted, border: PRODUCT_THEME.borderSubtle }}>
-                  <input
-                    type="radio"
-                    name="deleteMode"
-                    checked={isForce}
-                    onChange={() => setDeleteMode("force")}
-                    disabled={deleteLoading}
-                    className="mt-0.5 accent-red-500"
-                  />
-                  <div className="flex-1">
-                    <p className="font-black text-sm" style={{ color: T.textPrimary }}>⚠️ Borrar TODO (también apartados)</p>
-                    <p className="text-[11px] mt-0.5" style={{ color: T.textSecondary }}>
-                      Borra el producto Y <strong className="text-red-400">sus apartados</strong> (además de inventario y precios). Las ventas se conservan en historial/reportes. Úsalo solo si “Solo el producto” falla por apartados.
-                    </p>
-                  </div>
-                </label>
-                )}
-              </div>
-
-              {/* Confirmación tipeada para modo force */}
-              {isForce && (
-                <div className="mb-4">
-                  <p className="text-[11px] font-bold text-red-400 mb-2 uppercase tracking-wider">
-                    Para confirmar, tipea el nombre del producto:
-                  </p>
-                  <input
-                    type="text"
-                    value={forceConfirmText}
-                    onChange={e => setForceConfirmText(e.target.value)}
-                    placeholder={deleteTarget.nombre}
-                    disabled={deleteLoading}
-                    className="w-full px-3 py-2 rounded-xl text-sm font-bold border outline-none transition-all"
-                    style={{ ...T.input, borderColor: forceConfirmed ? '#10b981' : 'rgba(239,68,68,0.4)', color: forceConfirmed ? '#10b981' : T.textPrimary }}
-                  />
-                </div>
-              )}
-
-              <div className="flex gap-3 justify-end">
-                <button
-                  onClick={close}
-                  disabled={deleteLoading}
-                  className="px-5 py-2.5 rounded-xl text-sm font-bold transition-all"
-                  style={SECONDARY_BUTTON}
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={handleDeleteProduct}
-                  disabled={deleteLoading || !forceConfirmed}
-                  className="px-5 py-2.5 rounded-xl text-sm font-bold text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
-                  style={{ background: isForce ? '#b91c1c' : '#ef4444' }}
-                >
-                  {deleteLoading ? <><Loader2 size={14} className="animate-spin" /> Eliminando…</> : isForce ? '🗑 Borrar TODO' : 'Eliminar'}
-                </button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      {deleteTarget && (
+        <DeleteProductModal
+          kind="product"
+          isAdmin={isAdmin}
+          product={{ id: deleteTarget.id, name: deleteTarget.nombre, sku: deleteTarget.sku || null }}
+          onClose={() => setDeleteTarget(null)}
+          onDeleted={(mode) => {
+            void invalidateProducts();
+            void queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all });
+            setIsModalOpen(false);
+            setEditingProduct(undefined);
+            setDeleteTarget(null);
+            toast.success(mode === "force"
+              ? 'Producto y sus apartados eliminados. Las ventas quedan en el historial.'
+              : 'Producto eliminado. Sus ventas quedan en el historial y reportes.');
+            void refreshProductCount();
+          }}
+        />
+      )}
 
       </>}
 
@@ -3826,6 +3705,7 @@ export function ProductsPage() {
           onDeleted={() => {
             void invalidateMangas();
             void invalidateProducts();
+            void queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all });
             setEditingManga(null);
             toast.success('Tomo eliminado.');
           }}
