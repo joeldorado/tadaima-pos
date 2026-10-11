@@ -204,6 +204,20 @@ export function StockSearchPage() {
   const [compareQty, setCompareQty] = useState<string>('')
   const [categoryId, setCategoryId] = useState<number | ''>('')
   const [categorySearch, setCategorySearch] = useState('')
+  // Dropdown abierto con el listado completo al hacer clic (2026-10-10), no
+  // solo al escribir — antes había que teclear para verlo.
+  const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false)
+  const categoryDropdownRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (!categoryDropdownOpen) return
+    const onDown = (e: MouseEvent) => {
+      if (categoryDropdownRef.current && !categoryDropdownRef.current.contains(e.target as Node)) {
+        setCategoryDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [categoryDropdownOpen])
 
   // Debounce 300ms para el API de lista
   useEffect(() => {
@@ -327,16 +341,17 @@ export function StockSearchPage() {
 
           {/* Buscador de categoría */}
           {allCategories.length > 0 && (
-            <div className="relative">
+            <div className="relative" ref={categoryDropdownRef}>
               <input
                 type="text"
                 value={categorySearch}
-                onChange={e => { setCategorySearch(e.target.value); setCategoryId('') }}
+                onFocus={() => setCategoryDropdownOpen(true)}
+                onChange={e => { setCategorySearch(e.target.value); setCategoryId(''); setCategoryDropdownOpen(true) }}
                 placeholder="Categoría…"
                 className="rounded-lg px-2.5 py-1.5 text-xs outline-none w-36"
                 style={{ background: 'var(--td-input-bg)', border: `1px solid ${categoryId ? 'rgba(99,102,241,0.4)' : 'var(--td-input-border)'}`, color: categoryId ? '#6366F1' : 'var(--td-input-text)' }}
               />
-              {categorySearch && !categoryId && (
+              {categoryDropdownOpen && !categoryId && (
                 <div className="absolute z-20 top-full left-0 mt-1 w-56 rounded-xl overflow-hidden shadow-xl"
                   style={{ background: 'var(--td-panel-bg)', border: '1px solid var(--td-panel-border)' }}>
                   <div className="max-h-48 overflow-y-auto">
@@ -344,7 +359,7 @@ export function StockSearchPage() {
                       ? <p className="px-3 py-3 text-xs" style={{ color: 'var(--td-text-lo)' }}>Sin resultados</p>
                       : filteredCategories.map(c => (
                           <button key={c.id}
-                            onClick={() => { setCategoryId(c.id); setCategorySearch(c.name) }}
+                            onClick={() => { setCategoryId(c.id); setCategorySearch(c.name); setCategoryDropdownOpen(false) }}
                             className="w-full text-left px-3 py-2 text-xs font-semibold transition-colors hover:bg-[var(--td-hover-bg)]"
                             style={{ color: 'var(--td-text-hi)' }}>
                             {c.name}

@@ -1873,6 +1873,20 @@ export function ProductsPage() {
   const [search, setSearch] = useState("");
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
   const [categorySearch, setCategorySearch] = useState("");
+  // Dropdown de categoría abierto con el listado completo al hacer clic
+  // (2026-10-10), no solo al escribir — antes había que teclear para verlo.
+  const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
+  const categoryDropdownRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!categoryDropdownOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (categoryDropdownRef.current && !categoryDropdownRef.current.contains(e.target as Node)) {
+        setCategoryDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [categoryDropdownOpen]);
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<"grid" | "list">(
     () => (localStorage.getItem('tadaima-products-view') ?? 'list') as "grid" | "list"
@@ -3041,12 +3055,13 @@ export function ProductsPage() {
                     <X size={11} />
                   </button>
                 ) : (
-                  <div className="relative">
+                  <div className="relative" ref={categoryDropdownRef}>
                     <input
                       type="text"
                       placeholder="Categoría…"
                       value={categorySearch}
-                      onChange={e => setCategorySearch(e.target.value)}
+                      onFocus={() => setCategoryDropdownOpen(true)}
+                      onChange={e => { setCategorySearch(e.target.value); setCategoryDropdownOpen(true); }}
                       className="pl-3 pr-8 py-2 rounded-2xl text-xs font-semibold outline-none w-32 transition-all"
                       style={{
                         background: "var(--td-input-bg)",
@@ -3055,15 +3070,17 @@ export function ProductsPage() {
                       }}
                     />
                     <BookOpen size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: T.textMuted }} />
-                    {categorySearch.length > 0 && filtered.length > 0 && (
+                    {categoryDropdownOpen && (
                       <div
                         className="absolute left-0 top-full mt-1 z-50 rounded-xl overflow-hidden shadow-xl min-w-[180px] max-h-52 overflow-y-auto"
                         style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)" }}
                       >
-                        {filtered.map(cat => (
+                        {filtered.length === 0 ? (
+                          <p className="px-3 py-3 text-xs" style={{ color: T.textMuted }}>Sin resultados</p>
+                        ) : filtered.map(cat => (
                           <button
                             key={cat.id}
-                            onClick={() => { setSelectedCategoryId(cat.id); setCategorySearch(""); }}
+                            onClick={() => { setSelectedCategoryId(cat.id); setCategorySearch(""); setCategoryDropdownOpen(false); }}
                             className="w-full text-left px-3 py-2 text-xs font-semibold hover:bg-white/5 transition-colors"
                             style={{ color: T.textPrimary }}
                           >
