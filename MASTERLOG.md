@@ -4,7 +4,68 @@
 
 ---
 
-### Sesión 2026-10-09 — Eliminar producto y cancelar catálogo con vista previa (rama `feat/vista-previa-borrado`, SIN deploy)
+### Sesión 2026-10-11 (2) — Vista previa de borrado + PDF con formato del Excel (PR #53: #51 y #36) — rev tadaima-00076-dam
+
+**Pedido Joel:** deployar todo lo pendiente para probarlo en prod, con opción de rollback a este punto.
+
+> **PUNTO DE ROLLBACK (antes de este deploy):** revisión `tadaima-00074-tir`, `main` en `97ae2b0`
+> (rama de respaldo `backup/pre-vista-previa-pdf-2026-10-11`). Este deploy **no trae migraciones**:
+> regresar es solo mover el tráfico, no hay que tocar la base.
+>
+> ```
+> gcloud run services update-traffic tadaima --to-revisions tadaima-00074-tir=100 --project tadaimapos --region us-east1
+> ```
+>
+> Con el rollback se pierden SOLO la vista previa de borrado y el PDF nuevo. Lo de Ruben del mismo día
+> (imagen congelada, orden y filtros de Productos, Excel) y el aviso de promo ya venían en `00074-tir`
+> y se quedan. Si se regresa, avisar al equipo que recargue (caché PWA) y decidir si `main` se revierte
+> (`git revert -m 1 c6c1555`) o se corrige hacia adelante.
+
+**Qué entró:**
+- **Vista previa de borrado (PR #51)** — detalle en la entrada "Sesión 2026-10-09 — Eliminar producto y
+  cancelar catálogo con vista previa", justo abajo. `ProductDeletionService` y
+  `PreSaleCatalogCancellationService` son las únicas puertas; el candado de paquetes del PR #45
+  (`BundleService::hasStock`) quedó dentro del servicio.
+- **PDF de ventas con el formato del Excel (PR #36, abierto desde el 2026-10-03).** `exportPdf.ts` deja
+  de agrupar por categoría y usa las tablas por método del Excel (`methodTable`/`cardTable`): Efectivo,
+  Tarjeta, Transferencias, Preventas, Devoluciones, con detalle por ticket. Aplica al PDF de Reportes y
+  al del corte. Conflicto de una línea en `excelTopTables.ts`; a `exportPdf.test.ts` se le agregaron los
+  campos nuevos de `ReportExportParams`. Ojo: el PDF muestra las preventas en su tabla general, no
+  dentro de cada método como el Excel de hoy.
+- **Fuera:** PR #42 (`CashReportRangeTest` determinista en Postgres) choca con `6b45282`, que ya dejó
+  esa prueba estable; la suite de Postgres pasó 4 veces hoy. Queda para cerrarse.
+
+**Verificado (rama `release/2026-10-11b`):** backend 799 en SQLite; backend idéntico al del PR #51, que
+pasó 799 en Postgres 17 local; vitest 717 (6 del PDF, arman el PDF real); `tsc` 455 = 455 contra `main`;
+`vite build` OK. En local con backend y frontend integrados: eliminar un producto con stock en 2 tiendas
+(tabla por tienda, botón deshabilitado sin la casilla, borrado y aviso) y abrir/cerrar la vista previa de
+cancelar catálogo.
+
+**QUÉ PROBAR EN PROD** (incógnito o recarga forzada). Abrir una vista previa y cerrarla no cambia nada;
+confirmar SÍ borra o cancela de verdad, así que confirmar solo en casos reales:
+1. Productos → Editar → Eliminar en un producto con stock: tabla por tienda, casilla obligatoria.
+2. Lo mismo en un tomo (pide escribir el nombre) y en un producto con apartado (debe bloquear y sugerir
+   "Borrar TODO" solo al admin).
+3. Preventas → Catálogos → Acciones → Cancelar: folios por estado, anticipos cobrados, por tienda; con
+   folios pide escribir CANCELAR. Los anticipos NO se devuelven solos.
+4. Reportes → PDF de un día con ventas en los tres métodos y devoluciones; y el PDF de un corte.
+5. App móvil: borrar un producto sigue funcionando (no manda `expected`).
+
+**Señales para regresar:** no se puede eliminar un producto que antes sí (422 inesperado), el modal de
+eliminar o de cancelar catálogo no abre o truena, el PDF no descarga o sale en blanco, o errores 500 en
+`DELETE /products/*`, `GET /products/*/delete-preview`, `PATCH /pre-sale-catalogs/*/status`.
+
+**No se probó:** el PDF en pantalla (descarga), cancelar un catálogo CON folios después de la mezcla (se
+probó el 2026-10-09 y lo cubren 9 pruebas de backend), el borrado de tomos en pantalla, ni nada con
+datos reales.
+
+**Deploy (2026-10-11 ~15:35 Tijuana) — rev tadaima-00076-dam (rollback `tadaima-00074-tir`).** PR #53
+mergeado (`c6c1555`). Candidato sin tráfico desde un worktree en `main` (Dockerfile): `Nothing to
+migrate`, `/`, `/login`, `/caja`, `/products`, `/pre-sales`, `/sales`, `/reports` y `/tadaimaus/` 200,
+las rutas nuevas responden 401 sin sesión, el bundle trae "Entiendo que se pierden". Promovido al 100%;
+`tadaimamexico.com` sirve `index-CdEkA4ad.js`.
+
+### Sesión 2026-10-09 — Eliminar producto y cancelar catálogo con vista previa (PR #51) — en prod desde rev tadaima-00076-dam
 
 **Pedido Joel:** antes de eliminar un producto, enseñar si tiene stock y en qué tiendas (admin y
 gerente), avisar fuerte cuando lo hay, revisar que el borrado funcione bien de punta a punta; y en
@@ -63,7 +124,7 @@ refrescó sola; cancelar catálogo con 3 folios ($600 en anticipos, 1 con tarjet
 intacto) → folios cancelados, pagos intactos, 3 logs + system_log; catálogo sin folios → directo.
 
 **Docs:** `AGENTS.md` §5 (productos y preventas), `backend/AGENTS.md` §5 (endpoints nuevos).
-**Deploy:** pendiente (Joel decide PR/deploy).
+**Deploy:** 2026-10-11, rev `tadaima-00076-dam` (ver la entrada "Sesión 2026-10-11 (2)").
 
 **2026-10-11 — PR #51.** Commit `c658448` y PR a `main`. Se trajo `main` a la rama (17 commits): el
 único choque de código fue `ProductController::bundleDeleteGuardError`, que el PR #45 endureció y esta
