@@ -65,12 +65,14 @@ import { buildPaymentSummary } from "@/lib/paymentSummary";
 import { HISTORIAL_METHOD_OPTIONS, historialEntryMatchesPaymentFilter, type HistorialMethodFilter } from "@/lib/paymentFilter";
 import { computeMixedSplit } from "@/lib/mixedPayment";
 import { readFavoritePayment, saveFavoritePayment, startingPayment, toggleFavorite, withFavoriteTerminal, type StartingPayment } from "@/lib/favoritePaymentMethod";
+import { buildPromoPaymentAlert, clearDismissedForMesa, promoPoolLineIds } from "@/lib/promoPaymentAlert";
 import { computeRegularChargeAmount, discountPct } from "@/lib/promo";
 import { newLineId, recalculateSale, type LineDiscount, type LineSurcharge } from "@/lib/saleCalc";
 import { acceptsNewUnits, applyLineAdjustment, lineAdjustmentOf, removeLineAdjustment, type LineAdjustment } from "@/lib/lineAdjustments";
 import { finalPriceLine } from "@/lib/ticketLines";
 import { LineDiscountModal } from "@/components/sell/LineDiscountModal";
 import { LineCommentModal } from "@/components/sell/LineCommentModal";
+import { PromoPaymentAlertModal } from "@/components/sell/PromoPaymentAlertModal";
 import { lineCommentPayload, withLineComment } from "@/lib/lineComment";
 import { DISCOUNT_REASON_LABELS, SURCHARGE_REASON_LABELS } from "@/lib/discountReasons";
 import type { HistorialEntry } from "@/hooks/queries/useHistorial";
@@ -709,6 +711,8 @@ export function SellPage() {
   const [payOpen, setPayOpen] = useState(false);
   // Guard $0: confirmación cuando un descuento deja el cobro en $0 (cortesía).
   const [zeroConfirmOpen, setZeroConfirmOpen] = useState(false);
+  // Avisos "promo vs método de pago" que el cajero pospuso ("Decidir después").
+  const [dismissedPromoAlerts, setDismissedPromoAlerts] = useState<ReadonlySet<string>>(() => new Set());
   const [showTerminalModal, setShowTerminalModal] = useState(false);
   const [tcDraft, setTcDraft] = useState("15.50");
 
@@ -2556,15 +2560,82 @@ export function SellPage() {
       .filter(i => !itemAcceptsMethod(i, method))
       .map(i => {
         const nombre = i.product.name;
-        if (i.sellingCatalogId != null) return { item: i, motivo: "preventa" as const, nombre, promo: null };
+        if (i.sellingCatalogId != null) return { item: i, motivo: "preventa" as const, nombre, promo: null, promoId: null };
         if (isCard ? i.product.allow_card === false : i.product.allow_cash === false) {
-          return { item: i, motivo: "producto" as const, nombre, promo: null };
+          return { item: i, motivo: "producto" as const, nombre, promo: null, promoId: null };
         }
-        const promoId = lineCalcById[i.lineId]?.promoPart?.promoId;
+        const promoId = lineCalcById[i.lineId]?.promoPart?.promoId ?? null;
         const promo = promoId != null ? promoFlagsById[promoId]?.name ?? null : null;
-        return { item: i, motivo: "promo" as const, nombre, promo };
+        return { item: i, motivo: "promo" as const, nombre, promo, promoId };
       });
   }, [activeMesa.items, activeMesa.paymentMethod, itemAcceptsMethod, lineCalcById, promoFlagsById]);
+
+  // ── Aviso: la promo aplicada no se cobra con el método actual (2026-10-10) ──
+  // Con método favorito = Tarjeta la venta arranca en Tarjeta y una promo
+  // "solo efectivo" deja el cobro trabado. Caja no cambia el método sola (eso
+  // mueve precios): avisa y el cajero decide. Ver lib/promoPaymentAlert.ts.
+  const promoAlertMesaId = activeMesa?.id ?? "";
+  const promoAlertMethod = activeMesa?.paymentMethod ?? "Efectivo";
+  const promoAlert = useMemo(
+    () => buildPromoPaymentAlert(
+      promoAlertMesaId,
+      promoAlertMethod,
+      blockedItems.flatMap(b => b.motivo === "promo" && b.promoId != null
+        ? [{ productName: b.nombre, promoId: b.promoId, promoName: b.promo }]
+        : []),
+      saleCalcResult.lines,
+    ),
+    [promoAlertMesaId, promoAlertMethod, blockedItems, saleCalcResult],
+  );
+  const promoAlertKey = promoAlert?.key ?? null;
+  // Sin choque en esta caja se olvidan sus "decidir después": el siguiente
+  // choque vuelve a avisar. Se ajusta durante el render (estado derivado, sin
+  // efecto); no hace loop porque tras limpiar ya no queda nada que quitar.
+  if (promoAlertKey === null) {
+    const kept = clearDismissedForMesa(dismissedPromoAlerts, promoAlertMesaId);
+    if (kept !== dismissedPromoAlerts) setDismissedPromoAlerts(kept);
+  }
+  /** Por qué no se puede cambiar al método que conserva la promo (si aplica). */
+  const promoAlertKeepBlockedReason = (() => {
+    if (!promoAlert) return undefined;
+    // Mismo criterio que setPayment: una venta con preventa no va con Tarjeta.
+    if (promoAlert.keepMethod === "Tarjeta" && hasPreventaInCart) return "las preventas no se cobran con Tarjeta";
+    const blocker = activeMesa?.items.find(i => !itemAcceptsMethod(i, promoAlert.keepMethod))?.product.name;
+    return blocker ? `"${blocker}" no acepta ${promoAlert.keepMethod}` : undefined;
+  })();
+
+  const closePromoAlert = useCallback(() => {
+    if (promoAlertKey === null) return;
+    setDismissedPromoAlerts(prev => new Set(prev).add(promoAlertKey));
+    // El aviso no toma el foco: solo se regresa al campo de código si el clic
+    // lo sacó de ahí, sin quitárselo al de pesos recibidos (Esc).
+    if (document.activeElement !== cashInputRef.current) focusCodeInput();
+  }, [promoAlertKey, focusCodeInput]);
+
+  /** Conserva la promo: cambia al método que sí la acepta. */
+  const keepPromoFromAlert = () => {
+    if (!promoAlert) return;
+    setPayment(promoAlert.keepMethod);
+    // Tarjeta solo abre el modal de terminales (el aviso se esconde mientras
+    // está abierto); si el cajero lo cierra sin elegir, el aviso regresa.
+    if (promoAlert.keepMethod !== "Efectivo") return;
+    toast.success("Método cambiado a Efectivo: se conserva la promo.", { duration: 4000 });
+    focusCodeInput();
+  };
+
+  /** Sigue con el método actual: suelta la promo de todas las líneas que la arman. */
+  const skipPromoFromAlert = () => {
+    if (!promoAlert) return;
+    const lineIds = promoPoolLineIds(saleCalcResult.lines, promoAlert.promoIds);
+    updMesa(promoAlertMesaId, m => ({
+      ...m,
+      items: m.items.map(i => lineIds.has(i.lineId) ? { ...i, skipPromo: true } : i),
+    }));
+    pushPayLog(`Sin promo · ${promoAlert.productName}`, "info");
+    toast.info(`Se cobra sin la promo, con ${promoAlert.currentMethod}.`, { duration: 4000 });
+    focusCodeInput();
+  };
+
   const totalDeposit   = useMemo(() => activeMesa.items.reduce((s, i) => s + (i.depositAmount ?? 0), 0), [activeMesa.items]);
   const totalItems     = activeMesa.items.reduce((s, i) => s + i.quantity, 0);
   // Subtotal de ítems nuevos (no de preventa cargada) — usado en carrito mixto
@@ -7350,6 +7421,24 @@ export function SellPage() {
           </div>
         </div>
       )}
+
+      {/* Aviso: la promo aplicada no se cobra con el método actual. Espera a
+          que se cierren los modales donde el cajero sigue armando la venta. */}
+      <AnimatePresence>
+        {promoAlert && !dismissedPromoAlerts.has(promoAlert.key) && !isProcessing
+          && !showCatalog && !showPreSalesModal && !showTerminalModal && !showApartarModal
+          && !showCameraScanner && !showOpenCashModal && !showCloseCashModal && !zeroConfirmOpen && (
+          <PromoPaymentAlertModal
+            key="promo-payment-alert"
+            info={promoAlert}
+            keepBlockedReason={promoAlertKeepBlockedReason}
+            formatMoney={fmt}
+            onKeepPromo={keepPromoFromAlert}
+            onSkipPromo={skipPromoFromAlert}
+            onClose={closePromoAlert}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Modal Terminales de Pago */}
       <AnimatePresence>
