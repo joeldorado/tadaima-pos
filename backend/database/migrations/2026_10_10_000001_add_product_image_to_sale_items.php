@@ -23,6 +23,12 @@ return new class extends Migration
 {
     public function up(): void
     {
+        // Idempotente: en cada deploy el contenedor corre `migrate --force` al
+        // arrancar; si dos instancias arrancan a la vez, la segunda no truena.
+        if (Schema::hasColumn('sale_items', 'product_image')) {
+            return;
+        }
+
         Schema::table('sale_items', function (Blueprint $table) {
             $table->string('product_image')->nullable()->after('product_sku');
         });
@@ -30,6 +36,10 @@ return new class extends Migration
 
     public function down(): void
     {
+        if (! Schema::hasColumn('sale_items', 'product_image')) {
+            return;
+        }
+
         Schema::table('sale_items', function (Blueprint $table) {
             $table->dropColumn('product_image');
         });
