@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, Loader2, Trash2, X } from 'lucide-react'
@@ -6,9 +6,10 @@ import { toast } from 'sonner'
 import { deleteCashSession, getCashSessionDeletePreview, type CashSessionDeletePreview } from '@tadaima/api'
 import { invalidateAfterSale } from '@/lib/optimisticSale'
 import { BUSINESS_TZ } from '@/lib/date'
+import { Box, Cell, DELETE_RED, Table } from '@/components/common/DeletePreviewParts'
 
 const CONFIRM_WORD = 'BORRAR'
-const RED = '#ef4444'
+const RED = DELETE_RED
 
 const fmt = (n: number) =>
   new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN', minimumFractionDigits: 2 }).format(n || 0)
@@ -203,53 +204,6 @@ function Summary({ data }: { data: CashSessionDeletePreview }) {
       <Cell label="Abrió" value={fmtDate(s.opened_at)} />
       <Cell label="Abrió con" value={fmt(s.opening_cash)} />
       <Cell label="Cerró con" value={s.closing_cash != null ? fmt(s.closing_cash) : '—'} />
-    </div>
-  )
-}
-
-function Cell({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl px-3 py-2" style={{ background: 'var(--td-card-bg)', border: '1px solid var(--td-card-border)' }}>
-      <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: 'var(--td-text-lo)' }}>{label}</p>
-      <p className="font-black truncate" style={{ color: 'var(--td-text-hi)' }}>{value}</p>
-    </div>
-  )
-}
-
-function Box({ tone, title, children }: { tone: 'warn' | 'block'; title: string; children: ReactNode }) {
-  const color = tone === 'block' ? RED : '#f59e0b'
-  return (
-    <div className="rounded-xl px-4 py-3" style={{ background: `${color}14`, border: `1px solid ${color}55` }}>
-      <p className="text-[10px] font-black uppercase tracking-widest mb-1" style={{ color }}>{title}</p>
-      <ul className="list-disc pl-4 space-y-1 text-xs" style={{ color: 'var(--td-text-md)' }}>{children}</ul>
-    </div>
-  )
-}
-
-function Table({ title, head, rows, empty }: { title: string; head: string[]; rows: string[][]; empty: string }) {
-  return (
-    <div>
-      <p className="text-[10px] font-black uppercase tracking-widest mb-1" style={{ color: 'var(--td-text-lo)' }}>{title}</p>
-      {rows.length === 0 ? (
-        <p className="text-xs" style={{ color: 'var(--td-text-ghost)' }}>{empty}</p>
-      ) : (
-        <div className="rounded-xl overflow-x-auto" style={{ border: '1px solid var(--td-card-border)' }}>
-          <table className="w-full text-xs">
-            <thead>
-              <tr style={{ background: 'var(--td-card-bg)' }}>
-                {head.map(h => <th key={h} className="text-left px-3 py-2 font-black uppercase tracking-wider text-[9px]" style={{ color: 'var(--td-text-lo)' }}>{h}</th>)}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={i} style={{ borderTop: '1px solid var(--td-divider)' }}>
-                  {r.map((c, j) => <td key={j} className="px-3 py-1.5" style={{ color: 'var(--td-text-md)' }}>{c}</td>)}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
     </div>
   )
 }

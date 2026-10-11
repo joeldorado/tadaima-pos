@@ -10,6 +10,7 @@ use App\Http\Resources\PreSaleCatalogResource;
 use App\Models\PreSaleCatalog;
 use App\Models\PreSaleOrder;
 use App\Models\PreSaleOrderItem;
+use App\Services\PreSaleCatalogCancellationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -303,16 +304,20 @@ class PreSaleCatalogsController extends Controller
      * Transiciones válidas:
      *   draft     → published | cancelled
      *   published → arrived | closed | cancelled
-     *   arrived   → closed | cancelled
+     *   arrived   → completed | cancelled
      *   closed    → cancelled
      *
-     * arrived: marca el producto como llegado y pone todos los pedidos
-     *          pending de este catálogo en ready.
+     * arrived:   marca el producto como llegado y pone todos los pedidos
+     *            pending de este catálogo en ready.
+     * cancelled: pasa por PreSaleCatalogCancellationService (2026-10-09):
+     *            cancela los folios abiertos en transacción, respeta `expected`
+     *            (lo que el usuario vio en GET cancel-preview) y deja log por
+     *            folio + system_log con el preview.
      */
-    public function updateStatus(UpdatePreSaleCatalogStatusRequest $request, int $id): JsonResponse
+    public function updateStatus(UpdatePreSaleCatalogStatusRequest $request, int $id, PreSaleCatalogCancellationService $cancellation): JsonResponse
     {
-        if (!$request->user()->hasRole('admin') && !$request->user()->hasRole('gerente')) {
-            return $this->error('Sin permisos para gestionar catálogos.', 403);
+        if ($resp = $this->catalogGateError($request)) {
+            return $resp;
         }
 
         $catalog = PreSaleCatalog::findOrFail($id);
@@ -348,27 +353,61 @@ class PreSaleCatalogsController extends Controller
             );
         }
 
+        if ($to === PreSaleCatalog::STATUS_CANCELLED) {
+            try {
+                $cancellation->cancel($catalog, $request->user(), $request->expected());
+            } catch (\DomainException $e) {
+                return $this->error($e->getMessage(), 422);
+            }
+
+            return $this->success(new PreSaleCatalogResource($catalog->fresh()->load(self::STATUS_RELATIONS)));
+        }
+
         $catalog->update(['status' => $to]);
 
-        $orderIds = \DB::table('pre_sale_order_items')
-            ->where('pre_sale_catalog_id', $catalog->id)
-            ->pluck('pre_sale_order_id')
-            ->unique();
-
         if ($to === PreSaleCatalog::STATUS_ARRIVED) {
+            $orderIds = \DB::table('pre_sale_order_items')
+                ->where('pre_sale_catalog_id', $catalog->id)
+                ->pluck('pre_sale_order_id')
+                ->unique();
+
             PreSaleOrder::whereIn('id', $orderIds)
                 ->where('status', PreSaleOrder::STATUS_PENDING)
                 ->update(['status' => PreSaleOrder::STATUS_READY]);
         }
 
-        if ($to === PreSaleCatalog::STATUS_CANCELLED) {
-            PreSaleOrder::whereIn('id', $orderIds)
-                ->whereIn('status', [PreSaleOrder::STATUS_PENDING, PreSaleOrder::STATUS_READY])
-                ->update(['status' => PreSaleOrder::STATUS_CANCELLED]);
+        return $this->success(new PreSaleCatalogResource($catalog->load(self::STATUS_RELATIONS)));
+    }
+
+    /**
+     * GET /pre-sale-catalogs/{id}/cancel-preview
+     *
+     * Lo que "Cancelar catálogo" tocaría (2026-10-09): folios por estado,
+     * anticipos cobrados, saldo por cobrar, tiendas afectadas, unidades,
+     * avisos y bloqueos. Mismo gate que cambiar el estado.
+     */
+    public function cancelPreview(Request $request, int $id, PreSaleCatalogCancellationService $cancellation): JsonResponse
+    {
+        if ($resp = $this->catalogGateError($request)) {
+            return $resp;
         }
 
-        return $this->success(
-            new PreSaleCatalogResource($catalog->load(['category', 'supplier', 'product', 'orderItems', 'activeOrderItems', 'soldOrderItems', 'deliveredOrderItems.order:id,store_id']))
-        );
+        $catalog = PreSaleCatalog::findOrFail($id);
+
+        return $this->success($cancellation->preview($catalog, $request->user()));
+    }
+
+    /** Relaciones que la respuesta del cambio de estado siempre trae. */
+    private const STATUS_RELATIONS = ['category', 'supplier', 'product', 'orderItems', 'activeOrderItems', 'soldOrderItems', 'deliveredOrderItems.order:id,store_id'];
+
+    /** Gestionar catálogos (estado, cancelar): admin o gerente. */
+    private function catalogGateError(Request $request): ?JsonResponse
+    {
+        $user = $request->user();
+        if (! $user || (! $user->hasRole('admin') && ! $user->hasRole('gerente'))) {
+            return $this->error('Sin permisos para gestionar catálogos.', 403);
+        }
+
+        return null;
     }
 }

@@ -27,7 +27,7 @@ const MANGA_FILL = fill("DBEAFE");
 export const isManga = (g: GroupedProduct): boolean => g.product_type === "manga";
 const cellNameManga: CellStyle = { font: font({ bold: true, color: MANGA_BLUE }), alignment: align("left", "middle", true) };
 
-const displayName = (g: GroupedProduct) => (g.show_cost_tag ? `${g.name} · Costo ${fmt(g.cost_tag ?? 0)}` : g.name);
+export const displayName = (g: GroupedProduct) => (g.show_cost_tag ? `${g.name} · Costo ${fmt(g.cost_tag ?? 0)}` : g.name);
 
 /** Piezas y venta del producto cobradas con los métodos que cumplen `pred`. */
 function methodPart(g: GroupedProduct, pred: (name: string) => boolean): { qty: number; revenue: number } {

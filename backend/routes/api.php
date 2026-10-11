@@ -160,6 +160,9 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
 
     Route::prefix('products/{product}')->group(function () {
         Route::delete('force',                   [ProductController::class, 'forceDestroy']);
+        // Vista previa antes de eliminar (2026-10-09): stock por tienda, ventas,
+        // apartados, preventas, traslados, paquetes, promos, avisos y bloqueos.
+        Route::get('delete-preview',             [ProductController::class, 'deletePreview']);
         // Images
         Route::post('images/upload',             [ProductController::class, 'uploadImage']);
         Route::post('images',                    [ProductController::class, 'addImage']);
@@ -233,6 +236,8 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
             Route::get('customer-usage', [PreSaleCatalogsController::class, 'customerUsage']);
             Route::patch('/',            [PreSaleCatalogsController::class, 'update']);
             Route::patch('status',       [PreSaleCatalogsController::class, 'updateStatus']);
+            // Vista previa de "Cancelar catálogo" (2026-10-09): folios, anticipos, tiendas.
+            Route::get('cancel-preview', [PreSaleCatalogsController::class, 'cancelPreview']);
             Route::post('image',         [PreSaleCatalogsController::class, 'uploadImage']);
             Route::delete('image',       [PreSaleCatalogsController::class, 'removeImage']);
         });
