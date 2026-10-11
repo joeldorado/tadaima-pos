@@ -4,6 +4,67 @@
 
 ---
 
+### Sesión 2026-10-11 — Cambios de Ruben + aviso de promo en Caja (PR #52, incluye #50) — rev tadaima-00074-tir
+
+**Pedido Joel:** Ruben subió cambios a `develop`; verificarlos junto con el aviso de promo de ayer y
+deployar, dejando todo al día. La vista previa de borrado (PR #51) **no** entra (decisión de Joel).
+
+**De Ruben (`develop`, 5 commits):**
+- `79b20c1` Excel de ventas (Pier #17): cada pestaña va Ventas → Preventas → Manga, TOTAL FINAL suma
+  las tres, "Costo Producto" es fórmula y la pestaña Tarjeta usa el Neto en el Resumen.
+- `093e463` imagen congelada al cobrar: migración `sale_items.product_image` (`varchar(255)` nullable,
+  sin backfill), `CheckoutService` guarda el `image_path` de la primera imagen válida y
+  `SaleItemResource` la devuelve en `product_image` y `product.image`.
+- `ccb54b5` Ventas: lista a pantalla completa (botón Ampliar) y usa la imagen congelada.
+- `e4382c2` Productos: `GET /products?sort=stock_asc|price_desc|price_asc|newest|oldest` con su menú.
+- `6189ac8` filtro de categoría en Productos y en Existencias.
+
+**Aviso de promo en Caja (PR #50, pedido de Joel 2026-10-10).** Caso real en Macro: favorito Tarjeta +
+3 Toploader con la promo "Top loader 3x10" (solo efectivo) dejaba el cobro trabado y el cajero apretaba
+"Cobrar sin promo". Ahora, cuando la promo que ganó una línea no se cobra con el método actual, Caja abre
+un aviso y el cajero decide: cambiar al método que acepta la promo, seguir y cobrar sin la promo, o
+"Decidir después". Caja no cambia el método sola por una promo. `lib/promoPaymentAlert.ts` (+12
+pruebas), `components/sell/PromoPaymentAlertModal.tsx` (no roba el foco, sin botón por defecto, absorbe
+el doble clic), `SellPage`, `AGENTS.md` §5.
+
+**Agregado en la rama integrada (`release/2026-10-11`):**
+- `SaleItemImageSnapshotTest` (5 casos): el cambio de cobro no traía pruebas.
+- La migración revisa `Schema::hasColumn` (corre sola al arrancar cada contenedor).
+- Excel: la fórmula de TOTALES FINALES / Costo sumaba dos veces el subtotal de Efectivo (`C11+C11+…`).
+  El valor guardado estaba bien, pero Excel y Sheets recalculan al abrir y el costo total salía
+  inflado. Venía desde `365c426`, ya en prod.
+- Excel, pestaña Efectivo: Devoluciones podía pisar la última columna de Preventas; ahora va a la
+  derecha de la tabla más ancha.
+- `backend/AGENTS.md`: `product_image` en ADR-015 y los `sort` nuevos.
+
+**Pendientes para Ruben / Pier (no se tocaron):**
+- La imagen congelada es solo la ruta: al cambiar la foto o borrar el producto el archivo se elimina
+  del storage (`removeImage`, `destroy`) y la venta muestra "sin imagen"; antes mostraba la foto actual.
+- Excel, pestaña Tarjeta: con preventas cobradas con tarjeta, "Bruto Tarjeta" no las incluye y "Neto
+  Tarjeta" sí. El Resumen de Tarjeta ahora usa el Neto: confirmar con Pier que es lo buscado.
+- En local la miniatura de Ventas no se pinta: la CSP de `index.html` no permite imágenes de
+  `127.0.0.1` (en prod vienen de `storage.googleapis.com`).
+- Siguen abiertos los del favorito: precio socio tras el cambio automático a Efectivo, favorito Mixto con
+  preventa (se guarda todo como Efectivo) y la venta normal cobrada como tarjeta por olvido.
+
+**Verificado (sobre la rama integrada):** backend 771 en SQLite y en Postgres 17 local; vitest 702; `tsc`
+455 = 455 contra `main`; lint sin errores nuevos; `vite build` OK; revisión de código de los commits de
+Ruben sin hallazgos críticos ni altos. QA local con backend y frontend integrados: un cobro guardó y
+devolvió la imagen congelada, orden por precio (`sort=price_desc`), filtro de categoría, Existencias,
+lista de Ventas a pantalla completa y el aviso de promo con favorito Tarjeta. **No** se revisó el Excel
+con datos reales ni con lector físico.
+
+**Deploy (2026-10-11 ~14:20 Tijuana) — rev tadaima-00074-tir (rollback `tadaima-00072-wol`).** PR #52
+mergeado (`dcb91da`). Candidato sin tráfico desde un worktree en `main` (Dockerfile): la migración
+`add_product_image_to_sale_items` corrió en 176 ms, la columna existe en prod, `/`, `/login`, `/caja`,
+`/products`, `/sales`, `/reports`, `/buscar-tiendas` y `/tadaimaus/` 200, API 401 sin sesión, el bundle
+trae "Promo solo" y "Precio: mayor a menor". Promovido al 100%; `tadaimamexico.com` sirve
+`index-BZcDPj8G.js`. Rollback (la columna se queda y no estorba):
+`gcloud run services update-traffic tadaima --to-revisions tadaima-00072-wol=100 --project tadaimapos --region us-east1`.
+
+**Ramas al día:** `develop` avanzado a `main` (fast-forward). PR #51 (`feat/vista-previa-borrado`) con
+`main` mezclado y sus suites en verde (backend 799 en SQLite y Postgres, vitest 711); sigue abierto.
+
 ### Sesión 2026-10-10 — Reportes: Excel de preventas por método de pago (Ruben, PR #49) — rev tadaima-00072-wol
 
 **Qué subió Ruben** (`develop`, commit `abdc11a` "exel preventas"; solo frontend de Reportes, sin backend ni
