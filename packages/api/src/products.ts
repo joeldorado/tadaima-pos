@@ -11,9 +11,12 @@ export interface GetProductsParams {
   /**
    * 'top' ordena por count de sale_items en los últimos 30 días (desc).
    * Útil para pre-cargar el cache con los productos que el cajero más usa.
-   * 'stock_desc' = más piezas primero (modal "Productos sin Costo").
+   * 'stock_desc'/'stock_asc' = piezas en inventario (modal "Productos sin
+   * Costo" usa desc). 'price_desc'/'price_asc' = precio normal (price_1).
+   * 'newest'/'oldest' = fecha de alta al catálogo (2026-10-10). En TODOS los
+   * modos los productos sin stock (0) quedan al final, sin excepción.
    */
-  sort?: 'top' | 'stock_desc'
+  sort?: 'top' | 'stock_desc' | 'stock_asc' | 'price_desc' | 'price_asc' | 'newest' | 'oldest'
   /**
    * Con store_id: incluye también productos "no asignados" (sin inventario en
    * la tienda) con stock 0 + is_assigned=false, para que la sucursal les

@@ -26,6 +26,17 @@ const TOP_SELLERS_PAGE = 50
  */
 export type ProductsCatalogFilter = 'low_stock' | 'out_of_stock' | 'promos' | 'top' | 'no_category' | null
 
+/**
+ * Orden de la lista — independiente del chip de filtro (2026-10-10). "Más
+ * vendidos" (chip `top`) pisa cualquier sort elegido aquí: fija su propio
+ * `sort=top` y paginación de 50, ver `isTop` abajo.
+ */
+export type ProductsSortOption =
+  | 'stock_desc' | 'stock_asc'
+  | 'price_desc' | 'price_asc'
+  | 'newest' | 'oldest'
+  | null
+
 export interface ProductsListParamsInput {
   storeId?: number | null | undefined
   search?: string | undefined
@@ -37,6 +48,7 @@ export interface ProductsListParamsInput {
   withMeta?: boolean | undefined
   type?: 'product' | 'manga' | undefined
   filter?: ProductsCatalogFilter | undefined
+  sortBy?: ProductsSortOption | undefined
   threshold?: number | undefined
   page?: number | undefined
   perPage?: number | undefined
@@ -85,10 +97,14 @@ export function buildProductsListParams(
     ...(input.filter === 'promos' ? { has_promo: true } : {}),
     ...(input.filter === 'no_category' ? { no_category: true } : {}),
     // "Más vendidos" = top 50 fijo (ordenado por ventas de 30 días): pisa la
-    // paginación — una sola página de 50.
+    // paginación y cualquier `sortBy` elegido — una sola página de 50.
     ...(isTop
       ? { sort: 'top' as const, per_page: TOP_SELLERS_PAGE, page: 1 }
-      : { page: input.page ?? 1, per_page: input.perPage ?? 100 }),
+      : {
+          ...(input.sortBy ? { sort: input.sortBy } : {}),
+          page: input.page ?? 1,
+          per_page: input.perPage ?? 100,
+        }),
   }
 }
 
@@ -114,6 +130,7 @@ export function useProductsQuery(
     withMeta?: boolean
     type?: 'product' | 'manga'
     filter?: ProductsCatalogFilter
+    sortBy?: ProductsSortOption
     threshold?: number
     page?: number
     perPage?: number
@@ -126,6 +143,7 @@ export function useProductsQuery(
     withMeta: options?.withMeta,
     type: options?.type,
     filter: options?.filter,
+    sortBy: options?.sortBy,
     threshold: options?.threshold,
     page: options?.page,
     perPage: options?.perPage,
