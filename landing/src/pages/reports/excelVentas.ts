@@ -354,7 +354,9 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
         );
       }
       totalUtilRows.push(totalEfRow); // para que TOTALES FINALES sume este row
-      totalCostoRows.push(subtotalRow); // costo = subtotal (no cambia con egresos)
+      // El costo no cambia con egresos: su subtotal ya entró a `totalCostoRows`
+      // arriba, igual que en Tarjeta y Transferencias. Agregarlo otra vez
+      // duplicaba el costo de Efectivo en la fórmula de TOTALES FINALES.
       r++;
     } else {
       totalUtilRows.push(subtotalRow);
@@ -434,7 +436,11 @@ export function addVentasSheets(workbook: Workbook, p: ReportExportParams): void
   const cash = productSheet(workbook, p, "Efectivo",
     { main: " 1. VENTAS EN EFECTIVO", manga: "1. EFECTIVO — MANGA NACIONAL", presale: "1. EFECTIVO — APARTADOS Y PREVENTAS" },
     ["33BB66", "55CC77"], cashT, withMethod(groups, isCashLike), "venta", p.presaleRowsByMethod.cash);
-  const retCol = tableWidth(cashT) + GAP + 1;
+  // Devoluciones va a la derecha de la tabla más ancha de la pestaña: la de
+  // Preventas (apilada bajo Ventas) puede ser más ancha que la de Ventas y, si
+  // Devoluciones tiene más renglones que Ventas, le pisaba la última columna.
+  const cashWidth = Math.max(tableWidth(cashT), p.presaleRowsByMethod.cash.length > 0 ? PRESALE_COLS(canViewCost) : 0);
+  const retCol = cashWidth + GAP + 1;
   drawReturns(cash.sh, groups, retCol);
   tableWidths(cash.sh, retCol, RETURN_COLS, 48);
 

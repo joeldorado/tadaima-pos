@@ -342,6 +342,33 @@ describe("Excel de Ventas en pestañas", () => {
     const finalRow = find(res, "TOTALES FINALES:");
     expect(result(res, finalRow.row, 4)).toBeGreaterThanOrEqual(400);
   });
+
+  it("TOTALES FINALES: la fórmula del Costo suma cada subtotal una sola vez y da su valor guardado", () => {
+    const res = sheet(buildBook(true), "Resumen");
+    const finalRow = find(res, "TOTALES FINALES:");
+    const refs = (formula(res, finalRow.row, 3) ?? "").split("+");
+
+    expect(refs).toHaveLength(3); // Efectivo + Tarjeta + Transferencias
+    expect(new Set(refs).size).toBe(refs.length);
+    // Excel y Sheets recalculan al abrir: la fórmula debe dar lo mismo que el valor guardado.
+    // Una fórmula cuyo valor es $0 se guarda sin `result`.
+    const guardado = (ref: string): number => {
+      const v = res.getCell(ref).value;
+      return v && typeof v === "object" && "formula" in v ? Number(v.result ?? 0) : Number(v);
+    };
+    const recalculado = refs.reduce((a, ref) => a + guardado(ref), 0);
+    expect(recalculado).toBeCloseTo(Number(result(res, finalRow.row, 3)));
+  });
+
+  it("Efectivo con preventas: Devoluciones queda a la derecha de la tabla de Preventas, sin pisarla", () => {
+    for (const canViewCost of [true, false]) {
+      const ef = sheet(buildBook(canViewCost), "Efectivo");
+      // Preventas termina en Pactado, o en Pactado · Costo Producto · Utilidad con costos.
+      const ultimaColPreventas = find(ef, "Pactado").col + (canViewCost ? 2 : 0);
+
+      expect(find(ef, " 5. DEVOLUCIONES Y CANCELACIONES").col).toBeGreaterThan(ultimaColPreventas);
+    }
+  });
 });
 
 /** Dirección de celda (ej. "E12") para comparar contra una fórmula que la referencia. */
