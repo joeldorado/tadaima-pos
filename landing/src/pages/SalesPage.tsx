@@ -2882,11 +2882,16 @@ export function SalesPage() {
     const merged = [...saleRows, ...preSaleMovementRows].sort((a, b) => b.ts - a.ts);
     if (!searchSale.trim()) return merged;
     const q = searchSale.toLowerCase();
+    // El ticket se pinta en pantalla como "#62" (línea ~608), así que el
+    // usuario escribe el # de forma natural al buscar — sin este strip,
+    // comparar "#62" contra el id crudo "62" nunca hacía match (QA Ruben
+    // 2026-10-10).
+    const ticketQuery = q.replace(/^#/, "").trim();
     return merged.filter(row => {
       if (row.kind === "sale") {
         const s = row.sale;
         return (
-          String(s.id).includes(q) ||
+          (ticketQuery !== "" && String(s.id).includes(ticketQuery)) ||
           (s.customer?.name || "").toLowerCase().includes(q) ||
           getPaymentMethodName(s).toLowerCase().includes(q) ||
           (s.items || []).some(i => {
