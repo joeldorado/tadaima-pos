@@ -6,11 +6,13 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreMangaRequest;
+use App\Http\Requests\DeleteProductRequest;
 use App\Http\Requests\UpdateMangaRequest;
 use App\Http\Resources\MangaCompatResource;
 use App\Models\Product;
 use App\Models\ProductMangaDetail;
 use App\Models\SystemLog;
+use App\Services\ProductDeletionService;
 use App\Support\TomoCost;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -359,8 +361,11 @@ class MangaController extends Controller
 
     /**
      * DELETE /mangas/{manga}
+     *
+     * Misma puerta que /products (ProductDeletionService, 2026-10-09): apartados y
+     * paquetes bloquean, `expected` opcional de la vista previa, ventas se quedan.
      */
-    public function destroy(Product $manga): JsonResponse
+    public function destroy(DeleteProductRequest $request, Product $manga, ProductDeletionService $deletion): JsonResponse
     {
         // Eliminar tomo = permiso de ver costo (admin o gerente con can_view_cost).
         if ($resp = $this->canDeleteProductsError()) {
@@ -371,37 +376,21 @@ class MangaController extends Controller
             return $this->error('El producto no es de tipo manga.', 422);
         }
 
-        // Apartados = FK restrict (contrato vivo): mismo bloqueo que products.
-        $layawaysCount = DB::table('layaways')->where('product_id', $manga->id)->count();
-        if ($layawaysCount > 0) {
-            return $this->error(
-                "No se puede eliminar: el tomo tiene {$layawaysCount} apartado(s). Puedes desactivarlo.",
-                422
-            );
-        }
-
-        // Paquetes (2026-10-07): un tomo que es componente de un paquete no se borra.
-        if ($resp = ProductController::bundleDeleteGuardError($manga)) {
-            return $resp;
-        }
-
         $snapshot = ['id' => $manga->id, 'name' => $manga->name, 'sku' => $manga->sku];
 
-        $manga->images()->each(function ($img) {
-            Storage::delete($img->image_path);
-        });
-
-        // Las ventas ya NO bloquean ni degradan a "desactivar" (Joel
-        // 2026-08-18): sale_items conserva el snapshot nombre/SKU (ADR-015)
-        // y el historial/reportes quedan completos con product_id NULL.
-        $salesCount = ProductController::snapshotAndDelete($manga);
+        try {
+            $result = $deletion->delete($manga, $request->user(), force: false, expected: $request->expected());
+        } catch (\DomainException $e) {
+            return $this->error($e->getMessage(), 422);
+        }
+        $salesCount = $result['sales_kept'];
 
         SystemLog::write(
             action: 'manga.deleted',
             description: "Manga eliminado: {$snapshot['name']} (SKU: {$snapshot['sku']})",
             entityType: 'manga',
             entityId: $snapshot['id'],
-            meta: ['mode' => 'hard', 'snapshot' => $snapshot, 'sales_kept' => $salesCount],
+            meta: ['mode' => 'hard', 'snapshot' => $snapshot, 'sales_kept' => $salesCount, 'audit' => $result['audit']],
         );
 
         return $this->success(null, $salesCount > 0

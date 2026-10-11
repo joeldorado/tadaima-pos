@@ -21,6 +21,7 @@ import { AnimatePresence } from "motion/react";
 import { NewPreSaleCatalogModal } from "./NewPreSaleCatalogModal";
 import { CatalogToProductModal } from "./CatalogToProductModal";
 import { CatalogHistoryModal } from "./CatalogHistoryModal";
+import { CancelCatalogModal } from "./CancelCatalogModal";
 import { useAuth } from "@tadaima/auth";
 
 const GLASS: React.CSSProperties = {
@@ -64,7 +65,6 @@ const NEXT_STATUSES: Partial<Record<PreSaleCatalogStatus, { to: PreSaleCatalogSt
 const ACTION_INFO: Partial<Record<PreSaleCatalogStatus, { key: string; title: string; description: string; actionLabel: string }>> = {
   arrived:   { key: "catalog_arrived",  title: "¿El producto ya llegó?",       actionLabel: "Sí, ya llegó",   description: "Todos los folios pendientes pasarán a 'Listo' automáticamente para que los clientes puedan liquidar en caja." },
   closed:    { key: "catalog_close",    title: "Cerrar catálogo",              actionLabel: "Cerrar",          description: "Ya no se podrán crear nuevos folios. Los existentes continúan y pueden liquidarse normalmente." },
-  cancelled: { key: "catalog_cancel",   title: "Cancelar catálogo",            actionLabel: "Cancelar todo",   description: "Todos los folios pendientes y listos serán cancelados. Esta acción no puede revertirse." },
   published: { key: "catalog_publish",  title: "Publicar catálogo",            actionLabel: "Publicar",        description: "El catálogo estará visible para los cajeros y podrán crear folios de preventa." },
   completed: { key: "catalog_complete", title: "Completar ciclo de preventa",  actionLabel: "Sí, completar",   description: "El catálogo se marcará como completado y desaparecerá de Caja y difusión. Solo visible como historial en Proveedores." },
 };
@@ -410,6 +410,8 @@ export function PreSaleCatalogsPanel({ restrictedStoreId = null }: { restrictedS
   const [sorting, setSorting]     = useState<SortingState>([]);
   const [transitioning, setTrans] = useState<number | null>(null);
   const [confirmPending, setConfirmPending] = useState<{ catalog: PreSaleCatalog; to: PreSaleCatalogStatus } | null>(null);
+  // Cancelar catálogo (2026-10-09): modal con vista previa (folios, anticipos, tiendas).
+  const [cancelTarget, setCancelTarget] = useState<PreSaleCatalog | null>(null);
   const [blockedCatalog, setBlockedCatalog] = useState<PreSaleCatalog | null>(null);
   const [missingCostCatalog, setMissingCostCatalog] = useState<PreSaleCatalog | null>(null);
   // Al venir del aviso "falta el costo", el modal de edición abre directo en Precios.
@@ -451,6 +453,9 @@ export function PreSaleCatalogsPanel({ restrictedStoreId = null }: { restrictedS
 
   /** Sigue el flujo normal (confirmar → API), ya pasado el filtro de costo. */
   const proceedTransition = (catalog: PreSaleCatalog, to: PreSaleCatalogStatus) => {
+    // Cancelar siempre enseña la vista previa y NO respeta el "No mostrar de
+    // nuevo" viejo (td_confirm_skip_catalog_cancel): cancela folios con dinero.
+    if (to === "cancelled") { setCancelTarget(catalog); return; }
     const info = ACTION_INFO[to];
     if (info && localStorage.getItem(`td_confirm_skip_${info.key}`) !== "1") {
       setConfirmPending({ catalog, to });
@@ -878,6 +883,18 @@ export function PreSaleCatalogsPanel({ restrictedStoreId = null }: { restrictedS
           />
         ) : null;
       })()}
+
+      {cancelTarget && (
+        <CancelCatalogModal
+          catalog={cancelTarget}
+          onClose={() => setCancelTarget(null)}
+          onCancelled={() => {
+            setCancelTarget(null);
+            void invalidateCatalogs();
+            void queryClient.invalidateQueries({ queryKey: queryKeys.preSaleOrders.all });
+          }}
+        />
+      )}
 
       {missingCostCatalog && (
         <MissingCostModal

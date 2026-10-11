@@ -177,6 +177,14 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
 - **Borrar un producto no borra sus ventas:** usa
   `ProductController::snapshotAndDelete()`. `sale_items` congela nombre, SKU y costo
   al cobrar (ADR-015); solo los apartados bloquean el borrado.
+- **Eliminar con vista previa (2026-10-09):** antes de borrar un producto o tomo, el modal
+  pide `GET /products/{id}/delete-preview` y enseña stock por tienda (Exhibición/Bodega, la del
+  usuario primero), ventas que quedan, apartados, preventas, traslados pendientes, paquetes y
+  promos. Con stock hay que marcar "entiendo que se pierde" (el inventario se va en cascade, sin
+  movimiento). `ProductDeletionService` es la ÚNICA puerta de borrado (productos y tomos): los
+  bloqueos viven ahí una vez. El DELETE acepta `expected` opcional (los conteos vistos): si el
+  stock cambió, 422. La app móvil no lo manda y sigue igual. Lo mismo ven admin y gerente con
+  `can_view_cost` (el dato ya es visible a todos en "Existencias por Tienda").
 
 ### Paquetes (2026-10-07)
 - Un **paquete** es un producto (`products.product_type='bundle'`) hecho de 2+ productos con
@@ -199,6 +207,13 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   (`limit_per_customer`; identifica a la persona por id, teléfono o tarjeta de socio).
 - No se entrega/liquida una partida sin **costo real** capturado.
 - Las preventas no tocan el stock de Exhibición/Bodega.
+- **Cancelar catálogo (2026-10-09):** NO existe "eliminar catálogo"; cancelar cancela TODOS sus
+  folios abiertos (pending/ready). Pasa por `PreSaleCatalogCancellationService`: vista previa
+  (`GET /pre-sale-catalogs/{id}/cancel-preview`: folios por estado, anticipos cobrados, tiendas),
+  transacción, log por folio y `system_logs`, `expected` opcional. Decisión de Joel: los anticipos
+  cobrados **no bloquean**, se avisa que ese dinero NO se devuelve solo (para devolverlo se cancela
+  el folio desde Caja). El flag `BLOCK_WHEN_MONEY` del servicio cambia esa regla. El modal nuevo
+  ignora el "No mostrar de nuevo" viejo (`td_confirm_skip_catalog_cancel`).
 
 ### Permisos
 - Roles: admin, gerente, cajero (`User::ADMIN_ROLES` incluye variantes de dueño).

@@ -251,7 +251,8 @@ al dar de alta una tienda (y existe la migración de backfill
 |---|---|---|
 | GET | `/pre-sale-catalogs` · POST `/pre-sale-catalogs` | Listar / crear |
 | GET | `/pre-sale-catalogs/{id}` · PATCH `/pre-sale-catalogs/{id}` | Ver / editar |
-| PATCH | `/pre-sale-catalogs/{id}/status` | Cambiar estado |
+| PATCH | `/pre-sale-catalogs/{id}/status` | Cambiar estado. `cancelled` pasa por `PreSaleCatalogCancellationService` (2026-10-09): cancela los folios abiertos en transacción, log por folio + `system_logs` (`pre_sale_catalog.cancelled`); body opcional `expected: {to_cancel, with_money}` → 422 si entraron folios/cobros desde la vista previa. Los anticipos cobrados NO bloquean (decisión Joel): se avisa que no se devuelven |
+| GET | `/pre-sale-catalogs/{id}/cancel-preview` | **Vista previa de "Cancelar catálogo".** Folios por estado, cuántos tienen dinero / tarjeta / artículos de otros catálogos, anticipos cobrados (efectivo/tarjeta), por cobrar, tiendas afectadas (la del gerente primero), unidades, `warnings`, `blockers` y `counts` |
 | POST/DELETE | `/pre-sale-catalogs/{id}/image` | Imagen del catálogo |
 
 ### Preventas — Folios/Órdenes (`PreSaleOrdersController`)
@@ -283,8 +284,9 @@ al dar de alta una tienda (y existe la migración de backfill
 | GET | `/products/lookup` | `?code=` (+`?exclude_id=`) — productos que YA tienen ese código (exacto contra SKU o barcode, sin distinguir mayúsculas; máx 3, SKU primero). Aviso de duplicado en el alta |
 | GET | `/products/missing-cost/summary` | Contadores del modal "Productos sin Costo" por chip (`con_stock`, `exhibicion`, `bodega`, `todos`). Requiere `can_view_cost`; no-admin anclado a su tienda |
 | GET | `/products/{id}` | Detalle completo |
-| POST | `/products` · PUT `/products/{id}` · DELETE `/products/{id}` | CRUD (delete = soft) |
-| DELETE | `/products/{product}/force` | Borrado físico |
+| POST | `/products` · PUT `/products/{id}` · DELETE `/products/{id}` | CRUD. DELETE = borrado físico con snapshot en `sale_items` (ADR-015); `ProductDeletionService` es la única puerta (apartados, componente de paquete y paquete armado bloquean). Body opcional `expected: {stock_total, layaways, transfers_pending}` (lo que vio el modal): si cambió → 422 "vuelve a abrir la vista previa". Sin body sigue igual (app móvil) |
+| GET | `/products/{product}/delete-preview` | **Vista previa antes de eliminar (2026-10-09).** Stock por tienda (Exhibición/Bodega, la del usuario primero), ventas que quedan, apartados, preventas, traslados pendientes, paquetes, promos, `warnings`/`force_warnings`, `blockers`/`force_blockers` y `counts` (se reenvían como `expected`). Mismo gate que el DELETE; sirve también para tomos |
+| DELETE | `/products/{product}/force` | "Borrar TODO" (solo admin): también sus apartados. Mismo `expected` opcional |
 | POST | `/products/{product}/images/upload` · POST `images` · DELETE `images/{image}` · PUT `images/reorder` | Imágenes |
 | GET | `/products/{product}/store-prices` · PUT/DELETE `store-prices/{store}` | Precios override por tienda |
 
@@ -323,7 +325,7 @@ stock solo cambia armando/desarmando y vive en Exhibición); `ProductController:
 
 | Método | Path | Notas |
 |---|---|---|
-| GET | `/mangas` · POST · PUT `/mangas/{id}` · DELETE `/mangas/{id}` | CRUD |
+| GET | `/mangas` · POST · PUT `/mangas/{id}` · DELETE `/mangas/{id}` | CRUD. DELETE = misma puerta que `/products` (`ProductDeletionService`, `expected` opcional); la vista previa es `GET /products/{id}/delete-preview` |
 | POST | `/mangas/{manga}/image/upload` | Imagen |
 | GET | `/manga-inventory` | Inventario de mangas |
 | PUT | `/manga-inventory/{mangaId}/{warehouseId}` | Ajuste de stock |

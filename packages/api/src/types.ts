@@ -921,8 +921,19 @@ export interface UpdatePreSaleCatalogInput {
   store_limits?: { store_id: number; limit_qty: number }[]
 }
 
+/** Conteos de la vista previa de "Cancelar catálogo" (GET cancel-preview). */
+export interface CatalogCancelCounts {
+  to_cancel: number
+  with_money: number
+}
+
 export interface UpdatePreSaleCatalogStatusInput {
   status: PreSaleCatalogStatus
+  /**
+   * Solo para `cancelled` (2026-10-09): lo que el usuario vio en la vista
+   * previa. Si entraron folios o cobros mientras revisaba, el backend no cancela.
+   */
+  expected?: CatalogCancelCounts
 }
 
 export interface GetPreSaleCatalogsParams {

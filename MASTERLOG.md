@@ -4,6 +4,69 @@
 
 ---
 
+### Sesión 2026-10-09 — Eliminar producto y cancelar catálogo con vista previa (rama `feat/vista-previa-borrado`, SIN deploy)
+
+**Pedido Joel:** antes de eliminar un producto, enseñar si tiene stock y en qué tiendas (admin y
+gerente), avisar fuerte cuando lo hay, revisar que el borrado funcione bien de punta a punta; y en
+preventas enseñar folios/ventas/anticipos antes de la acción destructiva. Decisiones de Joel: en
+preventas solo vista previa al **Cancelar catálogo** (no se agrega borrado físico); los folios con
+anticipos cobrados **no bloquean**, se avisa que ese dinero NO se devuelve solo.
+
+**Hallazgos que motivaron el cambio:**
+- El modal de eliminar producto no enseñaba stock ni ventas; `inventory` y `transfer_items` se van
+  en cascade sin aviso ni movimiento.
+- Bug real: el toast de error leía `err.response.data.error`, pero el cliente API rechaza con
+  `ApiError { message }` → los 422 de apartados/paquetes nunca se veían (ProductsPage y
+  MangaEditModal).
+- Cancelar un catálogo cancelaba en masa los folios pending/ready sin transacción, sin log por folio
+  y sin decir cuántos ni cuánto dinero había; además "No mostrar de nuevo" lo saltaba.
+
+**Backend:**
+- `ProductDeletionService` (nuevo): única puerta de borrado de productos y tomos
+  (`ProductController::destroy/forceDestroy`, `MangaController::destroy`). `preview()` = stock por
+  tienda en una query (Exhibición/Bodega, la del usuario primero), ventas, apartados, preventas,
+  traslados pendientes, paquetes, promos, `warnings`/`force_warnings`, `blockers`/`force_blockers`,
+  `counts`. `delete()` en transacción con lock + `assertUnchanged(expected)`; imágenes se borran
+  después del commit. `bundleDeleteGuardError` se fue (vivía en 3 lugares).
+- `GET /products/{product}/delete-preview` (gate `canDeleteProductsError`). `DeleteProductRequest`:
+  `expected {stock_total, layaways, transfers_pending}` OPCIONAL → 422 si cambió (app móvil y
+  PWA vieja no lo mandan, siguen igual). `system_logs` guarda `audit` (stock por tienda perdido).
+- `PreSaleCatalogCancellationService` (nuevo) + `GET /pre-sale-catalogs/{id}/cancel-preview`;
+  `updateStatus → cancelled` lo usa: transacción + lock, `expected {to_cancel, with_money}`
+  opcional, `pre_sale_order_logs` por folio y `system_logs` `pre_sale_catalog.cancelled` con el
+  preview. Flag `BLOCK_WHEN_MONEY = false` (decisión Joel).
+- Tests nuevos: `ProductDeletePreviewTest` (10), `ProductDeleteExpectedTest` (8),
+  `PreSaleCatalogCancelPreviewTest` (9). Verde en SQLite y Postgres 17 local; regresión de borrado,
+  paquetes, scope, catálogos, folios y cancelaciones sin cambios (160 pruebas).
+
+**Frontend:**
+- `components/common/DeletePreviewParts.tsx` (Cell/Box/Table, extraídas del modal de Borrar corte,
+  que ahora las importa) + `lib/deletePreviewFormat.ts`.
+- `components/products/DeleteProductModal.tsx` reemplaza el modal inline de `ProductsPage` y el
+  diálogo de `MangaEditModal`: tabla de stock por tienda (badge "tu tienda"), celdas de ventas/
+  apartados/preventas/traslados/promos/movimientos, avisos y bloqueos del backend, radio Solo el
+  producto / Borrar TODO (admin), casilla obligatoria con stock, nombre tipeado en force y tomos;
+  manda `expected`; el error del backend llega al toast y refresca la vista previa.
+  `lib/deletePreviewGuards.ts` (lógica pura) + 9 pruebas Vitest.
+- `components/presales/CancelCatalogModal.tsx`: folios a cancelar, anticipos cobrados, por cobrar,
+  unidades, tablas por estado y por tienda, avisos; exige escribir CANCELAR si hay folios; sin folios
+  botón directo. `PreSaleCatalogsPanel` abre este modal para `cancelled` ANTES de leer el skip de
+  localStorage (ya no se puede saltar).
+- `packages/api`: `getProductDeletePreview`, `deleteProduct/forceDeleteProduct/deleteManga(id,
+  {expected})`, `getPreSaleCatalogCancelPreview`, `UpdatePreSaleCatalogStatusInput.expected`.
+
+**Verificado:** vitest 655 (+9), tsc = base (459, mismos errores), eslint 0 nuevos. QA local
+(backend SQLite + landing): eliminar con stock en 2 tiendas (tabla + casilla + toast), bloqueo por
+apartado con sugerencia de Borrar TODO, Borrar TODO con nombre tipeado, tomo con nombre tipeado,
+**carrera**: entró stock con el modal abierto → 422 con el mensaje del backend y la vista previa se
+refrescó sola; cancelar catálogo con 3 folios ($600 en anticipos, 1 con tarjeta, 1 entregado
+intacto) → folios cancelados, pagos intactos, 3 logs + system_log; catálogo sin folios → directo.
+
+**Docs:** `AGENTS.md` §5 (productos y preventas), `backend/AGENTS.md` §5 (endpoints nuevos).
+**Deploy:** pendiente (Joel decide PR/deploy).
+
+---
+
 ### Sesión 2026-10-08 (3) — Caja: filtro por método de pago en el Historial del Día (PR #43) — rev tadaima-00062-kof
 
 **Pedido Joel:** "revisa que los tipos de pago tengan filtros apropiados en Caja". La tienda pidió

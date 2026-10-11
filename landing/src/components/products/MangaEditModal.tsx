@@ -1,16 +1,16 @@
 import { useState, useEffect, useRef, useCallback, type CSSProperties } from 'react'
 import {
   X, Save, Loader2, BookOpen, DollarSign, Warehouse as WarehouseIcon,
-  CheckCircle2, AlertTriangle, Camera, Scan, Trash2,
+  CheckCircle2, Camera, Scan, Trash2,
 } from 'lucide-react'
-import { updateManga, deleteManga, uploadMangaImage, getMangaInventory, updateMangaInventory, getWarehouses } from '@tadaima/api'
+import { updateManga, uploadMangaImage, getMangaInventory, updateMangaInventory, getWarehouses } from '@tadaima/api'
 import type { Manga, MangaInventoryItem, Warehouse } from '@tadaima/api'
 import { compareWarehouses, warehouseOptionLabel, warehouseTypeLabel } from '@/lib/warehouse'
 import { EDITORIALS, MANGA_GENRES } from './mangaConstants'
-import { toast } from 'sonner'
 import { useAuth } from '@tadaima/auth'
 import { isAdmin as isAdminRole } from '@/lib/permisos'
 import { CategoryMultiPicker } from '@/components/products/CategoryMultiPicker'
+import { DeleteProductModal } from '@/components/products/DeleteProductModal'
 import { generateBarcode } from '@/lib/barcode'
 import { PRICE_FORM_LABELS } from '@/lib/priceLevels'
 import { costFromMargin, initialMarginInput, marginPayload, parseMarginPct } from '@/lib/mangaMargin'
@@ -178,7 +178,6 @@ export function MangaEditModal({
 
   // ── Delete state ──────────────────────────────────────────────────────────
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
-  const [deleting,         setDeleting]         = useState(false)
 
   // ── Derived ───────────────────────────────────────────────────────────────
   // La base del costo es el precio A que se guarda (Precio Normal), igual que el backend.
@@ -230,29 +229,12 @@ export function MangaEditModal({
 
       onSuccess(updated)
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
-        ?? 'No se pudo guardar.'
+      const msg = (err as { message?: string })?.message ?? 'No se pudo guardar.'
       setError(msg)
     } finally {
       setSaving(false)
     }
   }, [nombre, categoryIds, volNum, editorial, isbn, genero, precioPublico, margenPct, active, prices, quantities, imageFile, manga.id, nombreOk, precioOk, onSuccess])
-
-  const [deleteConfirmText, setDeleteConfirmText] = useState("")
-  const handleDelete = async () => {
-    setDeleting(true)
-    try {
-      await deleteManga(manga.id)
-      onDeleted()
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
-        ?? 'No se pudo eliminar el tomo (puede tener apartados activos)'
-      toast.error(msg)
-      setDeleting(false)
-      setShowDeleteDialog(false)
-      setDeleteConfirmText("")
-    }
-  }
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -673,75 +655,15 @@ export function MangaEditModal({
         </div>
       </div>
 
-      {/* ── Delete dialog (super alert con confirmación tipeada) ───────────── */}
-      {showDeleteDialog && (() => {
-        const fullName = `${manga.name}${manga.volume_number != null ? ` Vol. ${manga.volume_number}` : ''}`;
-        const confirmed = deleteConfirmText.trim().toLowerCase() === fullName.trim().toLowerCase();
-        return (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/85 backdrop-blur-md" onClick={() => { if (!deleting) { setShowDeleteDialog(false); setDeleteConfirmText(""); } }} />
-          <div className="relative w-full max-w-md rounded-2xl p-6 shadow-2xl" style={{ background: 'var(--td-panel-bg)', border: '1px solid rgba(239,68,68,0.5)' }}>
-            <div className="flex items-start gap-3 mb-4">
-              <div className="w-12 h-12 rounded-full bg-red-500/20 flex items-center justify-center shrink-0 animate-pulse">
-                <AlertTriangle size={26} className="text-red-400" />
-              </div>
-              <div>
-                <h3 className="font-black text-lg uppercase tracking-wider" style={{ color: T.textPrimary }}>⚠️ Eliminar tomo</h3>
-                <p className="text-xs mt-1" style={{ color: T.textSecondary }}>Esta acción <span className="text-red-400 font-bold">NO se puede deshacer</span>.</p>
-              </div>
-            </div>
-            <div className="rounded-xl p-3 mb-4" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
-              <p className="font-bold text-sm" style={{ color: T.textPrimary }}>{fullName}</p>
-              {manga.code && <p className="text-[10px] mt-0.5" style={{ color: T.textSecondary }}>Código: {manga.code}</p>}
-            </div>
-            <div className="rounded-xl p-3 mb-4 text-xs space-y-1" style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)' }}>
-              <p className="text-red-400 font-bold">Se eliminará:</p>
-              <ul className="list-disc list-inside space-y-0.5" style={{ color: T.textSecondary }}>
-                <li>Registro del tomo</li>
-                <li>Imagen del bucket</li>
-                <li>Inventario en todas las tiendas</li>
-              </ul>
-              <p className="text-amber-400 text-[11px] mt-2">Sus ventas NO se tocan: quedan en historial y reportes con el nombre marcado “(eliminado)”. Solo los apartados bloquean el borrado.</p>
-            </div>
-
-            <div className="mb-4">
-              <p className="text-[11px] font-bold text-red-400 mb-2 uppercase tracking-wider">
-                Para confirmar, tipea el nombre completo:
-              </p>
-              <input
-                type="text"
-                value={deleteConfirmText}
-                onChange={e => setDeleteConfirmText(e.target.value)}
-                placeholder={fullName}
-                disabled={deleting}
-                className="w-full px-3 py-2 rounded-xl text-sm font-bold border outline-none transition-all"
-                style={{ ...T.input, borderColor: confirmed ? '#10b981' : 'rgba(239,68,68,0.4)', color: confirmed ? '#10b981' : T.textPrimary }}
-              />
-            </div>
-
-            <div className="flex gap-3">
-              <button
-                onClick={() => { setShowDeleteDialog(false); setDeleteConfirmText(""); }}
-                disabled={deleting}
-                className="flex-1 py-2.5 rounded-xl text-sm font-bold transition-all"
-                style={SECONDARY_BUTTON}
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleDelete}
-                disabled={deleting || !confirmed}
-                className="flex-1 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-                style={{ background: 'linear-gradient(135deg,#991b1b,#dc2626)', color: '#fff', border: '1px solid rgba(239,68,68,0.3)' }}
-              >
-                {deleting ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={14} />}
-                Eliminar
-              </button>
-            </div>
-          </div>
-        </div>
-        );
-      })()}
+      {/* ── Eliminar tomo con vista previa (stock por tienda, apartados…) ── */}
+      {showDeleteDialog && (
+        <DeleteProductModal
+          kind="manga"
+          product={{ id: manga.id, name: `${manga.name}${manga.volume_number != null ? ` Vol. ${manga.volume_number}` : ''}`, sku: manga.code ?? null }}
+          onClose={() => setShowDeleteDialog(false)}
+          onDeleted={() => { setShowDeleteDialog(false); onDeleted() }}
+        />
+      )}
     </>
   )
 }
