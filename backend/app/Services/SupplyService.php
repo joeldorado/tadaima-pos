@@ -7,6 +7,8 @@ namespace App\Services;
 use App\Models\CashMovement;
 use App\Models\Supply;
 use App\Models\SupplyMovement;
+use App\Models\SystemLog;
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -43,10 +45,12 @@ class SupplyService
         int $userId,
         string $moneySource = SupplyMovement::SOURCE_CAJA,
         ?string $payerName = null,
+        ?int $storeId = null,
     ): SupplyMovement {
         if ($moneySource !== SupplyMovement::SOURCE_CAJA) {
             return SupplyMovement::create([
                 'supply_id'    => $supply->id,
+                'store_id'     => $storeId,
                 'type'         => SupplyMovement::TYPE_PURCHASE,
                 'quantity'     => round($quantity, 2),
                 'amount'       => round($amount, 2),
@@ -64,7 +68,7 @@ class SupplyService
             );
         }
 
-        return DB::transaction(function () use ($supply, $quantity, $amount, $note, $userId, $session) {
+        return DB::transaction(function () use ($supply, $quantity, $amount, $note, $userId, $session, $storeId) {
             $cashMovement = CashMovement::create([
                 'register_session_id' => $session->id,
                 'type'                => 'salida',
@@ -74,6 +78,7 @@ class SupplyService
 
             return SupplyMovement::create([
                 'supply_id'           => $supply->id,
+                'store_id'            => $storeId,
                 'type'                => SupplyMovement::TYPE_PURCHASE,
                 'quantity'            => round($quantity, 2),
                 'amount'              => round($amount, 2),
@@ -96,14 +101,67 @@ class SupplyService
         float $amount,
         ?string $note,
         int $userId,
+        ?int $storeId = null,
     ): SupplyMovement {
         return SupplyMovement::create([
             'supply_id' => $supply->id,
+            'store_id'  => $storeId,
             'type'      => $type,
             'quantity'  => round($quantity, 2),
             'amount'    => round($amount, 2),
             'note'      => $note,
             'user_id'   => $userId,
         ]);
+    }
+
+    /**
+     * Borra un registro de insumo (2026-10-12, admin — limpieza de pruebas en
+     * prod). Definitivo, sin SoftDeletes: igual que CashSessionDeletionService,
+     * guarda snapshot en system_logs ANTES de borrar.
+     *
+     * Si el movimiento tenía `cash_movement_id` (origen 'caja'), también borra
+     * ESE `cash_movements` — sin esto, el efectivo que "salió" seguiría
+     * descontado del esperado de ese corte aunque el insumo ya no exista,
+     * descuadrando el cajón.
+     */
+    public function deleteMovement(SupplyMovement $movement, User $by): void
+    {
+        DB::transaction(function () use ($movement, $by) {
+            $movement->loadMissing('supply:id,name,category,store_id');
+
+            SystemLog::write(
+                'supply_movement.deleted',
+                sprintf(
+                    'Insumo borrado: %s · %s (%s)',
+                    $movement->supply?->name ?? "#{$movement->supply_id}",
+                    number_format((float) $movement->amount, 2),
+                    $movement->money_source ?? $movement->type,
+                ),
+                $by->id,
+                'supply_movement',
+                $movement->id,
+                [
+                    'supply_id'           => $movement->supply_id,
+                    'supply_name'         => $movement->supply?->name,
+                    'store_id'            => $movement->store_id,
+                    'type'                => $movement->type,
+                    'quantity'            => $movement->quantity,
+                    'amount'              => $movement->amount,
+                    'money_source'        => $movement->money_source,
+                    'payer_name'          => $movement->payer_name,
+                    'note'                => $movement->note,
+                    'user_id'             => $movement->user_id,
+                    'register_session_id' => $movement->register_session_id,
+                    'cash_movement_id'    => $movement->cash_movement_id,
+                    'created_at'          => $movement->created_at?->toISOString(),
+                ],
+            );
+
+            if ($movement->cash_movement_id) {
+                CashMovement::where('id', $movement->cash_movement_id)->delete();
+            }
+
+            $movement->delete();
+        });
     }
 }

@@ -310,9 +310,12 @@ export function CloseCashModal({ session, title, reason, onClosed, onCancel }: C
         </div>
 
         {/* Reportes del día — mismo Excel que la pantalla de Reportes: el del
-            turno (este cajero) y el de toda la tienda. No cierran la caja. */}
+            turno (este cajero) y el de toda la tienda. No cierran la caja.
+            Botón "turno" comentado a propósito (Joel 2026-10-12): mientras no
+            se use, confundía a los cajeros tener los dos — solo queda el de
+            toda la tienda. Reactivar es solo descomentar esta línea. */}
         {([
-          { scope: "turno", label: "Descargar reporte del turno (Excel)", testId: "close-cash-excel", marginBottom: 8 },
+          // { scope: "turno", label: "Descargar reporte del turno (Excel)", testId: "close-cash-excel", marginBottom: 8 },
           { scope: "tienda", label: "Descargar reporte de toda la tienda (Excel)", testId: "close-cash-excel-store", marginBottom: 12 },
         ] as const).map(b => (
           <button
