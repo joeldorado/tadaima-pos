@@ -331,7 +331,8 @@ permitido); `/products` no crea ni re-tipa paquetes; `PurgeNoStockProductsComman
 
 | Método | Path | Notas |
 |---|---|---|
-| GET | `/mangas` · POST · PUT `/mangas/{id}` · DELETE `/mangas/{id}` | CRUD. DELETE = misma puerta que `/products` (`ProductDeletionService`, `expected` opcional); la vista previa es `GET /products/{id}/delete-preview` |
+| GET | `/mangas` | Lista paginada: `?page=&per_page=` (default 50, máx 200) → `{ data, pagination: { total, per_page, current_page, last_page } }`. `?store_id=` (+`?include_unassigned=1`), `?search=` (nombre, SKU, código de barras, editorial y género), `?active=`, `?genre=`, `?editorial=`. Filtros del tab Tomos (2026-10-12), combinables por AND: `?out_of_stock=1`, `?low_stock=1` (+`?threshold=`, default 10) y `?no_category=1` — mismo stock (`App\Support\StockSql`) y misma definición que `/products/stats?type=manga`, así que `pagination.total` = el badge. Orden: con stock primero, luego nombre, desempate por `id` |
+| POST | `/mangas` · PUT `/mangas/{id}` · DELETE `/mangas/{id}` | CRUD. DELETE = misma puerta que `/products` (`ProductDeletionService`, `expected` opcional); la vista previa es `GET /products/{id}/delete-preview` |
 | POST | `/mangas/{manga}/image/upload` | Imagen |
 | GET | `/manga-inventory` | Inventario de mangas |
 | PUT | `/manga-inventory/{mangaId}/{warehouseId}` | Ajuste de stock |

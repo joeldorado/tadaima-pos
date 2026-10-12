@@ -8,7 +8,7 @@
 > Detalle adicional: [`CLAUDE.md`](CLAUDE.md) (comandos y arquitectura del frontend) y
 > [`backend/AGENTS.md`](backend/AGENTS.md) (API, ADRs y referencia de endpoints).
 >
-> Última revisión: 2026-10-08.
+> Última revisión: 2026-10-12.
 
 ---
 
@@ -279,6 +279,12 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   "Actualizar" (también en la barra de filtros de Ventas y Reportes). Solo siguen en fondo:
   caja abierta, avisos, carritos de Caja y usuarios conectados. No vuelvas a meter
   `refetchInterval` en una pantalla de datos.
+- **Catálogo paginado en el servidor** (Productos 2026-08-04, Tomos 2026-10-12): con ~14k
+  productos y ~2.8k tomos la página cargada NO es el catálogo. Chips, búsqueda, contador y
+  paginador viajan al backend (`buildProductsListParams` / `buildMangasListParams`) y el total
+  sale de `pagination.total`; nunca filtres ni cuentes en el navegador sobre lo cargado (así
+  Tomos mostraba "50 tomos" con el badge de Agotados en 2,206). Cada chip usa la misma
+  definición que `GET /products/stats` (`App\Support\StockSql`): tabla y badge deben cuadrar.
 
 ---
 
