@@ -4,6 +4,82 @@
 
 ---
 
+### Sesión 2026-10-12 — Tomos: la lista no desplegaba todos los mangas (PR #54) — rev tadaima-00078-yem
+
+**Reporte de tienda (video):** en Productos → Tomos / Manga Nacional "no despliega todos los mangas". El
+contador decía "50 tomos" y al elegir Agotados el badge marcaba 2,206 pero la tabla enseñaba unos cuantos.
+
+**Causa:** la pestaña pedía `GET /mangas` UNA vez (el backend pagina a 50) y aplicaba chips, contador,
+orden y paginador en el navegador sobre esas filas. Los badges sí eran reales (`/products/stats`). No
+hubo pérdida de datos. Mismo problema que se arregló en la pestaña Productos el 2026-08-04; Tomos se
+había quedado con el esquema viejo (solo la búsqueda iba al servidor).
+
+> **PUNTO DE ROLLBACK (antes de este deploy):** revisión `tadaima-00076-dam`, `main` en `c394582`.
+> **Sin migraciones:** regresar es solo mover el tráfico.
+>
+> ```
+> gcloud run services update-traffic tadaima --to-revisions tadaima-00076-dam=100 --project tadaimapos --region us-east1
+> ```
+
+**Qué entró:**
+- **`GET /mangas` filtra y pagina de verdad** (aditivo: sin params nuevos responde igual).
+  `?out_of_stock`, `?low_stock` (+`threshold`) y `?no_category` usan el mismo stock y la misma definición
+  que `/products/stats` → `pagination.total` = el badge. `App\Support\StockSql` es ahora el único lugar
+  del SQL de stock de `/products` y `/mangas`.
+- **La búsqueda de tomos también cubre editorial y género** (lo prometía el buscador y solo "funcionaba"
+  sobre las 50 filas cargadas).
+- **Orden: con stock primero**, luego nombre, desempate por `id`. Antes era alfabético puro (decisión
+  aprobada por Joel en el plan; es una línea si se quiere regresar).
+- **Pestaña Tomos:** pide página por página (`buildMangasListParams`), contador y pie con el total real
+  ("Mostrando 1–20 de N · página 1 de M"), tamaños 10/20/50/100, regresa a la página 1 al cambiar
+  búsqueda, chip o tienda. Ya no se re-filtra en el navegador (un tomo encontrado por SKU desaparecía si
+  además tenía código de barras; la búsqueda arranca a partir de 2 caracteres). Un error de red ya no se
+  muestra como "no hay tomos". El pie de paginación es un componente compartido con Productos
+  (`TablePaginationFooter`).
+- **Bug aparte, encontrado al probar: el botón «Stock» de un tomo nunca guardaba.** `QuickStockModal`
+  llamaba `updateMangaInventory(id, almacén, { quantity })` y esa función recibe el número: se mandaba
+  `{ quantity: { quantity: n } }` → 422 "Los datos enviados no son válidos". Venía así desde mayo;
+  «Mover stock» y el modal de edición sí guardaban. Al guardar ahora también se refresca el badge.
+
+**Verificado (rama `fix/tomos-paginacion-server`):** backend 814 en SQLite; vitest 733; `tsc` 454 contra 455
+de `main` (ninguno nuevo); `vite build` OK. En Postgres 17 local pasan las suites de productos y tomos; la
+suite completa pasa salvo 2 pruebas de `CashReportRangeTest` que fallan IGUAL en `main` (`c394582`) —
+ver pendientes. En local con 130 tomos sembrados: paginación hasta la última página, cada chip = su badge,
+búsqueda por nombre / editorial / género / código de barras / SKU, cambio de tienda, guardar stock sin
+perder la página (y el badge baja), y la pestaña Productos con el pie compartido. Revisión de código
+independiente: aprobado, sin críticos ni altos.
+
+**QUÉ PROBAR EN PROD** (incógnito o recarga forzada):
+1. Productos → Tomos: el contador debe decir el total real (~2,800) y se debe poder pasar de página.
+2. Filtros → Agotados / Por agotarse / Sin categoría: el total de la tabla = el número del badge.
+3. Buscar un tomo por nombre, por código (lector + Enter), por editorial y por género.
+4. Botón «Stock» (o «Agregar stock») de un tomo: cambiar la cantidad y guardar — debe decir "Stock
+   actualizado" y la fila cambia sin salirse de la página.
+5. Pestaña Productos: la paginación de abajo se ve y funciona igual que antes.
+
+**Señales para regresar:** la pestaña Tomos no carga o se queda en "Actualizando tomos…", los totales no
+cuadran con los badges, la pestaña Productos pierde su paginación, o errores 500 en `GET /mangas` o
+`GET /products`.
+
+**No se probó:** nada con sesión en producción (no se entró con credenciales reales) ni con los ~2,800
+tomos reales; el rendimiento del orden por stock en Supabase se asume igual al de `/products`, que hace lo
+mismo con ~14k filas.
+
+**Pendientes:**
+- **Ruben / app móvil:** si consume `GET /mangas`, el orden por defecto ahora es "con stock primero" y
+  `search` también busca en editorial y género. En la copia local de `pos-app` no se encontró uso.
+- **`CashReportRangeTest` en Postgres:** hoy fallan 2 pruebas de forma consistente en Postgres 17 local,
+  también sobre `main` sin cambios (`test_expected_cash_usa_solo_dinero_fisico_y_no_tarjeta` y
+  `test_transferencia_no_entra_al_esperado_del_cajon`: esperado 0.0 en vez de 80 / 170). La entrada del
+  2026-10-11 la daba por estable; hay que ver si es la prueba (fechas) o el cálculo. Relacionado: PR #42.
+- Ordenar por columna en Tomos y Productos sigue siendo sobre la página visible.
+
+**Deploy (2026-10-12 ~13:20 Tijuana) — rev tadaima-00078-yem (rollback `tadaima-00076-dam`).** Candidato
+sin tráfico desde un worktree limpio en el commit `62ec388` (Dockerfile): `Nothing to migrate`, `/`,
+`/login`, `/caja`, `/products`, `/pre-sales`, `/sales`, `/reports` y `/tadaimaus/` 200, `GET /mangas` y
+`/products/stats` responden 401 sin sesión, el bundle trae "Tomos sin cargar", cero errores en logs.
+Promovido al 100%; `tadaimamexico.com` sirve `index-BQqBYyx7.js`.
+
 ### Sesión 2026-10-11 (2) — Vista previa de borrado + PDF con formato del Excel (PR #53: #51 y #36) — rev tadaima-00076-dam
 
 **Pedido Joel:** deployar todo lo pendiente para probarlo en prod, con opción de rollback a este punto.
