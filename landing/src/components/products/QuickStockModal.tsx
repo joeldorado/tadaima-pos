@@ -221,16 +221,20 @@ export function QuickStockModal({ productId, productName, kind = "product", onCl
     try {
       await Promise.all(diffs.map(d =>
         isManga
-          ? updateMangaInventory(productId, d.whId, { quantity: d.qty })
+          // OJO: firmas distintas. updateMangaInventory recibe el NÚMERO y arma
+          // el body; pasarle { quantity } mandaba { quantity: { quantity: n } }
+          // y el server respondía 422 "debe ser un entero" — el botón «Stock»
+          // de un tomo nunca guardaba (2026-10-12).
+          ? updateMangaInventory(productId, d.whId, d.qty)
           : updateInventory(productId, d.whId, { quantity: d.qty })
       ));
       toast.success(`Stock actualizado en ${diffs.length} almacén${diffs.length === 1 ? "" : "es"}`);
-      if (isManga) {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.mangas.all });
-      } else {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all });
-      }
+      // products.all incluye los contadores de /products/stats: sin esto, tras
+      // ponerle stock a un tomo el badge de «Agotados» seguía en el número
+      // viejo mientras la tabla ya mostraba uno menos.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all });
+      if (isManga) void queryClient.invalidateQueries({ queryKey: queryKeys.mangas.all });
       onClose();
     } catch (err: unknown) {
       const msg = (err as { message?: string })?.message ?? "Error al guardar inventario";
