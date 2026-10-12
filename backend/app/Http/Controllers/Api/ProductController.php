@@ -14,6 +14,7 @@ use App\Models\ProductStorePrice;
 use App\Models\Store;
 use App\Models\SystemLog;
 use App\Services\ProductDeletionService;
+use App\Support\StockSql;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -134,10 +135,8 @@ class ProductController extends Controller
         // Mismo SQL de stock usado por el filtro out_of_stock/low_stock de abajo
         // Y por el ORDER BY de más adelante (productos sin stock al final,
         // Joel 2026-08-05) — se calcula una sola vez para no duplicarlo.
-        $stockSql = $storeId
-            ? 'COALESCE((SELECT SUM(i.quantity) FROM inventory i JOIN warehouses w ON w.id = i.warehouse_id WHERE i.product_id = products.id AND w.store_id = ?), 0)'
-            : 'COALESCE((SELECT SUM(i.quantity) FROM inventory i WHERE i.product_id = products.id), 0)';
-        $bind = $storeId ? [$storeId] : [];
+        $stockSql = StockSql::total($storeId);
+        $bind = StockSql::bindings($storeId);
 
         if ($request->boolean('no_cost')) {
             // Paridad con el chip del front: NULL O <= 0 cuentan como "sin costo".

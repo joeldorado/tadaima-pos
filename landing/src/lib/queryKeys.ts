@@ -101,6 +101,11 @@ export const queryKeys = {
   mangas: {
     all: ['mangas'] as const,
     list: (params?: Record<string, unknown>) => ['mangas', 'list', params ?? {}] as const,
+    // Página del tab Tomos con paginación server-side (2026-10-12): guarda
+    // { data, total, last_page } y no el arreglo plano de `list` — key aparte
+    // para que un caché viejo persistido en IndexedDB nunca se lea con la
+    // forma nueva.
+    page: (params?: Record<string, unknown>) => ['mangas', 'page', params ?? {}] as const,
   },
   notifications: {
     all: ['notifications'] as const,

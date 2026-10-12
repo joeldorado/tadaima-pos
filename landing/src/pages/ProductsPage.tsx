@@ -4,14 +4,13 @@ import {
   Search, Plus,
   Package, AlertTriangle,
   DollarSign, Scan,
-  ChevronRight,
   Warehouse, CheckCircle2,
   X, Save,
   BookOpen, TrendingUp,
   MessageCircle,
   Upload, Camera, Loader2,
   ArrowUp, ArrowDown, ArrowUpDown,
-  ChevronLeft, ChevronsLeft, ChevronsRight, Trash2, Pencil, PackageX, TicketPercent,
+  Trash2, Pencil, PackageX, TicketPercent,
   ChevronDown, SlidersHorizontal, FolderX
 } from "lucide-react";
 import { useActiveStore } from "@/contexts/StoreContext";
@@ -25,9 +24,11 @@ import { lookupProductByCode, createProduct, updateProduct, uploadProductImage, 
 import type { ApiError } from "@tadaima/api";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useProductsQuery, useProductStatsQuery, type ProductsCatalogFilter, type ProductsSortOption } from "@/hooks/queries/useProducts";
-import { useMangasQuery } from "@/hooks/queries/useMangas";
+import { useMangasQuery, effectiveMangaSearch, MANGAS_DEFAULT_PAGE_SIZE } from "@/hooks/queries/useMangas";
 import { useCategoriesQuery } from "@/hooks/queries/useCategories";
 import { ProductsSkeleton } from "@/components/products/ProductsSkeleton";
+import { TablePaginationFooter } from "@/components/products/TablePaginationFooter";
+import { paginationRangeLabel } from "@/lib/paginationLabel";
 import { useStoresQuery } from "@/hooks/queries/useStores";
 import { useWarehousesQuery } from "@/hooks/queries/useWarehouses";
 import { queryKeys } from "@/lib/queryKeys";
@@ -63,7 +64,6 @@ import {
   useReactTable,
   getCoreRowModel,
   getSortedRowModel,
-  getPaginationRowModel,
   flexRender,
   createColumnHelper,
 } from '@tanstack/react-table';
@@ -1898,7 +1898,7 @@ export function ProductsPage() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 20 });
   const [mangaSearch, setMangaSearch] = useState('');
   const [mangaSorting, setMangaSorting] = useState<SortingState>([]);
-  const [mangaPagination, setMangaPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 20 });
+  const [mangaPagination, setMangaPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: MANGAS_DEFAULT_PAGE_SIZE });
   
   const { refreshProductCount } = useActiveStore();
   const { user } = useAuth();
@@ -2003,10 +2003,36 @@ export function ProductsPage() {
     const t = window.setTimeout(() => setServerMangaSearch(mangaSearch), 300);
     return () => window.clearTimeout(t);
   }, [mangaSearch]);
+  // Paginación + chips SERVER-SIDE también en Tomos (2026-10-12, bug de
+  // tienda "no despliega todos los mangas"): antes se pedía UNA página (50) y
+  // los chips/contador/paginador trabajaban en el navegador sobre esas filas,
+  // así que el badge decía 2,206 agotados y la tabla enseñaba unos cuantos.
   const mangasQuery = useMangasQuery(selectedStoreId, {
     enabled: pageSection === 'tomos' || productsQuery.isSuccess,
     search: serverMangaSearch,
+    filter: activeFilter,
+    threshold: 10,
+    page: mangaPagination.pageIndex + 1,
+    perPage: mangaPagination.pageSize,
   });
+  const totalMangas = mangasQuery.data?.total ?? 0;
+  const mangaLastPage = mangasQuery.data?.last_page ?? 1;
+  // Igual que en Productos: cambiar búsqueda/chip/tienda regresa a la página 1
+  // (con manualPagination nadie más lo hace y la tabla quedaba vacía). Usa el
+  // término que de verdad viaja al server: teclear 1 caracter no mueve nada.
+  const mangaServerTerm = effectiveMangaSearch(serverMangaSearch);
+  useEffect(() => {
+    setMangaPagination(p => (p.pageIndex === 0 ? p : { ...p, pageIndex: 0 }));
+  }, [mangaServerTerm, activeFilter, selectedStoreId]);
+  // Si la página actual dejó de existir (se borró el último tomo de la última
+  // página, o alguien vendió/ajustó y el chip ya tiene menos), cae a la última
+  // que sí hay en vez de quedarse en una página vacía.
+  const mangaServerLastPage = mangasQuery.isPlaceholderData ? null : (mangasQuery.data?.last_page ?? null);
+  useEffect(() => {
+    if (mangaServerLastPage === null) return;
+    const lastIndex = Math.max(0, mangaServerLastPage - 1);
+    setMangaPagination(p => (p.pageIndex > lastIndex ? { ...p, pageIndex: lastIndex } : p));
+  }, [mangaServerLastPage]);
   const storesQuery = useStoresQuery({ active: true, enabled: isAdmin });
   const warehousesQuery = useWarehousesQuery({ active: true });
 
@@ -2069,7 +2095,7 @@ export function ProductsPage() {
     for (const p of productsQuery.data?.data ?? []) if (p.stock_bodega != null) map.set(p.id, p.stock_bodega);
     return map;
   }, [productsQuery.data]);
-  const mangas = mangasQuery.data ?? [];
+  const mangas = useMemo(() => mangasQuery.data?.data ?? [], [mangasQuery.data]);
   const stores = storesQuery.data ?? [];
   const locations = useMemo(
     () => (warehousesQuery.data ?? [])
@@ -2801,134 +2827,85 @@ export function ProductsPage() {
     }),
   ], [canViewCost, canEdit, isAdmin, canNotify, handleNotify, openMangaDetails, alertingKey, notifiedKeys]);
 
-  const filteredMangas = useMemo(() => {
-    let list = mangas;
-    // Tab "Por agotarse" / "Agotados" / "Sin categoría" — solo aplica cuando
-    // estamos en sección tomos (la lista de mangas viene completa; se filtra aquí).
-    if (pageSection === 'tomos') {
-      if (showOutStock) {
-        list = list.filter(m => (m.stock ?? 0) === 0);
-      } else if (showLowStock) {
-        list = list.filter(m => (m.stock ?? 0) > 0 && (m.stock ?? 0) <= 10);
-      } else if (showNoCategory) {
-        // Misma semántica que ?no_category=1 del backend: pivote vacío
-        // (categories[]); fallback a category_id solo si la API vieja no lo manda.
-        list = list.filter(m => (m.categories ? m.categories.length === 0 : m.category_id == null));
-      }
-    }
-    if (!mangaSearch.trim()) return list;
-    const q = mangaSearch.toLowerCase();
-    return list.filter(m =>
-      m.name.toLowerCase().includes(q) ||
-      (m.editorial ?? '').toLowerCase().includes(q) ||
-      (m.genre ?? '').toLowerCase().includes(q) ||
-      (m.code ?? '').toLowerCase().includes(q)
-    );
-  }, [mangas, mangaSearch, showLowStock, showOutStock, showNoCategory, pageSection]);
-
+  // 2026-10-12: los chips (Por agotarse / Agotados / Sin categoría) y la
+  // búsqueda filtran en el SERVER — `mangas` ya es la página filtrada y el
+  // total viene aparte. Aquí NO se vuelve a filtrar: antes se re-filtraba la
+  // respuesta por nombre/editorial/género/código y un tomo encontrado por SKU
+  // desaparecía si además tenía código de barras, y cualquier filtro local
+  // deja el contador («N tomos») sin cuadrar con las filas.
+  //
+  // manualPagination: la tabla pinta la página que mandó el server tal cual;
+  // pageCount viene del total real. El sort por columna sigue siendo sobre la
+  // página visible (igual que en Productos).
   const mangaTable = useReactTable({
-    data: filteredMangas,
+    data: mangas,
     columns: mangaColumns,
     state: { sorting: mangaSorting, pagination: mangaPagination },
     onSortingChange: setMangaSorting,
     onPaginationChange: setMangaPagination,
     autoResetPageIndex: false,
+    manualPagination: true,
+    pageCount: mangaLastPage,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
   });
 
   // ── Footer de paginación SERVER-SIDE — compartido por Tabla y Cuadrícula.
   // "Mostrando X–Y de N" usa el total real del meta (~14k), no lo cargado.
-  const paginationFooter = (() => {
-    const pageIdx = pagination.pageIndex;
-    const size = pagination.pageSize;
-    const from = filtered.length === 0 ? 0 : pageIdx * size + 1;
-    const to = pageIdx * size + filtered.length;
-    return (
-      <div
-        className="flex items-center justify-between px-6 py-4 gap-4 flex-wrap"
-        style={{ borderTop: PRODUCT_THEME.borderSubtle, background: PRODUCT_THEME.tableFoot }}
-      >
-        <span className="text-[11px] font-semibold inline-flex items-center gap-2" style={{ color: T.textMuted }}>
-          {showTopSellers
-            ? `Top ${filtered.length} más vendidos (últimos 30 días)`
-            : `Mostrando ${from.toLocaleString("es-MX")}–${to.toLocaleString("es-MX")} de ${totalProducts.toLocaleString("es-MX")} · página ${pageIdx + 1} de ${Math.max(1, table.getPageCount())}`}
-          {productsQuery.isFetching && <Loader2 size={11} className="animate-spin" />}
-        </span>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => table.setPageIndex(0)}
-            disabled={!table.getCanPreviousPage()}
-            className="p-2 rounded-xl transition-all disabled:opacity-30"
-            style={SECONDARY_BUTTON}
-            title="Primera página"
-          >
-            <ChevronsLeft size={15} />
-          </button>
-          <button
-            onClick={() => table.previousPage()}
-            disabled={!table.getCanPreviousPage()}
-            className="p-2 rounded-xl transition-all disabled:opacity-30"
-            style={SECONDARY_BUTTON}
-            title="Página anterior"
-          >
-            <ChevronLeft size={15} />
-          </button>
+  const paginationFooter = (
+    <TablePaginationFooter
+      label={showTopSellers
+        ? `Top ${filtered.length} más vendidos (últimos 30 días)`
+        : paginationRangeLabel({
+            pageIndex: pagination.pageIndex,
+            pageSize: pagination.pageSize,
+            rowsOnPage: filtered.length,
+            total: totalProducts,
+            pageCount: table.getPageCount(),
+          })}
+      isFetching={productsQuery.isFetching}
+      pageIndex={pagination.pageIndex}
+      pageCount={table.getPageCount()}
+      pageSize={pagination.pageSize}
+      onPageChange={pageIndex => setPagination(p => ({ ...p, pageIndex }))}
+      // Cambiar el tamaño regresa a la página 1 — el índice viejo puede
+      // quedar fuera de rango con el tamaño nuevo (server-side).
+      onPageSizeChange={pageSize => setPagination({ pageIndex: 0, pageSize })}
+    />
+  );
 
-          {/* Page numbers */}
-          {Array.from({ length: table.getPageCount() }, (_, i) => i)
-            .filter(i => Math.abs(i - pageIdx) <= 2)
-            .map(i => (
-              <button
-                key={i}
-                onClick={() => table.setPageIndex(i)}
-                className="w-8 h-8 rounded-xl text-xs font-bold transition-all"
-                style={
-                  i === pageIdx
-                    ? { background: T.redBright, color: '#fff' }
-                    : { color: T.textMuted, background: 'transparent' }
-                }
-              >
-                {i + 1}
-              </button>
-            ))}
+  // Tabla de tomos vacía: distingue búsqueda, chip sin resultados y catálogo vacío.
+  const mangaChipLabel = (showLowStock || showOutStock || showNoCategory) && activeFilter
+    ? FILTER_META[activeFilter].label
+    : null;
+  // Un error de red NO es "no hay tomos": con el chip «Agotados» eso le
+  // aseguraría al gerente que nada está agotado.
+  const mangaEmptyMessage = mangasQuery.isError
+    ? 'No se pudieron cargar los tomos. Pulsa «Actualizar» para reintentar.'
+    : mangaServerTerm
+      ? 'Sin resultados para esa búsqueda.'
+      : mangaChipLabel
+        ? `No hay tomos en «${mangaChipLabel}».`
+        : 'No hay tomos registrados aún.';
 
-          <button
-            onClick={() => table.nextPage()}
-            disabled={!table.getCanNextPage()}
-            className="p-2 rounded-xl transition-all disabled:opacity-30"
-            style={SECONDARY_BUTTON}
-            title="Página siguiente"
-          >
-            <ChevronRight size={15} />
-          </button>
-          <button
-            onClick={() => table.setPageIndex(table.getPageCount() - 1)}
-            disabled={!table.getCanNextPage()}
-            className="p-2 rounded-xl transition-all disabled:opacity-30"
-            style={SECONDARY_BUTTON}
-            title="Última página"
-          >
-            <ChevronsRight size={15} />
-          </button>
-
-          <select
-            value={size}
-            // Cambiar el tamaño regresa a la página 1 — el índice viejo puede
-            // quedar fuera de rango con el tamaño nuevo (server-side).
-            onChange={e => setPagination({ pageIndex: 0, pageSize: Number(e.target.value) })}
-            className="ml-2 px-2 py-1 rounded-xl text-xs font-bold outline-none"
-            style={T.input}
-          >
-            {[10, 20, 50, 100].map(s => (
-              <option key={s} value={s}>{s} / página</option>
-            ))}
-          </select>
-        </div>
-      </div>
-    );
-  })();
+  // Mismo pie para Tomos, con el total real de GET /mangas.
+  const mangaPaginationFooter = (
+    <TablePaginationFooter
+      label={paginationRangeLabel({
+        pageIndex: mangaPagination.pageIndex,
+        pageSize: mangaPagination.pageSize,
+        rowsOnPage: mangas.length,
+        total: totalMangas,
+        pageCount: mangaLastPage,
+      })}
+      isFetching={mangasQuery.isFetching}
+      pageIndex={mangaPagination.pageIndex}
+      pageCount={mangaLastPage}
+      pageSize={mangaPagination.pageSize}
+      onPageChange={pageIndex => setMangaPagination(p => ({ ...p, pageIndex }))}
+      onPageSizeChange={pageSize => setMangaPagination({ pageIndex: 0, pageSize })}
+    />
+  );
 
   if (loading) {
     return <ProductsSkeleton viewMode={viewMode} bgGrad={T.bgGrad} />;
@@ -3479,8 +3456,11 @@ export function ProductsPage() {
         <>
           {/* Tomos header row */}
           <div className="flex items-center justify-between mb-4">
+            {/* Total REAL del servidor (con chip/búsqueda/tienda aplicados), no las filas cargadas. */}
             <p className="text-[10px] font-black uppercase tracking-[0.2em]" style={{ color: T.textMuted }}>
-              {filteredMangas.length} tomo{filteredMangas.length !== 1 ? 's' : ''}
+              {mangasQuery.isError && !mangasQuery.data
+                ? 'Tomos sin cargar'
+                : `${totalMangas.toLocaleString("es-MX")} tomo${totalMangas !== 1 ? 's' : ''}`}
             </p>
             {canEdit && (
               <button
@@ -3511,7 +3491,7 @@ export function ProductsPage() {
                   if (e.key === "Enter") {
                     const term = mangaSearch.trim();
                     setServerMangaSearch(term);
-                    if (term && filteredMangas.length === 0 && serverMangaSearch === term && !mangasQuery.isFetching) {
+                    if (term && mangas.length === 0 && serverMangaSearch === term && !mangasQuery.isFetching) {
                       toast.warning(`No se encontró "${term}"`);
                     }
                   }
@@ -3561,7 +3541,7 @@ export function ProductsPage() {
                               <Loader2 size={14} className="animate-spin" />
                               Actualizando tomos…
                             </span>
-                          ) : mangas.length === 0 ? 'No hay tomos registrados aún.' : 'Sin resultados para esa búsqueda.'}
+                          ) : mangaEmptyMessage}
                         </td>
                       </tr>
                     ) : (
@@ -3584,29 +3564,7 @@ export function ProductsPage() {
                 </table>
               </div>
 
-              {/* Pagination — idéntica a productos */}
-              <div className="flex items-center justify-between px-6 py-4 gap-4 flex-wrap" style={{ borderTop: PRODUCT_THEME.borderSubtle, background: PRODUCT_THEME.tableFoot }}>
-                <span className="text-[11px] font-semibold" style={{ color: T.textMuted }}>
-                  {filteredMangas.length} tomos · página {mangaTable.getState().pagination.pageIndex + 1} de {Math.max(1, mangaTable.getPageCount())}
-                </span>
-                <div className="flex items-center gap-1">
-                  <button onClick={() => mangaTable.setPageIndex(0)} disabled={!mangaTable.getCanPreviousPage()} className="p-2 rounded-xl transition-all disabled:opacity-30" style={SECONDARY_BUTTON}><ChevronsLeft size={15} /></button>
-                  <button onClick={() => mangaTable.previousPage()} disabled={!mangaTable.getCanPreviousPage()} className="p-2 rounded-xl transition-all disabled:opacity-30" style={SECONDARY_BUTTON}><ChevronLeft size={15} /></button>
-                  {Array.from({ length: mangaTable.getPageCount() }, (_, i) => i)
-                    .filter(i => Math.abs(i - mangaTable.getState().pagination.pageIndex) <= 2)
-                    .map(i => (
-                      <button key={i} onClick={() => mangaTable.setPageIndex(i)} className="w-8 h-8 rounded-xl text-xs font-bold transition-all"
-                        style={i === mangaTable.getState().pagination.pageIndex ? { background: T.redBright, color: '#fff' } : { color: T.textMuted }}>
-                        {i + 1}
-                      </button>
-                    ))}
-                  <button onClick={() => mangaTable.nextPage()} disabled={!mangaTable.getCanNextPage()} className="p-2 rounded-xl transition-all disabled:opacity-30" style={SECONDARY_BUTTON}><ChevronRight size={15} /></button>
-                  <button onClick={() => mangaTable.setPageIndex(mangaTable.getPageCount() - 1)} disabled={!mangaTable.getCanNextPage()} className="p-2 rounded-xl transition-all disabled:opacity-30" style={SECONDARY_BUTTON}><ChevronsRight size={15} /></button>
-                  <select value={mangaTable.getState().pagination.pageSize} onChange={e => mangaTable.setPageSize(Number(e.target.value))} className="ml-2 px-2 py-1 rounded-xl text-xs font-bold outline-none" style={T.input}>
-                    {[10, 20, 50].map(s => <option key={s} value={s}>{s} / página</option>)}
-                  </select>
-                </div>
-              </div>
+              {mangaPaginationFooter}
             </div>
           )}
         </>

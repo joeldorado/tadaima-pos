@@ -13,6 +13,7 @@ use App\Models\Product;
 use App\Models\ProductMangaDetail;
 use App\Models\SystemLog;
 use App\Services\ProductDeletionService;
+use App\Support\StockSql;
 use App\Support\TomoCost;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -32,10 +33,20 @@ class MangaController extends Controller
 {
     /**
      * GET /mangas — lista de productos con product_type='manga'.
+     *
+     * Paginada (?page, ?per_page: default 50, máx 200) con el total real en
+     * `pagination`. Filtros del tab Tomos (2026-10-12), todos opcionales y
+     * combinables por AND con tienda y búsqueda: ?out_of_stock=1, ?low_stock=1
+     * (+ ?threshold, default 10) y ?no_category=1. Antes el front los aplicaba
+     * en el navegador sobre la primera página (50 de ~2.8k) y el badge de
+     * /products/stats no cuadraba con la tabla; aquí usan el MISMO stock y la
+     * misma definición que stats, así que `pagination.total` = el badge.
      */
     public function index(Request $request): JsonResponse
     {
         $storeId = $request->filled('store_id') ? (int) $request->store_id : null;
+        $stockSql = StockSql::total($storeId);
+        $stockBind = StockSql::bindings($storeId);
 
         $query = Product::query()
             ->ofType(Product::TYPE_MANGA)
@@ -48,13 +59,39 @@ class MangaController extends Controller
                 ->whereHas('mangaDetails', fn ($d) => $d->where('genre', $request->genre)))
             ->when($request->filled('editorial'), fn ($q) => $q
                 ->whereHas('mangaDetails', fn ($d) => $d->where('editorial', $request->editorial)))
+            // Nombre, SKU, código de barras y también editorial / género: es lo
+            // que promete el buscador del tab, y con paginación server-side ya
+            // no hay un filtro en el navegador que lo "complete".
             ->when($request->filled('search'), fn ($q) => $q->where(function ($q2) use ($request) {
-                $term = $request->search;
-                $q2->whereLike('name', "%{$term}%", caseSensitive: false)
-                   ->orWhereLike('sku', "%{$term}%", caseSensitive: false)
-                   ->orWhereLike('barcode', "%{$term}%", caseSensitive: false);
-            }))
-            ->orderBy('name');
+                $like = '%' . trim((string) $request->search) . '%';
+                $q2->whereLike('name', $like, caseSensitive: false)
+                   ->orWhereLike('sku', $like, caseSensitive: false)
+                   ->orWhereLike('barcode', $like, caseSensitive: false)
+                   ->orWhereHas('mangaDetails', fn ($d) => $d->where(fn ($d2) => $d2
+                       ->whereLike('editorial', $like, caseSensitive: false)
+                       ->orWhereLike('genre', $like, caseSensitive: false)));
+            }));
+
+        if ($request->boolean('out_of_stock')) {
+            $query->whereRaw("{$stockSql} = 0", $stockBind);
+        } elseif ($request->boolean('low_stock')) {
+            $threshold = max(1, (int) $request->get('threshold', 10));
+            $query->whereRaw("{$stockSql} > 0", $stockBind)
+                ->whereRaw("{$stockSql} <= ?", [...$stockBind, $threshold]);
+        }
+
+        // Sin NINGUNA categoría: lee el pivote, no la caché products.category_id.
+        if ($request->boolean('no_category')) {
+            $query->whereDoesntHave('categories');
+        }
+
+        // Con stock primero (misma regla que Productos, Joel 2026-08-05: los
+        // agotados no estorban al inicio), luego por nombre. El `id` desempata:
+        // hay muchos tomos con el mismo nombre y sin él una fila puede repetirse
+        // o saltarse entre páginas.
+        $query->orderByRaw("({$stockSql}) = 0", $stockBind)
+            ->orderBy('name')
+            ->orderBy('id');
 
         // Visibilidad por tienda — mismo patrón que ProductController::index.
         // Default: solo tomos CON inventario en la tienda. Con
