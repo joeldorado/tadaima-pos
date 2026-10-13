@@ -151,9 +151,10 @@ para reportes.
 
 > ⚠️ **NO QUITAR — filtros `from`/`to`/`store_id`/`user_id` en `GET /supplies/movements` (2026-07, Ruben/Reportes).**
 > `SuppliesController::movements` acepta ahora `?from&to` (rango día-negocio, mismo
-> `DateRange::fromUtc/toUtc` que `/reports/supplies`), `?store_id` (filtra por la
-> tienda dueña del insumo, `supplies.store_id` vía `whereHas`; NULL = toda la
-> empresa) y `?user_id` (filtra por quién REGISTRÓ la compra — filtro de usuario del
+> `DateRange::fromUtc/toUtc` que `/reports/supplies`), `?store_id` (desde 2026-10-12
+> filtra por la tienda del MOVIMIENTO, `supply_movements.store_id`; los registros
+> anteriores, con esa columna NULL, caen a la tienda dueña del insumo,
+> `supplies.store_id` vía `whereHas`; NULL en ambas = toda la empresa) y `?user_id` (filtra por quién REGISTRÓ la compra — filtro de usuario del
 > Reporte; el cajero ya queda scoped a lo suyo). El eager-load ya trae `user:id,name`
 > (**quién registró la compra**) y el select del `supply` incluye `store_id`.
 > **Por qué:** el Reporte de Ventas lista los insumos (egresos) del MISMO rango y
@@ -421,9 +422,10 @@ permitido); `/products` no crea ni re-tipa paquetes; `PurgeNoStockProductsComman
 | Método | Path | Notas |
 |---|---|---|
 | GET | `/supplies` | Catálogo de insumos (scoped por empresa + tienda del insumo) |
-| POST | `/supplies` · PUT `/supplies/{supply}` | Alta / edición (admin o gerente) |
-| POST | `/supplies/movements` | Registrar compra/consumo/ajuste (`storeMovement`). `money_source` bifurca caja vs no-caja (`SupplyService`) |
+| POST | `/supplies` · PUT `/supplies/{supply}` | Alta / edición (admin o gerente). `store_id`: solo el admin lo decide (null = toda la empresa) y desde 2026-10-12 el PUT sí lo reasigna; el gerente queda forzado a su tienda (sin tienda → 422) |
+| POST | `/supplies/movements` | Registrar compra/consumo/ajuste (`storeMovement`). `money_source` bifurca caja vs no-caja (`SupplyService`). `store_id` del movimiento (2026-10-12): cajero/gerente = su tienda (sin tienda → 422); admin lo manda, o cae a su tienda, o NULL |
 | GET | `/supplies/movements` | Movimientos. **Filtros (Ruben/Reportes 2026-07): `?from&to&store_id`** + `?supply_id&type`. Trae `user` (quién registró); cajero solo ve los suyos. Ver ⚠️ NO QUITAR arriba. |
+| DELETE | `/supplies/movements/{movement}` | **Solo admin** (2026-10-12). `SupplyService::deleteMovement()`: borra el registro y su `cash_movement` ligado, snapshot en `system_logs` (`supply_movement.deleted`). Definitivo |
 | GET | `/reports/supplies` | Ver tabla de Reportes (resumen agregado). |
 
 ### Catálogo online / admin (`CatalogController`)
