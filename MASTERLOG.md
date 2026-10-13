@@ -4,6 +4,90 @@
 
 ---
 
+### Sesión 2026-10-12 (2) — Insumos por tienda + borrar registro de insumo (Ruben, PR #55) — rev tadaima-00080-zoy
+
+**Pedido Joel:** bajar lo que Ruben subió a `develop` (`445c772` "insumos y eliminar insumo con super
+admin" + merge `86261c1`), PR a `main` y deploy. `develop` iba 2 adelante / 0 atrás de `main`.
+
+> **PUNTO DE ROLLBACK (antes de este deploy):** revisión `tadaima-00078-yem`, `main` en `466c511`.
+> **Hay una migración** (`supply_movements.store_id`, nullable): se queda aunque se regrese, el código
+> anterior no la usa. Regresar es solo mover el tráfico.
+>
+> ```
+> gcloud run services update-traffic tadaima --to-revisions tadaima-00078-yem=100 --project tadaimapos --region us-east1
+> ```
+
+**Qué entró (de Ruben):**
+- **Migración `2026_10_12_000001_add_store_id_to_supply_movements`:** `store_id` nullable + FK a `stores`
+  (nullOnDelete) + índice `(store_id, created_at)`. Aditiva, idempotente, sin backfill a propósito.
+- **El registro de insumo queda atado a la tienda de quien lo registra**, no a la de la categoría
+  (`supplies.store_id`). Cajero y gerente forzados a su tienda (sin tienda asignada → 422, también al
+  crear un insumo en el catálogo); el admin elige tienda o "toda la empresa". Antes, una compra contra
+  una categoría de toda la empresa ("Sueldos") no salía en el reporte de la tienda del cajero.
+- **`GET /supplies/movements`** (`?store_id` y `?whole_store=1`) filtra por la tienda del movimiento y
+  cae a la de la categoría en los registros viejos (columna NULL).
+- **`PUT /supplies/{id}`:** el admin ya puede reasignar la tienda del insumo (el selector del modal se
+  ignoraba). El gerente no lo puede sacar de su tienda.
+- **`DELETE /supplies/movements/{movement}` (solo admin):** `SupplyService::deleteMovement()` borra el
+  registro y su `cash_movement` ligado (el esperado del corte regresa) con snapshot en `system_logs`
+  (`supply_movement.deleted`). Botón de bote en "Compras de hoy", con confirmación.
+- **Insumos (pantalla):** selector "Cargar a la tienda" para el admin, aviso "Se registra para: …" para
+  cajero/gerente y chip de tienda en cada compra de hoy.
+- **Cerrar Caja:** se oculta "Descargar reporte del turno (Excel)" (línea comentada en
+  `CloseCashModal`); queda solo el de toda la tienda.
+
+**Qué entró (de esta sesión):** la guía in-app de Caja habla de un solo reporte en Excel
+(`content/docs/data/caja.json`); `AGENTS.md` §5 y `backend/AGENTS.md` con la regla y el endpoint nuevos.
+
+**Verificado (rama `release/2026-10-12`, commit `44f53a6`):** backend 833 en SQLite (18 pruebas nuevas:
+`SupplyMovementDeleteTest`, `SupplyStoreAssignmentTest`); Postgres 17 local 831 de 833 — las 2 que fallan
+son las de `CashReportRangeTest` ya anotadas (con la versión de reloj fijo del PR #42 pasan las 11 contra
+este código); vitest 733; `vite build` OK; `tsc` 454 = base, ninguno nuevo. QA local (backend SQLite +
+landing): 16 casos por API (tienda del movimiento por rol, cajero que manda otra tienda queda en la suya,
+403 al borrar para gerente y cajero, esperado del corte 420 → 500 al borrar un insumo de caja, reasignar
+tienda del insumo) y en pantalla como admin (alta a Tienda 2, chip, borrado con confirmación) y como
+gerente (aviso de su tienda, sin selector ni bote); Cerrar Caja con un solo botón de Excel. En prod, por
+consulta de solo lectura antes del deploy: 0 cajeros y 0 gerentes sin tienda (el 422 nuevo no bloquea a
+nadie) y 13 registros de insumos.
+
+**QUÉ PROBAR EN PROD** (incógnito o recarga forzada):
+1. Admin → Insumos: registrar una compra de caja chica eligiendo tienda y ver el chip correcto.
+2. Cajero → registrar "Sueldos" (categoría de toda la empresa) y bajar el reporte de toda la tienda
+   desde Cerrar Caja: debe salir.
+3. Admin → borrar un registro de prueba con el bote; si era de caja, el esperado del corte regresa.
+4. Cerrar Caja enseña un solo botón de Excel.
+
+**Señales para regresar:** Insumos no carga o no deja registrar, errores 500 en `/supplies/movements`,
+o el reporte de la tienda deja de traer insumos que antes sí traía.
+
+**No se probó:** nada con sesión en producción (no se entró con credenciales reales).
+
+**Pendientes para Ruben (no bloquearon):**
+- Admin **con** tienda propia (1 de 3 en prod) que deja "Toda la empresa (sin tienda)" en el selector:
+  el backend lo carga a SU tienda (`storeMovement` cae a `user.store_id`). La opción engaña; el chip de
+  la lista sí enseña la tienda real.
+- Borrar un insumo pagado de caja de un corte **ya cerrado** cambia el esperado de ese corte (se calcula
+  en vivo) sin avisar. Hoy el bote solo sale en "Compras de hoy".
+- El gerente ve en "Compras de hoy" los insumos de otras tiendas: `GET /supplies/movements` solo acota al
+  cajero. Ya era así; el chip nuevo lo hace evidente.
+- `GET /reports/supplies` (totales de la pestaña Reporte) sigue sin filtro por tienda.
+- En "Compras de hoy" el nombre del insumo se corta cuando el chip de tienda es largo.
+- La sesión de caja en caché no es por usuario (`['cash','activeSession']`): al cambiar de usuario en la
+  misma PC, Insumos puede decir "necesitas una caja abierta" unos segundos. Ya era así.
+- `CashReportRangeTest` en Postgres sigue fallando 2 pruebas por la hora (PR #42 abierto).
+
+**Deploy (2026-10-12 ~17:12 Tijuana) — rev tadaima-00080-zoy (rollback `tadaima-00078-yem`).** Candidato
+sin tráfico desde un worktree limpio en el commit `44f53a6` (Dockerfile). Al arrancar corrió la migración
+(`add_store_id_to_supply_movements`, 292 ms, batch 14); verificado en Supabase por consulta de solo
+lectura: columna `bigint` nullable, FK `ON DELETE SET NULL`, índice, y las 13 filas existentes con
+`store_id` NULL. Smoke en el candidato y luego en `https://tadaimamexico.com`: `/`, `/login` y
+`/tadaimaus/` 200; login con datos falsos 401; `DELETE /api/v1/supplies/movements/0` sin token 401 (en la
+revisión anterior daba 404: la ruta es nueva); el bundle trae "Cargar a la tienda" y ya no trae
+"Descargar reporte del turno". Promovido con `update-traffic --to-latest`; sin errores en los logs de la
+revisión. PR #55 con merge commit y `develop` igualada a `main` (fast-forward).
+
+---
+
 ### Sesión 2026-10-12 — Tomos: la lista no desplegaba todos los mangas (PR #54) — rev tadaima-00078-yem
 
 **Reporte de tienda (video):** en Productos → Tomos / Manga Nacional "no despliega todos los mangas". El

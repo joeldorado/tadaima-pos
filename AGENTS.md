@@ -158,6 +158,15 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   cortes (devoluciones cruzadas). Definitivo: renglones completos en `system_logs`
   (`cash_session.deleted`, auditoría, no restaurable). NUNCA `$session->delete()` a secas:
   `sales.register_session_id` hace cascade y no regresa stock. Fondo inicial máximo $1,000,000.
+- **Insumos por tienda (2026-10-12, Ruben):** cada registro de insumo guarda SU tienda
+  (`supply_movements.store_id`) = la de quien lo registra, no la de la categoría
+  (`supplies.store_id`). Cajero y gerente quedan forzados a su tienda (sin tienda asignada → 422);
+  el admin elige tienda o "toda la empresa". Los filtros por tienda usan la del movimiento y solo
+  caen a la de la categoría en registros viejos (columna NULL, sin backfill a propósito).
+  **Borrar un registro** (`DELETE /supplies/movements/{id}`, solo admin) pasa por
+  `SupplyService::deleteMovement()`: borra también su `cash_movement` (el esperado del corte
+  regresa) y deja snapshot en `system_logs` (`supply_movement.deleted`). Nunca
+  `$movement->delete()` a secas: el cajón quedaría descuadrado.
 
 ### Productos e inventario
 - **Dos almacenes por tienda:** Exhibición (`warehouses.type='store'`, lo único que se
