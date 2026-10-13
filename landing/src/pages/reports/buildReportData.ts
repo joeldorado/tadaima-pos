@@ -345,8 +345,16 @@ export function buildGroupedProducts(
 
         pGroup.price_breakdown[unitPrice] = (pGroup.price_breakdown[unitPrice] ?? 0) + qty;
 
-        // Proportional commission allocation based on item total compared to sale total
-        if (isCardMethod(payMethodName.toLowerCase()) && sale.total > 0) {
+        // Comisión de terminal: sale.commission_amount ya es la suma de la comisión
+        // SOLO de los pagos con tarjeta de ese ticket (ver Payment::commission_amount
+        // en el backend) — en un pago en efectivo o transferencia esa comisión es 0.
+        // Antes esto se gateaba con isCardMethod(payMethodName), el pago MÁS GRANDE
+        // del ticket: en un ticket mixto con la tarjeta como pago MENOR (ej. 60%
+        // efectivo / 40% tarjeta) la comisión real nunca se sumaba al producto,
+        // inflando el Neto de la pestaña Tarjeta. Basta con que la venta tenga
+        // comisión (venga o no la tarjeta como pago principal); el reparto entre
+        // productos sigue siendo proporcional al valor del renglón (ratio).
+        if ((sale.commission_amount || 0) > 0 && sale.total > 0) {
           const ratio = itemTotal / sale.total;
           const comm = (sale.commission_amount || 0) * ratio;
           pGroup.commission_amount = (pGroup.commission_amount ?? 0) + comm;
