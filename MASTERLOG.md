@@ -4,6 +4,54 @@
 
 ---
 
+### Sesión 2026-10-12 (3) — Reportes: comisión de terminal en tickets con varios pagos (Ruben, PR #56) — rev tadaima-00082-juw
+
+**Pedido Joel:** bajar lo que Ruben subió a `develop` (`e080457` "comisión inflada en pagos de distintos
+tipos efectivo / tarjeta / transfer" + merge `149b88f`), PR a `main` y deploy.
+
+> **PUNTO DE ROLLBACK (antes de este deploy):** revisión `tadaima-00080-zoy`, `main` en `b4cd063`.
+> **Sin migraciones ni backend:** regresar es solo mover el tráfico.
+>
+> ```
+> gcloud run services update-traffic tadaima --to-revisions tadaima-00080-zoy=100 --project tadaimapos --region us-east1
+> ```
+
+**Qué entró (de Ruben):** en `buildGroupedProducts` (`landing/src/pages/reports/buildReportData.ts`) la
+comisión de la venta solo se repartía a sus productos cuando el pago MÁS GRANDE del ticket era tarjeta.
+En un ticket mixto con la tarjeta como pago menor (60% efectivo / 40% tarjeta) la tabla de Tarjeta traía
+el bruto de tarjeta pero comisión 0 → Neto Tarjeta inflado. Ahora basta con que la venta tenga comisión
+(`sale.commission_amount > 0`); el reparto entre productos sigue proporcional al valor del renglón.
+
+**Qué entró (de esta sesión):** `buildReportData.commission.test.ts` (5 casos: tarjeta como pago menor,
+como pago mayor, reparto entre dos productos, solo tarjeta, efectivo + transferencia sin comisión). Dos
+de los cinco fallan contra el código anterior.
+
+**Impacto en prod:** por consulta de solo lectura antes del deploy, de 1,415 ventas hay 0 tickets mixtos
+con tarjeta, 0 ventas con comisión sin pago de tarjeta, y en todas `sales.commission_amount` = suma de la
+comisión de sus pagos. Con los datos de hoy **ningún número de los reportes cambia**. La pantalla web no
+deja cobrar efectivo + tarjeta (Mixto = efectivo + transferencia) pero el API sí lo acepta: el arreglo
+aplica a lo que mande la app móvil.
+
+**Verificado (rama `release/2026-10-12b`, commit `71409d8`):** vitest 738 (733 + 5), `vite build` OK,
+`tsc` 454 = base, ninguno nuevo. Backend sin cambios, no se corrió. **No hubo QA en navegador:** la
+función es pura y la cubre la prueba; lo que pinta pantalla, Excel y PDF no cambió.
+
+**QUÉ PROBAR EN PROD** (incógnito o recarga forzada): Reportes → Ventas del día, los totales de Tarjeta
+(bruto, comisión, IVA, neto) deben salir iguales que antes; el Excel debe cuadrar con la pantalla.
+
+**Señales para regresar:** la comisión o el neto de Tarjeta cambian en un día que no tuvo tickets mixtos,
+o Reportes no carga.
+
+**Deploy (2026-10-12 ~20:06 Tijuana) — rev tadaima-00082-juw (rollback `tadaima-00080-zoy`).** Candidato
+sin tráfico desde un worktree limpio en el commit `71409d8` (Dockerfile): `Nothing to migrate`. Smoke en
+el candidato y luego en `https://tadaimamexico.com`: `/`, `/login` y `/tadaimaus/` 200; login con datos
+falsos 401; rutas de insumos sin token 401; el bundle (`index-DfIX-H-l.js`) trae la condición nueva
+(`commission_amount||0)>0&&`, 1 coincidencia contra 0 en la revisión anterior). Promovido con
+`update-traffic --to-latest`; sin errores en los logs de la revisión. PR #56 con merge commit y `develop`
+igualada a `main` (fast-forward).
+
+---
+
 ### Sesión 2026-10-12 (2) — Insumos por tienda + borrar registro de insumo (Ruben, PR #55) — rev tadaima-00080-zoy
 
 **Pedido Joel:** bajar lo que Ruben subió a `develop` (`445c772` "insumos y eliminar insumo con super
