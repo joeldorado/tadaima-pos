@@ -399,9 +399,10 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     Route::prefix('supplies')->group(function () {
         Route::get('/',          [SuppliesController::class, 'index']);
         Route::post('/',         [SuppliesController::class, 'store']);
-        Route::get('movements',  [SuppliesController::class, 'movements']);
-        Route::post('movements', [SuppliesController::class, 'storeMovement']);
-        Route::put('{supply}',   [SuppliesController::class, 'update']);
+        Route::get('movements',    [SuppliesController::class, 'movements']);
+        Route::post('movements',   [SuppliesController::class, 'storeMovement']);
+        Route::delete('movements/{movement}', [SuppliesController::class, 'destroyMovement']);
+        Route::put('{supply}',     [SuppliesController::class, 'update']);
     });
 
     // ── Paquetes (2026-10-07) — definición global, stock por tienda ──────────
