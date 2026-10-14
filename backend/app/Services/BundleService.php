@@ -15,6 +15,7 @@ use App\Models\SystemLog;
 use App\Models\User;
 use App\Models\Warehouse;
 use App\Support\BundleCodes;
+use App\Support\BundleCost;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -307,7 +308,8 @@ final class BundleService
 
     /**
      * Costo del paquete = Σ(costo componente × qty); null si algún componente no
-     * tiene costo (así sale en "Productos sin costo" en vez de inventar un número).
+     * tiene costo (fórmula en BundleCost; cuando cambia el costo de una pieza lo
+     * recalcula BundleCost::syncForComponents).
      */
     public function syncCost(Product $bundle): ?float
     {
@@ -316,17 +318,10 @@ final class BundleService
             ->with('component:id,cost')
             ->get();
 
-        $sum = 0.0;
-        $complete = $items->isNotEmpty();
-        foreach ($items as $item) {
-            $cost = $item->component?->cost;
-            if ($cost === null || (float) $cost <= 0) {
-                $complete = false;
-                break;
-            }
-            $sum += (float) $cost * (int) $item->quantity;
-        }
-        $new = $complete ? round($sum, 2) : null;
+        $new = BundleCost::compute($items->map(fn (ProductBundleItem $item) => [
+            'cost' => $item->component?->cost,
+            'quantity' => $item->quantity,
+        ]));
 
         $current = $bundle->cost !== null ? round((float) $bundle->cost, 2) : null;
         if ($current !== $new) {

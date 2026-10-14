@@ -18,6 +18,7 @@ use App\Models\Store;
 use App\Models\User;
 use App\Services\BundleAvailability;
 use App\Services\BundleService;
+use App\Support\BundleCost;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -115,18 +116,11 @@ class BundlesController extends Controller
 
         $canViewCost = $user instanceof User && $user->canViewCost();
         $priceSum = 0.0;
-        $costSum = 0.0;
-        $costComplete = true;
         $components = [];
         foreach ($lines as $line) {
             $p = $products->get($line['product_id']);
             $price1 = $p?->price?->price_1;
             $priceSum += $price1 !== null ? (float) $price1 * $line['quantity'] : 0;
-            if ($p?->cost === null || (float) $p->cost <= 0) {
-                $costComplete = false;
-            } else {
-                $costSum += (float) $p->cost * $line['quantity'];
-            }
             $components[] = array_merge([
                 'product_id' => $line['product_id'],
                 'name' => $p?->name ?? "Producto #{$line['product_id']}",
@@ -139,7 +133,9 @@ class BundlesController extends Controller
         return $this->success([
             'components' => $components,
             'suggested_price_sum' => round($priceSum, 2),
-            'cost_sum' => $canViewCost ? ($costComplete ? round($costSum, 2) : null) : null,
+            'cost_sum' => $canViewCost
+                ? BundleCost::compute(array_map(fn (array $l) => ['cost' => $products->get($l['product_id'])?->cost, 'quantity' => $l['quantity']], $lines))
+                : null,
             'availability' => $this->availability->availabilityForComponents($lines, $storeIds, $bundleId),
         ]);
     }

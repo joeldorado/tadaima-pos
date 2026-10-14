@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Support\BundleCost;
 use App\Support\DateRange;
 use App\Support\TomoRule;
 use Illuminate\Console\Command;
@@ -455,6 +456,7 @@ class ImportMacroProductsCommand extends Command
             //    en UNA transacción y el primer intento murió a medio camino
             //    (rollback limpio). Con diff quedan unos cientos de UPDATEs.
             $updsReales = 0;
+            $costoCambiado = [];
             foreach ($existentesSoloStock ? [] : $aActualizar as $a) {
                 $prev = $snapshot[$a['sku']] ?? null;
                 if ($prev === null) {
@@ -489,6 +491,7 @@ class ImportMacroProductsCommand extends Command
                 // nunca pisar costo capturado con NULL
                 if ($a['cost'] !== null && round((float) ($prev->cost ?? 0), 2) !== $a['cost']) {
                     $upd['cost'] = $a['cost'];
+                    $costoCambiado[] = $ids[$a['sku']];
                 }
                 if ($upd === []) {
                     continue;
@@ -500,6 +503,11 @@ class ImportMacroProductsCommand extends Command
             $this->line($existentesSoloStock
                 ? sprintf('  Updates de existentes: 0 (--existentes-solo-stock, %d intactos)', count($aActualizar))
                 : sprintf('  Updates con cambios reales: %d de %d existentes', $updsReales, count($aActualizar)));
+            // Los paquetes que llevan una pieza con costo nuevo siguen su costo (2026-10-14).
+            $paquetes = count(BundleCost::syncForComponents($costoCambiado, $db));
+            if ($paquetes > 0) {
+                $this->line("  Paquetes con costo recalculado: {$paquetes}");
+            }
 
             // 4. Precios — upsert por product_id (price_1/price_2; 3-5 intactos).
             //    Diff-aware: solo se re-escriben los que de verdad cambiaron.

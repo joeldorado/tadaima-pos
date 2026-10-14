@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
+use App\Support\BundleCost;
 use App\Support\TomoCost;
 use Illuminate\Console\Command;
 use Illuminate\Database\ConnectionInterface;
@@ -110,7 +111,7 @@ class HomologarCostoTomosCommand extends Command
             return self::FAILURE;
         }
 
-        [$logId, $escritos] = $db->transaction(function () use ($db) {
+        [$logId, $escritos, $paquetes] = $db->transaction(function () use ($db) {
             // Se vuelve a leer DENTRO de la transacción: lo que alguien haya
             // capturado mientras se confirmaba queda como "antes" en el
             // registro (si no, --revertir lo perdería).
@@ -141,6 +142,8 @@ class HomologarCostoTomosCommand extends Command
             if ($pendientes !== 0) {
                 throw new RuntimeException("Quedaron {$pendientes} tomos fuera de regla después de escribir — se deshace todo; vuelve a correr.");
             }
+            // Los paquetes que llevan alguno de estos tomos siguen su costo.
+            $paquetes = count(BundleCost::syncForComponents($c['a_escribir'], $db));
 
             $logId = $db->table('system_logs')->insertGetId([
                 'user_id' => (int) $this->option('user'),
@@ -160,6 +163,7 @@ class HomologarCostoTomosCommand extends Command
                         'desde_null' => count($c['desde_null']),
                         'desde_igual_precio' => count($c['desde_igual_precio']),
                         'desde_otro' => count($c['desde_otro']),
+                        'paquetes_recalculados' => $paquetes,
                     ],
                     'antes' => $antes,
                     'despues' => $despues,
@@ -167,10 +171,13 @@ class HomologarCostoTomosCommand extends Command
                 'created_at' => now(),
             ]);
 
-            return [$logId, $escritos];
+            return [$logId, $escritos, $paquetes];
         });
 
         $this->info(sprintf('Homologado: %d tomos escritos. ✓', $escritos));
+        if ($paquetes > 0) {
+            $this->line("  Paquetes con costo recalculado: {$paquetes}");
+        }
         $this->line("  Registro en system_logs: #{$logId}");
         $this->line("  Para regresar al costo anterior: php artisan tadaima:homologar-costo-tomos --revertir={$logId}");
 
@@ -297,7 +304,7 @@ class HomologarCostoTomosCommand extends Command
             return self::FAILURE;
         }
 
-        $nuevoLog = $db->transaction(function () use ($db, $restaurar, $aRestaurar, $omitidos, $logId) {
+        [$nuevoLog, $paquetes] = $db->transaction(function () use ($db, $restaurar, $aRestaurar, $omitidos, $logId) {
             $escritos = 0;
             foreach ($restaurar as $costo => $ids) {
                 $escritos += $this->escribir($db, $ids, $costo === 'null' ? null : (float) $costo);
@@ -305,19 +312,25 @@ class HomologarCostoTomosCommand extends Command
             if ($escritos !== $aRestaurar) {
                 throw new RuntimeException("Se esperaba restaurar {$aRestaurar} tomos y se restauraron {$escritos} — se deshace todo.");
             }
+            $paquetes = count(BundleCost::syncForComponents(array_merge(...array_values($restaurar)), $db));
 
-            return $db->table('system_logs')->insertGetId([
+            $nuevoLog = $db->table('system_logs')->insertGetId([
                 'user_id' => (int) $this->option('user'),
                 'action' => self::ACTION_REVERTIDO,
                 'entity_type' => 'product',
                 'entity_id' => null,
                 'description' => sprintf('Homologación de costo de tomos #%d revertida: %d restaurados, %d omitidos', $logId, $escritos, count($omitidos)),
-                'meta' => json_encode(['log_origen' => $logId, 'restaurados' => $escritos, 'omitidos' => $omitidos]),
+                'meta' => json_encode(['log_origen' => $logId, 'restaurados' => $escritos, 'omitidos' => $omitidos, 'paquetes_recalculados' => $paquetes]),
                 'created_at' => now(),
             ]);
+
+            return [$nuevoLog, $paquetes];
         });
 
         $this->info(sprintf('Revertido: %d tomos regresaron a su costo anterior. ✓ (system_logs #%d)', $aRestaurar, $nuevoLog));
+        if ($paquetes > 0) {
+            $this->line("  Paquetes con costo recalculado: {$paquetes}");
+        }
 
         return self::SUCCESS;
     }

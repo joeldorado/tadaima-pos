@@ -6,7 +6,7 @@ import {
 } from '@tadaima/api'
 import { useAuth } from '@tadaima/auth'
 import { queryKeys } from '@/lib/queryKeys'
-import { isAdmin as isAdminRole } from '@/lib/permisos'
+import { bundlePermissions, isAdmin as isAdminRole } from '@/lib/permisos'
 import { componentsSignature } from '@/lib/bundleDraft'
 
 /** La lista de Paquetes carga todo de un golpe (son decenas, no miles). */
@@ -16,11 +16,16 @@ const DETAIL_STALE_MS = 15_000
 const PREVIEW_STALE_MS = 15_000
 const PREVIEW_GC_MS = 60_000
 
-/** Quién mira la pantalla de Paquetes: el admin ve todas las tiendas; gerente/cajero la suya. */
+/**
+ * Quién mira la pantalla de Paquetes: el admin ve todas las tiendas; gerente/cajero la suya.
+ * `canEdit`/`canDelete` esconden los botones que el backend le negaría (ver `bundlePermissions`).
+ */
 export interface BundleViewer {
   isAdmin: boolean
   storeId: number | null
   storeName: string | null
+  canEdit: boolean
+  canDelete: boolean
 }
 
 export function useBundleViewer(): BundleViewer {
@@ -28,7 +33,11 @@ export function useBundleViewer(): BundleViewer {
   const isAdmin = isAdminRole(user?.roles)
   const storeId = user?.store_id ?? null
   const storeName = user?.store?.name ?? null
-  return useMemo(() => ({ isAdmin, storeId, storeName }), [isAdmin, storeId, storeName])
+  const { canEdit, canDelete } = bundlePermissions(user?.roles, !!user?.can_view_cost)
+  return useMemo(
+    () => ({ isAdmin, storeId, storeName, canEdit, canDelete }),
+    [isAdmin, storeId, storeName, canEdit, canDelete],
+  )
 }
 
 /**
