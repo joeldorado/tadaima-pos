@@ -31,7 +31,7 @@ export function BundleTable({
 }: BundleTableProps) {
   const canOperate = viewer.isAdmin || viewer.storeId != null;
   return (
-    <div className="overflow-auto rounded-3xl" style={{ background: CARD_BG, border: CARD_BORDER, maxHeight: "calc(100vh - 260px)" }} data-testid="bundle-table">
+    <div className="overflow-auto rounded-3xl" style={{ background: CARD_BG, border: CARD_BORDER, maxHeight: "calc(100vh - 260px)" }} data-testid="bundle-table" data-tour="bundles-list">
       <table className="w-full border-collapse text-left" style={{ minWidth: 760 }}>
         <thead>
           <tr>
