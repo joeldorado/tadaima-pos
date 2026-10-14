@@ -31,7 +31,7 @@ export function BundleTable({
 }: BundleTableProps) {
   const canOperate = viewer.isAdmin || viewer.storeId != null;
   return (
-    <div className="overflow-auto rounded-3xl" style={{ background: CARD_BG, border: CARD_BORDER, maxHeight: "calc(100vh - 260px)" }} data-testid="bundle-table">
+    <div className="overflow-auto rounded-3xl" style={{ background: CARD_BG, border: CARD_BORDER, maxHeight: "calc(100vh - 260px)" }} data-testid="bundle-table" data-tour="bundles-list">
       <table className="w-full border-collapse text-left" style={{ minWidth: 760 }}>
         <thead>
           <tr>
@@ -113,9 +113,11 @@ export function BundleTable({
                       testId={`bundle-menu-${bundle.id}`}
                       items={[
                         { key: "detail", label: "Ver detalle", onSelect: () => onDetail(bundle) },
-                        { key: "edit", label: "Editar", onSelect: () => onEdit(bundle) },
-                        { key: "toggle", label: bundle.active ? "Desactivar" : "Activar", onSelect: () => onToggleActive(bundle), disabled: togglingId === bundle.id },
-                        { key: "delete", label: "Borrar", onSelect: () => onDelete(bundle), danger: true },
+                        ...(viewer.canEdit ? [
+                          { key: "edit", label: "Editar", onSelect: () => onEdit(bundle) },
+                          { key: "toggle", label: bundle.active ? "Desactivar" : "Activar", onSelect: () => onToggleActive(bundle), disabled: togglingId === bundle.id },
+                        ] : []),
+                        ...(viewer.canDelete ? [{ key: "delete", label: "Borrar", onSelect: () => onDelete(bundle), danger: true }] : []),
                       ]}
                     />
                   </span>

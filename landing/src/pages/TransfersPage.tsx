@@ -19,6 +19,7 @@ import { useAuth } from "@tadaima/auth";
 import { isAdmin as isAdminRole, isManager as isManagerRole } from "@/lib/permisos";
 import { warehouseTypeLabel, warehouseOptionLabel } from "@/lib/warehouse";
 import { transferItemsLabel } from "@/lib/transferItems";
+import { errorMessage } from "@/lib/deletePreviewFormat";
 import { getStatusInfo } from "@/components/transfers/transferStatus";
 import { TransferDetailModal } from "@/components/transfers/TransferDetailModal";
 
@@ -88,6 +89,9 @@ interface ItemStockSnapshot {
   toAvailable: number | null;
   loading: boolean;
 }
+
+/** Resultados que muestra el buscador de artículos del traslado. */
+const PRODUCT_RESULTS = 8;
 
 interface ProductSearchResult {
   id: number;
@@ -185,8 +189,13 @@ export function TransfersPage() {
     if (!val.trim()) { setProductResults([]); return; }
     searchTimeout.current = setTimeout(() => {
       setProductSearching(true);
-      getProducts({ search: val, per_page: 8 })
-        .then(res => setProductResults(res.data.map(p => ({ id: p.id, name: p.name, sku: p.sku }))))
+      // Los paquetes no se trasladan (el backend responde 422): ni se ofrecen.
+      // Se piden de más para que un paquete no le quite lugar a una pieza.
+      getProducts({ search: val, per_page: PRODUCT_RESULTS * 2 })
+        .then(res => setProductResults(res.data
+          .filter(p => p.product_type !== "bundle")
+          .slice(0, PRODUCT_RESULTS)
+          .map(p => ({ id: p.id, name: p.name, sku: p.sku }))))
         .catch(() => { /* silently ignore */ })
         .finally(() => setProductSearching(false));
     }, 300);
@@ -459,12 +468,16 @@ export function TransfersPage() {
       toast.success(transferMode === "complete" ? "Transferencia completada" : "Transferencia creada");
       setIsModalOpen(false);
       resetModal();
-    } catch {
+    } catch (err: unknown) {
+      // El motivo real del backend (p. ej. "Los paquetes no se trasladan…") va
+      // como detalle; el título en español queda aunque el error sea de red.
+      const reason = errorMessage(err, "");
+      const detail = reason ? { description: reason } : {};
       if (createdTransfer) {
         void invalidateTransfers();
-        toast.error("La transferencia se creó, pero no se pudo completar automáticamente");
+        toast.error("La transferencia se creó, pero no se pudo completar automáticamente", detail);
       } else {
-        toast.error(transferMode === "complete" ? "Error al completar transferencia" : "Error al crear transferencia");
+        toast.error(transferMode === "complete" ? "Error al completar transferencia" : "Error al crear transferencia", detail);
       }
     } finally {
       setSaving(false);

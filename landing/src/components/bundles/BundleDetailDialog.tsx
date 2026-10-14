@@ -158,7 +158,9 @@ export function BundleDetailDialog({
       testId="bundle-detail-dialog"
       footer={bundle ? (
         <>
-          <PromoButton icon={<Pencil size={18} aria-hidden />} onClick={() => onEdit(bundle)} data-testid="detail-edit">Editar</PromoButton>
+          {viewer.canEdit && (
+            <PromoButton icon={<Pencil size={18} aria-hidden />} onClick={() => onEdit(bundle)} data-testid="detail-edit">Editar</PromoButton>
+          )}
           <PromoButton icon={<Tag size={18} aria-hidden />} onClick={() => onLabel(bundle)} data-testid="detail-label">Etiqueta</PromoButton>
           {canOperate && (
             <>

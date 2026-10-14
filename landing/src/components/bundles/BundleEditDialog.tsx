@@ -312,11 +312,11 @@ export function BundleEditDialog({ bundle, viewer, onClose, onSaved }: BundleEdi
           {bundle.composition_locked ? (
             <p className="mt-3 rounded-xl px-4 py-3 text-[14px] font-bold" style={tint(AMBER)}>
               Hay {bundlesLabel(bundle.stock_total)} armados{!viewer.isAdmin && viewer.storeName ? ` en ${viewer.storeName}` : ""}.
-              Para cambiar qué lleva, primero desármalos (así los productos regresan al inventario).
+              Los productos del paquete no se cambian: para otra combinación crea un paquete nuevo. Si este ya no va, desármalo (las piezas regresan al inventario) y desactívalo.
             </p>
           ) : (
             <p className="mt-3 text-[14px] font-semibold" style={{ color: TEXT_MD }}>
-              Para cambiar los productos del paquete, desármalo si tiene armados y edítalo; en esta versión la composición se cambia creando un paquete nuevo.
+              Los productos del paquete no se cambian: para otra combinación crea un paquete nuevo y desactiva o borra este.
             </p>
           )}
         </section>

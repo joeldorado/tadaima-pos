@@ -4,6 +4,70 @@
 
 ---
 
+### Sesión 2026-10-14 — Paquetes: costo que sigue a sus piezas, botones del cajero, Traslados y ayuda + tour (PR #57, #58, release #59) — rev tadaima-00084-huh
+
+**Pedido Joel:** resumen del módulo Paquetes; de ahí salieron detalles que confundían al cliente. Se
+arreglaron en dos ramas y se deployaron juntas (release `release/2026-10-14`, PR #59).
+
+> **PUNTO DE ROLLBACK (antes de este deploy):** revisión `tadaima-00082-juw`, `main` en `3fbc8ec`.
+> **Sin migraciones:** regresar es solo mover el tráfico.
+>
+> ```
+> gcloud run services update-traffic tadaima --to-revisions tadaima-00082-juw=100 --project tadaimapos --region us-east1
+> ```
+
+**Qué entró:**
+- **Costo del paquete (PR #58).** Antes `products.cost` de un paquete solo se recalculaba al
+  crear/editar/armar/desarmar; si cambiaba el costo de una pieza, el paquete se vendía con el costo
+  viejo congelado en `sale_items.cost`. Ahora `App\Support\BundleCost` (fórmula única) +
+  `syncForComponents` lo recalculan al cambiar el costo de una pieza:
+  - PUT `/products` y `/mangas` (log `bundles_cost` old/new en `product.updated`/`manga.updated`);
+  - `tadaima:homologar-costo-tomos` (también `--revertir`);
+  - `tadaima:import-macro`.
+  Los comandos lo hacen con su propia conexión. `POST /bundles/preview` usa la misma fórmula.
+- **Cajero (PR #58).** `bundlePermissions` (`lib/permisos.ts`): el cajero ya no ve Editar, Activar/Desactivar
+  ni Borrar (tarjeta, tabla y detalle); antes los veía y el backend le daba 403. Borrar = misma regla que
+  Productos (admin, o gerente con `can_view_cost`).
+- **Traslados (PR #58).** El buscador no ofrece paquetes; si el backend rechaza, el toast trae el motivo
+  real ("Los paquetes no se trasladan… desármalo aquí y ármalo en la otra tienda.").
+- **Ayuda in-app + tour (PR #57).** Tema `paquetes` reescrito (10 secciones, preguntas frecuentes,
+  tablas de inventario y permisos) + tour de 8 pasos (`data-tour` `bundles-new/search/list`). En la
+  release se corrigió la tabla de permisos: el cajero **no** borra paquetes aunque vea costos.
+
+**Impacto en prod:** por consulta de solo lectura antes del deploy, hay 1 paquete (id 16176) con el
+costo al día. No hace falta corregir datos. Desde ahora el costo de un paquete puede cambiar solo
+cuando alguien edita el costo de una pieza: queda en `system_logs`.
+
+**Verificado (rama `release/2026-10-14`, commit `4e14727`):**
+- Backend completo 840 OK (SQLite). `BundleCostSyncTest` 7/7 también en Postgres local; 5 de 7
+  fallan contra el código anterior.
+- Vitest 747 OK, `vite build` OK. `tsc` 454 = base, ninguno nuevo.
+- QA en navegador local (base SQLite propia): el cajero solo ve "Ver detalle"; el gerente sin costos
+  ve Editar/Desactivar sin Borrar; Traslados no ofrece el paquete y el 422 trae el texto real.
+
+**QUÉ PROBAR EN PROD** (incógnito o recarga forzada):
+- Paquetes como cajero: el menú ⋮ solo trae "Ver detalle".
+- Editar el costo de una pieza de un paquete → el costo del paquete cambia (Productos/Reportes).
+- Traslados: buscar un paquete → no aparece.
+- Ayuda → Paquetes y el tour.
+
+**Señales para regresar:** Productos o Tomos no guardan el costo; Paquetes no carga; Traslados no deja
+crear traslados de productos normales.
+
+**Pendiente (ya existía, fuera de alcance):** el backend `canDeleteProductsError` solo mira
+`canViewCost()`, no el rol. Un cajero con `can_view_cost` podría borrar productos o paquetes por API,
+aunque la UI no le muestre el botón.
+
+**Deploy (2026-10-14 ~15:46 Tijuana) — rev tadaima-00084-huh (rollback `tadaima-00082-juw`).** Candidato
+sin tráfico desde un worktree limpio en el commit `4e14727` (Dockerfile; solo se subieron archivos
+versionados): `Nothing to migrate`, sin errores en el log. Smoke en el candidato y luego en
+`https://tadaimamexico.com`: `/`, `/login` y `/tadaimaus/` 200; `/api/v1/bundles`, `/auth/me` y
+`/transfers` sin token 401 con el envelope. El bundle (`index-BaW2cdyk.js`, mismo hash que el build
+local) trae los textos nuevos y los `data-tour` de Paquetes. **No hubo prueba con sesión en prod:** queda
+para el equipo (ver QUÉ PROBAR).
+
+---
+
 ### Sesión 2026-10-12 (3) — Reportes: comisión de terminal en tickets con varios pagos (Ruben, PR #56) — rev tadaima-00082-juw
 
 **Pedido Joel:** bajar lo que Ruben subió a `develop` (`e080457` "comisión inflada en pagos de distintos

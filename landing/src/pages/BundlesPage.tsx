@@ -162,6 +162,7 @@ export function BundlesPage() {
             icon={<Plus size={20} aria-hidden />}
             onClick={() => setDialog({ kind: "wizard" })}
             data-testid="new-bundle-btn"
+            data-tour="bundles-new"
           >
             Nuevo paquete
           </PromoButton>

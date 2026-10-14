@@ -13,6 +13,7 @@ use App\Models\Product;
 use App\Models\ProductMangaDetail;
 use App\Models\SystemLog;
 use App\Services\ProductDeletionService;
+use App\Support\BundleCost;
 use App\Support\StockSql;
 use App\Support\TomoCost;
 use Illuminate\Http\JsonResponse;
@@ -284,7 +285,7 @@ class MangaController extends Controller
         // Se resuelve ANTES de la transacción: compara contra el precio A actual.
         $cost = $this->resolveCostForUpdate($manga, $data);
 
-        DB::transaction(function () use ($manga, $data, $cost): void {
+        $bundlesCost = DB::transaction(function () use ($manga, $data, $cost): array {
             $productPayload = array_filter([
                 'name'    => $data['name']    ?? null,
                 'sku'     => $data['code']    ?? null,
@@ -296,8 +297,13 @@ class MangaController extends Controller
                 'active'  => array_key_exists('active', $data) ? $data['active'] : null,
             ], fn ($v) => $v !== null);
 
+            $bundlesCost = [];
             if (! empty($productPayload)) {
                 $manga->update($productPayload);
+                // Si el tomo es pieza de algún paquete, el costo del paquete lo sigue (2026-10-14).
+                if ($manga->wasChanged('cost')) {
+                    $bundlesCost = BundleCost::syncForComponents([$manga->id]);
+                }
             }
 
             if (array_key_exists('category_ids', $data)) {
@@ -331,6 +337,8 @@ class MangaController extends Controller
                     ],
                 );
             }
+
+            return $bundlesCost;
         });
 
         $manga->load(['mangaDetails', 'price', 'images', 'categories:product_categories.id,name'])
@@ -358,7 +366,7 @@ class MangaController extends Controller
                 description: "Manga editado: {$manga->name} (SKU: {$manga->sku})",
                 entityType: 'manga',
                 entityId: $manga->id,
-                meta: ['changes' => $changes],
+                meta: ['changes' => $changes] + ($bundlesCost !== [] ? ['bundles_cost' => $bundlesCost] : []),
             );
         }
 
