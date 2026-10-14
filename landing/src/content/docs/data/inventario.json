@@ -250,16 +250,18 @@
       "desarmar",
       "puedes armar",
       "etiqueta",
-      "código de barras"
+      "código de barras",
+      "editar paquete",
+      "costo del paquete"
     ],
-    "updatedAt": "2026-10-08",
+    "updatedAt": "2026-10-14",
     "sections": [
       {
         "heading": "Qué es un paquete",
         "blocks": [
           {
             "kind": "prose",
-            "text": "Un paquete junta 2 o más productos distintos (por ejemplo 2 figuras de Goku + 1 de Vegeta) y se vende como UN solo producto, con su propio nombre, precio y código. El paquete tiene stock físico: para venderlo primero hay que armarlo, y al armarlo las piezas salen del inventario de la tienda. Así el stock de las piezas sueltas y el de los paquetes siempre cuadran."
+            "text": "Un paquete junta 2 o más productos distintos (por ejemplo 2 figuras de Goku + 1 de Vegeta) y se vende como UN solo producto, con su propio nombre, precio y código. El paquete tiene stock físico: para venderlo primero hay que armarlo, y al armarlo las piezas salen del inventario de la tienda. Así el stock de las piezas sueltas y el de los paquetes siempre cuadran. Su costo (el que ven los reportes) es la suma del costo de sus piezas y se actualiza solo cuando cambia el costo de alguna."
           }
         ]
       },
@@ -275,7 +277,7 @@
               },
               {
                 "title": "Nombre, precio y código",
-                "detail": "El sistema sugiere un nombre y un SKU (PAQ-0001…); puedes cambiarlos. Escribe el precio normal del paquete (verás la suma de las piezas sueltas y el ahorro) y, si quieres etiqueta, genera un código de barras de 13 dígitos."
+                "detail": "El sistema sugiere un nombre y un SKU (PAQ-0001…); puedes cambiarlos. Escribe el precio normal del paquete (verás la suma de las piezas sueltas y el ahorro). El código de barras de 13 dígitos se genera solo y es el que sale en la etiqueta; si quieres uno distinto, toca “Otro”."
               },
               {
                 "title": "¿Cuántos armar?",
@@ -302,7 +304,7 @@
             "kind": "callout",
             "tone": "warn",
             "title": "¿Lo necesitas en otra tienda? Los paquetes no se trasladan",
-            "text": "Traslados no acepta paquetes (te avisa al guardar). El stock de un paquete solo cambia armando o desarmando y siempre vive en Exhibición: desármalo aquí, traslada las piezas sueltas como cualquier producto y ármalo en la otra tienda."
+            "text": "Traslados no acepta paquetes: no aparecen en su buscador y, si alguno se cuela, te avisa al guardar. El stock de un paquete solo cambia armando o desarmando y siempre vive en Exhibición: desármalo aquí, traslada las piezas sueltas como cualquier producto y ármalo en la otra tienda."
           }
         ]
       },
@@ -320,13 +322,13 @@
         "blocks": [
           {
             "kind": "prose",
-            "text": "Puedes cambiar nombre, precios, código y foto en cualquier momento. Desactivar un paquete lo esconde de Caja sin perder su historial; borrarlo solo se permite cuando no hay paquetes armados en ninguna tienda."
+            "text": "Con Editar cambias nombre, descripción, precios, SKU, código de barras y foto cuando quieras. Lo que no se cambia es qué productos lleva ni cuántas piezas de cada uno. Desactivar un paquete lo esconde de Caja sin perder su historial; borrarlo solo se permite cuando no hay paquetes armados en ninguna tienda (las ventas que ya tuvo se conservan). Editar y Desactivar son de admin y gerente; Borrar, del admin o del gerente con permiso de ver costos. El cajero crea, arma, desarma y vende paquetes, pero no ve esos botones."
           },
           {
             "kind": "callout",
             "tone": "warn",
-            "title": "Con paquetes armados no se cambian los productos",
-            "text": "Mientras haya paquetes armados en alguna tienda, la lista de productos y sus cantidades queda bloqueada: si cambiara, las piezas que regresan al desarmar ya no coincidirían con las que salieron. Desarma todos primero y después edita los componentes."
+            "title": "¿Cambió el combo? Crea un paquete nuevo",
+            "text": "Si el paquete ahora lleva otra figura u otra cantidad, crea un paquete nuevo con la lista correcta. Al viejo desármale los que tenga armados (las piezas regresan al inventario) y después desactívalo o bórralo."
           }
         ]
       }

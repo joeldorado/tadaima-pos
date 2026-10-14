@@ -14,6 +14,7 @@ use App\Models\ProductStorePrice;
 use App\Models\Store;
 use App\Models\SystemLog;
 use App\Services\ProductDeletionService;
+use App\Support\BundleCost;
 use App\Support\StockSql;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -597,7 +598,7 @@ class ProductController extends Controller
         // Snapshot ANTES de mutar — para construir el diff en el log.
         $before = $product->only(['name', 'sku', 'barcode', 'description', 'category_id', 'supplier_id', 'cost', 'active', 'product_type']);
 
-        DB::transaction(function () use ($request, $product) {
+        $bundlesCost = DB::transaction(function () use ($request, $product) {
             $payload = $request->only([
                 'name', 'sku', 'barcode', 'description', 'supplier_id', 'cost', 'active',
             ]);
@@ -605,6 +606,9 @@ class ProductController extends Controller
                 $payload['product_type'] = $request->get('product_type');
             }
             $product->update($payload);
+
+            // Si es pieza de algún paquete, el costo del paquete la sigue (2026-10-14).
+            $bundlesCost = $product->wasChanged('cost') ? BundleCost::syncForComponents([$product->id]) : [];
 
             // Solo si el cliente mandó categorías (category_ids o category_id);
             // un PUT parcial sin ellas las conserva.
@@ -621,6 +625,8 @@ class ProductController extends Controller
             }
 
             $this->syncMangaDetails($product, $request);
+
+            return $bundlesCost;
         });
 
         $product->load(['category', 'categories:product_categories.id,name', 'supplier', 'price', 'images', 'paymentMethod', 'mangaDetails'])
@@ -642,7 +648,7 @@ class ProductController extends Controller
                 description: "Producto editado: {$product->name} (SKU: {$product->sku})",
                 entityType: 'product',
                 entityId: $product->id,
-                meta: ['changes' => $changes],
+                meta: ['changes' => $changes] + ($bundlesCost !== [] ? ['bundles_cost' => $bundlesCost] : []),
             );
         }
 

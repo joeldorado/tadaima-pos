@@ -3,6 +3,7 @@ import {
   canAccessPage,
   canSeeCost,
   canDeleteProducts,
+  bundlePermissions,
   isMasterAdmin,
   isEligibleForPermManagement,
 } from "./permisos";
@@ -35,6 +36,24 @@ describe("canDeleteProducts — eliminar = permiso de ver costo (2026-08-17)", (
   it("cajero nunca, aunque vea costo", () => {
     expect(canDeleteProducts(["cajero"], true)).toBe(false);
     expect(canDeleteProducts(undefined, true)).toBe(false);
+  });
+});
+
+// ─── bundlePermissions (2026-10-14) ──────────────────────────────────────────
+describe("bundlePermissions — botones de Paquetes = lo que el backend deja", () => {
+  it("cajero no edita ni borra, aunque vea costo", () => {
+    expect(bundlePermissions(["cajero"], false)).toEqual({ canEdit: false, canDelete: false });
+    expect(bundlePermissions(["cajero"], true)).toEqual({ canEdit: false, canDelete: false });
+  });
+  it("gerente edita; borra solo con can_view_cost", () => {
+    expect(bundlePermissions(["gerente"], false)).toEqual({ canEdit: true, canDelete: false });
+    expect(bundlePermissions(["gerente"], true)).toEqual({ canEdit: true, canDelete: true });
+  });
+  it("admin todo, con o sin flag", () => {
+    expect(bundlePermissions(["admin"], false)).toEqual({ canEdit: true, canDelete: true });
+  });
+  it("sin rol no ve nada", () => {
+    expect(bundlePermissions(undefined, true)).toEqual({ canEdit: false, canDelete: false });
   });
 });
 
