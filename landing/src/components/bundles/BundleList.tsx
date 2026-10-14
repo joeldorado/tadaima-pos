@@ -59,7 +59,7 @@ export function BundleList({
   return (
     <div className="space-y-4">
       {/* Barra fija: el buscador y el cambio de vista no se pierden al bajar por la lista. */}
-      <div className="sticky top-0 z-10 -mx-1 flex items-center gap-2 rounded-2xl px-1 py-2" style={{ background: "var(--td-popup-bg)", backdropFilter: "blur(12px)" }}>
+      <div className="sticky top-0 z-10 -mx-1 flex items-center gap-2 rounded-2xl px-1 py-2" style={{ background: "var(--td-popup-bg)", backdropFilter: "blur(12px)" }} data-tour="bundles-search">
         <div className="relative flex-1">
           <Search size={18} aria-hidden style={{ position: "absolute", left: 14, top: 15, color: TEXT_LO }} />
           <input
@@ -84,7 +84,7 @@ export function BundleList({
           <Loader2 size={20} className="animate-spin" aria-hidden /> Cargando paquetes…
         </p>
       ) : total === 0 ? (
-        <div className="rounded-3xl px-6 py-12 text-center" style={{ background: PANEL_BG, border: CARD_BORDER }} data-testid="bundles-empty">
+        <div className="rounded-3xl px-6 py-12 text-center" style={{ background: PANEL_BG, border: CARD_BORDER }} data-testid="bundles-empty" data-tour="bundles-list">
           <Boxes size={40} aria-hidden style={{ color: TEXT_MD, margin: "0 auto 12px" }} />
           <p className="text-[20px] font-black" style={{ color: TEXT_HI }}>Todavía no hay paquetes</p>
           <p className="mx-auto mt-2 max-w-xl text-[15px] font-semibold" style={{ color: TEXT_MD }}>
@@ -103,7 +103,7 @@ export function BundleList({
       ) : view === "table" ? (
         <BundleTable bundles={bundles} viewer={viewer} storeId={storeId} togglingId={togglingId} {...actions} />
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-3" data-tour="bundles-list">
           {bundles.map(bundle => (
             <BundleCard
               key={bundle.id}
