@@ -68,14 +68,17 @@ class PreSaleOrdersController extends Controller
             // Filtro por FECHA DE PAGO (anticipo/liquidación), no de creación: el
             // Reporte necesita las liquidaciones del día aunque el folio se haya
             // creado antes. Trae folios con al menos un pago dentro del rango.
-            ->when($request->filled('payment_from') || $request->filled('payment_to'), function ($q) use ($request) {
-                $from = \App\Support\DateRange::fromUtc($request->payment_from);
-                $to   = \App\Support\DateRange::toUtc($request->payment_to);
-                $q->whereHas('payments', function ($p) use ($from, $to) {
-                    if ($from) $p->where('created_at', '>=', $from);
-                    if ($to)   $p->where('created_at', '<=', $to);
-                });
-            })
+            // `payment_dates[]` (fechas sueltas, no consecutivas): opcional,
+            // gana sobre payment_from/payment_to — pestaña Ventas de Reportes.
+            ->when(
+                $request->filled('payment_from') || $request->filled('payment_to') || $request->filled('payment_dates'),
+                function ($q) use ($request) {
+                    $paymentDates = \App\Support\DateRange::parseDatesParam($request->input('payment_dates'));
+                    $q->whereHas('payments', function ($p) use ($request, $paymentDates) {
+                        \App\Support\DateRange::applyDates($p, 'created_at', $paymentDates, $request->payment_from, $request->payment_to);
+                    });
+                }
+            )
             ->latest();
 
         $perPage = min((int) ($request->per_page ?? 25), 500);

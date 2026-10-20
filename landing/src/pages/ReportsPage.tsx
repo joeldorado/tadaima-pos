@@ -34,6 +34,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import type { SalesReport, InventoryReport, TopProductsReport, CustomersReport, ProductType } from "@tadaima/api";
 import type { SaleDetail, Store as StoreType, PreSaleOrder } from "@tadaima/api";
 import { DateRangePicker } from "@/components/ui/DateRangePicker";
+import { MultiDatePicker } from "@/components/ui/MultiDatePicker";
 import { RefreshDataButton } from "@/components/layout/RefreshDataButton";
 
 // ─── Design tokens ─────────────────────────────────────────────────────────────
@@ -200,6 +201,20 @@ export function ReportsPage() {
   const [to, setTo]     = useState(today);
   const [activePreset, setActivePreset] = useState<string>("Este mes");
 
+  // Fechas sueltas (no consecutivas) — solo pestaña Ventas. "Rango" (default)
+  // sigue usando from/to de siempre; "Fechas sueltas" manda `dates`/
+  // `payment_dates` en vez de from/to a los endpoints que lo soportan
+  // (reports/sales, sales, pre-sale-orders). Egresos (insumos) no tiene
+  // soporte de dates[] en el backend — usa el mínimo/máximo elegido como
+  // aproximación de rango.
+  const [dateMode, setDateMode] = useState<"range" | "dates">("range");
+  const [selectedDates, setSelectedDates] = useState<string[]>([]);
+  const usingDates = dateMode === "dates" && selectedDates.length > 0;
+  const sortedDates = [...selectedDates].sort();
+  const datesParam = usingDates ? sortedDates.join(",") : undefined;
+  const datesFrom = usingDates ? (sortedDates[0] ?? from) : from;
+  const datesTo = usingDates ? (sortedDates[sortedDates.length - 1] ?? to) : to;
+
   // Store filter — admin can pick, others are locked to their store
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
   const effectiveStoreId = isAdmin ? selectedStoreId : (user?.store_id ?? null);
@@ -235,9 +250,10 @@ export function ReportsPage() {
   const usersQuery = useUsersQuery({ store_id: effectiveStoreId ?? undefined, per_page: 500 } as any);
   const users = usersQuery.data ?? [];
 
-  const baseParams = { 
-    from, 
-    to, 
+  const baseParams = {
+    from: datesFrom,
+    to: datesTo,
+    ...(datesParam ? { dates: datesParam } : {}),
     ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}),
     ...(selectedUserId ? { user_id: selectedUserId } : {})
   };
@@ -266,8 +282,9 @@ export function ReportsPage() {
   // con al menos un cobro (anticipo/liquidación) en el rango, aunque el folio se
   // haya creado antes. Los montos se acotan a los pagos del rango más abajo.
   const preSaleOrdersParams = {
-    payment_from: from,
-    payment_to: to,
+    payment_from: datesFrom,
+    payment_to: datesTo,
+    ...(datesParam ? { payment_dates: datesParam } : {}),
     status: "pending,ready,delivered,expired,cancelled",
     ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}),
     ...(selectedUserId ? { user_id: selectedUserId } : {}),
@@ -309,8 +326,8 @@ export function ReportsPage() {
   // quién las registró. Solo compras (type=purchase). Todo el desglose se deriva
   // de aquí para que cuadre con el filtro de tienda.
   const supplyMovementsQuery = useQuery({
-    queryKey: ["reports-supply-movements", from, to, effectiveStoreId, selectedUserId],
-    queryFn: () => getSupplyMovements({ from, to, type: "purchase", ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}), ...(selectedUserId ? { user_id: selectedUserId } : {}) }),
+    queryKey: ["reports-supply-movements", datesFrom, datesTo, effectiveStoreId, selectedUserId],
+    queryFn: () => getSupplyMovements({ from: datesFrom, to: datesTo, type: "purchase", ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}), ...(selectedUserId ? { user_id: selectedUserId } : {}) }),
     enabled: activeTab === "ventas",
     staleTime: REPORTS_STALE,
   });
@@ -342,8 +359,8 @@ export function ReportsPage() {
   );
 
   const groupedProducts = useMemo(
-    () => buildGroupedProducts(filteredSales, filteredPreSaleOrders, selectedFilters, from, to, canViewCost),
-    [filteredSales, filteredPreSaleOrders, selectedFilters, from, to, canViewCost],
+    () => buildGroupedProducts(filteredSales, filteredPreSaleOrders, selectedFilters, datesFrom, datesTo, canViewCost, usingDates ? selectedDates : undefined),
+    [filteredSales, filteredPreSaleOrders, selectedFilters, datesFrom, datesTo, canViewCost, usingDates, selectedDates],
   );
 
   // Renglones de la tabla de Preventas — MODELO DEL DUEÑO (rastreable por mes):
@@ -355,26 +372,26 @@ export function ReportsPage() {
   // Se clasifica por la FECHA DE ENTREGA (delivered_at ∈ rango), NO por el status
   // actual, para que un mes pasado NO mute cuando la preventa se liquida después.
   const presaleRows = useMemo<PresaleRow[]>(
-    () => buildPresaleRows(filteredPreSaleOrders, from, to),
-    [filteredPreSaleOrders, from, to],
+    () => buildPresaleRows(filteredPreSaleOrders, datesFrom, datesTo, usingDates ? selectedDates : undefined),
+    [filteredPreSaleOrders, datesFrom, datesTo, usingDates, selectedDates],
   );
 
   // Mismas filas, desglosadas por el método del abono (apartado/liquidación) —
   // para la tabla de Preventas que vive dentro de cada pestaña de pago.
   const presaleRowsByMethod = useMemo(
     () => ({
-      cash: buildPresaleRowsByMethod(filteredPreSaleOrders, from, to, isCashLike),
-      card: buildPresaleRowsByMethod(filteredPreSaleOrders, from, to, isCardMethod),
-      transfer: buildPresaleRowsByMethod(filteredPreSaleOrders, from, to, isTransferMethod),
+      cash: buildPresaleRowsByMethod(filteredPreSaleOrders, datesFrom, datesTo, isCashLike, usingDates ? selectedDates : undefined),
+      card: buildPresaleRowsByMethod(filteredPreSaleOrders, datesFrom, datesTo, isCardMethod, usingDates ? selectedDates : undefined),
+      transfer: buildPresaleRowsByMethod(filteredPreSaleOrders, datesFrom, datesTo, isTransferMethod, usingDates ? selectedDates : undefined),
     }),
-    [filteredPreSaleOrders, from, to],
+    [filteredPreSaleOrders, datesFrom, datesTo, usingDates, selectedDates],
   );
 
   // Pestaña "Preventas" rediseñada (2026-10-09): un renglón por folio + producto
   // + pago, para agrupar por producto y ordenar Efectivo → Tarjeta → Transferencia.
   const presaleFolioRows = useMemo(
-    () => buildPresaleFolioRows(filteredPreSaleOrders, from, to),
-    [filteredPreSaleOrders, from, to],
+    () => buildPresaleFolioRows(filteredPreSaleOrders, datesFrom, datesTo, usingDates ? selectedDates : undefined),
+    [filteredPreSaleOrders, datesFrom, datesTo, usingDates, selectedDates],
   );
 
   const uiTotals = useMemo(() => {
@@ -447,8 +464,8 @@ export function ReportsPage() {
 
 
   const paymentBreakdown = useMemo(
-    () => buildPaymentBreakdown(filteredSales, filteredPreSaleOrders, selectedFilters, from, to),
-    [filteredSales, filteredPreSaleOrders, selectedFilters, from, to],
+    () => buildPaymentBreakdown(filteredSales, filteredPreSaleOrders, selectedFilters, datesFrom, datesTo, usingDates ? selectedDates : undefined),
+    [filteredSales, filteredPreSaleOrders, selectedFilters, datesFrom, datesTo, usingDates, selectedDates],
   );
 
 
@@ -459,10 +476,13 @@ export function ReportsPage() {
   // Aquí solo empaquetamos el estado actual y delegamos.
   const buildExportParams = (): ReportExportParams => ({
     groupedProducts, regularProducts, tomoProducts, paymentBreakdown,
-    invReport, topReport, custReport, from, to, today, activeTab,
+    invReport, topReport, custReport, from: datesFrom, to: datesTo, today, activeTab,
     canViewCost, ivaRate, effectiveStoreId, selectedUserId, stores, users,
     supplyMovements,
     presaleRows, presaleRowsByMethod, presaleFolioRows,
+    // Fechas sueltas (no consecutivas): el encabezado del Excel/PDF muestra la
+    // lista en vez de "del X al Y" — periodLabel ya existía como override libre.
+    ...(usingDates ? { periodLabel: sortedDates.map(fmtDate).join(", ") } : {}),
   });
 
   const handleExportPDF = () => exportReportPdf(buildExportParams());
@@ -827,6 +847,41 @@ export function ReportsPage() {
           <div className="flex items-center gap-3 flex-wrap p-4 rounded-2xl" style={GLASS}>
             <Calendar size={15} style={{ color: RED }} />
 
+            {/* Toggle Rango / Fechas sueltas — solo pestaña Ventas (2026-10-19). */}
+            {activeTab === "ventas" && (
+              <div className="flex items-center rounded-xl overflow-hidden" style={{ border: "1px solid var(--td-panel-border)" }}>
+                {([
+                  { id: "range" as const, label: "Rango" },
+                  { id: "dates" as const, label: "Fechas sueltas" },
+                ]).map((opt) => {
+                  const active = dateMode === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      onClick={() => setDateMode(opt.id)}
+                      className="px-3 py-1.5 text-[10px] font-black uppercase tracking-wider transition-all"
+                      style={active
+                        ? { background: "linear-gradient(135deg,#CC2200,#FF4422)", color: "#fff" }
+                        : { background: "var(--td-panel-bg)", color: TS }
+                      }
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {activeTab === "ventas" && dateMode === "dates" ? (
+              <MultiDatePicker
+                selected={selectedDates}
+                onChange={setSelectedDates}
+                minValue={daysAgoLocal(365)}
+                maxValue={today}
+                ariaLabel="Fechas sueltas de reporte"
+              />
+            ) : (
+            <>
             {/* Quick presets */}
             {(() => {
               // Todos los presets se calculan en la zona del NEGOCIO (México),
@@ -879,6 +934,8 @@ export function ReportsPage() {
               maxValue={today}
               ariaLabel="Rango de fechas de reporte"
             />
+            </>
+            )}
 
             {/* Ya no se recarga solo (2026-10-02): botón a la vista. */}
             <RefreshDataButton variant="inline" updatedAt={salesListQuery.dataUpdatedAt || undefined} />
@@ -923,7 +980,9 @@ export function ReportsPage() {
 
             {/* Active range indicator */}
             <span className="ml-auto text-[10px] font-black" style={{ color: TM }}>
-              {from === to ? fmtDate(from) : `${fmtDate(from)} → ${fmtDate(to)}`}
+              {usingDates
+                ? sortedDates.map(fmtDate).join(", ")
+                : from === to ? fmtDate(from) : `${fmtDate(from)} → ${fmtDate(to)}`}
             </span>
           </div>
         )}

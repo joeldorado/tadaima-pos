@@ -50,8 +50,9 @@ class SalesController extends Controller
         // conversión, así que una venta del 21-may 19:00 MX (= 01:00 UTC del
         // 22-may) NO matchea con filter "Hoy" del cajero. DateRange convierte
         // el rango MX → UTC explícitamente.
-        $fromUtc = \App\Support\DateRange::fromUtc($request->from);
-        $toUtc = \App\Support\DateRange::toUtc($request->to);
+        // Fechas sueltas (no consecutivas), opcional — pestaña Ventas de
+        // Reportes (fetchAllSales). Cuando viene, gana sobre from/to.
+        $dates = \App\Support\DateRange::parseDatesParam($request->input('dates'));
 
         $query = Sale::with([
                 'customer', 'payments.paymentMethod', 'items.product', 'user:id,name',
@@ -74,8 +75,7 @@ class SalesController extends Controller
             ])
             ->when($request->user_id, fn ($q) => $q->where('user_id', $request->user_id))
             ->when($request->status,  fn ($q) => $q->where('status', $request->status))
-            ->when($fromUtc, fn ($q) => $q->where('sold_at', '>=', $fromUtc))
-            ->when($toUtc,   fn ($q) => $q->where('sold_at', '<=', $toUtc))
+            ->tap(fn ($q) => \App\Support\DateRange::applyDates($q, 'sold_at', $dates, $request->from, $request->to))
             ->when($request->payment_method_filter, function ($q) use ($request) {
                 // Filtra por método de pago server-side. La clasificación
                 // espeja classifyMethodName() del frontend (paymentFilter.ts).

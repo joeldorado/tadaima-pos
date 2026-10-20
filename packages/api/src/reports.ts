@@ -70,6 +70,13 @@ export interface CustomersReport {
 export interface ReportDateParams {
   from?: string
   to?: string
+  /**
+   * Fechas sueltas (no consecutivas), opcional — pestaña Ventas de Reportes.
+   * Cuando viene, gana sobre from/to. Se manda como string "a,b,c" (no array)
+   * para no depender de cómo axios serialice arrays en la query string; el
+   * backend acepta ambas formas (`DateRange::parseDatesParam`).
+   */
+  dates?: string
   store_id?: number
 }
 
