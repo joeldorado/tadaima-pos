@@ -4,6 +4,70 @@
 
 ---
 
+### Sesión 2026-10-19 — Paquetes: precio Socio a la vista + Caja: Historial del Día y "Otras ventas" sin amontonarse (PR #60) — rev tadaima-00086-nix
+
+**Pedido del cliente vía Joel:**
+1. "En el armado de paquetes no hay un campo para el precio de los socios con tarjeta Tadaima."
+2. El historial de Caja se atora cuando se juntan muchos tickets.
+
+> **PUNTO DE ROLLBACK (antes de este deploy):** revisión `tadaima-00084-huh`, `main` en `e0a21c1`.
+> **Sin migraciones:** regresar es solo mover el tráfico.
+>
+> ```
+> gcloud run services update-traffic tadaima --to-revisions tadaima-00084-huh=100 --project tadaimapos --region us-east1
+> ```
+
+**Qué entró:**
+- **Paquetes: los 5 precios a la vista.**
+  - El campo Socio ya existía (`price_2` = nivel b = "Precio Socio", el mismo de Productos y Mangas), pero estaba escondido en el desplegable "Más precios".
+  - Ahora el asistente y el editar muestran Normal / Socio / Mayorista y D / E, como el alta de Productos (`BundlePriceFields`).
+  - Se capturan **a mano** (decisión de Joel: Productos tampoco calcula el socio).
+  - Aviso no bloqueante si Socio ≥ Normal.
+  - Tarjeta, tabla y resumen muestran "Socio $X".
+  - Backend sin cambios: Caja ya cobraba el socio a paquetes. Prueba nueva: `BundleCheckoutTest::test_vender_paquete_a_precio_socio`.
+- **Historial del Día (Caja).**
+  - Causa raíz: las tarjetas eran hijas de una columna flex de alto fijo con `overflow:hidden` y se ENCOGÍAN (≈2 px cada una) en vez de dar scroll.
+  - Ahora `HistorialList`:
+    - agrupa por hora en un grid, con encabezado fijo "3 p. m. · 14 tickets";
+    - pinta de 50 en 50 ("Mostrar 50 más"; vuelve a 50 al cambiar filtro o búsqueda);
+    - trae botón "Arriba".
+  - Cada fila muestra solo la hora.
+  - Las acciones dejaron de ser `div role=button` anidados en un `<button>`.
+  - Las preventas del día traen todas las páginas (antes se cortaban en 50).
+  - `historialEntries` usa un arreglo vacío estable: `?? []` re-disparaba el efecto del pareo mixto en ciclo mientras cargaba.
+- **"Otras ventas" (ventas en espera).**
+  - `OtherSalesDock`: alto máximo con scroll, filas compactas con más de 4 ventas y se pliega en una píldora (`tadaima-caja-otras-ventas`).
+  - **Bug arreglado:** el subtotal sumaba `i.price`, que las líneas del carrito no traen, y salía **"$NaN"**. Ahora usa `getItemPrice`.
+- Docs in-app: Paquetes ("¿Dónde pongo el precio para socios…?") y Caja (agrupado por hora).
+
+**Verificado (commit `023dff5`):**
+- Backend 841 OK (SQLite).
+- Vitest 760 OK.
+- `tsc` sin errores nuevos (3 menos, entre ellos el de `i.price`).
+- QA en navegador local con base SQLite propia: 130 ventas y 12 ventas en espera.
+- Fotos antes/después en `.claude/entregables/historial-caja/` (ignorado por git). Joel dio luz verde con las fotos.
+
+**QUÉ PROBAR EN PROD** (incógnito o recarga forzada):
+- Paquetes → Nuevo paquete → paso 2: se ven los 5 precios. Crear o editar uno con Precio Socio.
+- Caja con un socio activo y Efectivo: el paquete se cobra a precio Socio; con Tarjeta, a normal.
+- Caja → Historial en una tienda con muchas ventas: no se aplasta, agrupa por hora, "Mostrar 50 más".
+- Varias ventas en espera: "Otras ventas" muestra montos reales, scrollea y se pliega.
+
+**Señales para regresar:**
+- Caja → Historial no abre o no deja reimprimir/cancelar.
+- Paquetes no guarda precios.
+
+**Deploy (2026-10-19 ~20:05 Tijuana) — rev tadaima-00086-nix (rollback `tadaima-00084-huh`).**
+- Candidato sin tráfico desde un worktree limpio en `023dff5` (Dockerfile; solo archivos versionados).
+- `Nothing to migrate`, sin errores en el log.
+- Smoke en el candidato y luego en `https://tadaimamexico.com`:
+  - `/`, `/login`, `/caja` y `/tadaimaus/` 200;
+  - `/api/v1/bundles`, `/auth/me` y `/sales` sin token 401 con el envelope;
+  - el bundle (`index-Codc2Pj-.js`) trae los textos nuevos y ya no el desplegable "Más precios".
+- **No hubo prueba con sesión en prod:** queda para el equipo (ver QUÉ PROBAR).
+
+---
+
 ### Sesión 2026-10-14 — Paquetes: costo que sigue a sus piezas, botones del cajero, Traslados y ayuda + tour (PR #57, #58, release #59) — rev tadaima-00084-huh
 
 **Pedido Joel:** resumen del módulo Paquetes; de ahí salieron detalles que confundían al cliente. Se
