@@ -5,6 +5,7 @@ import { availabilityFor, availabilityTone, savingsPct } from "@/lib/bundleMath"
 import { PromoButton } from "@/components/promos/PromoButton";
 import { ProductThumb } from "@/components/promos/ProductPickerRows";
 import { AMBER, CARD_BG, CARD_BORDER, GRAY, GREEN, POPUP_BG, TEXT_HI, TEXT_MD, fmtMoney, tint } from "@/components/promos/promoTokens";
+import { PRICE_LEVEL_COLORS } from "@/lib/priceLevels";
 import { BuildablePill } from "./BundleAvailability";
 import { BundleCardMenu } from "./BundleCardMenu";
 import type { BundleListActions } from "./BundleList";
@@ -68,6 +69,9 @@ export function BundleTable({
                 </td>
                 <td className="tabular-nums" style={{ ...TD, textAlign: "right", whiteSpace: "nowrap" }}>
                   <span className="block text-[15px] font-black" style={{ color: TEXT_HI }}>{fmtMoney(price)}</span>
+                  {bundle.prices.price_2 != null && (
+                    <span className="block text-[12px] font-extrabold" style={{ color: PRICE_LEVEL_COLORS.b }}>Socio {fmtMoney(bundle.prices.price_2)}</span>
+                  )}
                   {savings != null && savings !== 0 && (
                     <span className="block text-[12px] font-semibold" style={{ color: savings > 0 ? GREEN : AMBER }}>
                       {savings > 0 ? `ahorras ${savings}%` : `${Math.abs(savings)}% más caro`}
