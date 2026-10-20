@@ -4,6 +4,41 @@
 
 ---
 
+### Sesión 2026-10-19 (3) — Reportes: los egresos respetan las fechas sueltas (PR #62) — rev tadaima-00090-wur
+
+**Pedido Joel:** cerrar el hueco del release #61: con "Fechas sueltas", los egresos (insumos) usaban el rango del primer al último día elegido.
+
+> **PUNTO DE ROLLBACK (antes de este deploy):** revisión `tadaima-00088-nej`, `main` en `069482b`.
+> **Sin migraciones:** regresar es solo mover el tráfico.
+>
+> ```
+> gcloud run services update-traffic tadaima --to-revisions tadaima-00088-nej=100 --project tadaimapos --region us-east1
+> ```
+
+**Qué entró** (PR #62, merge `8caed7a`):
+- `GET /supplies/movements` acepta `?dates=a,b,c`. Usa `DateRange::applyDates`, igual que `/reports/sales` y `/sales`; cuando viene, gana sobre `from`/`to`.
+- Sin `dates`, todo funciona igual que antes. No se tocaron los filtros de empresa, tienda ni usuario (⚠️ NO QUITAR en `backend/AGENTS.md`).
+- `ReportsPage` manda `dates` en `supplyMovementsQuery`, también en su queryKey.
+- Prueba: `SupplyMovementsDatesTest`.
+
+**Verificado:**
+- Backend SQLite 847 OK.
+- Vitest 763 OK.
+- Postgres local: verde salvo las 2 de `CashReportRangeTest` que dependen de la hora (corrido en la sesión del PR).
+
+**QUÉ PROBAR EN PROD:** en Reportes → Ventas → "Fechas sueltas", elegir 2 días separados. Los egresos solo muestran compras de esos días; las de los días intermedios ya no.
+
+**Deploy (2026-10-19 ~23:36 Tijuana) — rev tadaima-00090-wur (rollback `tadaima-00088-nej`).**
+- Candidato sin tráfico desde un worktree limpio en `8caed7a`.
+- `Nothing to migrate`, 0 errores en el log.
+- Smoke en el candidato y luego en `https://tadaimamexico.com`:
+  - `/`, `/login`, `/caja`, `/reportes` y `/tadaimaus/` 200;
+  - `/api/v1/supplies/movements`, `/reports/sales` y `/auth/me` sin token 401;
+  - bundle `index-CQW-gSgZ.js`.
+- **No hubo prueba con sesión en prod.**
+
+---
+
 ### Sesión 2026-10-19 (2) — Reportes: fechas sueltas en la pestaña Ventas (Ruben) + arreglo de fechas inválidas (release #61) — rev tadaima-00088-nej
 
 **Pedido Joel:** bajar lo que Ruben subió a `develop`, PR a `main` y deploy de todo.
