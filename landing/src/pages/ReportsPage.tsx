@@ -204,9 +204,7 @@ export function ReportsPage() {
   // Fechas sueltas (no consecutivas) — solo pestaña Ventas. "Rango" (default)
   // sigue usando from/to de siempre; "Fechas sueltas" manda `dates`/
   // `payment_dates` en vez de from/to a los endpoints que lo soportan
-  // (reports/sales, sales, pre-sale-orders). Egresos (insumos) no tiene
-  // soporte de dates[] en el backend — usa el mínimo/máximo elegido como
-  // aproximación de rango.
+  // (reports/sales, sales, pre-sale-orders, supplies/movements).
   const [dateMode, setDateMode] = useState<"range" | "dates">("range");
   const [selectedDates, setSelectedDates] = useState<string[]>([]);
   const usingDates = dateMode === "dates" && selectedDates.length > 0;
@@ -326,8 +324,8 @@ export function ReportsPage() {
   // quién las registró. Solo compras (type=purchase). Todo el desglose se deriva
   // de aquí para que cuadre con el filtro de tienda.
   const supplyMovementsQuery = useQuery({
-    queryKey: ["reports-supply-movements", datesFrom, datesTo, effectiveStoreId, selectedUserId],
-    queryFn: () => getSupplyMovements({ from: datesFrom, to: datesTo, type: "purchase", ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}), ...(selectedUserId ? { user_id: selectedUserId } : {}) }),
+    queryKey: ["reports-supply-movements", datesFrom, datesTo, datesParam, effectiveStoreId, selectedUserId],
+    queryFn: () => getSupplyMovements({ from: datesFrom, to: datesTo, ...(datesParam ? { dates: datesParam } : {}), type: "purchase", ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}), ...(selectedUserId ? { user_id: selectedUserId } : {}) }),
     enabled: activeTab === "ventas",
     staleTime: REPORTS_STALE,
   });
