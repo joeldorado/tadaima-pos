@@ -122,6 +122,8 @@ export async function getSupplyMovements(params?: {
   /** Rango de fechas (día-negocio) — mismo criterio que /reports/supplies. */
   from?: string
   to?: string
+  /** Fechas sueltas `YYYY-MM-DD` separadas por coma; cuando viene, gana sobre from/to. */
+  dates?: string
   /** Filtra por la tienda dueña del insumo (supplies.store_id). Solo admin. */
   store_id?: number
   /** Filtra por el usuario que REGISTRÓ la compra (filtro de usuario del Reporte). */

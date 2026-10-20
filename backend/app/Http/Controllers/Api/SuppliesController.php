@@ -210,8 +210,12 @@ class SuppliesController extends Controller
 
         // Rango de fechas opcional (día-negocio), MISMO helper que /reports/supplies
         // para que la lista detallada del Reporte cuadre con el agregado.
-        $fromUtc = $request->input('from') ? DateRange::fromUtc((string) $request->input('from')) : null;
-        $toUtc   = $request->input('to')   ? DateRange::toUtc((string) $request->input('to'))     : null;
+        $from = $request->input('from') ? (string) $request->input('from') : null;
+        $to   = $request->input('to')   ? (string) $request->input('to')   : null;
+        // Fechas sueltas (no consecutivas), opcional — egresos de la pestaña Ventas
+        // de Reportes (2026-10-19). Cuando viene, gana sobre from/to, igual que
+        // /reports/sales y /sales: sin esto entraban los egresos de los días de en medio.
+        $dates = DateRange::parseDatesParam($request->input('dates'));
 
         $movements = SupplyMovement::with(['supply:id,name,category,unit,store_id', 'user:id,name'])
             // Scoping por empresa (fix 2026-07-18): sin esto el historial
@@ -219,8 +223,7 @@ class SuppliesController extends Controller
             ->whereHas('supply', fn ($q) => $q->where('company_id', $user->company_id))
             ->when($request->integer('supply_id'), fn ($q, $id) => $q->where('supply_id', $id))
             ->when($request->input('type'), fn ($q, $t) => $q->where('type', $t))
-            ->when($fromUtc, fn ($q) => $q->where('supply_movements.created_at', '>=', $fromUtc))
-            ->when($toUtc,   fn ($q) => $q->where('supply_movements.created_at', '<=', $toUtc))
+            ->tap(fn ($q) => DateRange::applyDates($q, 'supply_movements.created_at', $dates, $from, $to))
             // Filtro por tienda: prefiere la tienda del MOVIMIENTO (2026-10-12,
             // quien lo registró) y solo si el movimiento no trae una propia
             // (registros viejos, antes de esta columna) cae a la tienda DUEÑA
