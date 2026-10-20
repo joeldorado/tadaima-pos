@@ -8,8 +8,8 @@ import {
   Users, UserPlus, User, Phone, AlertCircle,
   Mail,
   TriangleAlert, PackageX, Bookmark, Calendar, PackageCheck, ClipboardList, Banknote,
-  Truck, CheckCircle2, Printer, History, Receipt, RefreshCw,
-  ShoppingCart, Crown, Circle, Trash2, XCircle, Clock, Bell, Scissors, MoreVertical, MessageSquare,
+  Truck, CheckCircle2, Printer, History, RefreshCw,
+  Trash2, XCircle, Clock, Bell, Scissors, MoreVertical, MessageSquare,
   Split,
 } from "lucide-react";
 import type { Product, PriceLevel } from "@/types/pos";
@@ -36,6 +36,8 @@ import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
 import { CloseCashModal } from "@/components/cash/CloseCashModal";
 import { UsdCalculatorModal } from "@/components/sell/UsdCalculatorModal";
 import { PayLogPanel } from "@/components/sell/PayLogPanel";
+import { HistorialList } from "@/components/sell/HistorialList";
+import { OtherSalesDock } from "@/components/sell/OtherSalesDock";
 import { pushPayEntry, removePayEntry, type PayLogEntry } from "@/lib/payLog";
 import { dispatchTicket, warmUpTicketPrinting } from "@/lib/ticketPrint";
 import { useLayoutChrome } from "@/contexts/LayoutChromeContext";
@@ -63,6 +65,7 @@ import { PRICE_LEVEL_LABELS, PRICE_LEVEL_COLORS, PRICE_LEVEL_RGB } from "@/lib/p
 import type { CashSession, CashRegisterInfo, PaymentMethod as ApiPaymentMethod, PreSaleCatalog, PreSaleOrder, PreSaleOrderItem, SaleDetail, Terminal, ExternalCardLookup } from "@tadaima/api";
 import { buildPaymentSummary } from "@/lib/paymentSummary";
 import { HISTORIAL_METHOD_OPTIONS, historialEntryMatchesPaymentFilter, type HistorialMethodFilter } from "@/lib/paymentFilter";
+import { ticketTime } from "@/lib/historialGroups";
 import { computeMixedSplit } from "@/lib/mixedPayment";
 import { readFavoritePayment, saveFavoritePayment, startingPayment, toggleFavorite, withFavoriteTerminal, type StartingPayment } from "@/lib/favoritePaymentMethod";
 import { buildPromoPaymentAlert, clearDismissedForMesa, promoPoolLineIds } from "@/lib/promoPaymentAlert";
@@ -185,6 +188,9 @@ function lineAdjustmentPayload(ci: Pick<CartItem, "discount" | "surcharge">) {
   }
   return {};
 }
+
+/** Historial sin data todavía: referencia estable (ver historialEntries). */
+const EMPTY_HISTORIAL: HistorialEntry[] = [];
 
 interface Mesa {
   id: string;
@@ -694,6 +700,15 @@ export function SellPage() {
   // addToCart después de awaitar un inFlight) lean la qty actual del UI sin
   // depender del closure capturado al inicio de la llamada (que ya está stale).
   const mesasRef = useRef<Mesa[]>(mesas);
+  // Resumen para el atajo "Otras ventas". Con el precio real de cada línea
+  // (getItemPrice): antes sumaba `i.price`, que las líneas del carrito no traen,
+  // y el subtotal salía "$NaN" (2026-10-19).
+  const dockSales = useMemo(() => mesas.map(m => ({
+    id: m.id,
+    name: m.name,
+    itemCount: m.items.reduce((s, i) => s + i.quantity, 0),
+    subtotal: m.items.reduce((s, i) => s + getItemPrice(i) * i.quantity, 0),
+  })), [mesas]);
   useEffect(() => { mesasRef.current = mesas; }, [mesas]);
 
   // Sincroniza el snapshot de mesas con localStorage en cada cambio.
@@ -869,7 +884,9 @@ export function SellPage() {
   // Apertura del modal instantánea con la última versión; background refetch
   // tras cada checkout/cancelación gracias a las invalidaciones.
   const historialQuery = useTodayHistorialQuery(activeStore?.id, { enabled: !!user });
-  const historialEntries: HistorialEntry[] = historialQuery.data ?? [];
+  // Sin data aún: el MISMO arreglo vacío en cada render. `?? []` creaba uno nuevo
+  // y el efecto del pareo mixto (deps [historialEntries]) se re-disparaba en ciclo.
+  const historialEntries: HistorialEntry[] = historialQuery.data ?? EMPTY_HISTORIAL;
   // Spinner grande SOLO en la primera carga sin datos en cache. Si ya hay
   // ventas en memoria, el modal abre instantáneo y el refresco se muestra
   // como un indicador sutil abajo (historialRefreshing).
@@ -953,6 +970,32 @@ export function SellPage() {
       : tabEntries.filter(e => historialEntryMatchesPaymentFilter(e, historialMethod, pairedSaleFor(e)));
     return { cancelledCount: historialEntries.filter(isCancelled).length, pairedSaleIds, methodCounts, methodEntries };
   }, [historialEntries, mixedPairs, historialFilter, historialMethod]);
+
+  // Lo que pinta la lista del Historial: pestaña + método (historialView), sin
+  // las ventas que van dentro de su preventa y con el buscador aplicado (ticket #,
+  // folio, cliente, producto, SKU o método de pago).
+  const historialVisible = useMemo(() => {
+    const { pairedSaleIds, methodEntries } = historialView;
+    const q = historialSearch.trim().toLowerCase();
+    return methodEntries.filter(e => {
+      if (e.type === 'sale' && pairedSaleIds.has(e.data.id!)) return false;
+      if (!q) return true;
+      if (e.type === 'sale') {
+        const sale = e.data;
+        return String(sale.id ?? '').includes(q)
+          || (sale.customer?.name ?? '').toLowerCase().includes(q)
+          || (sale.items ?? []).some(i =>
+            (i.product?.name ?? '').toLowerCase().includes(q)
+            || (i.product?.sku ?? '').toLowerCase().includes(q))
+          || (sale.payments ?? []).some(pay => (pay.payment_method?.name ?? '').toLowerCase().includes(q));
+      }
+      const o = e.data;
+      return (o.code ?? '').toLowerCase().includes(q)
+        || (o.customer?.name ?? '').toLowerCase().includes(q)
+        || (o.items ?? []).some(i => (i.catalog?.product_name ?? '').toLowerCase().includes(q))
+        || (o.payments ?? []).some(pay => (pay.payment_method?.name ?? '').toLowerCase().includes(q));
+    });
+  }, [historialView, historialSearch]);
 
   // ── Modal unificado de Preventas ──
   // showPreSalesModal se declara arriba (junto a las queries) para condicionar el polling.
@@ -8917,7 +8960,7 @@ export function SellPage() {
               </div>
 
               {/* Buscador inteligente: ticket #, folio, cliente, producto, SKU o método */}
-              <div style={{ position: "relative", width: 320 }}>
+              <div style={{ position: "relative", flex: "1 1 160px", minWidth: 160, maxWidth: 320 }}>
                 <Search size={14} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "var(--td-text-ghost)", pointerEvents: "none" }} />
                 <input
                   type="text"
@@ -9020,66 +9063,24 @@ export function SellPage() {
               );
             })()}
 
-            {/* List — max-height anclado al alto real de la pantalla (mide su
-                top vs window.innerHeight) para que el scroll se maneje SIEMPRE
-                internamente, sin depender solo de la cadena flex. minHeight 0
-                se mantiene como respaldo del flex. */}
-            <div ref={historialListRef} className="td-scroll-visible" style={{ flex: 1, minHeight: 0, maxHeight: historialListMaxH, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6, paddingRight: 4 }}>
-              {historialLoading ? (
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 40 }}>
-                  <Loader2 size={24} style={{ color: "#E0221A" }} className="animate-spin" />
-                </div>
-              ) : historialEntries.length === 0 ? (
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 40, opacity: 0.3 }}>
-                  <Receipt size={36} style={{ marginBottom: 8 }} />
-                  <p style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em" }}>Sin eventos registrados hoy</p>
-                </div>
-              ) : (
-                (() => {
-                  // Pestaña + método ya aplicados en historialView. Par mixto: la
-                  // venta emparejada se pinta dentro de su preventa, no suelta.
-                  const { pairedSaleIds, methodEntries } = historialView;
-
-                  // Buscador: ticket #, folio, cliente, producto, SKU o método de pago.
-                  const q = historialSearch.trim().toLowerCase();
-                  const filteredEntries = !q ? methodEntries : methodEntries.filter(e => {
-                    if (e.type === 'sale') {
-                      const s = e.data as SaleDetail;
-                      return String(s.id ?? '').includes(q)
-                        || (s.customer?.name ?? '').toLowerCase().includes(q)
-                        || (s.items ?? []).some(i =>
-                          (i.product?.name ?? '').toLowerCase().includes(q)
-                          || (i.product?.sku ?? '').toLowerCase().includes(q))
-                        || (s.payments ?? []).some(p => (p.payment_method?.name ?? '').toLowerCase().includes(q));
-                    }
-                    const o = e.data;
-                    return (o.code ?? '').toLowerCase().includes(q)
-                      || (o.customer?.name ?? '').toLowerCase().includes(q)
-                      || (o.items ?? []).some(i => (i.catalog?.product_name ?? '').toLowerCase().includes(q))
-                      || (o.payments ?? []).some(p => (p.payment_method?.name ?? '').toLowerCase().includes(q));
-                  });
-
-                  if (filteredEntries.length === 0) {
-                    return (
-                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 40, opacity: 0.3 }}>
-                        <Receipt size={36} style={{ marginBottom: 8 }} />
-                        <p style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em" }}>
-                          {q
-                            ? `Sin resultados para "${historialSearch.trim()}"`
-                            : historialMethod !== 'all'
-                              ? `Sin ${historialFilter === 'cancelled' ? 'cancelaciones' : 'ventas'} con ${HISTORIAL_METHOD_OPTIONS.find(o => o.value === historialMethod)?.label ?? ''} hoy`
-                              : historialFilter === 'cancelled' ? 'No hay cancelaciones hoy' : 'Sin eventos registrados hoy'}
-                        </p>
-                      </div>
-                    );
-                  }
-
-                  return filteredEntries.map(entry => {
+            {/* Lista agrupada por hora y pintada por tandas (HistorialList,
+                2026-10-19). El max-height sigue anclado al alto real de la pantalla. */}
+            <HistorialList
+              entries={historialVisible}
+              loading={historialLoading}
+              emptyText={historialEntries.length === 0
+                ? 'Sin eventos registrados hoy'
+                : historialSearch.trim()
+                  ? `Sin resultados para "${historialSearch.trim()}"`
+                  : historialMethod !== 'all'
+                    ? `Sin ${historialFilter === 'cancelled' ? 'cancelaciones' : 'ventas'} con ${HISTORIAL_METHOD_OPTIONS.find(o => o.value === historialMethod)?.label ?? ''} hoy`
+                    : historialFilter === 'cancelled' ? 'No hay cancelaciones hoy' : 'Sin eventos registrados hoy'}
+              resetKey={`${historialFilter}|${historialMethod}|${historialSearch.trim().toLowerCase()}`}
+              listRef={historialListRef}
+              maxHeight={historialListMaxH}
+              renderEntry={entry => {
                   const entryKey = `${entry.type}-${entry.data.id}`;
                   const isOpen = expandedEntryKey === entryKey;
-
-                  // ── VENTA PARTE DE UN PAR MIXTO → skip (la renderiza el bloque de preventa) ──
-                  if (entry.type === 'sale' && pairedSaleIds.has(entry.data.id!)) return null;
 
                   // ── VENTA REGULAR ────────────────────────────────────────────
                   if (entry.type === 'sale') {
@@ -9101,13 +9102,14 @@ export function SellPage() {
                     const discount = sale.discount;
                     return (
                       <div key={entryKey} style={{ background: "var(--td-card-bg)", border: `1px solid ${isOpen ? "rgba(224,34,26,0.3)" : "var(--td-card-border)"}`, borderRadius: 16, overflow: "hidden" }}>
-                        <button onClick={() => setExpandedEntryKey(isOpen ? null : entryKey)}
-                          style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "none", border: "none", cursor: "pointer", textAlign: "left" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, paddingRight: 14 }}>
+                        <button type="button" onClick={() => setExpandedEntryKey(isOpen ? null : entryKey)} aria-expanded={isOpen}
+                          style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 10, padding: "10px 4px 10px 14px", background: "none", border: "none", cursor: "pointer", textAlign: "left", color: "inherit", font: "inherit" }}>
                           <ChevronRight size={12} style={{ flexShrink: 0, transform: isOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s", color: isOpen ? "#E0221A" : "var(--td-text-ghost)" }} />
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                               <span style={{ fontSize: 9, fontWeight: 900, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.12em" }}>#{sale.id}</span>
-                              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--td-text-hi)" }}>{new Date(dateStr).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" })}</span>
+                              <span title={new Date(dateStr).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" })} style={{ fontSize: 12, fontWeight: 800, color: "var(--td-text-hi)", fontVariantNumeric: "tabular-nums" }}>{ticketTime(dateStr)}</span>
                               {sale.customer?.name && <span style={{ fontSize: 10, color: "var(--td-text-ghost)", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sale.customer.name}</span>}
                             </div>
                             <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
@@ -9133,7 +9135,8 @@ export function SellPage() {
                               )}
                             </span>
                           )}
-                          <div onClick={e => {
+                          </button>
+                          <button type="button" onClick={e => {
                             e.stopPropagation();
                             // Reconstrucción FIEL del ticket desde la venta guardada:
                             // método(s), efectivo/dólares/cambio y TC de la venta — antes
@@ -9176,31 +9179,31 @@ export function SellPage() {
                               ...(sum.change != null && sum.change > 0 ? { change: sum.change } : {}),
                             });
                           }}
-                            role="button" title="Reimprimir ticket"
-                            style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 9, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--td-text-lo)" }}
-                            onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = "rgba(224,34,26,0.1)"; (e.currentTarget as HTMLDivElement).style.borderColor = "rgba(224,34,26,0.3)"; (e.currentTarget as HTMLDivElement).style.color = "#E0221A"; }}
-                            onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = "var(--td-input-bg)"; (e.currentTarget as HTMLDivElement).style.borderColor = "var(--td-input-border)"; (e.currentTarget as HTMLDivElement).style.color = "var(--td-text-lo)"; }}>
+                            title="Reimprimir ticket" aria-label={`Reimprimir ticket #${sale.id}`}
+                            style={{ flexShrink: 0, padding: 0, width: 32, height: 32, borderRadius: 9, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--td-text-lo)" }}
+                            onMouseEnter={e => { e.currentTarget.style.background = "rgba(224,34,26,0.1)"; e.currentTarget.style.borderColor = "rgba(224,34,26,0.3)"; e.currentTarget.style.color = "#E0221A"; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = "var(--td-input-bg)"; e.currentTarget.style.borderColor = "var(--td-input-border)"; e.currentTarget.style.color = "var(--td-text-lo)"; }}>
                             <Printer size={13} />
-                          </div>
+                          </button>
                           {canFix && (
-                            <div onClick={e => { e.stopPropagation(); setCorrectPaymentTarget(sale); }}
-                              role="button" title="Corregir método de pago"
-                              style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 9, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--td-text-lo)" }}
+                            <button type="button" onClick={e => { e.stopPropagation(); setCorrectPaymentTarget(sale); }}
+                              title="Corregir método de pago" aria-label={`Corregir método de pago del ticket #${sale.id}`}
+                              style={{ flexShrink: 0, padding: 0, width: 32, height: 32, borderRadius: 9, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--td-text-lo)" }}
                               onMouseEnter={e => { e.currentTarget.style.background = "rgba(59,130,246,0.12)"; e.currentTarget.style.borderColor = "rgba(59,130,246,0.35)"; e.currentTarget.style.color = "#60a5fa"; }}
                               onMouseLeave={e => { e.currentTarget.style.background = "var(--td-input-bg)"; e.currentTarget.style.borderColor = "var(--td-input-border)"; e.currentTarget.style.color = "var(--td-text-lo)"; }}>
                               <ArrowLeftRight size={14} />
-                            </div>
+                            </button>
                           )}
                           {sale.status !== "returned" && (
-                            <div onClick={e => { e.stopPropagation(); setCancelTarget({ kind: 'sale', sale }); }}
-                              role="button" title="Cancelar venta"
-                              style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 9, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--td-text-lo)" }}
-                              onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = "rgba(239,68,68,0.12)"; (e.currentTarget as HTMLDivElement).style.borderColor = "rgba(239,68,68,0.35)"; (e.currentTarget as HTMLDivElement).style.color = "#f87171"; }}
-                              onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = "var(--td-input-bg)"; (e.currentTarget as HTMLDivElement).style.borderColor = "var(--td-input-border)"; (e.currentTarget as HTMLDivElement).style.color = "var(--td-text-lo)"; }}>
+                            <button type="button" onClick={e => { e.stopPropagation(); setCancelTarget({ kind: 'sale', sale }); }}
+                              title="Cancelar venta" aria-label={`Cancelar venta #${sale.id}`}
+                              style={{ flexShrink: 0, padding: 0, width: 32, height: 32, borderRadius: 9, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--td-text-lo)" }}
+                              onMouseEnter={e => { e.currentTarget.style.background = "rgba(239,68,68,0.12)"; e.currentTarget.style.borderColor = "rgba(239,68,68,0.35)"; e.currentTarget.style.color = "#f87171"; }}
+                              onMouseLeave={e => { e.currentTarget.style.background = "var(--td-input-bg)"; e.currentTarget.style.borderColor = "var(--td-input-border)"; e.currentTarget.style.color = "var(--td-text-lo)"; }}>
                               <XCircle size={15} />
-                            </div>
+                            </button>
                           )}
-                        </button>
+                        </div>
                         {isOpen && (
                           <div style={{ borderTop: "1px solid var(--td-card-border)", padding: "12px 14px 14px", background: MUTED }}>
                             <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 10 }}>
@@ -9341,8 +9344,9 @@ export function SellPage() {
 
                   return (
                     <div key={entryKey} style={{ background: isMixed ? "rgba(139,92,246,0.04)" : "rgba(245,158,11,0.04)", border: `1px solid ${isOpen ? (isMixed ? "rgba(139,92,246,0.45)" : "rgba(245,158,11,0.45)") : (isMixed ? "rgba(139,92,246,0.25)" : "rgba(245,158,11,0.2)")}`, borderRadius: 16, overflow: "hidden" }}>
-                      <button onClick={() => setExpandedEntryKey(isOpen ? null : entryKey)}
-                        style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "none", border: "none", cursor: "pointer", textAlign: "left" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, paddingRight: 14 }}>
+                      <button type="button" onClick={() => setExpandedEntryKey(isOpen ? null : entryKey)} aria-expanded={isOpen}
+                        style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 10, padding: "10px 4px 10px 14px", background: "none", border: "none", cursor: "pointer", textAlign: "left", color: "inherit", font: "inherit" }}>
                         <ChevronRight size={12} style={{ flexShrink: 0, transform: isOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s", color: isOpen ? (isMixed ? "#a78bfa" : "#f59e0b") : (isMixed ? "rgba(139,92,246,0.5)" : "rgba(245,158,11,0.5)") }} />
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -9350,7 +9354,7 @@ export function SellPage() {
                               {isMixed ? "Mixto" : "Preventa"}
                             </span>
                             <span style={{ fontSize: 10, fontWeight: 900, color: isMixed ? "#a78bfa" : "#f59e0b", fontFamily: "monospace" }}>{order.code}</span>
-                            <span style={{ fontSize: 11, fontWeight: 700, color: "var(--td-text-hi)" }}>{new Date(order.created_at).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" })}</span>
+                            <span title={new Date(order.created_at).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" })} style={{ fontSize: 12, fontWeight: 800, color: "var(--td-text-hi)", fontVariantNumeric: "tabular-nums" }}>{ticketTime(order.created_at)}</span>
                             {order.customer?.name && <span style={{ fontSize: 10, color: "var(--td-text-ghost)", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{order.customer.name}</span>}
                           </div>
                           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
@@ -9376,7 +9380,8 @@ export function SellPage() {
                         <span style={{ fontSize: 14, fontWeight: 900, color: order.status === "cancelled" ? "#f87171" : order.status === "delivered" ? "#34d399" : (isMixed ? "#a78bfa" : "#f59e0b"), flexShrink: 0, textDecoration: order.status === "cancelled" ? "line-through" : "none", opacity: order.status === "cancelled" ? 0.6 : 1 }} title={`Valor total de la preventa: ${fmt(order.total ?? 0)}`}>
                           {fmt(isMixed ? grandTotal : paidAmt)}
                         </span>
-                        <div
+                        </button>
+                        <button type="button"
                           onClick={e => {
                             e.stopPropagation();
                             doPrintTicket({
@@ -9394,25 +9399,25 @@ export function SellPage() {
                               preSaleIsLiquidation: order.status === "delivered",
                             });
                           }}
-                          role="button" title="Imprimir ticket"
-                          style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 9, background: isMixed ? "rgba(139,92,246,0.08)" : "rgba(245,158,11,0.08)", border: `1px solid ${isMixed ? "rgba(139,92,246,0.2)" : "rgba(245,158,11,0.2)"}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: isMixed ? "rgba(139,92,246,0.6)" : "rgba(245,158,11,0.6)" }}
-                          onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = isMixed ? "rgba(139,92,246,0.15)" : "rgba(245,158,11,0.15)"; (e.currentTarget as HTMLDivElement).style.color = isMixed ? "#a78bfa" : "#f59e0b"; }}
-                          onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = isMixed ? "rgba(139,92,246,0.08)" : "rgba(245,158,11,0.08)"; (e.currentTarget as HTMLDivElement).style.color = isMixed ? "rgba(139,92,246,0.6)" : "rgba(245,158,11,0.6)"; }}>
+                          title="Imprimir ticket" aria-label={`Imprimir ticket del folio ${order.code}`}
+                          style={{ flexShrink: 0, padding: 0, width: 32, height: 32, borderRadius: 9, background: isMixed ? "rgba(139,92,246,0.08)" : "rgba(245,158,11,0.08)", border: `1px solid ${isMixed ? "rgba(139,92,246,0.2)" : "rgba(245,158,11,0.2)"}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: isMixed ? "rgba(139,92,246,0.6)" : "rgba(245,158,11,0.6)" }}
+                          onMouseEnter={e => { e.currentTarget.style.background = isMixed ? "rgba(139,92,246,0.15)" : "rgba(245,158,11,0.15)"; e.currentTarget.style.color = isMixed ? "#a78bfa" : "#f59e0b"; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = isMixed ? "rgba(139,92,246,0.08)" : "rgba(245,158,11,0.08)"; e.currentTarget.style.color = isMixed ? "rgba(139,92,246,0.6)" : "rgba(245,158,11,0.6)"; }}>
                           <Printer size={13} />
-                        </div>
+                        </button>
                         {/* Liquidada (delivered) ya NO se puede cancelar: el botón
                             solo aparece para folios con anticipo pendiente
                             (Joel 2026-06-13). */}
                         {order.status !== "cancelled" && order.status !== "delivered" && (
-                          <div onClick={e => { e.stopPropagation(); setCancelTarget({ kind: 'presale', order }); }}
-                            role="button" title="Cancelar folio"
-                            style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 9, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.22)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "rgba(239,68,68,0.7)" }}
-                            onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = "rgba(239,68,68,0.18)"; (e.currentTarget as HTMLDivElement).style.color = "#f87171"; }}
-                            onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = "rgba(239,68,68,0.08)"; (e.currentTarget as HTMLDivElement).style.color = "rgba(239,68,68,0.7)"; }}>
+                          <button type="button" onClick={e => { e.stopPropagation(); setCancelTarget({ kind: 'presale', order }); }}
+                            title="Cancelar folio" aria-label={`Cancelar folio ${order.code}`}
+                            style={{ flexShrink: 0, padding: 0, width: 32, height: 32, borderRadius: 9, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.22)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "rgba(239,68,68,0.7)" }}
+                            onMouseEnter={e => { e.currentTarget.style.background = "rgba(239,68,68,0.18)"; e.currentTarget.style.color = "#f87171"; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = "rgba(239,68,68,0.08)"; e.currentTarget.style.color = "rgba(239,68,68,0.7)"; }}>
                             <XCircle size={15} />
-                          </div>
+                          </button>
                         )}
-                      </button>
+                      </div>
                       {isOpen && (
                         <div style={{ borderTop: `1px solid ${isMixed ? "rgba(139,92,246,0.15)" : "rgba(245,158,11,0.15)"}`, padding: "12px 14px 14px", background: MUTED }}>
 
@@ -9481,10 +9486,8 @@ export function SellPage() {
                       )}
                     </div>
                   );
-                  });
-                })()
-              )}
-            </div>
+              }}
+            />
 
             </div>
             </div>
@@ -9492,201 +9495,15 @@ export function SellPage() {
       )}
 
       {/* ══════════════ ATAJOS FLOTANTES: OTRAS VENTAS ABIERTAS ══════════════ */}
-      {/* Aparece solo si hay >1 mesa. Card flotante con filas tipo pill
-          (icono + nombre + items). Antes vivía abajo-derecha "arribita del
-          footer"; con el nuevo sidebar derecho de cobro se movió a abajo-IZQUIERDA
-          para no traslaparse con el panel de cobro. Usa variables --td-* para
-          adaptarse a light/dark theme. Las filas con items siempre rojas
-          (mantienen contraste en ambos themes). */}
-      {mesas.length > 1 && (
-        <>
-          <style>{`
-            @keyframes td-shortcut-pulse {
-              0%, 100% { box-shadow: 0 0 0 rgba(224,34,26,0); }
-              50%      { box-shadow: 0 0 18px rgba(224,34,26,0.55); }
-            }
-          `}</style>
-          <div
-            style={{
-              position: "fixed",
-              bottom: 20,
-              left: 20,
-              zIndex: 50,
-              display: "flex",
-              flexDirection: "column",
-              gap: 8,
-              minWidth: 210,
-              background: "var(--td-popup-bg)",
-              backdropFilter: "blur(14px)",
-              border: "1px solid var(--td-popup-border)",
-              borderRadius: 18,
-              padding: 10,
-              boxShadow: "0 12px 36px rgba(0,0,0,0.25)",
-            }}
-          >
-            {/* Header con label + contador de activas */}
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "2px 6px 6px",
-                borderBottom: "1px solid var(--td-panel-border)",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <ShoppingCart size={11} style={{ color: "var(--td-red)" }} />
-                <span
-                  style={{
-                    fontSize: 9,
-                    fontWeight: 900,
-                    letterSpacing: "0.16em",
-                    textTransform: "uppercase",
-                    color: "var(--td-red)",
-                  }}
-                >
-                  Otras ventas
-                </span>
-              </div>
-              <span
-                style={{
-                  fontSize: 9,
-                  fontWeight: 800,
-                  color: "var(--td-text-ghost)",
-                }}
-              >
-                {mesas.filter(m => m.id !== activeMesaId && m.items.length > 0).length}/{mesas.length - 1}
-              </span>
-            </div>
-
-            {mesas
-              .filter(m => m.id !== activeMesaId)
-              .map(m => {
-                const itemCount = m.items.reduce((s, i) => s + i.quantity, 0);
-                const subtotal = m.items.reduce((s, i) => s + i.price * i.quantity, 0);
-                const hasItems = itemCount > 0;
-                const isPrincipal = m.name === "Caja Principal";
-                const Icon = isPrincipal ? Crown : ShoppingCart;
-                return (
-                  <div
-                    key={m.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => setActiveMesaId(m.id)}
-                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setActiveMesaId(m.id); } }}
-                    title={`Ir a ${m.name}${hasItems ? ` · ${itemCount} item${itemCount === 1 ? "" : "s"} · $${subtotal.toFixed(0)}` : " · vacía"}`}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 10,
-                      width: "100%",
-                      padding: "10px 12px",
-                      borderRadius: 12,
-                      // Activas → rojo sólido (mismo contraste en light/dark).
-                      // Vacías → fondo y bordes del theme para integrarse.
-                      background: hasItems
-                        ? "linear-gradient(135deg, #BB1100 0%, #FF3322 100%)"
-                        : "var(--td-input-bg)",
-                      border: hasItems
-                        ? "1px solid rgba(255,120,80,0.5)"
-                        : "1px solid var(--td-input-border)",
-                      color: hasItems ? "#fff" : "var(--td-text-lo)",
-                      cursor: "pointer",
-                      textAlign: "left",
-                      transition: "transform 0.12s ease, background 0.15s",
-                      animation: hasItems ? "td-shortcut-pulse 2.6s ease-in-out infinite" : undefined,
-                    }}
-                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.transform = "translateX(-3px)"; }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.transform = "translateX(0)"; }}
-                  >
-                    <div
-                      style={{
-                        width: 32,
-                        height: 32,
-                        borderRadius: 10,
-                        background: hasItems ? "rgba(255,255,255,0.20)" : "var(--td-panel-bg)",
-                        border: hasItems ? "none" : "1px solid var(--td-panel-border)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        flexShrink: 0,
-                        color: hasItems ? "#fff" : "var(--td-text-ghost)",
-                      }}
-                    >
-                      <Icon size={15} strokeWidth={2.5} />
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, lineHeight: 1.15 }}>
-                      <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: "0.04em" }}>
-                        {m.name}
-                      </span>
-                      <span
-                        style={{
-                          fontSize: 9,
-                          fontWeight: 700,
-                          opacity: hasItems ? 0.85 : 1,
-                          color: hasItems ? "rgba(255,255,255,0.85)" : "var(--td-text-ghost)",
-                        }}
-                      >
-                        {hasItems ? `${itemCount} item${itemCount === 1 ? "" : "s"} · $${subtotal.toFixed(0)}` : "Vacía"}
-                      </span>
-                    </div>
-                    {hasItems ? (
-                      <ChevronRight size={14} style={{ opacity: 0.9, color: hasItems ? "#fff" : "var(--td-text-ghost)" }} />
-                    ) : (
-                      <Circle size={6} fill="currentColor" style={{ opacity: 0.4, color: "var(--td-text-ghost)" }} />
-                    )}
-                    {/* Cancelar venta — solo en Venta 2..5, nunca en Caja Principal.
-                        Si tiene items, pide confirmación para evitar borrar venta
-                        en curso por accidente. */}
-                    {!isPrincipal && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (hasItems) {
-                            const ok = window.confirm(
-                              `${m.name} tiene ${itemCount} item${itemCount === 1 ? "" : "s"} ($${subtotal.toFixed(0)}).\n\n¿Cancelar la venta? Los productos se perderán.`
-                            );
-                            if (!ok) return;
-                          }
-                          removeMesa(m.id);
-                        }}
-                        title={`Cancelar ${m.name}`}
-                        aria-label={`Cancelar ${m.name}`}
-                        style={{
-                          width: 26,
-                          height: 26,
-                          borderRadius: 8,
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          background: hasItems ? "rgba(0,0,0,0.18)" : "transparent",
-                          border: hasItems ? "1px solid rgba(255,255,255,0.18)" : "1px solid var(--td-panel-border)",
-                          color: hasItems ? "rgba(255,255,255,0.85)" : "var(--td-text-ghost)",
-                          cursor: "pointer",
-                          flexShrink: 0,
-                          transition: "background 0.12s, color 0.12s",
-                        }}
-                        onMouseEnter={(e) => {
-                          (e.currentTarget as HTMLButtonElement).style.background = "rgba(224,34,26,0.9)";
-                          (e.currentTarget as HTMLButtonElement).style.color = "#fff";
-                          (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,80,50,0.6)";
-                        }}
-                        onMouseLeave={(e) => {
-                          (e.currentTarget as HTMLButtonElement).style.background = hasItems ? "rgba(0,0,0,0.18)" : "transparent";
-                          (e.currentTarget as HTMLButtonElement).style.color = hasItems ? "rgba(255,255,255,0.85)" : "var(--td-text-ghost)";
-                          (e.currentTarget as HTMLButtonElement).style.borderColor = hasItems ? "rgba(255,255,255,0.18)" : "var(--td-panel-border)";
-                        }}
-                      >
-                        <Trash2 size={12} strokeWidth={2.5} />
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-          </div>
-        </>
-      )}
+      {/* Solo con >1 mesa. Abajo-IZQUIERDA para no taparse con el panel de cobro;
+          con muchas ventas en espera scrollea adentro y se puede plegar
+          (OtherSalesDock, 2026-10-19). */}
+      <OtherSalesDock
+        mesas={dockSales}
+        activeMesaId={activeMesaId}
+        onSelect={setActiveMesaId}
+        onRemove={removeMesa}
+      />
     </div>
   );
 }

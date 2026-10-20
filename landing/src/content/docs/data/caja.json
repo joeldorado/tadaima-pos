@@ -600,7 +600,7 @@
             "kind": "callout",
             "tone": "info",
             "title": "Sin salir de Caja: el botón “Historial”",
-            "text": "En Caja, el botón “Historial” abre las ventas de HOY de toda la tienda con los mismos filtros de método (Efectivo, Tarjeta, Transferencia, Dólares, Mixto) y un contador en cada uno; se combinan con la pestaña Canceladas y con el buscador. Las preventas del día se clasifican por cómo se pagó el anticipo, así que una preventa pagada por transferencia aparece bajo Transferencia."
+            "text": "En Caja, el botón “Historial” abre las ventas de HOY de toda la tienda con los mismos filtros de método (Efectivo, Tarjeta, Transferencia, Dólares, Mixto) y un contador en cada uno; se combinan con la pestaña Canceladas y con el buscador. Las preventas del día se clasifican por cómo se pagó el anticipo, así que una preventa pagada por transferencia aparece bajo Transferencia. Con muchos tickets la lista se agrupa por hora (“3 p. m. · 14 tickets”) y muestra 50 a la vez: abajo está “Mostrar 50 más” y el botón rojo con flecha regresa arriba."
           }
         ]
       },
