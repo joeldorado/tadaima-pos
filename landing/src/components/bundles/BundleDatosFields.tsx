@@ -1,13 +1,13 @@
 import { useState } from "react";
-import { ChevronDown, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { lookupProductByCode } from "@tadaima/api";
 import { generateEan13 } from "@/lib/barcode";
 import { MAX_DESCRIPTION, MAX_NAME, parseMoney, type BundleDraft } from "@/lib/bundleDraft";
 import { savingsPct } from "@/lib/bundleMath";
-import { PRICE_FORM_LABELS } from "@/lib/priceLevels";
 import { PromoButton } from "@/components/promos/PromoButton";
 import { AMBER, GREEN, TEXT_HI, TEXT_MD, fmtMoney, inputStyle } from "@/components/promos/promoTokens";
 import { BundlePhotoField } from "./BundlePhotoField";
+import { BundlePriceFields } from "./BundlePriceFields";
 
 interface BundleDatosFieldsProps {
   draft: BundleDraft;
@@ -37,7 +37,6 @@ const roundPeso = (n: number): string => String(Math.round(n));
 
 /** Paso 2 del asistente (y edición): foto, nombre, descripción, precios, SKU y código. */
 export function BundleDatosFields({ draft, onChange, photoUrl, onPhoto, priceSum, excludeProductId }: BundleDatosFieldsProps) {
-  const [morePrices, setMorePrices] = useState(() => [draft.price2, draft.price3, draft.price4, draft.price5].some(v => v.trim() !== ""));
   const [skuDuplicate, setSkuDuplicate] = useState<string | null>(null);
 
   const price = parseMoney(draft.price1);
@@ -93,58 +92,26 @@ export function BundleDatosFields({ draft, onChange, photoUrl, onPhoto, priceSum
         </div>
       </div>
 
-      <Field label="Precio normal del paquete">
-        <div className="relative">
-          <span className="absolute left-4 top-3 text-[18px] font-black" style={{ color: TEXT_MD }} aria-hidden>$</span>
-          <input
-            value={draft.price1}
-            inputMode="decimal"
-            onChange={event => onChange({ price1: event.target.value.replace(/[^\d.]/g, "") })}
-            placeholder="0"
-            aria-label="Precio normal del paquete en pesos"
-            style={{ ...inputStyle, paddingLeft: 32, fontSize: 20, fontWeight: 900 }}
-            data-testid="bundle-price-input"
-          />
-        </div>
-        {priceHelper && <span className="block text-[14px] font-bold" aria-live="polite">{priceHelper}</span>}
-        {priceSum != null && priceSum > 0 && (
-          <span className="mt-1 flex flex-wrap gap-2">
-            <PromoButton variant="accent" onClick={() => onChange({ price1: roundPeso(priceSum) })}>Usar la suma</PromoButton>
-            {QUICK_DISCOUNTS.map(pct => (
-              <PromoButton key={pct} onClick={() => onChange({ price1: roundPeso(priceSum * (1 - pct / 100)) })}>−{pct}%</PromoButton>
-            ))}
-          </span>
-        )}
-      </Field>
-
-      <div>
-        <button
-          type="button"
-          onClick={() => setMorePrices(current => !current)}
-          aria-expanded={morePrices}
-          className="inline-flex items-center gap-1 text-[14px] font-bold"
-          style={{ color: TEXT_HI, cursor: "pointer", background: "transparent", border: "none", padding: 0 }}
-        >
-          <ChevronDown size={16} aria-hidden style={{ transform: morePrices ? "rotate(180deg)" : "none", transition: "transform 150ms" }} />
-          Más precios (Socio, Mayorista…)
-        </button>
-        {morePrices && (
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            {([["price2", 1], ["price3", 2], ["price4", 3], ["price5", 4]] as const).map(([key, index]) => (
-              <Field key={key} label={PRICE_FORM_LABELS[index]}>
-                <input
-                  value={draft[key]}
-                  inputMode="decimal"
-                  onChange={event => onChange({ [key]: event.target.value.replace(/[^\d.]/g, "") })}
-                  placeholder="Vacío = usa el normal"
-                  style={inputStyle}
-                />
-              </Field>
-            ))}
-            <p className="text-[13px] font-semibold sm:col-span-2" style={{ color: TEXT_MD }}>Si los dejas vacíos, Caja usa el precio normal.</p>
-          </div>
-        )}
-      </div>
+      <section className="space-y-2">
+        <h3 className="text-[16px] font-black" style={{ color: TEXT_HI }}>Precios del paquete</h3>
+        <BundlePriceFields
+          draft={draft}
+          onChange={onChange}
+          normalTestId="bundle-price-input"
+          normalExtra={priceSum != null && priceSum > 0 ? (
+            <div className="space-y-1.5">
+              {priceHelper && <span className="block text-[14px] font-bold" aria-live="polite">{priceHelper}</span>}
+              <span className="flex flex-wrap items-center gap-2">
+                <span className="text-[13px] font-semibold" style={{ color: TEXT_MD }}>Precio normal:</span>
+                <PromoButton variant="accent" onClick={() => onChange({ price1: roundPeso(priceSum) })}>Usar la suma</PromoButton>
+                {QUICK_DISCOUNTS.map(pct => (
+                  <PromoButton key={pct} onClick={() => onChange({ price1: roundPeso(priceSum * (1 - pct / 100)) })}>−{pct}%</PromoButton>
+                ))}
+              </span>
+            </div>
+          ) : null}
+        />
+      </section>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="SKU (clave corta)" hint="Es lo que tecleas en Caja para encontrarlo. Puedes cambiarlo.">

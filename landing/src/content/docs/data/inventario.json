@@ -294,7 +294,7 @@
               ],
               [
                 "Niveles de precio",
-                "El precio normal es obligatorio; Socio, Mayorista, D y E son opcionales (vacío = se cobra el normal)."
+                "Los 5 precios están a la vista, como en Productos: Normal (obligatorio), Socio (cliente con tarjeta Tadaima), Mayorista, D y E (opcionales; vacío = se cobra el normal)."
               ],
               [
                 "Clave y código",
@@ -340,7 +340,7 @@
               },
               {
                 "title": "Nombre, precio y código",
-                "detail": "El sistema sugiere el nombre y la clave (PAQ-0001…) y genera solo el código de barras de 13 dígitos. Escribe el precio normal: verás la suma de las piezas sueltas y el ahorro."
+                "detail": "El sistema sugiere el nombre y la clave (PAQ-0001…) y genera solo el código de barras de 13 dígitos. Escribe el precio normal (verás la suma de las piezas sueltas y el ahorro) y, si quieres, el precio Socio para clientes con tarjeta Tadaima."
               },
               {
                 "title": "¿Cuántos armar?",
@@ -686,7 +686,7 @@
               ],
               [
                 "¿Aplican precio socio, promociones y descuentos?",
-                "Sí, igual que a cualquier producto. El precio socio aplica si se capturó un precio Socio para el paquete; si se dejó vacío, se cobra el normal."
+                "Sí, igual que a cualquier producto. Caja cobra el precio Socio sola cuando el cliente es socio activo y no paga con tarjeta; si el paquete no tiene precio Socio, se cobra el normal."
               ],
               [
                 "¿El ticket dice qué trae el paquete?",
@@ -709,6 +709,10 @@
               [
                 "¿Cómo pongo el precio?",
                 "Tú lo decides. El sistema te muestra cuánto costarían las piezas sueltas y te sugiere descuentos de 5, 10 o 15 %."
+              ],
+              [
+                "¿Dónde pongo el precio para socios con tarjeta Tadaima?",
+                "En el campo Precio Socio, junto al precio normal, al crear o al editar el paquete. Es el mismo precio Socio de productos y mangas: se escribe a mano y Caja lo cobra sola al socio activo que no paga con tarjeta. Si lo dejas vacío, el socio paga el precio normal."
               ],
               [
                 "¿Qué costo tiene un paquete y cuánto gano?",

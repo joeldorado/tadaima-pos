@@ -15,6 +15,7 @@ import {
   parseMoney,
   removeComponent,
   setQuantity,
+  socioPriceWarning,
   suggestBundleName,
   toDraftComponent,
   toggleComponent,
@@ -356,5 +357,28 @@ describe("componentsSentence", () => {
   it("corta en 3 nombres y dice cuántos faltan", () => {
     const five = [1, 2, 3, 4, 5].map((n) => ({ ...GOKU, productId: n, name: `P${n}`, quantity: n }));
     expect(componentsSentence(five)).toBe("1 × P1 + 2 × P2 + 3 × P3 y 2 más");
+  });
+});
+
+describe("socioPriceWarning", () => {
+  it("no avisa si el socio va vacío o es menor que el normal", () => {
+    expect(socioPriceWarning("500", "")).toBeNull();
+    expect(socioPriceWarning("500", "  ")).toBeNull();
+    expect(socioPriceWarning("500", "450")).toBeNull();
+  });
+
+  it("avisa si el socio es igual al normal", () => {
+    expect(socioPriceWarning("500", "500")).toMatch(/igual/);
+    expect(socioPriceWarning("$ 1,200", "1200.00")).toMatch(/igual/);
+  });
+
+  it("avisa si el socio es mayor que el normal", () => {
+    expect(socioPriceWarning("500", "550")).toMatch(/mayor/);
+  });
+
+  it("no avisa mientras un precio está incompleto o inválido (eso lo dice validateDatos)", () => {
+    expect(socioPriceWarning("", "550")).toBeNull();
+    expect(socioPriceWarning("500", "5.5.0")).toBeNull();
+    expect(socioPriceWarning("0", "10")).toBeNull();
   });
 });

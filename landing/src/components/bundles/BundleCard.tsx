@@ -6,6 +6,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { PromoButton } from "@/components/promos/PromoButton";
 import { ProductThumb } from "@/components/promos/ProductPickerRows";
 import { AMBER, CARD_BG, CARD_BORDER, GRAY, GREEN, TEXT_HI, TEXT_MD, fmtMoney, tint } from "@/components/promos/promoTokens";
+import { PRICE_LEVEL_COLORS } from "@/lib/priceLevels";
 import { BuildablePill, BundleStoreTable } from "./BundleAvailability";
 import { BundleCardMenu } from "./BundleCardMenu";
 import { pluralize } from "./bundleTokens";
@@ -38,6 +39,7 @@ export function BundleCard({
 }: BundleCardProps) {
   const [open, setOpen] = useState(false);
   const price = bundle.prices.price_1 ?? 0;
+  const socioPrice = bundle.prices.price_2;
   const savings = savingsPct(price, bundle.suggested_price_sum);
   const store = availabilityFor(bundle, storeId);
   const anyBuildable = bundle.availability.some(row => row.max_buildable > 0);
@@ -73,6 +75,9 @@ export function BundleCard({
           </p>
           <p className="mt-1 text-[17px] font-black" style={{ color: TEXT_HI }}>
             {fmtMoney(price)}
+            {socioPrice != null && (
+              <span className="ml-2 text-[14px] font-extrabold" style={{ color: PRICE_LEVEL_COLORS.b }}>Socio {fmtMoney(socioPrice)}</span>
+            )}
             {bundle.suggested_price_sum > 0 && (
               <span className="ml-2 text-[14px] font-semibold" style={{ color: savings != null && savings > 0 ? GREEN : savings != null && savings < 0 ? AMBER : TEXT_MD }}>
                 sueltos {fmtMoney(bundle.suggested_price_sum)}
