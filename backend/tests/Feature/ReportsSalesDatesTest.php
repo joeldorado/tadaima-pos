@@ -92,6 +92,27 @@ class ReportsSalesDatesTest extends TestCase
         $this->assertEquals(800, $res->json('data.summary.total_revenue'));
     }
 
+    /**
+     * Fechas que no se pueden leer no deben quitar el filtro: antes, si ninguna
+     * servía, el OR quedaba vacío y el reporte traía TODAS las ventas.
+     */
+    public function test_dates_invalidas_no_traen_todas_las_ventas(): void
+    {
+        $this->saleOn('2026-10-01', 100);
+        $this->saleOn('2026-10-05', 300);
+
+        $res = $this->actingAs($this->admin)
+            ->getJson('/api/v1/reports/sales?dates=no-es-fecha,2026-13-45')
+            ->assertOk();
+
+        $this->assertSame(0, $res->json('data.summary.total_count'));
+
+        $this->actingAs($this->admin)
+            ->getJson('/api/v1/sales?dates=no-es-fecha&whole_store=1')
+            ->assertOk()
+            ->assertJsonCount(0, 'data.data');
+    }
+
     public function test_sin_dates_sigue_usando_from_to_como_antes(): void
     {
         $this->saleOn('2026-10-01', 100);

@@ -19,6 +19,9 @@ use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
  */
 class DateRange
 {
+    /** Tope de fechas sueltas por consulta (el selector de Reportes ofrece un año). */
+    public const MAX_DATES = 366;
+
     /**
      * Zona horaria del negocio. Configurable vía env BUSINESS_TIMEZONE
      * (config/app.php → business_timezone). Default America/Tijuana — decisión
@@ -94,13 +97,23 @@ class DateRange
         ?string $to = null,
     ): EloquentBuilder|QueryBuilder {
         if (count($dates) > 0) {
-            return $query->where(function ($q) use ($column, $dates) {
-                foreach ($dates as $date) {
-                    $start = self::fromUtc($date);
-                    $end = self::toUtc($date);
-                    if (! $start || ! $end) {
-                        continue;
-                    }
+            // Solo las que se pueden leer, sin repetir y con tope (el selector
+            // ofrece un año). Si ninguna sirve, NO se quita el filtro: un OR
+            // vacío dejaba pasar todas las ventas (2026-10-19).
+            $windows = [];
+            foreach (array_slice(array_unique($dates), 0, self::MAX_DATES) as $date) {
+                $start = self::fromUtc($date);
+                $end = self::toUtc($date);
+                if ($start && $end) {
+                    $windows[] = [$start, $end];
+                }
+            }
+            if ($windows === []) {
+                return $query->whereRaw('1 = 0');
+            }
+
+            return $query->where(function ($q) use ($column, $windows) {
+                foreach ($windows as [$start, $end]) {
                     $q->orWhere(function ($q2) use ($column, $start, $end) {
                         $q2->where($column, '>=', $start)->where($column, '<=', $end);
                     });
