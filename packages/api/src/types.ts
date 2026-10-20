@@ -512,6 +512,8 @@ export interface GetSalesParams {
   whole_store?: boolean
   from?: string
   to?: string
+  /** Fechas sueltas (no consecutivas), opcional, "a,b,c" — gana sobre from/to. */
+  dates?: string
   status?: string
   per_page?: number
   page?: number
@@ -1045,6 +1047,8 @@ export interface GetPreSaleOrdersParams {
    *  liquidaciones del día aunque el folio se haya creado antes. */
   payment_from?: string
   payment_to?: string
+  /** Fechas sueltas (no consecutivas) de pago, "a,b,c" — gana sobre payment_from/to. */
+  payment_dates?: string
   /** Solo folios del usuario actual (creados o cobrados por él). Lo usa la Lista
    *  de Ventas del cajero para ver solo lo suyo. Opt-in (Caja no lo manda). */
   mine?: boolean

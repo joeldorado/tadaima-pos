@@ -33,15 +33,22 @@ export const readIvaRate = (): number => {
 export type SalesHistoryFilter =
   | "all" | "cash" | "dollar" | "card" | "transfer" | "preSales" | "cancelled" | "notPicked";
 
-/** Pagos de preventa cuya fecha cae dentro del rango (día-negocio local). */
+/**
+ * Pagos de preventa cuya fecha cae dentro del rango (día-negocio local), o —
+ * si `dates` viene con algo— cuya fecha es una de las fechas SUELTAS elegidas
+ * (no consecutivas, pestaña Ventas de Reportes, 2026-10-19). `dates` gana
+ * sobre `from`/`to` igual que en el backend.
+ */
 export function presalePaymentsInRange(
   payments: PreSaleOrderPayment[] | null | undefined,
   from: string,
   to: string,
+  dates?: string[],
 ): PreSaleOrderPayment[] {
+  const dateSet = dates && dates.length > 0 ? new Set(dates) : null;
   return (payments ?? []).filter((p) => {
     const ymd = toLocalYmd(new Date(p.created_at));
-    return ymd >= from && ymd <= to;
+    return dateSet ? dateSet.has(ymd) : (ymd >= from && ymd <= to);
   });
 }
 
@@ -133,6 +140,7 @@ export function buildGroupedProducts(
   from: string,
   to: string,
   canViewCost: boolean,
+  dates?: string[],
 ): GroupedProduct[] {
     const map = new Map<number | string, GroupedProduct>();
 
@@ -488,7 +496,7 @@ export function buildGroupedProducts(
     for (const order of filteredPreSaleOrders) {
       // Solo los pagos cuya fecha cae en el rango (anticipo y/o liquidación del
       // período). El monto reportado = lo COBRADO en el rango, no el acumulado.
-      const paymentsInRange = presalePaymentsInRange(order.payments, from, to);
+      const paymentsInRange = presalePaymentsInRange(order.payments, from, to, dates);
       const paidInRange = paymentsInRange.reduce((sum, p) => sum + (p.amount || 0), 0);
       // Abonos previos al rango (para el modelo del dueño al liquidar).
       const paidBeforeTotal = (order.payments ?? [])
@@ -647,10 +655,11 @@ export function buildPresaleRows(
   filteredPreSaleOrders: PreSaleOrder[],
   from: string,
   to: string,
+  dates?: string[],
 ): PresaleRow[] {
     const map = new Map<string, { productId: number; baseName: string; entregado: boolean; qty: number; apartado: number; deuda: number; costoReal: number; paidBefore: number }>();
     for (const order of filteredPreSaleOrders) {
-      const paymentsInRange = presalePaymentsInRange(order.payments, from, to);
+      const paymentsInRange = presalePaymentsInRange(order.payments, from, to, dates);
       const paidInRange = paymentsInRange.reduce((sum, p) => sum + (p.amount || 0), 0);
       // Abonos previos al rango (created_at < desde): lo que ya se había cobrado antes.
       const paidBeforeTotal = (order.payments ?? [])
@@ -708,10 +717,11 @@ export function buildPresaleRowsByMethod(
   from: string,
   to: string,
   matchesMethod: (name: string) => boolean,
+  dates?: string[],
 ): PresaleRow[] {
     const map = new Map<string, { productId: number; baseName: string; entregado: boolean; qty: number; apartado: number; deuda: number; costoReal: number; paidBefore: number }>();
     for (const order of filteredPreSaleOrders) {
-      const allPaymentsInRange = presalePaymentsInRange(order.payments, from, to);
+      const allPaymentsInRange = presalePaymentsInRange(order.payments, from, to, dates);
       const paymentsInRange = allPaymentsInRange
         .filter((p) => matchesMethod((p.payment_method?.name ?? "").toLowerCase()));
       const paidInRange = paymentsInRange.reduce((sum, p) => sum + (p.amount || 0), 0);
@@ -774,6 +784,7 @@ export function buildPresaleFolioRows(
   filteredPreSaleOrders: PreSaleOrder[],
   from: string,
   to: string,
+  dates?: string[],
 ): PresaleFolioRow[] {
     const isCardMethod = (name: string) =>
       name.includes("tarjeta") || name.includes("credit") || name.includes("debito") || name.includes("tpv") || name.includes("terminal");
@@ -786,7 +797,7 @@ export function buildPresaleFolioRows(
 
     const rows: PresaleFolioRow[] = [];
     for (const order of filteredPreSaleOrders) {
-      const paymentsInRange = presalePaymentsInRange(order.payments, from, to);
+      const paymentsInRange = presalePaymentsInRange(order.payments, from, to, dates);
       if (paymentsInRange.length === 0) continue;
       // Último pago del folio (orden cronológico): es el que liquida, si el item
       // se entregó en el rango. Los pagos anteriores son siempre abono.
@@ -845,6 +856,7 @@ export function buildPaymentBreakdown(
   selectedFilters: SalesHistoryFilter[],
   from: string,
   to: string,
+  dates?: string[],
 ): ReportPaymentBreakdown {
     let total = 0;
     let card = 0;
@@ -951,7 +963,7 @@ export function buildPaymentBreakdown(
 
     if (showPreSales) {
       for (const order of filteredPreSaleOrders) {
-        const paymentsInRange = presalePaymentsInRange(order.payments, from, to);
+        const paymentsInRange = presalePaymentsInRange(order.payments, from, to, dates);
         if (paymentsInRange.length > 0) {
           let orderContributed = false;
           for (const p of paymentsInRange) {
