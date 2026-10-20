@@ -4,6 +4,59 @@
 
 ---
 
+### Sesión 2026-10-19 (2) — Reportes: fechas sueltas en la pestaña Ventas (Ruben) + arreglo de fechas inválidas (release #61) — rev tadaima-00088-nej
+
+**Pedido Joel:** bajar lo que Ruben subió a `develop`, PR a `main` y deploy de todo.
+
+> **PUNTO DE ROLLBACK (antes de este deploy):** revisión `tadaima-00086-nix`, `main` en `83a742c`.
+> **Sin migraciones:** regresar es solo mover el tráfico.
+>
+> ```
+> gcloud run services update-traffic tadaima --to-revisions tadaima-00086-nix=100 --project tadaimapos --region us-east1
+> ```
+
+**Qué entró** (release `release/2026-10-19` desde `origin/develop`, PR #61, merge `ab3f8c5`):
+- **Ruben, `6b49c75` (backend):** fechas sueltas (no consecutivas).
+  - `DateRange::parseDatesParam` + `applyDates`: ventanas UTC día por día unidas con OR, con la misma lógica de zona horaria que el rango.
+  - Endpoints: `GET /reports/sales?dates=a,b,c`, `GET /sales?dates=` y `GET /pre-sale-orders?payment_dates=`. `dates` gana sobre `from`/`to`; sin `dates`, todo igual que antes.
+  - Prueba `ReportsSalesDatesTest`.
+- **Ruben, `12b5d94` (frontend):** Reportes → Ventas trae el interruptor **Rango / Fechas sueltas** (`MultiDatePicker`).
+  - Las tablas de ventas y preventas, y los exportes Excel/PDF, respetan los días elegidos; el encabezado los lista.
+  - Test `buildReportData.dates.test.ts`.
+- **Release, `8c0c20b`:** si `dates` traía solo fechas ilegibles, el OR quedaba vacío y `/reports/sales` y `/sales` regresaban **todas** las ventas.
+  - Ahora no regresan nada.
+  - Se quitan las fechas repetidas y hay un tope de 366 (`DateRange::MAX_DATES`).
+  - Prueba de regresión (falla contra el código de Ruben).
+
+**Ojo (no se cambió):** en modo Fechas sueltas, los **egresos (insumos)** usan el rango del primer al último día elegido, porque `/supplies/movements` no acepta `dates`. Es la aproximación que Ruben documentó: con días separados también cuentan los egresos de los días intermedios.
+
+**Verificado:**
+- Backend SQLite 844 OK.
+- Postgres 17 local: verde salvo las 2 de `CashReportRangeTest` que dependen de la hora. Con su versión de reloj fijo (PR #42) pasan 14/14, incluido `ReportsSalesDatesTest`.
+- Vitest 763 OK.
+- `tsc` 451 = base, ninguno nuevo.
+- Lint de `MultiDatePicker` limpio; `buildReportData` 52 = base.
+
+**QUÉ PROBAR EN PROD** (incógnito o recarga forzada):
+- Reportes → Ventas → "Fechas sueltas": elegir 2 o 3 días no seguidos. Total y tablas cuadran con esos días; Excel y PDF los listan.
+- "Rango" sigue igual que antes.
+- Lo del deploy anterior (PR #60) sigue pendiente de probar con sesión.
+
+**Señales para regresar:**
+- Reportes → Ventas no carga o los totales del modo Rango cambian.
+- Ventas no lista.
+
+**Deploy (2026-10-19 ~23:10 Tijuana) — rev tadaima-00088-nej (rollback `tadaima-00086-nix`).**
+- Candidato sin tráfico desde un worktree limpio en `ab3f8c5` (Dockerfile; solo archivos versionados).
+- `Nothing to migrate`, 0 errores en el log.
+- Smoke en el candidato y luego en `https://tadaimamexico.com`:
+  - `/`, `/login`, `/caja`, `/reportes` y `/tadaimaus/` 200;
+  - `/api/v1/reports/sales`, `/auth/me` y `/bundles` sin token 401 con el envelope;
+  - el bundle `index-BPRUqCfo.js` trae "Fechas sueltas" y conserva lo del PR #60.
+- **No hubo prueba con sesión en prod:** queda para el equipo.
+
+---
+
 ### Sesión 2026-10-19 — Paquetes: precio Socio a la vista + Caja: Historial del Día y "Otras ventas" sin amontonarse (PR #60) — rev tadaima-00086-nix
 
 **Pedido del cliente vía Joel:**
