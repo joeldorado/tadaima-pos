@@ -58,13 +58,15 @@ class ReportsController extends Controller
     {
         $from    = $request->input('from', now()->startOfMonth()->toDateString());
         $to      = $request->input('to',   now()->toDateString());
+        // Fechas sueltas (no consecutivas), opcional: cuando viene, gana sobre
+        // from/to en los filtros de este endpoint (pestaña Ventas únicamente).
+        $dates   = DateRange::parseDatesParam($request->input('dates'));
         $storeId = $this->scopedStoreId($request);
         $userId  = $request->integer('user_id')  ?: null;
 
         $base = Sale::query()
             ->where('status', Sale::STATUS_COMPLETED)
-            ->where('sold_at', '>=', DateRange::fromUtc($from))
-            ->where('sold_at', '<=', DateRange::toUtc($to))
+            ->tap(fn ($q) => DateRange::applyDates($q, 'sold_at', $dates, $from, $to))
             ->when($storeId, fn ($q) => $q->where('store_id', $storeId))
             ->when($userId,  fn ($q) => $q->where('user_id',  $userId));
 
@@ -82,8 +84,7 @@ class ReportsController extends Controller
             ->join('sales', 'sales.id', '=', 'payments.sale_id')
             ->join('payment_methods', 'payment_methods.id', '=', 'payments.payment_method_id')
             ->where('sales.status', Sale::STATUS_COMPLETED)
-            ->where('sales.sold_at', '>=', DateRange::fromUtc($from))
-            ->where('sales.sold_at', '<=', DateRange::toUtc($to))
+            ->tap(fn ($q) => DateRange::applyDates($q, 'sales.sold_at', $dates, $from, $to))
             ->when($storeId, fn ($q) => $q->where('sales.store_id', $storeId))
             ->when($userId,  fn ($q) => $q->where('sales.user_id',  $userId))
             ->selectRaw('payment_methods.name as payment_method, COUNT(DISTINCT payments.sale_id) as count, COALESCE(SUM(payments.amount), 0) as amount')
@@ -119,16 +120,14 @@ class ReportsController extends Controller
         // ── Pre-sale payments (esquema nuevo) ───────────────────────────────
         $preSaleSummary = DB::table('pre_sale_order_payments')
             ->join('pre_sale_orders', 'pre_sale_orders.id', '=', 'pre_sale_order_payments.pre_sale_order_id')
-            ->where('pre_sale_order_payments.created_at', '>=', DateRange::fromUtc($from))
-            ->where('pre_sale_order_payments.created_at', '<=', DateRange::toUtc($to))
+            ->tap(fn ($q) => DateRange::applyDates($q, 'pre_sale_order_payments.created_at', $dates, $from, $to))
             ->when($storeId, fn ($q) => $q->where('pre_sale_orders.store_id', $storeId))
             ->selectRaw('COUNT(*) as total_count, COALESCE(SUM(pre_sale_order_payments.amount), 0) as total_amount')
             ->first();
 
         $preSaleByDayRaw = DB::table('pre_sale_order_payments')
             ->join('pre_sale_orders', 'pre_sale_orders.id', '=', 'pre_sale_order_payments.pre_sale_order_id')
-            ->where('pre_sale_order_payments.created_at', '>=', DateRange::fromUtc($from))
-            ->where('pre_sale_order_payments.created_at', '<=', DateRange::toUtc($to))
+            ->tap(fn ($q) => DateRange::applyDates($q, 'pre_sale_order_payments.created_at', $dates, $from, $to))
             ->when($storeId, fn ($q) => $q->where('pre_sale_orders.store_id', $storeId))
             ->selectRaw("pre_sale_order_payments.created_at, pre_sale_order_payments.amount")
             ->get();
