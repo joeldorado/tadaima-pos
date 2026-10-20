@@ -4,6 +4,25 @@
 
 ---
 
+### Sesión 2026-10-20 — `CashReportRangeTest` con reloj fijo: ya no falla según la hora (PR #42, solo tests, SIN deploy)
+
+**Pedido Joel:** integrar el PR #42 para que la suite Postgres no falle según la hora. El 2026-10-19 en la noche fallaron
+`test_expected_cash_usa_solo_dinero_fisico_y_no_tarjeta` y `test_transferencia_no_entra_al_esperado_del_cajon`
+(`total_pre_sale_payments` 0 en vez de 170).
+
+- **Por qué seguía fallando:** `6b45282` (2026-10-08) ya le ponía `created_at` explícito al anticipo, pero como
+  `now()->subMinutes(30)` con el reloj REAL. Según la hora, el anticipo y la sesión caían en otro día de negocio.
+  Además el rango se pedía con `now()->toDateString()` (fecha UTC, que en la noche de Tijuana ya es mañana).
+- **Fix del PR #42** (solo `backend/tests/Feature/CashReportRangeTest.php`):
+  - reloj congelado en `setUp` a 2026-06-11 20:20 Tijuana (03:20 UTC del día siguiente, a propósito);
+  - el rango usa `hoy()` = día de NEGOCIO;
+  - `makePreSalePayment()` pone `created_at` explícito dentro de la ventana del corte (`opened_at + 30 min`).
+  - Sustituye al helper `anticipo()` de `6b45282`, que se quitó.
+  - Docblock con la regla: misma trampa para cualquier columna `useCurrent()` en pgsql.
+- **Sin cambios en `app/` ni migraciones. Sin deploy:** las pruebas no corren en prod.
+
+---
+
 ### Sesión 2026-10-19 (3) — Reportes: los egresos respetan las fechas sueltas (PR #62) — rev tadaima-00090-wur
 
 **Pedido Joel:** cerrar el hueco del release #61: con "Fechas sueltas", los egresos (insumos) usaban el rango del primer al último día elegido.

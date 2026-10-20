@@ -31,6 +31,23 @@ use Tests\TestCase;
  *    al siguiente (o sigue abierto varios días) no salía en los días
  *    posteriores. Ahora se filtra por TRASLAPE del rango con la vida de la
  *    sesión [opened_at, closed_at|ahora].
+ *
+ * 3. Determinismo (2026-10-08): la suite de Postgres fallaba a ratos en los
+ *    tests con anticipos de preventa. NO era la hora del día: RefreshDatabase
+ *    corre cada test dentro de UNA transacción y en Postgres CURRENT_TIMESTAMP
+ *    es la hora de inicio de la transacción (la misma para el default de
+ *    `pre_sale_order_payments.created_at` y para el tope
+ *    `COALESCE(closed_at, CURRENT_TIMESTAMP)` del reporte). Al guardarse en
+ *    timestamp(0) Postgres REDONDEA la fracción (…:17.6 → …:18), así que la
+ *    mitad de las veces el anticipo quedaba 1 s DESPUÉS del tope y no contaba.
+ *    SQLite no lo sufre (CURRENT_TIMESTAMP real, truncado). Reglas:
+ *      - El reloj de PHP va congelado en setUp a una noche fija de Tijuana
+ *        (ya es el día siguiente en UTC) y el rango se pide con hoy() (día de
+ *        NEGOCIO), nunca con now()->toDateString() (fecha UTC).
+ *      - Los pagos de preventa llevan created_at EXPLÍCITO dentro de la
+ *        ventana del corte (makePreSalePayment). Misma trampa para cualquier
+ *        columna useCurrent() (payments, sales, cash_movements…) que un test
+ *        compare contra CURRENT_TIMESTAMP o contra now() de PHP en pgsql.
  */
 class CashReportRangeTest extends TestCase
 {
@@ -44,6 +61,13 @@ class CashReportRangeTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+
+        // Reloj fijo en el PASADO (el tope de una caja abierta es el
+        // CURRENT_TIMESTAMP real de la BD; un "hoy" calculado en la mañana
+        // quedaría en el futuro). 20:20 Tijuana = 03:20 UTC del día siguiente:
+        // la noche en que el filtro "hoy" con fecha UTC se iba de día. Laravel
+        // restaura Carbon::setTestNow() en el tearDown.
+        Carbon::setTestNow(Carbon::parse('2026-06-11 20:20:00', DateRange::timezone()));
 
         $this->company = Company::create(['name' => 'Tadaima Test']);
         $this->store = Store::create([
@@ -92,28 +116,6 @@ class CashReportRangeTest extends TestCase
         ]);
     }
 
-    /**
-     * Anticipo cobrado a media sesión. `created_at` va explícito y NO en
-     * `now()`: su default es el CURRENT_TIMESTAMP de la base, que en Postgres
-     * queda congelado al inicio de la transacción del test (RefreshDatabase) y
-     * se guarda redondeado al segundo — si redondea hacia arriba queda
-     * "después" del CURRENT_TIMESTAMP del reporte y el anticipo se sale del
-     * corte (fallaba ~la mitad de las corridas).
-     */
-    private function anticipo(PreSaleOrder $order, PaymentMethod $method, float $amount): PreSaleOrderPayment
-    {
-        $payment = new PreSaleOrderPayment([
-            'pre_sale_order_id' => $order->id,
-            'amount'            => $amount,
-            'payment_method_id' => $method->id,
-            'cashier_id'        => $this->admin->id,
-        ]);
-        $payment->created_at = now()->subMinutes(30);
-        $payment->save();
-
-        return $payment;
-    }
-
     private function sessionIdsFor(string $from, string $to): array
     {
         $res = $this->actingAs($this->admin)
@@ -122,6 +124,34 @@ class CashReportRangeTest extends TestCase
             ->json('data.sessions');
 
         return array_column($res ?? [], 'id');
+    }
+
+    /** Día de NEGOCIO (Tijuana) del reloj congelado: 2026-06-11, no la fecha UTC (06-12). */
+    private function hoy(): string
+    {
+        return now(DateRange::timezone())->toDateString();
+    }
+
+    /**
+     * Anticipo/liquidación con created_at EXPLÍCITO dentro de la ventana del
+     * corte (punto 3 del docblock): el default CURRENT_TIMESTAMP de la columna
+     * es una moneda al aire en Postgres. created_at no es fillable → forceCreate.
+     */
+    private function makePreSalePayment(
+        PreSaleOrder $order,
+        PaymentMethod $method,
+        float $amount,
+        CashRegisterSession $session,
+        ?string $notes = null,
+    ): PreSaleOrderPayment {
+        return PreSaleOrderPayment::forceCreate([
+            'pre_sale_order_id' => $order->id,
+            'amount'            => $amount,
+            'payment_method_id' => $method->id,
+            'cashier_id'        => $this->admin->id,
+            'notes'             => $notes,
+            'created_at'        => $session->opened_at->copy()->addMinutes(30),
+        ]);
     }
 
     public function test_corte_nocturno_aparece_en_el_dia_de_negocio(): void
@@ -284,7 +314,7 @@ class CashReportRangeTest extends TestCase
             'customer_id' => $customer->id,
             'status'      => PreSaleOrder::STATUS_PENDING,
         ]);
-        $this->anticipo($order, $cash, 80);
+        $this->makePreSalePayment($order, $cash, 80, $session, 'Anticipo de prueba');
 
         DB::table('cash_movements')->insert([
             'register_session_id' => $session->id,
@@ -295,7 +325,7 @@ class CashReportRangeTest extends TestCase
         ]);
 
         $report = $this->actingAs($this->admin)
-            ->getJson('/api/v1/reports/cash?from=' . now()->toDateString() . '&to=' . now()->toDateString())
+            ->getJson('/api/v1/reports/cash?from=' . $this->hoy() . '&to=' . $this->hoy())
             ->assertOk()
             ->json('data.sessions');
 
@@ -354,8 +384,8 @@ class CashReportRangeTest extends TestCase
             'customer_id' => $customer->id,
             'status'      => PreSaleOrder::STATUS_PENDING,
         ]);
-        $this->anticipo($order, $cash, 80);
-        $this->anticipo($order, $transfer, 90);
+        $this->makePreSalePayment($order, $cash, 80, $session);
+        $this->makePreSalePayment($order, $transfer, 90, $session);
 
         DB::table('cash_movements')->insert([
             'register_session_id' => $session->id,
@@ -366,7 +396,7 @@ class CashReportRangeTest extends TestCase
         ]);
 
         $row = collect($this->actingAs($this->admin)
-            ->getJson('/api/v1/reports/cash?from=' . now()->toDateString() . '&to=' . now()->toDateString())
+            ->getJson('/api/v1/reports/cash?from=' . $this->hoy() . '&to=' . $this->hoy())
             ->assertOk()
             ->json('data.sessions'))->firstWhere('id', $session->id);
 
@@ -421,7 +451,7 @@ class CashReportRangeTest extends TestCase
         }
 
         $row = collect($this->actingAs($this->admin)
-            ->getJson('/api/v1/reports/cash?from=' . now()->toDateString() . '&to=' . now()->toDateString())
+            ->getJson('/api/v1/reports/cash?from=' . $this->hoy() . '&to=' . $this->hoy())
             ->assertOk()
             ->json('data.sessions'))->firstWhere('id', $session->id);
 
@@ -506,7 +536,7 @@ class CashReportRangeTest extends TestCase
         ]);
 
         $row = collect($this->actingAs($this->admin)
-            ->getJson('/api/v1/reports/cash?from=' . now()->toDateString() . '&to=' . now()->toDateString())
+            ->getJson('/api/v1/reports/cash?from=' . $this->hoy() . '&to=' . $this->hoy())
             ->assertOk()
             ->json('data.sessions'))->firstWhere('id', $session->id);
 
@@ -569,7 +599,7 @@ class CashReportRangeTest extends TestCase
         ]);
 
         $row = collect($this->actingAs($this->admin)
-            ->getJson('/api/v1/reports/cash?from=' . now()->toDateString() . '&to=' . now()->toDateString())
+            ->getJson('/api/v1/reports/cash?from=' . $this->hoy() . '&to=' . $this->hoy())
             ->assertOk()
             ->json('data.sessions'))->firstWhere('id', $session->id);
 
