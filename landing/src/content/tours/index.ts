@@ -6,6 +6,7 @@ import ventaCajaData from "./data/venta-caja.json"
 import preventasData from "./data/preventas.json"
 import corteCajaData from "./data/corte-caja.json"
 import altaProductoData from "./data/alta-producto.json"
+import paquetesData from "./data/paquetes.json"
 
 export type { TourDefinition, TourStep, TourPrecondition } from "./types"
 export { TOUR_CHECKS } from "./checks"
@@ -16,7 +17,7 @@ export { TOUR_CHECKS } from "./checks"
  * Para agregar un tour: JSON nuevo en `data/` + import aquí.
  */
 export const TOURS: TourDefinition[] = hydrateTours(
-  [ventaCajaData, preventasData, corteCajaData, altaProductoData],
+  [ventaCajaData, preventasData, corteCajaData, altaProductoData, paquetesData],
   "tours",
 )
 

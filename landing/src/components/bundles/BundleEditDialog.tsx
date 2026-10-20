@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
-import { Camera, ChevronDown, RefreshCw, Trash2 } from "lucide-react";
+import { Camera, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   removeProductImage, updateBundle, uploadProductImage,
@@ -10,11 +10,11 @@ import { generateEan13 } from "@/lib/barcode";
 import {
   MAX_DESCRIPTION, MAX_NAME, assembleErrorText, draftFromBundle, draftToInput, parseMoney, validateDatos, type BundleDraft } from "@/lib/bundleDraft";
 import { savingsPct } from "@/lib/bundleMath";
-import { PRICE_FORM_LABELS } from "@/lib/priceLevels";
 import { PromoButton } from "@/components/promos/PromoButton";
 import { PromoDialog } from "@/components/promos/PromoDialog";
 import { ProductThumb } from "@/components/promos/ProductPickerRows";
 import { AMBER, CARD_BORDER, GREEN, RED_SOFT, TEXT_HI, TEXT_MD, fmtMoney, inputStyle, tint } from "@/components/promos/promoTokens";
+import { BundlePriceFields } from "./BundlePriceFields";
 import { bundlesLabel } from "./bundleTokens";
 
 interface BundleEditDialogProps {
@@ -30,12 +30,6 @@ const H3 = "mb-3 text-[17px] font-black";
 const MAX_SKU = 100;
 const MAX_PHOTO_MB = 8;
 const MAX_PHOTO_BYTES = MAX_PHOTO_MB * 1024 * 1024;
-const MORE_PRICES = [
-  { key: "price2", label: PRICE_FORM_LABELS[1] },
-  { key: "price3", label: PRICE_FORM_LABELS[2] },
-  { key: "price4", label: PRICE_FORM_LABELS[3] },
-  { key: "price5", label: PRICE_FORM_LABELS[4] },
-] as const;
 
 /** Body del PUT: todo lo del borrador MENOS los componentes (en v1 la composición no se edita aquí). */
 const toUpdateInput = (draft: BundleDraft): Partial<BundleInput> => {
@@ -65,22 +59,6 @@ function Field({ label, hint, children }: { label: string; hint?: ReactNode; chi
   );
 }
 
-function PriceInput({ value, onChange, testId }: { value: string; onChange: (value: string) => void; testId?: string }) {
-  return (
-    <div className="relative">
-      <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[16px] font-bold" style={{ color: TEXT_MD }}>$</span>
-      <input
-        value={value}
-        onChange={event => onChange(event.target.value.replace(/[^\d.]/g, ""))}
-        inputMode="decimal"
-        placeholder="0"
-        style={{ ...inputStyle, paddingLeft: 30 }}
-        {...(testId ? { "data-testid": testId } : {})}
-      />
-    </div>
-  );
-}
-
 /**
  * Editar nombre, descripción, precios, SKU, código de barras y foto de un
  * paquete. La composición (qué lleva) se muestra solo de lectura en v1.
@@ -88,7 +66,6 @@ function PriceInput({ value, onChange, testId }: { value: string; onChange: (val
 export function BundleEditDialog({ bundle, viewer, onClose, onSaved }: BundleEditDialogProps) {
   const { applyFresh, invalidate } = useBundleCache();
   const [draft, setDraft] = useState<BundleDraft>(() => draftFromBundle(bundle));
-  const [morePrices, setMorePrices] = useState(() => [bundle.prices.price_2, bundle.prices.price_3, bundle.prices.price_4, bundle.prices.price_5].some(p => p != null));
   const [barcodeChanged, setBarcodeChanged] = useState(false);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
@@ -229,35 +206,19 @@ export function BundleEditDialog({ bundle, viewer, onClose, onSaved }: BundleEdi
             />
           </Field>
           <div>
-            <Field label="Precio normal">
-              <PriceInput value={draft.price1} onChange={price1 => patch({ price1 })} testId="bundle-price1-input" />
-            </Field>
-            <span className={HINT} style={{ color: savings != null && savings < 0 ? AMBER : TEXT_MD }}>
-              Suma de precios individuales: {fmtMoney(bundle.suggested_price_sum)}
-              {savings != null && savings >= 0 ? ` · Ahorro: ${savings}%` : ""}
-              {savings != null && savings < 0 ? " · El paquete cuesta más que los productos sueltos." : ""}
-            </span>
-          </div>
-          <div>
-            <button
-              type="button"
-              onClick={() => setMorePrices(open => !open)}
-              aria-expanded={morePrices}
-              className="inline-flex min-h-11 items-center gap-1.5 text-[14px] font-bold"
-              style={{ color: TEXT_MD, cursor: "pointer" }}
-            >
-              Más precios (Socio, Mayorista…)
-              <ChevronDown size={16} aria-hidden style={{ transform: morePrices ? "rotate(180deg)" : "none", transition: "transform 150ms" }} />
-            </button>
-            {morePrices && (
-              <div className="mt-2 grid gap-3 sm:grid-cols-2">
-                {MORE_PRICES.map(({ key, label }) => (
-                  <Field key={key} label={label}>
-                    <PriceInput value={draft[key]} onChange={value => patch({ [key]: value })} />
-                  </Field>
-                ))}
-              </div>
-            )}
+            <span className={LABEL} style={{ color: TEXT_HI }}>Precios</span>
+            <BundlePriceFields
+              draft={draft}
+              onChange={patch}
+              normalTestId="bundle-price1-input"
+              normalExtra={(
+                <span className={HINT} style={{ color: savings != null && savings < 0 ? AMBER : TEXT_MD }}>
+                  Suma de precios individuales: {fmtMoney(bundle.suggested_price_sum)}
+                  {savings != null && savings >= 0 ? ` · Ahorro: ${savings}%` : ""}
+                  {savings != null && savings < 0 ? " · El paquete cuesta más que los productos sueltos." : ""}
+                </span>
+              )}
+            />
           </div>
           <div>
             <Field label="SKU" hint="Código corto para teclearlo en Caja.">
@@ -312,11 +273,11 @@ export function BundleEditDialog({ bundle, viewer, onClose, onSaved }: BundleEdi
           {bundle.composition_locked ? (
             <p className="mt-3 rounded-xl px-4 py-3 text-[14px] font-bold" style={tint(AMBER)}>
               Hay {bundlesLabel(bundle.stock_total)} armados{!viewer.isAdmin && viewer.storeName ? ` en ${viewer.storeName}` : ""}.
-              Para cambiar qué lleva, primero desármalos (así los productos regresan al inventario).
+              Los productos del paquete no se cambian: para otra combinación crea un paquete nuevo. Si este ya no va, desármalo (las piezas regresan al inventario) y desactívalo.
             </p>
           ) : (
             <p className="mt-3 text-[14px] font-semibold" style={{ color: TEXT_MD }}>
-              Para cambiar los productos del paquete, desármalo si tiene armados y edítalo; en esta versión la composición se cambia creando un paquete nuevo.
+              Los productos del paquete no se cambian: para otra combinación crea un paquete nuevo y desactiva o borra este.
             </p>
           )}
         </section>

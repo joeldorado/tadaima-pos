@@ -8,7 +8,7 @@
 > Detalle adicional: [`CLAUDE.md`](CLAUDE.md) (comandos y arquitectura del frontend) y
 > [`backend/AGENTS.md`](backend/AGENTS.md) (API, ADRs y referencia de endpoints).
 >
-> Última revisión: 2026-10-12.
+> Última revisión: 2026-10-14.
 
 ---
 
@@ -217,6 +217,12 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   una sola fila negativa también, con su propio mensaje). Al calcular "puedes armar N", el stock
   negativo de un componente cuenta como 0 — igual que `assemble`. `tadaima:depurar-tomos` deja
   los paquetes fuera y nunca borra ni desactiva un componente.
+- **Costo del paquete** (2026-10-14) = Σ costo de sus piezas × qty y **sigue a sus piezas**: al
+  cambiar el costo de un componente (editar producto o tomo, homologar costo de tomos, import) se
+  recalcula solo (`App\Support\BundleCost`). Es el que se congela en `sale_items.cost` al vender.
+- En la pantalla, la composición no se edita: otra combinación = paquete nuevo. El cajero no ve
+  Editar/Activar ni Borrar (el backend se los niega); Traslados muestra el motivo real del 422 y
+  su buscador ya no ofrece paquetes.
 
 ### Preventas
 - Catálogo de proveedor → folios con anticipo → liquidación al recoger.

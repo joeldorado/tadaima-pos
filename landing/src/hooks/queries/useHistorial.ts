@@ -1,8 +1,11 @@
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { getPreSaleOrders, type SaleDetail, type PreSaleOrder } from '@tadaima/api'
-import { fetchAllSales } from '@/lib/fetchAllPages'
+import { fetchAllPages, fetchAllSales } from '@/lib/fetchAllPages'
 import { queryKeys } from '@/lib/queryKeys'
 import { useTodayLocal } from '@/lib/date'
+
+/** Folios por página al recorrer GET /pre-sale-orders (el backend acepta hasta 500). */
+const PRESALE_PAGE_SIZE = 100
 
 export type HistorialEntry =
   | { type: 'sale'; data: SaleDetail }
@@ -30,7 +33,9 @@ export function useTodayHistorialQuery(storeId?: number | null, options?: { enab
     queryFn: async () => {
       const [salesRes, ordersRes] = await Promise.all([
         fetchAllSales({ ...(storeId ? { store_id: storeId } : {}), from: today, to: today, whole_store: true }),
-        getPreSaleOrders({ ...(storeId ? { store_id: storeId } : {}), from: today, to: today, per_page: 50 }),
+        // Todas las páginas (2026-10-19): con una sola de 50 los folios de más
+        // se perdían sin avisar en un día movido.
+        fetchAllPages(page => getPreSaleOrders({ ...(storeId ? { store_id: storeId } : {}), from: today, to: today, per_page: PRESALE_PAGE_SIZE, page })),
       ])
 
       const entries: HistorialEntry[] = [

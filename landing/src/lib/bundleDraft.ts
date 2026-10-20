@@ -201,6 +201,20 @@ export function validateDatos(draft: BundleDraft): string | null {
 }
 
 /**
+ * Aviso suave (no bloquea): un precio Socio igual o mayor al normal no le da
+ * ahorro al socio. null = sin aviso (vacío, inválido o menor al normal).
+ */
+export function socioPriceWarning(price1: string, price2: string): string | null {
+  if (!price2.trim()) return null;
+  const normal = toMoney(price1);
+  const socio = toMoney(price2);
+  if (!Number.isFinite(normal) || !Number.isFinite(socio) || normal <= 0 || socio <= 0) return null;
+  if (socio > normal) return "El precio socio es mayor que el normal: al socio le saldría más caro.";
+  if (socio === normal) return "El precio socio es igual al normal: el socio no ahorra.";
+  return null;
+}
+
+/**
  * Paso "Revisar y armar": solo valida si se pidió armar ahora.
  * `maxForStore` = tope que calculó el server para la tienda elegida (null = aún no se sabe).
  */

@@ -112,6 +112,24 @@ export function canDeleteProducts(roles: string[] | undefined, canViewCost: bool
   return isAdmin(roles) || (isManager(roles) && canViewCost);
 }
 
+/**
+ * Acciones de Paquetes (2026-10-14), mismo criterio que Productos y que el
+ * backend: Editar y Activar/Desactivar = admin o gerente (`PUT /bundles`);
+ * Borrar = `canDeleteProducts`. Crear y armar siguen abiertos a los 3 roles.
+ * Antes el cajero veía todos los botones y el backend le respondía 403.
+ */
+export interface BundlePermissions {
+  canEdit: boolean;
+  canDelete: boolean;
+}
+
+export function bundlePermissions(roles: string[] | undefined, canViewCostFlag: boolean): BundlePermissions {
+  return {
+    canEdit: canEditProducts(roles),
+    canDelete: canDeleteProducts(roles, isAdmin(roles) || canViewCostFlag),
+  };
+}
+
 /** Reportes de ganancia bruta (con costo) — solo quien vea costo real */
 export function canSeeGrossProfit(roles: string[] | undefined, canViewCost: boolean): boolean {
   return isAdmin(roles) || canViewCost;

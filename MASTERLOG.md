@@ -4,6 +4,134 @@
 
 ---
 
+### Sesión 2026-10-19 — Paquetes: precio Socio a la vista + Caja: Historial del Día y "Otras ventas" sin amontonarse (PR #60) — rev tadaima-00086-nix
+
+**Pedido del cliente vía Joel:**
+1. "En el armado de paquetes no hay un campo para el precio de los socios con tarjeta Tadaima."
+2. El historial de Caja se atora cuando se juntan muchos tickets.
+
+> **PUNTO DE ROLLBACK (antes de este deploy):** revisión `tadaima-00084-huh`, `main` en `e0a21c1`.
+> **Sin migraciones:** regresar es solo mover el tráfico.
+>
+> ```
+> gcloud run services update-traffic tadaima --to-revisions tadaima-00084-huh=100 --project tadaimapos --region us-east1
+> ```
+
+**Qué entró:**
+- **Paquetes: los 5 precios a la vista.**
+  - El campo Socio ya existía (`price_2` = nivel b = "Precio Socio", el mismo de Productos y Mangas), pero estaba escondido en el desplegable "Más precios".
+  - Ahora el asistente y el editar muestran Normal / Socio / Mayorista y D / E, como el alta de Productos (`BundlePriceFields`).
+  - Se capturan **a mano** (decisión de Joel: Productos tampoco calcula el socio).
+  - Aviso no bloqueante si Socio ≥ Normal.
+  - Tarjeta, tabla y resumen muestran "Socio $X".
+  - Backend sin cambios: Caja ya cobraba el socio a paquetes. Prueba nueva: `BundleCheckoutTest::test_vender_paquete_a_precio_socio`.
+- **Historial del Día (Caja).**
+  - Causa raíz: las tarjetas eran hijas de una columna flex de alto fijo con `overflow:hidden` y se ENCOGÍAN (≈2 px cada una) en vez de dar scroll.
+  - Ahora `HistorialList`:
+    - agrupa por hora en un grid, con encabezado fijo "3 p. m. · 14 tickets";
+    - pinta de 50 en 50 ("Mostrar 50 más"; vuelve a 50 al cambiar filtro o búsqueda);
+    - trae botón "Arriba".
+  - Cada fila muestra solo la hora.
+  - Las acciones dejaron de ser `div role=button` anidados en un `<button>`.
+  - Las preventas del día traen todas las páginas (antes se cortaban en 50).
+  - `historialEntries` usa un arreglo vacío estable: `?? []` re-disparaba el efecto del pareo mixto en ciclo mientras cargaba.
+- **"Otras ventas" (ventas en espera).**
+  - `OtherSalesDock`: alto máximo con scroll, filas compactas con más de 4 ventas y se pliega en una píldora (`tadaima-caja-otras-ventas`).
+  - **Bug arreglado:** el subtotal sumaba `i.price`, que las líneas del carrito no traen, y salía **"$NaN"**. Ahora usa `getItemPrice`.
+- Docs in-app: Paquetes ("¿Dónde pongo el precio para socios…?") y Caja (agrupado por hora).
+
+**Verificado (commit `023dff5`):**
+- Backend 841 OK (SQLite).
+- Vitest 760 OK.
+- `tsc` sin errores nuevos (3 menos, entre ellos el de `i.price`).
+- QA en navegador local con base SQLite propia: 130 ventas y 12 ventas en espera.
+- Fotos antes/después en `.claude/entregables/historial-caja/` (ignorado por git). Joel dio luz verde con las fotos.
+
+**QUÉ PROBAR EN PROD** (incógnito o recarga forzada):
+- Paquetes → Nuevo paquete → paso 2: se ven los 5 precios. Crear o editar uno con Precio Socio.
+- Caja con un socio activo y Efectivo: el paquete se cobra a precio Socio; con Tarjeta, a normal.
+- Caja → Historial en una tienda con muchas ventas: no se aplasta, agrupa por hora, "Mostrar 50 más".
+- Varias ventas en espera: "Otras ventas" muestra montos reales, scrollea y se pliega.
+
+**Señales para regresar:**
+- Caja → Historial no abre o no deja reimprimir/cancelar.
+- Paquetes no guarda precios.
+
+**Deploy (2026-10-19 ~20:05 Tijuana) — rev tadaima-00086-nix (rollback `tadaima-00084-huh`).**
+- Candidato sin tráfico desde un worktree limpio en `023dff5` (Dockerfile; solo archivos versionados).
+- `Nothing to migrate`, sin errores en el log.
+- Smoke en el candidato y luego en `https://tadaimamexico.com`:
+  - `/`, `/login`, `/caja` y `/tadaimaus/` 200;
+  - `/api/v1/bundles`, `/auth/me` y `/sales` sin token 401 con el envelope;
+  - el bundle (`index-Codc2Pj-.js`) trae los textos nuevos y ya no el desplegable "Más precios".
+- **No hubo prueba con sesión en prod:** queda para el equipo (ver QUÉ PROBAR).
+
+---
+
+### Sesión 2026-10-14 — Paquetes: costo que sigue a sus piezas, botones del cajero, Traslados y ayuda + tour (PR #57, #58, release #59) — rev tadaima-00084-huh
+
+**Pedido Joel:** resumen del módulo Paquetes; de ahí salieron detalles que confundían al cliente. Se
+arreglaron en dos ramas y se deployaron juntas (release `release/2026-10-14`, PR #59).
+
+> **PUNTO DE ROLLBACK (antes de este deploy):** revisión `tadaima-00082-juw`, `main` en `3fbc8ec`.
+> **Sin migraciones:** regresar es solo mover el tráfico.
+>
+> ```
+> gcloud run services update-traffic tadaima --to-revisions tadaima-00082-juw=100 --project tadaimapos --region us-east1
+> ```
+
+**Qué entró:**
+- **Costo del paquete (PR #58).** Antes `products.cost` de un paquete solo se recalculaba al
+  crear/editar/armar/desarmar; si cambiaba el costo de una pieza, el paquete se vendía con el costo
+  viejo congelado en `sale_items.cost`. Ahora `App\Support\BundleCost` (fórmula única) +
+  `syncForComponents` lo recalculan al cambiar el costo de una pieza:
+  - PUT `/products` y `/mangas` (log `bundles_cost` old/new en `product.updated`/`manga.updated`);
+  - `tadaima:homologar-costo-tomos` (también `--revertir`);
+  - `tadaima:import-macro`.
+  Los comandos lo hacen con su propia conexión. `POST /bundles/preview` usa la misma fórmula.
+- **Cajero (PR #58).** `bundlePermissions` (`lib/permisos.ts`): el cajero ya no ve Editar, Activar/Desactivar
+  ni Borrar (tarjeta, tabla y detalle); antes los veía y el backend le daba 403. Borrar = misma regla que
+  Productos (admin, o gerente con `can_view_cost`).
+- **Traslados (PR #58).** El buscador no ofrece paquetes; si el backend rechaza, el toast trae el motivo
+  real ("Los paquetes no se trasladan… desármalo aquí y ármalo en la otra tienda.").
+- **Ayuda in-app + tour (PR #57).** Tema `paquetes` reescrito (10 secciones, preguntas frecuentes,
+  tablas de inventario y permisos) + tour de 8 pasos (`data-tour` `bundles-new/search/list`). En la
+  release se corrigió la tabla de permisos: el cajero **no** borra paquetes aunque vea costos.
+
+**Impacto en prod:** por consulta de solo lectura antes del deploy, hay 1 paquete (id 16176) con el
+costo al día. No hace falta corregir datos. Desde ahora el costo de un paquete puede cambiar solo
+cuando alguien edita el costo de una pieza: queda en `system_logs`.
+
+**Verificado (rama `release/2026-10-14`, commit `4e14727`):**
+- Backend completo 840 OK (SQLite). `BundleCostSyncTest` 7/7 también en Postgres local; 5 de 7
+  fallan contra el código anterior.
+- Vitest 747 OK, `vite build` OK. `tsc` 454 = base, ninguno nuevo.
+- QA en navegador local (base SQLite propia): el cajero solo ve "Ver detalle"; el gerente sin costos
+  ve Editar/Desactivar sin Borrar; Traslados no ofrece el paquete y el 422 trae el texto real.
+
+**QUÉ PROBAR EN PROD** (incógnito o recarga forzada):
+- Paquetes como cajero: el menú ⋮ solo trae "Ver detalle".
+- Editar el costo de una pieza de un paquete → el costo del paquete cambia (Productos/Reportes).
+- Traslados: buscar un paquete → no aparece.
+- Ayuda → Paquetes y el tour.
+
+**Señales para regresar:** Productos o Tomos no guardan el costo; Paquetes no carga; Traslados no deja
+crear traslados de productos normales.
+
+**Pendiente (ya existía, fuera de alcance):** el backend `canDeleteProductsError` solo mira
+`canViewCost()`, no el rol. Un cajero con `can_view_cost` podría borrar productos o paquetes por API,
+aunque la UI no le muestre el botón.
+
+**Deploy (2026-10-14 ~15:46 Tijuana) — rev tadaima-00084-huh (rollback `tadaima-00082-juw`).** Candidato
+sin tráfico desde un worktree limpio en el commit `4e14727` (Dockerfile; solo se subieron archivos
+versionados): `Nothing to migrate`, sin errores en el log. Smoke en el candidato y luego en
+`https://tadaimamexico.com`: `/`, `/login` y `/tadaimaus/` 200; `/api/v1/bundles`, `/auth/me` y
+`/transfers` sin token 401 con el envelope. El bundle (`index-BaW2cdyk.js`, mismo hash que el build
+local) trae los textos nuevos y los `data-tour` de Paquetes. **No hubo prueba con sesión en prod:** queda
+para el equipo (ver QUÉ PROBAR).
+
+---
+
 ### Sesión 2026-10-12 (3) — Reportes: comisión de terminal en tickets con varios pagos (Ruben, PR #56) — rev tadaima-00082-juw
 
 **Pedido Joel:** bajar lo que Ruben subió a `develop` (`e080457` "comisión inflada en pagos de distintos

@@ -89,6 +89,29 @@ class BundleCheckoutTest extends TestCase
         $this->assertSame(7.0, $this->qty($this->b, $this->exhA));
     }
 
+    /**
+     * Precio socio (2026-10-19): el paquete guarda sus 5 niveles como cualquier
+     * producto y Caja lo cobra a su price_2 (nivel b) a un socio.
+     */
+    public function test_vender_paquete_a_precio_socio(): void
+    {
+        $this->actingAs($this->admin)->putJson("/api/v1/bundles/{$this->bundle->id}", [
+            'prices' => ['price_1' => 180, 'price_2' => 160, 'price_3' => 150, 'price_4' => 140, 'price_5' => 130],
+        ])->assertOk()
+            ->assertJsonPath('data.prices.price_1', 180)
+            ->assertJsonPath('data.prices.price_2', 160)
+            ->assertJsonPath('data.prices.price_3', 150)
+            ->assertJsonPath('data.prices.price_4', 140)
+            ->assertJsonPath('data.prices.price_5', 130);
+
+        $res = $this->checkout([['product_id' => $this->bundle->id, 'quantity' => 1, 'price' => 160, 'price_level' => 'b']], 160);
+        $res->assertStatus(201);
+
+        $item = SaleItem::first();
+        $this->assertEqualsWithDelta(160.0, (float) $item->price, 0.001);
+        $this->assertSame(2.0, $this->qty($this->bundle, $this->exhA));
+    }
+
     public function test_precio_fuera_de_catalogo_y_stock_insuficiente(): void
     {
         $this->checkout([['product_id' => $this->bundle->id, 'quantity' => 1, 'price' => 150]], 150)->assertStatus(422);

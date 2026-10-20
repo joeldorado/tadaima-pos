@@ -5,6 +5,7 @@ import { availabilityFor, availabilityTone, savingsPct } from "@/lib/bundleMath"
 import { PromoButton } from "@/components/promos/PromoButton";
 import { ProductThumb } from "@/components/promos/ProductPickerRows";
 import { AMBER, CARD_BG, CARD_BORDER, GRAY, GREEN, POPUP_BG, TEXT_HI, TEXT_MD, fmtMoney, tint } from "@/components/promos/promoTokens";
+import { PRICE_LEVEL_COLORS } from "@/lib/priceLevels";
 import { BuildablePill } from "./BundleAvailability";
 import { BundleCardMenu } from "./BundleCardMenu";
 import type { BundleListActions } from "./BundleList";
@@ -31,7 +32,7 @@ export function BundleTable({
 }: BundleTableProps) {
   const canOperate = viewer.isAdmin || viewer.storeId != null;
   return (
-    <div className="overflow-auto rounded-3xl" style={{ background: CARD_BG, border: CARD_BORDER, maxHeight: "calc(100vh - 260px)" }} data-testid="bundle-table">
+    <div className="overflow-auto rounded-3xl" style={{ background: CARD_BG, border: CARD_BORDER, maxHeight: "calc(100vh - 260px)" }} data-testid="bundle-table" data-tour="bundles-list">
       <table className="w-full border-collapse text-left" style={{ minWidth: 760 }}>
         <thead>
           <tr>
@@ -68,6 +69,9 @@ export function BundleTable({
                 </td>
                 <td className="tabular-nums" style={{ ...TD, textAlign: "right", whiteSpace: "nowrap" }}>
                   <span className="block text-[15px] font-black" style={{ color: TEXT_HI }}>{fmtMoney(price)}</span>
+                  {bundle.prices.price_2 != null && (
+                    <span className="block text-[12px] font-extrabold" style={{ color: PRICE_LEVEL_COLORS.b }}>Socio {fmtMoney(bundle.prices.price_2)}</span>
+                  )}
                   {savings != null && savings !== 0 && (
                     <span className="block text-[12px] font-semibold" style={{ color: savings > 0 ? GREEN : AMBER }}>
                       {savings > 0 ? `ahorras ${savings}%` : `${Math.abs(savings)}% más caro`}
@@ -113,9 +117,11 @@ export function BundleTable({
                       testId={`bundle-menu-${bundle.id}`}
                       items={[
                         { key: "detail", label: "Ver detalle", onSelect: () => onDetail(bundle) },
-                        { key: "edit", label: "Editar", onSelect: () => onEdit(bundle) },
-                        { key: "toggle", label: bundle.active ? "Desactivar" : "Activar", onSelect: () => onToggleActive(bundle), disabled: togglingId === bundle.id },
-                        { key: "delete", label: "Borrar", onSelect: () => onDelete(bundle), danger: true },
+                        ...(viewer.canEdit ? [
+                          { key: "edit", label: "Editar", onSelect: () => onEdit(bundle) },
+                          { key: "toggle", label: bundle.active ? "Desactivar" : "Activar", onSelect: () => onToggleActive(bundle), disabled: togglingId === bundle.id },
+                        ] : []),
+                        ...(viewer.canDelete ? [{ key: "delete", label: "Borrar", onSelect: () => onDelete(bundle), danger: true }] : []),
                       ]}
                     />
                   </span>

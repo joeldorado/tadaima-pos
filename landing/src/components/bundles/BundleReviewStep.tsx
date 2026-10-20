@@ -4,6 +4,7 @@ import type { BundleViewer } from "@/hooks/queries/useBundles";
 import { parseMoney, totalPieces, type BundleDraft } from "@/lib/bundleDraft";
 import { ProductThumb } from "@/components/promos/ProductPickerRows";
 import { AMBER, CARD_BORDER, GREEN, RED_SOFT, SOFT_BG, TEXT_HI, TEXT_MD, fmtMoney, tint } from "@/components/promos/promoTokens";
+import { PRICE_LEVEL_COLORS } from "@/lib/priceLevels";
 import { BundleStoreTable } from "./BundleAvailability";
 import { QtyStepper } from "./QtyStepper";
 import { StoreSelect } from "./StoreSelect";
@@ -24,6 +25,7 @@ interface BundleReviewStepProps {
 /** Paso 3: resumen, cuántos se pueden armar por tienda y "¿armar ahora?". */
 export function BundleReviewStep({ draft, photoUrl, availability, previewLoading, previewError, clientMax, viewer, stores, onChange }: BundleReviewStepProps) {
   const price = parseMoney(draft.price1) || 0;
+  const socioPrice = draft.price2.trim() ? parseMoney(draft.price2) : Number.NaN;
   const storeRow = draft.buildStoreId != null ? availability.find(r => r.store_id === draft.buildStoreId) ?? null : null;
   const max = storeRow ? storeRow.max_buildable : clientMax;
   const qty = Number.parseInt(draft.buildQty, 10) || 1;
@@ -57,7 +59,9 @@ export function BundleReviewStep({ draft, photoUrl, availability, previewLoading
         <div className="min-w-0 flex-1">
           <p className="text-[17px] font-black leading-tight" style={{ color: TEXT_HI }}>{draft.name.trim() || "Paquete sin nombre"}</p>
           <p className="text-[14px] font-semibold" style={{ color: TEXT_MD }}>
-            {fmtMoney(price)} · {pluralize(draft.components.length, "producto", "productos")} · {pluralize(totalPieces(draft.components), "pieza", "piezas")}
+            {fmtMoney(price)}
+            {Number.isFinite(socioPrice) && socioPrice > 0 && <span style={{ color: PRICE_LEVEL_COLORS.b, fontWeight: 800 }}> · Socio {fmtMoney(socioPrice)}</span>}
+            {" · "}{pluralize(draft.components.length, "producto", "productos")} · {pluralize(totalPieces(draft.components), "pieza", "piezas")}
             {draft.sku ? ` · SKU ${draft.sku}` : ""}
           </p>
           <p className="mt-1 truncate text-[13px] font-semibold" style={{ color: TEXT_MD }}>

@@ -240,7 +240,7 @@
     "title": "Paquetes (combos de productos)",
     "category": "Inventario",
     "icon": "package",
-    "summary": "Junta 2 o más productos en un paquete con su propio precio y código; se arma con piezas de Exhibición o Bodega y se vende en Caja.",
+    "summary": "Junta 2 o más productos en un paquete con su propio precio y código; se arma con las piezas de la tienda y se vende en Caja como uno solo.",
     "keywords": [
       "paquete",
       "paquetes",
@@ -250,16 +250,81 @@
       "desarmar",
       "puedes armar",
       "etiqueta",
-      "código de barras"
+      "código de barras",
+      "PAQ",
+      "precio del paquete",
+      "costo del paquete",
+      "preguntas frecuentes"
     ],
-    "updatedAt": "2026-10-08",
+    "tourId": "paquetes",
+    "updatedAt": "2026-10-14",
     "sections": [
       {
         "heading": "Qué es un paquete",
         "blocks": [
           {
             "kind": "prose",
-            "text": "Un paquete junta 2 o más productos distintos (por ejemplo 2 figuras de Goku + 1 de Vegeta) y se vende como UN solo producto, con su propio nombre, precio y código. El paquete tiene stock físico: para venderlo primero hay que armarlo, y al armarlo las piezas salen del inventario de la tienda. Así el stock de las piezas sueltas y el de los paquetes siempre cuadran."
+            "text": "Un paquete junta 2 o más productos distintos (por ejemplo 2 tomos + 1 figura) y se vende como UN solo producto, con su propio nombre, precio, clave (PAQ-0001) y código de barras. Tiene stock propio: primero se arma con las piezas de la tienda y después se vende. Así el inventario de piezas sueltas y el de paquetes siempre cuadra."
+          },
+          {
+            "kind": "callout",
+            "tone": "gold",
+            "title": "Primero se arma, luego se vende",
+            "text": "Crear un paquete no mueve inventario. Armarlo convierte piezas en paquetes. Venderlo baja solo el paquete: las piezas ya bajaron al armar."
+          }
+        ]
+      },
+      {
+        "heading": "Qué tiene el módulo",
+        "blocks": [
+          {
+            "kind": "table",
+            "head": [
+              "Función",
+              "Qué hace"
+            ],
+            "rows": [
+              [
+                "Asistente de 3 pasos",
+                "Eliges productos y piezas (con buscador o lector), pones nombre y precio, y decides si armas algunos de una vez. Si cierras a medias, queda como borrador."
+              ],
+              [
+                "Precio con ahorro",
+                "Ves cuánto costarían las piezas sueltas y el % de ahorro, con botones para usar la suma o bajar 5, 10 o 15 %."
+              ],
+              [
+                "Niveles de precio",
+                "Los 5 precios están a la vista, como en Productos: Normal (obligatorio), Socio (cliente con tarjeta Tadaima), Mayorista, D y E (opcionales; vacío = se cobra el normal)."
+              ],
+              [
+                "Clave y código",
+                "Clave consecutiva PAQ-0001, PAQ-0002… y código de barras de 13 dígitos generados solos. Foto opcional."
+              ],
+              [
+                "«Puedes armar N»",
+                "Por tienda, con lo que hay en Exhibición y Bodega. Te dice qué producto es el que limita."
+              ],
+              [
+                "Armar y desarmar",
+                "Armar toma las piezas (Automático: Exhibición primero y lo que falte de Bodega, o eliges por producto). Desarmar las regresa a Exhibición o a Bodega."
+              ],
+              [
+                "Historial",
+                "Cada armado y desarmado queda registrado: quién, cuándo, en qué tienda, cuántos y de dónde salió cada pieza."
+              ],
+              [
+                "Etiqueta",
+                "De 58 × 40 mm con nombre, precio, código de barras y clave, en la impresora térmica. Hasta 100 copias."
+              ],
+              [
+                "Venta en Caja",
+                "Se escanea, se teclea la clave o se busca por nombre. Lleva una pastilla morada «Paquete»."
+              ],
+              [
+                "Activar y desactivar",
+                "Un paquete desactivado deja de salir en Caja y conserva todo su historial."
+              ]
+            ]
           }
         ]
       },
@@ -271,62 +336,443 @@
             "items": [
               {
                 "title": "Elige los productos",
-                "detail": "Busca por nombre, SKU o con el lector y agrega cada producto con las piezas que lleva por paquete. Se necesitan al menos 2 productos distintos."
+                "detail": "Busca por nombre, SKU o con el lector y pon cuántas piezas lleva cada paquete. Se necesitan al menos 2 productos distintos y activos; un paquete no puede llevar otro paquete."
               },
               {
                 "title": "Nombre, precio y código",
-                "detail": "El sistema sugiere un nombre y un SKU (PAQ-0001…); puedes cambiarlos. Escribe el precio normal del paquete (verás la suma de las piezas sueltas y el ahorro) y, si quieres etiqueta, genera un código de barras de 13 dígitos."
+                "detail": "El sistema sugiere el nombre y la clave (PAQ-0001…) y genera solo el código de barras de 13 dígitos. Escribe el precio normal (verás la suma de las piezas sueltas y el ahorro) y, si quieres, el precio Socio para clientes con tarjeta Tadaima."
               },
               {
                 "title": "¿Cuántos armar?",
-                "detail": "Revisa cuántos puedes armar por tienda y, si quieres, arma algunos en ese momento (o solo crea el paquete y ármalo después desde la lista)."
+                "detail": "Elige «Solo crear» o «Crear y armar ahora». La tabla te dice cuántos puedes armar en cada tienda."
               }
             ]
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Crear no mueve inventario",
+            "text": "El paquete nace con stock 0. En Caja aparece «Sin armar» hasta que lo armes desde Paquetes."
           }
         ]
       },
       {
-        "heading": "Armar y desarmar",
+        "heading": "Qué pasa con el inventario",
         "blocks": [
           {
-            "kind": "prose",
-            "text": "Armar descuenta las piezas de la tienda y suma paquetes a Exhibición. Desarmar hace lo contrario: resta paquetes y regresa las piezas a Exhibición o a Bodega, según elijas. Cada movimiento queda en el historial del paquete con quién lo hizo, cuándo y de dónde salieron las piezas."
+            "kind": "table",
+            "head": [
+              "Acción",
+              "Piezas (lo que trae)",
+              "El paquete"
+            ],
+            "rows": [
+              [
+                "Crear",
+                "No se mueven",
+                "Queda en 0"
+              ],
+              [
+                "Armar",
+                "Bajan: Exhibición primero y lo que falte de Bodega (o de donde tú elijas)",
+                "Suben en Exhibición"
+              ],
+              [
+                "Vender en Caja",
+                "No se mueven (ya bajaron al armar)",
+                "Baja 1 por cada uno vendido"
+              ],
+              [
+                "Cancelar la venta",
+                "No se mueven",
+                "Regresa armado a Exhibición"
+              ],
+              [
+                "Desarmar",
+                "Suben en Exhibición o en Bodega (tú eliges)",
+                "Bajan (solo los que están en Exhibición)"
+              ]
+            ]
           },
           {
             "kind": "callout",
             "tone": "info",
             "title": "¿Cuántos puedo armar?",
-            "text": "Es el mínimo entre los componentes. Ejemplo: el paquete lleva 2 Goku + 1 Vegeta y en la tienda hay 10 Goku y 3 Vegeta → con Goku alcanzaría para 5, con Vegeta solo para 3: puedes armar 3. En “Automático” las piezas se toman de Exhibición y lo que falte sale de Bodega; también puedes forzar que un producto salga solo de Exhibición o solo de Bodega."
+            "text": "Para cada producto se suma lo que hay en Exhibición y en Bodega de la tienda y se divide entre las piezas que lleva el paquete; manda el que alcance para menos. Ejemplo: el paquete lleva 2 Tomo A + 1 Figura B, y hay 16 Tomo A (alcanza para 8) y 7 Figura B (alcanza para 7): puedes armar 7. Si pides más de lo que alcanza, no se arma ninguno y el sistema te dice qué producto falta."
           },
           {
             "kind": "callout",
             "tone": "warn",
-            "title": "¿Lo necesitas en otra tienda? Los paquetes no se trasladan",
-            "text": "Traslados no acepta paquetes (te avisa al guardar). El stock de un paquete solo cambia armando o desarmando y siempre vive en Exhibición: desármalo aquí, traslada las piezas sueltas como cualquier producto y ármalo en la otra tienda."
+            "title": "El stock de un paquete no se ajusta a mano",
+            "text": "Solo cambia armando, desarmando, vendiendo o cancelando ventas. Si alguna pieza quedó en negativo por un ajuste, al armar cuenta como 0."
           }
         ]
       },
       {
-        "heading": "Vender y etiquetar",
+        "heading": "Ejemplo completo",
         "blocks": [
           {
             "kind": "prose",
-            "text": "En Caja el paquete se cobra como cualquier producto: tecleas su SKU, lo escaneas o lo buscas por nombre. Solo se vende lo que esté armado en Exhibición. Desde la pantalla de Paquetes puedes imprimir su etiqueta (nombre, precio, código de barras y SKU) en la impresora térmica de 58 mm, con las copias que necesites."
-          }
-        ]
-      },
-      {
-        "heading": "Editar, desactivar o borrar",
-        "blocks": [
-          {
-            "kind": "prose",
-            "text": "Puedes cambiar nombre, precios, código y foto en cualquier momento. Desactivar un paquete lo esconde de Caja sin perder su historial; borrarlo solo se permite cuando no hay paquetes armados en ninguna tienda."
+            "text": "El paquete lleva 2 Tomo A + 1 Figura B. Así cambian las existencias de una tienda paso a paso:"
           },
+          {
+            "kind": "table",
+            "head": [
+              "Existencias",
+              "Inicio",
+              "Armar 5",
+              "Vender 2",
+              "Cancelar 1 venta",
+              "Desarmar 1"
+            ],
+            "rows": [
+              [
+                "Tomo A · Exhibición",
+                "6",
+                "0",
+                "0",
+                "0",
+                "2"
+              ],
+              [
+                "Tomo A · Bodega",
+                "10",
+                "6",
+                "6",
+                "6",
+                "6"
+              ],
+              [
+                "Figura B · Exhibición",
+                "3",
+                "0",
+                "0",
+                "0",
+                "1"
+              ],
+              [
+                "Figura B · Bodega",
+                "4",
+                "2",
+                "2",
+                "2",
+                "2"
+              ],
+              [
+                "Paquete · Exhibición",
+                "0",
+                "5",
+                "3",
+                "4",
+                "3"
+              ],
+              [
+                "«Puedes armar»",
+                "7",
+                "2",
+                "2",
+                "2",
+                "3"
+              ]
+            ]
+          },
+          {
+            "kind": "prose",
+            "text": "Al armar 5 se necesitan 10 Tomo A (6 de Exhibición + 4 de Bodega) y 5 Figura B (3 + 2). Al vender, las piezas no se tocan. El Desarmar 1 regresa las piezas a Exhibición. El valor del inventario no cambia al armar: las piezas se convierten en paquetes al mismo costo."
+          }
+        ]
+      },
+      {
+        "heading": "Precio, costo y utilidad",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "El precio lo decides tú. El costo lo calcula el sistema: la suma del costo de cada pieza por su cantidad (no se captura a mano). Si alguna pieza no tiene costo capturado, el paquete queda sin costo. Promociones, descuentos, aumentos y precio socio aplican igual que a cualquier producto."
+          },
+          {
+            "kind": "table",
+            "head": [
+              "Ejemplo",
+              "Monto"
+            ],
+            "rows": [
+              [
+                "Piezas sueltas: 2 × Tomo A a $120 + 1 × Figura B a $380",
+                "$620"
+              ],
+              [
+                "Precio del paquete (−10 %)",
+                "$558"
+              ],
+              [
+                "Costo: 2 × $80 + 1 × $250",
+                "$410"
+              ],
+              [
+                "Utilidad por paquete",
+                "$148"
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "heading": "Quién puede hacer qué",
+        "blocks": [
+          {
+            "kind": "table",
+            "head": [
+              "Acción",
+              "Admin",
+              "Gerente",
+              "Cajero"
+            ],
+            "rows": [
+              [
+                "Ver paquetes y su stock",
+                "Todas las tiendas",
+                "Su tienda",
+                "Su tienda"
+              ],
+              [
+                "Crear un paquete",
+                "Sí",
+                "Sí",
+                "Sí"
+              ],
+              [
+                "Armar y desarmar",
+                "Cualquier tienda",
+                "Su tienda",
+                "Su tienda"
+              ],
+              [
+                "Imprimir etiqueta y vender en Caja",
+                "Sí",
+                "Sí",
+                "Sí"
+              ],
+              [
+                "Editar nombre, precios, clave y foto; activar o desactivar",
+                "Sí",
+                "Sí",
+                "No"
+              ],
+              [
+                "Borrar un paquete",
+                "Sí",
+                "Con permiso de ver costos",
+                "No"
+              ],
+              [
+                "Ver el costo del paquete",
+                "Sí",
+                "Con permiso de ver costos",
+                "Con permiso de ver costos"
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "heading": "Reglas y límites de esta versión",
+        "blocks": [
           {
             "kind": "callout",
             "tone": "warn",
-            "title": "Con paquetes armados no se cambian los productos",
-            "text": "Mientras haya paquetes armados en alguna tienda, la lista de productos y sus cantidades queda bloqueada: si cambiara, las piezas que regresan al desarmar ya no coincidirían con las que salieron. Desarma todos primero y después edita los componentes."
+            "title": "Los paquetes no se trasladan",
+            "text": "Traslados no acepta paquetes. Desármalo aquí, traslada las piezas sueltas como cualquier producto y ármalo en la otra tienda."
+          },
+          {
+            "kind": "table",
+            "head": [
+              "Regla",
+              "Qué hacer"
+            ],
+            "rows": [
+              [
+                "Mínimo 2 productos distintos, de 1 a 999 piezas de cada uno",
+                "El mismo producto se agrega una sola vez con su cantidad (por ejemplo ×2)."
+              ],
+              [
+                "No se permiten paquetes dentro de paquetes ni productos inactivos",
+                "Usa los productos sueltos."
+              ],
+              [
+                "No se vende sin armar",
+                "Ármalo desde Paquetes; en Caja aparece «Sin armar · ve a Paquetes»."
+              ],
+              [
+                "La lista de productos de un paquete no se edita",
+                "Crea un paquete nuevo y desactiva el anterior. Nombre, precios, clave y foto sí se editan."
+              ],
+              [
+                "Un producto que es pieza de un paquete no se borra",
+                "Primero borra el paquete que lo contiene."
+              ],
+              [
+                "Un paquete con armados o apartados no se borra",
+                "Desarma los armados. Si solo ya no lo vas a vender, desactívalo."
+              ],
+              [
+                "El ticket no lista lo que trae el paquete",
+                "Pon en el nombre lo que incluye."
+              ],
+              [
+                "En reportes cuenta el paquete, no sus piezas",
+                "Los tomos o figuras que van dentro no se suman como vendidos."
+              ]
+            ]
+          },
+          {
+            "kind": "prose",
+            "text": "Borrar un paquete conserva sus ventas, pero se pierde su historial de armados. Por eso, si ya no lo vas a vender, conviene desactivarlo."
+          }
+        ]
+      },
+      {
+        "heading": "Preguntas frecuentes: inventario y venta",
+        "blocks": [
+          {
+            "kind": "table",
+            "head": [
+              "Pregunta",
+              "Respuesta"
+            ],
+            "rows": [
+              [
+                "¿Al crear un paquete se me descuenta inventario?",
+                "No. Crear solo da de alta el paquete; el inventario se mueve hasta que lo armas."
+              ],
+              [
+                "¿Al vender un paquete se descuentan los productos que trae?",
+                "No, porque ya se descontaron al armarlo. En la venta solo baja el paquete."
+              ],
+              [
+                "¿De dónde toma las piezas al armar?",
+                "De Exhibición primero y lo que falte, de Bodega. Puedes elegir, producto por producto, que salga solo de Exhibición o solo de Bodega."
+              ],
+              [
+                "¿Dónde quedan los paquetes armados?",
+                "En la Exhibición de la tienda donde se armaron, listos para Caja."
+              ],
+              [
+                "¿Qué pasa si no alcanzan las piezas?",
+                "No se arma ninguno. El sistema te dice qué producto falta y cuántos paquetes sí puedes armar."
+              ],
+              [
+                "¿Y si armé de más o me equivoqué?",
+                "Lo desarmas: el paquete baja y las piezas regresan a Exhibición o a Bodega, como elijas."
+              ],
+              [
+                "¿Puedo corregir a mano el stock de un paquete?",
+                "No. Solo cambia armando, desarmando, vendiendo o cancelando ventas. Así siempre cuadra con las piezas."
+              ],
+              [
+                "¿Cambia el valor de mi inventario al armar?",
+                "No. Las piezas se convierten en paquetes al mismo costo."
+              ],
+              [
+                "¿Puedo vender un paquete que no he armado?",
+                "No. En Caja aparece «Sin armar · ve a Paquetes». Primero se arma."
+              ],
+              [
+                "¿Cómo lo cobro en Caja?",
+                "Como cualquier producto: escaneando su etiqueta, tecleando su clave (PAQ-0001…) o buscándolo por nombre."
+              ],
+              [
+                "¿Y si el cliente devuelve el paquete?",
+                "Se cancela la venta como siempre y el paquete regresa armado a Exhibición. Si quieres las piezas sueltas, después lo desarmas."
+              ],
+              [
+                "¿Aplican precio socio, promociones y descuentos?",
+                "Sí, igual que a cualquier producto. Caja cobra el precio Socio sola cuando el cliente es socio activo y no paga con tarjeta; si el paquete no tiene precio Socio, se cobra el normal."
+              ],
+              [
+                "¿El ticket dice qué trae el paquete?",
+                "No: imprime el nombre del paquete y su precio. Conviene que el nombre diga lo que incluye."
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "heading": "Preguntas frecuentes: precio, tiendas y cambios",
+        "blocks": [
+          {
+            "kind": "table",
+            "head": [
+              "Pregunta",
+              "Respuesta"
+            ],
+            "rows": [
+              [
+                "¿Cómo pongo el precio?",
+                "Tú lo decides. El sistema te muestra cuánto costarían las piezas sueltas y te sugiere descuentos de 5, 10 o 15 %."
+              ],
+              [
+                "¿Dónde pongo el precio para socios con tarjeta Tadaima?",
+                "En el campo Precio Socio, junto al precio normal, al crear o al editar el paquete. Es el mismo precio Socio de productos y mangas: se escribe a mano y Caja lo cobra sola al socio activo que no paga con tarjeta. Si lo dejas vacío, el socio paga el precio normal."
+              ],
+              [
+                "¿Qué costo tiene un paquete y cuánto gano?",
+                "El costo es la suma del costo de sus piezas, calculado por el sistema. La utilidad es el precio del paquete menos ese costo."
+              ],
+              [
+                "¿Y si una pieza no tiene costo?",
+                "El paquete queda sin costo y no verás su utilidad. Captura el costo de todas sus piezas."
+              ],
+              [
+                "¿En los reportes veo cuántos tomos se vendieron dentro de paquetes?",
+                "No. El reporte muestra el paquete como el producto vendido; las piezas que trae no se suman como ventas."
+              ],
+              [
+                "¿Puedo mandar paquetes a otra tienda?",
+                "No se trasladan. Desármalo, traslada las piezas sueltas y ármalo en la otra tienda."
+              ],
+              [
+                "¿Cada tienda tiene sus propios paquetes?",
+                "El paquete (nombre, precio y contenido) es el mismo para todas. Lo que es de cada tienda son los paquetes armados."
+              ],
+              [
+                "¿Le puedo cambiar lo que trae?",
+                "En esta versión no. Crea un paquete nuevo con el contenido correcto y desactiva el anterior."
+              ],
+              [
+                "¿Puedo borrar un producto que está dentro de un paquete?",
+                "No. Primero hay que borrar el paquete que lo contiene."
+              ],
+              [
+                "¿Puedo borrar un paquete?",
+                "Sí, si no tiene armados ni apartados. Sus ventas se conservan, pero se pierde su historial de armados."
+              ],
+              [
+                "¿Qué es mejor, desactivar o borrar?",
+                "Desactivar: deja de salir en Caja, conserva su historial y lo puedes volver a activar cuando quieras."
+              ],
+              [
+                "¿Puedo meter un paquete dentro de otro, o el mismo producto dos veces?",
+                "Un paquete dentro de otro, no. El mismo producto se agrega una sola vez con su cantidad (por ejemplo ×2)."
+              ],
+              [
+                "¿Le puedo hacer etiqueta?",
+                "Sí, de 58 × 40 mm con nombre, precio, código de barras y clave, en la impresora térmica. Hasta 100 copias."
+              ],
+              [
+                "¿Dónde veo los paquetes?",
+                "En el menú Paquetes y en Caja. No aparecen en la lista de Productos."
+              ]
+            ]
+          },
+          {
+            "kind": "link",
+            "toTopic": "traslados",
+            "label": "Traslados entre tiendas"
+          },
+          {
+            "kind": "link",
+            "toTopic": "cobro-caja",
+            "label": "Cobrar en Caja"
           }
         ]
       }
