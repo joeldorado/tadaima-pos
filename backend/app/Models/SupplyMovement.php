@@ -35,6 +35,9 @@ class SupplyMovement extends Model
 
     protected $fillable = [
         'supply_id',
+        // Tienda de ESTE movimiento (2026-10-12), no de la categoría —
+        // ver migración 2026_10_12_000001_add_store_id_to_supply_movements.
+        'store_id',
         'type',
         'quantity',
         'amount',

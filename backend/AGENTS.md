@@ -127,9 +127,10 @@ delgados → `app/Services/`). Decisiones load-bearing:
 | ADR | Qué |
 |-----|-----|
 | **ADR-014** | **Carrito client-authoritative.** El carrito vive en el frontend; `POST /sales` recibe `items[]` directos. Casi no se usan los drafts en vivo (endpoints comentados en `routes/api.php`). |
-| **ADR-015** | **`cost_at_sale` (snapshot de costo).** `sale_items.cost`, `pre_sale_order_items.cost` y `layaways.cost` se congelan al INSERT. Re-preciar un producto NO altera reportes históricos. `cost` se expone solo a admin (o rol con `can_view_cost`). Desde 2026-08-18 también se congela la IDENTIDAD: `sale_items.product_name`/`product_sku` — eliminar un producto (ventas ya NO bloquean el DELETE; solo apartados) deja `product_id` NULL pero la venta conserva nombre/SKU en historial, reportes, top-products y ticket (`product_deleted: true` en el Resource). |
+| **ADR-015** | **`cost_at_sale` (snapshot de costo).** `sale_items.cost`, `pre_sale_order_items.cost` y `layaways.cost` se congelan al INSERT. Re-preciar un producto NO altera reportes históricos. `cost` se expone solo a admin (o rol con `can_view_cost`). Desde 2026-08-18 también se congela la IDENTIDAD: `sale_items.product_name`/`product_sku` — eliminar un producto (ventas ya NO bloquean el DELETE; solo apartados) deja `product_id` NULL pero la venta conserva nombre/SKU en historial, reportes, top-products y ticket (`product_deleted: true` en el Resource). Desde 2026-10-10 también la IMAGEN: `sale_items.product_image` guarda el `image_path` de la primera imagen válida al cobrar (sin backfill: las líneas viejas quedan en NULL y el Resource cae a la imagen actual del catálogo); `SaleItemResource` la devuelve ya resuelta en `product_image` y en `product.image`. |
 | **ADR-016** | **Cancelaciones con log + reverso de caja.** `POST /sales/{id}/cancel` y `POST /pre-sale-orders/{id}/cancel`: editan in-place, restauran stock (`InventoryMovement` type `devolucion`), reversan efectivo (`cash_movements` type `salida`) y guardan snapshot en `sale_cancellations`. Desde 2026-09-29 se devuelve lo **cobrado** (neto con descuento/aumento prorrateado por cantidad): `amount_refunded = total antes − total después`. Desde 2026-09-30 las ventas con **tarjeta** también se cancelan (del cajón sale solo la porción en efectivo; preventas con tarjeta y el `/return` viejo siguen bloqueados). |
 | **ADR-017** | **Una caja por persona.** Cada usuario opera su propia sesión/corte; la caja se nombra `"{usuario} · {tienda}"`. Varios usuarios pueden tener caja abierta en la misma tienda a la vez. Corte = por persona (mismo user en 2 devices = 1 corte). |
+| **ADR-018** | **Paquetes como productos (2026-10-07).** Un paquete es `products.product_type='bundle'` + `product_bundle_items` + `bundle_assemblies`. Armar consume componentes (Exhibición y/o Bodega) y crea stock del paquete en Exhibición; vender descuenta solo el paquete. Costo del paquete = Σ costo componente × qty (null si falta alguno; fórmula en `App\Support\BundleCost`), refrescado al crear/editar/armar/desarmar **y cuando cambia el costo de una pieza** (2026-10-14: PUT `/products` y `/mangas`, `tadaima:homologar-costo-tomos` y `tadaima:import-macro` llaman `BundleCost::syncForComponents`; quien escriba `products.cost` por query builder también debe llamarlo, con la misma conexión). La composición y el borrado se bloquean mientras alguna fila de `inventory` del paquete sea ≠ 0. No se trasladan entre tiendas (2026-10-08). Ver tabla "Paquetes" en §5. |
 | Guard de precios | `CheckoutService` valida server-side que cada `price` coincida (±$0.01) con un nivel del catálogo del producto para esa tienda. Items `is_damaged=true` permiten precio manual. Para cobrar ARRIBA del catálogo existe el aumento por línea (`items.*.line_surcharge`, 2026-09-29): el `price` sigue siendo el de catálogo y el aumento va en `sale_items.surcharge_*`. |
 
 **Regla de negocio crítica:** la **comisión de terminal NUNCA se cobra al
@@ -150,10 +151,13 @@ para reportes.
 
 > ⚠️ **NO QUITAR — filtros `from`/`to`/`store_id`/`user_id` en `GET /supplies/movements` (2026-07, Ruben/Reportes).**
 > `SuppliesController::movements` acepta ahora `?from&to` (rango día-negocio, mismo
-> `DateRange::fromUtc/toUtc` que `/reports/supplies`), `?store_id` (filtra por la
-> tienda dueña del insumo, `supplies.store_id` vía `whereHas`; NULL = toda la
-> empresa) y `?user_id` (filtra por quién REGISTRÓ la compra — filtro de usuario del
-> Reporte; el cajero ya queda scoped a lo suyo). El eager-load ya trae `user:id,name`
+> `DateRange::fromUtc/toUtc` que `/reports/supplies`), `?store_id` (desde 2026-10-12
+> filtra por la tienda del MOVIMIENTO, `supply_movements.store_id`; los registros
+> anteriores, con esa columna NULL, caen a la tienda dueña del insumo,
+> `supplies.store_id` vía `whereHas`; NULL en ambas = toda la empresa) y `?user_id` (filtra por quién REGISTRÓ la compra — filtro de usuario del
+> Reporte; el cajero ya queda scoped a lo suyo). Desde 2026-10-19 también `?dates=a,b,c`
+> (fechas sueltas, `DateRange::applyDates`, gana sobre `from`/`to`) para los egresos del modo
+> "Fechas sueltas" de Reportes → Ventas. El eager-load ya trae `user:id,name`
 > (**quién registró la compra**) y el select del `supply` incluye `store_id`.
 > **Por qué:** el Reporte de Ventas lista los insumos (egresos) del MISMO rango y
 > tienda que el resto del reporte, y muestra **quién metió cada gasto** (es dinero
@@ -250,7 +254,8 @@ al dar de alta una tienda (y existe la migración de backfill
 |---|---|---|
 | GET | `/pre-sale-catalogs` · POST `/pre-sale-catalogs` | Listar / crear |
 | GET | `/pre-sale-catalogs/{id}` · PATCH `/pre-sale-catalogs/{id}` | Ver / editar |
-| PATCH | `/pre-sale-catalogs/{id}/status` | Cambiar estado |
+| PATCH | `/pre-sale-catalogs/{id}/status` | Cambiar estado. `cancelled` pasa por `PreSaleCatalogCancellationService` (2026-10-09): cancela los folios abiertos en transacción, log por folio + `system_logs` (`pre_sale_catalog.cancelled`); body opcional `expected: {to_cancel, with_money}` → 422 si entraron folios/cobros desde la vista previa. Los anticipos cobrados NO bloquean (decisión Joel): se avisa que no se devuelven |
+| GET | `/pre-sale-catalogs/{id}/cancel-preview` | **Vista previa de "Cancelar catálogo".** Folios por estado, cuántos tienen dinero / tarjeta / artículos de otros catálogos, anticipos cobrados (efectivo/tarjeta), por cobrar, tiendas afectadas (la del gerente primero), unidades, `warnings`, `blockers` y `counts` |
 | POST/DELETE | `/pre-sale-catalogs/{id}/image` | Imagen del catálogo |
 
 ### Preventas — Folios/Órdenes (`PreSaleOrdersController`)
@@ -278,20 +283,60 @@ al dar de alta una tienda (y existe la migración de backfill
 
 | Método | Path | Notas |
 |---|---|---|
-| GET | `/products` | `?light=1` (payload ligero), `?search=`, `?store_id=`, `?sort=top\|stock_desc`, `?type=`, `?no_cost=1` (+`?no_cost_stock=con_stock\|exhibicion\|bodega\|todos`) |
+| GET | `/products` | `?light=1` (payload ligero), `?search=`, `?store_id=`, `?sort=top\|stock_desc\|stock_asc\|price_desc\|price_asc\|newest\|oldest` (precio = nivel A; los agotados siempre al final; un valor desconocido cae al orden por defecto), `?type=`, `?no_cost=1` (+`?no_cost_stock=con_stock\|exhibicion\|bodega\|todos`) |
 | GET | `/products/lookup` | `?code=` (+`?exclude_id=`) — productos que YA tienen ese código (exacto contra SKU o barcode, sin distinguir mayúsculas; máx 3, SKU primero). Aviso de duplicado en el alta |
 | GET | `/products/missing-cost/summary` | Contadores del modal "Productos sin Costo" por chip (`con_stock`, `exhibicion`, `bodega`, `todos`). Requiere `can_view_cost`; no-admin anclado a su tienda |
 | GET | `/products/{id}` | Detalle completo |
-| POST | `/products` · PUT `/products/{id}` · DELETE `/products/{id}` | CRUD (delete = soft) |
-| DELETE | `/products/{product}/force` | Borrado físico |
+| POST | `/products` · PUT `/products/{id}` · DELETE `/products/{id}` | CRUD. DELETE = borrado físico con snapshot en `sale_items` (ADR-015); `ProductDeletionService` es la única puerta (apartados, componente de paquete y paquete con alguna fila de `inventory` ≠ 0 bloquean). Body opcional `expected: {stock_total, layaways, transfers_pending}` (lo que vio el modal): si cambió → 422 "vuelve a abrir la vista previa". Sin body sigue igual (app móvil) |
+| GET | `/products/{product}/delete-preview` | **Vista previa antes de eliminar (2026-10-09).** Stock por tienda (Exhibición/Bodega, la del usuario primero), ventas que quedan, apartados, preventas, traslados pendientes, paquetes, promos, `warnings`/`force_warnings`, `blockers`/`force_blockers` y `counts` (se reenvían como `expected`). Mismo gate que el DELETE; sirve también para tomos |
+| DELETE | `/products/{product}/force` | "Borrar TODO" (solo admin): también sus apartados. Mismo `expected` opcional |
 | POST | `/products/{product}/images/upload` · POST `images` · DELETE `images/{image}` · PUT `images/reorder` | Imágenes |
 | GET | `/products/{product}/store-prices` · PUT/DELETE `store-prices/{store}` | Precios override por tienda |
+
+### Paquetes (`BundlesController`) — 2026-10-07
+
+> Un paquete es una fila de `products` con `product_type='bundle'` (como los tomos con
+> `'manga'`): composición en `product_bundle_items`, bitácora en `bundle_assemblies`, stock
+> en `inventory`. Por eso Caja, cobro, cancelaciones, reportes e imágenes lo tratan como
+> un producto más (los **traslados NO**: ver "Reglas que lo protegen"). Lógica en
+> `App\Services\BundleService` (CRUD, armar,
+> desarmar) y `BundleAvailability` ("puedes armar N" por tienda); códigos en
+> `App\Support\BundleCodes` (SKU `PAQ-0001`, EAN-13 interno prefijo 200).
+> Definición global (todas las tiendas la ven), stock por tienda. Cualquier rol crea y arma/
+> desarma en SU tienda (`storeScopeError`); editar = admin/gerente (`adminOrManagerGateError`,
+> misma política que productos; `catalog_visible` además exige `catalogEditError`); borrar =
+> `canDeleteProductsError`. La UI esconde Editar/Activar y Borrar a quien no los tiene
+> (`bundlePermissions` en `landing/src/lib/permisos.ts`, 2026-10-14).
+
+| Método | Path | Notas |
+|---|---|---|
+| GET | `/bundles` | `?store_id=&search=&active=&page=&per_page=` (máx 200). Cada paquete trae `availability[]` por tienda permitida: `max_buildable`, stock del paquete (`stock_exhibicion`/`stock_bodega`) y por componente `stock_exhibicion`, `stock_bodega`, `max_from_combined`, `limiting`. Un stock negativo de un componente (ajuste viejo) se reporta como 0 y no presta piezas — exactamente lo que `assemble` acepta (2026-10-08) |
+| POST | `/bundles` | `{ name, description?, sku?, barcode?, prices{price_1 requerido}, components[{product_id, quantity}] (≥2 distintos, sin paquetes anidados ni inactivos), catalog_visible? }`. SKU/barcode se generan si no vienen |
+| POST | `/bundles/preview` | `{ components[], store_id?, bundle_id? }` → `suggested_price_sum`, `cost_sum` (gateado), `availability[]`. Acepta desde 1 componente (el asistente lo consulta en vivo) |
+| GET | `/bundles/{id}` | Detalle + `availability` + últimas 20 `assemblies` |
+| PUT | `/bundles/{id}` | Admin/gerente. Datos/precios siempre; `components` solo si NINGUNA fila de `inventory` del paquete es ≠ 0 (`composition_locked`; una fila negativa en otra tienda también bloquea — `BundleService::stockLock`, 2026-10-08) |
+| DELETE | `/bundles/{id}` | Solo si ninguna fila de `inventory` es ≠ 0 (no la suma: +2 en A y −2 en B sigue bloqueando) y sin apartados; `snapshotAndDelete` (las ventas quedan) |
+| POST | `/bundles/{id}/assemble` | `{ store_id, quantity, notes?, sources?[{product_id, source: auto\|store\|bodega}] }`. `auto` (default) toma primero de Exhibición y lo que falte de Bodega; el paquete siempre cae en Exhibición. Movimientos `transferencia` con `reference PAQ-{id}` |
+| POST | `/bundles/{id}/disassemble` | `{ store_id, quantity, notes?, destination?: store\|bodega }` (default Exhibición) |
+| GET | `/bundles/{id}/assemblies` | Historial paginado (no-admin: su tienda) |
+
+Reglas que lo protegen: `InventoryController::update`/`storeMovement`/`move` rechazan paquetes (su
+stock solo cambia armando/desarmando y vive en Exhibición); `ProductController::destroy`/`forceDestroy` y
+`MangaController::destroy` rechazan borrar un producto que es **componente** de un paquete
+(FK `restrictOnDelete`) o un paquete con alguna fila de `inventory` ≠ 0 (`BundleService::hasStock`);
+**`TransferService::create`/`complete` rechazan paquetes con 422** ("Los paquetes no se trasladan:
+desármalo aquí y ármalo en la otra tienda" — su stock vive en Exhibición y solo cambia armando/
+desarmando; un traslado lo dejaría atorado en Bodega u otra tienda; cancelar la solicitud sigue
+permitido); `/products` no crea ni re-tipa paquetes; `PurgeNoStockProductsCommand` los conserva;
+`tadaima:depurar-tomos` los deja fuera del universo y nunca borra ni desactiva un componente
+(2026-10-08); `/products/stats` los separa en `total_bundles`.
 
 ### Mangas / Tomos (`MangaController`, `MangaInventoryController`)
 
 | Método | Path | Notas |
 |---|---|---|
-| GET | `/mangas` · POST · PUT `/mangas/{id}` · DELETE `/mangas/{id}` | CRUD |
+| GET | `/mangas` | Lista paginada: `?page=&per_page=` (default 50, máx 200) → `{ data, pagination: { total, per_page, current_page, last_page } }`. `?store_id=` (+`?include_unassigned=1`), `?search=` (nombre, SKU, código de barras, editorial y género), `?active=`, `?genre=`, `?editorial=`. Filtros del tab Tomos (2026-10-12), combinables por AND: `?out_of_stock=1`, `?low_stock=1` (+`?threshold=`, default 10) y `?no_category=1` — mismo stock (`App\Support\StockSql`) y misma definición que `/products/stats?type=manga`, así que `pagination.total` = el badge. Orden: con stock primero, luego nombre, desempate por `id` |
+| POST | `/mangas` · PUT `/mangas/{id}` · DELETE `/mangas/{id}` | CRUD. DELETE = misma puerta que `/products` (`ProductDeletionService`, `expected` opcional); la vista previa es `GET /products/{id}/delete-preview` |
 | POST | `/mangas/{manga}/image/upload` | Imagen |
 | GET | `/manga-inventory` | Inventario de mangas |
 | PUT | `/manga-inventory/{mangaId}/{warehouseId}` | Ajuste de stock |
@@ -310,9 +355,9 @@ al dar de alta una tienda (y existe la migración de backfill
 
 | Método | Path | Notas |
 |---|---|---|
-| GET | `/transfers` · POST `/transfers` | Listar / solicitar |
+| GET | `/transfers` · POST `/transfers` | Listar / solicitar. **Paquetes → 422** (no se trasladan; ver "Paquetes", 2026-10-08) |
 | GET | `/transfers/{transfer}` · GET `/transfers/{transfer}/items` | Detalle / items |
-| PUT | `/transfers/{transfer}/complete` | Recibir: mueve el stock (admin o gerente de la tienda DESTINO, desde 2026-09-30) |
+| PUT | `/transfers/{transfer}/complete` | Recibir: mueve el stock (admin o gerente de la tienda DESTINO, desde 2026-09-30). Una solicitud con paquetes tampoco se recibe (422): cancélala |
 | PUT | `/transfers/{transfer}/cancel` | Cancelar |
 
 ### Clientes (`CustomerController`)
@@ -380,9 +425,10 @@ al dar de alta una tienda (y existe la migración de backfill
 | Método | Path | Notas |
 |---|---|---|
 | GET | `/supplies` | Catálogo de insumos (scoped por empresa + tienda del insumo) |
-| POST | `/supplies` · PUT `/supplies/{supply}` | Alta / edición (admin o gerente) |
-| POST | `/supplies/movements` | Registrar compra/consumo/ajuste (`storeMovement`). `money_source` bifurca caja vs no-caja (`SupplyService`) |
-| GET | `/supplies/movements` | Movimientos. **Filtros (Ruben/Reportes 2026-07): `?from&to&store_id`** + `?supply_id&type`. Trae `user` (quién registró); cajero solo ve los suyos. Ver ⚠️ NO QUITAR arriba. |
+| POST | `/supplies` · PUT `/supplies/{supply}` | Alta / edición (admin o gerente). `store_id`: solo el admin lo decide (null = toda la empresa) y desde 2026-10-12 el PUT sí lo reasigna; el gerente queda forzado a su tienda (sin tienda → 422) |
+| POST | `/supplies/movements` | Registrar compra/consumo/ajuste (`storeMovement`). `money_source` bifurca caja vs no-caja (`SupplyService`). `store_id` del movimiento (2026-10-12): cajero/gerente = su tienda (sin tienda → 422); admin lo manda, o cae a su tienda, o NULL |
+| GET | `/supplies/movements` | Movimientos. **Filtros (Ruben/Reportes 2026-07): `?from&to&store_id`** + `?supply_id&type`; `?dates=a,b,c` (fechas sueltas, 2026-10-19) gana sobre `from/to`. Trae `user` (quién registró); cajero solo ve los suyos. Ver ⚠️ NO QUITAR arriba. |
+| DELETE | `/supplies/movements/{movement}` | **Solo admin** (2026-10-12). `SupplyService::deleteMovement()`: borra el registro y su `cash_movement` ligado, snapshot en `system_logs` (`supply_movement.deleted`). Definitivo |
 | GET | `/reports/supplies` | Ver tabla de Reportes (resumen agregado). |
 
 ### Catálogo online / admin (`CatalogController`)

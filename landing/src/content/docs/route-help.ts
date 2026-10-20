@@ -24,6 +24,7 @@ export const ROUTE_HELP: RouteHelp[] = [
   { pattern: /^\/reports(?:\/|$)/, topic: "reportes" },
   { pattern: /^\/layaways(?:\/|$)/, topic: "apartados" },
   { pattern: /^\/promos(?:\/|$)/, topic: "promos-nxm" },
+  { pattern: /^\/paquetes(?:\/|$)/, topic: "paquetes" },
   { pattern: /^\/insumos(?:\/|$)/, topic: "insumos" },
   { pattern: /^\/buscar-tiendas(?:\/|$)/, topic: "buscar-en-tiendas" },
   { pattern: /^\/settings(?:\/|$)/, topic: "tienda-online" },

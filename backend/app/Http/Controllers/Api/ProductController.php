@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreProductRequest;
+use App\Http\Requests\DeleteProductRequest;
 use App\Http\Requests\UpdateProductRequest;
 use App\Http\Resources\ProductLightResource;
 use App\Http\Resources\ProductResource;
@@ -12,6 +13,9 @@ use App\Models\ProductImage;
 use App\Models\ProductStorePrice;
 use App\Models\Store;
 use App\Models\SystemLog;
+use App\Services\ProductDeletionService;
+use App\Support\BundleCost;
+use App\Support\StockSql;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -34,7 +38,9 @@ class ProductController extends Controller
      *   ?no_cost=1     sin costo real (cost NULL o <= 0) Y con stock > 0
      *     + ?no_cost_stock=con_stock|exhibicion|bodega|todos (default con_stock;
      *       todos = incluye agotados)
-     *   ?sort=top|stock_desc  más vendidos 30d / más piezas primero
+     *   ?sort=top|stock_desc|stock_asc|price_desc|price_asc|newest|oldest
+     *     más vendidos 30d / piezas desc / piezas asc / precio A desc / precio
+     *     A asc / alta desc (recientes primero) / alta asc (2026-10-10)
      *   ?out_of_stock=1 / ?low_stock=1 (+?threshold=, default 10) por stock
      *   ?has_promo=1   con promo vigente (scoped a ?store_id si viene)
      *   ?no_category=1 sin NINGUNA categoría (pivote vacío)
@@ -130,10 +136,8 @@ class ProductController extends Controller
         // Mismo SQL de stock usado por el filtro out_of_stock/low_stock de abajo
         // Y por el ORDER BY de más adelante (productos sin stock al final,
         // Joel 2026-08-05) — se calcula una sola vez para no duplicarlo.
-        $stockSql = $storeId
-            ? 'COALESCE((SELECT SUM(i.quantity) FROM inventory i JOIN warehouses w ON w.id = i.warehouse_id WHERE i.product_id = products.id AND w.store_id = ?), 0)'
-            : 'COALESCE((SELECT SUM(i.quantity) FROM inventory i WHERE i.product_id = products.id), 0)';
-        $bind = $storeId ? [$storeId] : [];
+        $stockSql = StockSql::total($storeId);
+        $bind = StockSql::bindings($storeId);
 
         if ($request->boolean('no_cost')) {
             // Paridad con el chip del front: NULL O <= 0 cuentan como "sin costo".
@@ -233,21 +237,47 @@ class ProductController extends Controller
         // that count, then by id desc as a stable tie-breaker (newest wins).
         // Useful for warming the cache with the most-likely-needed products
         // before the cashier opens Caja.
-        if ($request->get('sort') === 'top') {
-            $since = now()->subDays(30);
-            $query->withCount(['saleItems as recent_sales_count' => function ($q) use ($since) {
-                $q->whereHas('sale', fn ($sq) => $sq->where('created_at', '>=', $since));
-            }])->orderByDesc('recent_sales_count')->orderByDesc('id');
-        } elseif ($request->get('sort') === 'stock_desc') {
-            // Más piezas primero (modal sin costo, 2026-09-25): capturar primero
-            // el costo de lo que más pesa en inventario. Desempate estable por id.
-            $query->orderByRaw("{$stockSql} DESC", $bind)->orderBy('id', 'asc');
-        } else {
-            // Tiebreak estable (2026-08-05): antes no había NINGÚN orden
-            // secundario en el listado default, lo que hacía la paginación
-            // server-side no determinística con 10k+ filas (una fila podía
-            // repetirse o saltarse entre páginas).
-            $query->orderBy('id', 'asc');
+        $priceSql = '(SELECT price_1 FROM product_prices WHERE product_prices.product_id = products.id)';
+
+        switch ($request->get('sort')) {
+            case 'top':
+                $since = now()->subDays(30);
+                $query->withCount(['saleItems as recent_sales_count' => function ($q) use ($since) {
+                    $q->whereHas('sale', fn ($sq) => $sq->where('created_at', '>=', $since));
+                }])->orderByDesc('recent_sales_count')->orderByDesc('id');
+                break;
+            case 'stock_desc':
+                // Más piezas primero (modal sin costo, 2026-09-25): capturar primero
+                // el costo de lo que más pesa en inventario. Desempate estable por id.
+                $query->orderByRaw("{$stockSql} DESC", $bind)->orderBy('id', 'asc');
+                break;
+            case 'stock_asc':
+                // Menos piezas primero (filtro "Productos", 2026-10-10). Los
+                // agotados (0) ya quedan al final por el orderByRaw de arriba
+                // — aquí ordenamos lo que SÍ tiene piezas, de menos a más.
+                $query->orderByRaw("{$stockSql} ASC", $bind)->orderBy('id', 'asc');
+                break;
+            case 'price_desc':
+                // Precio normal (nivel A, price_1) de mayor a menor. NULLS LAST
+                // portable: el CASE manda los NULL al final en cualquier motor.
+                $query->orderByRaw("({$priceSql}) IS NULL")->orderByRaw("{$priceSql} DESC")->orderBy('id', 'asc');
+                break;
+            case 'price_asc':
+                $query->orderByRaw("({$priceSql}) IS NULL")->orderByRaw("{$priceSql} ASC")->orderBy('id', 'asc');
+                break;
+            case 'newest':
+                // Más recientes primero (alta al catálogo).
+                $query->orderByDesc('created_at')->orderByDesc('id');
+                break;
+            case 'oldest':
+                $query->orderBy('created_at', 'asc')->orderBy('id', 'asc');
+                break;
+            default:
+                // Tiebreak estable (2026-08-05): antes no había NINGÚN orden
+                // secundario en el listado default, lo que hacía la paginación
+                // server-side no determinística con 10k+ filas (una fila podía
+                // repetirse o saltarse entre páginas).
+                $query->orderBy('id', 'asc');
         }
 
         $perPage = (int) $request->get('per_page', 100);
@@ -335,12 +365,13 @@ class ProductController extends Controller
             ->selectRaw(
                 'COUNT(*) as total,
                  SUM(CASE WHEN p.product_type = ? THEN 1 ELSE 0 END) as total_mangas,
+                 SUM(CASE WHEN p.product_type = ? THEN 1 ELSE 0 END) as total_bundles,
                  SUM(CASE WHEN (p.cost IS NULL OR p.cost <= 0) AND COALESCE(inv.qty, 0) > 0 THEN 1 ELSE 0 END) as sin_costo,
                  SUM(CASE WHEN COALESCE(inv.qty, 0) = 0 THEN 1 ELSE 0 END) as agotados,
                  SUM(CASE WHEN COALESCE(inv.qty, 0) > 0 AND COALESCE(inv.qty, 0) <= ? THEN 1 ELSE 0 END) as por_agotarse,
                  SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM product_category_assignments pca WHERE pca.product_id = p.id) THEN 1 ELSE 0 END) as sin_categoria,
                  SUM(CASE WHEN p.cost > 0 THEN p.cost * COALESCE(inv.qty, 0) ELSE 0 END) as valor_invertido',
-                [Product::TYPE_MANGA, $threshold]
+                [Product::TYPE_MANGA, Product::TYPE_BUNDLE, $threshold]
             )
             ->first();
 
@@ -352,7 +383,9 @@ class ProductController extends Controller
         $data = [
             'total' => (int) $row->total,
             'total_mangas' => (int) $row->total_mangas,
-            'total_productos' => (int) $row->total - (int) $row->total_mangas,
+            // Paquetes (2026-10-07): viven en products pero NO son "productos" de la lista.
+            'total_bundles' => (int) $row->total_bundles,
+            'total_productos' => (int) $row->total - (int) $row->total_mangas - (int) $row->total_bundles,
             'agotados' => (int) $row->agotados,
             'por_agotarse' => (int) $row->por_agotarse,
             'sin_categoria' => (int) $row->sin_categoria,
@@ -525,7 +558,7 @@ class ProductController extends Controller
             // category_id solo (clientes viejos) equivale a [category_id].
             $product->syncCategories(self::categoryIdsFrom($request));
 
-            $this->syncPrices($product, $request->input('prices', []));
+            self::syncPrices($product, $request->input('prices', []));
             $this->syncPaymentMethod($product, $request);
             $this->syncMangaDetails($product, $request);
 
@@ -565,7 +598,7 @@ class ProductController extends Controller
         // Snapshot ANTES de mutar — para construir el diff en el log.
         $before = $product->only(['name', 'sku', 'barcode', 'description', 'category_id', 'supplier_id', 'cost', 'active', 'product_type']);
 
-        DB::transaction(function () use ($request, $product) {
+        $bundlesCost = DB::transaction(function () use ($request, $product) {
             $payload = $request->only([
                 'name', 'sku', 'barcode', 'description', 'supplier_id', 'cost', 'active',
             ]);
@@ -574,6 +607,9 @@ class ProductController extends Controller
             }
             $product->update($payload);
 
+            // Si es pieza de algún paquete, el costo del paquete la sigue (2026-10-14).
+            $bundlesCost = $product->wasChanged('cost') ? BundleCost::syncForComponents([$product->id]) : [];
+
             // Solo si el cliente mandó categorías (category_ids o category_id);
             // un PUT parcial sin ellas las conserva.
             if ($request->has('category_ids') || $request->has('category_id')) {
@@ -581,7 +617,7 @@ class ProductController extends Controller
             }
 
             if ($request->has('prices')) {
-                $this->syncPrices($product, $request->input('prices', []));
+                self::syncPrices($product, $request->input('prices', []));
             }
 
             if ($request->hasAny(['allow_cash', 'allow_card'])) {
@@ -589,6 +625,8 @@ class ProductController extends Controller
             }
 
             $this->syncMangaDetails($product, $request);
+
+            return $bundlesCost;
         });
 
         $product->load(['category', 'categories:product_categories.id,name', 'supplier', 'price', 'images', 'paymentMethod', 'mangaDetails'])
@@ -610,7 +648,7 @@ class ProductController extends Controller
                 description: "Producto editado: {$product->name} (SKU: {$product->sku})",
                 entityType: 'product',
                 entityId: $product->id,
-                meta: ['changes' => $changes],
+                meta: ['changes' => $changes] + ($bundlesCost !== [] ? ['bundles_cost' => $bundlesCost] : []),
             );
         }
 
@@ -656,35 +694,31 @@ class ProductController extends Controller
      * el historial, los reportes y el ticket siguen completos. Solo bloquean
      * los APARTADOS (FK restrict: son un contrato vivo ligado al producto).
      */
-    public function destroy(Product $product): JsonResponse
+    public function destroy(DeleteProductRequest $request, Product $product, ProductDeletionService $deletion): JsonResponse
     {
         // Eliminar = permiso de ver costo (admin o gerente con can_view_cost).
         if ($resp = $this->canDeleteProductsError()) {
             return $resp;
         }
 
-        $layawaysCount = DB::table('layaways')->where('product_id', $product->id)->count();
-        if ($layawaysCount > 0) {
-            return $this->error(
-                "No se puede eliminar: el producto tiene {$layawaysCount} apartado(s). Puedes desactivarlo.",
-                422
-            );
-        }
-
-        // Delete images from default storage (gcs en prod, public/local en dev)
-        foreach ($product->images as $image) {
-            Storage::delete($image->image_path);
-        }
-
         $productSnapshot = ['id' => $product->id, 'name' => $product->name, 'sku' => $product->sku];
-        $salesCount = $this->snapshotAndDelete($product);
+
+        // Bloqueos (apartados, componente de paquete, paquete armado) y el
+        // cross-check `expected` de la vista previa viven en el servicio
+        // (2026-10-09). Un DomainException es un 422 con el mensaje tal cual.
+        try {
+            $result = $deletion->delete($product, $request->user(), force: false, expected: $request->expected());
+        } catch (\DomainException $e) {
+            return $this->error($e->getMessage(), 422);
+        }
+        $salesCount = $result['sales_kept'];
 
         SystemLog::write(
             action: 'product.deleted',
             description: "Producto eliminado: {$productSnapshot['name']} (SKU: {$productSnapshot['sku']})",
             entityType: 'product',
             entityId: $productSnapshot['id'],
-            meta: ['mode' => 'soft', 'snapshot' => $productSnapshot, 'sales_kept' => $salesCount],
+            meta: ['mode' => 'soft', 'snapshot' => $productSnapshot, 'sales_kept' => $salesCount, 'audit' => $result['audit']],
         );
 
         return $this->success(null, $salesCount > 0
@@ -696,8 +730,8 @@ class ProductController extends Controller
      * Congela el snapshot en las líneas de venta que aún no lo tengan (ventas
      * pre-migración), protege las promos generales compartidas y borra el
      * producto. Devuelve cuántas líneas de venta lo referencian (quedan con
-     * product_id NULL — nullOnDelete). Compartido por destroy/forceDestroy y
-     * MangaController::destroy.
+     * product_id NULL — nullOnDelete). Lo llama
+     * ProductDeletionService::delete (productos y tomos) y BundleService::delete.
      */
     public static function snapshotAndDelete(Product $product): int
     {
@@ -723,39 +757,46 @@ class ProductController extends Controller
     }
 
     /**
-     * DELETE /products/{product}/force
-     * Elimina el producto sin importar ventas ni apartados.
-     * Limpia manualmente las tablas sin cascade antes de borrar.
+     * GET /products/{product}/delete-preview
+     *
+     * Vista previa antes de eliminar (2026-10-09): stock por tienda, ventas,
+     * apartados, preventas, traslados, paquetes, promos, avisos y bloqueos.
+     * Mismo gate que el DELETE. Sirve también para tomos (mismo modelo).
      */
-    public function forceDestroy(Product $product): JsonResponse
+    public function deletePreview(Request $request, Product $product, ProductDeletionService $deletion): JsonResponse
     {
-        // Borrado TOTAL (mata ventas históricas/apartados): solo admin.
+        if ($resp = $this->canDeleteProductsError()) {
+            return $resp;
+        }
+
+        return $this->success($deletion->preview($product, $request->user()));
+    }
+
+    /**
+     * DELETE /products/{product}/force
+     * Elimina el producto sin importar ventas ni apartados (borra los apartados).
+     */
+    public function forceDestroy(DeleteProductRequest $request, Product $product, ProductDeletionService $deletion): JsonResponse
+    {
+        // Borrado TOTAL (mata apartados): solo admin.
         if ($resp = $this->adminOnlyError()) {
             return $resp;
         }
 
         $productSnapshot = ['id' => $product->id, 'name' => $product->name, 'sku' => $product->sku];
 
-        DB::transaction(function () use ($product) {
-            // Delete images from default storage (gcs en prod, public/local en dev)
-            foreach ($product->images as $image) {
-                Storage::delete($image->image_path);
-            }
-
-            // Manually handle tables without cascade
-            DB::table('layaways')->where('product_id', $product->id)->delete();
-
-            // Snapshot + null-out de promos compartidas + delete (las ventas
-            // conservan nombre/SKU también en el borrado total).
-            self::snapshotAndDelete($product);
-        });
+        try {
+            $result = $deletion->delete($product, $request->user(), force: true, expected: $request->expected());
+        } catch (\DomainException $e) {
+            return $this->error($e->getMessage(), 422);
+        }
 
         SystemLog::write(
             action: 'product.force_deleted',
             description: "Producto eliminado forzosamente: {$productSnapshot['name']} (SKU: {$productSnapshot['sku']})",
             entityType: 'product',
             entityId: $productSnapshot['id'],
-            meta: ['mode' => 'force', 'snapshot' => $productSnapshot],
+            meta: ['mode' => 'force', 'snapshot' => $productSnapshot, 'sales_kept' => $result['sales_kept'], 'audit' => $result['audit']],
         );
 
         return $this->success(null, 'Producto eliminado forzosamente.');
@@ -1012,7 +1053,8 @@ class ProductController extends Controller
 
     // ─── Helpers privados ─────────────────────────────────────────────────────
 
-    private function syncPrices(Product $product, array $prices): void
+    /** Público/estático desde 2026-10-07: BundleService lo reutiliza para los paquetes. */
+    public static function syncPrices(Product $product, array $prices): void
     {
         if (empty($prices)) {
             return;

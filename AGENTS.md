@@ -8,7 +8,7 @@
 > Detalle adicional: [`CLAUDE.md`](CLAUDE.md) (comandos y arquitectura del frontend) y
 > [`backend/AGENTS.md`](backend/AGENTS.md) (API, ADRs y referencia de endpoints).
 >
-> Última revisión: 2026-10-03.
+> Última revisión: 2026-10-14.
 
 ---
 
@@ -158,6 +158,15 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   cortes (devoluciones cruzadas). Definitivo: renglones completos en `system_logs`
   (`cash_session.deleted`, auditoría, no restaurable). NUNCA `$session->delete()` a secas:
   `sales.register_session_id` hace cascade y no regresa stock. Fondo inicial máximo $1,000,000.
+- **Insumos por tienda (2026-10-12, Ruben):** cada registro de insumo guarda SU tienda
+  (`supply_movements.store_id`) = la de quien lo registra, no la de la categoría
+  (`supplies.store_id`). Cajero y gerente quedan forzados a su tienda (sin tienda asignada → 422);
+  el admin elige tienda o "toda la empresa". Los filtros por tienda usan la del movimiento y solo
+  caen a la de la categoría en registros viejos (columna NULL, sin backfill a propósito).
+  **Borrar un registro** (`DELETE /supplies/movements/{id}`, solo admin) pasa por
+  `SupplyService::deleteMovement()`: borra también su `cash_movement` (el esperado del corte
+  regresa) y deja snapshot en `system_logs` (`supply_movement.deleted`). Nunca
+  `$movement->delete()` a secas: el cajón quedaría descuadrado.
 
 ### Productos e inventario
 - **Dos almacenes por tienda:** Exhibición (`warehouses.type='store'`, lo único que se
@@ -177,13 +186,61 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
 - **Borrar un producto no borra sus ventas:** usa
   `ProductController::snapshotAndDelete()`. `sale_items` congela nombre, SKU y costo
   al cobrar (ADR-015); solo los apartados bloquean el borrado.
+- **Eliminar con vista previa (2026-10-09):** antes de borrar un producto o tomo, el modal
+  pide `GET /products/{id}/delete-preview` y enseña stock por tienda (Exhibición/Bodega, la del
+  usuario primero), ventas que quedan, apartados, preventas, traslados pendientes, paquetes y
+  promos. Con stock hay que marcar "entiendo que se pierde" (el inventario se va en cascade, sin
+  movimiento). `ProductDeletionService` es la ÚNICA puerta de borrado (productos y tomos): los
+  bloqueos viven ahí una vez. El DELETE acepta `expected` opcional (los conteos vistos): si el
+  stock cambió, 422. La app móvil no lo manda y sigue igual. Lo mismo ven admin y gerente con
+  `can_view_cost` (el dato ya es visible a todos en "Existencias por Tienda").
+
+### Paquetes (2026-10-07)
+- Un **paquete** es un producto (`products.product_type='bundle'`) hecho de 2+ productos con
+  cantidad (`product_bundle_items`). Se vende en Caja como cualquier producto (SKU `PAQ-0001`
+  y EAN-13 interno). Vender un paquete descuenta **solo** el stock del paquete.
+- **Armar** N en una tienda saca N×qty de cada componente (Exhibición primero y lo que falte
+  de Bodega, o el almacén que se fuerce por componente) y mete N paquetes en Exhibición.
+  **Desarmar** lo regresa (a Exhibición o a Bodega). Todo queda en `bundle_assemblies` y en
+  `inventory_movements` tipo `transferencia` con `reference PAQ-{id}`.
+- "Puedes armar N" por tienda = `min_i floor((exh_i + bod_i) / qty_i)`; lo calcula solo el
+  backend (`BundleAvailability`) y es exactamente lo que `assemble` acepta.
+- El stock de un paquete **no se ajusta a mano** (QuickStock / `PUT /inventory` lo rechazan);
+  la composición no se edita mientras haya armados; un producto que es componente no se
+  borra (primero quítalo del paquete). Definición global, stock por tienda; cualquier rol crea y
+  arma en su tienda; editar = admin/gerente (como productos); borrar = permiso de borrar productos.
+- **No se trasladan entre tiendas** (2026-10-08): `POST /transfers` y recibir un traslado con un
+  paquete responden 422 ("desármalo aquí y ármalo en la otra tienda"). Un traslado lo dejaría
+  atorado en Bodega u otra tienda sin forma de moverlo.
+- **Candado de borrar / editar composición** (2026-10-08): bloquea si CUALQUIER fila de
+  `inventory` del paquete es ≠ 0, no la suma (+2 en una tienda y −2 en otra sigue bloqueando;
+  una sola fila negativa también, con su propio mensaje). Al calcular "puedes armar N", el stock
+  negativo de un componente cuenta como 0 — igual que `assemble`. `tadaima:depurar-tomos` deja
+  los paquetes fuera y nunca borra ni desactiva un componente.
+- **Costo del paquete** (2026-10-14) = Σ costo de sus piezas × qty y **sigue a sus piezas**: al
+  cambiar el costo de un componente (editar producto o tomo, homologar costo de tomos, import) se
+  recalcula solo (`App\Support\BundleCost`). Es el que se congela en `sale_items.cost` al vender.
+- En la pantalla, la composición no se edita: otra combinación = paquete nuevo. El cajero no ve
+  Editar/Activar ni Borrar (el backend se los niega); Traslados muestra el motivo real del 422 y
+  su buscador ya no ofrece paquetes.
 
 ### Preventas
 - Catálogo de proveedor → folios con anticipo → liquidación al recoger.
-- Límites: tope global (`preorder_limit`), por tienda y **por cliente**
-  (`limit_per_customer`; identifica a la persona por id, teléfono o tarjeta de socio).
+- Límites: **por tienda** (`store_limits`, el cupo real: sin entrada = esa tienda no
+  vende) y **por cliente** (`limit_per_customer`; identifica a la persona por id,
+  teléfono o tarjeta de socio). `preorder_limit` ("Límite de unidades") es un tope global
+  viejo que el backend ya NO aplica: no lo uses como cupo ni como límite por cliente
+  (2026-10-09: Caja mostraba "Reservados 24 / 1" con 12+12 por tienda). En Caja el cupo
+  sale de `lib/presaleAvailability.ts`.
 - No se entrega/liquida una partida sin **costo real** capturado.
 - Las preventas no tocan el stock de Exhibición/Bodega.
+- **Cancelar catálogo (2026-10-09):** NO existe "eliminar catálogo"; cancelar cancela TODOS sus
+  folios abiertos (pending/ready). Pasa por `PreSaleCatalogCancellationService`: vista previa
+  (`GET /pre-sale-catalogs/{id}/cancel-preview`: folios por estado, anticipos cobrados, tiendas),
+  transacción, log por folio y `system_logs`, `expected` opcional. Decisión de Joel: los anticipos
+  cobrados **no bloquean**, se avisa que ese dinero NO se devuelve solo (para devolverlo se cancela
+  el folio desde Caja). El flag `BLOCK_WHEN_MONEY` del servicio cambia esa regla. El modal nuevo
+  ignora el "No mostrar de nuevo" viejo (`td_confirm_skip_catalog_cancel`).
 
 ### Permisos
 - Roles: admin, gerente, cajero (`User::ADMIN_ROLES` incluye variantes de dueño).
@@ -212,6 +269,19 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
 ### Frontend
 - **Carrito client-authoritative** (zustand + localStorage): se manda completo al
   cobrar. El checkout escribe optimista en el caché (`lib/optimisticSale.ts`). Sin Redux.
+- **Método de pago favorito** (2026-10-09, `lib/favoritePaymentMethod.ts`): el cajero marca
+  uno con el check del menú de método; cada venta y mesa nueva arranca con él (sin favorito,
+  Efectivo). Es por usuario en esa PC (localStorage `tadaima-caja-metodo-fav:{userId}`, sin
+  backend); con Tarjeta recuerda la última terminal. Solo decide el método de ARRANQUE: las
+  reglas de preventa, productos solo efectivo/tarjeta y precio socio siguen mandando.
+- **Aviso promo vs método de pago** (2026-10-10, `lib/promoPaymentAlert.ts` +
+  `components/sell/PromoPaymentAlertModal.tsx`): cuando la promo que ganó una línea no se
+  cobra con el método actual (p. ej. favorito Tarjeta y promo solo efectivo), Caja abre un
+  aviso y el cajero decide: cambiar al método que acepta la promo, seguir con el método y
+  cobrar sin la promo, o "Decidir después". Caja NO cambia el método sola por una promo
+  (decisión de Joel); el cambio automático con aviso sigue siendo solo para restricciones
+  del PRODUCTO y de preventa. El modal no roba el foco ni tiene botón por defecto: el
+  lector sigue activo y un Enter no elige por el cajero.
 - Estado de servidor en TanStack Query, persistido en IndexedDB (soporte offline).
 - La lógica de negocio pura va en `landing/src/lib/` con su test al lado.
 - **Botón global "Actualizar"** (2026-10-01, `lib/screenRefresh.ts`): vive en el sidebar
@@ -224,6 +294,12 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   "Actualizar" (también en la barra de filtros de Ventas y Reportes). Solo siguen en fondo:
   caja abierta, avisos, carritos de Caja y usuarios conectados. No vuelvas a meter
   `refetchInterval` en una pantalla de datos.
+- **Catálogo paginado en el servidor** (Productos 2026-08-04, Tomos 2026-10-12): con ~14k
+  productos y ~2.8k tomos la página cargada NO es el catálogo. Chips, búsqueda, contador y
+  paginador viajan al backend (`buildProductsListParams` / `buildMangasListParams`) y el total
+  sale de `pagination.total`; nunca filtres ni cuentes en el navegador sobre lo cargado (así
+  Tomos mostraba "50 tomos" con el badge de Agotados en 2,206). Cada chip usa la misma
+  definición que `GET /products/stats` (`App\Support\StockSql`): tabla y badge deben cuadrar.
 
 ---
 

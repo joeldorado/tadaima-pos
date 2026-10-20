@@ -6,6 +6,8 @@ import type {
   CreatePreSaleCatalogInput,
   UpdatePreSaleCatalogInput,
   UpdatePreSaleCatalogStatusInput,
+  CatalogCancelCounts,
+  PreSaleCatalogStatus,
 } from './types'
 
 /**
@@ -74,6 +76,45 @@ export async function updatePreSaleCatalogStatus(
     `/pre-sale-catalogs/${id}/status`,
     input
   )
+  return response.data
+}
+
+// ─── Cancelar catálogo con vista previa (2026-10-09) ─────────────────────────
+
+/** GET /pre-sale-catalogs/{id}/cancel-preview — lo que "Cancelar catálogo" tocaría. */
+export interface CatalogCancelPreview {
+  catalog: { id: number; product_name: string; status: PreSaleCatalogStatus; can_cancel: boolean }
+  folios: {
+    total: number
+    /** Folios abiertos (pendientes y listos) que se cancelan. */
+    to_cancel: number
+    by_status: { pending: number; ready: number; delivered: number; expired: number; cancelled: number }
+    /** De los que se cancelan: cuántos ya tienen anticipos cobrados. */
+    with_money: number
+    with_card: number
+    /** Folios que también traen artículos de OTROS catálogos (se cancelan completos). */
+    mixed: number
+    /** Para gerente: folios abiertos de otras tiendas. Admin: 0. */
+    other_stores: number
+  }
+  money: {
+    /** Anticipos cobrados de los folios que se cancelan. NO se devuelven al cancelar así. */
+    anticipos_cobrados: number
+    anticipos_efectivo: number
+    anticipos_tarjeta: number
+    por_cobrar: number
+  }
+  stores: Array<{ store_id: number; store_name: string; is_mine: boolean; folios_to_cancel: number; anticipos: number }>
+  units: { reserved: number; delivered: number }
+  /** Se reenvían como `expected` en el PATCH de estado. */
+  counts: CatalogCancelCounts
+  warnings: string[]
+  /** No vacío = no se puede cancelar (ya cancelado / completado). */
+  blockers: string[]
+}
+
+export async function getPreSaleCatalogCancelPreview(id: number): Promise<CatalogCancelPreview> {
+  const response = await apiClient.get<CatalogCancelPreview>(`/pre-sale-catalogs/${id}/cancel-preview`)
   return response.data
 }
 

@@ -25,6 +25,10 @@ export type SupplyMoneySource = 'caja' | 'caja_chica' | 'propio'
 export interface SupplyMovementRecord {
   id: number
   supply_id: number
+  /** Tienda de ESTE movimiento (2026-10-12) — quien lo registró. NULL en
+   *  movimientos de antes de esta columna (caen al fallback de supply.store_id)
+   *  o "toda la empresa" si lo registró un admin sin elegir tienda. */
+  store_id: number | null
   type: 'purchase' | 'consumption' | 'adjustment'
   quantity: number
   amount: number
@@ -96,9 +100,20 @@ export async function registerSupplyPurchase(input: {
   note?: string
   money_source?: SupplyMoneySource
   payer_name?: string
+  /** Solo admin: a qué tienda cargar el registro (2026-10-12). Ignorado para cajero/gerente. */
+  store_id?: number | null
 }): Promise<SupplyMovementRecord> {
   const response = await apiClient.post<SupplyMovementRecord>('/supplies/movements', input)
   return response.data
+}
+
+/**
+ * DELETE /supplies/movements/{id} — solo admin (2026-10-12). Borra el
+ * registro y, si venía de 'caja', también el cash_movement linkeado.
+ * Definitivo — queda snapshot en system_logs, no se puede deshacer.
+ */
+export async function deleteSupplyMovement(id: number): Promise<void> {
+  await apiClient.delete(`/supplies/movements/${id}`)
 }
 
 export async function getSupplyMovements(params?: {
@@ -107,6 +122,8 @@ export async function getSupplyMovements(params?: {
   /** Rango de fechas (día-negocio) — mismo criterio que /reports/supplies. */
   from?: string
   to?: string
+  /** Fechas sueltas `YYYY-MM-DD` separadas por coma; cuando viene, gana sobre from/to. */
+  dates?: string
   /** Filtra por la tienda dueña del insumo (supplies.store_id). Solo admin. */
   store_id?: number
   /** Filtra por el usuario que REGISTRÓ la compra (filtro de usuario del Reporte). */

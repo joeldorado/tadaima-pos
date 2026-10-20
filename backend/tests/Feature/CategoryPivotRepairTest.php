@@ -101,11 +101,11 @@ class CategoryPivotRepairTest extends TestCase
     {
         $this->legacyProduct('Booster MTG Marvel', $this->cartas->id);
 
-        $this->artisan('tadaima:reparar-categorias', ['--dry-run' => true, '--connection' => 'sqlite', '--unsafe-host' => true])
+        $this->artisan('tadaima:reparar-categorias', ['--dry-run' => true, '--connection' => config('database.default'), '--unsafe-host' => true])
             ->assertSuccessful();
         $this->assertSame(0, DB::table('product_category_assignments')->count());
 
-        $this->artisan('tadaima:reparar-categorias', ['--connection' => 'sqlite', '--unsafe-host' => true])
+        $this->artisan('tadaima:reparar-categorias', ['--connection' => config('database.default'), '--unsafe-host' => true])
             ->assertSuccessful();
         $this->assertSame(1, DB::table('product_category_assignments')->count());
     }

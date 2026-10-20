@@ -8,8 +8,8 @@ import {
   Users, UserPlus, User, Phone, AlertCircle,
   Mail,
   TriangleAlert, PackageX, Bookmark, Calendar, PackageCheck, ClipboardList, Banknote,
-  Truck, CheckCircle2, Printer, History, Receipt, RefreshCw,
-  ShoppingCart, Crown, Circle, Trash2, XCircle, Clock, Bell, Scissors, MoreVertical, MessageSquare,
+  Truck, CheckCircle2, Printer, History, RefreshCw,
+  Trash2, XCircle, Clock, Bell, Scissors, MoreVertical, MessageSquare,
   Split,
 } from "lucide-react";
 import type { Product, PriceLevel } from "@/types/pos";
@@ -18,6 +18,8 @@ import { ImageWithFallback } from "@/components/figma/ImageWithFallback";
 import { UserAvatar } from "@/components/UserAvatar";
 import { ProductCatalogModal } from "@/components/ProductCatalogModal";
 import { QuickStockModal } from "@/components/products/QuickStockModal";
+import { BundleBadge } from "@/components/bundles/BundleBadge";
+import { BUNDLE_NO_STOCK_IN_CAJA } from "@/components/bundles/bundleTokens";
 import { PreSaleDifusionPanel } from "@/components/presales/PreSaleDifusionPanel";
 import { CameraScannerModal } from "@/components/CameraScannerModal";
 import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
@@ -34,6 +36,8 @@ import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
 import { CloseCashModal } from "@/components/cash/CloseCashModal";
 import { UsdCalculatorModal } from "@/components/sell/UsdCalculatorModal";
 import { PayLogPanel } from "@/components/sell/PayLogPanel";
+import { HistorialList } from "@/components/sell/HistorialList";
+import { OtherSalesDock } from "@/components/sell/OtherSalesDock";
 import { pushPayEntry, removePayEntry, type PayLogEntry } from "@/lib/payLog";
 import { dispatchTicket, warmUpTicketPrinting } from "@/lib/ticketPrint";
 import { useLayoutChrome } from "@/contexts/LayoutChromeContext";
@@ -60,13 +64,18 @@ import { isValidEmail, isValidPhone } from "@/lib/validation";
 import { PRICE_LEVEL_LABELS, PRICE_LEVEL_COLORS, PRICE_LEVEL_RGB } from "@/lib/priceLevels";
 import type { CashSession, CashRegisterInfo, PaymentMethod as ApiPaymentMethod, PreSaleCatalog, PreSaleOrder, PreSaleOrderItem, SaleDetail, Terminal, ExternalCardLookup } from "@tadaima/api";
 import { buildPaymentSummary } from "@/lib/paymentSummary";
+import { HISTORIAL_METHOD_OPTIONS, historialEntryMatchesPaymentFilter, type HistorialMethodFilter } from "@/lib/paymentFilter";
+import { ticketTime } from "@/lib/historialGroups";
 import { computeMixedSplit } from "@/lib/mixedPayment";
+import { readFavoritePayment, saveFavoritePayment, startingPayment, toggleFavorite, withFavoriteTerminal, type StartingPayment } from "@/lib/favoritePaymentMethod";
+import { buildPromoPaymentAlert, clearDismissedForMesa, promoPoolLineIds } from "@/lib/promoPaymentAlert";
 import { computeRegularChargeAmount, discountPct } from "@/lib/promo";
 import { newLineId, recalculateSale, type LineDiscount, type LineSurcharge } from "@/lib/saleCalc";
 import { acceptsNewUnits, applyLineAdjustment, lineAdjustmentOf, removeLineAdjustment, type LineAdjustment } from "@/lib/lineAdjustments";
 import { finalPriceLine } from "@/lib/ticketLines";
 import { LineDiscountModal } from "@/components/sell/LineDiscountModal";
 import { LineCommentModal } from "@/components/sell/LineCommentModal";
+import { PromoPaymentAlertModal } from "@/components/sell/PromoPaymentAlertModal";
 import { lineCommentPayload, withLineComment } from "@/lib/lineComment";
 import { DISCOUNT_REASON_LABELS, SURCHARGE_REASON_LABELS } from "@/lib/discountReasons";
 import type { HistorialEntry } from "@/hooks/queries/useHistorial";
@@ -74,6 +83,7 @@ import { useCartDraftStore } from "@/stores/cartDraftStore";
 import { useActiveStore } from "@/contexts/StoreContext";
 import { useAuth } from "@tadaima/auth";
 import { isAdmin as isAdminRole } from "@/lib/permisos";
+import { cartUnitLimit, storeAvailability } from "@/lib/presaleAvailability";
 import { CancelTicketModal } from "@/components/cancel/CancelTicketModal";
 import { CorrectPaymentModal } from "@/components/sales/CorrectPaymentModal";
 import { motion as Motion, AnimatePresence } from "motion/react";
@@ -158,7 +168,7 @@ interface CartItem {
   preSaleOrderItemId?: number; // id del PreSaleOrderItem en backend
   preSaleItemDelivered?: boolean;
   sellingCatalogId?: number; // ID del PreSaleCatalog que se está reservando
-  unitLimit?: number; // límite de unidades por cliente (catálogo.preorder_limit)
+  unitLimit?: number; // límite de unidades por cliente (catálogo.limit_per_customer)
   syncError?: boolean; // true si addDraftItem/updateDraftItem falló — bloquea checkout
 }
 
@@ -179,6 +189,9 @@ function lineAdjustmentPayload(ci: Pick<CartItem, "discount" | "surcharge">) {
   return {};
 }
 
+/** Historial sin data todavía: referencia estable (ver historialEntries). */
+const EMPTY_HISTORIAL: HistorialEntry[] = [];
+
 interface Mesa {
   id: string;
   name: string;
@@ -195,7 +208,7 @@ interface Mesa {
   paymentMethod: PaymentMethod;
   isPreventa: boolean;
   depositAmount: number;
-  selectedTerminalId?: number;
+  selectedTerminalId?: number | undefined;
   // La tienda SIEMPRE absorbe la comisión de tarjeta — campo conservado
   // por compatibilidad con código viejo, pero ya no se usa en cálculos.
   absorbCommission?: boolean;
@@ -389,13 +402,15 @@ let _mc = 2;
 // Tab 1 → "Caja Principal" (el turno del cajero), tabs 2..5 → "Venta N"
 // (ventas paralelas para atender múltiples clientes a la vez).
 const mesaLabel = (n: number): string => (n === 1 ? "Caja Principal" : `Venta ${n}`);
-const makeMesa = (n?: number): Mesa => {
+// `start` = método con el que arranca (el favorito del cajero, o Efectivo).
+const makeMesa = (n?: number, start: StartingPayment = startingPayment(null)): Mesa => {
   const num = n !== undefined ? n : _mc++;
   return {
     id: `mesa-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     name: mesaLabel(num),
     items: [],
-    paymentMethod: "Efectivo",
+    paymentMethod: start.paymentMethod,
+    selectedTerminalId: start.selectedTerminalId,
     isPreventa: false,
     depositAmount: 0,
     absorbCommission: true, // tienda siempre absorbe — nunca se cobra al cliente
@@ -432,6 +447,12 @@ export function SellPage() {
   const isAdmin = isAdminRole(user?.roles);
   const { activeStore, stores, setActiveStore, isLoading: storeLoading } = useActiveStore();
 
+  // Método de pago favorito del cajero en esta PC (2026-10-09): cada venta y
+  // mesa nueva arranca con él. Ver lib/favoritePaymentMethod.ts. Se lee al
+  // montar: ProtectedRoute garantiza `user` y cambiar de usuario pasa por
+  // /login (Caja se desmonta), así que no hace falta re-leerlo.
+  const [favoritePayment, setFavoritePayment] = useState(() => readFavoritePayment(user?.id));
+
   const draftStore = useCartDraftStore();
   // Hidratar mesas desde snapshot persistido (sobrevive navegación entre páginas).
   // Si el snapshot está vacío/corrupto, arrancar con una mesa nueva.
@@ -442,13 +463,20 @@ export function SellPage() {
         // Normaliza labels antiguos ("Caja 1..5") al nuevo esquema
         // ("Caja Principal" / "Venta 2..5"). Asigna lineId a items de snapshots
         // previos a Descuentos v2 (carritos persistidos sin lineId).
-        return (snap as Mesa[]).map((m, idx) => ({
-          ...m,
-          name: mesaLabel(idx + 1),
-          items: (m.items ?? []).map(i => (i.lineId ? i : { ...i, lineId: newLineId() })),
-        }));
+        // Las mesas vacías (sin preventa ni folio) arrancan en el favorito; las
+        // que traen productos conservan el método que ya tenían.
+        return (snap as Mesa[]).map((m, idx) => {
+          const items = (m.items ?? []).map(i => (i.lineId ? i : { ...i, lineId: newLineId() }));
+          const isBlank = items.length === 0 && !m.isPreventa && m.loadedPreSaleOrderId == null;
+          return {
+            ...m,
+            ...(isBlank ? startingPayment(favoritePayment) : {}),
+            name: mesaLabel(idx + 1),
+            items,
+          };
+        });
       }
-      return [makeMesa(1)];
+      return [makeMesa(1, startingPayment(favoritePayment))];
     })()
   );
   const initialActiveId = useRef<string>(
@@ -672,6 +700,15 @@ export function SellPage() {
   // addToCart después de awaitar un inFlight) lean la qty actual del UI sin
   // depender del closure capturado al inicio de la llamada (que ya está stale).
   const mesasRef = useRef<Mesa[]>(mesas);
+  // Resumen para el atajo "Otras ventas". Con el precio real de cada línea
+  // (getItemPrice): antes sumaba `i.price`, que las líneas del carrito no traen,
+  // y el subtotal salía "$NaN" (2026-10-19).
+  const dockSales = useMemo(() => mesas.map(m => ({
+    id: m.id,
+    name: m.name,
+    itemCount: m.items.reduce((s, i) => s + i.quantity, 0),
+    subtotal: m.items.reduce((s, i) => s + getItemPrice(i) * i.quantity, 0),
+  })), [mesas]);
   useEffect(() => { mesasRef.current = mesas; }, [mesas]);
 
   // Sincroniza el snapshot de mesas con localStorage en cada cambio.
@@ -689,6 +726,8 @@ export function SellPage() {
   const [payOpen, setPayOpen] = useState(false);
   // Guard $0: confirmación cuando un descuento deja el cobro en $0 (cortesía).
   const [zeroConfirmOpen, setZeroConfirmOpen] = useState(false);
+  // Avisos "promo vs método de pago" que el cajero pospuso ("Decidir después").
+  const [dismissedPromoAlerts, setDismissedPromoAlerts] = useState<ReadonlySet<string>>(() => new Set());
   const [showTerminalModal, setShowTerminalModal] = useState(false);
   const [tcDraft, setTcDraft] = useState("15.50");
 
@@ -845,7 +884,9 @@ export function SellPage() {
   // Apertura del modal instantánea con la última versión; background refetch
   // tras cada checkout/cancelación gracias a las invalidaciones.
   const historialQuery = useTodayHistorialQuery(activeStore?.id, { enabled: !!user });
-  const historialEntries: HistorialEntry[] = historialQuery.data ?? [];
+  // Sin data aún: el MISMO arreglo vacío en cada render. `?? []` creaba uno nuevo
+  // y el efecto del pareo mixto (deps [historialEntries]) se re-disparaba en ciclo.
+  const historialEntries: HistorialEntry[] = historialQuery.data ?? EMPTY_HISTORIAL;
   // Spinner grande SOLO en la primera carga sin datos en cache. Si ya hay
   // ventas en memoria, el modal abre instantáneo y el refresco se muestra
   // como un indicador sutil abajo (historialRefreshing).
@@ -854,6 +895,10 @@ export function SellPage() {
   // ADR-016 Fase 1 — filtro del historial. 'all' default; 'cancelled' muestra
   // solo ventas con status='returned' y preventas con status='cancelled'.
   const [historialFilter, setHistorialFilter] = useState<'all' | 'cancelled'>('all');
+  // Filtro por método de pago (2026-10-08): la tienda quiere ver "las
+  // transferencias de hoy" sin salir de Caja. Mismos criterios que en Ventas
+  // (lib/paymentFilter); las preventas se clasifican por cómo se pagó el anticipo.
+  const [historialMethod, setHistorialMethod] = useState<HistorialMethodFilter>("all");
   // Buscador del historial full-screen: ticket #, folio, cliente, producto o método.
   const [historialSearch, setHistorialSearch] = useState("");
   const [expandedEntryKey, setExpandedEntryKey]     = useState<string | null>(null);
@@ -894,6 +939,63 @@ export function SellPage() {
   const [addingExternalId, setAddingExternalId]     = useState<string | null>(null);
   // Tracks mixed-checkout pairs: presale order + regular sale created in the same transaction
   const [mixedPairs, setMixedPairs] = useState<Array<{ preSaleOrderId: number; saleId: number }>>([]);
+
+  // Historial: pestaña (Todas/Canceladas) + método de pago (2026-10-08), calculado
+  // una vez por render para la fila de filtros (contadores) y para la lista. Va
+  // después de `mixedPairs` porque lo usa: el par preventa+venta cobrado junto se
+  // pinta como UN bloque (la venta emparejada se salta) y se clasifica por los
+  // pagos de los dos.
+  const historialView = useMemo(() => {
+    const isCancelled = (e: HistorialEntry): boolean => e.type === 'sale'
+      ? (e.data.status === 'returned' || e.data.cancellation_status === 'partial')
+      : (e.data.status === 'cancelled' || e.data.cancellation_status === 'partial');
+    const pairedSaleIds = new Set(mixedPairs.map(p => p.saleId));
+    const saleById = new Map<number, SaleDetail>();
+    for (const e of historialEntries) {
+      if (e.type === 'sale' && e.data.id != null) saleById.set(e.data.id, e.data);
+    }
+    const pairedSaleFor = (e: HistorialEntry): SaleDetail | undefined => {
+      if (e.type !== 'presale') return undefined;
+      const pair = mixedPairs.find(p => p.preSaleOrderId === e.data.id);
+      return pair ? saleById.get(pair.saleId) : undefined;
+    };
+    const tabEntries = historialFilter === 'cancelled' ? historialEntries.filter(isCancelled) : historialEntries;
+    // Las ventas emparejadas no se cuentan aparte: ya van dentro de su preventa.
+    const countable = tabEntries.filter(e => !(e.type === 'sale' && pairedSaleIds.has(e.data.id!)));
+    const methodCounts = Object.fromEntries(
+      HISTORIAL_METHOD_OPTIONS.map(o => [o.value, countable.filter(e => historialEntryMatchesPaymentFilter(e, o.value, pairedSaleFor(e))).length]),
+    ) as Record<HistorialMethodFilter, number>;
+    const methodEntries = historialMethod === 'all'
+      ? tabEntries
+      : tabEntries.filter(e => historialEntryMatchesPaymentFilter(e, historialMethod, pairedSaleFor(e)));
+    return { cancelledCount: historialEntries.filter(isCancelled).length, pairedSaleIds, methodCounts, methodEntries };
+  }, [historialEntries, mixedPairs, historialFilter, historialMethod]);
+
+  // Lo que pinta la lista del Historial: pestaña + método (historialView), sin
+  // las ventas que van dentro de su preventa y con el buscador aplicado (ticket #,
+  // folio, cliente, producto, SKU o método de pago).
+  const historialVisible = useMemo(() => {
+    const { pairedSaleIds, methodEntries } = historialView;
+    const q = historialSearch.trim().toLowerCase();
+    return methodEntries.filter(e => {
+      if (e.type === 'sale' && pairedSaleIds.has(e.data.id!)) return false;
+      if (!q) return true;
+      if (e.type === 'sale') {
+        const sale = e.data;
+        return String(sale.id ?? '').includes(q)
+          || (sale.customer?.name ?? '').toLowerCase().includes(q)
+          || (sale.items ?? []).some(i =>
+            (i.product?.name ?? '').toLowerCase().includes(q)
+            || (i.product?.sku ?? '').toLowerCase().includes(q))
+          || (sale.payments ?? []).some(pay => (pay.payment_method?.name ?? '').toLowerCase().includes(q));
+      }
+      const o = e.data;
+      return (o.code ?? '').toLowerCase().includes(q)
+        || (o.customer?.name ?? '').toLowerCase().includes(q)
+        || (o.items ?? []).some(i => (i.catalog?.product_name ?? '').toLowerCase().includes(q))
+        || (o.payments ?? []).some(pay => (pay.payment_method?.name ?? '').toLowerCase().includes(q));
+    });
+  }, [historialView, historialSearch]);
 
   // ── Modal unificado de Preventas ──
   // showPreSalesModal se declara arriba (junto a las queries) para condicionar el polling.
@@ -1630,7 +1732,7 @@ export function SellPage() {
       });
       return;
     }
-    const m = makeMesa();
+    const m = makeMesa(undefined, startingPayment(favoritePayment));
     setMesas(prev => [...prev, m]);
     setActiveMesaId(m.id);
   };
@@ -1655,11 +1757,15 @@ export function SellPage() {
   }, [reservedInOtherMesas]);
 
   // Abre el modal "Agregar stock" para un producto/tomo no asignado a esta tienda.
-  const openStockFor = (p: Product) => setStockModalProduct({
-    id: Number(p.id),
-    name: p.name + (p.volume_number != null ? ` Vol. ${p.volume_number}` : ""),
-    kind: p.product_type === "manga" ? "manga" : "product",
-  });
+  // Paquetes (2026-10-07): su stock se ARMA desde el menú Paquetes, no se captura aquí.
+  const openStockFor = (p: Product) => {
+    if (p.product_type === "bundle") { toast.info(BUNDLE_NO_STOCK_IN_CAJA); return; }
+    setStockModalProduct({
+      id: Number(p.id),
+      name: p.name + (p.volume_number != null ? ` Vol. ${p.volume_number}` : ""),
+      kind: p.product_type === "manga" ? "manga" : "product",
+    });
+  };
 
   const removeMesa = (id: string) => {
     if (mesas.length <= 1) return;
@@ -2038,6 +2144,21 @@ export function SellPage() {
     }
   };
 
+  // Check de favorito en el menú de método: uno solo; tocar el actual lo quita.
+  // No cambia la venta en curso — aplica desde la siguiente.
+  const toggleFavoritePayment = (pm: PaymentMethod) => {
+    if (pm === "Dólares") return;
+    const terminalId = activeMesa?.paymentMethod === "Tarjeta" ? activeMesa.selectedTerminalId : undefined;
+    const next = toggleFavorite(favoritePayment, pm, terminalId);
+    saveFavoritePayment(user?.id, next);
+    setFavoritePayment(next);
+    if (next) {
+      toast.success(`${pm} quedó como favorito: cada venta nueva arranca así.`, { duration: 3500 });
+    } else {
+      toast.info("Sin método favorito: cada venta nueva arranca en Efectivo.", { duration: 3500 });
+    }
+  };
+
   const selectTerminal = (terminalId: number) => {
     const wasSocio = !!activeMesa?.customerSocioEligible;
     updMesa(activeMesa.id, m => ({
@@ -2049,6 +2170,12 @@ export function SellPage() {
       items: repriceForSocio(m.items, "a"),
     }));
     setShowTerminalModal(false);
+    // Favorito = Tarjeta: recuerda la última terminal para la siguiente venta.
+    const nextFav = withFavoriteTerminal(favoritePayment, terminalId);
+    if (nextFav !== favoritePayment) {
+      saveFavoritePayment(user?.id, nextFav);
+      setFavoritePayment(nextFav);
+    }
     if (wasSocio) {
       toast.info("Con tarjeta se cobra precio normal (la tienda absorbe la comisión).", { duration: 4000 });
     }
@@ -2239,7 +2366,7 @@ export function SellPage() {
     updMesa(mesaId, m => ({
       ...m, items: [], customerId: undefined, customerName: undefined,
       customerPhone: "", customerEmail: "", customerIsSocio: false, customerSocioEligible: false, isNewCustomer: false, depositAmount: 0,
-      selectedTerminalId: undefined, absorbCommission: true,
+      absorbCommission: true,
       isPreventa: false, loadedPreSaleOrderId: undefined, loadedPreSaleOrderCode: undefined,
       cashReceived: "",
       cashReceivedUsd: "",
@@ -2247,10 +2374,10 @@ export function SellPage() {
       usdPrimaryMode: false,
       usdApplied: false,
       payLog: [],
-      // Tras cada cobro el método vuelve SIEMPRE a Efectivo (pedido Joel):
-      // si la venta anterior fue con Tarjeta, la siguiente no debe arrancar en
-      // Tarjeta por inercia.
-      paymentMethod: "Efectivo",
+      // Tras cada cobro el método vuelve SIEMPRE al favorito del cajero, o a
+      // Efectivo si no marcó ninguno (pedido Joel): la siguiente venta no
+      // arranca en Tarjeta por inercia de la anterior, solo si así lo eligió.
+      ...startingPayment(favoritePayment),
     }));
     // Defensa contra fuga de cliente entre ventas consecutivas (bug reportado
     // Joel 2026-05-27 en prod): reseteamos también todo el estado del popup
@@ -2476,15 +2603,82 @@ export function SellPage() {
       .filter(i => !itemAcceptsMethod(i, method))
       .map(i => {
         const nombre = i.product.name;
-        if (i.sellingCatalogId != null) return { item: i, motivo: "preventa" as const, nombre, promo: null };
+        if (i.sellingCatalogId != null) return { item: i, motivo: "preventa" as const, nombre, promo: null, promoId: null };
         if (isCard ? i.product.allow_card === false : i.product.allow_cash === false) {
-          return { item: i, motivo: "producto" as const, nombre, promo: null };
+          return { item: i, motivo: "producto" as const, nombre, promo: null, promoId: null };
         }
-        const promoId = lineCalcById[i.lineId]?.promoPart?.promoId;
+        const promoId = lineCalcById[i.lineId]?.promoPart?.promoId ?? null;
         const promo = promoId != null ? promoFlagsById[promoId]?.name ?? null : null;
-        return { item: i, motivo: "promo" as const, nombre, promo };
+        return { item: i, motivo: "promo" as const, nombre, promo, promoId };
       });
   }, [activeMesa.items, activeMesa.paymentMethod, itemAcceptsMethod, lineCalcById, promoFlagsById]);
+
+  // ── Aviso: la promo aplicada no se cobra con el método actual (2026-10-10) ──
+  // Con método favorito = Tarjeta la venta arranca en Tarjeta y una promo
+  // "solo efectivo" deja el cobro trabado. Caja no cambia el método sola (eso
+  // mueve precios): avisa y el cajero decide. Ver lib/promoPaymentAlert.ts.
+  const promoAlertMesaId = activeMesa?.id ?? "";
+  const promoAlertMethod = activeMesa?.paymentMethod ?? "Efectivo";
+  const promoAlert = useMemo(
+    () => buildPromoPaymentAlert(
+      promoAlertMesaId,
+      promoAlertMethod,
+      blockedItems.flatMap(b => b.motivo === "promo" && b.promoId != null
+        ? [{ productName: b.nombre, promoId: b.promoId, promoName: b.promo }]
+        : []),
+      saleCalcResult.lines,
+    ),
+    [promoAlertMesaId, promoAlertMethod, blockedItems, saleCalcResult],
+  );
+  const promoAlertKey = promoAlert?.key ?? null;
+  // Sin choque en esta caja se olvidan sus "decidir después": el siguiente
+  // choque vuelve a avisar. Se ajusta durante el render (estado derivado, sin
+  // efecto); no hace loop porque tras limpiar ya no queda nada que quitar.
+  if (promoAlertKey === null) {
+    const kept = clearDismissedForMesa(dismissedPromoAlerts, promoAlertMesaId);
+    if (kept !== dismissedPromoAlerts) setDismissedPromoAlerts(kept);
+  }
+  /** Por qué no se puede cambiar al método que conserva la promo (si aplica). */
+  const promoAlertKeepBlockedReason = (() => {
+    if (!promoAlert) return undefined;
+    // Mismo criterio que setPayment: una venta con preventa no va con Tarjeta.
+    if (promoAlert.keepMethod === "Tarjeta" && hasPreventaInCart) return "las preventas no se cobran con Tarjeta";
+    const blocker = activeMesa?.items.find(i => !itemAcceptsMethod(i, promoAlert.keepMethod))?.product.name;
+    return blocker ? `"${blocker}" no acepta ${promoAlert.keepMethod}` : undefined;
+  })();
+
+  const closePromoAlert = useCallback(() => {
+    if (promoAlertKey === null) return;
+    setDismissedPromoAlerts(prev => new Set(prev).add(promoAlertKey));
+    // El aviso no toma el foco: solo se regresa al campo de código si el clic
+    // lo sacó de ahí, sin quitárselo al de pesos recibidos (Esc).
+    if (document.activeElement !== cashInputRef.current) focusCodeInput();
+  }, [promoAlertKey, focusCodeInput]);
+
+  /** Conserva la promo: cambia al método que sí la acepta. */
+  const keepPromoFromAlert = () => {
+    if (!promoAlert) return;
+    setPayment(promoAlert.keepMethod);
+    // Tarjeta solo abre el modal de terminales (el aviso se esconde mientras
+    // está abierto); si el cajero lo cierra sin elegir, el aviso regresa.
+    if (promoAlert.keepMethod !== "Efectivo") return;
+    toast.success("Método cambiado a Efectivo: se conserva la promo.", { duration: 4000 });
+    focusCodeInput();
+  };
+
+  /** Sigue con el método actual: suelta la promo de todas las líneas que la arman. */
+  const skipPromoFromAlert = () => {
+    if (!promoAlert) return;
+    const lineIds = promoPoolLineIds(saleCalcResult.lines, promoAlert.promoIds);
+    updMesa(promoAlertMesaId, m => ({
+      ...m,
+      items: m.items.map(i => lineIds.has(i.lineId) ? { ...i, skipPromo: true } : i),
+    }));
+    pushPayLog(`Sin promo · ${promoAlert.productName}`, "info");
+    toast.info(`Se cobra sin la promo, con ${promoAlert.currentMethod}.`, { duration: 4000 });
+    focusCodeInput();
+  };
+
   const totalDeposit   = useMemo(() => activeMesa.items.reduce((s, i) => s + (i.depositAmount ?? 0), 0), [activeMesa.items]);
   const totalItems     = activeMesa.items.reduce((s, i) => s + i.quantity, 0);
   // Subtotal de ítems nuevos (no de preventa cargada) — usado en carrito mixto
@@ -2900,8 +3094,9 @@ export function SellPage() {
       // en lugar de duplicar la fila (bug típico al doble-click en la card del modal).
       const existing = m.items.find(i => i.sellingCatalogId === catalog.id);
       if (existing) {
-        // Respeta el unitLimit del catálogo si está definido
-        const limit = catalog.preorder_limit ?? Infinity;
+        // Respeta el límite por cliente del catálogo si está definido
+        // (limit_per_customer — nunca preorder_limit, que es el tope global viejo).
+        const limit = cartUnitLimit(catalog) ?? Infinity;
         if (existing.quantity + 1 > limit) {
           toast.error(`Límite por cliente alcanzado: ${limit} unidad(es)`);
           return m;
@@ -2916,6 +3111,7 @@ export function SellPage() {
         };
       }
 
+      const unitLimit = cartUnitLimit(catalog);
       const item: CartItem = {
         lineId: newLineId(),
         product: {
@@ -2934,7 +3130,7 @@ export function SellPage() {
         priceLevel,
         depositAmount: anticipo,
         sellingCatalogId: catalog.id,
-        ...(catalog.preorder_limit != null ? { unitLimit: catalog.preorder_limit } : {}),
+        ...(unitLimit !== undefined ? { unitLimit } : {}),
       };
       return {
         ...m,
@@ -3506,7 +3702,7 @@ export function SellPage() {
     }
 
     // Preventa: el backend devuelve "'X' solo tiene N unidades disponibles (límite: M)."
-    // cuando el preorder_limit del catálogo ya se alcanzó. Auto-ajusta el item de
+    // cuando se llenó el cupo de la tienda (store_limits). Auto-ajusta el item de
     // preventa-catálogo en el carrito al disponible real, igual que con productos.
     const presaleMatch = msg.match(/'([^']+)' solo tiene (\d+) unidades disponibles \(límite: \d+\)/);
     if (presaleMatch) {
@@ -5439,6 +5635,7 @@ export function SellPage() {
                                   Tomo {p.volume_number}
                                 </span>
                               )}
+                              {p.product_type === "bundle" && <BundleBadge />}
                               {/* Promo NxM vigente — el cajero la ve ANTES de agregar (QA Joel 2026-07-16) */}
                               {(p.active_promotions?.length ?? 0) > 0 && (() => {
                                 const pool = (p.active_promotions ?? []);
@@ -5511,10 +5708,12 @@ export function SellPage() {
                                 style={{ background: "rgba(245,158,11,0.10)", borderColor: "rgba(245,158,11,0.35)", color: "#f59e0b" }}
                                 onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(245,158,11,0.18)"; }}
                                 onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(245,158,11,0.10)"; }}
-                                title="Sin stock en esta tienda — agrégalo para poder venderlo"
+                                title={p.product_type === "bundle" ? "Este paquete no está armado en esta tienda — ármalo desde Paquetes" : "Sin stock en esta tienda — agrégalo para poder venderlo"}
                               >
                                 <Plus size={14} />
-                                <span className="text-[11px] font-black uppercase tracking-widest">No asignado · Agregar stock</span>
+                                <span className="text-[11px] font-black uppercase tracking-widest">
+                                  {p.product_type === "bundle" ? "Sin armar · ve a Paquetes" : "No asignado · Agregar stock"}
+                                </span>
                               </button>
                             ) : getPriceLevels(p).map(lvl => {
                               // Color de identidad por nivel (Normal=verde,
@@ -5702,6 +5901,7 @@ export function SellPage() {
                           angostas baja justo debajo en vez de comerse el nombre. */}
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
                         <h3 className={`${compactCart ? "text-lg" : "text-base"} font-black truncate leading-tight min-w-0 max-w-full`} style={{ color: THI }}>{item.product.name}</h3>
+                        {item.product.product_type === "bundle" && <BundleBadge small />}
                         {/* Comentario de la línea (2026-10-03): recordatorio del cajero, a
                             lado del nombre. Tocarlo lo edita. No sale en el ticket. */}
                         {item.comment && (
@@ -6896,10 +7096,21 @@ export function SellPage() {
                           <div className="flex w-full h-[52px] rounded-2xl overflow-hidden" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", color: "var(--td-text-hi)" }}>
                             <button
                               onClick={() => setPaymentMenuOpen(o => !o)}
-                              className="flex-1 min-w-0 flex items-center justify-center gap-1.5 transition-colors"
+                              className="relative flex-1 min-w-0 flex items-center justify-center gap-1.5 transition-colors"
                               onMouseEnter={e => { e.currentTarget.style.background = "var(--td-hover-bg)"; }}
                               onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+                              {...(active === favoritePayment?.method ? { title: `${active} es tu método favorito` } : {})}
                             >
+                              {/* Insignia de favorito en la esquina: no le quita ancho al label. */}
+                              {active === favoritePayment?.method && (
+                                <span
+                                  aria-hidden
+                                  className="absolute top-1 right-1 w-3 h-3 rounded-full flex items-center justify-center"
+                                  style={{ background: "var(--td-red)" }}
+                                >
+                                  <Check size={8} strokeWidth={4} className="text-white" />
+                                </span>
+                              )}
                               {renderLabel(active, false)}
                               {/* Menú abre HACIA ARRIBA porque vive al fondo del sidebar.
                                   Chevron: cerrado = ↑ (apunta hacia arriba indicando
@@ -6954,10 +7165,15 @@ export function SellPage() {
                                 animate={{ opacity: 1, y: 0 }}
                                 exit={{ opacity: 0, y: 8 }}
                                 transition={{ duration: 0.12 }}
-                                className="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-2xl overflow-hidden"
-                                style={{ background: "var(--td-popup-bg)", backdropFilter: "blur(20px)", border: "1px solid var(--td-popup-border)" }}
+                                className="absolute bottom-full left-0 mb-2 z-50 rounded-2xl overflow-hidden"
+                                // Más ancho que el botón: cabe el label + la columna del check de favorito.
+                                style={{ width: "max(100%, 17.5rem)", background: "var(--td-popup-bg)", backdropFilter: "blur(20px)", border: "1px solid var(--td-popup-border)" }}
                               >
-                                {allOptions.filter(pm => pm !== active).map(pm => {
+                                {/* Los 4 métodos, también el activo (resaltado, sin acción)
+                                    para poder marcarlo como favorito. */}
+                                {allOptions.map(pm => {
+                                  const isActive = pm === active;
+                                  const isFavorite = favoritePayment?.method === pm;
                                   // Bloquea la opción si ALGÚN item del carrito no acepta ese
                                   // método (preventa/cash_only → no Tarjeta; allow_cash=false →
                                   // no Efectivo). Mismo criterio que payBlocked y el guard del
@@ -6990,29 +7206,68 @@ export function SellPage() {
                                     const promoNombre = promoId != null ? promoFlagsById[promoId]?.name : null;
                                     return `No disponible: la promo "${promoNombre ?? "aplicada"}" de "${primero.product.name}" no se cobra con ${pm}. Puedes cobrar esa línea sin la promo.${resto}`;
                                   })();
-                                  const isHovered = hoveredPayPm === pm && !isBlocked;
+                                  const canSwitch = !isActive && !isBlocked;
+                                  const isHovered = hoveredPayPm === pm && canSwitch;
                                   return (
-                                    <button
+                                    <div
                                       key={pm}
-                                      onClick={() => { if (!isBlocked) { setPayment(pm); setPaymentMenuOpen(false); setHoveredPayPm(null); } }}
-                                      disabled={isBlocked}
-                                      {...(blockedTitle ? { title: blockedTitle } : {})}
-                                      className={`w-full px-3 flex items-center justify-center border-b last:border-b-0 transition-all duration-150 ${
-                                        isBlocked ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'
-                                      }`}
+                                      className="flex items-stretch border-b last:border-b-0 transition-all duration-150"
                                       style={{
                                         // Crece al hover (60px) para leer bien; vuelve a 44px al salir.
                                         height: isHovered ? 60 : 44,
                                         borderBottomColor: "var(--td-divider)",
-                                        color: isBlocked ? "var(--td-text-ghost)" : isHovered ? "var(--td-text-hi)" : "var(--td-text-md)",
-                                        background: isHovered ? "var(--td-red-dim)" : "transparent",
+                                        background: isHovered ? "var(--td-red-dim)" : isActive ? "var(--td-hover-bg)" : "transparent",
                                       }}
-                                      onMouseEnter={() => { if (!isBlocked) setHoveredPayPm(pm); }}
-                                      onMouseLeave={() => setHoveredPayPm(null)}
                                     >
-                                      {isBlocked && <AlertTriangle size={11} className="text-amber-500 mr-1.5" />}
-                                      {renderLabel(pm, false, isHovered)}
-                                    </button>
+                                      <button
+                                        onClick={() => { if (canSwitch) { setPayment(pm); setPaymentMenuOpen(false); setHoveredPayPm(null); } }}
+                                        disabled={!canSwitch}
+                                        {...(blockedTitle && !isActive ? { title: blockedTitle } : {})}
+                                        className={`flex-1 min-w-0 pl-3 flex items-center justify-center transition-colors duration-150 ${
+                                          isActive ? 'cursor-default' : isBlocked ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'
+                                        }`}
+                                        style={{
+                                          color: isActive || isHovered ? "var(--td-text-hi)" : isBlocked ? "var(--td-text-ghost)" : "var(--td-text-md)",
+                                        }}
+                                        onMouseEnter={() => { if (canSwitch) setHoveredPayPm(pm); }}
+                                        onMouseLeave={() => setHoveredPayPm(null)}
+                                      >
+                                        {isBlocked && !isActive && <AlertTriangle size={11} className="text-amber-500 mr-1.5" />}
+                                        {renderLabel(pm, false, isHovered)}
+                                        {isActive && (
+                                          <span className="ml-1.5 text-[9px] font-bold uppercase tracking-wider whitespace-nowrap shrink-0" style={{ color: "var(--td-text-lo)" }}>
+                                            · actual
+                                          </span>
+                                        )}
+                                      </button>
+                                      {/* Check de favorito: uno solo, se queda fijo (por usuario en
+                                          esta PC). Disponible aunque el método esté bloqueado para
+                                          ESTE carrito — es una preferencia, no un cobro. */}
+                                      <button
+                                        type="button"
+                                        onClick={e => { e.stopPropagation(); toggleFavoritePayment(pm); }}
+                                        aria-pressed={isFavorite}
+                                        aria-label={isFavorite ? `Quitar ${pm} como método favorito` : `Fijar ${pm} como método favorito`}
+                                        title={isFavorite ? "Método favorito — clic para quitarlo" : "Fijar como favorito: cada venta nueva arranca con este método"}
+                                        className="group w-11 shrink-0 flex items-center justify-center transition-colors"
+                                        onMouseEnter={e => { e.currentTarget.style.background = "var(--td-hover-bg)"; }}
+                                        onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+                                      >
+                                        <span
+                                          className="w-5 h-5 rounded-full flex items-center justify-center transition-all duration-150 group-active:scale-90"
+                                          style={isFavorite
+                                            ? { background: "var(--td-red)", border: "1.5px solid var(--td-red)" }
+                                            : { background: "transparent", border: "1.5px solid var(--td-text-ghost)" }}
+                                        >
+                                          <Check
+                                            size={11}
+                                            strokeWidth={3.5}
+                                            className={isFavorite ? "text-white" : "opacity-0 group-hover:opacity-50 transition-opacity"}
+                                            style={isFavorite ? undefined : { color: "var(--td-text-md)" }}
+                                          />
+                                        </span>
+                                      </button>
+                                    </div>
                                   );
                                 })}
                               </Motion.div>
@@ -7210,6 +7465,24 @@ export function SellPage() {
         </div>
       )}
 
+      {/* Aviso: la promo aplicada no se cobra con el método actual. Espera a
+          que se cierren los modales donde el cajero sigue armando la venta. */}
+      <AnimatePresence>
+        {promoAlert && !dismissedPromoAlerts.has(promoAlert.key) && !isProcessing
+          && !showCatalog && !showPreSalesModal && !showTerminalModal && !showApartarModal
+          && !showCameraScanner && !showOpenCashModal && !showCloseCashModal && !zeroConfirmOpen && (
+          <PromoPaymentAlertModal
+            key="promo-payment-alert"
+            info={promoAlert}
+            keepBlockedReason={promoAlertKeepBlockedReason}
+            formatMoney={fmt}
+            onKeepPromo={keepPromoFromAlert}
+            onSkipPromo={skipPromoFromAlert}
+            onClose={closePromoAlert}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Modal Terminales de Pago */}
       <AnimatePresence>
         {showTerminalModal && (
@@ -7387,16 +7660,9 @@ export function SellPage() {
             // Cambio Joel 2026-05-20: si la tienda activa no tiene entrada en
             // store_limits, NO se vende en esa tienda (antes había fallback al
             // preorder_limit global, lo que abría el catálogo en todas las tiendas
-            // sin querer).
-            const storeLimitRow = catalog.store_limits?.find(sl => sl.store_id === activeStore?.id);
-            const limit = storeLimitRow?.limit_qty ?? 0;
-            const reserved = activeStore?.id != null
-              ? (catalog.reserved_by_store?.[String(activeStore.id)] ?? 0)
-              : 0;
-            const remaining = Math.max(0, limit - reserved);
-            // Sin entrada en store_limits = el gerente/admin aún no habilita esta
-            // tienda → "Sin asignar" (no es lo mismo que agotado: nunca tuvo cupo).
-            const isSinAsignar = storeLimitRow === undefined;
+            // sin querer). Sin entrada = "Sin asignar" (no es lo mismo que
+            // agotado: nunca tuvo cupo). Ver lib/presaleAvailability.
+            const { unassigned: isSinAsignar, limit, reserved, remaining } = storeAvailability(catalog, activeStore?.id);
             const isAgotado = !isSinAsignar && remaining <= 0;
             // Bloqueo por LÍMITE POR CLIENTE: el cliente asignado ya alcanzó su
             // tope de por vida en este catálogo (se llenó al intentar agregar).
@@ -7516,7 +7782,9 @@ export function SellPage() {
                     {catalog.advance_payment > 0 ? fmt(catalog.advance_payment) : "Sin anticipo"}
                   </span>
                 </div>
-                {catalog.preorder_limit != null && (
+                {/* Reservados de ESTA tienda sobre su cupo (store_limits). Antes
+                    salía reserved_count global / preorder_limit → "24 / 1". */}
+                {!isSinAsignar && (
                   <div
                     style={{
                       display: "flex",
@@ -7530,7 +7798,24 @@ export function SellPage() {
                       Reservados
                     </span>
                     <span style={{ fontSize: 17, fontWeight: 900, color: "var(--td-text-hi)" }}>
-                      {catalog.reserved_count ?? 0} / {catalog.preorder_limit}
+                      {reserved} / {limit}
+                    </span>
+                  </div>
+                )}
+                {catalog.limit_per_customer != null && (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 10,
+                    }}
+                  >
+                    <span style={{ fontSize: 10, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--td-text-ghost)" }}>
+                      Máx. por cliente
+                    </span>
+                    <span style={{ fontSize: 13, fontWeight: 900, color: "var(--td-text-md)" }}>
+                      {catalog.limit_per_customer}
                     </span>
                   </div>
                 )}
@@ -8051,11 +8336,14 @@ export function SellPage() {
             toast.success("Actualizando catálogo…");
           }}
           isRefreshing={productsQuery.isFetching}
-          onAddStock={(p) => setStockModalProduct({
-            id: Number(p.id),
-            name: p.name + (p.volume_number != null ? ` Vol. ${p.volume_number}` : ""),
-            kind: p.product_type === "manga" ? "manga" : "product",
-          })}
+          onAddStock={(p) => {
+            if (p.product_type === "bundle") { toast.info(BUNDLE_NO_STOCK_IN_CAJA); return; }
+            setStockModalProduct({
+              id: Number(p.id),
+              name: p.name + (p.volume_number != null ? ` Vol. ${p.volume_number}` : ""),
+              kind: p.product_type === "manga" ? "manga" : "product",
+            });
+          }}
         />
       )}
 
@@ -8672,7 +8960,7 @@ export function SellPage() {
               </div>
 
               {/* Buscador inteligente: ticket #, folio, cliente, producto, SKU o método */}
-              <div style={{ position: "relative", width: 320 }}>
+              <div style={{ position: "relative", flex: "1 1 160px", minWidth: 160, maxWidth: 320 }}>
                 <Search size={14} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "var(--td-text-ghost)", pointerEvents: "none" }} />
                 <input
                   type="text"
@@ -8717,49 +9005,57 @@ export function SellPage() {
             <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", justifyContent: "center" }}>
             <div style={{ width: "100%", maxWidth: 1000, height: "100%", padding: "16px 20px 20px", boxSizing: "border-box", display: "flex", flexDirection: "column", minHeight: 0 }}>
 
-            {/* ADR-016 Fase 1 — Tabs/filtros del historial */}
+            {/* ADR-016 Fase 1 — Tabs/filtros del historial + método de pago (2026-10-08).
+                Los contadores salen de historialView (misma lógica que la lista). */}
             {(() => {
-              const cancelledCount = historialEntries.filter(e => {
-                if (e.type === 'sale') {
-                  const s = e.data as SaleDetail;
-                  return s.status === 'returned' || s.cancellation_status === 'partial';
-                }
-                return e.data.status === 'cancelled' || e.data.cancellation_status === 'partial';
-              }).length;
+              const chip = (isActive: boolean, tone: 'red' | 'danger'): React.CSSProperties => ({
+                padding: '6px 12px',
+                borderRadius: 10,
+                fontSize: 10,
+                fontWeight: 900,
+                textTransform: 'uppercase',
+                letterSpacing: '0.1em',
+                cursor: 'pointer',
+                background: isActive ? (tone === 'danger' ? 'rgba(239,68,68,0.15)' : 'rgba(224,34,26,0.12)') : 'var(--td-card-bg)',
+                border: `1px solid ${isActive ? (tone === 'danger' ? 'rgba(239,68,68,0.35)' : 'rgba(224,34,26,0.30)') : 'var(--td-card-border)'}`,
+                color: isActive ? (tone === 'danger' ? '#f87171' : '#E0221A') : 'var(--td-text-lo)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                transition: 'all 0.15s',
+              });
+              const countStyle = (isActive: boolean): React.CSSProperties => ({
+                background: isActive ? "var(--td-surface-strong)" : "var(--td-surface-soft)",
+                borderRadius: 999,
+                padding: '1px 6px',
+                fontSize: 9,
+              });
               return (
-                <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginBottom: 10 }}>
                   {(['all', 'cancelled'] as const).map(f => {
                     const isActive = historialFilter === f;
                     const label = f === 'all' ? 'Todas' : 'Canceladas';
-                    const count = f === 'all' ? historialEntries.length : cancelledCount;
+                    const count = f === 'all' ? historialEntries.length : historialView.cancelledCount;
+                    return (
+                      <button key={f} onClick={() => setHistorialFilter(f)} style={chip(isActive, f === 'cancelled' ? 'danger' : 'red')}>
+                        {label}
+                        <span style={countStyle(isActive)}>{count}</span>
+                      </button>
+                    );
+                  })}
+                  {/* Método de pago: "¿cuáles fueron las transferencias de hoy?" */}
+                  <span aria-hidden style={{ width: 1, alignSelf: 'stretch', background: 'var(--td-card-border)', margin: '0 4px' }} />
+                  {HISTORIAL_METHOD_OPTIONS.map(opt => {
+                    const isActive = historialMethod === opt.value;
                     return (
                       <button
-                        key={f}
-                        onClick={() => setHistorialFilter(f)}
-                        style={{
-                          padding: '6px 12px',
-                          borderRadius: 10,
-                          fontSize: 10,
-                          fontWeight: 900,
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.1em',
-                          cursor: 'pointer',
-                          background: isActive ? (f === 'cancelled' ? 'rgba(239,68,68,0.15)' : 'rgba(224,34,26,0.12)') : 'var(--td-card-bg)',
-                          border: `1px solid ${isActive ? (f === 'cancelled' ? 'rgba(239,68,68,0.35)' : 'rgba(224,34,26,0.30)') : 'var(--td-card-border)'}`,
-                          color: isActive ? (f === 'cancelled' ? '#f87171' : '#E0221A') : 'var(--td-text-lo)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 6,
-                          transition: 'all 0.15s',
-                        }}
+                        key={opt.value}
+                        onClick={() => setHistorialMethod(opt.value)}
+                        title={opt.value === 'all' ? 'Todos los métodos de pago' : `Solo lo pagado con ${opt.label}`}
+                        style={chip(isActive, 'red')}
                       >
-                        {label}
-                        <span style={{
-                          background: isActive ? "var(--td-surface-strong)" : "var(--td-surface-soft)",
-                          borderRadius: 999,
-                          padding: '1px 6px',
-                          fontSize: 9,
-                        }}>{count}</span>
+                        {opt.label}
+                        <span style={countStyle(isActive)}>{historialView.methodCounts[opt.value]}</span>
                       </button>
                     );
                   })}
@@ -8767,72 +9063,24 @@ export function SellPage() {
               );
             })()}
 
-            {/* List — max-height anclado al alto real de la pantalla (mide su
-                top vs window.innerHeight) para que el scroll se maneje SIEMPRE
-                internamente, sin depender solo de la cadena flex. minHeight 0
-                se mantiene como respaldo del flex. */}
-            <div ref={historialListRef} className="td-scroll-visible" style={{ flex: 1, minHeight: 0, maxHeight: historialListMaxH, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6, paddingRight: 4 }}>
-              {historialLoading ? (
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 40 }}>
-                  <Loader2 size={24} style={{ color: "#E0221A" }} className="animate-spin" />
-                </div>
-              ) : historialEntries.length === 0 ? (
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 40, opacity: 0.3 }}>
-                  <Receipt size={36} style={{ marginBottom: 8 }} />
-                  <p style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em" }}>Sin eventos registrados hoy</p>
-                </div>
-              ) : (
-                (() => {
-                  // Build set of saleIds that are part of a mixed pair so we skip them as standalone
-                  const pairedSaleIds = new Set(mixedPairs.map(p => p.saleId));
-
-                  // ADR-016 Fase 1: aplica filtro de tab.
-                  const tabEntries = historialFilter === 'cancelled'
-                    ? historialEntries.filter(e => {
-                        if (e.type === 'sale') {
-                          const s = e.data as SaleDetail;
-                          return s.status === 'returned' || s.cancellation_status === 'partial';
-                        }
-                        return e.data.status === 'cancelled' || e.data.cancellation_status === 'partial';
-                      })
-                    : historialEntries;
-
-                  // Buscador: ticket #, folio, cliente, producto, SKU o método de pago.
-                  const q = historialSearch.trim().toLowerCase();
-                  const filteredEntries = !q ? tabEntries : tabEntries.filter(e => {
-                    if (e.type === 'sale') {
-                      const s = e.data as SaleDetail;
-                      return String(s.id ?? '').includes(q)
-                        || (s.customer?.name ?? '').toLowerCase().includes(q)
-                        || (s.items ?? []).some(i =>
-                          (i.product?.name ?? '').toLowerCase().includes(q)
-                          || (i.product?.sku ?? '').toLowerCase().includes(q))
-                        || (s.payments ?? []).some(p => (p.payment_method?.name ?? '').toLowerCase().includes(q));
-                    }
-                    const o = e.data;
-                    return (o.code ?? '').toLowerCase().includes(q)
-                      || (o.customer?.name ?? '').toLowerCase().includes(q)
-                      || (o.items ?? []).some(i => (i.catalog?.product_name ?? '').toLowerCase().includes(q))
-                      || (o.payments ?? []).some(p => (p.payment_method?.name ?? '').toLowerCase().includes(q));
-                  });
-
-                  if (filteredEntries.length === 0) {
-                    return (
-                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 40, opacity: 0.3 }}>
-                        <Receipt size={36} style={{ marginBottom: 8 }} />
-                        <p style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em" }}>
-                          {q ? `Sin resultados para "${historialSearch.trim()}"` : historialFilter === 'cancelled' ? 'No hay cancelaciones hoy' : 'Sin eventos registrados hoy'}
-                        </p>
-                      </div>
-                    );
-                  }
-
-                  return filteredEntries.map(entry => {
+            {/* Lista agrupada por hora y pintada por tandas (HistorialList,
+                2026-10-19). El max-height sigue anclado al alto real de la pantalla. */}
+            <HistorialList
+              entries={historialVisible}
+              loading={historialLoading}
+              emptyText={historialEntries.length === 0
+                ? 'Sin eventos registrados hoy'
+                : historialSearch.trim()
+                  ? `Sin resultados para "${historialSearch.trim()}"`
+                  : historialMethod !== 'all'
+                    ? `Sin ${historialFilter === 'cancelled' ? 'cancelaciones' : 'ventas'} con ${HISTORIAL_METHOD_OPTIONS.find(o => o.value === historialMethod)?.label ?? ''} hoy`
+                    : historialFilter === 'cancelled' ? 'No hay cancelaciones hoy' : 'Sin eventos registrados hoy'}
+              resetKey={`${historialFilter}|${historialMethod}|${historialSearch.trim().toLowerCase()}`}
+              listRef={historialListRef}
+              maxHeight={historialListMaxH}
+              renderEntry={entry => {
                   const entryKey = `${entry.type}-${entry.data.id}`;
                   const isOpen = expandedEntryKey === entryKey;
-
-                  // ── VENTA PARTE DE UN PAR MIXTO → skip (la renderiza el bloque de preventa) ──
-                  if (entry.type === 'sale' && pairedSaleIds.has(entry.data.id!)) return null;
 
                   // ── VENTA REGULAR ────────────────────────────────────────────
                   if (entry.type === 'sale') {
@@ -8854,13 +9102,14 @@ export function SellPage() {
                     const discount = sale.discount;
                     return (
                       <div key={entryKey} style={{ background: "var(--td-card-bg)", border: `1px solid ${isOpen ? "rgba(224,34,26,0.3)" : "var(--td-card-border)"}`, borderRadius: 16, overflow: "hidden" }}>
-                        <button onClick={() => setExpandedEntryKey(isOpen ? null : entryKey)}
-                          style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "none", border: "none", cursor: "pointer", textAlign: "left" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, paddingRight: 14 }}>
+                        <button type="button" onClick={() => setExpandedEntryKey(isOpen ? null : entryKey)} aria-expanded={isOpen}
+                          style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 10, padding: "10px 4px 10px 14px", background: "none", border: "none", cursor: "pointer", textAlign: "left", color: "inherit", font: "inherit" }}>
                           <ChevronRight size={12} style={{ flexShrink: 0, transform: isOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s", color: isOpen ? "#E0221A" : "var(--td-text-ghost)" }} />
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                               <span style={{ fontSize: 9, fontWeight: 900, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.12em" }}>#{sale.id}</span>
-                              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--td-text-hi)" }}>{new Date(dateStr).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" })}</span>
+                              <span title={new Date(dateStr).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" })} style={{ fontSize: 12, fontWeight: 800, color: "var(--td-text-hi)", fontVariantNumeric: "tabular-nums" }}>{ticketTime(dateStr)}</span>
                               {sale.customer?.name && <span style={{ fontSize: 10, color: "var(--td-text-ghost)", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sale.customer.name}</span>}
                             </div>
                             <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
@@ -8886,7 +9135,8 @@ export function SellPage() {
                               )}
                             </span>
                           )}
-                          <div onClick={e => {
+                          </button>
+                          <button type="button" onClick={e => {
                             e.stopPropagation();
                             // Reconstrucción FIEL del ticket desde la venta guardada:
                             // método(s), efectivo/dólares/cambio y TC de la venta — antes
@@ -8929,31 +9179,31 @@ export function SellPage() {
                               ...(sum.change != null && sum.change > 0 ? { change: sum.change } : {}),
                             });
                           }}
-                            role="button" title="Reimprimir ticket"
-                            style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 9, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--td-text-lo)" }}
-                            onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = "rgba(224,34,26,0.1)"; (e.currentTarget as HTMLDivElement).style.borderColor = "rgba(224,34,26,0.3)"; (e.currentTarget as HTMLDivElement).style.color = "#E0221A"; }}
-                            onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = "var(--td-input-bg)"; (e.currentTarget as HTMLDivElement).style.borderColor = "var(--td-input-border)"; (e.currentTarget as HTMLDivElement).style.color = "var(--td-text-lo)"; }}>
+                            title="Reimprimir ticket" aria-label={`Reimprimir ticket #${sale.id}`}
+                            style={{ flexShrink: 0, padding: 0, width: 32, height: 32, borderRadius: 9, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--td-text-lo)" }}
+                            onMouseEnter={e => { e.currentTarget.style.background = "rgba(224,34,26,0.1)"; e.currentTarget.style.borderColor = "rgba(224,34,26,0.3)"; e.currentTarget.style.color = "#E0221A"; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = "var(--td-input-bg)"; e.currentTarget.style.borderColor = "var(--td-input-border)"; e.currentTarget.style.color = "var(--td-text-lo)"; }}>
                             <Printer size={13} />
-                          </div>
+                          </button>
                           {canFix && (
-                            <div onClick={e => { e.stopPropagation(); setCorrectPaymentTarget(sale); }}
-                              role="button" title="Corregir método de pago"
-                              style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 9, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--td-text-lo)" }}
+                            <button type="button" onClick={e => { e.stopPropagation(); setCorrectPaymentTarget(sale); }}
+                              title="Corregir método de pago" aria-label={`Corregir método de pago del ticket #${sale.id}`}
+                              style={{ flexShrink: 0, padding: 0, width: 32, height: 32, borderRadius: 9, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--td-text-lo)" }}
                               onMouseEnter={e => { e.currentTarget.style.background = "rgba(59,130,246,0.12)"; e.currentTarget.style.borderColor = "rgba(59,130,246,0.35)"; e.currentTarget.style.color = "#60a5fa"; }}
                               onMouseLeave={e => { e.currentTarget.style.background = "var(--td-input-bg)"; e.currentTarget.style.borderColor = "var(--td-input-border)"; e.currentTarget.style.color = "var(--td-text-lo)"; }}>
                               <ArrowLeftRight size={14} />
-                            </div>
+                            </button>
                           )}
                           {sale.status !== "returned" && (
-                            <div onClick={e => { e.stopPropagation(); setCancelTarget({ kind: 'sale', sale }); }}
-                              role="button" title="Cancelar venta"
-                              style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 9, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--td-text-lo)" }}
-                              onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = "rgba(239,68,68,0.12)"; (e.currentTarget as HTMLDivElement).style.borderColor = "rgba(239,68,68,0.35)"; (e.currentTarget as HTMLDivElement).style.color = "#f87171"; }}
-                              onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = "var(--td-input-bg)"; (e.currentTarget as HTMLDivElement).style.borderColor = "var(--td-input-border)"; (e.currentTarget as HTMLDivElement).style.color = "var(--td-text-lo)"; }}>
+                            <button type="button" onClick={e => { e.stopPropagation(); setCancelTarget({ kind: 'sale', sale }); }}
+                              title="Cancelar venta" aria-label={`Cancelar venta #${sale.id}`}
+                              style={{ flexShrink: 0, padding: 0, width: 32, height: 32, borderRadius: 9, background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--td-text-lo)" }}
+                              onMouseEnter={e => { e.currentTarget.style.background = "rgba(239,68,68,0.12)"; e.currentTarget.style.borderColor = "rgba(239,68,68,0.35)"; e.currentTarget.style.color = "#f87171"; }}
+                              onMouseLeave={e => { e.currentTarget.style.background = "var(--td-input-bg)"; e.currentTarget.style.borderColor = "var(--td-input-border)"; e.currentTarget.style.color = "var(--td-text-lo)"; }}>
                               <XCircle size={15} />
-                            </div>
+                            </button>
                           )}
-                        </button>
+                        </div>
                         {isOpen && (
                           <div style={{ borderTop: "1px solid var(--td-card-border)", padding: "12px 14px 14px", background: MUTED }}>
                             <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 10 }}>
@@ -9094,8 +9344,9 @@ export function SellPage() {
 
                   return (
                     <div key={entryKey} style={{ background: isMixed ? "rgba(139,92,246,0.04)" : "rgba(245,158,11,0.04)", border: `1px solid ${isOpen ? (isMixed ? "rgba(139,92,246,0.45)" : "rgba(245,158,11,0.45)") : (isMixed ? "rgba(139,92,246,0.25)" : "rgba(245,158,11,0.2)")}`, borderRadius: 16, overflow: "hidden" }}>
-                      <button onClick={() => setExpandedEntryKey(isOpen ? null : entryKey)}
-                        style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "none", border: "none", cursor: "pointer", textAlign: "left" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, paddingRight: 14 }}>
+                      <button type="button" onClick={() => setExpandedEntryKey(isOpen ? null : entryKey)} aria-expanded={isOpen}
+                        style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 10, padding: "10px 4px 10px 14px", background: "none", border: "none", cursor: "pointer", textAlign: "left", color: "inherit", font: "inherit" }}>
                         <ChevronRight size={12} style={{ flexShrink: 0, transform: isOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s", color: isOpen ? (isMixed ? "#a78bfa" : "#f59e0b") : (isMixed ? "rgba(139,92,246,0.5)" : "rgba(245,158,11,0.5)") }} />
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -9103,7 +9354,7 @@ export function SellPage() {
                               {isMixed ? "Mixto" : "Preventa"}
                             </span>
                             <span style={{ fontSize: 10, fontWeight: 900, color: isMixed ? "#a78bfa" : "#f59e0b", fontFamily: "monospace" }}>{order.code}</span>
-                            <span style={{ fontSize: 11, fontWeight: 700, color: "var(--td-text-hi)" }}>{new Date(order.created_at).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" })}</span>
+                            <span title={new Date(order.created_at).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" })} style={{ fontSize: 12, fontWeight: 800, color: "var(--td-text-hi)", fontVariantNumeric: "tabular-nums" }}>{ticketTime(order.created_at)}</span>
                             {order.customer?.name && <span style={{ fontSize: 10, color: "var(--td-text-ghost)", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{order.customer.name}</span>}
                           </div>
                           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
@@ -9129,7 +9380,8 @@ export function SellPage() {
                         <span style={{ fontSize: 14, fontWeight: 900, color: order.status === "cancelled" ? "#f87171" : order.status === "delivered" ? "#34d399" : (isMixed ? "#a78bfa" : "#f59e0b"), flexShrink: 0, textDecoration: order.status === "cancelled" ? "line-through" : "none", opacity: order.status === "cancelled" ? 0.6 : 1 }} title={`Valor total de la preventa: ${fmt(order.total ?? 0)}`}>
                           {fmt(isMixed ? grandTotal : paidAmt)}
                         </span>
-                        <div
+                        </button>
+                        <button type="button"
                           onClick={e => {
                             e.stopPropagation();
                             doPrintTicket({
@@ -9147,25 +9399,25 @@ export function SellPage() {
                               preSaleIsLiquidation: order.status === "delivered",
                             });
                           }}
-                          role="button" title="Imprimir ticket"
-                          style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 9, background: isMixed ? "rgba(139,92,246,0.08)" : "rgba(245,158,11,0.08)", border: `1px solid ${isMixed ? "rgba(139,92,246,0.2)" : "rgba(245,158,11,0.2)"}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: isMixed ? "rgba(139,92,246,0.6)" : "rgba(245,158,11,0.6)" }}
-                          onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = isMixed ? "rgba(139,92,246,0.15)" : "rgba(245,158,11,0.15)"; (e.currentTarget as HTMLDivElement).style.color = isMixed ? "#a78bfa" : "#f59e0b"; }}
-                          onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = isMixed ? "rgba(139,92,246,0.08)" : "rgba(245,158,11,0.08)"; (e.currentTarget as HTMLDivElement).style.color = isMixed ? "rgba(139,92,246,0.6)" : "rgba(245,158,11,0.6)"; }}>
+                          title="Imprimir ticket" aria-label={`Imprimir ticket del folio ${order.code}`}
+                          style={{ flexShrink: 0, padding: 0, width: 32, height: 32, borderRadius: 9, background: isMixed ? "rgba(139,92,246,0.08)" : "rgba(245,158,11,0.08)", border: `1px solid ${isMixed ? "rgba(139,92,246,0.2)" : "rgba(245,158,11,0.2)"}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: isMixed ? "rgba(139,92,246,0.6)" : "rgba(245,158,11,0.6)" }}
+                          onMouseEnter={e => { e.currentTarget.style.background = isMixed ? "rgba(139,92,246,0.15)" : "rgba(245,158,11,0.15)"; e.currentTarget.style.color = isMixed ? "#a78bfa" : "#f59e0b"; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = isMixed ? "rgba(139,92,246,0.08)" : "rgba(245,158,11,0.08)"; e.currentTarget.style.color = isMixed ? "rgba(139,92,246,0.6)" : "rgba(245,158,11,0.6)"; }}>
                           <Printer size={13} />
-                        </div>
+                        </button>
                         {/* Liquidada (delivered) ya NO se puede cancelar: el botón
                             solo aparece para folios con anticipo pendiente
                             (Joel 2026-06-13). */}
                         {order.status !== "cancelled" && order.status !== "delivered" && (
-                          <div onClick={e => { e.stopPropagation(); setCancelTarget({ kind: 'presale', order }); }}
-                            role="button" title="Cancelar folio"
-                            style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 9, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.22)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "rgba(239,68,68,0.7)" }}
-                            onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = "rgba(239,68,68,0.18)"; (e.currentTarget as HTMLDivElement).style.color = "#f87171"; }}
-                            onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = "rgba(239,68,68,0.08)"; (e.currentTarget as HTMLDivElement).style.color = "rgba(239,68,68,0.7)"; }}>
+                          <button type="button" onClick={e => { e.stopPropagation(); setCancelTarget({ kind: 'presale', order }); }}
+                            title="Cancelar folio" aria-label={`Cancelar folio ${order.code}`}
+                            style={{ flexShrink: 0, padding: 0, width: 32, height: 32, borderRadius: 9, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.22)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "rgba(239,68,68,0.7)" }}
+                            onMouseEnter={e => { e.currentTarget.style.background = "rgba(239,68,68,0.18)"; e.currentTarget.style.color = "#f87171"; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = "rgba(239,68,68,0.08)"; e.currentTarget.style.color = "rgba(239,68,68,0.7)"; }}>
                             <XCircle size={15} />
-                          </div>
+                          </button>
                         )}
-                      </button>
+                      </div>
                       {isOpen && (
                         <div style={{ borderTop: `1px solid ${isMixed ? "rgba(139,92,246,0.15)" : "rgba(245,158,11,0.15)"}`, padding: "12px 14px 14px", background: MUTED }}>
 
@@ -9234,10 +9486,8 @@ export function SellPage() {
                       )}
                     </div>
                   );
-                  });
-                })()
-              )}
-            </div>
+              }}
+            />
 
             </div>
             </div>
@@ -9245,201 +9495,15 @@ export function SellPage() {
       )}
 
       {/* ══════════════ ATAJOS FLOTANTES: OTRAS VENTAS ABIERTAS ══════════════ */}
-      {/* Aparece solo si hay >1 mesa. Card flotante con filas tipo pill
-          (icono + nombre + items). Antes vivía abajo-derecha "arribita del
-          footer"; con el nuevo sidebar derecho de cobro se movió a abajo-IZQUIERDA
-          para no traslaparse con el panel de cobro. Usa variables --td-* para
-          adaptarse a light/dark theme. Las filas con items siempre rojas
-          (mantienen contraste en ambos themes). */}
-      {mesas.length > 1 && (
-        <>
-          <style>{`
-            @keyframes td-shortcut-pulse {
-              0%, 100% { box-shadow: 0 0 0 rgba(224,34,26,0); }
-              50%      { box-shadow: 0 0 18px rgba(224,34,26,0.55); }
-            }
-          `}</style>
-          <div
-            style={{
-              position: "fixed",
-              bottom: 20,
-              left: 20,
-              zIndex: 50,
-              display: "flex",
-              flexDirection: "column",
-              gap: 8,
-              minWidth: 210,
-              background: "var(--td-popup-bg)",
-              backdropFilter: "blur(14px)",
-              border: "1px solid var(--td-popup-border)",
-              borderRadius: 18,
-              padding: 10,
-              boxShadow: "0 12px 36px rgba(0,0,0,0.25)",
-            }}
-          >
-            {/* Header con label + contador de activas */}
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "2px 6px 6px",
-                borderBottom: "1px solid var(--td-panel-border)",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <ShoppingCart size={11} style={{ color: "var(--td-red)" }} />
-                <span
-                  style={{
-                    fontSize: 9,
-                    fontWeight: 900,
-                    letterSpacing: "0.16em",
-                    textTransform: "uppercase",
-                    color: "var(--td-red)",
-                  }}
-                >
-                  Otras ventas
-                </span>
-              </div>
-              <span
-                style={{
-                  fontSize: 9,
-                  fontWeight: 800,
-                  color: "var(--td-text-ghost)",
-                }}
-              >
-                {mesas.filter(m => m.id !== activeMesaId && m.items.length > 0).length}/{mesas.length - 1}
-              </span>
-            </div>
-
-            {mesas
-              .filter(m => m.id !== activeMesaId)
-              .map(m => {
-                const itemCount = m.items.reduce((s, i) => s + i.quantity, 0);
-                const subtotal = m.items.reduce((s, i) => s + i.price * i.quantity, 0);
-                const hasItems = itemCount > 0;
-                const isPrincipal = m.name === "Caja Principal";
-                const Icon = isPrincipal ? Crown : ShoppingCart;
-                return (
-                  <div
-                    key={m.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => setActiveMesaId(m.id)}
-                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setActiveMesaId(m.id); } }}
-                    title={`Ir a ${m.name}${hasItems ? ` · ${itemCount} item${itemCount === 1 ? "" : "s"} · $${subtotal.toFixed(0)}` : " · vacía"}`}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 10,
-                      width: "100%",
-                      padding: "10px 12px",
-                      borderRadius: 12,
-                      // Activas → rojo sólido (mismo contraste en light/dark).
-                      // Vacías → fondo y bordes del theme para integrarse.
-                      background: hasItems
-                        ? "linear-gradient(135deg, #BB1100 0%, #FF3322 100%)"
-                        : "var(--td-input-bg)",
-                      border: hasItems
-                        ? "1px solid rgba(255,120,80,0.5)"
-                        : "1px solid var(--td-input-border)",
-                      color: hasItems ? "#fff" : "var(--td-text-lo)",
-                      cursor: "pointer",
-                      textAlign: "left",
-                      transition: "transform 0.12s ease, background 0.15s",
-                      animation: hasItems ? "td-shortcut-pulse 2.6s ease-in-out infinite" : undefined,
-                    }}
-                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.transform = "translateX(-3px)"; }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.transform = "translateX(0)"; }}
-                  >
-                    <div
-                      style={{
-                        width: 32,
-                        height: 32,
-                        borderRadius: 10,
-                        background: hasItems ? "rgba(255,255,255,0.20)" : "var(--td-panel-bg)",
-                        border: hasItems ? "none" : "1px solid var(--td-panel-border)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        flexShrink: 0,
-                        color: hasItems ? "#fff" : "var(--td-text-ghost)",
-                      }}
-                    >
-                      <Icon size={15} strokeWidth={2.5} />
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, lineHeight: 1.15 }}>
-                      <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: "0.04em" }}>
-                        {m.name}
-                      </span>
-                      <span
-                        style={{
-                          fontSize: 9,
-                          fontWeight: 700,
-                          opacity: hasItems ? 0.85 : 1,
-                          color: hasItems ? "rgba(255,255,255,0.85)" : "var(--td-text-ghost)",
-                        }}
-                      >
-                        {hasItems ? `${itemCount} item${itemCount === 1 ? "" : "s"} · $${subtotal.toFixed(0)}` : "Vacía"}
-                      </span>
-                    </div>
-                    {hasItems ? (
-                      <ChevronRight size={14} style={{ opacity: 0.9, color: hasItems ? "#fff" : "var(--td-text-ghost)" }} />
-                    ) : (
-                      <Circle size={6} fill="currentColor" style={{ opacity: 0.4, color: "var(--td-text-ghost)" }} />
-                    )}
-                    {/* Cancelar venta — solo en Venta 2..5, nunca en Caja Principal.
-                        Si tiene items, pide confirmación para evitar borrar venta
-                        en curso por accidente. */}
-                    {!isPrincipal && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (hasItems) {
-                            const ok = window.confirm(
-                              `${m.name} tiene ${itemCount} item${itemCount === 1 ? "" : "s"} ($${subtotal.toFixed(0)}).\n\n¿Cancelar la venta? Los productos se perderán.`
-                            );
-                            if (!ok) return;
-                          }
-                          removeMesa(m.id);
-                        }}
-                        title={`Cancelar ${m.name}`}
-                        aria-label={`Cancelar ${m.name}`}
-                        style={{
-                          width: 26,
-                          height: 26,
-                          borderRadius: 8,
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          background: hasItems ? "rgba(0,0,0,0.18)" : "transparent",
-                          border: hasItems ? "1px solid rgba(255,255,255,0.18)" : "1px solid var(--td-panel-border)",
-                          color: hasItems ? "rgba(255,255,255,0.85)" : "var(--td-text-ghost)",
-                          cursor: "pointer",
-                          flexShrink: 0,
-                          transition: "background 0.12s, color 0.12s",
-                        }}
-                        onMouseEnter={(e) => {
-                          (e.currentTarget as HTMLButtonElement).style.background = "rgba(224,34,26,0.9)";
-                          (e.currentTarget as HTMLButtonElement).style.color = "#fff";
-                          (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,80,50,0.6)";
-                        }}
-                        onMouseLeave={(e) => {
-                          (e.currentTarget as HTMLButtonElement).style.background = hasItems ? "rgba(0,0,0,0.18)" : "transparent";
-                          (e.currentTarget as HTMLButtonElement).style.color = hasItems ? "rgba(255,255,255,0.85)" : "var(--td-text-ghost)";
-                          (e.currentTarget as HTMLButtonElement).style.borderColor = hasItems ? "rgba(255,255,255,0.18)" : "var(--td-panel-border)";
-                        }}
-                      >
-                        <Trash2 size={12} strokeWidth={2.5} />
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-          </div>
-        </>
-      )}
+      {/* Solo con >1 mesa. Abajo-IZQUIERDA para no taparse con el panel de cobro;
+          con muchas ventas en espera scrollea adentro y se puede plegar
+          (OtherSalesDock, 2026-10-19). */}
+      <OtherSalesDock
+        mesas={dockSales}
+        activeMesaId={activeMesaId}
+        onSelect={setActiveMesaId}
+        onRemove={removeMesa}
+      />
     </div>
   );
 }

@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Inventory;
 use App\Models\InventoryMovement;
+use App\Models\Product;
 use App\Models\Transfer;
 use App\Models\TransferItem;
 use Illuminate\Support\Facades\DB;
@@ -19,6 +20,7 @@ class TransferService
      * Valida antes de crear:
      *  - Las bodegas existen y son distintas
      *  - No hay ítems duplicados del mismo producto
+     *  - Ningún ítem es un paquete (ver assertNoBundles)
      *
      * @throws \DomainException
      */
@@ -30,6 +32,7 @@ class TransferService
             if (count($productIds) !== count(array_unique($productIds))) {
                 throw new \DomainException('Hay productos duplicados en el traslado. Consolídalos en un solo ítem.');
             }
+            $this->assertNoBundles($productIds, received: false);
 
             $transfer = Transfer::create([
                 'from_warehouse_id' => $data['from_warehouse_id'],
@@ -79,6 +82,8 @@ class TransferService
             }
 
             $transfer->load('items.product');
+            // Una solicitud vieja (o de otro cliente) con paquetes tampoco se recibe.
+            $this->assertNoBundles($transfer->items->pluck('product_id')->all(), received: true);
             $ref = "TRASLADO-{$transfer->id}";
 
             foreach ($transfer->items as $item) {
@@ -158,5 +163,35 @@ class TransferService
 
             return $transfer->fresh(['items.product', 'fromWarehouse', 'toWarehouse', 'user']);
         });
+    }
+
+    // ─── Paquetes ─────────────────────────────────────────────────────────────
+
+    /**
+     * Paquetes (2026-10-08): NO se trasladan. Su stock solo cambia armando o
+     * desarmando (BundleService) y vive en Exhibición; un traslado lo dejaría
+     * atorado en Bodega o en otra tienda sin forma de moverlo. Se revisa al
+     * solicitar y al recibir (una solicitud creada antes de la regla o desde
+     * otro cliente también se rechaza; cancelarla sigue permitido).
+     *
+     * @param  list<int|string>  $productIds
+     *
+     * @throws \DomainException
+     */
+    private function assertNoBundles(array $productIds, bool $received): void
+    {
+        $bundles = Product::query()
+            ->whereIn('id', $productIds)
+            ->where('product_type', Product::TYPE_BUNDLE)
+            ->orderBy('name')
+            ->get(['id', 'name', 'sku']);
+        if ($bundles->isEmpty()) {
+            return;
+        }
+
+        $names = $bundles->map(fn (Product $b) => "«{$b->name}» {$b->sku}")->implode(', ');
+        throw new \DomainException($received
+            ? "Este traslado incluye paquetes ({$names}) y no se puede recibir: cancélalo, desarma el paquete en la tienda origen y ármalo en la destino."
+            : "Los paquetes no se trasladan ({$names}): desármalo aquí y ármalo en la otra tienda.");
     }
 }

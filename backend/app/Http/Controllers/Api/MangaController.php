@@ -6,11 +6,15 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreMangaRequest;
+use App\Http\Requests\DeleteProductRequest;
 use App\Http\Requests\UpdateMangaRequest;
 use App\Http\Resources\MangaCompatResource;
 use App\Models\Product;
 use App\Models\ProductMangaDetail;
 use App\Models\SystemLog;
+use App\Services\ProductDeletionService;
+use App\Support\BundleCost;
+use App\Support\StockSql;
 use App\Support\TomoCost;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -30,10 +34,20 @@ class MangaController extends Controller
 {
     /**
      * GET /mangas — lista de productos con product_type='manga'.
+     *
+     * Paginada (?page, ?per_page: default 50, máx 200) con el total real en
+     * `pagination`. Filtros del tab Tomos (2026-10-12), todos opcionales y
+     * combinables por AND con tienda y búsqueda: ?out_of_stock=1, ?low_stock=1
+     * (+ ?threshold, default 10) y ?no_category=1. Antes el front los aplicaba
+     * en el navegador sobre la primera página (50 de ~2.8k) y el badge de
+     * /products/stats no cuadraba con la tabla; aquí usan el MISMO stock y la
+     * misma definición que stats, así que `pagination.total` = el badge.
      */
     public function index(Request $request): JsonResponse
     {
         $storeId = $request->filled('store_id') ? (int) $request->store_id : null;
+        $stockSql = StockSql::total($storeId);
+        $stockBind = StockSql::bindings($storeId);
 
         $query = Product::query()
             ->ofType(Product::TYPE_MANGA)
@@ -46,13 +60,39 @@ class MangaController extends Controller
                 ->whereHas('mangaDetails', fn ($d) => $d->where('genre', $request->genre)))
             ->when($request->filled('editorial'), fn ($q) => $q
                 ->whereHas('mangaDetails', fn ($d) => $d->where('editorial', $request->editorial)))
+            // Nombre, SKU, código de barras y también editorial / género: es lo
+            // que promete el buscador del tab, y con paginación server-side ya
+            // no hay un filtro en el navegador que lo "complete".
             ->when($request->filled('search'), fn ($q) => $q->where(function ($q2) use ($request) {
-                $term = $request->search;
-                $q2->whereLike('name', "%{$term}%", caseSensitive: false)
-                   ->orWhereLike('sku', "%{$term}%", caseSensitive: false)
-                   ->orWhereLike('barcode', "%{$term}%", caseSensitive: false);
-            }))
-            ->orderBy('name');
+                $like = '%' . trim((string) $request->search) . '%';
+                $q2->whereLike('name', $like, caseSensitive: false)
+                   ->orWhereLike('sku', $like, caseSensitive: false)
+                   ->orWhereLike('barcode', $like, caseSensitive: false)
+                   ->orWhereHas('mangaDetails', fn ($d) => $d->where(fn ($d2) => $d2
+                       ->whereLike('editorial', $like, caseSensitive: false)
+                       ->orWhereLike('genre', $like, caseSensitive: false)));
+            }));
+
+        if ($request->boolean('out_of_stock')) {
+            $query->whereRaw("{$stockSql} = 0", $stockBind);
+        } elseif ($request->boolean('low_stock')) {
+            $threshold = max(1, (int) $request->get('threshold', 10));
+            $query->whereRaw("{$stockSql} > 0", $stockBind)
+                ->whereRaw("{$stockSql} <= ?", [...$stockBind, $threshold]);
+        }
+
+        // Sin NINGUNA categoría: lee el pivote, no la caché products.category_id.
+        if ($request->boolean('no_category')) {
+            $query->whereDoesntHave('categories');
+        }
+
+        // Con stock primero (misma regla que Productos, Joel 2026-08-05: los
+        // agotados no estorban al inicio), luego por nombre. El `id` desempata:
+        // hay muchos tomos con el mismo nombre y sin él una fila puede repetirse
+        // o saltarse entre páginas.
+        $query->orderByRaw("({$stockSql}) = 0", $stockBind)
+            ->orderBy('name')
+            ->orderBy('id');
 
         // Visibilidad por tienda — mismo patrón que ProductController::index.
         // Default: solo tomos CON inventario en la tienda. Con
@@ -245,7 +285,7 @@ class MangaController extends Controller
         // Se resuelve ANTES de la transacción: compara contra el precio A actual.
         $cost = $this->resolveCostForUpdate($manga, $data);
 
-        DB::transaction(function () use ($manga, $data, $cost): void {
+        $bundlesCost = DB::transaction(function () use ($manga, $data, $cost): array {
             $productPayload = array_filter([
                 'name'    => $data['name']    ?? null,
                 'sku'     => $data['code']    ?? null,
@@ -257,8 +297,13 @@ class MangaController extends Controller
                 'active'  => array_key_exists('active', $data) ? $data['active'] : null,
             ], fn ($v) => $v !== null);
 
+            $bundlesCost = [];
             if (! empty($productPayload)) {
                 $manga->update($productPayload);
+                // Si el tomo es pieza de algún paquete, el costo del paquete lo sigue (2026-10-14).
+                if ($manga->wasChanged('cost')) {
+                    $bundlesCost = BundleCost::syncForComponents([$manga->id]);
+                }
             }
 
             if (array_key_exists('category_ids', $data)) {
@@ -292,6 +337,8 @@ class MangaController extends Controller
                     ],
                 );
             }
+
+            return $bundlesCost;
         });
 
         $manga->load(['mangaDetails', 'price', 'images', 'categories:product_categories.id,name'])
@@ -319,7 +366,7 @@ class MangaController extends Controller
                 description: "Manga editado: {$manga->name} (SKU: {$manga->sku})",
                 entityType: 'manga',
                 entityId: $manga->id,
-                meta: ['changes' => $changes],
+                meta: ['changes' => $changes] + ($bundlesCost !== [] ? ['bundles_cost' => $bundlesCost] : []),
             );
         }
 
@@ -359,8 +406,11 @@ class MangaController extends Controller
 
     /**
      * DELETE /mangas/{manga}
+     *
+     * Misma puerta que /products (ProductDeletionService, 2026-10-09): apartados y
+     * paquetes bloquean, `expected` opcional de la vista previa, ventas se quedan.
      */
-    public function destroy(Product $manga): JsonResponse
+    public function destroy(DeleteProductRequest $request, Product $manga, ProductDeletionService $deletion): JsonResponse
     {
         // Eliminar tomo = permiso de ver costo (admin o gerente con can_view_cost).
         if ($resp = $this->canDeleteProductsError()) {
@@ -371,32 +421,21 @@ class MangaController extends Controller
             return $this->error('El producto no es de tipo manga.', 422);
         }
 
-        // Apartados = FK restrict (contrato vivo): mismo bloqueo que products.
-        $layawaysCount = DB::table('layaways')->where('product_id', $manga->id)->count();
-        if ($layawaysCount > 0) {
-            return $this->error(
-                "No se puede eliminar: el tomo tiene {$layawaysCount} apartado(s). Puedes desactivarlo.",
-                422
-            );
-        }
-
         $snapshot = ['id' => $manga->id, 'name' => $manga->name, 'sku' => $manga->sku];
 
-        $manga->images()->each(function ($img) {
-            Storage::delete($img->image_path);
-        });
-
-        // Las ventas ya NO bloquean ni degradan a "desactivar" (Joel
-        // 2026-08-18): sale_items conserva el snapshot nombre/SKU (ADR-015)
-        // y el historial/reportes quedan completos con product_id NULL.
-        $salesCount = ProductController::snapshotAndDelete($manga);
+        try {
+            $result = $deletion->delete($manga, $request->user(), force: false, expected: $request->expected());
+        } catch (\DomainException $e) {
+            return $this->error($e->getMessage(), 422);
+        }
+        $salesCount = $result['sales_kept'];
 
         SystemLog::write(
             action: 'manga.deleted',
             description: "Manga eliminado: {$snapshot['name']} (SKU: {$snapshot['sku']})",
             entityType: 'manga',
             entityId: $snapshot['id'],
-            meta: ['mode' => 'hard', 'snapshot' => $snapshot, 'sales_kept' => $salesCount],
+            meta: ['mode' => 'hard', 'snapshot' => $snapshot, 'sales_kept' => $salesCount, 'audit' => $result['audit']],
         );
 
         return $this->success(null, $salesCount > 0

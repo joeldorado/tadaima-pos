@@ -61,6 +61,7 @@
     "html5-qrcode": "^2.3.8",
     "idb-keyval": "^6.2.2",
     "input-otp": "^1.4.2",
+    "jsbarcode": "^3.12.3",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",
     "lucide-react": "^1.8.0",
@@ -85,6 +86,7 @@
   "devDependencies": {
     "@eslint/js": "^9.39.4",
     "@tailwindcss/vite": "^4.2.2",
+    "@types/jsbarcode": "^3.11.4",
     "@types/node": "^24.12.2",
     "@types/qz-tray": "^2.2.2",
     "@types/react": "^19.2.14",

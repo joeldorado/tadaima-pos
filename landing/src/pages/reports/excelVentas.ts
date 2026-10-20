@@ -12,13 +12,15 @@ import {
   totalLabel, totalMoney, totalQty,
   type CellStyle, type SheetBuilder,
 } from "./excelSheet";
+import type { PresaleRow } from "./reportTypes";
 import {
-  FIRST_TABLE_ROW, PRESALE_COLS, RETURN_COLS,
-  cardTable, drawPresales, drawProductTable, drawReturns, drawTableHeaders,
+  FIRST_TABLE_ROW, PRESALE_COLS, PRESALE_FOLIO_COLS, RETURN_COLS,
+  cardTable, drawPresales, drawPresaleFolios, drawProductTable, drawReturns, drawTableHeaders,
   isCardMethod, isCashLike, isManga, isTransferMethod, methodTable, tableWidth, withMethod,
-  type TableResult,
+  type PresaleTotals, type TableResult,
 } from "./excelTopTables";
 import { bottomLayout, drawEgresos, drawMethodAdjustments } from "./excelBottomTables";
+import { sortPresaleFolioRows } from "./buildReportData";
 
 /** Columnas vacías entre dos tablas de la misma pestaña. */
 const GAP = 1;
@@ -47,9 +49,11 @@ function drawTitle(sh: SheetBuilder, p: ReportExportParams, width: number, start
   sh.height(startRow + 1, 20);
 }
 
-/** Anchos: nombre ancho, cantidad mediana, montos iguales. */
-function tableWidths(sh: SheetBuilder, col: number, n: number): void {
-  sh.width(col, 34);
+/** Anchos: nombre ancho, cantidad mediana, montos iguales. `nameWidth` más
+ *  grande para columnas de Producto (nombres reales son largos: figuras,
+ *  mangas con subtítulo, bundles de TCG, etc. — los de prueba son cortos). */
+function tableWidths(sh: SheetBuilder, col: number, n: number, nameWidth = 34): void {
+  sh.width(col, nameWidth);
   sh.width(col + 1, 14);
   for (let c = col + 2; c < col + n; c++) sh.width(c, 15);
 }
@@ -63,6 +67,8 @@ interface ProductSheet {
   regularTotals: Record<string, { ref: string; value: number }>;
   /** Totales de manga para el resumen desglosado. */
   mangaTotals: Record<string, { ref: string; value: number }>;
+  /** Totales de la sub-tabla de Preventas de este método ("TOTAL PREVENTAS"), para el Resumen. */
+  presaleTotals: PresaleTotals | null;
 }
 
 /**
@@ -72,8 +78,9 @@ interface ProductSheet {
  */
 function productSheet(
   wb: Workbook, p: ReportExportParams, name: string,
-  titles: { main: string; manga: string }, colors: [string, string],
+  titles: { main: string; manga: string; presale: string }, colors: [string, string],
   table: ReturnType<typeof methodTable>, groups: GroupedProduct[], ventaKey: string,
+  presaleRows: readonly PresaleRow[],
 ): ProductSheet & { sh: SheetBuilder } {
   const sh = createSheet(wb.addWorksheet(name));
   const w = tableWidth(table);
@@ -82,25 +89,53 @@ function productSheet(
   const regular = groups.filter((g) => !isManga(g));
   const mangaGroups = groups.filter(isManga);
 
-  // Sub-tabla 1: productos regulares
+  // Sub-tabla 1: productos regulares (Ventas)
   sectionHeader(sh, FIRST_TABLE_ROW, 1, w, titles.main, colors[0]);
   drawTableHeaders(sh, table, colors[1]);
   const r1 = drawProductTable(sh, table, regular, false);
 
+  // Sub-tabla 2: Preventas de este método, apilada justo debajo de Ventas y
+  // ANTES de Manga (orden pedido: Ventas → Preventas → Manga). Sus totales se
+  // exponen para que el Resumen agregue una fila "Preventas:" por método.
+  let presaleTotals: PresaleTotals | null = null;
+  let afterPresale = r1.next;
+  if (presaleRows.length > 0) {
+    const presaleTop = r1.next + STACK_GAP;
+    const pr = drawPresales(sh, presaleRows, 1, p.canViewCost, presaleTop, titles.presale);
+    presaleTotals = pr.totals;
+    afterPresale = pr.next;
+  }
+
+  // A qué columna de `table` va cada total de Preventas (mismo venta/costo/util
+  // que usan Manga y el Resumen).
+  const presaleFor = (key: string): { ref: string; value: number } | undefined => {
+    if (!presaleTotals) return undefined;
+    if (key === ventaKey) return presaleTotals.apartado;
+    if (key === "costo") return presaleTotals.costoNeto;
+    if (key === "util") return presaleTotals.utilidad;
+    return undefined;
+  };
+
   let result: TableResult;
+  let mangaTotals: Record<string, { ref: string; value: number }> = {};
+  const hasManga = mangaGroups.length > 0;
 
-  if (mangaGroups.length > 0) {
-    // Sub-tabla 2: Manga Nacional — con su propio título de encabezado
-    const titleRow = r1.next + STACK_GAP;
-    drawTitle(sh, p, w, titleRow);
-    const mangaHdrRow = titleRow + 3; // título (2 filas) + 1 fila de espacio
-    sectionHeader(sh, mangaHdrRow, 1, w, titles.manga, MANGA_HDR_COLOR);
-    drawTableHeaders(sh, table, MANGA_SUB_COLOR, "Producto", mangaHdrRow + 1);
-    const mangaTable = { ...table, totalText: `${table.totalText} MANGA` };
-    const r2 = drawProductTable(sh, mangaTable, mangaGroups, false, mangaHdrRow + 2);
+  if (hasManga || presaleTotals) {
+    let r2: TableResult | null = null;
+    if (hasManga) {
+      // Sub-tabla 3: Manga Nacional — con su propio título de encabezado
+      const titleRow = afterPresale + STACK_GAP;
+      drawTitle(sh, p, w, titleRow);
+      const mangaHdrRow = titleRow + 3; // título (2 filas) + 1 fila de espacio
+      sectionHeader(sh, mangaHdrRow, 1, w, titles.manga, MANGA_HDR_COLOR);
+      drawTableHeaders(sh, table, MANGA_SUB_COLOR, "Producto", mangaHdrRow + 1);
+      const mangaTable = { ...table, totalText: `${table.totalText} MANGA` };
+      r2 = drawProductTable(sh, mangaTable, mangaGroups, false, mangaHdrRow + 2);
+      mangaTotals = r2.totals;
+    }
 
-    // Renglón "TOTAL FINAL" que combina ambas sub-tablas
-    const grandRow = r2.next + 1;
+    // Renglón "TOTAL FINAL" que combina Ventas + Preventas + Manga.
+    const grandRow = (hasManga && r2 ? r2.next : afterPresale) + 1;
     sh.set(grandRow, 1, `TOTAL FINAL ${name.toUpperCase()}`, { ...totalLabel, fill: fill(colors[0]) });
     sh.height(grandRow, 22);
 
@@ -109,11 +144,13 @@ function productSheet(
       const colN = table.col + 1 + ci;
       if (c.noSum) { grandTotals[c.key] = { ref: cellRef(grandRow, colN), value: 0 }; return; }
       const v1 = r1.totals[c.key];
-      const v2 = r2.totals[c.key];
-      const combined = (v1?.value ?? 0) + (v2?.value ?? 0);
+      const v2 = r2?.totals[c.key];
+      const vp = presaleFor(c.key);
+      const combined = (v1?.value ?? 0) + (v2?.value ?? 0) + (vp?.value ?? 0);
       const style = c.qty ? totalQty : totalMoney(c.color);
-      if (v1 && v2) {
-        sh.setF(grandRow, colN, `${v1.ref}+${v2.ref}`, combined, style);
+      const parts = [v1?.ref, v2?.ref, vp?.ref].filter((ref): ref is string => !!ref);
+      if (parts.length > 0) {
+        sh.setF(grandRow, colN, parts.join("+"), combined, style);
       } else {
         sh.set(grandRow, colN, combined, style);
       }
@@ -121,14 +158,13 @@ function productSheet(
     });
 
     result = { next: grandRow + 1, manga: null, totals: grandTotals };
-    return { sh, name, ventaKey, result, regularTotals: r1.totals, mangaTotals: r2.totals };
   } else {
-    // Sin manga: una sola sub-tabla, sin renglón TOTAL FINAL
-    result = r1;
+    // Sin manga ni preventas: solo Ventas, sin renglón TOTAL FINAL
+    result = { ...r1, next: afterPresale };
   }
 
-  tableWidths(sh, 1, w);
-  return { sh, name, ventaKey, result, regularTotals: r1.totals, mangaTotals: {} };
+  tableWidths(sh, 1, Math.max(w, PRESALE_COLS(p.canViewCost)), 48);
+  return { sh, name, ventaKey, result, regularTotals: r1.totals, mangaTotals, presaleTotals };
 }
 
 /** Anchos de un bloque de descuentos/aumentos/egresos. */
@@ -255,15 +291,29 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
       r++;
     }
 
+    // Fila Preventas (si este método tiene abonos/liquidaciones en el rango) —
+    // referencia cross-tab a "TOTAL PREVENTAS" de la sub-tabla 3 de este método.
+    let presaleRow = -1;
+    if (t.presaleTotals) {
+      sh.set(r, 2, "Preventas:", label);
+      sh.setF(r, ventaCol, xref(t.name, t.presaleTotals.apartado.ref), t.presaleTotals.apartado.value, money);
+      if (canViewCost) {
+        if (t.presaleTotals.costoNeto) sh.setF(r, costoCol, xref(t.name, t.presaleTotals.costoNeto.ref), t.presaleTotals.costoNeto.value, money);
+        if (t.presaleTotals.utilidad)  sh.setF(r, utilCol,  xref(t.name, t.presaleTotals.utilidad.ref),  t.presaleTotals.utilidad.value,  green);
+      }
+      presaleRow = r;
+      r++;
+    }
+
     // Separador antes del subtotal
     for (let c = 1; c <= totalCols; c++) sh.set(r, c, "", { fill: sep });
     r++;
 
     // Subtotal del método
-    const subRows = [regRow, ...(mangaRow >= 0 ? [mangaRow] : [])];
-    const subVenta = (regTotals[t.ventaKey]?.value ?? 0) + (hasManga ? (mangTotals[t.ventaKey]?.value ?? 0) : 0);
-    const subCosto = (regTotals["costo"]?.value ?? 0) + (hasManga ? (mangTotals["costo"]?.value ?? 0) : 0);
-    const subUtil  = (regTotals["util"]?.value  ?? 0) + (hasManga ? (mangTotals["util"]?.value  ?? 0) : 0);
+    const subRows = [regRow, ...(mangaRow >= 0 ? [mangaRow] : []), ...(presaleRow >= 0 ? [presaleRow] : [])];
+    const subVenta = (regTotals[t.ventaKey]?.value ?? 0) + (hasManga ? (mangTotals[t.ventaKey]?.value ?? 0) : 0) + (t.presaleTotals?.apartado.value ?? 0);
+    const subCosto = (regTotals["costo"]?.value ?? 0) + (hasManga ? (mangTotals["costo"]?.value ?? 0) : 0) + (t.presaleTotals?.costoNeto?.value ?? 0);
+    const subUtil  = (regTotals["util"]?.value  ?? 0) + (hasManga ? (mangTotals["util"]?.value  ?? 0) : 0) + (t.presaleTotals?.utilidad?.value ?? 0);
     const subLabel = canViewCost ? `$ ` : `$ `;
 
     sh.set(r, 2, subLabel, labelLeft);
@@ -304,7 +354,9 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
         );
       }
       totalUtilRows.push(totalEfRow); // para que TOTALES FINALES sume este row
-      totalCostoRows.push(subtotalRow); // costo = subtotal (no cambia con egresos)
+      // El costo no cambia con egresos: su subtotal ya entró a `totalCostoRows`
+      // arriba, igual que en Tarjeta y Transferencias. Agregarlo otra vez
+      // duplicaba el costo de Efectivo en la fórmula de TOTALES FINALES.
       r++;
     } else {
       totalUtilRows.push(subtotalRow);
@@ -315,7 +367,9 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
   for (let c = 1; c <= totalCols; c++) sh.set(r, c, "", { fill: sepDark });
   r++;
 
-  // TOTALES FINALES
+  // TOTALES FINALES — t.result.totals ya trae Ventas + Preventas + Manga
+  // combinados (el "TOTAL FINAL {TAB}" de cada pestaña), no hay que sumar
+  // t.presaleTotals aparte aquí (se contaría dos veces).
   const finalStyle: CellStyle = { ...money, fill: fill("B8732E"), font: font({ sz: 11, bold: true, color: "FFFFFF" }) };
   const totalVenta = tabs.reduce((a, t) => a + (t.result.totals[t.ventaKey]?.value ?? 0), 0);
   const totalCosto = tabs.reduce((a, t) => a + (t.result.totals["costo"]?.value ?? 0), 0);
@@ -377,31 +431,44 @@ export function addVentasSheets(workbook: Workbook, p: ReportExportParams): void
 
   const resumen = createSheet(workbook.addWorksheet("Resumen"));
 
-  // Efectivo: regulares arriba + Manga abajo + TOTAL FINAL EFECTIVO
+  // Efectivo: regulares arriba + Manga abajo + Preventas abonadas en efectivo + TOTAL FINAL EFECTIVO
   const cashT = methodTable(1, isCashLike, "Efectivo", "TOTAL EFECTIVO", canViewCost);
   const cash = productSheet(workbook, p, "Efectivo",
-    { main: " 1. VENTAS EN EFECTIVO", manga: "1. EFECTIVO — MANGA NACIONAL" },
-    ["33BB66", "55CC77"], cashT, withMethod(groups, isCashLike), "venta");
-  const retCol = tableWidth(cashT) + GAP + 1;
+    { main: " 1. VENTAS EN EFECTIVO", manga: "1. EFECTIVO — MANGA NACIONAL", presale: "1. EFECTIVO — APARTADOS Y PREVENTAS" },
+    ["33BB66", "55CC77"], cashT, withMethod(groups, isCashLike), "venta", p.presaleRowsByMethod.cash);
+  // Devoluciones va a la derecha de la tabla más ancha de la pestaña: la de
+  // Preventas (apilada bajo Ventas) puede ser más ancha que la de Ventas y, si
+  // Devoluciones tiene más renglones que Ventas, le pisaba la última columna.
+  const cashWidth = Math.max(tableWidth(cashT), p.presaleRowsByMethod.cash.length > 0 ? PRESALE_COLS(canViewCost) : 0);
+  const retCol = cashWidth + GAP + 1;
   drawReturns(cash.sh, groups, retCol);
-  tableWidths(cash.sh, retCol, RETURN_COLS);
+  tableWidths(cash.sh, retCol, RETURN_COLS, 48);
 
-  // Tarjeta: regulares arriba + Manga abajo + TOTAL FINAL TARJETA
+  // Tarjeta: regulares arriba + Manga abajo + Preventas abonadas con tarjeta + TOTAL FINAL TARJETA
   const card = productSheet(workbook, p, "Tarjeta",
-    { main: " 2. DESGLOSE DE COBROS CON TARJETA", manga: "2. TARJETA — MANGA NACIONAL" },
-    ["2266BB", "4488DD"], cardTable(1, canViewCost, ivaRate), withMethod(groups, isCardMethod), "bruto");
+    { main: " 2. DESGLOSE DE COBROS CON TARJETA", manga: "2. TARJETA — MANGA NACIONAL", presale: "2. TARJETA — APARTADOS Y PREVENTAS" },
+    ["2266BB", "4488DD"], cardTable(1, canViewCost, ivaRate), withMethod(groups, isCardMethod), "neto", p.presaleRowsByMethod.card);
 
-  // Transferencias: regulares arriba + Manga abajo + TOTAL FINAL TRANSFERENCIAS
+  // Transferencias: regulares arriba + Manga abajo + Preventas abonadas por transferencia + TOTAL FINAL TRANSFERENCIAS
   const transfer = productSheet(workbook, p, "Transferencias",
-    { main: " 3. TRANSFERENCIAS / DEPÓSITOS", manga: "3. TRANSFERENCIAS — MANGA NACIONAL" },
+    { main: " 3. TRANSFERENCIAS / DEPÓSITOS", manga: "3. TRANSFERENCIAS — MANGA NACIONAL", presale: "3. TRANSFERENCIAS — APARTADOS Y PREVENTAS" },
     ["119999", "33BBBB"], methodTable(1, isTransferMethod, "Transferencia", "TOTAL TRANSFERENCIAS", canViewCost),
-    withMethod(groups, isTransferMethod), "venta");
+    withMethod(groups, isTransferMethod), "venta", p.presaleRowsByMethod.transfer);
 
-  // Preventas: última pestaña
+  // Preventas: última pestaña — 3 tablas separadas por método de pago
+  // (Efectivo · Tarjeta · Transferencias), cada una agrupada por producto.
   const pre = createSheet(workbook.addWorksheet("Preventas"));
-  drawTitle(pre, p, PRESALE_COLS(canViewCost));
-  drawPresales(pre, p.presaleRows, 1, canViewCost);
-  tableWidths(pre, 1, PRESALE_COLS(canViewCost));
+  drawTitle(pre, p, PRESALE_FOLIO_COLS);
+  const byMethod = (m: "cash" | "card" | "transfer") =>
+    sortPresaleFolioRows(p.presaleFolioRows.filter((r) => r.method === m));
+  let preRow = FIRST_TABLE_ROW;
+  preRow = drawPresaleFolios(pre, byMethod("cash"), 1, preRow, " 1. EFECTIVO — APARTADOS Y PREVENTAS") + STACK_GAP;
+  preRow = drawPresaleFolios(pre, byMethod("card"), 1, preRow, " 2. TARJETA — APARTADOS Y PREVENTAS") + STACK_GAP;
+  preRow = drawPresaleFolios(pre, byMethod("transfer"), 1, preRow, " 3. TRANSFERENCIAS — APARTADOS Y PREVENTAS") + STACK_GAP;
+  // Pago con método no identificado (no debería pasar, pero no se descarta en silencio).
+  const otherRows = sortPresaleFolioRows(p.presaleFolioRows.filter((r) => r.method === "other"));
+  if (otherRows.length > 0) drawPresaleFolios(pre, otherRows, 1, preRow, " 4. OTRO MÉTODO — APARTADOS Y PREVENTAS");
+  tableWidths(pre, 1, PRESALE_FOLIO_COLS);
 
   drawTitle(resumen, p, BLOCK_WIDTH * 2 + GAP);
   drawResumen(resumen, p, groups, [cash, card, transfer]);

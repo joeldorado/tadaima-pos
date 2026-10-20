@@ -15,6 +15,15 @@ export const queryKeys = {
     all: ['promotions'] as const,
     admin: () => ['promotions', 'admin'] as const,
   },
+  // Paquetes (2026-10-07): combos con stock propio por tienda. Al armar/
+  // desarmar invalida TAMBIÉN products.all, inventory.all y mangas.all — las
+  // piezas salen/regresan de Exhibición/Bodega y Caja y Productos lo ven ahí.
+  bundles: {
+    all: ['bundles'] as const,
+    list: (params?: Record<string, unknown>) => ['bundles', 'list', params ?? {}] as const,
+    detail: (id: number, storeId?: number | null) => ['bundles', 'detail', id, storeId ?? 'all'] as const,
+    preview: (signature: string) => ['bundles', 'preview', signature] as const,
+  },
   customers: {
     all: ['customers'] as const,
     list: (params?: Record<string, unknown>) => ['customers', 'list', params ?? {}] as const,
@@ -92,6 +101,11 @@ export const queryKeys = {
   mangas: {
     all: ['mangas'] as const,
     list: (params?: Record<string, unknown>) => ['mangas', 'list', params ?? {}] as const,
+    // Página del tab Tomos con paginación server-side (2026-10-12): guarda
+    // { data, total, last_page } y no el arreglo plano de `list` — key aparte
+    // para que un caché viejo persistido en IndexedDB nunca se lea con la
+    // forma nueva.
+    page: (params?: Record<string, unknown>) => ['mangas', 'page', params ?? {}] as const,
   },
   notifications: {
     all: ['notifications'] as const,

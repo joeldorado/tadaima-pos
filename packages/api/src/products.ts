@@ -1,5 +1,5 @@
 import { apiClient } from './client'
-import type { CreateProductInput, UpdateProductInput, PaginatedResponse, Product } from './types'
+import type { CreateProductInput, UpdateProductInput, PaginatedResponse, Product, ProductType } from './types'
 
 export interface GetProductsParams {
   page?: number
@@ -11,9 +11,12 @@ export interface GetProductsParams {
   /**
    * 'top' ordena por count de sale_items en los últimos 30 días (desc).
    * Útil para pre-cargar el cache con los productos que el cajero más usa.
-   * 'stock_desc' = más piezas primero (modal "Productos sin Costo").
+   * 'stock_desc'/'stock_asc' = piezas en inventario (modal "Productos sin
+   * Costo" usa desc). 'price_desc'/'price_asc' = precio normal (price_1).
+   * 'newest'/'oldest' = fecha de alta al catálogo (2026-10-10). En TODOS los
+   * modos los productos sin stock (0) quedan al final, sin excepción.
    */
-  sort?: 'top' | 'stock_desc'
+  sort?: 'top' | 'stock_desc' | 'stock_asc' | 'price_desc' | 'price_asc' | 'newest' | 'oldest'
   /**
    * Con store_id: incluye también productos "no asignados" (sin inventario en
    * la tienda) con stock 0 + is_assigned=false, para que la sucursal les
@@ -163,7 +166,7 @@ export interface ProductLight {
    * ("No asignado"). undefined en la vista global (sin store_id).
    */
   is_assigned?: boolean
-  product_type?: 'product' | 'manga'
+  product_type?: ProductType
   /** Número de tomo (solo mangas) — distingue tomos de la misma serie en Caja. */
   volume_number?: number | null
   /** Promos NxM vigentes (Descuentos v2 Fase 3) — el backend ya las embebe.
@@ -317,16 +320,81 @@ export async function updateStorePrices(
   return response.data
 }
 
-/**
- * Sube una imagen de producto y la asocia al mismo.
- * POST /products/{id}/images/upload (multipart/form-data)
- */
-export async function deleteProduct(id: number): Promise<void> {
-  await apiClient.delete(`/products/${id}`)
+// ─── Eliminar con vista previa (2026-10-09) ──────────────────────────────────
+
+/** Conteos que el usuario vio en la vista previa: el DELETE los manda de vuelta y si cambiaron no borra. */
+export interface ProductDeleteCounts {
+  stock_total: number
+  layaways: number
+  transfers_pending: number
 }
 
-export async function forceDeleteProduct(id: number): Promise<void> {
-  await apiClient.delete(`/products/${id}/force`)
+export interface ProductDeleteStoreStock {
+  store_id: number
+  store_name: string
+  /** La tienda del usuario (el backend la pone primero). */
+  is_mine: boolean
+  exhibicion: number
+  bodega: number
+  total: number
+}
+
+/** GET /products/{id}/delete-preview — todo lo que eliminar el producto tocaría. */
+export interface ProductDeletePreview {
+  product: { id: number; name: string; sku: string | null; product_type: ProductType; active: boolean }
+  stock: {
+    total: number
+    /** Almacén central (sin tienda), si existe. */
+    central: number
+    /** Movimientos de inventario que se borran en cascade. */
+    movements_count: number
+    stores: ProductDeleteStoreStock[]
+  }
+  /** Ventas que QUEDAN en historial y reportes (snapshot de nombre/SKU). */
+  sales: { count: number; last_sold_at: string | null }
+  layaways: { total: number; open: number }
+  presales: { catalogs: number; open_items: number }
+  transfers: { pending: number }
+  bundles: { component_of: Array<{ id: number; name: string; sku: string | null }>; assembled_stock: number }
+  promos: { count: number }
+  counts: ProductDeleteCounts
+  /** Aplican a "Solo el producto" y a "Borrar TODO". */
+  warnings: string[]
+  /** Solo "Borrar TODO" (los apartados que se borrarían). */
+  force_warnings: string[]
+  /** No vacío = "Solo el producto" no se puede (apartados, paquete). */
+  blockers: string[]
+  /** No vacío = tampoco "Borrar TODO" (componente de paquete / paquete armado). */
+  force_blockers: string[]
+}
+
+export async function getProductDeletePreview(id: number): Promise<ProductDeletePreview> {
+  const response = await apiClient.get<ProductDeletePreview>(`/products/${id}/delete-preview`)
+  return response.data
+}
+
+export interface DeleteProductOptions {
+  /** Conteos de la vista previa. Sin ellos el backend no hace el cross-check (compat app móvil). */
+  expected?: ProductDeleteCounts
+}
+
+/** axios manda el body de un DELETE en `data`. Sin `expected` no se manda body. */
+export function deleteRequestConfig(opts?: DeleteProductOptions): { data: { expected: ProductDeleteCounts } } | undefined {
+  return opts?.expected ? { data: { expected: opts.expected } } : undefined
+}
+
+/**
+ * DELETE /products/{id} — "Solo el producto": sus ventas quedan en historial.
+ * 422 si tiene apartados, es componente de un paquete, es un paquete armado o
+ * si `expected` ya no coincide (cambió el stock mientras se revisaba).
+ */
+export async function deleteProduct(id: number, opts?: DeleteProductOptions): Promise<void> {
+  await apiClient.delete(`/products/${id}`, deleteRequestConfig(opts))
+}
+
+/** DELETE /products/{id}/force — "Borrar TODO" (solo admin): también sus apartados. */
+export async function forceDeleteProduct(id: number, opts?: DeleteProductOptions): Promise<void> {
+  await apiClient.delete(`/products/${id}/force`, deleteRequestConfig(opts))
 }
 
 export async function removeProductImage(productId: number, imageId: number): Promise<void> {

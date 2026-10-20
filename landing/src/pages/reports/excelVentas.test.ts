@@ -3,7 +3,7 @@ import ExcelJS from "exceljs";
 import type { SaleDetail } from "@tadaima/api";
 import { buildGroupedProducts, buildPaymentBreakdown } from "./buildReportData";
 import { addVentasSheets } from "./excelVentas";
-import type { PresaleRow, ReportExportParams } from "./reportTypes";
+import type { PresaleFolioRow, PresaleRow, ReportExportParams } from "./reportTypes";
 
 // Excel de Ventas en pestañas (2026-10-05): una tabla por pestaña, los tomos
 // (Manga Nacional) en pestañas propias y los totales como fórmulas.
@@ -48,10 +48,23 @@ const PRESALE: PresaleRow = {
   apartado: 300, deuda: 700, pactado: 1000, costoReal: 800, costoNeto: 300, utilidad: 0,
 };
 
+const PRESALE_CASH: PresaleRow = {
+  productId: 11, name: "Figura Y (Liquidada)", entregado: true, qty: 1,
+  apartado: 400, deuda: 0, pactado: 400, costoReal: 250, costoNeto: 250, utilidad: 150,
+};
+
+const PRESALE_FOLIO: PresaleFolioRow = {
+  productId: 9, productName: "Preventa X", folio: "PREV-00001", cliente: "Jorge González",
+  total: 1000, anticipo: 300, pendiente: 700, estado: "Apartada", tienda: "Tadaima MACRO",
+  fecha: "2026-10-03T18:00:00Z", method: "cash",
+};
+
 function buildBook(canViewCost = false): ExcelJS.Workbook {
   const groupedProducts = buildGroupedProducts(SALES, [], ["all"], "2026-10-03", "2026-10-03", canViewCost);
   const params: ReportExportParams = {
     presaleRows: [PRESALE],
+    presaleFolioRows: [PRESALE_FOLIO],
+    presaleRowsByMethod: { cash: [PRESALE_CASH], card: [], transfer: [] },
     groupedProducts,
     regularProducts: groupedProducts,
     tomoProducts: [],
@@ -114,10 +127,11 @@ describe("Excel de Ventas en pestañas", () => {
     // Sub-tabla de manga con su propio encabezado
     expect(() => find(ef, "1. EFECTIVO — MANGA NACIONAL")).not.toThrow();
     expect(() => find(ef, "Tomo 21")).not.toThrow();
-    // Renglón TOTAL FINAL EFECTIVO combina ambas sub-tablas ($90 + $300 = $390)
+    // Renglón TOTAL FINAL EFECTIVO combina Ventas + Preventas + Manga
+    // ($90 regulares + $400 preventa cash + $300 manga = $790)
     const fin = find(ef, "TOTAL FINAL EFECTIVO");
-    expect(result(ef, fin.row, fin.col + 2)).toBe(390);
-    expect(formula(ef, fin.row, fin.col + 2)).toMatch(/\+/); // suma de ambos totales
+    expect(result(ef, fin.row, fin.col + 2)).toBe(790);
+    expect(formula(ef, fin.row, fin.col + 2)).toMatch(/\+/); // suma de las 3 sub-tablas
     // Devoluciones a la derecha, misma fila que el encabezado de regulares
     const dev = find(ef, " 5. DEVOLUCIONES Y CANCELACIONES");
     expect(dev.row).toBe(find(ef, " 1. VENTAS EN EFECTIVO").row);
@@ -157,11 +171,48 @@ describe("Excel de Ventas en pestañas", () => {
     expect(wb.getWorksheet("Transferencias Manga")).toBeUndefined();
   });
 
-  it("Preventas es la última pestaña y Pactado = Abonado + Pendiente", () => {
-    const pre = sheet(buildBook(), "Preventas");
-    const row = find(pre, "Preventa X (Apartada)");
-    expect(formula(pre, row.row, row.col + 4)).toBe(`${pre.getCell(row.row, row.col + 2).address}+${pre.getCell(row.row, row.col + 3).address}`);
-    expect(result(pre, row.row, row.col + 4)).toBe(1000);
+  it("Efectivo: orden Ventas → Preventas → Manga (preventas de este método)", () => {
+    const wb = buildBook();
+    const ef = sheet(wb, "Efectivo");
+    const ventasTitle = find(ef, "1. VENTAS EN EFECTIVO");
+    const presTitle = find(ef, "1. EFECTIVO — APARTADOS Y PREVENTAS");
+    const mangaTitle = find(ef, "1. EFECTIVO — MANGA NACIONAL");
+    const finalTotal = find(ef, "TOTAL FINAL EFECTIVO");
+    expect(presTitle.row).toBeGreaterThan(ventasTitle.row);
+    expect(mangaTitle.row).toBeGreaterThan(presTitle.row);
+    expect(finalTotal.row).toBeGreaterThan(mangaTitle.row);
+    const row = find(ef, "Figura Y (Liquidada)");
+    expect(result(ef, row.row, row.col + 2)).toBe(400); // Abonado
+    // Tarjeta y Transferencias no tienen preventas este rango: sin tabla de preventas
+    expect(wb.getWorksheet("Tarjeta")!.getCell(1, 1)).toBeDefined();
+    expect(() => find(sheet(wb, "Tarjeta"), "APARTADOS Y PREVENTAS")).toThrow();
+    expect(() => find(sheet(wb, "Transferencias"), "APARTADOS Y PREVENTAS")).toThrow();
+  });
+
+  it("Preventas es la última pestaña, con 3 tablas separadas por método (Efectivo · Tarjeta · Transferencias)", () => {
+    const wb = buildBook();
+    expect(wb.worksheets.map((w) => w.name)).toEqual([
+      "Resumen", "Efectivo", "Tarjeta", "Transferencias", "Preventas",
+    ]);
+    const pre = sheet(wb, "Preventas");
+    const efHeader = find(pre, "1. EFECTIVO — APARTADOS Y PREVENTAS");
+    const taHeader = find(pre, "2. TARJETA — APARTADOS Y PREVENTAS");
+    const trHeader = find(pre, "3. TRANSFERENCIAS — APARTADOS Y PREVENTAS");
+    expect(taHeader.row).toBeGreaterThan(efHeader.row);
+    expect(trHeader.row).toBeGreaterThan(taHeader.row);
+    // El folio PREV-00001 (efectivo) cae dentro de la tabla de Efectivo
+    const group = find(pre, "Preventa X"); // encabezado del grupo de producto
+    expect(group.row).toBeGreaterThan(efHeader.row);
+    expect(group.row).toBeLessThan(taHeader.row);
+    const row = { row: group.row + 1, col: group.col };
+    expect(text(pre, row.row, row.col)).toBe("PREV-00001");
+    expect(text(pre, row.row, row.col + 1)).toBe("Jorge González");
+    expect(result(pre, row.row, row.col + 3)).toBe(300); // Anticipo
+    expect(result(pre, row.row, row.col + 4)).toBe(700); // Pendiente
+    expect(text(pre, row.row, row.col + 5)).toBe("Apartada");
+    expect(text(pre, row.row, row.col + 8)).toBe("Efectivo");
+    // No hay preventas de tarjeta/transferencia en el fixture: no aparece "4. OTRO MÉTODO"
+    expect(() => find(pre, "OTRO MÉTODO")).toThrow();
   });
 
   it("Resumen muestra desglose regular+manga por método con totales y TOTALES FINALES (sin costos)", () => {
@@ -202,6 +253,24 @@ describe("Excel de Ventas en pestañas", () => {
     })));
   });
 
+  it("con costos: Resumen de Tarjeta usa Neto (no Bruto) — Venta − Costo = Utilidad consistente", () => {
+    const wb = buildBook(true);
+    const ta = sheet(wb, "Tarjeta");
+    const netoRow = find(ta, "Neto Tarjeta").row + 1; // fila de datos de ETB
+    const netoCol = find(ta, "Neto Tarjeta").col;
+    const brutoCol = find(ta, "Bruto Tarjeta").col;
+    const netoVal = result(ta, netoRow, netoCol) as number;
+    const brutoVal = result(ta, netoRow, brutoCol) as number;
+    expect(netoVal).not.toBe(brutoVal); // la comisión sí descuenta algo en el fixture
+
+    const res = sheet(wb, "Resumen");
+    const tarjetaRow = find(res, "Tarjeta:");
+    // El Resumen debe tomar el NETO (ya con comisión e IVA restados), no el bruto
+    const venta = result(res, tarjetaRow.row, 4) as number;
+    expect(venta).toBeCloseTo(netoVal, 5);
+    expect(venta).not.toBeCloseTo(brutoVal, 5);
+  });
+
   it("con costos: Resumen muestra Costo/Venta/Utilidad por método con desglose regular+manga", () => {
     const wb = buildBook(true);
     // Cada pestaña tiene columna Utilidad con fórmula en sub-tabla de regulares
@@ -229,7 +298,83 @@ describe("Excel de Ventas en pestañas", () => {
     const totalEf = find(res, "Total efectivo");
     expect(formula(res, totalEf.row, 5)).toMatch(/E\d+-[A-Z]\d+/);
   });
+
+  it("con costos: Costo Producto es fórmula Cant × Costo Unitario, no un valor plano", () => {
+    const wb = buildBook(true);
+    // Efectivo: tabla de regulares (Sticker) — Costo = Cant × Costo Unitario
+    // (el fixture no define `cost`, así que el valor da $0 — exceljs omite la
+    // propiedad `result` cuando el caché de una fórmula es 0, así que aquí solo
+    // se valida la fórmula; el caso con valor real se cubre con la preventa abajo).
+    const ef = sheet(wb, "Efectivo");
+    const costoHdr = find(ef, "Costo Producto");
+    const dataRow = costoHdr.row + 1;
+    expect(formula(ef, dataRow, costoHdr.col)).toMatch(/^[A-Z]+\d+\*[A-Z]+\d+$/);
+
+    // Tarjeta: tabla de regulares (ETB)
+    const ta = sheet(wb, "Tarjeta");
+    const costoHdrTa = find(ta, "Costo Producto");
+    expect(formula(ta, costoHdrTa.row + 1, costoHdrTa.col)).toMatch(/^[A-Z]+\d+\*[A-Z]+\d+$/);
+
+    // Preventas por método dentro de Efectivo: Figura Y, 1 pieza × $250 costo unitario = $250
+    const presaleRow = find(ef, "Figura Y (Liquidada)");
+    const costoCol = presaleRow.col + 6; // Producto·Cant·CostoUnitario·Abonado·Pendiente·Pactado·[Costo]
+    expect(formula(ef, presaleRow.row, costoCol)).toMatch(/^[A-Z]+\d+\*[A-Z]+\d+$/);
+    expect(result(ef, presaleRow.row, costoCol)).toBe(250);
+  });
+
+  it("Resumen suma las Preventas al subtotal y a TOTALES FINALES (Efectivo tiene preventa de $400 / costo $250 / utilidad $150)", () => {
+    const wb = buildBook(true);
+    const res = sheet(wb, "Resumen");
+    const preRow = find(res, "Preventas:");
+    expect(result(res, preRow.row, 3)).toBe(250); // Costo
+    expect(result(res, preRow.row, 4)).toBe(400); // Venta (Abonado)
+    expect(result(res, preRow.row, 5)).toBe(150); // Utilidad
+    // Tarjeta y Transferencias no tienen preventas en el fixture: sin fila "Preventas:" en esos bloques
+    const efBlock = find(res, "EFECTIVO");
+    const taBlock = find(res, "TARJETA");
+    expect(preRow.row).toBeGreaterThan(efBlock.row);
+    expect(preRow.row).toBeLessThan(taBlock.row);
+    // Total efectivo (utilidad) ya incluye la utilidad de la preventa ($150)
+    const totalEf = find(res, "Total efectivo");
+    const egresos = find(res, "Egresos");
+    expect(formula(res, totalEf.row, 5)).toContain(cellRefLike(res, egresos.row - 1, 5));
+    // TOTALES FINALES incluye la preventa en Venta/Costo/Utilidad
+    const finalRow = find(res, "TOTALES FINALES:");
+    expect(result(res, finalRow.row, 4)).toBeGreaterThanOrEqual(400);
+  });
+
+  it("TOTALES FINALES: la fórmula del Costo suma cada subtotal una sola vez y da su valor guardado", () => {
+    const res = sheet(buildBook(true), "Resumen");
+    const finalRow = find(res, "TOTALES FINALES:");
+    const refs = (formula(res, finalRow.row, 3) ?? "").split("+");
+
+    expect(refs).toHaveLength(3); // Efectivo + Tarjeta + Transferencias
+    expect(new Set(refs).size).toBe(refs.length);
+    // Excel y Sheets recalculan al abrir: la fórmula debe dar lo mismo que el valor guardado.
+    // Una fórmula cuyo valor es $0 se guarda sin `result`.
+    const guardado = (ref: string): number => {
+      const v = res.getCell(ref).value;
+      return v && typeof v === "object" && "formula" in v ? Number(v.result ?? 0) : Number(v);
+    };
+    const recalculado = refs.reduce((a, ref) => a + guardado(ref), 0);
+    expect(recalculado).toBeCloseTo(Number(result(res, finalRow.row, 3)));
+  });
+
+  it("Efectivo con preventas: Devoluciones queda a la derecha de la tabla de Preventas, sin pisarla", () => {
+    for (const canViewCost of [true, false]) {
+      const ef = sheet(buildBook(canViewCost), "Efectivo");
+      // Preventas termina en Pactado, o en Pactado · Costo Producto · Utilidad con costos.
+      const ultimaColPreventas = find(ef, "Pactado").col + (canViewCost ? 2 : 0);
+
+      expect(find(ef, " 5. DEVOLUCIONES Y CANCELACIONES").col).toBeGreaterThan(ultimaColPreventas);
+    }
+  });
 });
+
+/** Dirección de celda (ej. "E12") para comparar contra una fórmula que la referencia. */
+function cellRefLike(ws: ExcelJS.Worksheet, row: number, col: number): string {
+  return ws.getCell(row, col).address;
+}
 
 describe("buildGroupedProducts — detalle de descuentos por ticket", () => {
   it("guarda el ticket, el método principal y el motivo", () => {

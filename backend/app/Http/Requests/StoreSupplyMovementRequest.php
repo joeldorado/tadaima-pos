@@ -29,6 +29,10 @@ class StoreSupplyMovementRequest extends FormRequest
                 ? ['required', 'numeric', 'min:0.01']
                 : ['nullable', 'numeric', 'min:0'],
             'note'      => ['nullable', 'string', 'max:255'],
+            // Tienda del movimiento (2026-10-12): solo el admin puede mandarlo —
+            // el controller lo ignora para cajero/gerente (siempre su propia
+            // tienda). null/omitido = "toda la empresa" para el admin.
+            'store_id'  => ['nullable', 'integer', 'exists:stores,id'],
             // Origen del dinero (solo compras): caja (default) / caja_chica /
             // propio — con propio hay que decir QUIÉN puso el dinero.
             'money_source' => ['nullable', Rule::in(SupplyMovement::SOURCES)],

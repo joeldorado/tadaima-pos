@@ -4,14 +4,13 @@ import {
   Search, Plus,
   Package, AlertTriangle,
   DollarSign, Scan,
-  ChevronRight,
   Warehouse, CheckCircle2,
   X, Save,
   BookOpen, TrendingUp,
   MessageCircle,
   Upload, Camera, Loader2,
   ArrowUp, ArrowDown, ArrowUpDown,
-  ChevronLeft, ChevronsLeft, ChevronsRight, Trash2, Pencil, PackageX, TicketPercent,
+  Trash2, Pencil, PackageX, TicketPercent,
   ChevronDown, SlidersHorizontal, FolderX
 } from "lucide-react";
 import { useActiveStore } from "@/contexts/StoreContext";
@@ -21,13 +20,15 @@ import { isAdmin as isAdminRole, isManager as isManagerRole, canDeleteProducts }
 import { CategoryMultiPicker } from "@/components/products/CategoryMultiPicker";
 import { joinCategoryNames } from "@/lib/categoryPicker";
 import { toast } from "sonner";
-import { lookupProductByCode, createProduct, updateProduct, deleteProduct, forceDeleteProduct, uploadProductImage, removeProductImage, getInventory, updateInventory, getPrice, sendStockAlert, getCategories, getSuppliers, createSupplier, attachPromotionProducts } from "@tadaima/api";
+import { lookupProductByCode, createProduct, updateProduct, uploadProductImage, removeProductImage, getInventory, updateInventory, getPrice, sendStockAlert, getCategories, getSuppliers, createSupplier, attachPromotionProducts } from "@tadaima/api";
 import type { ApiError } from "@tadaima/api";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
-import { useProductsQuery, useProductStatsQuery, type ProductsCatalogFilter } from "@/hooks/queries/useProducts";
-import { useMangasQuery } from "@/hooks/queries/useMangas";
+import { useProductsQuery, useProductStatsQuery, type ProductsCatalogFilter, type ProductsSortOption } from "@/hooks/queries/useProducts";
+import { useMangasQuery, effectiveMangaSearch, MANGAS_DEFAULT_PAGE_SIZE } from "@/hooks/queries/useMangas";
 import { useCategoriesQuery } from "@/hooks/queries/useCategories";
 import { ProductsSkeleton } from "@/components/products/ProductsSkeleton";
+import { TablePaginationFooter } from "@/components/products/TablePaginationFooter";
+import { paginationRangeLabel } from "@/lib/paginationLabel";
 import { useStoresQuery } from "@/hooks/queries/useStores";
 import { useWarehousesQuery } from "@/hooks/queries/useWarehouses";
 import { queryKeys } from "@/lib/queryKeys";
@@ -54,6 +55,7 @@ import { ProductTypeSelectorModal } from "@/components/products/ProductTypeSelec
 import { StoreStockBreakdown } from "@/components/inventory/StoreStockBreakdown";
 import { MangaBatchModal } from "@/components/products/MangaBatchModal";
 import { MangaEditModal } from "@/components/products/MangaEditModal";
+import { DeleteProductModal } from "@/components/products/DeleteProductModal";
 import { QuickStockModal } from "@/components/products/QuickStockModal";
 import { MissingCostModal } from "@/components/products/MissingCostModal";
 import { ProductPromotionsTab } from "@/components/products/ProductPromotionsTab";
@@ -62,7 +64,6 @@ import {
   useReactTable,
   getCoreRowModel,
   getSortedRowModel,
-  getPaginationRowModel,
   flexRender,
   createColumnHelper,
 } from '@tanstack/react-table';
@@ -1764,12 +1765,129 @@ function FilterDropdown({ activeFilter, onSelect, isProductos, canViewCost, coun
   );
 }
 
+// ─── Dropdown de orden (2026-10-10) ──────────────────────────────────────────
+// Independiente del FilterDropdown: ahí se elige QUÉ productos se ven, aquí
+// en QUÉ ORDEN. "Más vendidos" (chip top) fija su propio orden server-side y
+// pisa cualquier opción de aquí (ver isTop en buildProductsListParams), así
+// que el botón se deshabilita mientras ese chip esté activo.
+const SORT_META: Record<Exclude<ProductsSortOption, null>, { label: string; icon: React.ComponentType<{ size?: number | string }> }> = {
+  stock_desc: { label: "Stock: mayor a menor", icon: ArrowDown },
+  stock_asc:  { label: "Stock: menor a mayor", icon: ArrowUp },
+  price_desc: { label: "Precio: mayor a menor", icon: ArrowDown },
+  price_asc:  { label: "Precio: menor a mayor", icon: ArrowUp },
+  newest:     { label: "Recientes primero", icon: ArrowDown },
+  oldest:     { label: "Antiguos primero", icon: ArrowUp },
+};
+const SORT_GROUPS: { title: string; options: Exclude<ProductsSortOption, null>[] }[] = [
+  { title: "Stock", options: ["stock_desc", "stock_asc"] },
+  { title: "Precio", options: ["price_desc", "price_asc"] },
+  { title: "Fecha de alta", options: ["newest", "oldest"] },
+];
+
+function SortDropdown({ sortBy, onSelect, disabled }: {
+  sortBy: ProductsSortOption;
+  onSelect: (s: ProductsSortOption) => void;
+  /** true mientras el chip "Más vendidos" esté activo (pisa el orden). */
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const active = sortBy ? SORT_META[sortBy] : null;
+  const pick = (s: ProductsSortOption) => { onSelect(s); setOpen(false); };
+
+  return (
+    <div ref={rootRef} className="relative shrink-0">
+      <button
+        onClick={() => !disabled && setOpen(v => !v)}
+        disabled={disabled}
+        className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-40 disabled:hover:scale-100"
+        data-testid="sort-dropdown"
+        style={active
+          ? { background: "rgba(68,153,255,0.12)", border: "1px solid rgba(68,153,255,0.5)", color: "#4499FF" }
+          : { background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)", color: T.textSecondary }}
+        title={disabled ? "No disponible con «Más vendidos» activo" : "Ordenar catálogo"}
+      >
+        {active ? <active.icon size={13} /> : <ArrowUpDown size={13} />}
+        {active ? active.label : "Ordenar"}
+        <ChevronDown size={13} style={{ transform: open ? "rotate(180deg)" : undefined, transition: "transform 150ms ease" }} />
+      </button>
+
+      {open && (
+        <div
+          className="absolute right-0 top-full mt-2 z-[120] min-w-[230px] rounded-2xl p-1.5 shadow-2xl"
+          style={{ background: "var(--td-popup-bg, var(--td-panel-bg))", border: "1px solid var(--td-card-border)" }}
+        >
+          <button
+            onClick={() => pick(null)}
+            disabled={!sortBy}
+            data-testid="sort-clear"
+            className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-black transition-colors disabled:opacity-40 hover:bg-white/5"
+            style={{ color: T.textSecondary }}
+          >
+            <X size={13} />
+            Orden por defecto
+          </button>
+          {SORT_GROUPS.map(group => (
+            <div key={group.title}>
+              <div className="my-1" style={{ borderTop: "1px solid var(--td-card-border)" }} />
+              <p className="px-3 pt-1.5 pb-0.5 text-[9px] font-black uppercase tracking-widest" style={{ color: T.textMuted }}>
+                {group.title}
+              </p>
+              {group.options.map(key => {
+                const meta = SORT_META[key];
+                const isActive = sortBy === key;
+                return (
+                  <button
+                    key={key}
+                    onClick={() => pick(isActive ? null : key)}
+                    data-testid={`sort-${key}`}
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-black transition-colors hover:bg-white/5"
+                    style={{ color: isActive ? "#4499FF" : T.textPrimary, background: isActive ? "rgba(68,153,255,0.1)" : undefined }}
+                  >
+                    <meta.icon size={13} />
+                    <span className="flex-1 text-left">{meta.label}</span>
+                    {isActive && <CheckCircle2 size={13} />}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── App Principal ────────────────────────────────────────────────────────────
 export function ProductsPage() {
   const [pageSection, setPageSection] = useState<'productos' | 'tomos'>('productos');
   const [search, setSearch] = useState("");
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
   const [categorySearch, setCategorySearch] = useState("");
+  // Dropdown de categoría abierto con el listado completo al hacer clic
+  // (2026-10-10), no solo al escribir — antes había que teclear para verlo.
+  const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
+  const categoryDropdownRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!categoryDropdownOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (categoryDropdownRef.current && !categoryDropdownRef.current.contains(e.target as Node)) {
+        setCategoryDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [categoryDropdownOpen]);
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<"grid" | "list">(
     () => (localStorage.getItem('tadaima-products-view') ?? 'list') as "grid" | "list"
@@ -1780,7 +1898,7 @@ export function ProductsPage() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 20 });
   const [mangaSearch, setMangaSearch] = useState('');
   const [mangaSorting, setMangaSorting] = useState<SortingState>([]);
-  const [mangaPagination, setMangaPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 20 });
+  const [mangaPagination, setMangaPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: MANGAS_DEFAULT_PAGE_SIZE });
   
   const { refreshProductCount } = useActiveStore();
   const { user } = useAuth();
@@ -1820,6 +1938,8 @@ export function ProductsPage() {
   // apagar Promos). Las constantes derivadas conservan los nombres históricos
   // para no tocar los ~20 sitios de lectura.
   const [activeFilter, setActiveFilter] = useState<ProductsCatalogFilter>(null);
+  // Orden de la lista (2026-10-10) — independiente del chip de filtro.
+  const [sortBy, setSortBy] = useState<ProductsSortOption>(null);
   const showTopSellers = activeFilter === 'top';
   const showLowStock = activeFilter === 'low_stock';
   const showOutStock = activeFilter === 'out_of_stock';
@@ -1851,6 +1971,7 @@ export function ProductsPage() {
     withMeta: true,
     type: 'product',
     filter: activeFilter,
+    sortBy,
     threshold: 10,
     page: pagination.pageIndex + 1,
     perPage: pagination.pageSize,
@@ -1871,7 +1992,7 @@ export function ProductsPage() {
   // manualPagination + autoResetPageIndex:false nadie más la regresa a 1).
   useEffect(() => {
     setPagination(p => (p.pageIndex === 0 ? p : { ...p, pageIndex: 0 }));
-  }, [serverSearch, activeFilter, selectedStoreId, selectedCategoryId]);
+  }, [serverSearch, activeFilter, sortBy, selectedStoreId, selectedCategoryId]);
   // Librerías: se cargan al entrar a su tab, PERO también en background una vez
   // que el catálogo de productos terminó de cargar → al dar clic en "Tomos" ya
   // están en cache (instantáneo). El spinner de tomos sigue gateado a su tab,
@@ -1882,10 +2003,36 @@ export function ProductsPage() {
     const t = window.setTimeout(() => setServerMangaSearch(mangaSearch), 300);
     return () => window.clearTimeout(t);
   }, [mangaSearch]);
+  // Paginación + chips SERVER-SIDE también en Tomos (2026-10-12, bug de
+  // tienda "no despliega todos los mangas"): antes se pedía UNA página (50) y
+  // los chips/contador/paginador trabajaban en el navegador sobre esas filas,
+  // así que el badge decía 2,206 agotados y la tabla enseñaba unos cuantos.
   const mangasQuery = useMangasQuery(selectedStoreId, {
     enabled: pageSection === 'tomos' || productsQuery.isSuccess,
     search: serverMangaSearch,
+    filter: activeFilter,
+    threshold: 10,
+    page: mangaPagination.pageIndex + 1,
+    perPage: mangaPagination.pageSize,
   });
+  const totalMangas = mangasQuery.data?.total ?? 0;
+  const mangaLastPage = mangasQuery.data?.last_page ?? 1;
+  // Igual que en Productos: cambiar búsqueda/chip/tienda regresa a la página 1
+  // (con manualPagination nadie más lo hace y la tabla quedaba vacía). Usa el
+  // término que de verdad viaja al server: teclear 1 caracter no mueve nada.
+  const mangaServerTerm = effectiveMangaSearch(serverMangaSearch);
+  useEffect(() => {
+    setMangaPagination(p => (p.pageIndex === 0 ? p : { ...p, pageIndex: 0 }));
+  }, [mangaServerTerm, activeFilter, selectedStoreId]);
+  // Si la página actual dejó de existir (se borró el último tomo de la última
+  // página, o alguien vendió/ajustó y el chip ya tiene menos), cae a la última
+  // que sí hay en vez de quedarse en una página vacía.
+  const mangaServerLastPage = mangasQuery.isPlaceholderData ? null : (mangasQuery.data?.last_page ?? null);
+  useEffect(() => {
+    if (mangaServerLastPage === null) return;
+    const lastIndex = Math.max(0, mangaServerLastPage - 1);
+    setMangaPagination(p => (p.pageIndex > lastIndex ? { ...p, pageIndex: lastIndex } : p));
+  }, [mangaServerLastPage]);
   const storesQuery = useStoresQuery({ active: true, enabled: isAdmin });
   const warehousesQuery = useWarehousesQuery({ active: true });
 
@@ -1948,7 +2095,7 @@ export function ProductsPage() {
     for (const p of productsQuery.data?.data ?? []) if (p.stock_bodega != null) map.set(p.id, p.stock_bodega);
     return map;
   }, [productsQuery.data]);
-  const mangas = mangasQuery.data ?? [];
+  const mangas = useMemo(() => mangasQuery.data?.data ?? [], [mangasQuery.data]);
   const stores = storesQuery.data ?? [];
   const locations = useMemo(
     () => (warehousesQuery.data ?? [])
@@ -2141,42 +2288,7 @@ export function ProductsPage() {
   };
 
   const [deleteTarget, setDeleteTarget] = React.useState<Producto | null>(null);
-  const [deleteLoading, setDeleteLoading] = React.useState(false);
-  // Modo del delete (2026-08-18): "soft" = borrar el producto; sus VENTAS se
-  //   conservan en historial/reportes vía snapshot (solo apartados bloquean).
-  //   "force" (admin) = además borra los apartados.
-  const [deleteMode, setDeleteMode] = React.useState<"soft" | "force">("soft");
-  // Confirmación extra para force: el cajero debe tipear el nombre del producto.
-  const [forceConfirmText, setForceConfirmText] = React.useState("");
-
-  const handleDeleteProduct = async (): Promise<void> => {
-    if (!deleteTarget) return;
-    setDeleteLoading(true);
-    try {
-      if (deleteMode === "force") {
-        await forceDeleteProduct(deleteTarget.id);
-      } else {
-        await deleteProduct(deleteTarget.id);
-      }
-      void invalidateProducts();
-      setIsModalOpen(false);
-      setEditingProduct(undefined);
-      setDeleteTarget(null);
-      setDeleteMode("soft");
-      setForceConfirmText("");
-      toast.success(deleteMode === "force"
-        ? 'Producto y sus apartados eliminados. Las ventas quedan en el historial.'
-        : 'Producto eliminado. Sus ventas quedan en el historial y reportes.');
-      void refreshProductCount();
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
-        ?? 'No se pudo eliminar el producto.';
-      // En modo soft, si el backend rechaza por relaciones, sugerimos cambiar a force.
-      toast.error(msg + (deleteMode === "soft" ? " Cambia a 'Borrar TODO' si quieres eliminarlo de todos modos." : ""));
-    } finally {
-      setDeleteLoading(false);
-    }
-  };
+  // El modo (soft/force), la vista previa y el borrado viven en DeleteProductModal (2026-10-09).
 
   const handleToggleWhatsappSelection = (id: number) => {
     setSelectedForWhatsapp(prev => 
@@ -2715,134 +2827,85 @@ export function ProductsPage() {
     }),
   ], [canViewCost, canEdit, isAdmin, canNotify, handleNotify, openMangaDetails, alertingKey, notifiedKeys]);
 
-  const filteredMangas = useMemo(() => {
-    let list = mangas;
-    // Tab "Por agotarse" / "Agotados" / "Sin categoría" — solo aplica cuando
-    // estamos en sección tomos (la lista de mangas viene completa; se filtra aquí).
-    if (pageSection === 'tomos') {
-      if (showOutStock) {
-        list = list.filter(m => (m.stock ?? 0) === 0);
-      } else if (showLowStock) {
-        list = list.filter(m => (m.stock ?? 0) > 0 && (m.stock ?? 0) <= 10);
-      } else if (showNoCategory) {
-        // Misma semántica que ?no_category=1 del backend: pivote vacío
-        // (categories[]); fallback a category_id solo si la API vieja no lo manda.
-        list = list.filter(m => (m.categories ? m.categories.length === 0 : m.category_id == null));
-      }
-    }
-    if (!mangaSearch.trim()) return list;
-    const q = mangaSearch.toLowerCase();
-    return list.filter(m =>
-      m.name.toLowerCase().includes(q) ||
-      (m.editorial ?? '').toLowerCase().includes(q) ||
-      (m.genre ?? '').toLowerCase().includes(q) ||
-      (m.code ?? '').toLowerCase().includes(q)
-    );
-  }, [mangas, mangaSearch, showLowStock, showOutStock, showNoCategory, pageSection]);
-
+  // 2026-10-12: los chips (Por agotarse / Agotados / Sin categoría) y la
+  // búsqueda filtran en el SERVER — `mangas` ya es la página filtrada y el
+  // total viene aparte. Aquí NO se vuelve a filtrar: antes se re-filtraba la
+  // respuesta por nombre/editorial/género/código y un tomo encontrado por SKU
+  // desaparecía si además tenía código de barras, y cualquier filtro local
+  // deja el contador («N tomos») sin cuadrar con las filas.
+  //
+  // manualPagination: la tabla pinta la página que mandó el server tal cual;
+  // pageCount viene del total real. El sort por columna sigue siendo sobre la
+  // página visible (igual que en Productos).
   const mangaTable = useReactTable({
-    data: filteredMangas,
+    data: mangas,
     columns: mangaColumns,
     state: { sorting: mangaSorting, pagination: mangaPagination },
     onSortingChange: setMangaSorting,
     onPaginationChange: setMangaPagination,
     autoResetPageIndex: false,
+    manualPagination: true,
+    pageCount: mangaLastPage,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
   });
 
   // ── Footer de paginación SERVER-SIDE — compartido por Tabla y Cuadrícula.
   // "Mostrando X–Y de N" usa el total real del meta (~14k), no lo cargado.
-  const paginationFooter = (() => {
-    const pageIdx = pagination.pageIndex;
-    const size = pagination.pageSize;
-    const from = filtered.length === 0 ? 0 : pageIdx * size + 1;
-    const to = pageIdx * size + filtered.length;
-    return (
-      <div
-        className="flex items-center justify-between px-6 py-4 gap-4 flex-wrap"
-        style={{ borderTop: PRODUCT_THEME.borderSubtle, background: PRODUCT_THEME.tableFoot }}
-      >
-        <span className="text-[11px] font-semibold inline-flex items-center gap-2" style={{ color: T.textMuted }}>
-          {showTopSellers
-            ? `Top ${filtered.length} más vendidos (últimos 30 días)`
-            : `Mostrando ${from.toLocaleString("es-MX")}–${to.toLocaleString("es-MX")} de ${totalProducts.toLocaleString("es-MX")} · página ${pageIdx + 1} de ${Math.max(1, table.getPageCount())}`}
-          {productsQuery.isFetching && <Loader2 size={11} className="animate-spin" />}
-        </span>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => table.setPageIndex(0)}
-            disabled={!table.getCanPreviousPage()}
-            className="p-2 rounded-xl transition-all disabled:opacity-30"
-            style={SECONDARY_BUTTON}
-            title="Primera página"
-          >
-            <ChevronsLeft size={15} />
-          </button>
-          <button
-            onClick={() => table.previousPage()}
-            disabled={!table.getCanPreviousPage()}
-            className="p-2 rounded-xl transition-all disabled:opacity-30"
-            style={SECONDARY_BUTTON}
-            title="Página anterior"
-          >
-            <ChevronLeft size={15} />
-          </button>
+  const paginationFooter = (
+    <TablePaginationFooter
+      label={showTopSellers
+        ? `Top ${filtered.length} más vendidos (últimos 30 días)`
+        : paginationRangeLabel({
+            pageIndex: pagination.pageIndex,
+            pageSize: pagination.pageSize,
+            rowsOnPage: filtered.length,
+            total: totalProducts,
+            pageCount: table.getPageCount(),
+          })}
+      isFetching={productsQuery.isFetching}
+      pageIndex={pagination.pageIndex}
+      pageCount={table.getPageCount()}
+      pageSize={pagination.pageSize}
+      onPageChange={pageIndex => setPagination(p => ({ ...p, pageIndex }))}
+      // Cambiar el tamaño regresa a la página 1 — el índice viejo puede
+      // quedar fuera de rango con el tamaño nuevo (server-side).
+      onPageSizeChange={pageSize => setPagination({ pageIndex: 0, pageSize })}
+    />
+  );
 
-          {/* Page numbers */}
-          {Array.from({ length: table.getPageCount() }, (_, i) => i)
-            .filter(i => Math.abs(i - pageIdx) <= 2)
-            .map(i => (
-              <button
-                key={i}
-                onClick={() => table.setPageIndex(i)}
-                className="w-8 h-8 rounded-xl text-xs font-bold transition-all"
-                style={
-                  i === pageIdx
-                    ? { background: T.redBright, color: '#fff' }
-                    : { color: T.textMuted, background: 'transparent' }
-                }
-              >
-                {i + 1}
-              </button>
-            ))}
+  // Tabla de tomos vacía: distingue búsqueda, chip sin resultados y catálogo vacío.
+  const mangaChipLabel = (showLowStock || showOutStock || showNoCategory) && activeFilter
+    ? FILTER_META[activeFilter].label
+    : null;
+  // Un error de red NO es "no hay tomos": con el chip «Agotados» eso le
+  // aseguraría al gerente que nada está agotado.
+  const mangaEmptyMessage = mangasQuery.isError
+    ? 'No se pudieron cargar los tomos. Pulsa «Actualizar» para reintentar.'
+    : mangaServerTerm
+      ? 'Sin resultados para esa búsqueda.'
+      : mangaChipLabel
+        ? `No hay tomos en «${mangaChipLabel}».`
+        : 'No hay tomos registrados aún.';
 
-          <button
-            onClick={() => table.nextPage()}
-            disabled={!table.getCanNextPage()}
-            className="p-2 rounded-xl transition-all disabled:opacity-30"
-            style={SECONDARY_BUTTON}
-            title="Página siguiente"
-          >
-            <ChevronRight size={15} />
-          </button>
-          <button
-            onClick={() => table.setPageIndex(table.getPageCount() - 1)}
-            disabled={!table.getCanNextPage()}
-            className="p-2 rounded-xl transition-all disabled:opacity-30"
-            style={SECONDARY_BUTTON}
-            title="Última página"
-          >
-            <ChevronsRight size={15} />
-          </button>
-
-          <select
-            value={size}
-            // Cambiar el tamaño regresa a la página 1 — el índice viejo puede
-            // quedar fuera de rango con el tamaño nuevo (server-side).
-            onChange={e => setPagination({ pageIndex: 0, pageSize: Number(e.target.value) })}
-            className="ml-2 px-2 py-1 rounded-xl text-xs font-bold outline-none"
-            style={T.input}
-          >
-            {[10, 20, 50, 100].map(s => (
-              <option key={s} value={s}>{s} / página</option>
-            ))}
-          </select>
-        </div>
-      </div>
-    );
-  })();
+  // Mismo pie para Tomos, con el total real de GET /mangas.
+  const mangaPaginationFooter = (
+    <TablePaginationFooter
+      label={paginationRangeLabel({
+        pageIndex: mangaPagination.pageIndex,
+        pageSize: mangaPagination.pageSize,
+        rowsOnPage: mangas.length,
+        total: totalMangas,
+        pageCount: mangaLastPage,
+      })}
+      isFetching={mangasQuery.isFetching}
+      pageIndex={mangaPagination.pageIndex}
+      pageCount={mangaLastPage}
+      pageSize={mangaPagination.pageSize}
+      onPageChange={pageIndex => setMangaPagination(p => ({ ...p, pageIndex }))}
+      onPageSizeChange={pageSize => setMangaPagination({ pageIndex: 0, pageSize })}
+    />
+  );
 
   if (loading) {
     return <ProductsSkeleton viewMode={viewMode} bgGrad={T.bgGrad} />;
@@ -2935,12 +2998,13 @@ export function ProductsPage() {
                     <X size={11} />
                   </button>
                 ) : (
-                  <div className="relative">
+                  <div className="relative" ref={categoryDropdownRef}>
                     <input
                       type="text"
                       placeholder="Categoría…"
                       value={categorySearch}
-                      onChange={e => setCategorySearch(e.target.value)}
+                      onFocus={() => setCategoryDropdownOpen(true)}
+                      onChange={e => { setCategorySearch(e.target.value); setCategoryDropdownOpen(true); }}
                       className="pl-3 pr-8 py-2 rounded-2xl text-xs font-semibold outline-none w-32 transition-all"
                       style={{
                         background: "var(--td-input-bg)",
@@ -2949,15 +3013,17 @@ export function ProductsPage() {
                       }}
                     />
                     <BookOpen size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: T.textMuted }} />
-                    {categorySearch.length > 0 && filtered.length > 0 && (
+                    {categoryDropdownOpen && (
                       <div
                         className="absolute left-0 top-full mt-1 z-50 rounded-xl overflow-hidden shadow-xl min-w-[180px] max-h-52 overflow-y-auto"
                         style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)" }}
                       >
-                        {filtered.map(cat => (
+                        {filtered.length === 0 ? (
+                          <p className="px-3 py-3 text-xs" style={{ color: T.textMuted }}>Sin resultados</p>
+                        ) : filtered.map(cat => (
                           <button
                             key={cat.id}
-                            onClick={() => { setSelectedCategoryId(cat.id); setCategorySearch(""); }}
+                            onClick={() => { setSelectedCategoryId(cat.id); setCategorySearch(""); setCategoryDropdownOpen(false); }}
                             className="w-full text-left px-3 py-2 text-xs font-semibold hover:bg-white/5 transition-colors"
                             style={{ color: T.textPrimary }}
                           >
@@ -2985,6 +3051,10 @@ export function ProductsPage() {
             }}
             storeName={selectedStoreId ? (stores.find(s => s.id === selectedStoreId)?.name ?? null) : null}
           />
+
+          {pageSection === 'productos' && (
+            <SortDropdown sortBy={sortBy} onSelect={setSortBy} disabled={showTopSellers} />
+          )}
 
           {/* Valor invertido = Σ costo × stock del catálogo COMPLETO (stats). */}
           {canViewCost && pageSection === 'productos' && (
@@ -3359,112 +3429,25 @@ export function ProductsPage() {
         </div>
       )}
 
-      {deleteTarget && (() => {
-        const close = () => { if (!deleteLoading) { setDeleteTarget(null); setDeleteMode("soft"); setForceConfirmText(""); } };
-        const isForce = deleteMode === "force";
-        const forceConfirmed = !isForce || forceConfirmText.trim().toLowerCase() === deleteTarget.nombre.trim().toLowerCase();
-        return (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/85 backdrop-blur-md" onClick={close} />
-            <div className="relative w-full max-w-md rounded-2xl p-6 shadow-2xl transition-all" style={{ background: "var(--td-panel-bg)", border: `1px solid ${isForce ? 'rgba(239,68,68,0.7)' : 'rgba(239,68,68,0.3)'}` }}>
-              <div className="flex items-start gap-3 mb-4">
-                <div className="w-12 h-12 rounded-full flex items-center justify-center shrink-0 animate-pulse" style={{ background: isForce ? 'rgba(239,68,68,0.25)' : 'rgba(239,68,68,0.12)' }}>
-                  <AlertTriangle size={26} className="text-red-400" />
-                </div>
-                <div>
-                  <h3 className="font-black text-lg uppercase tracking-wider" style={{ color: T.textPrimary }}>
-                    {isForce ? '⚠️ Borrado total' : 'Eliminar producto'}
-                  </h3>
-                  <p className="text-xs mt-1" style={{ color: T.textSecondary }}>Esta acción <span className="text-red-400 font-bold">NO se puede deshacer</span>.</p>
-                </div>
-              </div>
-
-              <div className="rounded-xl p-3 mb-4" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
-                <p className="font-bold text-sm" style={{ color: T.textPrimary }}>{deleteTarget.nombre}</p>
-                <p className="text-[10px] mt-0.5" style={{ color: T.textSecondary }}>SKU: {deleteTarget.sku || "—"}</p>
-              </div>
-
-              {/* Radio: elegir modo */}
-              <div className="space-y-2 mb-4">
-                <label className={`flex items-start gap-3 p-3 rounded-xl cursor-pointer transition-all ${!isForce ? 'bg-amber-500/10 border border-amber-500/30' : ''}`} style={!isForce ? undefined : { background: PRODUCT_THEME.surfaceMuted, border: PRODUCT_THEME.borderSubtle }}>
-                  <input
-                    type="radio"
-                    name="deleteMode"
-                    checked={!isForce}
-                    onChange={() => { setDeleteMode("soft"); setForceConfirmText(""); }}
-                    disabled={deleteLoading}
-                    className="mt-0.5 accent-amber-500"
-                  />
-                  <div className="flex-1">
-                    <p className="font-black text-sm" style={{ color: T.textPrimary }}>Solo el producto</p>
-                    <p className="text-[11px] mt-0.5" style={{ color: T.textSecondary }}>
-                      Elimina el producto con sus imágenes, inventario y precios. <strong className="text-amber-400">Sus ventas NO se tocan</strong>: quedan en historial y reportes con el nombre marcado como “(eliminado)”. Si tiene apartados, fallará — desactívalo (Baja) o resuelve los apartados primero.
-                    </p>
-                  </div>
-                </label>
-
-                {/* Borrar TODO (mata ventas históricas): solo admin — el API
-                    también lo exige (adminOnlyError en /products/{id}/force). */}
-                {isAdmin && (
-                <label className={`flex items-start gap-3 p-3 rounded-xl cursor-pointer transition-all ${isForce ? 'bg-red-500/10 border border-red-500/40' : ''}`} style={isForce ? undefined : { background: PRODUCT_THEME.surfaceMuted, border: PRODUCT_THEME.borderSubtle }}>
-                  <input
-                    type="radio"
-                    name="deleteMode"
-                    checked={isForce}
-                    onChange={() => setDeleteMode("force")}
-                    disabled={deleteLoading}
-                    className="mt-0.5 accent-red-500"
-                  />
-                  <div className="flex-1">
-                    <p className="font-black text-sm" style={{ color: T.textPrimary }}>⚠️ Borrar TODO (también apartados)</p>
-                    <p className="text-[11px] mt-0.5" style={{ color: T.textSecondary }}>
-                      Borra el producto Y <strong className="text-red-400">sus apartados</strong> (además de inventario y precios). Las ventas se conservan en historial/reportes. Úsalo solo si “Solo el producto” falla por apartados.
-                    </p>
-                  </div>
-                </label>
-                )}
-              </div>
-
-              {/* Confirmación tipeada para modo force */}
-              {isForce && (
-                <div className="mb-4">
-                  <p className="text-[11px] font-bold text-red-400 mb-2 uppercase tracking-wider">
-                    Para confirmar, tipea el nombre del producto:
-                  </p>
-                  <input
-                    type="text"
-                    value={forceConfirmText}
-                    onChange={e => setForceConfirmText(e.target.value)}
-                    placeholder={deleteTarget.nombre}
-                    disabled={deleteLoading}
-                    className="w-full px-3 py-2 rounded-xl text-sm font-bold border outline-none transition-all"
-                    style={{ ...T.input, borderColor: forceConfirmed ? '#10b981' : 'rgba(239,68,68,0.4)', color: forceConfirmed ? '#10b981' : T.textPrimary }}
-                  />
-                </div>
-              )}
-
-              <div className="flex gap-3 justify-end">
-                <button
-                  onClick={close}
-                  disabled={deleteLoading}
-                  className="px-5 py-2.5 rounded-xl text-sm font-bold transition-all"
-                  style={SECONDARY_BUTTON}
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={handleDeleteProduct}
-                  disabled={deleteLoading || !forceConfirmed}
-                  className="px-5 py-2.5 rounded-xl text-sm font-bold text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
-                  style={{ background: isForce ? '#b91c1c' : '#ef4444' }}
-                >
-                  {deleteLoading ? <><Loader2 size={14} className="animate-spin" /> Eliminando…</> : isForce ? '🗑 Borrar TODO' : 'Eliminar'}
-                </button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      {deleteTarget && (
+        <DeleteProductModal
+          kind="product"
+          isAdmin={isAdmin}
+          product={{ id: deleteTarget.id, name: deleteTarget.nombre, sku: deleteTarget.sku || null }}
+          onClose={() => setDeleteTarget(null)}
+          onDeleted={(mode) => {
+            void invalidateProducts();
+            void queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all });
+            setIsModalOpen(false);
+            setEditingProduct(undefined);
+            setDeleteTarget(null);
+            toast.success(mode === "force"
+              ? 'Producto y sus apartados eliminados. Las ventas quedan en el historial.'
+              : 'Producto eliminado. Sus ventas quedan en el historial y reportes.');
+            void refreshProductCount();
+          }}
+        />
+      )}
 
       </>}
 
@@ -3473,8 +3456,11 @@ export function ProductsPage() {
         <>
           {/* Tomos header row */}
           <div className="flex items-center justify-between mb-4">
+            {/* Total REAL del servidor (con chip/búsqueda/tienda aplicados), no las filas cargadas. */}
             <p className="text-[10px] font-black uppercase tracking-[0.2em]" style={{ color: T.textMuted }}>
-              {filteredMangas.length} tomo{filteredMangas.length !== 1 ? 's' : ''}
+              {mangasQuery.isError && !mangasQuery.data
+                ? 'Tomos sin cargar'
+                : `${totalMangas.toLocaleString("es-MX")} tomo${totalMangas !== 1 ? 's' : ''}`}
             </p>
             {canEdit && (
               <button
@@ -3505,7 +3491,7 @@ export function ProductsPage() {
                   if (e.key === "Enter") {
                     const term = mangaSearch.trim();
                     setServerMangaSearch(term);
-                    if (term && filteredMangas.length === 0 && serverMangaSearch === term && !mangasQuery.isFetching) {
+                    if (term && mangas.length === 0 && serverMangaSearch === term && !mangasQuery.isFetching) {
                       toast.warning(`No se encontró "${term}"`);
                     }
                   }
@@ -3555,7 +3541,7 @@ export function ProductsPage() {
                               <Loader2 size={14} className="animate-spin" />
                               Actualizando tomos…
                             </span>
-                          ) : mangas.length === 0 ? 'No hay tomos registrados aún.' : 'Sin resultados para esa búsqueda.'}
+                          ) : mangaEmptyMessage}
                         </td>
                       </tr>
                     ) : (
@@ -3578,29 +3564,7 @@ export function ProductsPage() {
                 </table>
               </div>
 
-              {/* Pagination — idéntica a productos */}
-              <div className="flex items-center justify-between px-6 py-4 gap-4 flex-wrap" style={{ borderTop: PRODUCT_THEME.borderSubtle, background: PRODUCT_THEME.tableFoot }}>
-                <span className="text-[11px] font-semibold" style={{ color: T.textMuted }}>
-                  {filteredMangas.length} tomos · página {mangaTable.getState().pagination.pageIndex + 1} de {Math.max(1, mangaTable.getPageCount())}
-                </span>
-                <div className="flex items-center gap-1">
-                  <button onClick={() => mangaTable.setPageIndex(0)} disabled={!mangaTable.getCanPreviousPage()} className="p-2 rounded-xl transition-all disabled:opacity-30" style={SECONDARY_BUTTON}><ChevronsLeft size={15} /></button>
-                  <button onClick={() => mangaTable.previousPage()} disabled={!mangaTable.getCanPreviousPage()} className="p-2 rounded-xl transition-all disabled:opacity-30" style={SECONDARY_BUTTON}><ChevronLeft size={15} /></button>
-                  {Array.from({ length: mangaTable.getPageCount() }, (_, i) => i)
-                    .filter(i => Math.abs(i - mangaTable.getState().pagination.pageIndex) <= 2)
-                    .map(i => (
-                      <button key={i} onClick={() => mangaTable.setPageIndex(i)} className="w-8 h-8 rounded-xl text-xs font-bold transition-all"
-                        style={i === mangaTable.getState().pagination.pageIndex ? { background: T.redBright, color: '#fff' } : { color: T.textMuted }}>
-                        {i + 1}
-                      </button>
-                    ))}
-                  <button onClick={() => mangaTable.nextPage()} disabled={!mangaTable.getCanNextPage()} className="p-2 rounded-xl transition-all disabled:opacity-30" style={SECONDARY_BUTTON}><ChevronRight size={15} /></button>
-                  <button onClick={() => mangaTable.setPageIndex(mangaTable.getPageCount() - 1)} disabled={!mangaTable.getCanNextPage()} className="p-2 rounded-xl transition-all disabled:opacity-30" style={SECONDARY_BUTTON}><ChevronsRight size={15} /></button>
-                  <select value={mangaTable.getState().pagination.pageSize} onChange={e => mangaTable.setPageSize(Number(e.target.value))} className="ml-2 px-2 py-1 rounded-xl text-xs font-bold outline-none" style={T.input}>
-                    {[10, 20, 50].map(s => <option key={s} value={s}>{s} / página</option>)}
-                  </select>
-                </div>
-              </div>
+              {mangaPaginationFooter}
             </div>
           )}
         </>
@@ -3699,6 +3663,7 @@ export function ProductsPage() {
           onDeleted={() => {
             void invalidateMangas();
             void invalidateProducts();
+            void queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all });
             setEditingManga(null);
             toast.success('Tomo eliminado.');
           }}

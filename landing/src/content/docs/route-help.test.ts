@@ -21,6 +21,7 @@ describe("ROUTE_HELP", () => {
     expect(helpTopicFor("/reports")).toBe("reportes");
     expect(helpTopicFor("/layaways")).toBe("apartados");
     expect(helpTopicFor("/promos")).toBe("promos-nxm");
+    expect(helpTopicFor("/paquetes")).toBe("paquetes");
     expect(helpTopicFor("/insumos")).toBe("insumos");
     expect(helpTopicFor("/buscar-tiendas")).toBe("buscar-en-tiendas");
     expect(helpTopicFor("/settings")).toBe("tienda-online");

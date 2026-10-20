@@ -1,3 +1,10 @@
+// ─── Tipos de producto ───────────────────────────────────────────────────────
+/**
+ * `products.product_type`: 'product' (genérico), 'manga' (tomo, módulo Tomos)
+ * o 'bundle' (Paquete: combo de productos con stock propio — ver bundles.ts).
+ */
+export type ProductType = 'product' | 'manga' | 'bundle'
+
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
 export interface User {
@@ -75,7 +82,7 @@ export interface Product {
   is_assigned?: boolean
   images: Array<{ id: number; image_path: string; url: string; sort_order: number }>
   /** Discriminador producto normal vs tomo de librería (default 'product'). */
-  product_type?: 'product' | 'manga'
+  product_type?: ProductType
   /** Promos NxM VIGENTES (Fase 3) — el motor de Caja elige la mejor por línea. */
   active_promotions?: ActiveProductPromotion[]
   created_at: string
@@ -336,6 +343,11 @@ export interface SaleItemDetail {
    */
   product_name?: string | null
   product_sku?: string | null
+  /**
+   * Imagen de la línea (2026-10-10, mismo espíritu que product_name/sku):
+   * congelada al checkout. Preferir sobre `product.image`/catálogo en vivo.
+   */
+  product_image?: string | null
   /** true = la línea vendió un producto que YA NO existe en el catálogo. */
   product_deleted?: boolean
   quantity: number
@@ -383,9 +395,11 @@ export interface SaleItemDetail {
    * ventas nuevas SIEMPRE preferir `item.cost`.
    */
   product: {
-    id: number; name: string; sku: string; cost?: number | null; product_type?: 'product' | 'manga'
+    id: number; name: string; sku: string; cost?: number | null; product_type?: ProductType
     /** Nombres de sus categorías en orden (solo en el listado `GET /sales`, para reportes). */
     categories?: string[]
+    /** Primera imagen del producto, snapshot de la venta (2026-10-10). */
+    image?: string | null
   } | null
   created_at: string
 }
@@ -451,7 +465,7 @@ export interface SaleDetail {
     surcharge_cancelled?: number | null
     /** cost_at_sale del item cancelado (snapshot ADR-015). Solo para admin/can_view_cost; null si no. */
     cost?: number | null
-    product_type?: 'product' | 'manga'
+    product_type?: ProductType
     /** Categorías del producto, en orden (2026-10-03, para agrupar el reporte). */
     categories?: string[]
   }>
@@ -498,6 +512,8 @@ export interface GetSalesParams {
   whole_store?: boolean
   from?: string
   to?: string
+  /** Fechas sueltas (no consecutivas), opcional, "a,b,c" — gana sobre from/to. */
+  dates?: string
   status?: string
   per_page?: number
   page?: number
@@ -914,8 +930,19 @@ export interface UpdatePreSaleCatalogInput {
   store_limits?: { store_id: number; limit_qty: number }[]
 }
 
+/** Conteos de la vista previa de "Cancelar catálogo" (GET cancel-preview). */
+export interface CatalogCancelCounts {
+  to_cancel: number
+  with_money: number
+}
+
 export interface UpdatePreSaleCatalogStatusInput {
   status: PreSaleCatalogStatus
+  /**
+   * Solo para `cancelled` (2026-10-09): lo que el usuario vio en la vista
+   * previa. Si entraron folios o cobros mientras revisaba, el backend no cancela.
+   */
+  expected?: CatalogCancelCounts
 }
 
 export interface GetPreSaleCatalogsParams {
@@ -947,7 +974,7 @@ export interface PreSaleOrderItem {
    *  lo ven todos los roles, a diferencia de `cost`. */
   has_real_cost?: boolean
   catalog: { id: number; product_name: string; image_path: string | null; status: PreSaleCatalogStatus | null; pickup_deadline: string | null } | null
-  product_type?: 'product' | 'manga'
+  product_type?: ProductType
 }
 
 export interface PreSaleOrderPayment {
@@ -1020,6 +1047,8 @@ export interface GetPreSaleOrdersParams {
    *  liquidaciones del día aunque el folio se haya creado antes. */
   payment_from?: string
   payment_to?: string
+  /** Fechas sueltas (no consecutivas) de pago, "a,b,c" — gana sobre payment_from/to. */
+  payment_dates?: string
   /** Solo folios del usuario actual (creados o cobrados por él). Lo usa la Lista
    *  de Ventas del cajero para ver solo lo suyo. Opt-in (Caja no lo manda). */
   mine?: boolean

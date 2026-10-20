@@ -6,12 +6,14 @@ import ventaCajaData from "./data/venta-caja.json"
 import preventasData from "./data/preventas.json"
 import corteCajaData from "./data/corte-caja.json"
 import altaProductoData from "./data/alta-producto.json"
+import paquetesData from "./data/paquetes.json"
 
 const ALL_FILES: [string, unknown][] = [
   ["venta-caja", ventaCajaData],
   ["preventas", preventasData],
   ["corte-caja", corteCajaData],
   ["alta-producto", altaProductoData],
+  ["paquetes", paquetesData],
 ]
 
 /** Tour base válido para mutarlo en los casos negativos. */
@@ -110,8 +112,8 @@ describe("data/*.json contra validateTourDefinition", () => {
     expect(result.ok ? [] : result.errors).toEqual([])
   })
 
-  it("los ids de tour son únicos y los 4 hidratan", () => {
-    expect(TOURS).toHaveLength(4)
+  it("los ids de tour son únicos y los 5 hidratan", () => {
+    expect(TOURS).toHaveLength(5)
     const ids = TOURS.map((t) => t.id)
     expect(new Set(ids).size).toBe(ids.length)
   })
@@ -138,6 +140,8 @@ describe("filtrado por rol (funciones puras)", () => {
     // alta-producto es admin+gerente — el cajero no lo ve.
     expect(cajeroTours).not.toContain("alta-producto")
     expect(cajeroTours).toContain("venta-caja")
+    // paquetes no restringe roles: el cajero también arma y vende paquetes.
+    expect(cajeroTours).toContain("paquetes")
   })
 
   it("el paso 'nuevo-catalogo' de preventas es solo admin/gerente", () => {

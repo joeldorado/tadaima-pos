@@ -3,16 +3,17 @@ import { motion as Motion } from "motion/react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  ShoppingBasket, Plus, Pencil, Loader2, Wallet, AlertTriangle, BarChart2, X,
+  ShoppingBasket, Plus, Pencil, Loader2, Wallet, AlertTriangle, BarChart2, X, Store as StoreIcon, Trash2,
 } from "lucide-react";
 import {
-  createSupply, updateSupply, registerSupplyPurchase, getStores,
+  createSupply, updateSupply, registerSupplyPurchase, deleteSupplyMovement, getStores,
   type Supply, type Store, type SupplyMoneySource,
 } from "@tadaima/api";
 import { useAuth } from "@tadaima/auth";
 import { queryKeys } from "@/lib/queryKeys";
 import { useSuppliesQuery, useSupplyMovementsQuery, useSupplyReportQuery } from "@/hooks/queries/useSupplies";
 import { useActiveSessionQuery } from "@/hooks/queries/useCashSession";
+import { useStoresQuery } from "@/hooks/queries/useStores";
 import { isAdmin as isAdminRole, isManager as isManagerRole } from "@/lib/permisos";
 import { getTodayLocal, BUSINESS_TZ } from "@/lib/date";
 import { DateRangePicker } from "@/components/ui/DateRangePicker";
@@ -68,7 +69,8 @@ const sourceLabel = (source: SupplyMoneySource | null, payerName?: string | null
  */
 export function SuppliesPage() {
   const { user } = useAuth();
-  const canManageCatalog = isAdminRole(user?.roles) || isManagerRole(user?.roles);
+  const isAdmin = isAdminRole(user?.roles);
+  const canManageCatalog = isAdmin || isManagerRole(user?.roles);
   const queryClient = useQueryClient();
 
   const [tab, setTab] = useState<Tab>("comprar");
@@ -79,6 +81,18 @@ export function SuppliesPage() {
   const movementsQuery = useSupplyMovementsQuery({ type: "purchase" });
   const sessionQuery = useActiveSessionQuery();
   const hasOpenSession = !!sessionQuery.data;
+
+  // Tienda a la que se carga el registro (2026-10-12): solo el admin elige —
+  // cajero/gerente quedan forzados a la suya (el backend lo fuerza de todos
+  // modos, esto es puramente informativo/selector para admin).
+  // Para TODOS (no solo admin): resolver el nombre de tienda de cada compra
+  // en "Compras de hoy" (abajo) necesita la lista completa.
+  const storesQuery = useStoresQuery({ active: true });
+  const stores = storesQuery.data ?? [];
+  const [movementStoreId, setMovementStoreId] = useState<string>("");
+  const registeringStoreName = isAdmin
+    ? (movementStoreId ? (stores.find(s => s.id === Number(movementStoreId))?.name ?? null) : null)
+    : (user?.store?.name ?? null);
 
   // ── Registrar compra ─────────────────────────────────────────────────────
   const [supplyId, setSupplyId] = useState<string>("");
@@ -149,6 +163,9 @@ export function SuppliesPage() {
         ...(note.trim() ? { note: note.trim().slice(0, 255) } : {}),
         money_source: moneySource,
         ...(moneySource === "propio" ? { payer_name: payerName.trim().slice(0, 100) } : {}),
+        // Solo admin manda store_id — el backend lo ignora para cajero/gerente
+        // (siempre su propia tienda). Vacío = "toda la empresa".
+        ...(isAdmin ? { store_id: movementStoreId ? Number(movementStoreId) : null } : {}),
       });
       toast.success(isCajaSource
         ? `Compra registrada · salió ${fmt(a)} de tu caja`
@@ -167,6 +184,26 @@ export function SuppliesPage() {
       toast.error((err as { message?: string }).message ?? "No se pudo registrar la compra");
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Borrar un registro (2026-10-12, solo admin — limpieza de pruebas).
+  // Definitivo: avisa con confirm() antes, no se puede deshacer.
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const handleDeleteMovement = async (id: number, label: string) => {
+    if (!window.confirm(`¿Borrar "${label}"? Esto es definitivo y no se puede deshacer.`)) return;
+    setDeletingId(id);
+    try {
+      await deleteSupplyMovement(id);
+      toast.success("Insumo borrado");
+      void queryClient.invalidateQueries({ queryKey: queryKeys.supplies.all });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.reports.cash() });
+      void queryClient.invalidateQueries({ queryKey: ["cash-session-detail"] });
+      void queryClient.invalidateQueries({ queryKey: ["cash"] });
+    } catch (err: unknown) {
+      toast.error((err as { message?: string }).message ?? "No se pudo borrar el insumo");
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -221,6 +258,37 @@ export function SuppliesPage() {
         <div className="grid gap-5 lg:grid-cols-[1fr_1.2fr]">
           <Motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
             className="rounded-3xl p-6" style={{ background: PANEL, border: BORDER }}>
+            {/* A qué tienda queda atado el registro (2026-10-12): para cajero/
+                gerente es automático (su store_id, no se elige aquí). Admin
+                SÍ puede elegir — mismo criterio del backend,
+                SuppliesController::storeMovement. */}
+            {isAdmin ? (
+              <div className="mb-4">
+                <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>
+                  Cargar a la tienda
+                </label>
+                <div className="flex items-center gap-2" style={{ marginTop: 6 }}>
+                  <StoreIcon size={13} style={{ color: "#60A5FA" }} className="shrink-0" />
+                  <select
+                    value={movementStoreId}
+                    onChange={e => setMovementStoreId(e.target.value)}
+                    style={inputStyle}
+                  >
+                    <option value="">Toda la empresa (sin tienda)</option>
+                    {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+              </div>
+            ) : (
+              <div className="mb-4 flex items-center gap-2 rounded-2xl px-3 py-2"
+                style={{ background: "rgba(96,165,250,0.08)", border: "1px solid rgba(96,165,250,0.25)" }}>
+                <StoreIcon size={13} style={{ color: "#60A5FA" }} />
+                <p className="text-[11px] font-bold" style={{ color: "#60A5FA" }}>
+                  Se registra para: <b>{registeringStoreName ?? "Toda la empresa (sin tienda asignada)"}</b>
+                </p>
+              </div>
+            )}
+
             {isCajaSource && !hasOpenSession && !sessionQuery.isLoading && (
               <div className="mb-4 flex items-start gap-2 rounded-2xl p-3"
                 style={{ background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.3)" }}>
@@ -375,7 +443,15 @@ export function SuppliesPage() {
               </p>
             ) : (
               <div className="flex flex-col gap-2 max-h-[480px] overflow-y-auto pr-1">
-                {todayMovements.map(m => (
+                {todayMovements.map(m => {
+                  // Tienda a la que quedó atado (2026-10-12): prefiere la del
+                  // MOVIMIENTO; solo si es viejo (sin store_id propio) cae a
+                  // la de la categoría — mismo criterio que el backend.
+                  const movementStoreIdResolved = m.store_id ?? m.supply?.store_id ?? null;
+                  const movementStoreLabel = movementStoreIdResolved
+                    ? (stores.find(s => s.id === movementStoreIdResolved)?.name ?? `Tienda ${movementStoreIdResolved}`)
+                    : "Toda la empresa";
+                  return (
                   <div key={m.id} className="flex items-center gap-3 rounded-2xl px-4 py-2.5" style={{ background: CARD, border: CARD_B }}>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-[12px] font-black" style={{ color: THI }}>{m.supply?.name ?? `#${m.supply_id}`}</p>
@@ -384,6 +460,13 @@ export function SuppliesPage() {
                         {m.user?.name ? ` · ${m.user.name}` : ""}{m.note ? ` · ${m.note}` : ""}
                       </p>
                     </div>
+                    <span
+                      className="shrink-0 flex items-center gap-1 rounded-full px-2.5 py-1 text-[9px] font-black uppercase tracking-wider"
+                      style={{ color: "#60A5FA", background: "rgba(96,165,250,0.1)", border: "1px solid rgba(96,165,250,0.3)" }}
+                    >
+                      <StoreIcon size={10} />
+                      {movementStoreLabel}
+                    </span>
                     <span
                       className="shrink-0 rounded-full px-2.5 py-1 text-[9px] font-black uppercase tracking-wider"
                       style={{
@@ -396,8 +479,21 @@ export function SuppliesPage() {
                     </span>
                     <span className="text-[10px] font-bold" style={{ color: TLO }}>×{m.quantity}</span>
                     <span className="text-[13px] font-black" style={{ color: "var(--td-red)" }}>−{fmt(m.amount)}</span>
+                    {isAdmin && (
+                      <button
+                        onClick={() => void handleDeleteMovement(m.id, m.supply?.name ?? `#${m.supply_id}`)}
+                        disabled={deletingId === m.id}
+                        title="Borrar (definitivo)"
+                        className="shrink-0 rounded-lg p-1.5 transition-colors hover:bg-white/10 disabled:opacity-40"
+                      >
+                        {deletingId === m.id
+                          ? <Loader2 size={13} className="animate-spin" style={{ color: TLO }} />
+                          : <Trash2 size={13} style={{ color: "var(--td-red)" }} />}
+                      </button>
+                    )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             );
             })()}

@@ -1,0 +1,67 @@
+{
+  "id": "paquetes",
+  "title": "Paquetes: armar y vender combos",
+  "description": "Cómo se crea un paquete, qué pasa con el inventario al armarlo y cómo se vende en Caja.",
+  "icon": "package",
+  "topicSlug": "paquetes",
+  "steps": [
+    {
+      "id": "intro",
+      "title": "Paquetes: combos de productos",
+      "body": "Te enseño cómo funcionan los paquetes: juntan 2 o más productos, se arman con el inventario de tu tienda y se venden en Caja como uno solo. Nada se crea ni se arma por ti. Puedes salir cuando quieras con Esc o la ✕."
+    },
+    {
+      "id": "nav-paquetes",
+      "target": "nav-paquetes",
+      "placement": "right",
+      "title": "Aquí viven los paquetes",
+      "body": "En el menú Paquetes se crean, se arman, se desarman y se imprimen sus etiquetas. Vamos para allá."
+    },
+    {
+      "id": "nuevo",
+      "route": "/paquetes",
+      "target": "bundles-new",
+      "waitFor": true,
+      "placement": "bottom",
+      "title": "Crea un paquete en 3 pasos",
+      "body": "1) Elige los productos y cuántas piezas lleva cada paquete (puedes escanear). 2) Nombre, precio y código: ves cuánto costarían sueltos y el % de ahorro. 3) Solo créalo o arma algunos de una vez. Crear no mueve inventario."
+    },
+    {
+      "id": "buscar",
+      "route": "/paquetes",
+      "target": "bundles-search",
+      "placement": "bottom",
+      "title": "Busca o escanea",
+      "body": "Escribe el nombre o la clave PAQ-0001, o escanea la etiqueta para abrir el detalle del paquete. A la derecha cambias entre tarjetas y tabla."
+    },
+    {
+      "id": "armar",
+      "route": "/paquetes",
+      "target": "bundles-list",
+      "placement": "top",
+      "title": "Armar: las piezas se vuelven paquetes",
+      "body": "Cada paquete te dice cuántos puedes armar con lo que hay en Exhibición y Bodega. Al armar, las piezas bajan (Exhibición primero y lo que falte de Bodega, o tú eliges) y los paquetes suben en Exhibición. Si no alcanza, no se arma ninguno."
+    },
+    {
+      "id": "vender",
+      "route": "/paquetes",
+      "target": "bundles-list",
+      "placement": "top",
+      "title": "Vender, cancelar y desarmar",
+      "body": "En Caja se cobra como cualquier producto y baja solo el paquete: las piezas ya bajaron al armar. Si cancelan la venta, el paquete regresa armado. Desarmar regresa las piezas a Exhibición o a Bodega."
+    },
+    {
+      "id": "menu",
+      "route": "/paquetes",
+      "target": "bundles-list",
+      "placement": "top",
+      "title": "Etiqueta, historial y más",
+      "body": "Desde cada paquete imprimes su etiqueta de 58 × 40 mm y revisas su historial de armados. Admin y gerente también editan nombre y precios, o lo desactivan para que deje de salir en Caja."
+    },
+    {
+      "id": "reglas",
+      "title": "Ten en cuenta",
+      "body": "Los paquetes no se trasladan entre tiendas: desarma, traslada las piezas y arma allá. Su stock no se ajusta a mano. Para cambiar lo que trae, crea uno nuevo. El detalle y las preguntas frecuentes están en el tema Paquetes de Documentación."
+    }
+  ]
+}

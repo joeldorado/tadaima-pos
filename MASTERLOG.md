@@ -4,31 +4,838 @@
 
 ---
 
-### Sesión 2026-10-08 (3) — `CashReportRangeTest` determinista en Postgres (solo tests, SIN deploy)
+### Sesión 2026-10-20 — `CashReportRangeTest` con reloj fijo: ya no falla según la hora (PR #42, solo tests, SIN deploy)
 
-**Pedido Joel:** la suite pgsql fallaba "de noche" en `test_expected_cash_usa_solo_dinero_fisico_y_no_tarjeta`
-(`total_pre_sale_payments` 0 en vez de 80) y a veces en `test_transferencia_no_entra_al_esperado_del_cajon`.
+**Pedido Joel:** integrar el PR #42 para que la suite Postgres no falle según la hora. El 2026-10-19 en la noche fallaron
+`test_expected_cash_usa_solo_dinero_fisico_y_no_tarjeta` y `test_transferencia_no_entra_al_esperado_del_cajon`
+(`total_pre_sale_payments` 0 en vez de 170).
 
-- **Causa real (no era la hora):** `pre_sale_order_payments.created_at` quedaba al default `CURRENT_TIMESTAMP`.
-  `RefreshDatabase` corre cada test en UNA transacción y en Postgres `CURRENT_TIMESTAMP` es la hora de inicio
-  de la transacción (la misma para el INSERT y para el tope `COALESCE(closed_at, CURRENT_TIMESTAMP)` de
-  `/reports/cash`); al guardarse en `timestamp(0)` Postgres REDONDEA (`…:17.6` → `…:18`), así que ~la mitad
-  de las corridas el anticipo quedaba 1 s después del tope y no contaba. SQLite no lo sufre (reloj real,
-  truncado). Reproducido: 2 de 6 corridas rojas a cualquier hora; con `setTestNow` a las 03:20 UTC SQLite
-  sigue verde.
-- **Fix (solo `backend/tests/Feature/CashReportRangeTest.php`):** reloj congelado en `setUp` a
-  2026-06-11 20:20 Tijuana (03:20 UTC del 12, pasado fijo), rango con `hoy()` = día de NEGOCIO, y
-  `makePreSalePayment()` con `created_at` explícito dentro de la ventana del corte (`forceCreate`, no es
-  fillable). Docblock con la regla: misma trampa para cualquier columna `useCurrent()` en pgsql.
-- **Sin cambios en prod.** Prod también deja el default, pero sin transacción envolvente el redondeo mueve
-  ≤ 0.5 s (teórico: anticipo en el mismo segundo del cierre). No se tocó.
-- Ojo: dos sesiones corriendo `phpunit.pgsql.xml` a la vez chocan en `tadaima_test` (`migrate:fresh`
-  doble → "relation migrations already exists", 11 errores con 0 aserciones). PHPUnit no pisa variables ya
-  exportadas: `DB_DATABASE=tadaima_test_b50b79 vendor/bin/phpunit -c phpunit.pgsql.xml` usa una base propia.
+- **Por qué seguía fallando:** `6b45282` (2026-10-08) ya le ponía `created_at` explícito al anticipo, pero como
+  `now()->subMinutes(30)` con el reloj REAL. Según la hora, el anticipo y la sesión caían en otro día de negocio.
+  Además el rango se pedía con `now()->toDateString()` (fecha UTC, que en la noche de Tijuana ya es mañana).
+- **Fix del PR #42** (solo `backend/tests/Feature/CashReportRangeTest.php`):
+  - reloj congelado en `setUp` a 2026-06-11 20:20 Tijuana (03:20 UTC del día siguiente, a propósito);
+  - el rango usa `hoy()` = día de NEGOCIO;
+  - `makePreSalePayment()` pone `created_at` explícito dentro de la ventana del corte (`opened_at + 30 min`).
+  - Sustituye al helper `anticipo()` de `6b45282`, que se quitó.
+  - Docblock con la regla: misma trampa para cualquier columna `useCurrent()` en pgsql.
+- **Sin cambios en `app/` ni migraciones. Sin deploy:** las pruebas no corren en prod.
 
-**Verificado:** SQLite 718/718; Postgres 17 local (base propia): `CashReportRangeTest` 22/22 corridas
-verdes, suite completa 718 con SOLO las 5 fallas preexistentes (`PurgeNoStockProductsTest` ×4,
-`CategoryPivotRepairTest` ×1). Sin commit (rama `claude/beautiful-liskov-b50b79`).
+---
+
+### Sesión 2026-10-19 (3) — Reportes: los egresos respetan las fechas sueltas (PR #62) — rev tadaima-00090-wur
+
+**Pedido Joel:** cerrar el hueco del release #61: con "Fechas sueltas", los egresos (insumos) usaban el rango del primer al último día elegido.
+
+> **PUNTO DE ROLLBACK (antes de este deploy):** revisión `tadaima-00088-nej`, `main` en `069482b`.
+> **Sin migraciones:** regresar es solo mover el tráfico.
+>
+> ```
+> gcloud run services update-traffic tadaima --to-revisions tadaima-00088-nej=100 --project tadaimapos --region us-east1
+> ```
+
+**Qué entró** (PR #62, merge `8caed7a`):
+- `GET /supplies/movements` acepta `?dates=a,b,c`. Usa `DateRange::applyDates`, igual que `/reports/sales` y `/sales`; cuando viene, gana sobre `from`/`to`.
+- Sin `dates`, todo funciona igual que antes. No se tocaron los filtros de empresa, tienda ni usuario (⚠️ NO QUITAR en `backend/AGENTS.md`).
+- `ReportsPage` manda `dates` en `supplyMovementsQuery`, también en su queryKey.
+- Prueba: `SupplyMovementsDatesTest`.
+
+**Verificado:**
+- Backend SQLite 847 OK.
+- Vitest 763 OK.
+- Postgres local: verde salvo las 2 de `CashReportRangeTest` que dependen de la hora (corrido en la sesión del PR).
+
+**QUÉ PROBAR EN PROD:** en Reportes → Ventas → "Fechas sueltas", elegir 2 días separados. Los egresos solo muestran compras de esos días; las de los días intermedios ya no.
+
+**Deploy (2026-10-19 ~23:36 Tijuana) — rev tadaima-00090-wur (rollback `tadaima-00088-nej`).**
+- Candidato sin tráfico desde un worktree limpio en `8caed7a`.
+- `Nothing to migrate`, 0 errores en el log.
+- Smoke en el candidato y luego en `https://tadaimamexico.com`:
+  - `/`, `/login`, `/caja`, `/reportes` y `/tadaimaus/` 200;
+  - `/api/v1/supplies/movements`, `/reports/sales` y `/auth/me` sin token 401;
+  - bundle `index-CQW-gSgZ.js`.
+- **No hubo prueba con sesión en prod.**
+
+---
+
+### Sesión 2026-10-19 (2) — Reportes: fechas sueltas en la pestaña Ventas (Ruben) + arreglo de fechas inválidas (release #61) — rev tadaima-00088-nej
+
+**Pedido Joel:** bajar lo que Ruben subió a `develop`, PR a `main` y deploy de todo.
+
+> **PUNTO DE ROLLBACK (antes de este deploy):** revisión `tadaima-00086-nix`, `main` en `83a742c`.
+> **Sin migraciones:** regresar es solo mover el tráfico.
+>
+> ```
+> gcloud run services update-traffic tadaima --to-revisions tadaima-00086-nix=100 --project tadaimapos --region us-east1
+> ```
+
+**Qué entró** (release `release/2026-10-19` desde `origin/develop`, PR #61, merge `ab3f8c5`):
+- **Ruben, `6b49c75` (backend):** fechas sueltas (no consecutivas).
+  - `DateRange::parseDatesParam` + `applyDates`: ventanas UTC día por día unidas con OR, con la misma lógica de zona horaria que el rango.
+  - Endpoints: `GET /reports/sales?dates=a,b,c`, `GET /sales?dates=` y `GET /pre-sale-orders?payment_dates=`. `dates` gana sobre `from`/`to`; sin `dates`, todo igual que antes.
+  - Prueba `ReportsSalesDatesTest`.
+- **Ruben, `12b5d94` (frontend):** Reportes → Ventas trae el interruptor **Rango / Fechas sueltas** (`MultiDatePicker`).
+  - Las tablas de ventas y preventas, y los exportes Excel/PDF, respetan los días elegidos; el encabezado los lista.
+  - Test `buildReportData.dates.test.ts`.
+- **Release, `8c0c20b`:** si `dates` traía solo fechas ilegibles, el OR quedaba vacío y `/reports/sales` y `/sales` regresaban **todas** las ventas.
+  - Ahora no regresan nada.
+  - Se quitan las fechas repetidas y hay un tope de 366 (`DateRange::MAX_DATES`).
+  - Prueba de regresión (falla contra el código de Ruben).
+
+**Ojo (no se cambió):** en modo Fechas sueltas, los **egresos (insumos)** usan el rango del primer al último día elegido, porque `/supplies/movements` no acepta `dates`. Es la aproximación que Ruben documentó: con días separados también cuentan los egresos de los días intermedios.
+
+**Verificado:**
+- Backend SQLite 844 OK.
+- Postgres 17 local: verde salvo las 2 de `CashReportRangeTest` que dependen de la hora. Con su versión de reloj fijo (PR #42) pasan 14/14, incluido `ReportsSalesDatesTest`.
+- Vitest 763 OK.
+- `tsc` 451 = base, ninguno nuevo.
+- Lint de `MultiDatePicker` limpio; `buildReportData` 52 = base.
+
+**QUÉ PROBAR EN PROD** (incógnito o recarga forzada):
+- Reportes → Ventas → "Fechas sueltas": elegir 2 o 3 días no seguidos. Total y tablas cuadran con esos días; Excel y PDF los listan.
+- "Rango" sigue igual que antes.
+- Lo del deploy anterior (PR #60) sigue pendiente de probar con sesión.
+
+**Señales para regresar:**
+- Reportes → Ventas no carga o los totales del modo Rango cambian.
+- Ventas no lista.
+
+**Deploy (2026-10-19 ~23:10 Tijuana) — rev tadaima-00088-nej (rollback `tadaima-00086-nix`).**
+- Candidato sin tráfico desde un worktree limpio en `ab3f8c5` (Dockerfile; solo archivos versionados).
+- `Nothing to migrate`, 0 errores en el log.
+- Smoke en el candidato y luego en `https://tadaimamexico.com`:
+  - `/`, `/login`, `/caja`, `/reportes` y `/tadaimaus/` 200;
+  - `/api/v1/reports/sales`, `/auth/me` y `/bundles` sin token 401 con el envelope;
+  - el bundle `index-BPRUqCfo.js` trae "Fechas sueltas" y conserva lo del PR #60.
+- **No hubo prueba con sesión en prod:** queda para el equipo.
+
+---
+
+### Sesión 2026-10-19 — Paquetes: precio Socio a la vista + Caja: Historial del Día y "Otras ventas" sin amontonarse (PR #60) — rev tadaima-00086-nix
+
+**Pedido del cliente vía Joel:**
+1. "En el armado de paquetes no hay un campo para el precio de los socios con tarjeta Tadaima."
+2. El historial de Caja se atora cuando se juntan muchos tickets.
+
+> **PUNTO DE ROLLBACK (antes de este deploy):** revisión `tadaima-00084-huh`, `main` en `e0a21c1`.
+> **Sin migraciones:** regresar es solo mover el tráfico.
+>
+> ```
+> gcloud run services update-traffic tadaima --to-revisions tadaima-00084-huh=100 --project tadaimapos --region us-east1
+> ```
+
+**Qué entró:**
+- **Paquetes: los 5 precios a la vista.**
+  - El campo Socio ya existía (`price_2` = nivel b = "Precio Socio", el mismo de Productos y Mangas), pero estaba escondido en el desplegable "Más precios".
+  - Ahora el asistente y el editar muestran Normal / Socio / Mayorista y D / E, como el alta de Productos (`BundlePriceFields`).
+  - Se capturan **a mano** (decisión de Joel: Productos tampoco calcula el socio).
+  - Aviso no bloqueante si Socio ≥ Normal.
+  - Tarjeta, tabla y resumen muestran "Socio $X".
+  - Backend sin cambios: Caja ya cobraba el socio a paquetes. Prueba nueva: `BundleCheckoutTest::test_vender_paquete_a_precio_socio`.
+- **Historial del Día (Caja).**
+  - Causa raíz: las tarjetas eran hijas de una columna flex de alto fijo con `overflow:hidden` y se ENCOGÍAN (≈2 px cada una) en vez de dar scroll.
+  - Ahora `HistorialList`:
+    - agrupa por hora en un grid, con encabezado fijo "3 p. m. · 14 tickets";
+    - pinta de 50 en 50 ("Mostrar 50 más"; vuelve a 50 al cambiar filtro o búsqueda);
+    - trae botón "Arriba".
+  - Cada fila muestra solo la hora.
+  - Las acciones dejaron de ser `div role=button` anidados en un `<button>`.
+  - Las preventas del día traen todas las páginas (antes se cortaban en 50).
+  - `historialEntries` usa un arreglo vacío estable: `?? []` re-disparaba el efecto del pareo mixto en ciclo mientras cargaba.
+- **"Otras ventas" (ventas en espera).**
+  - `OtherSalesDock`: alto máximo con scroll, filas compactas con más de 4 ventas y se pliega en una píldora (`tadaima-caja-otras-ventas`).
+  - **Bug arreglado:** el subtotal sumaba `i.price`, que las líneas del carrito no traen, y salía **"$NaN"**. Ahora usa `getItemPrice`.
+- Docs in-app: Paquetes ("¿Dónde pongo el precio para socios…?") y Caja (agrupado por hora).
+
+**Verificado (commit `023dff5`):**
+- Backend 841 OK (SQLite).
+- Vitest 760 OK.
+- `tsc` sin errores nuevos (3 menos, entre ellos el de `i.price`).
+- QA en navegador local con base SQLite propia: 130 ventas y 12 ventas en espera.
+- Fotos antes/después en `.claude/entregables/historial-caja/` (ignorado por git). Joel dio luz verde con las fotos.
+
+**QUÉ PROBAR EN PROD** (incógnito o recarga forzada):
+- Paquetes → Nuevo paquete → paso 2: se ven los 5 precios. Crear o editar uno con Precio Socio.
+- Caja con un socio activo y Efectivo: el paquete se cobra a precio Socio; con Tarjeta, a normal.
+- Caja → Historial en una tienda con muchas ventas: no se aplasta, agrupa por hora, "Mostrar 50 más".
+- Varias ventas en espera: "Otras ventas" muestra montos reales, scrollea y se pliega.
+
+**Señales para regresar:**
+- Caja → Historial no abre o no deja reimprimir/cancelar.
+- Paquetes no guarda precios.
+
+**Deploy (2026-10-19 ~20:05 Tijuana) — rev tadaima-00086-nix (rollback `tadaima-00084-huh`).**
+- Candidato sin tráfico desde un worktree limpio en `023dff5` (Dockerfile; solo archivos versionados).
+- `Nothing to migrate`, sin errores en el log.
+- Smoke en el candidato y luego en `https://tadaimamexico.com`:
+  - `/`, `/login`, `/caja` y `/tadaimaus/` 200;
+  - `/api/v1/bundles`, `/auth/me` y `/sales` sin token 401 con el envelope;
+  - el bundle (`index-Codc2Pj-.js`) trae los textos nuevos y ya no el desplegable "Más precios".
+- **No hubo prueba con sesión en prod:** queda para el equipo (ver QUÉ PROBAR).
+
+---
+
+### Sesión 2026-10-14 — Paquetes: costo que sigue a sus piezas, botones del cajero, Traslados y ayuda + tour (PR #57, #58, release #59) — rev tadaima-00084-huh
+
+**Pedido Joel:** resumen del módulo Paquetes; de ahí salieron detalles que confundían al cliente. Se
+arreglaron en dos ramas y se deployaron juntas (release `release/2026-10-14`, PR #59).
+
+> **PUNTO DE ROLLBACK (antes de este deploy):** revisión `tadaima-00082-juw`, `main` en `3fbc8ec`.
+> **Sin migraciones:** regresar es solo mover el tráfico.
+>
+> ```
+> gcloud run services update-traffic tadaima --to-revisions tadaima-00082-juw=100 --project tadaimapos --region us-east1
+> ```
+
+**Qué entró:**
+- **Costo del paquete (PR #58).** Antes `products.cost` de un paquete solo se recalculaba al
+  crear/editar/armar/desarmar; si cambiaba el costo de una pieza, el paquete se vendía con el costo
+  viejo congelado en `sale_items.cost`. Ahora `App\Support\BundleCost` (fórmula única) +
+  `syncForComponents` lo recalculan al cambiar el costo de una pieza:
+  - PUT `/products` y `/mangas` (log `bundles_cost` old/new en `product.updated`/`manga.updated`);
+  - `tadaima:homologar-costo-tomos` (también `--revertir`);
+  - `tadaima:import-macro`.
+  Los comandos lo hacen con su propia conexión. `POST /bundles/preview` usa la misma fórmula.
+- **Cajero (PR #58).** `bundlePermissions` (`lib/permisos.ts`): el cajero ya no ve Editar, Activar/Desactivar
+  ni Borrar (tarjeta, tabla y detalle); antes los veía y el backend le daba 403. Borrar = misma regla que
+  Productos (admin, o gerente con `can_view_cost`).
+- **Traslados (PR #58).** El buscador no ofrece paquetes; si el backend rechaza, el toast trae el motivo
+  real ("Los paquetes no se trasladan… desármalo aquí y ármalo en la otra tienda.").
+- **Ayuda in-app + tour (PR #57).** Tema `paquetes` reescrito (10 secciones, preguntas frecuentes,
+  tablas de inventario y permisos) + tour de 8 pasos (`data-tour` `bundles-new/search/list`). En la
+  release se corrigió la tabla de permisos: el cajero **no** borra paquetes aunque vea costos.
+
+**Impacto en prod:** por consulta de solo lectura antes del deploy, hay 1 paquete (id 16176) con el
+costo al día. No hace falta corregir datos. Desde ahora el costo de un paquete puede cambiar solo
+cuando alguien edita el costo de una pieza: queda en `system_logs`.
+
+**Verificado (rama `release/2026-10-14`, commit `4e14727`):**
+- Backend completo 840 OK (SQLite). `BundleCostSyncTest` 7/7 también en Postgres local; 5 de 7
+  fallan contra el código anterior.
+- Vitest 747 OK, `vite build` OK. `tsc` 454 = base, ninguno nuevo.
+- QA en navegador local (base SQLite propia): el cajero solo ve "Ver detalle"; el gerente sin costos
+  ve Editar/Desactivar sin Borrar; Traslados no ofrece el paquete y el 422 trae el texto real.
+
+**QUÉ PROBAR EN PROD** (incógnito o recarga forzada):
+- Paquetes como cajero: el menú ⋮ solo trae "Ver detalle".
+- Editar el costo de una pieza de un paquete → el costo del paquete cambia (Productos/Reportes).
+- Traslados: buscar un paquete → no aparece.
+- Ayuda → Paquetes y el tour.
+
+**Señales para regresar:** Productos o Tomos no guardan el costo; Paquetes no carga; Traslados no deja
+crear traslados de productos normales.
+
+**Pendiente (ya existía, fuera de alcance):** el backend `canDeleteProductsError` solo mira
+`canViewCost()`, no el rol. Un cajero con `can_view_cost` podría borrar productos o paquetes por API,
+aunque la UI no le muestre el botón.
+
+**Deploy (2026-10-14 ~15:46 Tijuana) — rev tadaima-00084-huh (rollback `tadaima-00082-juw`).** Candidato
+sin tráfico desde un worktree limpio en el commit `4e14727` (Dockerfile; solo se subieron archivos
+versionados): `Nothing to migrate`, sin errores en el log. Smoke en el candidato y luego en
+`https://tadaimamexico.com`: `/`, `/login` y `/tadaimaus/` 200; `/api/v1/bundles`, `/auth/me` y
+`/transfers` sin token 401 con el envelope. El bundle (`index-BaW2cdyk.js`, mismo hash que el build
+local) trae los textos nuevos y los `data-tour` de Paquetes. **No hubo prueba con sesión en prod:** queda
+para el equipo (ver QUÉ PROBAR).
+
+---
+
+### Sesión 2026-10-12 (3) — Reportes: comisión de terminal en tickets con varios pagos (Ruben, PR #56) — rev tadaima-00082-juw
+
+**Pedido Joel:** bajar lo que Ruben subió a `develop` (`e080457` "comisión inflada en pagos de distintos
+tipos efectivo / tarjeta / transfer" + merge `149b88f`), PR a `main` y deploy.
+
+> **PUNTO DE ROLLBACK (antes de este deploy):** revisión `tadaima-00080-zoy`, `main` en `b4cd063`.
+> **Sin migraciones ni backend:** regresar es solo mover el tráfico.
+>
+> ```
+> gcloud run services update-traffic tadaima --to-revisions tadaima-00080-zoy=100 --project tadaimapos --region us-east1
+> ```
+
+**Qué entró (de Ruben):** en `buildGroupedProducts` (`landing/src/pages/reports/buildReportData.ts`) la
+comisión de la venta solo se repartía a sus productos cuando el pago MÁS GRANDE del ticket era tarjeta.
+En un ticket mixto con la tarjeta como pago menor (60% efectivo / 40% tarjeta) la tabla de Tarjeta traía
+el bruto de tarjeta pero comisión 0 → Neto Tarjeta inflado. Ahora basta con que la venta tenga comisión
+(`sale.commission_amount > 0`); el reparto entre productos sigue proporcional al valor del renglón.
+
+**Qué entró (de esta sesión):** `buildReportData.commission.test.ts` (5 casos: tarjeta como pago menor,
+como pago mayor, reparto entre dos productos, solo tarjeta, efectivo + transferencia sin comisión). Dos
+de los cinco fallan contra el código anterior.
+
+**Impacto en prod:** por consulta de solo lectura antes del deploy, de 1,415 ventas hay 0 tickets mixtos
+con tarjeta, 0 ventas con comisión sin pago de tarjeta, y en todas `sales.commission_amount` = suma de la
+comisión de sus pagos. Con los datos de hoy **ningún número de los reportes cambia**. La pantalla web no
+deja cobrar efectivo + tarjeta (Mixto = efectivo + transferencia) pero el API sí lo acepta: el arreglo
+aplica a lo que mande la app móvil.
+
+**Verificado (rama `release/2026-10-12b`, commit `71409d8`):** vitest 738 (733 + 5), `vite build` OK,
+`tsc` 454 = base, ninguno nuevo. Backend sin cambios, no se corrió. **No hubo QA en navegador:** la
+función es pura y la cubre la prueba; lo que pinta pantalla, Excel y PDF no cambió.
+
+**QUÉ PROBAR EN PROD** (incógnito o recarga forzada): Reportes → Ventas del día, los totales de Tarjeta
+(bruto, comisión, IVA, neto) deben salir iguales que antes; el Excel debe cuadrar con la pantalla.
+
+**Señales para regresar:** la comisión o el neto de Tarjeta cambian en un día que no tuvo tickets mixtos,
+o Reportes no carga.
+
+**Deploy (2026-10-12 ~20:06 Tijuana) — rev tadaima-00082-juw (rollback `tadaima-00080-zoy`).** Candidato
+sin tráfico desde un worktree limpio en el commit `71409d8` (Dockerfile): `Nothing to migrate`. Smoke en
+el candidato y luego en `https://tadaimamexico.com`: `/`, `/login` y `/tadaimaus/` 200; login con datos
+falsos 401; rutas de insumos sin token 401; el bundle (`index-DfIX-H-l.js`) trae la condición nueva
+(`commission_amount||0)>0&&`, 1 coincidencia contra 0 en la revisión anterior). Promovido con
+`update-traffic --to-latest`; sin errores en los logs de la revisión. PR #56 con merge commit y `develop`
+igualada a `main` (fast-forward).
+
+---
+
+### Sesión 2026-10-12 (2) — Insumos por tienda + borrar registro de insumo (Ruben, PR #55) — rev tadaima-00080-zoy
+
+**Pedido Joel:** bajar lo que Ruben subió a `develop` (`445c772` "insumos y eliminar insumo con super
+admin" + merge `86261c1`), PR a `main` y deploy. `develop` iba 2 adelante / 0 atrás de `main`.
+
+> **PUNTO DE ROLLBACK (antes de este deploy):** revisión `tadaima-00078-yem`, `main` en `466c511`.
+> **Hay una migración** (`supply_movements.store_id`, nullable): se queda aunque se regrese, el código
+> anterior no la usa. Regresar es solo mover el tráfico.
+>
+> ```
+> gcloud run services update-traffic tadaima --to-revisions tadaima-00078-yem=100 --project tadaimapos --region us-east1
+> ```
+
+**Qué entró (de Ruben):**
+- **Migración `2026_10_12_000001_add_store_id_to_supply_movements`:** `store_id` nullable + FK a `stores`
+  (nullOnDelete) + índice `(store_id, created_at)`. Aditiva, idempotente, sin backfill a propósito.
+- **El registro de insumo queda atado a la tienda de quien lo registra**, no a la de la categoría
+  (`supplies.store_id`). Cajero y gerente forzados a su tienda (sin tienda asignada → 422, también al
+  crear un insumo en el catálogo); el admin elige tienda o "toda la empresa". Antes, una compra contra
+  una categoría de toda la empresa ("Sueldos") no salía en el reporte de la tienda del cajero.
+- **`GET /supplies/movements`** (`?store_id` y `?whole_store=1`) filtra por la tienda del movimiento y
+  cae a la de la categoría en los registros viejos (columna NULL).
+- **`PUT /supplies/{id}`:** el admin ya puede reasignar la tienda del insumo (el selector del modal se
+  ignoraba). El gerente no lo puede sacar de su tienda.
+- **`DELETE /supplies/movements/{movement}` (solo admin):** `SupplyService::deleteMovement()` borra el
+  registro y su `cash_movement` ligado (el esperado del corte regresa) con snapshot en `system_logs`
+  (`supply_movement.deleted`). Botón de bote en "Compras de hoy", con confirmación.
+- **Insumos (pantalla):** selector "Cargar a la tienda" para el admin, aviso "Se registra para: …" para
+  cajero/gerente y chip de tienda en cada compra de hoy.
+- **Cerrar Caja:** se oculta "Descargar reporte del turno (Excel)" (línea comentada en
+  `CloseCashModal`); queda solo el de toda la tienda.
+
+**Qué entró (de esta sesión):** la guía in-app de Caja habla de un solo reporte en Excel
+(`content/docs/data/caja.json`); `AGENTS.md` §5 y `backend/AGENTS.md` con la regla y el endpoint nuevos.
+
+**Verificado (rama `release/2026-10-12`, commit `44f53a6`):** backend 833 en SQLite (18 pruebas nuevas:
+`SupplyMovementDeleteTest`, `SupplyStoreAssignmentTest`); Postgres 17 local 831 de 833 — las 2 que fallan
+son las de `CashReportRangeTest` ya anotadas (con la versión de reloj fijo del PR #42 pasan las 11 contra
+este código); vitest 733; `vite build` OK; `tsc` 454 = base, ninguno nuevo. QA local (backend SQLite +
+landing): 16 casos por API (tienda del movimiento por rol, cajero que manda otra tienda queda en la suya,
+403 al borrar para gerente y cajero, esperado del corte 420 → 500 al borrar un insumo de caja, reasignar
+tienda del insumo) y en pantalla como admin (alta a Tienda 2, chip, borrado con confirmación) y como
+gerente (aviso de su tienda, sin selector ni bote); Cerrar Caja con un solo botón de Excel. En prod, por
+consulta de solo lectura antes del deploy: 0 cajeros y 0 gerentes sin tienda (el 422 nuevo no bloquea a
+nadie) y 13 registros de insumos.
+
+**QUÉ PROBAR EN PROD** (incógnito o recarga forzada):
+1. Admin → Insumos: registrar una compra de caja chica eligiendo tienda y ver el chip correcto.
+2. Cajero → registrar "Sueldos" (categoría de toda la empresa) y bajar el reporte de toda la tienda
+   desde Cerrar Caja: debe salir.
+3. Admin → borrar un registro de prueba con el bote; si era de caja, el esperado del corte regresa.
+4. Cerrar Caja enseña un solo botón de Excel.
+
+**Señales para regresar:** Insumos no carga o no deja registrar, errores 500 en `/supplies/movements`,
+o el reporte de la tienda deja de traer insumos que antes sí traía.
+
+**No se probó:** nada con sesión en producción (no se entró con credenciales reales).
+
+**Pendientes para Ruben (no bloquearon):**
+- Admin **con** tienda propia (1 de 3 en prod) que deja "Toda la empresa (sin tienda)" en el selector:
+  el backend lo carga a SU tienda (`storeMovement` cae a `user.store_id`). La opción engaña; el chip de
+  la lista sí enseña la tienda real.
+- Borrar un insumo pagado de caja de un corte **ya cerrado** cambia el esperado de ese corte (se calcula
+  en vivo) sin avisar. Hoy el bote solo sale en "Compras de hoy".
+- El gerente ve en "Compras de hoy" los insumos de otras tiendas: `GET /supplies/movements` solo acota al
+  cajero. Ya era así; el chip nuevo lo hace evidente.
+- `GET /reports/supplies` (totales de la pestaña Reporte) sigue sin filtro por tienda.
+- En "Compras de hoy" el nombre del insumo se corta cuando el chip de tienda es largo.
+- La sesión de caja en caché no es por usuario (`['cash','activeSession']`): al cambiar de usuario en la
+  misma PC, Insumos puede decir "necesitas una caja abierta" unos segundos. Ya era así.
+- `CashReportRangeTest` en Postgres sigue fallando 2 pruebas por la hora (PR #42 abierto).
+
+**Deploy (2026-10-12 ~17:12 Tijuana) — rev tadaima-00080-zoy (rollback `tadaima-00078-yem`).** Candidato
+sin tráfico desde un worktree limpio en el commit `44f53a6` (Dockerfile). Al arrancar corrió la migración
+(`add_store_id_to_supply_movements`, 292 ms, batch 14); verificado en Supabase por consulta de solo
+lectura: columna `bigint` nullable, FK `ON DELETE SET NULL`, índice, y las 13 filas existentes con
+`store_id` NULL. Smoke en el candidato y luego en `https://tadaimamexico.com`: `/`, `/login` y
+`/tadaimaus/` 200; login con datos falsos 401; `DELETE /api/v1/supplies/movements/0` sin token 401 (en la
+revisión anterior daba 404: la ruta es nueva); el bundle trae "Cargar a la tienda" y ya no trae
+"Descargar reporte del turno". Promovido con `update-traffic --to-latest`; sin errores en los logs de la
+revisión. PR #55 con merge commit y `develop` igualada a `main` (fast-forward).
+
+---
+
+### Sesión 2026-10-12 — Tomos: la lista no desplegaba todos los mangas (PR #54) — rev tadaima-00078-yem
+
+**Reporte de tienda (video):** en Productos → Tomos / Manga Nacional "no despliega todos los mangas". El
+contador decía "50 tomos" y al elegir Agotados el badge marcaba 2,206 pero la tabla enseñaba unos cuantos.
+
+**Causa:** la pestaña pedía `GET /mangas` UNA vez (el backend pagina a 50) y aplicaba chips, contador,
+orden y paginador en el navegador sobre esas filas. Los badges sí eran reales (`/products/stats`). No
+hubo pérdida de datos. Mismo problema que se arregló en la pestaña Productos el 2026-08-04; Tomos se
+había quedado con el esquema viejo (solo la búsqueda iba al servidor).
+
+> **PUNTO DE ROLLBACK (antes de este deploy):** revisión `tadaima-00076-dam`, `main` en `c394582`.
+> **Sin migraciones:** regresar es solo mover el tráfico.
+>
+> ```
+> gcloud run services update-traffic tadaima --to-revisions tadaima-00076-dam=100 --project tadaimapos --region us-east1
+> ```
+
+**Qué entró:**
+- **`GET /mangas` filtra y pagina de verdad** (aditivo: sin params nuevos responde igual).
+  `?out_of_stock`, `?low_stock` (+`threshold`) y `?no_category` usan el mismo stock y la misma definición
+  que `/products/stats` → `pagination.total` = el badge. `App\Support\StockSql` es ahora el único lugar
+  del SQL de stock de `/products` y `/mangas`.
+- **La búsqueda de tomos también cubre editorial y género** (lo prometía el buscador y solo "funcionaba"
+  sobre las 50 filas cargadas).
+- **Orden: con stock primero**, luego nombre, desempate por `id`. Antes era alfabético puro (decisión
+  aprobada por Joel en el plan; es una línea si se quiere regresar).
+- **Pestaña Tomos:** pide página por página (`buildMangasListParams`), contador y pie con el total real
+  ("Mostrando 1–20 de N · página 1 de M"), tamaños 10/20/50/100, regresa a la página 1 al cambiar
+  búsqueda, chip o tienda. Ya no se re-filtra en el navegador (un tomo encontrado por SKU desaparecía si
+  además tenía código de barras; la búsqueda arranca a partir de 2 caracteres). Un error de red ya no se
+  muestra como "no hay tomos". El pie de paginación es un componente compartido con Productos
+  (`TablePaginationFooter`).
+- **Bug aparte, encontrado al probar: el botón «Stock» de un tomo nunca guardaba.** `QuickStockModal`
+  llamaba `updateMangaInventory(id, almacén, { quantity })` y esa función recibe el número: se mandaba
+  `{ quantity: { quantity: n } }` → 422 "Los datos enviados no son válidos". Venía así desde mayo;
+  «Mover stock» y el modal de edición sí guardaban. Al guardar ahora también se refresca el badge.
+
+**Verificado (rama `fix/tomos-paginacion-server`):** backend 814 en SQLite; vitest 733; `tsc` 454 contra 455
+de `main` (ninguno nuevo); `vite build` OK. En Postgres 17 local pasan las suites de productos y tomos; la
+suite completa pasa salvo 2 pruebas de `CashReportRangeTest` que fallan IGUAL en `main` (`c394582`) —
+ver pendientes. En local con 130 tomos sembrados: paginación hasta la última página, cada chip = su badge,
+búsqueda por nombre / editorial / género / código de barras / SKU, cambio de tienda, guardar stock sin
+perder la página (y el badge baja), y la pestaña Productos con el pie compartido. Revisión de código
+independiente: aprobado, sin críticos ni altos.
+
+**QUÉ PROBAR EN PROD** (incógnito o recarga forzada):
+1. Productos → Tomos: el contador debe decir el total real (~2,800) y se debe poder pasar de página.
+2. Filtros → Agotados / Por agotarse / Sin categoría: el total de la tabla = el número del badge.
+3. Buscar un tomo por nombre, por código (lector + Enter), por editorial y por género.
+4. Botón «Stock» (o «Agregar stock») de un tomo: cambiar la cantidad y guardar — debe decir "Stock
+   actualizado" y la fila cambia sin salirse de la página.
+5. Pestaña Productos: la paginación de abajo se ve y funciona igual que antes.
+
+**Señales para regresar:** la pestaña Tomos no carga o se queda en "Actualizando tomos…", los totales no
+cuadran con los badges, la pestaña Productos pierde su paginación, o errores 500 en `GET /mangas` o
+`GET /products`.
+
+**No se probó:** nada con sesión en producción (no se entró con credenciales reales) ni con los ~2,800
+tomos reales; el rendimiento del orden por stock en Supabase se asume igual al de `/products`, que hace lo
+mismo con ~14k filas.
+
+**Pendientes:**
+- **Ruben / app móvil:** si consume `GET /mangas`, el orden por defecto ahora es "con stock primero" y
+  `search` también busca en editorial y género. En la copia local de `pos-app` no se encontró uso.
+- **`CashReportRangeTest` en Postgres:** hoy fallan 2 pruebas de forma consistente en Postgres 17 local,
+  también sobre `main` sin cambios (`test_expected_cash_usa_solo_dinero_fisico_y_no_tarjeta` y
+  `test_transferencia_no_entra_al_esperado_del_cajon`: esperado 0.0 en vez de 80 / 170). La entrada del
+  2026-10-11 la daba por estable; hay que ver si es la prueba (fechas) o el cálculo. Relacionado: PR #42.
+- Ordenar por columna en Tomos y Productos sigue siendo sobre la página visible.
+
+**Deploy (2026-10-12 ~13:20 Tijuana) — rev tadaima-00078-yem (rollback `tadaima-00076-dam`).** Candidato
+sin tráfico desde un worktree limpio en el commit `62ec388` (Dockerfile): `Nothing to migrate`, `/`,
+`/login`, `/caja`, `/products`, `/pre-sales`, `/sales`, `/reports` y `/tadaimaus/` 200, `GET /mangas` y
+`/products/stats` responden 401 sin sesión, el bundle trae "Tomos sin cargar", cero errores en logs.
+Promovido al 100%; `tadaimamexico.com` sirve `index-BQqBYyx7.js`.
+
+### Sesión 2026-10-11 (2) — Vista previa de borrado + PDF con formato del Excel (PR #53: #51 y #36) — rev tadaima-00076-dam
+
+**Pedido Joel:** deployar todo lo pendiente para probarlo en prod, con opción de rollback a este punto.
+
+> **PUNTO DE ROLLBACK (antes de este deploy):** revisión `tadaima-00074-tir`, `main` en `97ae2b0`
+> (rama de respaldo `backup/pre-vista-previa-pdf-2026-10-11`). Este deploy **no trae migraciones**:
+> regresar es solo mover el tráfico, no hay que tocar la base.
+>
+> ```
+> gcloud run services update-traffic tadaima --to-revisions tadaima-00074-tir=100 --project tadaimapos --region us-east1
+> ```
+>
+> Con el rollback se pierden SOLO la vista previa de borrado y el PDF nuevo. Lo de Ruben del mismo día
+> (imagen congelada, orden y filtros de Productos, Excel) y el aviso de promo ya venían en `00074-tir`
+> y se quedan. Si se regresa, avisar al equipo que recargue (caché PWA) y decidir si `main` se revierte
+> (`git revert -m 1 c6c1555`) o se corrige hacia adelante.
+
+**Qué entró:**
+- **Vista previa de borrado (PR #51)** — detalle en la entrada "Sesión 2026-10-09 — Eliminar producto y
+  cancelar catálogo con vista previa", justo abajo. `ProductDeletionService` y
+  `PreSaleCatalogCancellationService` son las únicas puertas; el candado de paquetes del PR #45
+  (`BundleService::hasStock`) quedó dentro del servicio.
+- **PDF de ventas con el formato del Excel (PR #36, abierto desde el 2026-10-03).** `exportPdf.ts` deja
+  de agrupar por categoría y usa las tablas por método del Excel (`methodTable`/`cardTable`): Efectivo,
+  Tarjeta, Transferencias, Preventas, Devoluciones, con detalle por ticket. Aplica al PDF de Reportes y
+  al del corte. Conflicto de una línea en `excelTopTables.ts`; a `exportPdf.test.ts` se le agregaron los
+  campos nuevos de `ReportExportParams`. Ojo: el PDF muestra las preventas en su tabla general, no
+  dentro de cada método como el Excel de hoy.
+- **Fuera:** PR #42 (`CashReportRangeTest` determinista en Postgres) choca con `6b45282`, que ya dejó
+  esa prueba estable; la suite de Postgres pasó 4 veces hoy. Queda para cerrarse.
+
+**Verificado (rama `release/2026-10-11b`):** backend 799 en SQLite; backend idéntico al del PR #51, que
+pasó 799 en Postgres 17 local; vitest 717 (6 del PDF, arman el PDF real); `tsc` 455 = 455 contra `main`;
+`vite build` OK. En local con backend y frontend integrados: eliminar un producto con stock en 2 tiendas
+(tabla por tienda, botón deshabilitado sin la casilla, borrado y aviso) y abrir/cerrar la vista previa de
+cancelar catálogo.
+
+**QUÉ PROBAR EN PROD** (incógnito o recarga forzada). Abrir una vista previa y cerrarla no cambia nada;
+confirmar SÍ borra o cancela de verdad, así que confirmar solo en casos reales:
+1. Productos → Editar → Eliminar en un producto con stock: tabla por tienda, casilla obligatoria.
+2. Lo mismo en un tomo (pide escribir el nombre) y en un producto con apartado (debe bloquear y sugerir
+   "Borrar TODO" solo al admin).
+3. Preventas → Catálogos → Acciones → Cancelar: folios por estado, anticipos cobrados, por tienda; con
+   folios pide escribir CANCELAR. Los anticipos NO se devuelven solos.
+4. Reportes → PDF de un día con ventas en los tres métodos y devoluciones; y el PDF de un corte.
+5. App móvil: borrar un producto sigue funcionando (no manda `expected`).
+
+**Señales para regresar:** no se puede eliminar un producto que antes sí (422 inesperado), el modal de
+eliminar o de cancelar catálogo no abre o truena, el PDF no descarga o sale en blanco, o errores 500 en
+`DELETE /products/*`, `GET /products/*/delete-preview`, `PATCH /pre-sale-catalogs/*/status`.
+
+**No se probó:** el PDF en pantalla (descarga), cancelar un catálogo CON folios después de la mezcla (se
+probó el 2026-10-09 y lo cubren 9 pruebas de backend), el borrado de tomos en pantalla, ni nada con
+datos reales.
+
+**Deploy (2026-10-11 ~15:35 Tijuana) — rev tadaima-00076-dam (rollback `tadaima-00074-tir`).** PR #53
+mergeado (`c6c1555`). Candidato sin tráfico desde un worktree en `main` (Dockerfile): `Nothing to
+migrate`, `/`, `/login`, `/caja`, `/products`, `/pre-sales`, `/sales`, `/reports` y `/tadaimaus/` 200,
+las rutas nuevas responden 401 sin sesión, el bundle trae "Entiendo que se pierden". Promovido al 100%;
+`tadaimamexico.com` sirve `index-CdEkA4ad.js`.
+
+### Sesión 2026-10-09 — Eliminar producto y cancelar catálogo con vista previa (PR #51) — en prod desde rev tadaima-00076-dam
+
+**Pedido Joel:** antes de eliminar un producto, enseñar si tiene stock y en qué tiendas (admin y
+gerente), avisar fuerte cuando lo hay, revisar que el borrado funcione bien de punta a punta; y en
+preventas enseñar folios/ventas/anticipos antes de la acción destructiva. Decisiones de Joel: en
+preventas solo vista previa al **Cancelar catálogo** (no se agrega borrado físico); los folios con
+anticipos cobrados **no bloquean**, se avisa que ese dinero NO se devuelve solo.
+
+**Hallazgos que motivaron el cambio:**
+- El modal de eliminar producto no enseñaba stock ni ventas; `inventory` y `transfer_items` se van
+  en cascade sin aviso ni movimiento.
+- Bug real: el toast de error leía `err.response.data.error`, pero el cliente API rechaza con
+  `ApiError { message }` → los 422 de apartados/paquetes nunca se veían (ProductsPage y
+  MangaEditModal).
+- Cancelar un catálogo cancelaba en masa los folios pending/ready sin transacción, sin log por folio
+  y sin decir cuántos ni cuánto dinero había; además "No mostrar de nuevo" lo saltaba.
+
+**Backend:**
+- `ProductDeletionService` (nuevo): única puerta de borrado de productos y tomos
+  (`ProductController::destroy/forceDestroy`, `MangaController::destroy`). `preview()` = stock por
+  tienda en una query (Exhibición/Bodega, la del usuario primero), ventas, apartados, preventas,
+  traslados pendientes, paquetes, promos, `warnings`/`force_warnings`, `blockers`/`force_blockers`,
+  `counts`. `delete()` en transacción con lock + `assertUnchanged(expected)`; imágenes se borran
+  después del commit. `bundleDeleteGuardError` se fue (vivía en 3 lugares).
+- `GET /products/{product}/delete-preview` (gate `canDeleteProductsError`). `DeleteProductRequest`:
+  `expected {stock_total, layaways, transfers_pending}` OPCIONAL → 422 si cambió (app móvil y
+  PWA vieja no lo mandan, siguen igual). `system_logs` guarda `audit` (stock por tienda perdido).
+- `PreSaleCatalogCancellationService` (nuevo) + `GET /pre-sale-catalogs/{id}/cancel-preview`;
+  `updateStatus → cancelled` lo usa: transacción + lock, `expected {to_cancel, with_money}`
+  opcional, `pre_sale_order_logs` por folio y `system_logs` `pre_sale_catalog.cancelled` con el
+  preview. Flag `BLOCK_WHEN_MONEY = false` (decisión Joel).
+- Tests nuevos: `ProductDeletePreviewTest` (10), `ProductDeleteExpectedTest` (8),
+  `PreSaleCatalogCancelPreviewTest` (9). Verde en SQLite y Postgres 17 local; regresión de borrado,
+  paquetes, scope, catálogos, folios y cancelaciones sin cambios (160 pruebas).
+
+**Frontend:**
+- `components/common/DeletePreviewParts.tsx` (Cell/Box/Table, extraídas del modal de Borrar corte,
+  que ahora las importa) + `lib/deletePreviewFormat.ts`.
+- `components/products/DeleteProductModal.tsx` reemplaza el modal inline de `ProductsPage` y el
+  diálogo de `MangaEditModal`: tabla de stock por tienda (badge "tu tienda"), celdas de ventas/
+  apartados/preventas/traslados/promos/movimientos, avisos y bloqueos del backend, radio Solo el
+  producto / Borrar TODO (admin), casilla obligatoria con stock, nombre tipeado en force y tomos;
+  manda `expected`; el error del backend llega al toast y refresca la vista previa.
+  `lib/deletePreviewGuards.ts` (lógica pura) + 9 pruebas Vitest.
+- `components/presales/CancelCatalogModal.tsx`: folios a cancelar, anticipos cobrados, por cobrar,
+  unidades, tablas por estado y por tienda, avisos; exige escribir CANCELAR si hay folios; sin folios
+  botón directo. `PreSaleCatalogsPanel` abre este modal para `cancelled` ANTES de leer el skip de
+  localStorage (ya no se puede saltar).
+- `packages/api`: `getProductDeletePreview`, `deleteProduct/forceDeleteProduct/deleteManga(id,
+  {expected})`, `getPreSaleCatalogCancelPreview`, `UpdatePreSaleCatalogStatusInput.expected`.
+
+**Verificado:** vitest 655 (+9), tsc = base (459, mismos errores), eslint 0 nuevos. QA local
+(backend SQLite + landing): eliminar con stock en 2 tiendas (tabla + casilla + toast), bloqueo por
+apartado con sugerencia de Borrar TODO, Borrar TODO con nombre tipeado, tomo con nombre tipeado,
+**carrera**: entró stock con el modal abierto → 422 con el mensaje del backend y la vista previa se
+refrescó sola; cancelar catálogo con 3 folios ($600 en anticipos, 1 con tarjeta, 1 entregado
+intacto) → folios cancelados, pagos intactos, 3 logs + system_log; catálogo sin folios → directo.
+
+**Docs:** `AGENTS.md` §5 (productos y preventas), `backend/AGENTS.md` §5 (endpoints nuevos).
+**Deploy:** 2026-10-11, rev `tadaima-00076-dam` (ver la entrada "Sesión 2026-10-11 (2)").
+
+**2026-10-11 — PR #51.** Commit `c658448` y PR a `main`. Se trajo `main` a la rama (17 commits): el
+único choque de código fue `ProductController::bundleDeleteGuardError`, que el PR #45 endureció y esta
+rama ya había movido a `ProductDeletionService::blockers`; el candado nuevo (paquete con alguna fila de
+`inventory` ≠ 0, `BundleService::hasStock`, mismo mensaje) quedó portado al servicio.
+
+### Sesión 2026-10-11 — Cambios de Ruben + aviso de promo en Caja (PR #52, incluye #50) — rev tadaima-00074-tir
+
+**Pedido Joel:** Ruben subió cambios a `develop`; verificarlos junto con el aviso de promo de ayer y
+deployar, dejando todo al día. La vista previa de borrado (PR #51) **no** entra (decisión de Joel).
+
+**De Ruben (`develop`, 5 commits):**
+- `79b20c1` Excel de ventas (Pier #17): cada pestaña va Ventas → Preventas → Manga, TOTAL FINAL suma
+  las tres, "Costo Producto" es fórmula y la pestaña Tarjeta usa el Neto en el Resumen.
+- `093e463` imagen congelada al cobrar: migración `sale_items.product_image` (`varchar(255)` nullable,
+  sin backfill), `CheckoutService` guarda el `image_path` de la primera imagen válida y
+  `SaleItemResource` la devuelve en `product_image` y `product.image`.
+- `ccb54b5` Ventas: lista a pantalla completa (botón Ampliar) y usa la imagen congelada.
+- `e4382c2` Productos: `GET /products?sort=stock_asc|price_desc|price_asc|newest|oldest` con su menú.
+- `6189ac8` filtro de categoría en Productos y en Existencias.
+
+**Aviso de promo en Caja (PR #50, pedido de Joel 2026-10-10).** Caso real en Macro: favorito Tarjeta +
+3 Toploader con la promo "Top loader 3x10" (solo efectivo) dejaba el cobro trabado y el cajero apretaba
+"Cobrar sin promo". Ahora, cuando la promo que ganó una línea no se cobra con el método actual, Caja abre
+un aviso y el cajero decide: cambiar al método que acepta la promo, seguir y cobrar sin la promo, o
+"Decidir después". Caja no cambia el método sola por una promo. `lib/promoPaymentAlert.ts` (+12
+pruebas), `components/sell/PromoPaymentAlertModal.tsx` (no roba el foco, sin botón por defecto, absorbe
+el doble clic), `SellPage`, `AGENTS.md` §5.
+
+**Agregado en la rama integrada (`release/2026-10-11`):**
+- `SaleItemImageSnapshotTest` (5 casos): el cambio de cobro no traía pruebas.
+- La migración revisa `Schema::hasColumn` (corre sola al arrancar cada contenedor).
+- Excel: la fórmula de TOTALES FINALES / Costo sumaba dos veces el subtotal de Efectivo (`C11+C11+…`).
+  El valor guardado estaba bien, pero Excel y Sheets recalculan al abrir y el costo total salía
+  inflado. Venía desde `365c426`, ya en prod.
+- Excel, pestaña Efectivo: Devoluciones podía pisar la última columna de Preventas; ahora va a la
+  derecha de la tabla más ancha.
+- `backend/AGENTS.md`: `product_image` en ADR-015 y los `sort` nuevos.
+
+**Pendientes para Ruben / Pier (no se tocaron):**
+- La imagen congelada es solo la ruta: al cambiar la foto o borrar el producto el archivo se elimina
+  del storage (`removeImage`, `destroy`) y la venta muestra "sin imagen"; antes mostraba la foto actual.
+- Excel, pestaña Tarjeta: con preventas cobradas con tarjeta, "Bruto Tarjeta" no las incluye y "Neto
+  Tarjeta" sí. El Resumen de Tarjeta ahora usa el Neto: confirmar con Pier que es lo buscado.
+- En local la miniatura de Ventas no se pinta: la CSP de `index.html` no permite imágenes de
+  `127.0.0.1` (en prod vienen de `storage.googleapis.com`).
+- Siguen abiertos los del favorito: precio socio tras el cambio automático a Efectivo, favorito Mixto con
+  preventa (se guarda todo como Efectivo) y la venta normal cobrada como tarjeta por olvido.
+
+**Verificado (sobre la rama integrada):** backend 771 en SQLite y en Postgres 17 local; vitest 702; `tsc`
+455 = 455 contra `main`; lint sin errores nuevos; `vite build` OK; revisión de código de los commits de
+Ruben sin hallazgos críticos ni altos. QA local con backend y frontend integrados: un cobro guardó y
+devolvió la imagen congelada, orden por precio (`sort=price_desc`), filtro de categoría, Existencias,
+lista de Ventas a pantalla completa y el aviso de promo con favorito Tarjeta. **No** se revisó el Excel
+con datos reales ni con lector físico.
+
+**Deploy (2026-10-11 ~14:20 Tijuana) — rev tadaima-00074-tir (rollback `tadaima-00072-wol`).** PR #52
+mergeado (`dcb91da`). Candidato sin tráfico desde un worktree en `main` (Dockerfile): la migración
+`add_product_image_to_sale_items` corrió en 176 ms, la columna existe en prod, `/`, `/login`, `/caja`,
+`/products`, `/sales`, `/reports`, `/buscar-tiendas` y `/tadaimaus/` 200, API 401 sin sesión, el bundle
+trae "Promo solo" y "Precio: mayor a menor". Promovido al 100%; `tadaimamexico.com` sirve
+`index-BZcDPj8G.js`. Rollback (la columna se queda y no estorba):
+`gcloud run services update-traffic tadaima --to-revisions tadaima-00072-wol=100 --project tadaimapos --region us-east1`.
+
+**Ramas al día:** `develop` avanzado a `main` (fast-forward). PR #51 (`feat/vista-previa-borrado`) con
+`main` mezclado y sus suites en verde (backend 799 en SQLite y Postgres, vitest 711); sigue abierto.
+
+### Sesión 2026-10-10 — Reportes: Excel de preventas por método de pago (Ruben, PR #49) — rev tadaima-00072-wol
+
+**Qué subió Ruben** (`develop`, commit `abdc11a` "exel preventas"; solo frontend de Reportes, sin backend ni
+migraciones). Cambia el Excel de Ventas y el Excel del Corte:
+- Cada pestaña Efectivo / Tarjeta / Transferencias lleva abajo su tabla de preventas abonadas con ese
+  método (`buildPresaleRowsByMethod`; "Costo Unitario" para quien ve costos).
+- La pestaña Preventas pasa a ser por folio (Folio · Cliente · Total · Anticipo · Pendiente · Estado ·
+  Tienda · Fecha · Método), en 3 tablas por método y agrupada por producto (`buildPresaleFolioRows`,
+  `drawPresaleFolios`).
+- El Resumen agrega la fila "Preventas:" por método y la suma al subtotal y a TOTALES FINALES.
+- El PDF y la pantalla de Reportes no cambian (siguen con `buildPresaleRows`).
+
+**Fix encima (`3607001`, decisión de Joel antes del deploy).** `buildPresaleRowsByMethod` cargaba el costo
+completo de una preventa liquidada en cada pestaña donde tuvo abonos: con apartado y liquidación en el
+mismo rango y métodos distintos ($300 efectivo + $700 tarjeta, costo $800) el Resumen marcaba costo $1,600
+y utilidad −$600 en vez de $800 y +$200. Ahora el costo real y los abonos previos se reparten según lo
+abonado con cada método en el rango (`methodShare`); la suma de las tres pestañas da lo mismo que
+`buildPresaleRows`. Con un solo método, o con el apartado antes del rango, no cambia nada. Pruebas en
+`landing/src/pages/reports/buildReportData.presaleMethod.test.ts` (7 casos).
+
+**Cómo entró:** rama `feat/excel-preventas-ruben` desde `main` = merge de `develop` (sin conflictos) + el
+fix; PR #49 mergeado con merge commit (`0d73e54`), así `abdc11a` queda en la historia de `main`. Ruben
+tiene que bajar `main` a `develop`.
+
+**Pendientes para Ruben (no se tocaron):**
+- Una preventa pagada completa ANTES del rango y entregada dentro del rango no sale en ninguna tabla por
+  método (`if (paidInRange <= 0) continue`), así que su utilidad no llega al Resumen del Excel; el PDF sí
+  la muestra. Falta decidir a qué método se asigna.
+- El reparto es proporcional a lo abonado: el apartado en efectivo de una preventa liquidada con tarjeta en
+  el mismo rango sale como "(Liquidada)" con parte de la utilidad. Alternativa: que la liquidación cargue
+  todo el costo y el apartado quede en utilidad $0. Los totales son iguales con las dos.
+- Pestaña Preventas: "Total" y "Pendiente" del TOTAL PREVENTAS se repiten si un folio tiene dos pagos del
+  mismo método en el rango.
+- `buildPresaleFolioRows` duplica los clasificadores de método de `excelTopTables.ts`; "Depósito" con
+  acento no entra a Transferencias (`isTransferMethod` busca "deposit").
+- "Costo Unitario" de una apartada muestra el abono entre la cantidad.
+
+**Verificado:** vitest 686 (main 677; +2 de Ruben, +7 del fix), `tsc` 455 = 455 contra `main`, `vite build`
+OK, lint limpio en el fix (el commit de Ruben suma 2 `!` innecesarios en `buildReportData.ts`, 50 → 52),
+revisión de código del fix sin hallazgos críticos ni altos. **No** se revisó el Excel con datos reales:
+falta abrir Reportes en prod (incógnito) y exportar un rango con preventas.
+
+**Deploy (2026-10-10 ~02:40 Tijuana) — rev tadaima-00072-wol (rollback `tadaima-00070-yuv`).** Candidato
+sin tráfico desde un worktree en `main` (Dockerfile): `Nothing to migrate`, `/`, `/login`, `/caja`,
+`/reports` y `/tadaimaus/` 200, API 401 sin sesión, el bundle trae "EFECTIVO — APARTADOS Y PREVENTAS".
+Promovido al 100%; `tadaimamexico.com` sirve `index-Clq3BxYM.js`. Rollback:
+`gcloud run services update-traffic tadaima --to-revisions tadaima-00070-yuv=100 --project tadaimapos --region us-east1`.
+
+### Sesión 2026-10-09 (3) — Preventas: tarjeta de Caja "Reservados 24 / 1" (PR #48) — rev tadaima-00070-yuv
+
+**Reporte (Ruben, app móvil; lo mismo en la Caja web):** "PREVENTA Booster bundle 30th" (catálogo id 1)
+decía **Reservados 24 / 1**. Datos de prod: `preorder_limit=1`, `limit_per_customer=1`, `store_limits`
+CENTRO 12 + MACRO 12, reservados 12 + 12 → el "Agotado" era correcto. El `24` sumaba todas las tiendas y
+el `1` era `preorder_limit` ("Límite de unidades"), tope global viejo que el backend ya no aplica desde
+2026-05-20. **No** era el límite por cliente. Cupo real = `store_limits`; por persona = `limit_per_customer`.
+
+**Fix (solo frontend, sin migraciones)** — rama `fix/preventa-reservados-tienda`, commit `d24e338`, PR #48
+mergeado a `main` (`fa80caf`):
+- `landing/src/lib/presaleAvailability.ts` (+ pruebas): `storeAvailability()` (cupo de la tienda activa,
+  "Sin asignar" si no tiene entrada) y `cartUnitLimit()` (`limit_per_customer`).
+- `SellPage`: la tarjeta dice "Reservados {de esta tienda} / {cupo de la tienda}" + "Máx. por cliente N";
+  el tope del carrito por línea usa `limit_per_customer` (antes `preorder_limit` con el aviso "Límite por
+  cliente", que bloqueaba de más).
+- `AGENTS.md` §5 Preventas.
+
+**Pendiente:** la app móvil (`tadaima-app-pos`, `ExistenciasScreen` / `VentaScreen`) tiene el mismo bug
+(`preorder_limit ?? …`); Ruben la corrige con la misma regla. Nunca usar `preorder_limit` como cupo.
+
+**Verificado:** vitest 677, tsc sin errores nuevos en `SellPage` (383 = 383 contra main), lint limpio,
+QA local (0/12, Máx. 2, tercera unidad bloqueada).
+
+**Deploy (2026-10-09 ~14:30 Tijuana) — rev tadaima-00070-yuv (rollback `tadaima-00068-yil`).** Candidato
+sin tráfico desde un worktree en `main` (Dockerfile): `Nothing to migrate`, `/`, `/caja`, `/transfers` y
+`/tadaimaus/` 200, API 401 sin sesión, el bundle trae "Máx. por cliente". Promovido al 100%;
+`tadaimamexico.com` sirve `index-nFPfvQfq.js`. Rollback:
+`gcloud run services update-traffic tadaima --to-revisions tadaima-00068-yil=100 --project tadaimapos --region us-east1`.
+
+### Sesión 2026-10-09 (2) — Caja: método de pago favorito + Traslados: detalle de productos (PR #46 y #47) — rev tadaima-00068-yil
+
+**Pedido Joel:** (1) en Caja poder fijar UN método de pago favorito con un check, que se quede fijo;
+(2) en Traslados la tarjeta solo decía "+12 más (13 SKUs)" sin decir cuáles productos van. Dos ramas
+desde `main` en worktrees aparte (la de vista previa de borrado sigue sin commit en el checkout
+principal): `feat/metodo-pago-favorito` (PR #46, `42727ee`) y `feat/traslados-detalle-productos`
+(PR #47, `74be250`), mergeadas a `main` con `--no-ff`. **Solo frontend, sin migraciones.**
+
+**Método de pago favorito** (decisión Joel: por usuario en esa PC, sin backend):
+- `lib/favoritePaymentMethod.ts` (+14 pruebas): llave localStorage `tadaima-caja-metodo-fav:{userId}`,
+  lectura tolerante a basura, `startingPayment`, `toggleFavorite`, `withFavoriteTerminal`.
+- `SellPage`: el menú de método lista los 4 métodos (el activo "· actual") con un círculo-check a la
+  derecha; insignia roja en la esquina del botón cuando el activo es el favorito. `clearCart` (tras
+  cada cobro), `makeMesa` (mesa inicial y "+") y la hidratación de mesas vacías arrancan en el
+  favorito. **Cambia la regla vieja** "tras cobrar SIEMPRE vuelve a Efectivo": ahora vuelve al
+  favorito (Efectivo si no hay). Con Tarjeta guarda la terminal y `selectTerminal` la actualiza; si la
+  terminal ya no existe, el efecto de terminal zombie la limpia y sale el aviso ámbar. Marcarlo no
+  cambia la venta en curso; preventa / solo efectivo / precio socio siguen mandando.
+- Guía in-app de Caja (callout) y `AGENTS.md` §5.
+
+**Traslados — detalle de productos** (`GET /transfers` ya traía `items.product`):
+- La tarjeta enseña "Ver N productos" (botón) → `components/transfers/TransferDetailModal.tsx`:
+  origen/destino, quién lo pidió, fecha, nota, "N productos · M piezas", cada producto con foto, SKU y
+  ×cantidad, buscador si hay más de 8. Pendiente + permiso: Recibir / Cancelar desde el popup
+  (reusa `handleComplete`/`handleCancel`, que ahora regresan boolean y cierran el popup).
+- `lib/transferItems.ts` (+9 pruebas), `getStatusInfo` movido a `components/transfers/transferStatus.ts`.
+- Callout en la guía in-app de Inventario (Traslados). Ruta de la pantalla: `/transfers`.
+
+**Verificado:** vitest 669 en `main` mergeado, tsc = base (459, sin errores nuevos), `vite build` OK.
+QA local (SQLite): favorito Transferencia/Tarjeta+terminal en venta siguiente y mesa nueva, recarga,
+desmarcar; popup de traslado, Escape, Recibir desde el popup, 375px sin scroll horizontal. Pendiente
+en prod: probar con un cajero real y con un traslado de muchos productos (buscador).
+
+**Deploy (2026-10-09 ~14:00 Tijuana) — rev tadaima-00068-yil (rollback `tadaima-00066-map`).**
+Candidato sin tráfico desde un worktree de `main` (Dockerfile): `Nothing to migrate`, `/`, `/caja`,
+`/transfers` y `/tadaimaus/` 200, API 401 sin sesión, cero 5xx; el bundle trae las dos mejoras.
+Promovido al 100%; `tadaimamexico.com` sirve el mismo bundle (`index-Ina84SVe.js`). Rollback:
+`gcloud run services update-traffic tadaima --to-revisions tadaima-00066-map=100 --project tadaimapos --region us-east1`.
+
+**Limpieza:** worktrees viejos `beautiful-liskov-b50b79` y `friendly-dubinsky-bff8af` (limpios, ya en
+`main`) borrados, igual que los de esta sesión y las ramas mergeadas; configs de dev de prueba
+quitadas de `.claude/launch.json`.
+
+### Sesión 2026-10-08 (4) — Paquetes: endurecimientos (depurar-tomos, traslados, candado de stock, PR #45) — rev tadaima-00066-map
+
+**Pedido Joel:** cerrar tres follow-ups de la entrada de Paquetes (rev `tadaima-00064-yec`) dejando la
+rama lista para PR; después (00:00) decidió mergear y deployar esta misma noche. Rama
+`claude/keen-murdock-c92ea5` desde `main` (worktree), commit `863ad39` + MASTERLOG `334dd23`, PR #45
+mergeado a `main` con `--no-ff` (`0366c5b`). Sin migraciones.
+
+**Cambios** (solo backend + docs):
+- `tadaima:depurar-tomos` deja los `product_type='bundle'` fuera del universo (un paquete con categoría
+  de librería y sin stock ya no se borra ni se re-tipa: su composición quedaría huérfana). Hallazgo: la
+  "exclusión de componentes" que ya existía solo los sacaba de la búsqueda de historial, no de la lista
+  de borrado; el test nuevo reventó con `FOREIGN KEY constraint failed` (rollback total del comando).
+  Ahora un componente con stock 0 nunca se borra ni se desactiva: sigue la ruta "con stock" (manga
+  no-tomo → producto). Es un comando manual que no ha corrido en prod con paquetes.
+- **Los paquetes no se trasladan**: `TransferService::assertNoBundles` (en el service, así cubre la app
+  móvil) rechaza paquetes al solicitar y al recibir con 422 "Los paquetes no se trasladan («X»
+  PAQ-0001): desármalo aquí y ármalo en la otra tienda". Una solicitud vieja con paquete no se recibe
+  pero sí se cancela. Motivo: su stock solo cambia armando/desarmando y vive en Exhibición.
+- **Candado de borrar / editar composición por fila**: `BundleService::stockLock()` / `hasStock()`
+  bloquean si CUALQUIER fila de `inventory` del paquete es ≠ 0 (antes era suma > 0: +2 en una tienda y
+  −2 en otra colaba el borrado); una sola fila negativa bloquea con mensaje propio. `composition_locked`
+  usa el mismo candado (`withExists` en el listado). `BundleAvailability` trata el stock negativo de un
+  componente como 0, igual que `assemble`, así "puedes armar N" vuelve a ser exactamente lo que acepta
+  el armado (la UI suma esos campos).
+- Docs: `backend/AGENTS.md` (ADR-018, tabla Paquetes, tabla Traslados), `AGENTS.md` §5 y un callout
+  en la guía in-app de Paquetes. Tests nuevos: `TransferBundleTest`, `BundleStockLockTest`, caso en
+  `DepurarTomosTest`.
+
+**Verificado:** SQLite 763/763; Postgres 17 local 761/763 (los 2 son `CashReportRangeTest`,
+preexistentes y por la hora: usa `now()->toDateString()` en UTC contra el día de Tijuana, falla de
+17:00 a 24:00); vitest guías 26/26; `vite build` OK; Pint marca 4 archivos con las mismas reglas que
+ya fallaban en `main` (no se reformateó).
+
+**Deploy (2026-10-09 00:10 Tijuana) — rev tadaima-00066-map (rollback `tadaima-00064-yec`).**
+Candidato sin tráfico desde un worktree temporal de `main` (Dockerfile): `Nothing to migrate`, index y
+`/tadaimaus/` 200, `/bundles` y `/transfers` 401 sin sesión, login sin errores de consola, cero 5xx;
+SELECT en prod sin cambios (0 paquetes / 0 componentes / 0 armados, 4,891 productos, 982 ventas, 144
+migraciones). Promovido al 100%; `tadaimamexico.com` ya sirve el bundle nuevo. Antes de este deploy
+prod estuvo en `00064-yec` (Paquetes) desde las 23:21 sin errores ni 5xx y sin que nadie usara
+`/bundles` con sesión. Si Paquetes completo tuviera que salir: `--to-revisions tadaima-00062-kof=100`
+(con paquetes armados: desarmar antes y no borrar productos ni ajustar stock de paquetes desde la
+versión vieja).
+
+**Para la prueba del equipo (mañana):** crear paquete (SKU `PAQ-0001` + código de barras) → armar N
+en su tienda (Automático y forzando Bodega; el "Puedes armar" debe coincidir) → imprimir etiqueta →
+vender en Caja (ticket; baja el stock del paquete, no el de las piezas) → cancelar esa venta (regresa el
+paquete) → desarmar (piezas vuelven a Exhibición o Bodega, según se elija) → intentar borrar con armados
+(debe negarse y mandar a desarmar). Reportar pantalla, tienda, qué esperaban y qué pasó. Pendientes
+conocidos: cajero ve Editar/Borrar que dan 403; avisar a Ruben (`product_type` puede ser `bundle`);
+follow-up frontend: `TransfersPage` muestra un toast genérico en vez del mensaje del 422 y su buscador
+lista paquetes. Pedir Ctrl+Shift+R / incógnito por la caché PWA.
+
+---
+
+### Sesión 2026-10-08 (3) — Caja: filtro por método de pago en el Historial del Día (PR #43) — rev tadaima-00062-kof
+
+**Pedido Joel:** "revisa que los tipos de pago tengan filtros apropiados en Caja". La tienda pidió
+filtrar transferencias el 2026-10-01 y se hizo solo en Ventas; el Historial del Día de Caja (botón
+"Historial") solo tenía Todas/Canceladas y el buscador. Decisión (Joel): los mismos filtros de
+Ventas en el Historial, con las preventas clasificadas por cómo se pagó el anticipo.
+
+**Cambios** (solo frontend; rama `feat/historial-filtro-metodo` desde `main`, trabajada en un
+worktree para no tocar `feat/paquetes`):
+- `lib/paymentFilter.ts`: `historialEntryMatchesPaymentFilter` + `HISTORIAL_METHOD_OPTIONS` (sin
+  "Varios"). Venta = igual que en Ventas; preventa = pagos del anticipo unidos a los de la venta
+  emparejada cuando es un par mixto; sin anticipo solo entra en "Todos los pagos".
+- `SellPage.tsx` (Historial): chips Efectivo / Tarjeta / Transferencia / Dólares / Mixto con contador.
+  `historialView` (useMemo) aplica pestaña + método una sola vez para contadores y lista; las ventas
+  emparejadas no se cuentan aparte (van dentro de su preventa). Combinables con Canceladas y con el
+  buscador; estado vacío "Sin ventas con X hoy".
+- Guía in-app "Historial de ventas": callout del botón Historial de Caja.
+- Entró también `6b45282 test(backend)` (solo tests: suite Postgres determinista; sin cambios en app/).
+
+**Verificado:** vitest 557 (+4 casos), eslint y tsc = base, `vite build` OK; backend SQLite 718 y
+Postgres 17 local TODO verde (0 fallas). QA local con 5 ventas (Efectivo, Tarjeta, Transferencia,
+Mixto E+T, Dólares) y una preventa con anticipo por Transferencia: Transferencia 3, Dólares 1, Mixto 2,
+Tarjeta 1, Efectivo 3; Canceladas + Tarjeta → "Sin cancelaciones con Tarjeta hoy"; el buscador
+filtra encima del método. Candidata sin tráfico: index y `/tadaimaus/` 200, API 401 sin sesión, login
+sin errores de consola, bundle con el filtro y cero menciones de Paquetes. Luego se promovió al 100%.
+
+**Deploy:** tadaima-00062-kof (rollback `tadaima-00060-viz`). Pedir Ctrl+Shift+R / incógnito por la caché PWA.
 
 ---
 
@@ -86,6 +893,109 @@ Paquetes. Luego se promovió al 100%. Falta la revisión con sesión (Joel/equip
 Tienda, Productos y Cerrar caja.
 
 **Deploy:** tadaima-00058-bek (rollback `tadaima-00056-siw`). Pedir Ctrl+Shift+R / incógnito por la caché PWA.
+
+---
+
+### Sesión 2026-10-07 (3) — Módulo Paquetes (combos de productos con stock propio, PR #44) — rev tadaima-00064-yec
+
+**Pedido Joel:** módulo nuevo en el menú para armar "paquetes" de 2+ productos (con cantidad), con su
+propio nombre, foto, precio, SKU corto y código de barras imprimible; se vende en Caja como un producto;
+armar consume stock de los componentes (ya no se venden sueltos) y el sistema dice cuántos se pueden
+armar por tienda (admin ve todas; gerente/cajero la suya). Decisiones: nombre **Paquetes**, precio
+manual con referencia (suma de sueltos + % de ahorro), origen Exhibición **o** Bodega por componente
+(default Automático = Exhibición primero), etiqueta por ventana de impresión. Revisado en LOCAL.
+
+**Decisión de diseño (ADR-018):** un paquete es una fila de `products` con `product_type='bundle'`
+(como los tomos) + tablas nuevas `product_bundle_items` (composición) y `bundle_assemblies`
+(bitácora). Así Caja, cobro, cancelaciones, reportes, imágenes y traslados funcionan sin tocarse: vender
+descuenta solo el stock del paquete. Movimientos de armado = `inventory_movements` tipo
+`transferencia` con `reference PAQ-{id}` (no se altera el CHECK de movimientos).
+
+**Cambios backend** (`backend/`): migraciones `2026_10_07_000001` (extiende el CHECK de
+`products.product_type` en Postgres; en SQLite recrea la tabla si el archivo es viejo; la base
+`2026_05_19_000002` ya nace con 'bundle'), `000002` y `000003` (tablas nuevas);
+`Services/BundleService` (CRUD, armar, desarmar, costo = Σ costo componente × qty),
+`Services/BundleAvailability` ("puedes armar N" = min floor((exh+bod)/qty)), `Support/BundleCodes`
+(SKU `PAQ-0001`, EAN-13 prefijo 200); `BundlesController` + 5 FormRequests + 2 Resources +
+rutas `/bundles` (index, store, preview, show, update, destroy, assemble, disassemble, assemblies).
+Toques: `ProductController` (`syncPrices` público, `stats.total_bundles`, candado de borrar
+componente/paquete con stock), `MangaController::destroy`, `InventoryController` (rechaza ajustar
+stock de paquetes a mano), `UpdateProductRequest` (no se re-tipa un paquete), purga de sin-stock
+conserva paquetes. Docs: `backend/AGENTS.md` (tabla Paquetes + ADR-018) y `AGENTS.md` §5.
+
+**Cambios frontend** (`landing/`, `packages/api`): `packages/api/src/bundles.ts` + `ProductType`
+union; `hooks/queries/useBundles.ts`; libs puras con tests `lib/bundleMath.ts`, `lib/bundleDraft.ts`,
+`lib/bundleLabel.ts`, `lib/barcode.ts` (+EAN-13 válido); `pages/BundlesPage.tsx` y
+`components/bundles/*` (lista en tarjetas con semáforo "Puedes armar", asistente de 3 pasos con
+lector y vista previa por tienda, diálogos Armar (origen por componente) / Desarmar (destino) /
+Detalle con historial / Editar / Etiqueta con `jsbarcode`); menú "Paquetes" (`permisos.ts`,
+`Layout.tsx`, router `/paquetes`); Caja: pill "Paquete" y guard de "Agregar stock"; tema de docs
+`paquetes`. Dependencia nueva: `jsbarcode`.
+
+**Tests (cierre 2026-10-08):** backend 5 archivos nuevos (`BundleCreateTest`, `BundleAssembleTest`,
+`BundleStoreScopeTest`, `BundleCheckoutTest`, `BundleSearchTest`) → suite completa 755 verdes
+(SQLite, 3,233 aserciones). Landing: 646 vitest verdes (52 archivos); `tsc -b` 459 errores (base de
+`main` 460, cero en archivos de paquetes); eslint limpio; `vite build` OK; sin secretos ni
+`console.log` en el diff.
+
+**Verificado en local** (backend SQLite :8000 + landing :5174): crear paquete por lector/teclado,
+"puedes armar" por tienda, crear y armar 2, armar 1 forzando Bodega, desarmar a Bodega, detalle con
+historial, etiqueta EAN-13, Caja encuentra `PAQ-0001` con pill "Paquete" y lo mete al carrito.
+Probado también como gerente (solo su tienda, 403 en tienda ajena) y en móvil (375 px). Lo que falta
+para subir está al final de esta entrada ("Pendientes para la sesión de deploy").
+
+**Revisión (agentes code-reviewer/typescript-reviewer) aplicada:** lock `FOR NO KEY UPDATE` en Postgres (evitaba
+deadlock con el cobro), editar paquetes = admin/gerente, borrado atómico bajo lock, `components[].cost`
+ya no sale como `{}` sin permiso, purga/depurar respetan componentes, `/inventory/move` rechaza paquetes;
+front: menú ⋮ ya no se corta, detalle con clave de query por tienda, `parseMoney` estricto, lector
+sin cierres obsoletos, borrador no se marca "restaurado" en falso.
+
+**Iteración 2 (2026-10-08, feedback de Joel en local):** el paso 1 del asistente confundía
+"piezas por paquete" con "cuántos paquetes armar" y pedía una tabla con checks. Ahora el paso 1
+tiene dos zonas: "1. Elige los productos" (tabla con check, buscador que filtra en vivo, filtro de
+categoría, switch "Solo con stock en {tienda}" por default, lector que marca o suma piezas) y
+"2. Cada paquete lleva" (contador etiquetado **Piezas por paquete**, "Hay en tienda", "alcanza
+para N"); el pie dice "Cada paquete: 1 × A + 2 × B" y "Con el stock de hoy: puedes armar N".
+El paso 3 se renombró "¿Cuántos armar?" con el bloque "¿Cuántos paquetes armar ahora?" primero.
+Archivos: `components/bundles/BundleProductTable.tsx` (nuevo), `BundleComponentPicker.tsx`
+(reescrito), `lib/bundlePicker.ts` (+test), `lib/bundleDraft.ts` (`toggleComponent`,
+`componentsSentence`), `useBundlePickerPoolQuery` en `hooks/queries/useBundles.ts`;
+`BundlePickerResults.tsx` eliminado.
+
+**Iteración 3 (2026-10-08, feedback de Joel):** borrar con armados mostraba "Sí, borrar" sin hacer nada →
+ahora sale "Primero hay que desarmarlo" con botón "Ir a desarmar"; sin armados pide confirmación y borra.
+Vista **Tabla** además de tarjetas (toggle persistido en `tadaima-bundles-view`, `BundleTable.tsx` con
+encabezado fijo) y la barra de búsqueda/vista queda fija al hacer scroll.
+
+**Cierre 2026-10-08 — aprobado por Joel en local ("me gusta, para mandar").** Se apagaron los
+servidores locales, se borró la base SQLite local (`backend/database/local.sqlite`; se recrea con
+`APP_ENV=sqlitelocal php artisan migrate:fresh --seed`); el WIP `ad27a46`, el merge `9fec3ab` y un
+segundo merge de `main` (PR #41/#43, sin conflictos; suites re-verificadas sobre lo mezclado) se
+aplanaron (`git reset --soft main`) en **un solo commit `feat(paquetes)` sobre `main`** en la rama
+`feat/paquetes`, sin push. Revisión no aplicada (opcional, no bloquea): los diálogos Armar / Desarmar /
+Editar reciben el paquete congelado en el estado `dialog` en vez de leerlo vivo de la lista por id, y
+`bundlesQuery.isError` esconde la lista cacheada si falla un refetch (usar `isError && !data`).
+
+**Deploy (2026-10-08 noche) — rev tadaima-00064-yec (rollback `tadaima-00062-kof`).** PR #44
+`feat/paquetes → main` (merge `f56fa01`). Antes de subir, Joel pidió un check general: tres revisiones
+de solo lectura (backend/migraciones, frontend/packages, pipeline de deploy) sin bloqueantes, más
+SELECTs en prod: `product_type` solo `manga` 2,971 / `product` 1,920, CHECK exactamente
+`('product','manga')`, sin tablas ni índices con los nombres nuevos. Fix previo `b15df57`:
+`POST /bundles` con `catalog_visible=true` exige el flag de catálogo (un cajero podía crear el paquete
+ya publicado en la tienda online); docblock de `InventoryController::bundleStockGuardError` corregido.
+Suites sobre la rama: SQLite 755, **Postgres 17 local completa verde** (incluye la rama pgsql de la
+migración del CHECK y el lock `FOR NO KEY UPDATE`), vitest 646. Candidato sin tráfico: las 3
+migraciones `2026_10_07_*` en DONE (214 / 374 / 430 ms); en prod quedaron las 2 tablas y el CHECK con
+`bundle` y los conteos no cambiaron (0 paquetes, 982 ventas); index y `/tadaimaus/` 200, `/bundles`
+401 sin sesión, bundle con Paquetes, login sin errores de consola. Promovido al 100%.
+
+**Pendiente:** prueba con sesión en prod (crear, armar, etiqueta, vender en Caja, desarmar); avisar a
+Ruben (`products.product_type` ahora puede ser `bundle`; la app móvil lo tipa `'product'|'manga'` y
+en runtime lo trata como producto normal). Follow-ups (chips): el cajero ve Editar/Borrar que el
+backend rechaza con 403; `DepurarTomosCommand` no excluye `bundle` del conjunto que revisa; traslados
+de paquetes sin candado; `lock_timeout` en migraciones futuras. **Rollback solo con `update-traffic`
+(nunca `migrate:rollback`)**: si ya hay paquetes armados, desarmarlos antes y no borrar productos ni
+ajustar stock de paquetes desde la versión vieja (no tiene los candados).
 
 ---
 

@@ -22,7 +22,7 @@ class SalesController extends Controller
 {
     /** Relaciones del detalle de una venta (show y respuestas de mutaciones). */
     private const DETAIL_RELATIONS = [
-        'items.product', 'payments.paymentMethod', 'customer', 'user:id,name',
+        'items.product', 'items.product.images', 'payments.paymentMethod', 'customer', 'user:id,name',
         'preSaleOrders.items.catalog:id,product_name',
         'cancellations', 'registerSession:id,status',
     ];
@@ -50,11 +50,17 @@ class SalesController extends Controller
         // conversión, así que una venta del 21-may 19:00 MX (= 01:00 UTC del
         // 22-may) NO matchea con filter "Hoy" del cajero. DateRange convierte
         // el rango MX → UTC explícitamente.
-        $fromUtc = \App\Support\DateRange::fromUtc($request->from);
-        $toUtc = \App\Support\DateRange::toUtc($request->to);
+        // Fechas sueltas (no consecutivas), opcional — pestaña Ventas de
+        // Reportes (fetchAllSales). Cuando viene, gana sobre from/to.
+        $dates = \App\Support\DateRange::parseDatesParam($request->input('dates'));
 
         $query = Sale::with([
                 'customer', 'payments.paymentMethod', 'items.product', 'user:id,name',
+                // Thumbnail de la línea en Ventas/Reportes (2026-10-10): antes
+                // dependía de un fetch aparte y limitado del catálogo (solo
+                // 100 productos), así que la mayoría de las filas no traían
+                // imagen. Viene en el propio snapshot de la venta.
+                'items.product.images',
                 // Categorías del producto (2026-10-03): Reportes y el Excel del
                 // corte agrupan por categoría A-Z, igual que en Productos.
                 'items.product.categories' => fn ($q) => $q->select('product_categories.id', 'product_categories.name'),
@@ -69,8 +75,7 @@ class SalesController extends Controller
             ])
             ->when($request->user_id, fn ($q) => $q->where('user_id', $request->user_id))
             ->when($request->status,  fn ($q) => $q->where('status', $request->status))
-            ->when($fromUtc, fn ($q) => $q->where('sold_at', '>=', $fromUtc))
-            ->when($toUtc,   fn ($q) => $q->where('sold_at', '<=', $toUtc))
+            ->tap(fn ($q) => \App\Support\DateRange::applyDates($q, 'sold_at', $dates, $request->from, $request->to))
             ->when($request->payment_method_filter, function ($q) use ($request) {
                 // Filtra por método de pago server-side. La clasificación
                 // espeja classifyMethodName() del frontend (paymentFilter.ts).
@@ -299,7 +304,7 @@ class SalesController extends Controller
             }
         });
 
-        $sale->load(['items.product', 'payments.paymentMethod', 'customer']);
+        $sale->load(['items.product', 'items.product.images', 'payments.paymentMethod', 'customer']);
 
         return $this->success(new SaleResource($sale), 'Devolución registrada correctamente.');
     }
@@ -345,7 +350,7 @@ class SalesController extends Controller
             return $this->error($e->getMessage(), 422);
         }
 
-        $sale->refresh()->load(['items.product', 'payments.paymentMethod', 'customer', 'registerSession:id,status']);
+        $sale->refresh()->load(['items.product', 'items.product.images', 'payments.paymentMethod', 'customer', 'registerSession:id,status']);
         return $this->success([
             'sale'         => new SaleResource($sale),
             'cancellation' => [

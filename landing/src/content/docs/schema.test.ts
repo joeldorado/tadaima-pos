@@ -67,8 +67,8 @@ describe("data/*.json contra validateTopicData", () => {
 })
 
 describe("DOC_TOPICS (hidratado)", () => {
-  it("hidrata exactamente 26 temas hoy", () => {
-    expect(DOC_TOPICS).toHaveLength(26)
+  it("hidrata exactamente 27 temas hoy", () => {
+    expect(DOC_TOPICS).toHaveLength(27)
   })
 
   it("cada tema trae su icono resuelto como componente", () => {

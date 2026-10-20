@@ -1,10 +1,25 @@
 import { describe, it, expect } from "vitest";
 import {
+  canAccessPage,
   canSeeCost,
   canDeleteProducts,
+  bundlePermissions,
   isMasterAdmin,
   isEligibleForPermManagement,
 } from "./permisos";
+
+// ─── canAccessPage: Paquetes (2026-10-07) ─────────────────────────────────────
+describe("canAccessPage — Paquetes visible para los 3 roles", () => {
+  it("admin, gerente y cajero entran a 'bundles'", () => {
+    expect(canAccessPage(["admin"], "bundles")).toBe(true);
+    expect(canAccessPage(["gerente"], "bundles")).toBe(true);
+    expect(canAccessPage(["cajero"], "bundles")).toBe(true);
+  });
+  it("sin rol conocido NO entra", () => {
+    expect(canAccessPage(["visitante"], "bundles")).toBe(false);
+    expect(canAccessPage(undefined, "bundles")).toBe(false);
+  });
+});
 
 // ─── canDeleteProducts ───────────────────────────────────────────────────────
 describe("canDeleteProducts — eliminar = permiso de ver costo (2026-08-17)", () => {
@@ -21,6 +36,24 @@ describe("canDeleteProducts — eliminar = permiso de ver costo (2026-08-17)", (
   it("cajero nunca, aunque vea costo", () => {
     expect(canDeleteProducts(["cajero"], true)).toBe(false);
     expect(canDeleteProducts(undefined, true)).toBe(false);
+  });
+});
+
+// ─── bundlePermissions (2026-10-14) ──────────────────────────────────────────
+describe("bundlePermissions — botones de Paquetes = lo que el backend deja", () => {
+  it("cajero no edita ni borra, aunque vea costo", () => {
+    expect(bundlePermissions(["cajero"], false)).toEqual({ canEdit: false, canDelete: false });
+    expect(bundlePermissions(["cajero"], true)).toEqual({ canEdit: false, canDelete: false });
+  });
+  it("gerente edita; borra solo con can_view_cost", () => {
+    expect(bundlePermissions(["gerente"], false)).toEqual({ canEdit: true, canDelete: false });
+    expect(bundlePermissions(["gerente"], true)).toEqual({ canEdit: true, canDelete: true });
+  });
+  it("admin todo, con o sin flag", () => {
+    expect(bundlePermissions(["admin"], false)).toEqual({ canEdit: true, canDelete: true });
+  });
+  it("sin rol no ve nada", () => {
+    expect(bundlePermissions(undefined, true)).toEqual({ canEdit: false, canDelete: false });
   });
 });
 

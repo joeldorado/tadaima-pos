@@ -128,6 +128,12 @@
           {
             "kind": "callout",
             "tone": "info",
+            "title": "Tu método favorito",
+            "text": "Si casi todo lo cobras igual (por ejemplo con Tarjeta o Transferencia), abre el menú del método y toca el círculo a la derecha del que quieras: queda marcado como favorito y cada venta nueva (y cada caja nueva) arranca con él en lugar de Efectivo. Solo hay un favorito; tocarlo otra vez lo quita. Si es Tarjeta, recuerda la última terminal que elegiste. Es tuyo y de esa computadora: otro cajero tiene el suyo, y en otra caja lo vuelves a marcar. Las reglas siguen mandando: con preventas o productos solo efectivo el método cambia solo, como siempre."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
             "title": "¿El cliente trae dólares? Usa la calculadora",
             "text": "Con Efectivo, el botón “$ Dólares” abre la calculadora: arriba ves el total en pesos y en dólares (para decírselo al cliente), tecleas los billetes americanos, ves el tipo de cambio y en vivo te dice “LE ALCANZA — CAMBIO $X” o “FALTAN $X”. Nada cuenta hasta presionar “✓ Sí paga con dólares”; si solo era pregunta, cierras con “✗ Solo era pregunta” y no pasa nada. El sistema guarda los dólares físicos recibidos y el tipo de cambio de esa venta para el corte y los reportes. Si el tipo de cambio del día no es el que usas, el botón de ajustes junto a “Efectivo” lo cambia para tu caja (solo en tu pantalla; la referencia global la pone el admin en Configuración)."
           },
@@ -293,8 +299,8 @@
           {
             "kind": "callout",
             "tone": "info",
-            "title": "Reportes en Excel del día",
-            "text": "Antes de confirmar puedes bajar dos reportes: “reporte del turno” (solo tus ventas de hoy) y “reporte de toda la tienda” (las ventas de todos los cajeros de tu tienda ese día), útil para cerrar el día aunque no esté el gerente. Descargarlos no cierra la caja."
+            "title": "Reporte en Excel del día",
+            "text": "Antes de confirmar puedes bajar el “reporte de toda la tienda” (las ventas de todos los cajeros de tu tienda ese día), útil para cerrar el día aunque no esté el gerente. Descargarlo no cierra la caja."
           },
           {
             "kind": "callout",
@@ -568,7 +574,7 @@
       "no. ticket",
       "método de pago"
     ],
-    "updatedAt": "2026-09-30",
+    "updatedAt": "2026-10-08",
     "sections": [
       {
         "id": "lista-ventas",
@@ -589,6 +595,12 @@
             "tone": "info",
             "title": "El detalle de cada venta",
             "text": "Clic en la fila y se despliegan los artículos y el bloque “Cómo se pagó”: método, recibido (pesos y dólares con su tipo de cambio) y cambio. Las ventas con pago mixto dicen “Mixto” con el desglose de cada método."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Sin salir de Caja: el botón “Historial”",
+            "text": "En Caja, el botón “Historial” abre las ventas de HOY de toda la tienda con los mismos filtros de método (Efectivo, Tarjeta, Transferencia, Dólares, Mixto) y un contador en cada uno; se combinan con la pestaña Canceladas y con el buscador. Las preventas del día se clasifican por cómo se pagó el anticipo, así que una preventa pagada por transferencia aparece bajo Transferencia. Con muchos tickets la lista se agrupa por hora (“3 p. m. · 14 tickets”) y muestra 50 a la vez: abajo está “Mostrar 50 más” y el botón rojo con flecha regresa arriba."
           }
         ]
       },

@@ -30,6 +30,7 @@ use App\Http\Controllers\Api\SalesDraftController;
 use App\Http\Controllers\Api\SaleCancellationsController;
 use App\Http\Controllers\Api\SalesController;
 use App\Http\Controllers\Api\StoreController;
+use App\Http\Controllers\Api\BundlesController;
 use App\Http\Controllers\Api\SuppliesController;
 use App\Http\Controllers\Api\TerminalController;
 use App\Http\Controllers\Api\UserController;
@@ -159,6 +160,9 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
 
     Route::prefix('products/{product}')->group(function () {
         Route::delete('force',                   [ProductController::class, 'forceDestroy']);
+        // Vista previa antes de eliminar (2026-10-09): stock por tienda, ventas,
+        // apartados, preventas, traslados, paquetes, promos, avisos y bloqueos.
+        Route::get('delete-preview',             [ProductController::class, 'deletePreview']);
         // Images
         Route::post('images/upload',             [ProductController::class, 'uploadImage']);
         Route::post('images',                    [ProductController::class, 'addImage']);
@@ -232,6 +236,8 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
             Route::get('customer-usage', [PreSaleCatalogsController::class, 'customerUsage']);
             Route::patch('/',            [PreSaleCatalogsController::class, 'update']);
             Route::patch('status',       [PreSaleCatalogsController::class, 'updateStatus']);
+            // Vista previa de "Cancelar catálogo" (2026-10-09): folios, anticipos, tiendas.
+            Route::get('cancel-preview', [PreSaleCatalogsController::class, 'cancelPreview']);
             Route::post('image',         [PreSaleCatalogsController::class, 'uploadImage']);
             Route::delete('image',       [PreSaleCatalogsController::class, 'removeImage']);
         });
@@ -393,9 +399,23 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     Route::prefix('supplies')->group(function () {
         Route::get('/',          [SuppliesController::class, 'index']);
         Route::post('/',         [SuppliesController::class, 'store']);
-        Route::get('movements',  [SuppliesController::class, 'movements']);
-        Route::post('movements', [SuppliesController::class, 'storeMovement']);
-        Route::put('{supply}',   [SuppliesController::class, 'update']);
+        Route::get('movements',    [SuppliesController::class, 'movements']);
+        Route::post('movements',   [SuppliesController::class, 'storeMovement']);
+        Route::delete('movements/{movement}', [SuppliesController::class, 'destroyMovement']);
+        Route::put('{supply}',     [SuppliesController::class, 'update']);
+    });
+
+    // ── Paquetes (2026-10-07) — definición global, stock por tienda ──────────
+    Route::prefix('bundles')->group(function () {
+        Route::get('/',                 [BundlesController::class, 'index']);
+        Route::post('/',                [BundlesController::class, 'store']);
+        Route::post('preview',          [BundlesController::class, 'preview']); // ANTES de {id}
+        Route::get('{id}',              [BundlesController::class, 'show'])->whereNumber('id');
+        Route::put('{id}',              [BundlesController::class, 'update'])->whereNumber('id');
+        Route::delete('{id}',           [BundlesController::class, 'destroy'])->whereNumber('id');
+        Route::post('{id}/assemble',    [BundlesController::class, 'assemble'])->whereNumber('id');
+        Route::post('{id}/disassemble', [BundlesController::class, 'disassemble'])->whereNumber('id');
+        Route::get('{id}/assemblies',   [BundlesController::class, 'assemblies'])->whereNumber('id');
     });
 
     // ── TadaimaUS (módulo admin — cada método gatea con adminOnlyError) ───────

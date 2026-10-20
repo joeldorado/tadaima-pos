@@ -8,7 +8,7 @@ import {
   Users, Receipt, UserCircle2, ClipboardList, ArrowLeftRight, ShoppingBasket, BarChart2,
   Settings, Sun, Moon, PackageSearch, Wallet, KeyRound,
   ChevronDown, ChevronRight, PanelLeftClose, TriangleAlert, TicketPercent, BookOpen,
-  HelpCircle, Play, Globe,
+  HelpCircle, Play, Globe, Boxes,
 } from "lucide-react";
 import { NotificationBadge } from "@/components/notifications/NotificationBadge";
 import { RefreshDataButton } from "@/components/layout/RefreshDataButton";
@@ -69,6 +69,9 @@ const NAV_TREE: NavEntry[] = [
   { to: "/clients",   label: "Clientes",  icon: UserCircle2,  page: "clients"  },
   { to: "/pre-sales", label: "Preventas", icon: ClipboardList, page: "presales" },
   { to: "/products",  label: "Productos", icon: Package,      page: "products" },
+  // Paquetes (2026-10-07): combos de productos con stock propio por tienda.
+  // Junto a Productos porque un paquete ES un producto que se vende en Caja.
+  { to: "/paquetes",  label: "Paquetes",  icon: Boxes,        page: "bundles"  },
   {
     group: true, key: "inventario", label: "Inventario", icon: PackageSearch,
     children: [
@@ -87,16 +90,16 @@ const NAV_TREE: NavEntry[] = [
 ];
 
 const NAV_BY_ROLE: Record<string, PageKey[]> = {
-  admin:   ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers", "supplies", "promos", "reports", "docs", "admin"],
+  admin:   ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers", "supplies", "promos", "bundles", "reports", "docs", "admin"],
   // Gerente: sin Tiendas. Solo gestiona la suya; el switcher del header basta
   // para alternar entre tiendas asignadas. La página /stores es CRUD admin.
   // Reportes habilitado para gerente (verificará permisos/scope en backend)
   // "Cajas" (cortes de caja) visible a los 3 roles — backend acota por rol.
-  gerente: ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers", "supplies", "promos", "reports", "docs"],
+  gerente: ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers", "supplies", "promos", "bundles", "reports", "docs"],
   // Cajero: sin Tiendas, con Preventas para ver catálogos disponibles +
   // difusión + vencidos de su sucursal. "Buscar en Tiendas" para localizar stock.
   // Promos: consulta + Modo TV (crear/editar promos es de admin/gerente, en el mismo menú Promos).
-  cajero:  ["inicio", "products", "stock_search", "sales", "cash_cuts", "presales", "supplies", "promos", "docs"],
+  cajero:  ["inicio", "products", "stock_search", "sales", "cash_cuts", "presales", "supplies", "promos", "bundles", "docs"],
   unknown: ["inicio"],
 };
 

@@ -58,13 +58,20 @@ class SuppliesController extends Controller
             return $resp;
         }
 
-        // Tienda del insumo con RBAC: admin manda lo que quiera (null = toda la
-        // empresa); gerente queda forzado a SU tienda.
+        // Tienda del insumo con RBAC (2026-10-12, Joel): admin manda lo que
+        // quiera (null = toda la empresa, sigue existiendo para él); gerente
+        // SIEMPRE queda forzado a SU tienda — ya no puede dejarlo sin tienda.
+        // Antes, un gerente sin store_id asignado (cuenta mal configurada)
+        // creaba insumos "de toda la empresa" sin querer, y luego no le
+        // aparecían en SU reporte (quedaban fuera del filtro por tienda).
         $user = $request->user();
         $isAdmin = $user->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
+        if (! $isAdmin && ! $user->store_id) {
+            return $this->error('Tu usuario no tiene una tienda asignada — pídele al administrador que te la asigne antes de crear insumos.', 422);
+        }
         $storeId = $isAdmin
             ? ($request->filled('store_id') ? (int) $request->input('store_id') : null)
-            : ($user->store_id ? (int) $user->store_id : null);
+            : (int) $user->store_id;
 
         $supply = Supply::create(array_merge(
             $request->only(['name', 'category', 'unit']),
@@ -87,13 +94,25 @@ class SuppliesController extends Controller
 
         // Pertenencia por empresa (fix 2026-07-16): el route-model-binding trae
         // cualquier id — sin este check un gerente podía editar insumos ajenos.
-        if ((int) $supply->company_id !== (int) $request->user()->company_id) {
+        $user = $request->user();
+        if ((int) $supply->company_id !== (int) $user->company_id) {
             return $this->error('Este insumo no pertenece a tu empresa.', 403);
         }
+
+        // Reasignar tienda (2026-10-12, Joel): antes el selector de "Tienda" del
+        // modal de editar se ignoraba por completo — el admin elegía otra tienda,
+        // guardaba, y el insumo se quedaba exactamente igual. Mismo RBAC que al
+        // crear: solo admin puede mover un insumo de tienda (o dejarlo "toda la
+        // empresa"); un gerente no puede sacarlo de SU tienda.
+        $isAdmin = $user->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
+        $storeUpdate = $isAdmin && $request->has('store_id')
+            ? ['store_id' => $request->filled('store_id') ? (int) $request->input('store_id') : null]
+            : [];
 
         $supply->update(array_merge(
             $request->only(['name', 'category', 'unit']),
             $request->has('is_active') ? ['is_active' => $request->boolean('is_active')] : [],
+            $storeUpdate,
         ));
 
         return $this->success($supply->fresh(), 'Insumo actualizado.');
@@ -114,7 +133,23 @@ class SuppliesController extends Controller
         }
 
         $type   = (string) $request->input('type', SupplyMovement::TYPE_PURCHASE);
-        $userId = $request->user()->id;
+        $user   = $request->user();
+        $userId = $user->id;
+
+        // Tienda del MOVIMIENTO (2026-10-12, Joel): queda atada a la tienda de
+        // QUIEN LO REGISTRA, no a la tienda de la categoría — así un insumo
+        // creado "de toda la empresa" (ej. "Sueldos") no deja los registros
+        // nuevos huérfanos de tienda. Cajero/gerente SIEMPRE quedan forzados a
+        // SU tienda (sin tienda asignada → 422, no pueden elegir otra). Admin
+        // SÍ puede elegir a qué tienda cargarlo (o dejarlo "toda la empresa");
+        // sin elegir nada, cae a su propia tienda si tiene una, si no, NULL.
+        $isAdmin = $user->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
+        if (! $isAdmin && ! $user->store_id) {
+            return $this->error('Tu usuario no tiene una tienda asignada — pídele al administrador que te la asigne antes de registrar insumos.', 422);
+        }
+        $storeId = $isAdmin
+            ? ($request->filled('store_id') ? (int) $request->input('store_id') : ($user->store_id ? (int) $user->store_id : null))
+            : (int) $user->store_id;
 
         try {
             $movement = $type === SupplyMovement::TYPE_PURCHASE
@@ -126,6 +161,7 @@ class SuppliesController extends Controller
                     userId:      $userId,
                     moneySource: (string) $request->input('money_source', SupplyMovement::SOURCE_CAJA),
                     payerName:   $request->input('payer_name') ? trim((string) $request->input('payer_name')) : null,
+                    storeId:     $storeId,
                 )
                 : $this->service->registerNonCashMovement(
                     supply:   $supply,
@@ -134,12 +170,34 @@ class SuppliesController extends Controller
                     amount:   (float) ($request->input('amount') ?? 0),
                     note:     $request->input('note'),
                     userId:   $userId,
+                    storeId:  $storeId,
                 );
         } catch (\DomainException $e) {
             return $this->error($e->getMessage(), 422);
         }
 
         return $this->success($movement->load('supply'), 'Movimiento registrado.', 201);
+    }
+
+    /**
+     * DELETE /supplies/movements/{movement} — solo admin (2026-10-12).
+     * Borra el registro y, si tenía cash_movement ligado (origen 'caja'),
+     * también lo borra — sin esto el cajón quedaría descuadrado. Definitivo,
+     * snapshot completo en system_logs antes de borrar.
+     */
+    public function destroyMovement(SupplyMovement $movement): JsonResponse
+    {
+        if ($resp = $this->adminOnlyError()) {
+            return $resp;
+        }
+
+        if ((int) $movement->supply?->company_id !== (int) request()->user()->company_id) {
+            return $this->error('Este insumo no pertenece a tu empresa.', 403);
+        }
+
+        $this->service->deleteMovement($movement, request()->user());
+
+        return $this->success(null, 'Insumo borrado.');
     }
 
     /** GET /supplies/movements — historial (cajero: solo los suyos). */
@@ -152,8 +210,12 @@ class SuppliesController extends Controller
 
         // Rango de fechas opcional (día-negocio), MISMO helper que /reports/supplies
         // para que la lista detallada del Reporte cuadre con el agregado.
-        $fromUtc = $request->input('from') ? DateRange::fromUtc((string) $request->input('from')) : null;
-        $toUtc   = $request->input('to')   ? DateRange::toUtc((string) $request->input('to'))     : null;
+        $from = $request->input('from') ? (string) $request->input('from') : null;
+        $to   = $request->input('to')   ? (string) $request->input('to')   : null;
+        // Fechas sueltas (no consecutivas), opcional — egresos de la pestaña Ventas
+        // de Reportes (2026-10-19). Cuando viene, gana sobre from/to, igual que
+        // /reports/sales y /sales: sin esto entraban los egresos de los días de en medio.
+        $dates = DateRange::parseDatesParam($request->input('dates'));
 
         $movements = SupplyMovement::with(['supply:id,name,category,unit,store_id', 'user:id,name'])
             // Scoping por empresa (fix 2026-07-18): sin esto el historial
@@ -161,18 +223,38 @@ class SuppliesController extends Controller
             ->whereHas('supply', fn ($q) => $q->where('company_id', $user->company_id))
             ->when($request->integer('supply_id'), fn ($q, $id) => $q->where('supply_id', $id))
             ->when($request->input('type'), fn ($q, $t) => $q->where('type', $t))
-            ->when($fromUtc, fn ($q) => $q->where('supply_movements.created_at', '>=', $fromUtc))
-            ->when($toUtc,   fn ($q) => $q->where('supply_movements.created_at', '<=', $toUtc))
-            // Filtro por tienda DUEÑA del insumo (supplies.store_id); NULL = toda la
-            // empresa. Reportes por tienda (2026-07). Solo aplica si se envía store_id.
-            ->when($request->filled('store_id') && ! $cashierWholeStore, fn ($q) => $q->whereHas('supply', fn ($qq) => $qq->where('store_id', $request->integer('store_id'))))
+            ->tap(fn ($q) => DateRange::applyDates($q, 'supply_movements.created_at', $dates, $from, $to))
+            // Filtro por tienda: prefiere la tienda del MOVIMIENTO (2026-10-12,
+            // quien lo registró) y solo si el movimiento no trae una propia
+            // (registros viejos, antes de esta columna) cae a la tienda DUEÑA
+            // de la categoría (supplies.store_id). NULL en ambas = toda la
+            // empresa. Mismo criterio en los dos filtros de abajo.
+            ->when(
+                $request->filled('store_id') && ! $cashierWholeStore,
+                fn ($q) => $q->where(fn ($qq) => $qq
+                    ->where('supply_movements.store_id', $request->integer('store_id'))
+                    ->orWhere(fn ($qqq) => $qqq
+                        ->whereNull('supply_movements.store_id')
+                        ->whereHas('supply', fn ($s) => $s->where('store_id', $request->integer('store_id')))
+                    )
+                ),
+            )
             // Filtro por usuario que REGISTRÓ la compra (para el filtro de usuario del
             // Reporte). El cajero de todos modos ya queda scoped a lo suyo abajo.
             ->when($request->integer('user_id'), fn ($q, $id) => $q->where('user_id', $id))
             ->when($isCashier && ! $cashierWholeStore, fn ($q) => $q->where('user_id', $user->id))
             // ?whole_store=1 (reporte de toda la tienda desde el corte, 2026-09-27):
             // el cajero ve lo de todos, pero anclado a los insumos de SU tienda.
-            ->when($cashierWholeStore, fn ($q) => $q->whereHas('supply', fn ($qq) => $qq->where('store_id', $user->store_id ?? -1)))
+            ->when(
+                $cashierWholeStore,
+                fn ($q) => $q->where(fn ($qq) => $qq
+                    ->where('supply_movements.store_id', $user->store_id ?? -1)
+                    ->orWhere(fn ($qqq) => $qqq
+                        ->whereNull('supply_movements.store_id')
+                        ->whereHas('supply', fn ($s) => $s->where('store_id', $user->store_id ?? -1))
+                    )
+                ),
+            )
             ->orderByDesc('created_at')
             ->limit(200)
             ->get();

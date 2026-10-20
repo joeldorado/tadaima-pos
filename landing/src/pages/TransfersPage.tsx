@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   Truck, Plus, Search,
   CheckCircle2, Clock, X, ArrowRight,
@@ -18,6 +18,10 @@ import { queryKeys } from "@/lib/queryKeys";
 import { useAuth } from "@tadaima/auth";
 import { isAdmin as isAdminRole, isManager as isManagerRole } from "@/lib/permisos";
 import { warehouseTypeLabel, warehouseOptionLabel } from "@/lib/warehouse";
+import { transferItemsLabel } from "@/lib/transferItems";
+import { errorMessage } from "@/lib/deletePreviewFormat";
+import { getStatusInfo } from "@/components/transfers/transferStatus";
+import { TransferDetailModal } from "@/components/transfers/TransferDetailModal";
 
 // ─── Paleta Tadaima ───────────────────────────────────────────────────────────
 const T = {
@@ -86,19 +90,13 @@ interface ItemStockSnapshot {
   loading: boolean;
 }
 
+/** Resultados que muestra el buscador de artículos del traslado. */
+const PRODUCT_RESULTS = 8;
+
 interface ProductSearchResult {
   id: number;
   name: string;
   sku: string;
-}
-
-// ─── Status helpers ───────────────────────────────────────────────────────────
-function getStatusInfo(status: Transfer["status"]) {
-  switch (status) {
-    case "pending":   return { bg: "rgba(255,170,0,0.15)",  color: "#FFAA00", icon: Clock,        label: "Pendiente"  };
-    case "completed": return { bg: "rgba(0,204,102,0.15)",  color: "#00CC66", icon: CheckCircle2, label: "Completado" };
-    case "cancelled": return { bg: "rgba(255,68,34,0.15)",  color: "#FF4422", icon: X,            label: "Cancelado"  };
-  }
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -138,6 +136,8 @@ export function TransfersPage() {
   const loading = transfersQuery.isPending || warehousesQuery.isPending;
   const invalidateTransfers = () => queryClient.invalidateQueries({ queryKey: queryKeys.transfers.all });
   const [isModalOpen, setIsModalOpen]   = useState(false);
+  // Popup de detalle (productos y cantidades) de un traslado de la lista.
+  const [detailId, setDetailId]         = useState<number | null>(null);
   const [saving, setSaving]             = useState(false);
   const [actionLoading, setActionLoading] = useState<Record<number, boolean>>({});
 
@@ -189,8 +189,13 @@ export function TransfersPage() {
     if (!val.trim()) { setProductResults([]); return; }
     searchTimeout.current = setTimeout(() => {
       setProductSearching(true);
-      getProducts({ search: val, per_page: 8 })
-        .then(res => setProductResults(res.data.map(p => ({ id: p.id, name: p.name, sku: p.sku }))))
+      // Los paquetes no se trasladan (el backend responde 422): ni se ofrecen.
+      // Se piden de más para que un paquete no le quite lugar a una pieza.
+      getProducts({ search: val, per_page: PRODUCT_RESULTS * 2 })
+        .then(res => setProductResults(res.data
+          .filter(p => p.product_type !== "bundle")
+          .slice(0, PRODUCT_RESULTS)
+          .map(p => ({ id: p.id, name: p.name, sku: p.sku }))))
         .catch(() => { /* silently ignore */ })
         .finally(() => setProductSearching(false));
     }, 300);
@@ -463,58 +468,70 @@ export function TransfersPage() {
       toast.success(transferMode === "complete" ? "Transferencia completada" : "Transferencia creada");
       setIsModalOpen(false);
       resetModal();
-    } catch {
+    } catch (err: unknown) {
+      // El motivo real del backend (p. ej. "Los paquetes no se trasladan…") va
+      // como detalle; el título en español queda aunque el error sea de red.
+      const reason = errorMessage(err, "");
+      const detail = reason ? { description: reason } : {};
       if (createdTransfer) {
         void invalidateTransfers();
-        toast.error("La transferencia se creó, pero no se pudo completar automáticamente");
+        toast.error("La transferencia se creó, pero no se pudo completar automáticamente", detail);
       } else {
-        toast.error(transferMode === "complete" ? "Error al completar transferencia" : "Error al crear transferencia");
+        toast.error(transferMode === "complete" ? "Error al completar transferencia" : "Error al crear transferencia", detail);
       }
     } finally {
       setSaving(false);
     }
   };
 
-  const handleComplete = async (id: number) => {
+  // Regresan true si la acción se hizo (el popup de detalle se cierra entonces).
+  const handleComplete = async (id: number): Promise<boolean> => {
     const trf = transfers.find(t => t.id === id);
     if (!canCompleteTransfer(trf)) {
       toast.error("Solo el gerente de la tienda que recibe (o un admin) puede recibir esta transferencia");
-      return;
+      return false;
     }
     // El stock se mueve al confirmar: solo cuando la mercancía ya llegó.
-    if (!window.confirm(`¿Ya llegó la mercancía del traslado #${id}?\nSe sumará al inventario de ${trf?.to_warehouse?.name ?? "la tienda destino"}.`)) return;
+    if (!window.confirm(`¿Ya llegó la mercancía del traslado #${id}?\nSe sumará al inventario de ${trf?.to_warehouse?.name ?? "la tienda destino"}.`)) return false;
     setActionLoading(prev => ({ ...prev, [id]: true }));
     try {
       await completeTransfer(id);
       void invalidateTransfers();
       toast.success("Transferencia recibida — inventario actualizado");
+      return true;
     } catch (err: unknown) {
       toast.error((err as { message?: string })?.message ?? "Error al recibir transferencia");
+      return false;
     } finally {
       setActionLoading(prev => ({ ...prev, [id]: false }));
     }
   };
 
-  const handleCancel = async (id: number) => {
+  const handleCancel = async (id: number): Promise<boolean> => {
     const transfer = transfers.find(item => item.id === id);
     const allowed = transfer ? canCancelTransfer(transfer) : false;
     if (!allowed) {
       toast.error("Solo Admin o el gerente creador pueden cancelar esta transferencia");
-      return;
+      return false;
     }
     setActionLoading(prev => ({ ...prev, [id]: true }));
     try {
       await cancelTransfer(id);
       void invalidateTransfers();
       toast.success("Transferencia cancelada");
+      return true;
     } catch {
       toast.error("Error al cancelar transferencia");
+      return false;
     } finally {
       setActionLoading(prev => ({ ...prev, [id]: false }));
     }
   };
 
   // ─── Derived state ─────────────────────────────────────────────────────────
+  // Se lee de la lista viva: si se recibe o cancela, el popup ve el estado nuevo.
+  const detailTransfer = detailId == null ? null : transfers.find(t => t.id === detailId) ?? null;
+  const closeDetail = useCallback(() => setDetailId(null), []);
   const filteredTransfers = useMemo(() => {
     return transfers.filter(t => {
       const from = t.from_warehouse?.name ?? "";
@@ -709,24 +726,33 @@ export function TransfersPage() {
                         <span className="text-[9px] font-black text-red-500 uppercase tracking-widest">Origen</span>
                         <span className="text-sm font-bold text-white">{trf.from_warehouse?.name ?? "—"}</span>
                       </div>
-                      <div className="flex flex-col items-center max-w-[120px] text-center">
-                        <ArrowRight size={14} className="text-white/20 mb-1" />
-                        {trf.items && trf.items.length > 0 ? (
-                          <>
-                            {trf.items[0].product?.image_url && (
-                              <img src={trf.items[0].product.image_url} alt="" className="w-6 h-6 object-cover rounded mb-0.5" />
-                            )}
-                            <span className="text-[10px] font-bold text-white truncate w-full">
-                              {trf.items[0].product?.name || "Producto"}
-                            </span>
-                            <span className="text-[8px] font-black text-white/40 uppercase tracking-widest mt-0.5">
-                              {trf.items.length > 1 ? `+${trf.items.length - 1} más (${trf.items.length} SKUs)` : '1 SKU'}
-                            </span>
-                          </>
-                        ) : (
+                      {trf.items && trf.items.length > 0 ? (
+                        // Clic → popup con TODOS los productos y cantidades (antes solo
+                        // se veía el primero y "+N más").
+                        <button
+                          type="button"
+                          onClick={() => setDetailId(trf.id)}
+                          data-testid={`trf-detail-${trf.id}`}
+                          className="group/items flex flex-col items-center max-w-[170px] text-center rounded-2xl px-3 py-2 transition-colors hover:bg-white/[0.06] focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-500"
+                        >
+                          <ArrowRight size={14} className="text-white/20 mb-1" />
+                          {trf.items[0].product?.image_url && (
+                            <img src={trf.items[0].product.image_url} alt="" className="w-6 h-6 object-cover rounded mb-0.5" />
+                          )}
+                          <span className="text-[10px] font-bold text-white truncate w-full">
+                            {trf.items[0].product?.name || "Producto"}
+                          </span>
+                          <span className="inline-flex items-center gap-1 whitespace-nowrap text-[8px] font-black text-red-400 uppercase tracking-widest mt-1 px-2 py-0.5 rounded-full transition-colors group-hover/items:text-white group-hover/items:bg-red-500/80" style={{ background: "rgba(255,68,34,0.12)" }}>
+                            <Search size={9} />
+                            {transferItemsLabel(trf.items.length)}
+                          </span>
+                        </button>
+                      ) : (
+                        <div className="flex flex-col items-center max-w-[120px] text-center">
+                          <ArrowRight size={14} className="text-white/20 mb-1" />
                           <span className="text-[9px] font-black text-white/20">Sin items</span>
-                        )}
-                      </div>
+                        </div>
+                      )}
                       <div className="flex flex-col text-right">
                         <span className="text-[9px] font-black text-green-500 uppercase tracking-widest">Destino</span>
                         <span className="text-sm font-bold text-white">{trf.to_warehouse?.name ?? "—"}</span>
@@ -814,6 +840,19 @@ export function TransfersPage() {
             </p>
           </div>
         </div>
+      )}
+
+      {/* ── Popup: detalle de productos de un traslado ─────────────────────── */}
+      {detailTransfer && (
+        <TransferDetailModal
+          transfer={detailTransfer}
+          canReceive={!!canCompleteTransfer(detailTransfer)}
+          canCancel={canCancelTransfer(detailTransfer)}
+          busy={actionLoading[detailTransfer.id] ?? false}
+          onClose={closeDetail}
+          onReceive={() => { void handleComplete(detailTransfer.id).then(ok => { if (ok) closeDetail(); }); }}
+          onCancel={() => { void handleCancel(detailTransfer.id).then(ok => { if (ok) closeDetail(); }); }}
+        />
       )}
 
       {/* ── Modal: Nueva Transferencia ───────────────────────────────────── */}
