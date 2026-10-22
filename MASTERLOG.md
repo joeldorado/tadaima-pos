@@ -4,6 +4,55 @@
 
 ---
 
+### Sesión 2026-10-22 — Estadística mejorada + aviso de componentes sin costo en Paquetes (Ruben, PR #64) — rev tadaima-00094-niw
+
+**Pedido Joel:** bajar el update nuevo de Ruben (`develop`), verificarlo y deployarlo.
+
+> **PUNTO DE ROLLBACK (antes de este deploy):** revisión `tadaima-00092-joc`, `main` en `1f8e01b`.
+> **Sin migraciones:** regresar es solo mover el tráfico.
+>
+> ```
+> gcloud run services update-traffic tadaima --to-revisions tadaima-00092-joc=100 --project tadaimapos --region us-east1
+> ```
+
+**Qué entró** (PR #64, merge `3365f99`):
+- **Estadística** (Ruben, solo frontend):
+  - orden por columna, que hace el servidor (`sort_by`/`sort_dir`, límite 500);
+  - clic en un renglón lo apaga del resumen y la basura lo quita de la lista;
+  - buscador multi-select para fijar productos;
+  - tarjeta "Productos" y botón "volver arriba".
+  - `ReportsController` queda igual a prod: el merge `eb26595` de Ruben integró las correcciones del PR #63.
+- **Paquetes** (Ruben, `6bac026` y `57315a9`):
+  - `has_cost` (sí/no, sin monto) en `ProductLightResource` y en los componentes de `BundleResource`,
+    visible para todos los roles, como el filtro `?no_cost=1` de `/products`. El monto sigue gateado por `canViewCost`.
+  - En el paso 3 del asistente sale un aviso amarillo con los componentes sin costo. Se puede continuar.
+- **Pruebas** (`1ec7aaf`):
+  - `BundleHasCostTest`, que falla con los Resources de `main`;
+  - `bundleDraft.test.ts` con `hasCost`. Las 2 de `toDraftComponent`/`draftFromBundle` fallaban porque
+    comparan el objeto exacto, no por un bug.
+
+**Verificado:**
+- Backend SQLite 854 OK.
+- Postgres 17 local 854 OK.
+- Vitest 764 OK.
+- `vite build` OK; type-check 451 errores, los mismos que `main`.
+
+**QUÉ PROBAR EN PROD (incógnito):**
+- Estadística: ordenar por columnas, apagar y ocultar renglones.
+- Paquetes → Nuevo con un componente sin costo: en el paso 3 sale el aviso amarillo.
+
+**Deploy (2026-10-22 ~14:08 Tijuana) — rev tadaima-00094-niw (rollback `tadaima-00092-joc`).**
+- Candidato sin tráfico desde un worktree limpio en `3365f99`.
+- `Nothing to migrate`, 0 errores en el log.
+- Smoke en el candidato y luego en `https://tadaimamexico.com`:
+  - `/login`, `/estadistica`, `/paquetes` y `/tadaimaus/` 200;
+  - `/api/v1/reports/top-products`, `/bundles`, `/products` y `/auth/me` sin token 401;
+  - bundle `index-DKaTMcJm.js`, con los textos nuevos.
+- **No hubo prueba con sesión en prod.**
+- `develop` igualado a `main`: Ruben debe hacer `git pull` antes de volver a subir.
+
+---
+
 ### Sesión 2026-10-21 — Pantalla Estadística (Ruben) + correcciones de costo y fotos (PR #63) — rev tadaima-00092-joc
 
 **Pedido Joel:** revisar lo que Ruben subió a `develop`, bajarlo y deployarlo a prod.
