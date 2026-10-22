@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { TrendingUp, Search, Package, BookOpen, X, ChevronDown, ChevronUp, ArrowUp, Trash2 } from "lucide-react";
+import { TrendingUp, Search, Package, BookOpen, X, ChevronDown, ChevronUp, ArrowUp, Trash2, Check } from "lucide-react";
 import { getTopProductsReport, getCategories, type TopProductsReportItem } from "@tadaima/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { DateRangePicker } from "@/components/ui/DateRangePicker";
@@ -23,6 +23,10 @@ function useDebounced(value: string, delay = 250) {
   return debounced;
 }
 
+// Clave de producto (agrupa todos los precios/costos del mismo producto)
+function productKey(item: TopProductsReportItem) {
+  return `${item.type}:${item.id}`;
+}
 // Clave única de renglón (producto + precio + costo)
 function rowKey(item: TopProductsReportItem) {
   return `${item.type}:${item.id}:${item.unit_price}:${item.unit_cost ?? 0}`;
@@ -44,8 +48,12 @@ export function EstadisticaPage() {
   const [excluded, setExcluded]     = useState<Set<string>>(new Set());
   // Set de rowKeys ocultos (quitados de la tabla)
   const [hidden, setHidden]         = useState<Set<string>>(new Set());
+  // Set de productKeys fijados desde el buscador
+  const [pinned, setPinned]         = useState<Set<string>>(new Set());
+  const [dropdownOpen, setDropdownOpen] = useState(false);
   const [showTop, setShowTop]       = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLDivElement>(null);
   const debouncedSearch = useDebounced(search);
 
@@ -74,9 +82,8 @@ export function EstadisticaPage() {
     item_type: itemType,
     sort_by: sortCol,
     sort_dir: sortDir,
-    ...(debouncedSearch ? { search: debouncedSearch } : {}),
     ...(categoryId ? { category_id: categoryId } : {}),
-  }), [from, to, itemType, categoryId, sortCol, sortDir, debouncedSearch]);
+  }), [from, to, itemType, categoryId, sortCol, sortDir]);
 
   const query = useQuery({
     queryKey: queryKeys.reports.topProducts(params),
@@ -94,16 +101,45 @@ export function EstadisticaPage() {
 
   useScreenRefresh(() => { void query.refetch(); });
 
-  // Al cambiar filtros, reinicia apagados y ocultos
-  useEffect(() => { setExcluded(new Set()); setHidden(new Set()); }, [from, to, itemType, categoryId, debouncedSearch]);
+  // Cierra dropdown al hacer clic fuera
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (
+        dropdownRef.current && !dropdownRef.current.contains(e.target as Node) &&
+        searchRef.current && !searchRef.current.contains(e.target as Node)
+      ) setDropdownOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  // Al cambiar filtros de datos, reinicia apagados y ocultos (no pinned — el usuario los eligió)
+  useEffect(() => { setExcluded(new Set()); setHidden(new Set()); }, [from, to, itemType, categoryId]);
 
   const allItems = query.data?.data ?? [];
 
-  // Renglones visibles en tabla (sin los ocultos)
-  const displayItems = useMemo(
-    () => allItems.filter((i) => !hidden.has(rowKey(i))),
-    [allItems, hidden],
-  );
+  // Sugerencias del dropdown — deduplicadas por producto, filtradas por texto
+  const suggestions = useMemo(() => {
+    const q = debouncedSearch.trim().toLowerCase();
+    const seen = new Set<string>();
+    const source = q
+      ? allItems.filter((i) => i.name.toLowerCase().includes(q) || i.sku.toLowerCase().includes(q))
+      : allItems;
+    return source.filter((i) => {
+      const k = productKey(i);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    }).slice(0, 12);
+  }, [allItems, debouncedSearch]);
+
+  // Renglones visibles: si hay pinned → solo esos; si no → todos; siempre sin hidden
+  const displayItems = useMemo(() => {
+    const base = pinned.size > 0
+      ? allItems.filter((i) => pinned.has(productKey(i)))
+      : allItems;
+    return base.filter((i) => !hidden.has(rowKey(i)));
+  }, [allItems, pinned, hidden]);
 
   // Solo los visibles y no-apagados alimentan las tarjetas
   const activeItems = useMemo(
@@ -126,8 +162,18 @@ export function EstadisticaPage() {
     setExcluded((prev) => { const next = new Set(prev); next.delete(k); return next; });
   };
 
+  const togglePinned = (item: TopProductsReportItem) => {
+    const k = productKey(item);
+    setPinned((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k); else next.add(k);
+      return next;
+    });
+  };
+
   const clearExcluded = () => setExcluded(new Set());
   const clearHidden   = () => setHidden(new Set());
+  const clearPinned   = () => setPinned(new Set());
 
   const totalIngresos = activeItems.reduce((a, i) => a + i.total_revenue, 0);
   const totalCosto    = activeItems.reduce((a, i) => a + (i.unit_cost ?? 0) * i.total_quantity, 0);
@@ -158,30 +204,94 @@ export function EstadisticaPage() {
       {/* Filtros */}
       <div className="flex flex-wrap items-center gap-2">
 
-        {/* Búsqueda — va directo al backend */}
-        <div
-          className="flex items-center gap-2 rounded-full h-[34px] px-3"
-          style={{
-            width: 300,
-            background: "var(--td-input-bg, rgba(255,255,255,0.04))",
-            border: `1px solid ${search ? "rgba(220,38,38,0.5)" : "var(--td-panel-border)"}`,
-            transition: "border-color 0.15s",
-          }}
-        >
-          <Search size={11} style={{ color: "var(--td-text-lo)", flexShrink: 0 }} />
-          <input
-            ref={searchRef}
-            type="text"
-            placeholder="Buscar por nombre o SKU…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="flex-1 bg-transparent outline-none text-[11px] font-semibold"
-            style={{ color: "var(--td-text-hi)" }}
-          />
-          {search && (
-            <button type="button" onClick={() => { setSearch(""); searchRef.current?.focus(); }} className="opacity-40 hover:opacity-80">
-              <X size={10} />
-            </button>
+        {/* Búsqueda con dropdown multi-select */}
+        <div className="relative">
+          <div
+            className="flex items-center gap-2 rounded-full h-[34px] px-3"
+            style={{
+              width: 300,
+              background: "var(--td-input-bg, rgba(255,255,255,0.04))",
+              border: `1px solid ${dropdownOpen || pinned.size > 0 ? "rgba(220,38,38,0.5)" : "var(--td-panel-border)"}`,
+              transition: "border-color 0.15s",
+            }}
+          >
+            <Search size={11} style={{ color: "var(--td-text-lo)", flexShrink: 0 }} />
+            <input
+              ref={searchRef}
+              type="text"
+              placeholder={pinned.size > 0 ? `${pinned.size} seleccionado${pinned.size > 1 ? "s" : ""}…` : "Buscar por nombre o SKU…"}
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setDropdownOpen(true); }}
+              onFocus={() => setDropdownOpen(true)}
+              className="flex-1 bg-transparent outline-none text-[11px] font-semibold"
+              style={{ color: "var(--td-text-hi)" }}
+            />
+            {(search || pinned.size > 0) && (
+              <button type="button" onClick={() => { setSearch(""); clearPinned(); searchRef.current?.focus(); }} className="opacity-40 hover:opacity-80">
+                <X size={10} />
+              </button>
+            )}
+          </div>
+
+          {/* Dropdown */}
+          {dropdownOpen && allItems.length > 0 && (
+            <div
+              ref={dropdownRef}
+              className="absolute left-0 top-full mt-1 z-50 rounded-2xl overflow-hidden py-1"
+              style={{
+                width: 320,
+                background: "var(--td-popup-bg)",
+                border: "1px solid var(--td-panel-border)",
+                boxShadow: "0 16px 48px rgba(0,0,0,0.4)",
+                maxHeight: 320,
+                overflowY: "auto",
+              }}
+            >
+              {suggestions.length === 0 ? (
+                <p className="px-4 py-3 text-[11px]" style={{ color: "var(--td-text-lo)" }}>Sin resultados</p>
+              ) : (
+                suggestions.map((item) => {
+                  const isPinned = pinned.has(productKey(item));
+                  return (
+                    <button
+                      key={productKey(item)}
+                      type="button"
+                      onClick={() => { togglePinned(item); setSearch(""); }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-white/5"
+                    >
+                      <div className="w-7 h-7 rounded-lg flex-shrink-0 overflow-hidden flex items-center justify-center" style={{ background: "rgba(0,0,0,0.2)" }}>
+                        {item.image_url
+                          ? <img src={item.image_url} alt="" loading="lazy" className="w-full h-full object-cover" />
+                          : item.type === "manga"
+                            ? <BookOpen size={12} style={{ color: "var(--td-text-lo)", opacity: 0.4 }} strokeWidth={1.5} />
+                            : <Package size={12} style={{ color: "var(--td-text-lo)", opacity: 0.4 }} strokeWidth={1.5} />
+                        }
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[11px] font-semibold truncate" style={{ color: "var(--td-text-hi)" }}>{item.name}</p>
+                        <p className="text-[9px] font-semibold uppercase tracking-wider" style={{ color: "var(--td-text-lo)" }}>
+                          {item.sku} · {item.total_quantity} uds
+                        </p>
+                      </div>
+                      <span
+                        className="flex items-center justify-center w-4 h-4 rounded flex-shrink-0"
+                        style={{
+                          background: isPinned ? "var(--td-red)" : "rgba(255,255,255,0.06)",
+                          border: `1px solid ${isPinned ? "var(--td-red)" : "var(--td-panel-border)"}`,
+                        }}
+                      >
+                        {isPinned && <Check size={9} strokeWidth={3} color="#fff" />}
+                      </span>
+                    </button>
+                  );
+                })
+              )}
+              {!debouncedSearch && allItems.length > 12 && (
+                <p className="px-4 py-1.5 text-[9px] font-semibold uppercase tracking-widest" style={{ color: "var(--td-text-lo)", borderTop: "1px solid var(--td-panel-border)" }}>
+                  Escribe para filtrar entre {allItems.length} productos
+                </p>
+              )}
+            </div>
           )}
         </div>
 
@@ -231,6 +341,30 @@ export function EstadisticaPage() {
           <DateRangePicker from={from} to={to} onChange={(f, t) => { setFrom(f); setTo(t); }} maxValue={today} />
         </div>
       </div>
+
+      {/* Chips de productos fijados */}
+      {pinned.size > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[9px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>Mostrando:</span>
+          {[...pinned].map((k) => {
+            const item = allItems.find((i) => productKey(i) === k);
+            if (!item) return null;
+            return (
+              <span
+                key={k}
+                className="flex items-center gap-1.5 rounded-full h-[26px] pl-3 pr-2 text-[10px] font-bold"
+                style={{ background: "rgba(220,38,38,0.15)", border: "1px solid rgba(220,38,38,0.35)", color: "var(--td-text-hi)" }}
+              >
+                {item.name.length > 28 ? item.name.slice(0, 28) + "…" : item.name}
+                <button type="button" onClick={() => togglePinned(item)} className="opacity-60 hover:opacity-100"><X size={10} /></button>
+              </span>
+            );
+          })}
+          <button type="button" onClick={clearPinned} className="text-[9px] font-bold uppercase tracking-widest opacity-50 hover:opacity-90 ml-1" style={{ color: "var(--td-text-lo)" }}>
+            Limpiar
+          </button>
+        </div>
+      )}
 
       {/* Avisos de filas apagadas / ocultas */}
       {(excluded.size > 0 || hidden.size > 0) && (
