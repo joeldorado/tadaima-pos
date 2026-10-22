@@ -4,6 +4,56 @@
 
 ---
 
+### Sesión 2026-10-21 — Pantalla Estadística (Ruben) + correcciones de costo y fotos (PR #63) — rev tadaima-00092-joc
+
+**Pedido Joel:** revisar lo que Ruben subió a `develop`, bajarlo y deployarlo a prod.
+
+> **PUNTO DE ROLLBACK (antes de este deploy):** revisión `tadaima-00090-wur`, `main` en `34bb75f`.
+> **Sin migraciones:** regresar es solo mover el tráfico.
+>
+> ```
+> gcloud run services update-traffic tadaima --to-revisions tadaima-00090-wur=100 --project tadaimapos --region us-east1
+> ```
+
+**Qué entró** (PR #63, merge `67e6924`):
+- **De Ruben** (`84a0ff8`, `83eb79b`): pantalla **Estadística** (`/estadistica`, solo admin, grupo Ventas). Usa
+  `GET /reports/top-products`, ahora con `image_url`, `unit_price`, `unit_cost`, búsqueda, categoría, tipo,
+  `sort_by`/`sort_dir` y límite hasta 500.
+  - Un renglón por producto + precio + costo, **a propósito** (Ruben): socio vs normal y el costo real
+    de cada compra cambian la utilidad. La pestaña "Top productos" de Reportes está oculta, así que no
+    cambia ninguna pantalla existente.
+- **Correcciones** (`8688247`), sin cambiar lo que ve el admin:
+  - `unit_cost` solo para admin o `can_view_cost` (ADR-015). El endpoint no tiene gate de rol y un gerente
+    o cajero lo recibía por API. Sin permiso tampoco se ordena por costo o utilidad.
+  - La foto se busca aparte. El JOIN a `product_images` duplicaba renglones (unidades y total al doble)
+    cuando 2 fotos empatan en `sort_order`; subir foto siempre guarda 0. En prod había 4 productos así.
+  - `sort_by=utilidad` daba error SQL en Postgres (alias dentro de una expresión del ORDER BY). Productos
+    + mangas se reordenan y se cortan juntos.
+  - Búsqueda con `whereLike(caseSensitive: false)`; "hoy" de la página en día de negocio (Tijuana).
+- Prueba: `TopProductsReportTest` (5). Falla con el controller de `develop` (fotos y costo en SQLite, y
+  además utilidad en Postgres).
+
+**Verificado:**
+- Backend SQLite 852 OK.
+- Postgres 17 local 852 OK.
+- Vitest 763 OK.
+- `vite build` OK; type-check 451 errores, los mismos que `main`.
+
+**QUÉ PROBAR EN PROD (incógnito):** como admin, Ventas → Estadística: ingresos, utilidad, costo y fotos.
+Un gerente no ve la pantalla.
+
+**Deploy (2026-10-21 ~22:20 Tijuana) — rev tadaima-00092-joc (rollback `tadaima-00090-wur`).**
+- Candidato sin tráfico desde un worktree limpio en `67e6924`.
+- `Nothing to migrate`, 0 errores en el log.
+- Smoke en el candidato y luego en `https://tadaimamexico.com`:
+  - `/login`, `/estadistica` y `/tadaimaus/` 200;
+  - `/api/v1/reports/top-products` y `/auth/me` sin token 401;
+  - bundle `index-CiuONrdH.js`, con el texto de Estadística.
+- **No hubo prueba con sesión en prod.**
+- `develop` igualado a `main`: Ruben debe hacer `git pull` antes de volver a subir.
+
+---
+
 ### Sesión 2026-10-20 — `CashReportRangeTest` con reloj fijo: ya no falla según la hora (PR #42, solo tests, SIN deploy)
 
 **Pedido Joel:** integrar el PR #42 para que la suite Postgres no falle según la hora. El 2026-10-19 en la noche fallaron
