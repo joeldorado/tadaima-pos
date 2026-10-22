@@ -670,9 +670,11 @@ class ReportsController extends Controller
             ? "(total_revenue - unit_cost * total_quantity) {$sortDir}"
             : "{$sortBy} {$sortDir}";
 
-        $products = collect();
+        // Construye cada rama como SQL crudo para poder hacer UNION ALL
+        $parts = [];
+
         if ($includeProducts) {
-            $products = DB::table('sale_items')
+            $pq = DB::table('sale_items')
                 ->join('sales',    'sales.id',    '=', 'sale_items.sale_id')
                 ->leftJoin('products', 'products.id', '=', 'sale_items.product_id')
                 ->leftJoin('product_images', function ($join) {
@@ -698,7 +700,6 @@ class ReportsController extends Controller
                     COALESCE(products.name, sale_items.product_name) as name,
                     COALESCE(products.sku, sale_items.product_sku) as sku,
                     \'product\' as type,
-                    CASE WHEN sale_items.product_id IS NULL THEN 1 ELSE 0 END as deleted,
                     MIN(product_images.image_path) as image_path,
                     sale_items.price as unit_price,
                     COALESCE(sale_items.cost, products.cost, 0) as unit_cost,
@@ -712,15 +713,12 @@ class ReportsController extends Controller
                     DB::raw('COALESCE(products.sku, sale_items.product_sku)'),
                     'sale_items.price',
                     DB::raw('COALESCE(sale_items.cost, products.cost, 0)'),
-                )
-                ->orderByRaw($orderSql)
-                ->limit($limit)
-                ->get();
+                );
+            $parts[] = $pq;
         }
 
-        $mangas = collect();
         if ($includeMangas && !$categoryId) {
-            $mangas = DB::table('sale_items')
+            $mq = DB::table('sale_items')
                 ->join('sales',  'sales.id',  '=', 'sale_items.sale_id')
                 ->join('mangas', 'mangas.id', '=', 'sale_items.manga_id')
                 ->where('sales.status', Sale::STATUS_COMPLETED)
@@ -743,13 +741,28 @@ class ReportsController extends Controller
                     COALESCE(SUM(sale_items.quantity), 0) as total_quantity,
                     ' . self::LINE_REVENUE_SQL . ' as total_revenue
                 ')
-                ->groupBy('sale_items.manga_id', 'mangas.name', 'mangas.code', 'mangas.image_path', 'sale_items.price', DB::raw('COALESCE(sale_items.cost, mangas.cost, 0)'))
-                ->orderByRaw($orderSql)
-                ->limit($limit)
-                ->get();
+                ->groupBy('sale_items.manga_id', 'mangas.name', 'mangas.code', 'mangas.image_path', 'sale_items.price', DB::raw('COALESCE(sale_items.cost, mangas.cost, 0)'));
+            $parts[] = $mq;
         }
 
-        $combined = $products->concat($mangas)->values();
+        if (empty($parts)) {
+            return $this->success(['period' => ['from' => $from, 'to' => $to], 'data' => []]);
+        }
+
+        // UNION ALL de todas las ramas → ORDER BY y LIMIT globales en una sola pasada
+        if (count($parts) === 1) {
+            $combined = $parts[0]->orderByRaw($orderSql)->limit($limit)->get();
+        } else {
+            [$first, $second] = $parts;
+            $combined = DB::table(
+                DB::raw('(' . $first->toSql() . ' UNION ALL ' . $second->toSql() . ') as _union')
+            )
+            ->mergeBindings($first)
+            ->mergeBindings($second)
+            ->orderByRaw($orderSql)
+            ->limit($limit)
+            ->get();
+        }
 
         return $this->success([
             'period' => ['from' => $from, 'to' => $to],
