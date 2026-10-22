@@ -644,74 +644,112 @@ class ReportsController extends Controller
 
     /**
      * GET /reports/top-products
-     * Filters: from (date), to (date), store_id, limit (default 20, max 100)
+     * Filters: from, to, dates, store_id, limit (default 50 max 200), search, category_id, item_type (product|manga|all)
      *
-     * Returns most sold products by quantity and revenue.
-     * Covers both products (product_id) and mangas (manga_id).
+     * Returns most sold products by quantity and revenue with image_url, cost and profit.
      */
     public function topProducts(Request $request): JsonResponse
     {
-        $from    = $request->input('from', now()->startOfMonth()->toDateString());
-        $to      = $request->input('to',   now()->toDateString());
-        $storeId = $this->scopedStoreId($request);
-        $limit   = min((int) ($request->input('limit', 20)), 100);
+        $from       = $request->input('from', now()->startOfMonth()->toDateString());
+        $to         = $request->input('to',   now()->toDateString());
+        $storeId    = $this->scopedStoreId($request);
+        $limit      = min((int) ($request->input('limit', 50)), 500);
+        $search     = trim((string) $request->input('search', ''));
+        $dates      = DateRange::parseDatesParam($request->input('dates'));
+        $categoryId = $request->input('category_id');
+        $itemType   = $request->input('item_type', 'all'); // product | manga | all
 
-        // Products. LEFT JOIN (2026-08-18): un producto ELIMINADO del catálogo
-        // sigue rankeando con el snapshot de la línea (sale_items.product_name)
-        // — antes el INNER JOIN lo desaparecía del top. Las líneas legacy de
-        // mangas (product_id y snapshot NULL) siguen fuera, van en su query.
-        $products = DB::table('sale_items')
-            ->join('sales',    'sales.id',    '=', 'sale_items.sale_id')
-            ->leftJoin('products', 'products.id', '=', 'sale_items.product_id')
-            ->where('sales.status', Sale::STATUS_COMPLETED)
-            ->whereDate('sales.sold_at', '>=', $from)
-            ->whereDate('sales.sold_at', '<=', $to)
-            ->where(fn ($q) => $q
-                ->whereNotNull('sale_items.product_id')
-                ->orWhereNotNull('sale_items.product_name'))
-            ->when($storeId, fn ($q) => $q->where('sales.store_id', $storeId))
-            ->selectRaw('
-                sale_items.product_id as id,
-                COALESCE(products.name, sale_items.product_name) as name,
-                COALESCE(products.sku, sale_items.product_sku) as sku,
-                \'product\' as type,
-                CASE WHEN sale_items.product_id IS NULL THEN 1 ELSE 0 END as deleted,
-                COUNT(DISTINCT sale_items.sale_id) as times_sold,
-                COALESCE(SUM(sale_items.quantity), 0) as total_quantity,
-                ' . self::LINE_REVENUE_SQL . ' as total_revenue
-            ')
-            ->groupBy(
-                'sale_items.product_id',
-                DB::raw('COALESCE(products.name, sale_items.product_name)'),
-                DB::raw('COALESCE(products.sku, sale_items.product_sku)'),
-            )
-            ->get();
+        $includeProducts = $itemType !== 'manga';
+        $includeMangas   = $itemType !== 'product';
 
-        // Mangas
-        $mangas = DB::table('sale_items')
-            ->join('sales',  'sales.id',  '=', 'sale_items.sale_id')
-            ->join('mangas', 'mangas.id', '=', 'sale_items.manga_id')
-            ->where('sales.status', Sale::STATUS_COMPLETED)
-            ->whereDate('sales.sold_at', '>=', $from)
-            ->whereDate('sales.sold_at', '<=', $to)
-            ->whereNotNull('sale_items.manga_id')
-            ->when($storeId, fn ($q) => $q->where('sales.store_id', $storeId))
-            ->selectRaw('
-                sale_items.manga_id as id,
-                mangas.name,
-                mangas.code as sku,
-                \'manga\' as type,
-                COUNT(DISTINCT sale_items.sale_id) as times_sold,
-                COALESCE(SUM(sale_items.quantity), 0) as total_quantity,
-                ' . self::LINE_REVENUE_SQL . ' as total_revenue
-            ')
-            ->groupBy('sale_items.manga_id', 'mangas.name', 'mangas.code')
-            ->get();
+        $sortBy  = $request->input('sort_by', 'total_revenue');
+        $sortDir = strtolower($request->input('sort_dir', 'desc')) === 'asc' ? 'asc' : 'desc';
+        $allowedSorts = ['name', 'unit_price', 'unit_cost', 'total_quantity', 'total_revenue', 'utilidad'];
+        if (!in_array($sortBy, $allowedSorts)) $sortBy = 'total_revenue';
+        $orderSql = $sortBy === 'utilidad'
+            ? "(total_revenue - unit_cost * total_quantity) {$sortDir}"
+            : "{$sortBy} {$sortDir}";
 
-        $combined = $products->concat($mangas)
-            ->sortByDesc('total_quantity')
-            ->take($limit)
-            ->values();
+        $products = collect();
+        if ($includeProducts) {
+            $products = DB::table('sale_items')
+                ->join('sales',    'sales.id',    '=', 'sale_items.sale_id')
+                ->leftJoin('products', 'products.id', '=', 'sale_items.product_id')
+                ->leftJoin('product_images', function ($join) {
+                    $join->on('product_images.product_id', '=', 'products.id')
+                        ->whereRaw('product_images.sort_order = (SELECT MIN(pi2.sort_order) FROM product_images pi2 WHERE pi2.product_id = products.id)');
+                })
+                ->when($categoryId, fn ($q) => $q
+                    ->join('product_category_assignments', 'product_category_assignments.product_id', '=', 'sale_items.product_id')
+                    ->where('product_category_assignments.category_id', $categoryId)
+                )
+                ->where('sales.status', Sale::STATUS_COMPLETED)
+                ->tap(fn ($q) => DateRange::applyDates($q, 'sales.sold_at', $dates, $from, $to))
+                ->where(fn ($q) => $q
+                    ->whereNotNull('sale_items.product_id')
+                    ->orWhereNotNull('sale_items.product_name'))
+                ->when($storeId, fn ($q) => $q->where('sales.store_id', $storeId))
+                ->when($search !== '', fn ($q) => $q->where(fn ($w) => $w
+                    ->where(DB::raw("LOWER(COALESCE(products.name, sale_items.product_name))"), 'like', '%' . strtolower($search) . '%')
+                    ->orWhere(DB::raw("LOWER(COALESCE(products.sku, sale_items.product_sku))"), 'like', '%' . strtolower($search) . '%')
+                ))
+                ->selectRaw('
+                    sale_items.product_id as id,
+                    COALESCE(products.name, sale_items.product_name) as name,
+                    COALESCE(products.sku, sale_items.product_sku) as sku,
+                    \'product\' as type,
+                    CASE WHEN sale_items.product_id IS NULL THEN 1 ELSE 0 END as deleted,
+                    MIN(product_images.image_path) as image_path,
+                    sale_items.price as unit_price,
+                    COALESCE(sale_items.cost, products.cost, 0) as unit_cost,
+                    COUNT(DISTINCT sale_items.sale_id) as times_sold,
+                    COALESCE(SUM(sale_items.quantity), 0) as total_quantity,
+                    ' . self::LINE_REVENUE_SQL . ' as total_revenue
+                ')
+                ->groupBy(
+                    'sale_items.product_id',
+                    DB::raw('COALESCE(products.name, sale_items.product_name)'),
+                    DB::raw('COALESCE(products.sku, sale_items.product_sku)'),
+                    'sale_items.price',
+                    DB::raw('COALESCE(sale_items.cost, products.cost, 0)'),
+                )
+                ->orderByRaw($orderSql)
+                ->limit($limit)
+                ->get();
+        }
+
+        $mangas = collect();
+        if ($includeMangas && !$categoryId) {
+            $mangas = DB::table('sale_items')
+                ->join('sales',  'sales.id',  '=', 'sale_items.sale_id')
+                ->join('mangas', 'mangas.id', '=', 'sale_items.manga_id')
+                ->where('sales.status', Sale::STATUS_COMPLETED)
+                ->tap(fn ($q) => DateRange::applyDates($q, 'sales.sold_at', $dates, $from, $to))
+                ->whereNotNull('sale_items.manga_id')
+                ->when($storeId, fn ($q) => $q->where('sales.store_id', $storeId))
+                ->when($search !== '', fn ($q) => $q->where(fn ($w) => $w
+                    ->whereLike('mangas.name', "%{$search}%", caseSensitive: false)
+                    ->orWhereLike('mangas.code', "%{$search}%", caseSensitive: false)
+                ))
+                ->selectRaw('
+                    sale_items.manga_id as id,
+                    mangas.name,
+                    mangas.code as sku,
+                    \'manga\' as type,
+                    mangas.image_path as image_path,
+                    sale_items.price as unit_price,
+                    COALESCE(sale_items.cost, mangas.cost, 0) as unit_cost,
+                    COUNT(DISTINCT sale_items.sale_id) as times_sold,
+                    COALESCE(SUM(sale_items.quantity), 0) as total_quantity,
+                    ' . self::LINE_REVENUE_SQL . ' as total_revenue
+                ')
+                ->groupBy('sale_items.manga_id', 'mangas.name', 'mangas.code', 'mangas.image_path', 'sale_items.price', DB::raw('COALESCE(sale_items.cost, mangas.cost, 0)'))
+                ->orderByRaw($orderSql)
+                ->limit($limit)
+                ->get();
+        }
+
+        $combined = $products->concat($mangas)->values();
 
         return $this->success([
             'period' => ['from' => $from, 'to' => $to],
@@ -720,6 +758,9 @@ class ReportsController extends Controller
                 'name'           => $r->name,
                 'sku'            => $r->sku,
                 'type'           => $r->type,
+                'image_url'      => \App\Models\ProductImage::resolveUrl($r->image_path),
+                'unit_price'     => round((float) ($r->unit_price ?? 0), 2),
+                'unit_cost'      => round((float) ($r->unit_cost  ?? 0), 2),
                 'times_sold'     => (int)   $r->times_sold,
                 'total_quantity' => round((float) $r->total_quantity, 2),
                 'total_revenue'  => round((float) $r->total_revenue,  2),
