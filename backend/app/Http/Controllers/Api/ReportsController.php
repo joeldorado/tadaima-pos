@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\CashRegisterSession;
 use App\Models\Inventory;
+use App\Models\ProductImage;
 use App\Models\Sale;
 use App\Support\DateRange;
 use Carbon\Carbon;
@@ -644,43 +645,48 @@ class ReportsController extends Controller
 
     /**
      * GET /reports/top-products
-     * Filters: from, to, dates, store_id, limit (default 50 max 200), search, category_id, item_type (product|manga|all)
+     * Filters: from, to, dates, store_id, limit (default 50, max 500), search, category_id,
+     * item_type (product|manga|all), sort_by (name|unit_price|unit_cost|total_quantity|total_revenue|utilidad), sort_dir
      *
-     * Returns most sold products by quantity and revenue with image_url, cost and profit.
+     * Pantalla Estadística (Ruben 2026-10-21): un renglón por producto + precio + costo
+     * (socio vs normal, costo real de cada compra), con image_url. `unit_cost` solo va
+     * a admin o a quien tiene can_view_cost (ADR-015); sin ese permiso tampoco se
+     * puede ordenar por costo o utilidad.
      */
     public function topProducts(Request $request): JsonResponse
     {
-        $from       = $request->input('from', now()->startOfMonth()->toDateString());
-        $to         = $request->input('to',   now()->toDateString());
-        $storeId    = $this->scopedStoreId($request);
-        $limit      = min((int) ($request->input('limit', 50)), 500);
-        $search     = trim((string) $request->input('search', ''));
-        $dates      = DateRange::parseDatesParam($request->input('dates'));
-        $categoryId = $request->input('category_id');
-        $itemType   = $request->input('item_type', 'all'); // product | manga | all
+        $from        = $request->input('from', now()->startOfMonth()->toDateString());
+        $to          = $request->input('to',   now()->toDateString());
+        $storeId     = $this->scopedStoreId($request);
+        $limit       = min((int) ($request->input('limit', 50)), 500);
+        $search      = trim((string) $request->input('search', ''));
+        $dates       = DateRange::parseDatesParam($request->input('dates'));
+        $categoryId  = $request->input('category_id');
+        $itemType    = $request->input('item_type', 'all'); // product | manga | all
+        $canViewCost = (bool) $request->user()?->canViewCost();
 
         $includeProducts = $itemType !== 'manga';
         $includeMangas   = $itemType !== 'product';
 
         $sortBy  = $request->input('sort_by', 'total_revenue');
-        $sortDir = strtolower($request->input('sort_dir', 'desc')) === 'asc' ? 'asc' : 'desc';
-        $allowedSorts = ['name', 'unit_price', 'unit_cost', 'total_quantity', 'total_revenue', 'utilidad'];
-        if (!in_array($sortBy, $allowedSorts)) $sortBy = 'total_revenue';
-        $orderSql = $sortBy === 'utilidad'
-            ? "(total_revenue - unit_cost * total_quantity) {$sortDir}"
+        $sortDir = strtolower((string) $request->input('sort_dir', 'desc')) === 'asc' ? 'asc' : 'desc';
+        $allowedSorts = $canViewCost
+            ? ['name', 'unit_price', 'unit_cost', 'total_quantity', 'total_revenue', 'utilidad']
+            : ['name', 'unit_price', 'total_quantity', 'total_revenue'];
+        if (! in_array($sortBy, $allowedSorts, true)) {
+            $sortBy = 'total_revenue';
+        }
+        // Postgres acepta un alias solo si va solo en el ORDER BY; la utilidad es
+        // una expresión, así que se escribe completa.
+        $orderSql = fn (string $costSql): string => $sortBy === 'utilidad'
+            ? '(' . self::LINE_REVENUE_SQL . ") - {$costSql} * COALESCE(SUM(sale_items.quantity), 0) {$sortDir}"
             : "{$sortBy} {$sortDir}";
 
-        // Construye cada rama como SQL crudo para poder hacer UNION ALL
-        $parts = [];
-
+        $products = collect();
         if ($includeProducts) {
-            $pq = DB::table('sale_items')
+            $products = DB::table('sale_items')
                 ->join('sales',    'sales.id',    '=', 'sale_items.sale_id')
                 ->leftJoin('products', 'products.id', '=', 'sale_items.product_id')
-                ->leftJoin('product_images', function ($join) {
-                    $join->on('product_images.product_id', '=', 'products.id')
-                        ->whereRaw('product_images.sort_order = (SELECT MIN(pi2.sort_order) FROM product_images pi2 WHERE pi2.product_id = products.id)');
-                })
                 ->when($categoryId, fn ($q) => $q
                     ->join('product_category_assignments', 'product_category_assignments.product_id', '=', 'sale_items.product_id')
                     ->where('product_category_assignments.category_id', $categoryId)
@@ -692,15 +698,15 @@ class ReportsController extends Controller
                     ->orWhereNotNull('sale_items.product_name'))
                 ->when($storeId, fn ($q) => $q->where('sales.store_id', $storeId))
                 ->when($search !== '', fn ($q) => $q->where(fn ($w) => $w
-                    ->where(DB::raw("LOWER(COALESCE(products.name, sale_items.product_name))"), 'like', '%' . strtolower($search) . '%')
-                    ->orWhere(DB::raw("LOWER(COALESCE(products.sku, sale_items.product_sku))"), 'like', '%' . strtolower($search) . '%')
+                    ->whereLike(DB::raw('COALESCE(products.name, sale_items.product_name)'), "%{$search}%", caseSensitive: false)
+                    ->orWhereLike(DB::raw('COALESCE(products.sku, sale_items.product_sku)'), "%{$search}%", caseSensitive: false)
                 ))
                 ->selectRaw('
                     sale_items.product_id as id,
                     COALESCE(products.name, sale_items.product_name) as name,
                     COALESCE(products.sku, sale_items.product_sku) as sku,
                     \'product\' as type,
-                    MIN(product_images.image_path) as image_path,
+                    CASE WHEN sale_items.product_id IS NULL THEN 1 ELSE 0 END as deleted,
                     sale_items.price as unit_price,
                     COALESCE(sale_items.cost, products.cost, 0) as unit_cost,
                     COUNT(DISTINCT sale_items.sale_id) as times_sold,
@@ -713,12 +719,15 @@ class ReportsController extends Controller
                     DB::raw('COALESCE(products.sku, sale_items.product_sku)'),
                     'sale_items.price',
                     DB::raw('COALESCE(sale_items.cost, products.cost, 0)'),
-                );
-            $parts[] = $pq;
+                )
+                ->orderByRaw($orderSql('COALESCE(sale_items.cost, products.cost, 0)'))
+                ->limit($limit)
+                ->get();
         }
 
-        if ($includeMangas && !$categoryId) {
-            $mq = DB::table('sale_items')
+        $mangas = collect();
+        if ($includeMangas && ! $categoryId) {
+            $mangas = DB::table('sale_items')
                 ->join('sales',  'sales.id',  '=', 'sale_items.sale_id')
                 ->join('mangas', 'mangas.id', '=', 'sale_items.manga_id')
                 ->where('sales.status', Sale::STATUS_COMPLETED)
@@ -741,28 +750,37 @@ class ReportsController extends Controller
                     COALESCE(SUM(sale_items.quantity), 0) as total_quantity,
                     ' . self::LINE_REVENUE_SQL . ' as total_revenue
                 ')
-                ->groupBy('sale_items.manga_id', 'mangas.name', 'mangas.code', 'mangas.image_path', 'sale_items.price', DB::raw('COALESCE(sale_items.cost, mangas.cost, 0)'));
-            $parts[] = $mq;
+                ->groupBy('sale_items.manga_id', 'mangas.name', 'mangas.code', 'mangas.image_path', 'sale_items.price', DB::raw('COALESCE(sale_items.cost, mangas.cost, 0)'))
+                ->orderByRaw($orderSql('COALESCE(sale_items.cost, mangas.cost, 0)'))
+                ->limit($limit)
+                ->get();
         }
 
-        if (empty($parts)) {
-            return $this->success(['period' => ['from' => $from, 'to' => $to], 'data' => []]);
-        }
+        // Cada query ya viene ordenada y limitada; al juntarlas se reordena y se
+        // vuelve a cortar para que el límite y el orden valgan sobre el total.
+        $sortValue = fn ($r) => match ($sortBy) {
+            'name'     => mb_strtolower((string) $r->name),
+            'utilidad' => (float) $r->total_revenue - (float) $r->unit_cost * (float) $r->total_quantity,
+            default    => (float) $r->{$sortBy},
+        };
+        $combined = $products->concat($mangas)
+            ->sortBy($sortValue, SORT_REGULAR, $sortDir === 'desc')
+            ->take($limit)
+            ->values();
 
-        // UNION ALL de todas las ramas → ORDER BY y LIMIT globales en una sola pasada
-        if (count($parts) === 1) {
-            $combined = $parts[0]->orderByRaw($orderSql)->limit($limit)->get();
-        } else {
-            [$first, $second] = $parts;
-            $combined = DB::table(
-                DB::raw('(' . $first->toSql() . ' UNION ALL ' . $second->toSql() . ') as _union')
-            )
-            ->mergeBindings($first)
-            ->mergeBindings($second)
-            ->orderByRaw($orderSql)
-            ->limit($limit)
-            ->get();
-        }
+        // La foto se busca aparte: un JOIN a product_images duplicaba renglones
+        // (y sumaba doble) cuando 2 fotos empatan en sort_order — subir una foto
+        // siempre guarda 0.
+        $productIds = $combined->where('type', 'product')->pluck('id')->filter()->unique()->values();
+        $images = $productIds->isEmpty() ? collect() : ProductImage::query()
+            ->whereIn('product_id', $productIds)
+            ->whereNotNull('image_path')
+            ->where('image_path', '!=', '0')
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->get(['product_id', 'image_path'])
+            ->unique('product_id')
+            ->pluck('image_path', 'product_id');
 
         return $this->success([
             'period' => ['from' => $from, 'to' => $to],
@@ -771,9 +789,11 @@ class ReportsController extends Controller
                 'name'           => $r->name,
                 'sku'            => $r->sku,
                 'type'           => $r->type,
-                'image_url'      => \App\Models\ProductImage::resolveUrl($r->image_path),
+                'image_url'      => ProductImage::resolveUrl(
+                    $r->type === 'product' ? ($images[$r->id] ?? null) : $r->image_path
+                ),
                 'unit_price'     => round((float) ($r->unit_price ?? 0), 2),
-                'unit_cost'      => round((float) ($r->unit_cost  ?? 0), 2),
+                ...($canViewCost ? ['unit_cost' => round((float) ($r->unit_cost ?? 0), 2)] : []),
                 'times_sold'     => (int)   $r->times_sold,
                 'total_quantity' => round((float) $r->total_quantity, 2),
                 'total_revenue'  => round((float) $r->total_revenue,  2),

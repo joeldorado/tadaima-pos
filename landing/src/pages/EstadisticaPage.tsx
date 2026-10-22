@@ -5,8 +5,10 @@ import { getTopProductsReport, getCategories, type TopProductsReportItem } from 
 import { queryKeys } from "@/lib/queryKeys";
 import { DateRangePicker } from "@/components/ui/DateRangePicker";
 import { useScreenRefresh } from "@/hooks/useScreenRefresh";
+import { getTodayLocal } from "@/lib/date";
 
-const today        = new Date().toISOString().slice(0, 10);
+// Día de negocio (Tijuana), no UTC: después de las 5 pm la fecha UTC ya es mañana.
+const today        = getTodayLocal();
 const firstOfMonth = `${today.slice(0, 7)}-01`;
 
 const fmtMXN     = new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", maximumFractionDigits: 0 });
@@ -27,7 +29,7 @@ function productKey(item: TopProductsReportItem) {
 }
 // Clave única de renglón (producto + precio + costo)
 function rowKey(item: TopProductsReportItem) {
-  return `${item.type}:${item.id}:${item.unit_price}:${item.unit_cost}`;
+  return `${item.type}:${item.id}:${item.unit_price}:${item.unit_cost ?? 0}`;
 }
 
 type ItemType = "all" | "product" | "manga";
@@ -119,10 +121,9 @@ export function EstadisticaPage() {
 
   const clearSelection = () => setSelected(new Map());
 
-  const totalUnidades = displayItems.reduce((a, i) => a + i.total_quantity, 0);
   const totalIngresos = displayItems.reduce((a, i) => a + i.total_revenue, 0);
-  const totalCosto    = displayItems.reduce((a, i) => a + i.unit_cost * i.total_quantity, 0);
-  const totalUtilidad = totalIngresos - displayItems.reduce((a, i) => a + i.unit_cost * i.total_quantity, 0);
+  const totalCosto    = displayItems.reduce((a, i) => a + (i.unit_cost ?? 0) * i.total_quantity, 0);
+  const totalUtilidad = totalIngresos - totalCosto;
   const margen        = totalIngresos > 0 ? (totalUtilidad / totalIngresos) * 100 : 0;
 
   return (
@@ -413,7 +414,7 @@ function ProductRow({
 }) {
   const [imgError, setImgError] = useState(false);
   const hasImage = item.image_url && !imgError;
-  const utilidad = item.total_revenue - item.unit_cost * item.total_quantity;
+  const utilidad = item.total_revenue - (item.unit_cost ?? 0) * item.total_quantity;
   const margen   = item.total_revenue > 0 ? (utilidad / item.total_revenue) * 100 : 0;
   const margenColor = margen >= 30 ? "#22c55e" : margen >= 15 ? "#eab308" : "var(--td-text-lo)";
 
@@ -473,7 +474,7 @@ function ProductRow({
         <span className="text-[11px] font-black tabular-nums block" style={{ color: margenColor }}>
           {fmtCompact.format(utilidad)}
         </span>
-        {item.unit_cost > 0 && (
+        {(item.unit_cost ?? 0) > 0 && (
           <span className="text-[9px] font-semibold" style={{ color: margenColor, opacity: 0.7 }}>
             {margen.toFixed(0)}%
           </span>
@@ -482,7 +483,7 @@ function ProductRow({
 
       {/* Costo */}
       <span className="text-right text-[11px] font-semibold tabular-nums" style={{ color: "var(--td-text-lo)" }}>
-        {item.unit_cost > 0 ? fmtCompact.format(item.unit_cost) : "—"}
+        {(item.unit_cost ?? 0) > 0 ? fmtCompact.format(item.unit_cost ?? 0) : "—"}
       </span>
     </div>
   );
