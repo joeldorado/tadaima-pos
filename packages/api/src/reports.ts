@@ -41,6 +41,10 @@ export interface TopProductsReportItem {
   name: string
   sku: string
   type: 'product' | 'manga'
+  image_url: string
+  unit_price: number
+  /** Solo llega a admin o a quien tiene can_view_cost (el backend lo omite). */
+  unit_cost?: number
   times_sold: number
   total_quantity: number
   total_revenue: number
@@ -95,7 +99,12 @@ export async function getInventoryReport(params?: {
   return response.data
 }
 
-export async function getTopProductsReport(params?: ReportDateParams & { limit?: number }): Promise<TopProductsReport> {
+export async function getTopProductsReport(params?: ReportDateParams & {
+  limit?: number
+  search?: string
+  category_id?: number
+  item_type?: 'product' | 'manga' | 'all'
+}): Promise<TopProductsReport> {
   const response = await apiClient.get<TopProductsReport>('/reports/top-products', { params })
   return response.data
 }

@@ -25,6 +25,7 @@ import { PromosPage } from '@/pages/PromosPage'
 import { BundlesPage } from '@/pages/BundlesPage'
 import { DocsPage } from '@/pages/DocsPage'
 import { TadaimaUsPage } from '@/pages/TadaimaUsPage'
+import { EstadisticaPage } from '@/pages/EstadisticaPage'
 
 function IndexPage() {
   const { user } = useAuth()
@@ -87,6 +88,7 @@ export const router = createBrowserRouter([
       { path: 'clients',   element: <ProtectedRoute requiresPage="clients"><ClientsPage /></ProtectedRoute> },
       { path: 'pre-sales', element: <ProtectedRoute requiresPage="presales"><PreSalesPage /></ProtectedRoute> },
       { path: 'reports',   element: <ProtectedRoute requiresPage="reports"><ReportsPage /></ProtectedRoute> },
+      { path: 'estadistica', element: <ProtectedRoute requiresPage="estadistica"><EstadisticaPage /></ProtectedRoute> },
       { path: 'settings',  element: <ProtectedRoute requiresPage="settings"><SettingsPage /></ProtectedRoute> },
       { path: 'stores',    element: <ProtectedRoute requiresPage="stores"><StoresPage /></ProtectedRoute> },
       { path: 'admin',     element: <ProtectedRoute requiresPage="admin"><AdminPage /></ProtectedRoute> },

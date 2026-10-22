@@ -8,7 +8,7 @@ import {
   Users, Receipt, UserCircle2, ClipboardList, ArrowLeftRight, ShoppingBasket, BarChart2,
   Settings, Sun, Moon, PackageSearch, Wallet, KeyRound,
   ChevronDown, ChevronRight, PanelLeftClose, TriangleAlert, TicketPercent, BookOpen,
-  HelpCircle, Play, Globe, Boxes,
+  HelpCircle, Play, Globe, Boxes, TrendingUp,
 } from "lucide-react";
 import { NotificationBadge } from "@/components/notifications/NotificationBadge";
 import { RefreshDataButton } from "@/components/layout/RefreshDataButton";
@@ -63,7 +63,8 @@ const NAV_TREE: NavEntry[] = [
       // "Historial" en vez de "Ventas" para no chocar con el nombre del grupo.
       { to: "/sales",   label: "Historial", icon: Receipt,   page: "sales"     },
       { to: "/cortes",  label: "Cortes",    icon: Wallet,    page: "cash_cuts" },
-      { to: "/reports", label: "Reportes",  icon: BarChart2, page: "reports"   },
+      { to: "/reports",     label: "Reportes",    icon: BarChart2,  page: "reports"      },
+      { to: "/estadistica", label: "Estadística", icon: TrendingUp, page: "estadistica"  },
     ],
   },
   { to: "/clients",   label: "Clientes",  icon: UserCircle2,  page: "clients"  },
@@ -90,7 +91,7 @@ const NAV_TREE: NavEntry[] = [
 ];
 
 const NAV_BY_ROLE: Record<string, PageKey[]> = {
-  admin:   ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers", "supplies", "promos", "bundles", "reports", "docs", "admin"],
+  admin:   ["inicio", "products", "stock_search", "sales", "cash_cuts", "clients", "presales", "transfers", "supplies", "promos", "bundles", "reports", "estadistica", "docs", "admin"],
   // Gerente: sin Tiendas. Solo gestiona la suya; el switcher del header basta
   // para alternar entre tiendas asignadas. La página /stores es CRUD admin.
   // Reportes habilitado para gerente (verificará permisos/scope en backend)
