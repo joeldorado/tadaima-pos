@@ -43,7 +43,8 @@ export interface TopProductsReportItem {
   type: 'product' | 'manga'
   image_url: string
   unit_price: number
-  unit_cost: number
+  /** Solo llega a admin o a quien tiene can_view_cost (el backend lo omite). */
+  unit_cost?: number
   times_sold: number
   total_quantity: number
   total_revenue: number
