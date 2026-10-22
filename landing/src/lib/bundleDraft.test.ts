@@ -36,7 +36,7 @@ const BASE_PRODUCT: ProductLight = {
 const product = (over: Partial<ProductLight> = {}): ProductLight => ({ ...BASE_PRODUCT, stock_bodega: 4, ...over });
 
 const comp = (over: Partial<BundleDraftComponent> = {}): BundleDraftComponent => ({
-  productId: 1, name: "Goku", sku: "FIG-001", image: null, quantity: 1, unitPrice: 250,
+  productId: 1, hasCost: false, name: "Goku", sku: "FIG-001", image: null, quantity: 1, unitPrice: 250,
   stockExh: 10, stockBod: 4, ...over,
 });
 
@@ -62,6 +62,12 @@ describe("emptyDraft", () => {
 describe("toDraftComponent", () => {
   it("toma precio normal, foto y stock de la tienda", () => {
     expect(toDraftComponent(product(), true)).toEqual(GOKU);
+  });
+
+  it("hasCost viene de has_cost; una API vieja sin el campo cuenta como sin costo", () => {
+    expect(toDraftComponent(product({ has_cost: true }), true).hasCost).toBe(true);
+    expect(toDraftComponent(product({ has_cost: false }), true).hasCost).toBe(false);
+    expect(toDraftComponent(BASE_PRODUCT, true).hasCost).toBe(false);
   });
 
   it("los tomos llevan su número de volumen en el nombre", () => {
@@ -218,7 +224,7 @@ describe("draftFromBundle", () => {
     prices: { price_1: 450, price_2: 400, price_3: null, price_4: null, price_5: null },
     image: null, images: [], components_count: 2, suggested_price_sum: 550,
     components: [
-      { product_id: 2, name: "Vegeta", sku: "FIG-002", quantity: 1, position: 2, image: null, price_1: 300 },
+      { product_id: 2, name: "Vegeta", sku: "FIG-002", quantity: 1, position: 2, image: null, price_1: 300, has_cost: true },
       { product_id: 1, name: "Goku", sku: "FIG-001", quantity: 2, position: 1, image: "g.png", price_1: null },
     ],
     stock_total: 3, composition_locked: true, availability: [], created_at: "", updated_at: "",
@@ -231,8 +237,9 @@ describe("draftFromBundle", () => {
     expect([d.price1, d.price2, d.price3]).toEqual(["450", "400", ""]);
     expect(d.components.map((c) => c.productId)).toEqual([1, 2]);
     expect(d.components[0]).toEqual({
-      productId: 1, name: "Goku", sku: "FIG-001", image: "g.png", quantity: 2, unitPrice: 0, stockExh: null, stockBod: null,
+      productId: 1, hasCost: false, name: "Goku", sku: "FIG-001", image: "g.png", quantity: 2, unitPrice: 0, stockExh: null, stockBod: null,
     });
+    expect(d.components[1].hasCost).toBe(true);
     expect(d.buildNow).toBe(false);
   });
 

@@ -38,6 +38,8 @@ export interface BundleComponent {
   price_1: number | null
   /** Solo viaja si el usuario puede ver costos. */
   cost?: number | null
+  /** true si el componente tiene costo capturado (> 0). Todos los roles lo ven. */
+  has_cost?: boolean
 }
 
 /** Disponibilidad de UN componente en una tienda (para la columna "limita"). */

@@ -104,6 +104,8 @@ export async function getTopProductsReport(params?: ReportDateParams & {
   search?: string
   category_id?: number
   item_type?: 'product' | 'manga' | 'all'
+  sort_by?: 'name' | 'unit_price' | 'total_quantity' | 'total_revenue' | 'utilidad' | 'unit_cost'
+  sort_dir?: 'asc' | 'desc'
 }): Promise<TopProductsReport> {
   const response = await apiClient.get<TopProductsReport>('/reports/top-products', { params })
   return response.data
