@@ -22,6 +22,8 @@ const SKU_PAD = 4;
 
 export interface BundleDraftComponent {
   productId: number;
+  /** true si el componente tiene costo capturado (> 0). Default false si el API es viejo. */
+  hasCost?: boolean;
   name: string;
   sku: string;
   image: string | null;
@@ -87,6 +89,7 @@ export function toDraftComponent(p: ProductLight, hasStore: boolean): BundleDraf
     image: p.image,
     quantity: 1,
     unitPrice: p.prices.price_1 ?? 0,
+    hasCost: p.has_cost ?? false,
     stockExh: hasStore ? p.stock_total : null,
     stockBod: hasStore ? (p.stock_bodega ?? 0) : null,
   };
@@ -265,6 +268,7 @@ export function draftFromBundle(b: Bundle): BundleDraft {
       image: c.image,
       quantity: c.quantity,
       unitPrice: c.price_1 ?? 0,
+      hasCost: c.has_cost ?? false,
       stockExh: null,
       stockBod: null,
     })),

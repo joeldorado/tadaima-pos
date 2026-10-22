@@ -169,6 +169,11 @@ export interface ProductLight {
   product_type?: ProductType
   /** Número de tomo (solo mangas) — distingue tomos de la misma serie en Caja. */
   volume_number?: number | null
+  /**
+   * true si el producto tiene costo capturado (> 0). No expone el monto.
+   * Disponible para todos los roles; útil para warnings en el wizard de paquetes.
+   */
+  has_cost?: boolean
   /** Promos NxM vigentes (Descuentos v2 Fase 3) — el backend ya las embebe.
    *  Con ?store_id el embed viene FILTRADO a esa tienda (o globales). */
   active_promotions?: { id: number; name: string; type?: 'nxm' | 'qty_discount'; buy_n: number | null; pay_m: number | null; min_qty?: number | null; discount_per_unit?: number | null; allow_cash?: boolean; allow_card?: boolean; priority: number; store_id?: number | null }[]

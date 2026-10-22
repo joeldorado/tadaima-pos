@@ -110,6 +110,12 @@ export function BundleWizard({ defaultStoreId, stores, viewer, existingSkus, onC
   // Con keepPreviousData el preview puede ir 400 ms atrás: mientras sea placeholder manda la suma local.
   const sum = !preview.isPlaceholderData && preview.data ? preview.data.suggested_price_sum : localSum;
 
+  // Componentes sin costo capturado — el paquete quedará con costo null.
+  const missingCost = useMemo(
+    () => draft.components.filter(c => !(c.hasCost ?? false)),
+    [draft.components],
+  );
+
   const goToDatos = () => {
     const problem = validateComponentes(draft);
     if (problem) { setError(problem); return; }
@@ -286,6 +292,26 @@ export function BundleWizard({ defaultStoreId, stores, viewer, existingSkus, onC
               onChange={patch}
             />
           )}
+          {step === 3 && missingCost.length > 0 && (
+            <div className="mt-4 rounded-xl px-4 py-3" style={{ background: "rgba(234,179,8,0.1)", border: "1px solid rgba(234,179,8,0.35)" }}>
+              <p className="text-[13px] font-black mb-1" style={{ color: "#eab308" }}>
+                {missingCost.length === 1
+                  ? "1 componente sin costo capturado"
+                  : `${missingCost.length} componentes sin costo capturado`}
+              </p>
+              <ul className="mb-2 space-y-0.5">
+                {missingCost.map(c => (
+                  <li key={c.productId} className="text-[12px] font-semibold" style={{ color: "#eab308", opacity: 0.85 }}>
+                    · {c.name} ({c.sku})
+                  </li>
+                ))}
+              </ul>
+              <p className="text-[11px]" style={{ color: "#eab308", opacity: 0.7 }}>
+                El costo del paquete quedará sin registrar hasta que se capture el costo de estos productos. Puedes continuar.
+              </p>
+            </div>
+          )}
+
           {error && (
             <p role="alert" className="mt-4 rounded-xl px-4 py-3 text-[15px] font-bold" style={{ background: "rgba(224,34,26,0.12)", color: RED_SOFT }}>
               {error}
