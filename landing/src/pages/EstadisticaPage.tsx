@@ -359,11 +359,12 @@ export function EstadisticaPage() {
       )}
 
       {/* Métricas resumen */}
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-3 gap-2">
         {[
-          { label: "Ingresos",   value: totalIngresos,  fmt: (v: number) => fmtMXN.format(v) },
-          { label: "Utilidad",   value: totalUtilidad,  fmt: (v: number) => `${fmtMXN.format(v)} (${margen.toFixed(0)}%)` },
-        ].map(({ label, value, fmt }) => (
+          { label: "Ingresos",   value: fmtMXN.format(totalIngresos) },
+          { label: "Utilidad",   value: `${fmtMXN.format(totalUtilidad)} (${margen.toFixed(0)}%)` },
+          { label: "Productos",  value: displayItems.length.toLocaleString("es-MX") },
+        ].map(({ label, value }) => (
           <div
             key={label}
             className="rounded-2xl px-4 py-3"
@@ -374,7 +375,7 @@ export function EstadisticaPage() {
               {selected.size > 0 && <span style={{ color: "var(--td-red)" }}> · selección</span>}
             </p>
             <p className="text-[16px] font-black leading-none" style={{ color: "var(--td-text-hi)" }}>
-              {query.isLoading ? "—" : fmt(value)}
+              {query.isLoading ? "—" : value}
             </p>
           </div>
         ))}
