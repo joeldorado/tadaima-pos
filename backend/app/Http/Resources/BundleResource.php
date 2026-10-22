@@ -87,6 +87,7 @@ class BundleResource extends JsonResource
                 'image' => $image ?: null,
                 'price_1' => $price1 !== null ? (float) $price1 : null,
                 'cost' => $this->when($canViewCost, fn () => $product?->cost !== null ? (float) $product->cost : null),
+                'has_cost' => $product !== null && $product->cost !== null && (float) $product->cost > 0,
                 'active' => (bool) ($product?->active ?? false),
             ];
         })->values()->all(); // array plano: JsonResource solo quita MissingValue (cost gateado) en arrays

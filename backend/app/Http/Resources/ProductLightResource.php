@@ -88,6 +88,11 @@ class ProductLightResource extends JsonResource
             // no tienen la columna en envs viejos.
             'product_type' => $this->product_type ?? 'product',
 
+            // Indica si el producto tiene costo capturado (> 0). No expone el
+            // monto: lo ven todos los roles, solo para mostrar warnings en el
+            // wizard de paquetes cuando un componente no tiene costo.
+            'has_cost' => $this->cost !== null && (float) $this->cost > 0,
+
             // Número de tomo para mangas — la Caja lo muestra junto al nombre
             // para distinguir tomos de la misma serie (QA 2026-06-11).
             'volume_number' => $this->relationLoaded('mangaDetails')
