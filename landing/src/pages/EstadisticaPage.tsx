@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { TrendingUp, Search, Package, BookOpen, X, ChevronDown, ChevronUp, ArrowUp } from "lucide-react";
+import { TrendingUp, Search, Package, BookOpen, X, ChevronDown, ChevronUp, ArrowUp, Trash2 } from "lucide-react";
 import { getTopProductsReport, getCategories, type TopProductsReportItem } from "@tadaima/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { DateRangePicker } from "@/components/ui/DateRangePicker";
@@ -42,6 +42,8 @@ export function EstadisticaPage() {
   const [sortDir, setSortDir]       = useState<SortDir>("desc");
   // Set de rowKeys apagados (excluidos del resumen)
   const [excluded, setExcluded]     = useState<Set<string>>(new Set());
+  // Set de rowKeys ocultos (quitados de la tabla)
+  const [hidden, setHidden]         = useState<Set<string>>(new Set());
   const [showTop, setShowTop]       = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const mainRef = useRef<HTMLDivElement>(null);
@@ -92,15 +94,21 @@ export function EstadisticaPage() {
 
   useScreenRefresh(() => { void query.refetch(); });
 
-  // Al cambiar filtros, reinicia los apagados
-  useEffect(() => { setExcluded(new Set()); }, [from, to, itemType, categoryId, debouncedSearch]);
+  // Al cambiar filtros, reinicia apagados y ocultos
+  useEffect(() => { setExcluded(new Set()); setHidden(new Set()); }, [from, to, itemType, categoryId, debouncedSearch]);
 
   const allItems = query.data?.data ?? [];
 
-  // Todos los renglones van a la tabla; solo los no-apagados alimentan las tarjetas
+  // Renglones visibles en tabla (sin los ocultos)
+  const displayItems = useMemo(
+    () => allItems.filter((i) => !hidden.has(rowKey(i))),
+    [allItems, hidden],
+  );
+
+  // Solo los visibles y no-apagados alimentan las tarjetas
   const activeItems = useMemo(
-    () => allItems.filter((i) => !excluded.has(rowKey(i))),
-    [allItems, excluded],
+    () => displayItems.filter((i) => !excluded.has(rowKey(i))),
+    [displayItems, excluded],
   );
 
   const toggleRow = (item: TopProductsReportItem) => {
@@ -112,7 +120,14 @@ export function EstadisticaPage() {
     });
   };
 
+  const hideRow = (item: TopProductsReportItem) => {
+    const k = rowKey(item);
+    setHidden((prev) => new Set([...prev, k]));
+    setExcluded((prev) => { const next = new Set(prev); next.delete(k); return next; });
+  };
+
   const clearExcluded = () => setExcluded(new Set());
+  const clearHidden   = () => setHidden(new Set());
 
   const totalIngresos = activeItems.reduce((a, i) => a + i.total_revenue, 0);
   const totalCosto    = activeItems.reduce((a, i) => a + (i.unit_cost ?? 0) * i.total_quantity, 0);
@@ -217,20 +232,29 @@ export function EstadisticaPage() {
         </div>
       </div>
 
-      {/* Aviso de filas apagadas */}
-      {excluded.size > 0 && (
-        <div className="flex items-center gap-2">
-          <span className="text-[9px] font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>
-            {excluded.size} {excluded.size === 1 ? "fila apagada" : "filas apagadas"} del resumen
-          </span>
-          <button
-            type="button"
-            onClick={clearExcluded}
-            className="text-[9px] font-bold uppercase tracking-widest"
-            style={{ color: "var(--td-red)" }}
-          >
-            Encender todo
-          </button>
+      {/* Avisos de filas apagadas / ocultas */}
+      {(excluded.size > 0 || hidden.size > 0) && (
+        <div className="flex items-center gap-4">
+          {excluded.size > 0 && (
+            <span className="flex items-center gap-1.5 text-[9px]">
+              <span className="font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>
+                {excluded.size} {excluded.size === 1 ? "apagada" : "apagadas"} del resumen
+              </span>
+              <button type="button" onClick={clearExcluded} className="font-bold uppercase tracking-widest" style={{ color: "var(--td-red)" }}>
+                Encender todo
+              </button>
+            </span>
+          )}
+          {hidden.size > 0 && (
+            <span className="flex items-center gap-1.5 text-[9px]">
+              <span className="font-black uppercase tracking-widest" style={{ color: "var(--td-text-lo)" }}>
+                {hidden.size} {hidden.size === 1 ? "oculta" : "ocultas"} de la lista
+              </span>
+              <button type="button" onClick={clearHidden} className="font-bold uppercase tracking-widest" style={{ color: "var(--td-red)" }}>
+                Mostrar todo
+              </button>
+            </span>
+          )}
         </div>
       )}
 
@@ -277,7 +301,7 @@ export function EstadisticaPage() {
             <div key={i} className="rounded-xl h-12 animate-pulse" style={{ background: "var(--td-panel-bg)" }} />
           ))}
         </div>
-      ) : allItems.length === 0 ? (
+      ) : displayItems.length === 0 ? (
         <div
           className="rounded-2xl p-12 flex flex-col items-center gap-3"
           style={{ background: "var(--td-panel-bg)", border: "1px solid var(--td-panel-border)" }}
@@ -296,7 +320,7 @@ export function EstadisticaPage() {
           <div
             className="grid items-center px-3 py-2 text-[9px] font-black uppercase tracking-widest"
             style={{
-              gridTemplateColumns: "28px 36px 1fr 80px 60px 90px 90px 80px",
+              gridTemplateColumns: "28px 36px 1fr 80px 60px 90px 90px 80px 28px",
               color: "var(--td-text-lo)",
               borderBottom: "1px solid var(--td-panel-border)",
             }}
@@ -309,17 +333,19 @@ export function EstadisticaPage() {
             <SortHeader label="Total"     col="total_revenue" active={sortCol} dir={sortDir} onSort={handleSort} />
             <SortHeader label="Utilidad"  col="utilidad"      active={sortCol} dir={sortDir} onSort={handleSort} />
             <SortHeader label="Costo"     col="unit_cost"     active={sortCol} dir={sortDir} onSort={handleSort} />
+            <span />
           </div>
 
           {/* Filas */}
           <div className="divide-y" style={{ "--tw-divide-opacity": 1, borderColor: "var(--td-panel-border)" } as React.CSSProperties}>
-            {allItems.map((item, idx) => (
+            {displayItems.map((item, idx) => (
               <ProductRow
                 key={rowKey(item)}
                 item={item}
                 rank={idx + 1}
                 isOff={excluded.has(rowKey(item))}
                 onToggle={() => toggleRow(item)}
+                onHide={() => hideRow(item)}
               />
             ))}
           </div>
@@ -361,14 +387,16 @@ function SortHeader({
 // ─── Fila de producto ─────────────────────────────────────────────────────────
 
 function ProductRow({
-  item, rank, isOff, onToggle,
+  item, rank, isOff, onToggle, onHide,
 }: {
   item: TopProductsReportItem;
   rank: number;
   isOff: boolean;
   onToggle: () => void;
+  onHide: () => void;
 }) {
   const [imgError, setImgError] = useState(false);
+  const [hovered, setHovered]   = useState(false);
   const hasImage = item.image_url && !imgError;
   const utilidad = item.total_revenue - (item.unit_cost ?? 0) * item.total_quantity;
   const margen   = item.total_revenue > 0 ? (utilidad / item.total_revenue) * 100 : 0;
@@ -377,11 +405,13 @@ function ProductRow({
   return (
     <div
       onClick={onToggle}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       className="grid items-center px-3 py-1.5 transition-all cursor-pointer"
       style={{
-        gridTemplateColumns: "28px 36px 1fr 80px 60px 90px 90px 80px",
+        gridTemplateColumns: "28px 36px 1fr 80px 60px 90px 90px 80px 28px",
         opacity: isOff ? 0.3 : 1,
-        background: isOff ? "rgba(0,0,0,0.1)" : "transparent",
+        background: isOff ? "rgba(0,0,0,0.1)" : hovered ? "rgba(255,255,255,0.02)" : "transparent",
       }}
     >
       {/* Rank */}
@@ -441,6 +471,23 @@ function ProductRow({
       <span className="text-right text-[11px] font-semibold tabular-nums" style={{ color: "var(--td-text-lo)" }}>
         {(item.unit_cost ?? 0) > 0 ? fmtCompact.format(item.unit_cost ?? 0) : "—"}
       </span>
+
+      {/* Quitar de lista */}
+      <div className="flex items-center justify-center">
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onHide(); }}
+          className="flex items-center justify-center w-6 h-6 rounded-lg transition-all"
+          style={{
+            opacity: hovered ? 0.6 : 0,
+            background: "transparent",
+            color: "var(--td-text-lo)",
+          }}
+          title="Quitar de la lista"
+        >
+          <Trash2 size={11} strokeWidth={2} />
+        </button>
+      </div>
     </div>
   );
 }
