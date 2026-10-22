@@ -57,9 +57,9 @@ export function EstadisticaPage() {
   const mainRef = useRef<HTMLDivElement>(null);
   const debouncedSearch = useDebounced(search);
 
-  // Scroll listener para botón "volver arriba"
+  // Scroll listener — el scroll vive en el <main> del Layout, no en este div
   useEffect(() => {
-    const el = mainRef.current;
+    const el = mainRef.current?.closest("main") ?? mainRef.current;
     if (!el) return;
     const onScroll = () => setShowTop(el.scrollTop > 300);
     el.addEventListener("scroll", onScroll, { passive: true });
@@ -181,7 +181,7 @@ export function EstadisticaPage() {
   const margen        = totalIngresos > 0 ? (totalUtilidad / totalIngresos) * 100 : 0;
 
   return (
-    <div ref={mainRef} className="flex flex-col gap-4 p-5 overflow-y-auto" style={{ height: "100%" }}>
+    <div ref={mainRef} className="flex flex-col gap-4 p-5">
 
       {/* Header */}
       <div className="flex items-center gap-3">
@@ -396,7 +396,7 @@ export function EstadisticaPage() {
       {showTop && (
         <button
           type="button"
-          onClick={() => mainRef.current?.scrollTo({ top: 0, behavior: "smooth" })}
+          onClick={() => (mainRef.current?.closest("main") ?? mainRef.current)?.scrollTo({ top: 0, behavior: "smooth" })}
           className="fixed bottom-6 right-6 z-50 flex items-center justify-center rounded-full w-10 h-10 shadow-xl transition-all"
           style={{ background: "var(--td-red)", color: "#fff" }}
           title="Volver arriba"
