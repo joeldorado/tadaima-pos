@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { TrendingUp, Search, Package, BookOpen, X, ChevronDown, CheckSquare } from "lucide-react";
+import { TrendingUp, Search, Package, BookOpen, X, ChevronDown, CheckSquare, ChevronUp, ArrowUp } from "lucide-react";
 import { getTopProductsReport, getCategories, type TopProductsReportItem } from "@tadaima/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { DateRangePicker } from "@/components/ui/DateRangePicker";
@@ -33,6 +33,8 @@ function rowKey(item: TopProductsReportItem) {
 }
 
 type ItemType = "all" | "product" | "manga";
+type SortCol = "name" | "unit_price" | "total_quantity" | "total_revenue" | "utilidad" | "unit_cost";
+type SortDir = "asc" | "desc";
 
 export function EstadisticaPage() {
   const [from, setFrom]             = useState(firstOfMonth);
@@ -40,21 +42,45 @@ export function EstadisticaPage() {
   const [search, setSearch]         = useState("");
   const [itemType, setItemType]     = useState<ItemType>("all");
   const [categoryId, setCategoryId] = useState<number | null>(null);
+  const [sortCol, setSortCol]       = useState<SortCol>("total_revenue");
+  const [sortDir, setSortDir]       = useState<SortDir>("desc");
   // Map<key, item> de productos seleccionados para el análisis
   const [selected, setSelected]     = useState<Map<string, TopProductsReportItem>>(new Map());
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [showTop, setShowTop]       = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const mainRef = useRef<HTMLDivElement>(null);
   const debouncedSearch = useDebounced(search);
 
-  // El backend ya no filtra por search — lo hacemos client-side en el dropdown
+  // Scroll listener para botón "volver arriba"
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!el) return;
+    const onScroll = () => setShowTop(el.scrollTop > 300);
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+
+  const handleSort = (col: SortCol) => {
+    if (col === sortCol) {
+      setSortDir((d) => (d === "desc" ? "asc" : "desc"));
+    } else {
+      setSortCol(col);
+      setSortDir(col === "name" ? "asc" : "desc");
+    }
+  };
+
   const params = useMemo(() => ({
     from,
     to,
-    limit: 200,
+    limit: 500,
     item_type: itemType,
+    sort_by: sortCol,
+    sort_dir: sortDir,
+    ...(debouncedSearch ? { search: debouncedSearch } : {}),
     ...(categoryId ? { category_id: categoryId } : {}),
-  }), [from, to, itemType, categoryId]);
+  }), [from, to, itemType, categoryId, sortCol, sortDir, debouncedSearch]);
 
   const query = useQuery({
     queryKey: queryKeys.reports.topProducts(params),
@@ -127,7 +153,7 @@ export function EstadisticaPage() {
   const margen        = totalIngresos > 0 ? (totalUtilidad / totalIngresos) * 100 : 0;
 
   return (
-    <div className="flex flex-col gap-4 p-5">
+    <div ref={mainRef} className="flex flex-col gap-4 p-5 overflow-y-auto" style={{ height: "100%" }}>
 
       {/* Header */}
       <div className="flex items-center gap-3">
@@ -319,6 +345,19 @@ export function EstadisticaPage() {
         </div>
       )}
 
+      {/* Botón volver arriba */}
+      {showTop && (
+        <button
+          type="button"
+          onClick={() => mainRef.current?.scrollTo({ top: 0, behavior: "smooth" })}
+          className="fixed bottom-6 right-6 z-50 flex items-center justify-center rounded-full w-10 h-10 shadow-xl transition-all"
+          style={{ background: "var(--td-red)", color: "#fff" }}
+          title="Volver arriba"
+        >
+          <ArrowUp size={16} strokeWidth={2.5} />
+        </button>
+      )}
+
       {/* Métricas resumen */}
       <div className="grid grid-cols-2 gap-2">
         {[
@@ -374,12 +413,12 @@ export function EstadisticaPage() {
           >
             <span>#</span>
             <span />
-            <span>Producto</span>
-            <span className="text-right">P. Venta</span>
-            <span className="text-right">Uds</span>
-            <span className="text-right">Total</span>
-            <span className="text-right">Utilidad</span>
-            <span className="text-right">Costo</span>
+            <SortHeader label="Producto"  col="name"          active={sortCol} dir={sortDir} onSort={handleSort} align="left" />
+            <SortHeader label="P. Venta"  col="unit_price"    active={sortCol} dir={sortDir} onSort={handleSort} />
+            <SortHeader label="Uds"       col="total_quantity" active={sortCol} dir={sortDir} onSort={handleSort} />
+            <SortHeader label="Total"     col="total_revenue" active={sortCol} dir={sortDir} onSort={handleSort} />
+            <SortHeader label="Utilidad"  col="utilidad"      active={sortCol} dir={sortDir} onSort={handleSort} />
+            <SortHeader label="Costo"     col="unit_cost"     active={sortCol} dir={sortDir} onSort={handleSort} />
           </div>
 
           {/* Filas */}
@@ -398,6 +437,35 @@ export function EstadisticaPage() {
         </div>
       )}
     </div>
+  );
+}
+
+// ─── Sort Header ──────────────────────────────────────────────────────────────
+
+function SortHeader({
+  label, col, active, dir, onSort, align = "right",
+}: {
+  label: string;
+  col: SortCol;
+  active: SortCol;
+  dir: SortDir;
+  onSort: (col: SortCol) => void;
+  align?: "left" | "right";
+}) {
+  const isActive = active === col;
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(col)}
+      className={`flex items-center gap-0.5 w-full text-[9px] font-black uppercase tracking-widest select-none ${align === "right" ? "justify-end" : "justify-start"}`}
+      style={{ color: isActive ? "var(--td-text-hi)" : "var(--td-text-lo)" }}
+    >
+      {label}
+      <span className="flex flex-col ml-0.5" style={{ opacity: isActive ? 1 : 0.3 }}>
+        <ChevronUp  size={7} strokeWidth={3} style={{ color: isActive && dir === "asc"  ? "var(--td-red)" : undefined }} />
+        <ChevronDown size={7} strokeWidth={3} style={{ color: isActive && dir === "desc" ? "var(--td-red)" : undefined }} />
+      </span>
+    </button>
   );
 }
 
