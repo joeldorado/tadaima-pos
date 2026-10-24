@@ -17,7 +17,7 @@ class TransferResource extends JsonResource
             'status'            => $this->status,
             'notes'             => $this->notes,
 
-            'from_warehouse' => $this->when(
+            'fromWarehouse' => $this->when(
                 $this->relationLoaded('fromWarehouse') && $this->fromWarehouse,
                 fn () => [
                     'id'       => $this->fromWarehouse->id,
@@ -26,7 +26,7 @@ class TransferResource extends JsonResource
                 ],
             ),
 
-            'to_warehouse' => $this->when(
+            'toWarehouse' => $this->when(
                 $this->relationLoaded('toWarehouse') && $this->toWarehouse,
                 fn () => [
                     'id'       => $this->toWarehouse->id,
