@@ -17,8 +17,8 @@ use Tests\TestCase;
  * - Solo admin y gerente crean traslados (cajero 403).
  * - Gerente solicita viendo stock de TODAS las tiendas: origen libre, pero su
  *   tienda debe ser origen o destino.
- * - Recibe (completa, mueve inventario) el gerente de la tienda DESTINO o
- *   admin (2026-09-30; antes era el origen y el destino no tenía botón).
+ * - Recibe (completa, mueve inventario) admin o cualquier gerente (2026-10-24);
+ *   el cajero no.
  * - Cancela admin o el gerente que creó la solicitud.
  */
 class TransferRbacTest extends TestCase
@@ -124,30 +124,41 @@ class TransferRbacTest extends TestCase
             ->assertForbidden();
     }
 
-    public function test_recibe_el_gerente_de_la_tienda_destino(): void
+    public function test_cajero_no_puede_recibir(): void
     {
-        // Traslado B → A: A es la tienda que recibe.
         $transfer = $this->createPendingTransfer($this->admin);
 
-        // Gerente de la tienda ORIGEN ya no completa: la recepción es del destino.
-        $this->actingAs($this->managerB)
-            ->putJson("/api/v1/transfers/{$transfer->id}/complete")
-            ->assertForbidden();
-
-        // Gerente de una tercera tienda tampoco.
-        $storeC = Store::create(['company_id' => $this->company->id, 'name' => 'Tienda C', 'active' => true]);
-        $managerC = $this->makeUser('gerentec@test.com', 'gerente', $storeC->id);
-        $this->actingAs($managerC)
-            ->putJson("/api/v1/transfers/{$transfer->id}/complete")
-            ->assertForbidden();
-
-        // Cajero de la tienda destino tampoco.
         $this->actingAs($this->cashierA)
             ->putJson("/api/v1/transfers/{$transfer->id}/complete")
             ->assertForbidden();
+    }
 
-        // Gerente DESTINO recibe y el inventario se mueve.
+    public function test_gerente_de_tercera_tienda_puede_recibir(): void
+    {
+        $transfer = $this->createPendingTransfer($this->admin);
+        $storeC = Store::create(['company_id' => $this->company->id, 'name' => 'Tienda C', 'active' => true]);
+        $managerC = $this->makeUser('gerentec@test.com', 'gerente', $storeC->id);
+
+        $this->actingAs($managerC)
+            ->putJson("/api/v1/transfers/{$transfer->id}/complete")
+            ->assertOk();
+    }
+
+    public function test_gerente_destino_puede_recibir(): void
+    {
+        $transfer = $this->createPendingTransfer($this->admin);
+
         $this->actingAs($this->managerA)
+            ->putJson("/api/v1/transfers/{$transfer->id}/complete")
+            ->assertOk();
+    }
+
+    public function test_gerente_origen_puede_recibir_y_mueve_inventario(): void
+    {
+        // Traslado B → A creado por admin; lo recibe el gerente de la tienda ORIGEN.
+        $transfer = $this->createPendingTransfer($this->admin);
+
+        $this->actingAs($this->managerB)
             ->putJson("/api/v1/transfers/{$transfer->id}/complete")
             ->assertOk()
             ->assertJsonPath('message', 'Traslado recibido. Inventario actualizado.');
