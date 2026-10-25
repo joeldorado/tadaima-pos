@@ -4,6 +4,26 @@
 
 ---
 
+### Sesión 2026-10-25 — Traslados: también los completa el gerente de la tienda origen (Ruben, PR #65) — rev tadaima-00096-roh
+
+**Pedido Joel:** bajar los cambios de backend de Ruben (`develop`) y deployarlos.
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00094-niw`, `main` en `fa96ef0`. Sin migraciones.
+>
+> ```
+> gcloud run services update-traffic tadaima --to-revisions tadaima-00094-niw=100 --project tadaimapos --region us-east1
+> ```
+
+**Qué entró** (PR #65, merge `be5db00`):
+- `PUT /transfers/{id}/complete`: admin o gerente de la tienda ORIGEN o DESTINO (antes solo destino).
+- Ruben lo había abierto a cualquier gerente; decisión Joel: un gerente de una tercera tienda sigue en 403 (`canAccessTransfer`).
+- El rename `fromWarehouse`/`toWarehouse` de Ruben se revirtió (rompía la pantalla de Traslados); el JSON sigue en snake_case.
+- UI: el botón Recibir aparece también al gerente de origen (`TransfersPage.tsx`).
+
+**Pruebas:** `php artisan test` 857 ✓, vitest 764 ✓; candidate: `/` 200, `/api/v1/transfers` 401, `/tadaimaus/` 200.
+
+---
+
 ### Sesión 2026-10-22 — Estadística mejorada + aviso de componentes sin costo en Paquetes (Ruben, PR #64) — rev tadaima-00094-niw
 
 **Pedido Joel:** bajar el update nuevo de Ruben (`develop`), verificarlo y deployarlo.
