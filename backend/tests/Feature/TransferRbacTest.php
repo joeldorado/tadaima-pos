@@ -17,8 +17,8 @@ use Tests\TestCase;
  * - Solo admin y gerente crean traslados (cajero 403).
  * - Gerente solicita viendo stock de TODAS las tiendas: origen libre, pero su
  *   tienda debe ser origen o destino.
- * - Recibe (completa, mueve inventario) admin o cualquier gerente (2026-10-24);
- *   el cajero no.
+ * - Recibe (completa, mueve inventario) admin o el gerente de la tienda origen
+ *   o destino (2026-10-24); un gerente de una tercera tienda y el cajero no.
  * - Cancela admin o el gerente que creó la solicitud.
  */
 class TransferRbacTest extends TestCase
@@ -133,7 +133,7 @@ class TransferRbacTest extends TestCase
             ->assertForbidden();
     }
 
-    public function test_gerente_de_tercera_tienda_puede_recibir(): void
+    public function test_gerente_de_tercera_tienda_no_puede_recibir(): void
     {
         $transfer = $this->createPendingTransfer($this->admin);
         $storeC = Store::create(['company_id' => $this->company->id, 'name' => 'Tienda C', 'active' => true]);
@@ -141,7 +141,7 @@ class TransferRbacTest extends TestCase
 
         $this->actingAs($managerC)
             ->putJson("/api/v1/transfers/{$transfer->id}/complete")
-            ->assertOk();
+            ->assertForbidden();
     }
 
     public function test_gerente_destino_puede_recibir(): void

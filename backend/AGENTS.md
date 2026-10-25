@@ -357,7 +357,7 @@ permitido); `/products` no crea ni re-tipa paquetes; `PurgeNoStockProductsComman
 |---|---|---|
 | GET | `/transfers` · POST `/transfers` | Listar / solicitar. **Paquetes → 422** (no se trasladan; ver "Paquetes", 2026-10-08) |
 | GET | `/transfers/{transfer}` · GET `/transfers/{transfer}/items` | Detalle / items |
-| PUT | `/transfers/{transfer}/complete` | Recibir: mueve el stock (admin o gerente de la tienda DESTINO, desde 2026-09-30). Una solicitud con paquetes tampoco se recibe (422): cancélala |
+| PUT | `/transfers/{transfer}/complete` | Recibir: mueve el stock (admin o gerente de la tienda ORIGEN o DESTINO, desde 2026-10-24; antes solo destino). Una solicitud con paquetes tampoco se recibe (422): cancélala |
 | PUT | `/transfers/{transfer}/cancel` | Cancelar |
 
 ### Clientes (`CustomerController`)

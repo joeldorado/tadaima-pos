@@ -116,7 +116,9 @@ export function TransfersPage() {
   const canCompleteTransfer = (transfer?: Transfer) => {
     if (!transfer) return false;
     if (isAdminUser) return true;
-    return isManagerUser && user?.store_id && transfer.to_warehouse?.store_id === user.store_id;
+    // Ruben 2026-10-24: también el gerente de la tienda ORIGEN.
+    return isManagerUser && !!user?.store_id
+      && (transfer.to_warehouse?.store_id === user.store_id || transfer.from_warehouse?.store_id === user.store_id);
   };
   /** Pendiente que llega a MI tienda → me toca recibirla. */
   const isIncomingForMe = (transfer: Transfer) =>
