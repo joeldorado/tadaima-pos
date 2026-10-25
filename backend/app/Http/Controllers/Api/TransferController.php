@@ -179,22 +179,17 @@ class TransferController extends Controller
      * Ejecuta el traslado: mueve inventario de bodega origen a destino.
      * Falla si algún producto no tiene stock suficiente en origen.
      *
-     * Quién recibe (Joel 2026-09-30): el gerente de la tienda DESTINO, cuando
-     * la mercancía llega físicamente — antes solo el origen/admin podía y la
-     * tienda que recibía veía la solicitud sin ningún botón. Admin conserva
-     * el override.
+     * Quién puede completar (2026-10-24, Ruben): admin siempre; el gerente de la
+     * tienda ORIGEN o DESTINO (antes solo destino). Un gerente de una tercera
+     * tienda sigue en 403 (aislamiento por tienda).
      */
     public function complete(Transfer $transfer): JsonResponse
     {
         $user = request()->user();
 
         if (! $this->isAdminUser($user)) {
-            $isManager = $this->isManagerUser($user);
-            $transfer->loadMissing('toWarehouse');
-            $isDestinationStore = $user?->store_id && ((int) ($transfer->toWarehouse?->store_id ?? 0) === (int) $user->store_id);
-
-            if (! $isManager || ! $isDestinationStore) {
-                return $this->error('Solo el gerente de la tienda que recibe (o un admin) puede recibir este traslado.', 403);
+            if (! $this->isManagerUser($user) || ! $this->canAccessTransfer($transfer, $user)) {
+                return $this->error('Solo admin o el gerente de la tienda origen o destino pueden completar este traslado.', 403);
             }
         }
 
