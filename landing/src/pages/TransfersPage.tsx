@@ -175,13 +175,22 @@ export function TransfersPage() {
     }
   }, [transfersQuery.error, warehousesQuery.error]);
 
-  // Auto-pick first two warehouses once they load (if not already set)
+  // Auto-pick piso warehouses once they load (if not already set):
+  // origen = piso de la tienda propia del gerente; destino = piso de otra tienda.
   useEffect(() => {
     if (warehouses.length === 0) return;
-    setFromWhId(prev => prev || String(warehouses[0]!.id));
-    if (warehouses.length >= 2) {
-      setToWhId(prev => prev || String(warehouses[1]!.id));
-    }
+    const myStorePiso = warehouses.find(
+      w => w.type === 'store' && w.store?.id === user?.store_id
+    );
+    const firstPiso = warehouses.find(w => w.type === 'store');
+    const defaultFrom = myStorePiso ?? firstPiso;
+    if (defaultFrom) setFromWhId(prev => prev || String(defaultFrom.id));
+
+    const fromStoreId = defaultFrom?.store?.id;
+    const otherPiso = warehouses.find(
+      w => w.type === 'store' && w.store?.id !== fromStoreId
+    );
+    if (otherPiso) setToWhId(prev => prev || String(otherPiso.id));
   }, [warehouses]);
 
   // ─── Product search (debounced) ────────────────────────────────────────────
@@ -203,20 +212,30 @@ export function TransfersPage() {
     }, 300);
   };
 
-  // Cada bodega/exhibición con stock del producto es un origen distinto (modelo
-  // de 2 stocks por tienda). Etiqueta "Tienda · Bodega/Exhibición" para poder
-  // distinguir bodegas dentro de la misma tienda y entre tiendas.
+  // Origen a nivel-TIENDA: una entrada por tienda, stock combinado piso+bodega.
+  // El id es el warehouse piso (type='store') de la tienda para que el backend
+  // reciba siempre el almacén de exhibición como origen del traslado.
   const availableOriginWarehouses = useMemo(() => {
-    return selectedProductInventory
-      .filter(row => row.quantity > 0 && row.warehouse)
-      .map(row => ({
-        id: row.warehouse_id,
-        store_id: row.warehouse?.store?.id ?? null,
-        name: row.warehouse?.store?.name
-          ? `${row.warehouse.store.name} · ${warehouseTypeLabel(row.warehouse.type)}`
-          : (row.warehouse?.name ?? "Bodega"),
-        quantity: row.quantity,
-      }));
+    const storeMap = new Map<number, { id: string; store_id: number; name: string; quantity: number }>();
+    selectedProductInventory
+      .filter(row => row.warehouse?.store)
+      .forEach(row => {
+        const storeId = row.warehouse!.store!.id;
+        const existing = storeMap.get(storeId);
+        if (!existing) {
+          storeMap.set(storeId, {
+            id: String(row.warehouse_id),
+            store_id: storeId,
+            name: row.warehouse!.store!.name,
+            quantity: 0,
+          });
+        }
+        const entry = storeMap.get(storeId)!;
+        if (row.quantity > 0) entry.quantity += row.quantity;
+        // Preferir piso (type='store') como warehouse_id representativo
+        if (row.warehouse!.type === 'store') entry.id = String(row.warehouse_id);
+      });
+    return Array.from(storeMap.values()).filter(s => s.quantity > 0);
   }, [selectedProductInventory]);
 
   const selectedProductFromAvailable = useMemo(
@@ -256,12 +275,32 @@ export function TransfersPage() {
       const inventoryRows = await getInventory({ product_id: prod.id });
       setSelectedProductInventory(inventoryRows);
 
-      const originOptions = inventoryRows
-        .filter(row => row.quantity > 0)
-        .map(row => String(row.warehouse_id));
+      // Mapa storeId → id del piso (type='store'), fallback bodega
+      const storePisoMap = new Map<number, string>();
+      inventoryRows
+        .filter(row => row.warehouse?.store && row.quantity > 0)
+        .forEach(row => {
+          const storeId = row.warehouse!.store!.id;
+          const existing = storePisoMap.get(storeId);
+          if (!existing || row.warehouse!.type === 'store') {
+            storePisoMap.set(storeId, String(row.warehouse_id));
+          }
+        });
 
-      if (!originOptions.includes(fromWhId)) {
-        setFromWhId(originOptions[0] ?? "");
+      // ¿El origen actual (tienda) aún tiene stock para este producto?
+      const currentStoreId = warehouses.find(w => String(w.id) === fromWhId)?.store?.id;
+      const sameStorePisoId = currentStoreId ? storePisoMap.get(currentStoreId) : undefined;
+      const sameStoreHasStock = currentStoreId
+        ? inventoryRows.some(r => r.warehouse?.store?.id === currentStoreId && r.quantity > 0)
+        : false;
+
+      if (sameStoreHasStock && sameStorePisoId) {
+        // Misma tienda tiene stock — mantener tienda, apuntar al piso
+        if (fromWhId !== sameStorePisoId) setFromWhId(sameStorePisoId);
+      } else {
+        // Tienda actual sin stock → cambiar a la primera tienda con stock
+        const firstPiso = storePisoMap.values().next().value as string | undefined;
+        setFromWhId(firstPiso ?? "");
       }
 
       if (toWhId && (toWhId === fromWhId || !warehouses.some(w => String(w.id) === toWhId))) {
@@ -273,10 +312,9 @@ export function TransfersPage() {
     } finally {
       setSelectedProductInventoryLoading(false);
     }
-
   };
 
-  const loadItemStock = async (productId: number, originId: string, destinationId: string) => {
+  const loadItemStock = async (productId: number, _originId: string, destinationId: string) => {
     setItemStock(prev => ({
       ...prev,
       [productId]: {
@@ -286,17 +324,16 @@ export function TransfersPage() {
       },
     }));
 
+    // fromAvailable = stock combinado piso+bodega de la tienda origen (scoped al gerente)
     const [fromRows, toRows] = await Promise.all([
-      originId
-        ? getInventory({ product_id: productId, warehouse_id: Number(originId) })
-        : Promise.resolve([]),
+      getInventory({ product_id: productId }),
       destinationId
         ? getInventory({ product_id: productId, warehouse_id: Number(destinationId) })
         : Promise.resolve([]),
     ]);
 
     const snapshot = {
-      fromAvailable: fromRows[0]?.quantity ?? 0,
+      fromAvailable: fromRows.reduce((sum, r) => sum + r.quantity, 0),
       toAvailable: toRows[0]?.quantity ?? 0,
       loading: false,
     };
@@ -548,21 +585,26 @@ export function TransfersPage() {
   /** Pendientes que llegan a mi tienda — contador en la pestaña Pendientes. */
   const incomingCount = transfers.filter(isIncomingForMe).length;
 
-  // Destino = cualquier bodega/exhibición distinta del origen exacto. Mantiene
-  // el modelo a nivel-bodega para elegir Bodega vs Exhibición específica como
-  // destino (alineado con el backend, que transfiere por warehouse_id).
+  // Tienda origen del fromWhId actual (para excluirla de destinos)
+  const fromStoreId = useMemo(
+    () => warehouses.find(w => String(w.id) === fromWhId)?.store?.id ?? null,
+    [warehouses, fromWhId],
+  );
+
+  // Destino = piso (type='store') de cada OTRA tienda. Siempre piso para que
+  // los productos lleguen al almacén de exhibición del destino.
   const destinationWarehouses = useMemo(() => {
     return warehouses
-      .filter(w => String(w.id) !== fromWhId)
+      .filter(w => w.type === 'store' && w.store?.id && w.store.id !== fromStoreId)
       .map(w => ({
         id: w.id,
-        store_id: w.store?.id ?? null,
-        name: w.store?.name
-          ? `${w.store.name} · ${warehouseTypeLabel(w.type)}`
-          : w.name,
-        quantity: selectedProductInventory.find(row => row.warehouse_id === w.id)?.quantity ?? 0,
+        store_id: w.store!.id,
+        name: w.store!.name,
+        quantity: selectedProductInventory
+          .filter(row => row.warehouse?.store?.id === w.store!.id)
+          .reduce((sum, row) => sum + row.quantity, 0),
       }));
-  }, [warehouses, fromWhId, selectedProductInventory]);
+  }, [warehouses, fromStoreId, selectedProductInventory]);
 
   useEffect(() => {
     if (fromWhId && toWhId === fromWhId) {
