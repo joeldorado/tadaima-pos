@@ -81,39 +81,74 @@ class TransferService
                 );
             }
 
-            $transfer->load('items.product');
+            $transfer->load('items.product', 'fromWarehouse.store.warehouses');
             // Una solicitud vieja (o de otro cliente) con paquetes tampoco se recibe.
             $this->assertNoBundles($transfer->items->pluck('product_id')->all(), received: true);
             $ref = "TRASLADO-{$transfer->id}";
 
-            foreach ($transfer->items as $item) {
-                // ── Lock inventario origen ────────────────────────────────────
-                $from = Inventory::lockForUpdate()
-                    ->where('product_id',   $item->product_id)
-                    ->where('warehouse_id', $transfer->from_warehouse_id)
-                    ->first();
+            // Piso (type='store') y bodega de la tienda origen, para descontar
+            // piso primero y luego bodega cuando no alcanza en uno solo.
+            $originStore = $transfer->fromWarehouse?->store;
+            $pisoWh   = $originStore?->warehouses->firstWhere('type', 'store');
+            $bodegaWh = $originStore?->warehouses->firstWhere('type', 'bodega');
 
-                $available = $from?->quantity ?? 0;
-                if ($available < $item->quantity) {
+            foreach ($transfer->items as $item) {
+                // ── Lock inventario piso y bodega origen ──────────────────────
+                $pisoInv = $pisoWh
+                    ? Inventory::lockForUpdate()
+                        ->where('product_id', $item->product_id)
+                        ->where('warehouse_id', $pisoWh->id)
+                        ->first()
+                    : null;
+                $bodegaInv = $bodegaWh
+                    ? Inventory::lockForUpdate()
+                        ->where('product_id', $item->product_id)
+                        ->where('warehouse_id', $bodegaWh->id)
+                        ->first()
+                    : null;
+
+                $pisoStock   = $pisoInv?->quantity   ?? 0;
+                $bodegaStock = $bodegaInv?->quantity ?? 0;
+                $totalAvailable = $pisoStock + $bodegaStock;
+
+                if ($totalAvailable < $item->quantity) {
                     $name = $item->product?->name ?? "ID:{$item->product_id}";
                     throw new \DomainException(
-                        "Stock insuficiente para '{$name}' en bodega origen. " .
-                        "Disponible: {$available}, requerido: {$item->quantity}."
+                        "Stock insuficiente para '{$name}'. " .
+                        "Disponible: {$totalAvailable} (piso: {$pisoStock}, bodega: {$bodegaStock}), " .
+                        "requerido: {$item->quantity}."
                     );
                 }
 
-                // ── Descontar origen ──────────────────────────────────────────
-                $from->decrement('quantity', $item->quantity);
+                // ── Descontar piso primero, luego bodega ──────────────────────
+                $fromPiso   = min($pisoStock, $item->quantity);
+                $fromBodega = $item->quantity - $fromPiso;
 
-                InventoryMovement::create([
-                    'product_id'   => $item->product_id,
-                    'warehouse_id' => $transfer->from_warehouse_id,
-                    'type'         => 'transferencia',
-                    'quantity'     => -$item->quantity, // salida
-                    'reference'    => $ref,
-                    'notes'        => "Salida por traslado #{$transfer->id}",
-                    'user_id'      => $userId,
-                ]);
+                if ($fromPiso > 0 && $pisoInv && $pisoWh) {
+                    $pisoInv->decrement('quantity', $fromPiso);
+                    InventoryMovement::create([
+                        'product_id'   => $item->product_id,
+                        'warehouse_id' => $pisoWh->id,
+                        'type'         => 'transferencia',
+                        'quantity'     => -$fromPiso,
+                        'reference'    => $ref,
+                        'notes'        => "Salida por traslado #{$transfer->id}",
+                        'user_id'      => $userId,
+                    ]);
+                }
+
+                if ($fromBodega > 0 && $bodegaInv && $bodegaWh) {
+                    $bodegaInv->decrement('quantity', $fromBodega);
+                    InventoryMovement::create([
+                        'product_id'   => $item->product_id,
+                        'warehouse_id' => $bodegaWh->id,
+                        'type'         => 'transferencia',
+                        'quantity'     => -$fromBodega,
+                        'reference'    => $ref,
+                        'notes'        => "Salida por traslado #{$transfer->id} (bodega)",
+                        'user_id'      => $userId,
+                    ]);
+                }
 
                 // ── Incrementar destino ───────────────────────────────────────
                 $to = Inventory::lockForUpdate()->firstOrCreate(
