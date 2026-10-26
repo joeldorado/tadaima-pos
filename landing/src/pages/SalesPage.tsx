@@ -304,7 +304,8 @@ function printTicket(sale: SaleDetail) {
 
   ${paymentBlock}
   <div class="divider"></div>
-  <div class="footer">¡Gracias por tu compra!</div>
+  <div style="text-align:center;font-size:8px;color:#000;margin-top:6px">Toda venta es final<br>No hay cambios ni devoluciones</div>
+  <div class="footer" style="font-size:11px">¡Gracias por tu compra!</div>
   </body></html>`;
   // Decisor único (2026-07-30): QZ silencioso si la máquina lo configuró; si
   // no, la ventana clásica (antes esto hacía window.open + print directo).
