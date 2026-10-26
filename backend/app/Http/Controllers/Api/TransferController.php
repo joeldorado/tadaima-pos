@@ -30,33 +30,43 @@ class TransferController extends Controller
         return $user !== null && $user->hasRole(['gerente', 'manager']);
     }
 
-    /** Aplica el scope por tienda al query de transferencias para usuarios no-admin. */
+    /** Aplica el scope al query de transferencias para usuarios no-admin. */
     private function scopeToUserStore($query, ?User $user): void
     {
         if ($this->isAdminUser($user)) {
             return;
         }
+        $userId  = $user?->id;
         $storeId = $user?->store_id;
-        if (! $storeId) {
-            // Usuario no-admin sin tienda asignada → no ve nada.
+        if (! $userId) {
             $query->whereRaw('1=0');
             return;
         }
-        // Una transferencia es "de mi tienda" si la bodega origen O destino
-        // pertenece al store_id del usuario.
-        $query->where(function ($q) use ($storeId) {
-            $q->whereHas('fromWarehouse', fn ($w) => $w->where('store_id', $storeId))
-              ->orWhereHas('toWarehouse',   fn ($w) => $w->where('store_id', $storeId));
+        // Ve el traslado si: su tienda es origen/destino, O él lo creó.
+        $query->where(function ($q) use ($storeId, $userId) {
+            $q->where('user_id', $userId);
+            if ($storeId) {
+                $q->orWhereHas('fromWarehouse', fn ($w) => $w->where('store_id', $storeId))
+                  ->orWhereHas('toWarehouse',   fn ($w) => $w->where('store_id', $storeId));
+            }
         });
     }
 
-    /** True si el usuario (no-admin) tiene visibilidad sobre la transferencia indicada. */
+    /** True si el usuario puede ver/actuar sobre la transferencia indicada. */
     private function canAccessTransfer(Transfer $transfer, ?User $user): bool
     {
         if ($this->isAdminUser($user)) {
             return true;
         }
-        $storeId = $user?->store_id;
+        if (! $user) {
+            return false;
+        }
+        // El gerente que la creó siempre tiene acceso.
+        if ((int) $transfer->user_id === (int) $user->id) {
+            return true;
+        }
+        // También el gerente cuya tienda es origen o destino.
+        $storeId = $user->store_id;
         if (! $storeId) {
             return false;
         }
@@ -119,16 +129,6 @@ class TransferController extends Controller
             if (! $this->isManagerUser($user)) {
                 return $this->error('Solo admin o gerente pueden crear traslados.', 403);
             }
-            $storeId = $user?->store_id;
-            $fromWarehouse = Warehouse::find($request->input('from_warehouse_id'));
-            $toWarehouse   = Warehouse::find($request->input('to_warehouse_id'));
-            $touchesOwnStore = $storeId && (
-                (int) ($fromWarehouse?->store_id ?? 0) === (int) $storeId
-                || (int) ($toWarehouse?->store_id ?? 0) === (int) $storeId
-            );
-            if (! $touchesOwnStore) {
-                return $this->error('El traslado debe tener tu tienda como origen o destino.', 403);
-            }
         }
 
         try {
@@ -179,9 +179,8 @@ class TransferController extends Controller
      * Ejecuta el traslado: mueve inventario de bodega origen a destino.
      * Falla si algún producto no tiene stock suficiente en origen.
      *
-     * Quién puede completar (2026-10-24, Ruben): admin siempre; el gerente de la
-     * tienda ORIGEN o DESTINO (antes solo destino). Un gerente de una tercera
-     * tienda sigue en 403 (aislamiento por tienda).
+     * Quién puede completar (2026-10-26): admin siempre; el gerente que creó el
+     * traslado; o el gerente de la tienda ORIGEN o DESTINO.
      */
     public function complete(Transfer $transfer): JsonResponse
     {
