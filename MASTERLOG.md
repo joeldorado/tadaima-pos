@@ -4,6 +4,17 @@
 
 ---
 
+### Sesión 2026-10-25 (b) — Ticket: "Toda venta es final" (Ruben, PR #67) — rev tadaima-00098-wid
+
+**Pedido Joel:** bajar los cambios de Ruben, validar, deployar y PR.
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00096-roh`. Sin migraciones, solo frontend.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00096-roh=100 --project tadaimapos --region us-east1`
+
+- `f85b1cd` (Ruben): leyenda "Toda venta es final / No hay cambios ni devoluciones" en el ticket de venta nueva (`SellPage.tsx`).
+- `7cbfb17`: la misma leyenda en la reimpresión (`SalesPage.tsx`). El corte no la lleva (no es venta).
+- Validación: vitest 764/764, `vite build` OK, bundle con la leyenda; candidate `/`, `/login`, `/tadaimaus/` = 200, API 401 sin token. Promovida al 100%.
+
 ### Sesión 2026-10-25 — Traslados: también los completa el gerente de la tienda origen (Ruben, PR #65) — rev tadaima-00096-roh
 
 **Pedido Joel:** bajar los cambios de backend de Ruben (`develop`) y deployarlos.
