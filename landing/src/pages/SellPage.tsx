@@ -3508,7 +3508,7 @@ export function SellPage() {
     ${preSaleSection}${regularSection}${grandTotal}
     <div class="divider"></div>
     <table style="font-size:10px">${paymentRows}</table>
-    <div class="divider"></div><div class="footer">¡Gracias por tu compra!</div></body></html>`;
+    <div class="divider"></div><div style="text-align:center;font-size:8px;color:#000;margin-top:6px">Toda venta es final<br>No hay cambios ni devoluciones</div><div class="footer" style="font-size:11px">¡Gracias por tu compra!</div></body></html>`;
 
     // Salida por el decisor único (2026-07-30): QZ Tray silencioso si esta
     // máquina lo configuró, si no la ventana clásica de siempre (mecanismo
