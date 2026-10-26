@@ -107,8 +107,9 @@ class TransferService
                         ->first()
                     : null;
 
-                $pisoStock   = $pisoInv?->quantity   ?? 0;
-                $bodegaStock = $bodegaInv?->quantity ?? 0;
+                // Un renglón negativo cuenta como 0 (si no, fromPiso < 0 descuadra).
+                $pisoStock   = max(0, $pisoInv?->quantity   ?? 0);
+                $bodegaStock = max(0, $bodegaInv?->quantity ?? 0);
                 $totalAvailable = $pisoStock + $bodegaStock;
 
                 if ($totalAvailable < $item->quantity) {
