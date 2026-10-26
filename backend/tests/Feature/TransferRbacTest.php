@@ -107,14 +107,19 @@ class TransferRbacTest extends TestCase
             ->assertCreated();
     }
 
-    public function test_gerente_no_puede_crear_traslado_entre_tiendas_ajenas(): void
+    public function test_gerente_puede_crear_traslado_entre_tiendas_ajenas(): void
     {
+        // Decisión 2026-10-26: gerentes pueden solicitar traslados entre
+        // cualquier par de tiendas, no solo las que tocan la suya.
         $storeC = Store::create(['company_id' => $this->company->id, 'name' => 'Tienda C', 'active' => true]);
         $whC = Warehouse::create(['company_id' => $this->company->id, 'store_id' => $storeC->id, 'name' => 'Bodega C', 'type' => 'store', 'active' => true]);
+        DB::table('inventory')->insert([
+            ['product_id' => $this->product->id, 'warehouse_id' => $whC->id, 'quantity' => 5],
+        ]);
 
         $this->actingAs($this->managerA)
             ->postJson('/api/v1/transfers', $this->transferPayload($this->whB->id, $whC->id))
-            ->assertForbidden();
+            ->assertCreated();
     }
 
     public function test_cajero_no_puede_crear_traslados(): void

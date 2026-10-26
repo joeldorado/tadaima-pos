@@ -119,16 +119,6 @@ class TransferController extends Controller
             if (! $this->isManagerUser($user)) {
                 return $this->error('Solo admin o gerente pueden crear traslados.', 403);
             }
-            $storeId = $user?->store_id;
-            $fromWarehouse = Warehouse::find($request->input('from_warehouse_id'));
-            $toWarehouse   = Warehouse::find($request->input('to_warehouse_id'));
-            $touchesOwnStore = $storeId && (
-                (int) ($fromWarehouse?->store_id ?? 0) === (int) $storeId
-                || (int) ($toWarehouse?->store_id ?? 0) === (int) $storeId
-            );
-            if (! $touchesOwnStore) {
-                return $this->error('El traslado debe tener tu tienda como origen o destino.', 403);
-            }
         }
 
         try {
