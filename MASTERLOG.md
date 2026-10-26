@@ -4,6 +4,18 @@
 
 ---
 
+### Sesión 2026-10-26 — Traslados: origen = tienda, piso primero y luego bodega (Ruben, PR #69) — rev tadaima-00100-tis
+
+**Pedido Joel:** bajar el cambio de Ruben (backend que usa también la app móvil) y deployar.
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00098-wid`. Sin migraciones.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00098-wid=100 --project tadaimapos --region us-east1`
+
+- `d649b4f` (Ruben): `TransferService::complete` descuenta del piso (Exhibición) de la tienda origen y lo que falte de Bodega, un movimiento por almacén; el error de stock trae desglose piso/bodega. `TransfersPage` agrupa el origen por tienda y el destino siempre es el piso.
+- Fix nuestro: un renglón negativo cuenta como 0 (si no, `fromPiso` negativo descuadraba). Test nuevo `TransferPisoBodegaTest` (4 casos).
+- Prod antes del deploy: 0 traslados pendientes con origen Bodega (los 2 pendientes salen de piso).
+- Validación: SQLite 861 ok, Postgres (traslados) ok, vitest 764 ok; candidate `/`, `/tadaimaus/` = 200, API 401/422 sin token. Promovida al 100%.
+
 ### Sesión 2026-10-25 (b) — Ticket: "Toda venta es final" (Ruben, PR #67) — rev tadaima-00098-wid
 
 **Pedido Joel:** bajar los cambios de Ruben, validar, deployar y PR.
