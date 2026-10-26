@@ -4,6 +4,18 @@
 
 ---
 
+### Sesión 2026-10-26 (b) — Traslados entre tiendas ajenas (Ruben, PR #71) — rev tadaima-00102-qoy
+
+**Pedido Joel:** bajar el nuevo cambio de Ruben y deployar.
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00100-tis`. Sin migraciones, solo backend.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00100-tis=100 --project tadaimapos --region us-east1`
+
+- `7909cc6` (Ruben): un gerente puede solicitar traslados entre cualquier par de tiendas, aunque la suya no sea origen ni destino (el cajero sigue en 403).
+- `6231b1b` (Ruben): el gerente que CREÓ el traslado lo ve en su lista y lo completa aunque sea entre tiendas ajenas. Un gerente ajeno que no lo creó sigue en 403.
+- `backend/AGENTS.md` actualizado con la regla nueva.
+- Validación: SQLite 861 ok, Postgres (traslados) 23 ok; candidate `/`, `/tadaimaus/` = 200, API 401 sin token. Promovida al 100%.
+
 ### Sesión 2026-10-26 — Traslados: origen = tienda, piso primero y luego bodega (Ruben, PR #69) — rev tadaima-00100-tis
 
 **Pedido Joel:** bajar el cambio de Ruben (backend que usa también la app móvil) y deployar.
