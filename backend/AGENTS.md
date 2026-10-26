@@ -357,7 +357,7 @@ permitido); `/products` no crea ni re-tipa paquetes; `PurgeNoStockProductsComman
 |---|---|---|
 | GET | `/transfers` · POST `/transfers` | Listar / solicitar. **Paquetes → 422** (no se trasladan; ver "Paquetes", 2026-10-08) |
 | GET | `/transfers/{transfer}` · GET `/transfers/{transfer}/items` | Detalle / items |
-| PUT | `/transfers/{transfer}/complete` | Recibir: mueve el stock (admin o gerente de la tienda ORIGEN o DESTINO, desde 2026-10-24; antes solo destino). Una solicitud con paquetes tampoco se recibe (422): cancélala |
+| PUT | `/transfers/{transfer}/complete` | Recibir: mueve el stock, piso primero y luego bodega de la tienda origen (2026-10-26). Lo completa admin, el gerente que CREÓ el traslado o el gerente de la tienda ORIGEN o DESTINO (2026-10-26). Un gerente puede solicitar traslados entre dos tiendas ajenas (2026-10-26, decisión Joel); el cajero no crea ni completa. Una solicitud con paquetes tampoco se recibe (422): cancélala |
 | PUT | `/transfers/{transfer}/cancel` | Cancelar |
 
 ### Clientes (`CustomerController`)
