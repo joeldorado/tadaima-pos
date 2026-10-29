@@ -4,6 +4,19 @@
 
 ---
 
+### Sesión 2026-10-29 — Ventas: todas las páginas + buscador por snapshot (PR #73) — rev tadaima-00104-riz
+
+**Pedido Joel:** la cajera de Centro reportó que en Ventas "no encuentra algunas ventas ni por nombre ni por código de barras" (caso: DBS premium card collection, SKU 810059789340). Ruben quería ver cuánto se vendió, cuánto entró y cuándo.
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00102-qoy`. Sin migraciones, solo frontend.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00102-qoy=100 --project tadaimapos --region us-east1`
+
+- **Diagnóstico (prod, solo lectura):** las ventas y el stock del producto cuadran exacto (16 entradas; 10 sueltas vendidas, 1 en paquete, 3 en paquetes en stock, 2 en Macro). No faltaba nada.
+- **Causa:** `SalesPage` pedía UNA página de `GET /sales` (tope 100, orden `sold_at` desc) y el buscador de Lista de Ventas / Por Producto filtraba en el cliente solo esas 100. Centro hace ~49 ventas/día: cualquier rango de más de ~2 días cortaba sin aviso (también los totales del Reporte del Día de esa pantalla). Reportes, Historial y corte ya usaban `fetchAllSales`.
+- `af53abf`: `useSalesQuery` → `fetchAllSales` (misma forma de respuesta; `optimisticSale.ts` sigue igual). Nuevo `lib/salesSearch.ts`: el buscador compara nombre/SKU actuales Y el snapshot de la línea (`product_name`/`product_sku`), sin acentos, mayúsculas ni espacios sobrantes (`normalizeSearchText`). Tests `salesSearch.test.ts`.
+- Validación: vitest 773 ✓ (8 nuevos), type-check sin errores nuevos (452 preexistentes), `vite build` OK; local con 232 ventas en el mes pidió `page=1,2,3` y encontró el ticket del inicio del mes. Candidate `/`, `/login`, `/tadaimaus/` = 200, API 422 sin datos. Promovida al 100%; `tadaimamexico.com` ya sirve el bundle `index-H_gVWO7q.js`.
+- Mensaje a la tienda: no es caché ni hay que recargar; ya pueden buscar con rangos largos (incógnito o recarga forzada por la caché PWA).
+
 ### Sesión 2026-10-26 (b) — Traslados entre tiendas ajenas (Ruben, PR #71) — rev tadaima-00102-qoy
 
 **Pedido Joel:** bajar el nuevo cambio de Ruben y deployar.
