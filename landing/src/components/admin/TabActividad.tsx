@@ -31,8 +31,9 @@ const DEFAULT_RANGE_DAYS = 0;
  * Los filtros APLICADOS viven en la URL (`/admin?tab=actividad&p=3349&u=14…`,
  * para compartir el enlace). La barra edita un BORRADOR y solo consulta al
  * servidor con el botón «Filtrar» (Joel 2026-10-29: cada clic en un chip
- * disparaba una consulta pesada). Los atajos de navegación (clic en un
- * producto o persona, paginación) sí aplican de inmediato.
+ * disparaba una consulta pesada). Lo que es un solo clic con intención clara
+ * (elegir producto, usuario o tienda, clic en un nombre de la tabla,
+ * paginación) aplica de inmediato, llevándose el borrador que haya.
  */
 export function TabActividad() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -127,6 +128,7 @@ export function TabActividad() {
       <ActivityFilterBar
         state={draft}
         onChange={editDraft}
+        onCommit={(patch) => commit({ ...draft, ...patch })}
         onApply={applyDraft}
         isDirty={isDirty}
         isFetching={feedQuery.isFetching}

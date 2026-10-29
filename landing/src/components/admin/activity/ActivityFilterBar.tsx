@@ -13,7 +13,10 @@ import { inputStyle, labelClass } from "./activityUi";
 interface Props {
   /** Borrador: lo que el admin va armando. Se consulta al servidor con «Filtrar». */
   state: ActivityFilterState;
+  /** Edita el borrador (rango, chips de tipo, búsqueda, ruido): se consulta con «Filtrar». */
   onChange: (patch: Partial<ActivityFilterState>) => void;
+  /** Aplica al momento (producto, usuario, tienda): un clic con intención clara. */
+  onCommit: (patch: Partial<ActivityFilterState>) => void;
   onApply: () => void;
   /** El borrador difiere de lo aplicado: el botón Filtrar se enciende. */
   isDirty: boolean;
@@ -46,7 +49,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
  * ruido, búsqueda. Edita un BORRADOR; nada viaja al servidor hasta «Filtrar»
  * (o Enter en Buscar).
  */
-export function ActivityFilterBar({ state, onChange, onApply, isDirty, isFetching, onReset, onExport, isExporting, noiseHidden }: Props) {
+export function ActivityFilterBar({ state, onChange, onCommit, onApply, isDirty, isFetching, onReset, onExport, isExporting, noiseHidden }: Props) {
   const storesQuery = useStoresQuery({ active: true });
   const usersQuery = useUsersQuery();
   const today = getTodayLocal();
@@ -94,15 +97,15 @@ export function ActivityFilterBar({ state, onChange, onApply, isDirty, isFetchin
           </div>
         </div>
 
-        <ActivityProductSearch selectedIds={state.productIds} onChange={(ids) => onChange({ productIds: ids, page: 1 })} />
+        <ActivityProductSearch selectedIds={state.productIds} onChange={(ids) => onCommit({ productIds: ids, page: 1 })} />
 
         <Field label="Usuario">
           <select
             value={state.userId ?? ""}
-            onChange={(e) => onChange({ userId: e.target.value ? Number(e.target.value) : null, page: 1 })}
+            onChange={(e) => onCommit({ userId: e.target.value ? Number(e.target.value) : null, page: 1 })}
             style={{ ...inputStyle, minWidth: 150 }}
           >
-            <option value="">Todos</option>
+            <option value="">Todos los usuarios</option>
             {(usersQuery.data ?? []).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
           </select>
         </Field>
@@ -110,10 +113,10 @@ export function ActivityFilterBar({ state, onChange, onApply, isDirty, isFetchin
         <Field label="Tienda">
           <select
             value={state.storeId ?? ""}
-            onChange={(e) => onChange({ storeId: e.target.value ? Number(e.target.value) : null, page: 1 })}
+            onChange={(e) => onCommit({ storeId: e.target.value ? Number(e.target.value) : null, page: 1 })}
             style={{ ...inputStyle, minWidth: 140 }}
           >
-            <option value="">Todas</option>
+            <option value="">Todas las tiendas</option>
             {(storesQuery.data ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </Field>
@@ -141,10 +144,10 @@ export function ActivityFilterBar({ state, onChange, onApply, isDirty, isFetchin
             style={isDirty
               ? { background: "#FF4422", border: "1px solid #FF4422", color: "#fff", boxShadow: "0 0 0 3px rgba(255,68,34,0.18)" }
               : { background: "var(--td-input-bg)", border: "1px solid var(--td-input-border)", color: "var(--td-text-md)" }}
-            title={isDirty ? "Hay filtros sin aplicar" : "Consultar con estos filtros"}
+            title={isDirty ? "Hay cambios en los filtros: da clic para consultar" : "Consultar con estos filtros"}
           >
             {isFetching ? <Loader2 size={12} className="inline mr-1 animate-spin" /> : <SlidersHorizontal size={12} className="inline mr-1" />}
-            {isDirty ? "Filtrar · sin aplicar" : "Filtrar"}
+            Filtrar
           </button>
           <button
             type="button"
