@@ -4,6 +4,21 @@
 
 ---
 
+### Sesión 2026-10-29 (b) — Módulo Actividad (solo admin) + huecos de registro (PR #75) — rev tadaima-00106-nug
+
+**Pedido Joel:** módulo nuevo solo para admin con los logs de actividad: que Pier pueda filtrar y buscar por producto o por cajero, porque no sabía quién modificaba el stock de un producto ni qué había pasado con uno o varios productos. Revisado primero en local con datos reales y pulido antes del deploy.
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00104-riz`. Migración aditiva de 2 índices (`inventory_movements(user_id, created_at)`, `system_logs(user_id, created_at)`): no estorba al revertir.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00104-riz=100 --project tadaimapos --region us-east1`
+
+- **Diagnóstico (prod, solo lectura):** `system_logs` 13.5k filas y `inventory_movements` 19.7k; los ajustes de stock sí quedaban con quién y cuándo, pero 3,696 de 5,476 `product.updated` traían `changes: []` (no se registraban precios), el stock de **tomos** no dejaba rastro y 6,625 de 9,755 ajustes desde el 1-oct eran "0 → 0" (el modal de editar producto manda todos los almacenes).
+- **Administración → Actividad** (`TabActividad`, `/admin?tab=actividad`): feed unificado movimientos + bitácora con filtros por rango (día de negocio, default Hoy), producto (buscador, varios), usuario, tienda, chips de tipo y texto; resumen (quién más movió, productos más tocados: top 5 fijo, clic = filtra); ficha del producto con stock actual por tienda; historial de la persona; detalle legible ("10 → 8 (−2) · Tadaima CENTRO", "Precio Normal: $980 → $1,100"); export CSV. Decisiones de Joel: la pestaña **entra vacía** (nada se consulta hasta dar «Filtrar»), chips apagados = todos los tipos, producto/usuario/tienda aplican al momento, velo «Filtrando…» / «Actualizando nuevos registros…». Filtros en la URL (`go=1` arma la consulta).
+- **Backend:** `GET /activity`, `/activity/summary`, `/activity/export` (`ActivityController`, `ActivityFeedService` UNION ALL portable PG/SQLite, `ActivityGroups`, `ActivityFilters`, `ActivityIndexRequest`, `DateRange::businessDayExpr`). `GET /logs` ahora solo admin. Ruido oculto por default (0→0, `qz_print_*`, log `inventory.adjusted` duplicado).
+- **Huecos tapados** (sesión paralela): `StockAdjustmentService::setAbsolute` unifica `PUT /inventory` y `PUT /manga-inventory` (tomos con rastro; sin cambio real no escribe nada); `ProductAuditSnapshot` mete precios, métodos de pago y categorías al diff de `product.updated`/`manga.updated`; precios por tienda dejan `product.store_price_updated/removed`.
+- `UserResource`: una copia de contraseña cifrada con otra APP_KEY ya no tumba el login (`password_plain` null). Entorno local `prodro` (`ReadOnlyDatabase`, solo `APP_ENV=prodro`) documentado en `AGENTS.md` §6.
+- Validación: SQLite 884 ✓ (`ActivityFeedTest` 15 + `ActivityLoggingTest` 8 nuevos), `ActivityFeedTest` en Postgres 17 local ✓, vitest 792 ✓ (19 nuevos), `vite build` OK, lint limpio en lo nuevo. Candidate: `/` 200, `/up` 200, `/api/v1/activity*` y `/logs` 401 sin token, migración `2026_10_29_000001` DONE en el arranque (índices confirmados en Supabase), bundle con la pestaña. Promovida al 100%; `tadaimamexico.com` sirve `index-DEFo1T_n.js`.
+- Follow-up: `inventory_movements.product_id/user_id` son `cascadeOnDelete` (borrar producto/usuario borra su historial; queda el log con snapshot) → pasar a `nullOnDelete` + columnas snapshot.
+
 ### Sesión 2026-10-29 — Ventas: todas las páginas + buscador por snapshot (PR #73) — rev tadaima-00104-riz
 
 **Pedido Joel:** la cajera de Centro reportó que en Ventas "no encuentra algunas ventas ni por nombre ni por código de barras" (caso: DBS premium card collection, SKU 810059789340). Ruben quería ver cuánto se vendió, cuánto entró y cuándo.
