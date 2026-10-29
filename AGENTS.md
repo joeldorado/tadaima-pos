@@ -8,7 +8,7 @@
 > Detalle adicional: [`CLAUDE.md`](CLAUDE.md) (comandos y arquitectura del frontend) y
 > [`backend/AGENTS.md`](backend/AGENTS.md) (API, ADRs y referencia de endpoints).
 >
-> Última revisión: 2026-10-14.
+> Última revisión: 2026-10-29.
 
 ---
 
@@ -242,6 +242,26 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   el folio desde Caja). El flag `BLOCK_WHEN_MONEY` del servicio cambia esa regla. El modal nuevo
   ignora el "No mostrar de nuevo" viejo (`td_confirm_skip_catalog_cancel`).
 
+### Actividad y auditoría (2026-10-29)
+- **Administración → Actividad** (solo admin, `/admin?tab=actividad`): feed unificado de
+  `inventory_movements` + `system_logs` — quién hizo qué, con qué producto y en qué tienda.
+  Endpoints `GET /activity`, `/activity/summary`, `/activity/export` (CSV, tope 20k);
+  `ActivityFeedService` (UNION ALL paginado en servidor) + catálogo action→grupo/título en
+  `backend/app/Support/ActivityGroups.php` (espejo: `landing/src/lib/activityFormat.ts`).
+  **Una action nueva de `system_logs` se agrega ahí** (si no, cae en «Sistema» con su nombre crudo).
+  `GET /logs` también quedó solo admin (`POST /logs` sigue abierto: telemetría QZ).
+- Ruido oculto por default en el feed (`include_noise=0`): ajustes con `quantity=0`, `qz_print_*` y
+  el log `inventory.adjusted` (duplica al movimiento `ajuste`; el antes/después se lee de `notes`).
+  Sin producto/usuario el rango se limita a 92 días (default 30).
+- **Ajuste absoluto de stock = `StockAdjustmentService::setAbsolute`** (`PUT /inventory/{p}/{w}` y
+  `PUT /manga-inventory/{p}/{w}`): deja movimiento `ajuste` + log `inventory.adjusted`, y **sin cambio
+  real no escribe nada** (antes el modal de editar producto dejaba miles de «0 → 0»; los tomos no
+  dejaban rastro). El diff de `product.updated` / `manga.updated` incluye precios
+  (`prices.price_N`), métodos de pago (`payment.*`) y categorías (`ProductAuditSnapshot`); sin
+  cambio real no hay log. Precios por tienda: `product.store_price_updated/removed`.
+- Follow-up pendiente: `inventory_movements.product_id/user_id` son `cascadeOnDelete` → borrar un
+  producto o usuario borra su historial (solo queda el log de borrado con `meta.snapshot`).
+
 ### Permisos
 - Roles: admin, gerente, cajero (`User::ADMIN_ROLES` incluye variantes de dueño).
 - **Aislamiento por tienda en el backend.** Todo endpoint que reciba `store_id`,
@@ -315,6 +335,17 @@ cd landing && npm run test                           # vitest
 
 ⚠️ Nunca apuntes una suite de tests a Supabase ni a ninguna base real: `RefreshDatabase`
 hace `migrate:fresh` y la vacía.
+
+**Ver datos reales en local sin tocar prod (2026-10-29).** `backend/.env.prodro` (gitignored; copia
+de `.env.sqlitelocal` con `DB_CONNECTION=pgsql` y las credenciales `POS_PG_*` de tu `.env`) +
+`APP_ENV=prodro`: `bootstrap/app.php` registra `ReadOnlyDatabase` (cada request corre con
+`default_transaction_read_only = on`, salvo el login) y no toca `last_seen_at`. Cualquier escritura
+truena en vez de llegar a prod. Como el :8000 suele estar ocupado y la CSP solo deja `'self'` o
+`127.0.0.1:8000`, el backend va en :8002 y el front en :5179 con `landing/vite.prodro.config.ts`
+(gitignored, proxy `/api` → 8002) y `VITE_API_URL=http://localhost:5179`; ambos están en
+`.claude/launch.json` (`backend-prodro`, `landing-prodro`). Login con tu cuenta de prod (el admin ve
+`password_plain` en null porque la APP_KEY local no descifra la copia). Cada consulta tarda ~0.3 s
+de red: lo lento ahí no es el código.
 
 **Deploy (Cloud Run, sin Docker local).** Siempre desde la **raíz** del repo y con
 `--project` explícito (en la máquina de Joel hay cuentas de otros clientes):

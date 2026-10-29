@@ -445,7 +445,10 @@ permitido); `/products` no crea ni re-tipa paquetes; `PurgeNoStockProductsComman
 |---|---|---|
 | GET | `/settings` · PUT `/settings` | Mapa clave→valor / actualización batch |
 | GET/PUT | `/settings/{key}` | Una clave (ej. `points_multiplier`) |
-| GET/POST | `/logs` | Auditoría de mutaciones (entity_type + entity_id + meta JSON) |
+| GET/POST | `/logs` | Auditoría de mutaciones (entity_type + entity_id + meta JSON). GET solo admin (2026-10-29); POST abierto (telemetría QZ) |
+| GET | `/activity` | **Solo admin (2026-10-29).** Feed unificado `inventory_movements` + `system_logs`, paginado en servidor: `?from&to` (día negocio; máx 92 días salvo producto/usuario/dates), `?dates=a,b`, `?product_ids[]`/`product_id`, `?user_id`, `?store_id` (solo movimientos), `?group=stock,venta…`, `?action` (`mov.<tipo>` o action de log), `?search`, `?include_noise=1`, `?per_page` (≤200). Evento: `{id "mov:1"|"log:2", at, user, group, action, title, product{deleted}, store, warehouse, qty_delta, stock_before/after, reference, meta}`. `ActivityFeedService` + `App\Support\ActivityGroups` |
+| GET | `/activity/summary` | Mismos filtros: `totals`, `by_group`, `by_action`, `by_user`, `by_day`, `top_products`, `noise_excluded` |
+| GET | `/activity/export` | Mismos filtros → CSV UTF-8 (BOM), tope 20,000 filas |
 
 ---
 

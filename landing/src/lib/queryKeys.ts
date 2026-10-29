@@ -1,4 +1,11 @@
 export const queryKeys = {
+  // Actividad del sistema (solo admin, 2026-10-29): feed + resumen con los
+  // mismos filtros. Sin polling: carga al entrar y con «Actualizar».
+  activity: {
+    all: ['activity'] as const,
+    list: (params?: Record<string, unknown>) => ['activity', 'list', params ?? {}] as const,
+    summary: (params?: Record<string, unknown>) => ['activity', 'summary', params ?? {}] as const,
+  },
   products: {
     all: ['products'] as const,
     list: (params?: Record<string, unknown>) => ['products', 'list', params ?? {}] as const,
