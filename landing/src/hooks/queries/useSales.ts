@@ -1,10 +1,17 @@
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
-import { getSales } from '@tadaima/api'
+import type { getSales } from '@tadaima/api'
+import { fetchAllSales } from '@/lib/fetchAllPages'
 import { queryKeys } from '@/lib/queryKeys'
 
 /**
  * Lista de ventas con filtros opcionales.
  *
+ * - TODAS las páginas (2026-10-29): GET /sales topa en 100 por página y la
+ *   pantalla Ventas pedía solo la primera, así que con un rango de más de un
+ *   par de días la tienda veía únicamente las 100 ventas más recientes y el
+ *   buscador "no encontraba" las anteriores (ni por nombre ni por código).
+ *   `fetchAllSales` devuelve la misma forma de una página, así los parches
+ *   optimistas de `lib/optimisticSale.ts` siguen funcionando igual.
  * - staleTime 5min: las mutaciones (checkout/cancelación en Caja) invalidan
  *   queryKeys.sales.all explícitamente, así que no necesitamos un staleTime
  *   corto para "ver lo nuevo" — solo generaba refetches al navegar de regreso.
@@ -12,12 +19,8 @@ import { queryKeys } from '@/lib/queryKeys'
  *   la queryKey cambia; sin esto la tabla blankeaba a skeleton en cada cambio.
  *   Ahora se queda la lista anterior mientras llega la nueva (mismo patrón
  *   que Preventas #126 y Historial #116).
- * - refetchOnWindowFocus default true: admin que tiene reportes abierto
- *   en otra tab y vuelve, ve ventas nuevas hechas por cajeros en otras tiendas
- *
- * Sin polling activo — el caso "ver venta en vivo" lo cubre la propia Caja
- * que invalida queryKeys.sales.all tras cada cobro (mismo browser) y el
- * focus refetch para máquinas distintas.
+ * - Sin refetch al volver a la ventana (`refetchOnWindowFocus: false` global,
+ *   Joel 2026-10-02): los datos se recargan al entrar y con «Actualizar».
  */
 export function useSalesQuery(
   params?: Parameters<typeof getSales>[0],
@@ -25,7 +28,7 @@ export function useSalesQuery(
 ) {
   return useQuery({
     queryKey: queryKeys.sales.list(params as Record<string, unknown> | undefined),
-    queryFn: () => getSales(params),
+    queryFn: () => fetchAllSales(params ?? {}),
     enabled: options?.enabled ?? true,
     staleTime: 5 * 60_000,
     placeholderData: keepPreviousData,
