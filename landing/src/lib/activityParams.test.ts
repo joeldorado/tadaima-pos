@@ -22,11 +22,12 @@ const state: ActivityFilterState = {
   includeNoise: false,
   page: 1,
   perPage: 50,
+  armed: true,
 };
 
 describe("effectiveGroups", () => {
-  it("vacío = todos menos Impresión", () => {
-    expect(effectiveGroups([])).toEqual(["stock", "producto", "venta", "caja", "paquete", "preventa", "insumo", "sistema"]);
+  it("vacío = sin filtro de tipo", () => {
+    expect(effectiveGroups([])).toBeNull();
   });
   it("todos marcados = sin filtro", () => {
     expect(effectiveGroups(["stock", "producto", "venta", "caja", "paquete", "preventa", "insumo", "sistema", "impresion"])).toBeNull();
@@ -37,12 +38,8 @@ describe("effectiveGroups", () => {
 });
 
 describe("buildActivityParams", () => {
-  it("default: rango + grupos sin impresión + página", () => {
-    expect(buildActivityParams(state)).toEqual({
-      from: "2026-09-29", to: "2026-10-29",
-      group: "stock,producto,venta,caja,paquete,preventa,insumo,sistema",
-      page: 1, per_page: 50,
-    });
+  it("default: rango + página, sin filtro de tipo", () => {
+    expect(buildActivityParams(state)).toEqual({ from: "2026-09-29", to: "2026-10-29", page: 1, per_page: 50 });
   });
   it("manda producto, usuario, tienda, búsqueda y ruido; ordena los ids", () => {
     expect(buildActivityParams({ ...state, productIds: [30, 10], userId: 4, storeId: 2, search: "  ygo ", includeNoise: true, page: 3 }))
@@ -62,7 +59,11 @@ describe("URL ⇄ estado", () => {
     expect(sp.get("tab")).toBe("actividad");
     expect(sp.get("to")).toBeNull();
     expect(sp.get("from")).toBe("2026-10-01");
+    expect(sp.get("go")).toBe("1");
     expect(filtersFromSearchParams(sp, defaults)).toEqual(s);
+  });
+  it("sin «go» en la URL la pestaña entra desarmada (no consulta)", () => {
+    expect(filtersFromSearchParams(new URLSearchParams("tab=actividad"), defaults).armed).toBe(false);
   });
   it("ignora basura en la URL", () => {
     const sp = new URLSearchParams("p=abc,0,7&g=stock,nope&pp=33&page=-4");
@@ -78,6 +79,7 @@ describe("filtersEqual", () => {
   it("ignora la página y el tamaño, compara lo demás", () => {
     expect(filtersEqual(state, { ...state, page: 3 })).toBe(true);
     expect(filtersEqual(state, { ...state, search: "x" })).toBe(false);
-    expect(filtersEqual(state, { ...state, groups: ["stock", "producto", "venta", "caja", "paquete", "preventa", "insumo", "sistema"] })).toBe(true);
+    expect(filtersEqual(state, { ...state, groups: ["stock", "producto", "venta", "caja", "paquete", "preventa", "insumo", "sistema", "impresion"] })).toBe(true);
+    expect(filtersEqual(state, { ...state, groups: ["stock"] })).toBe(false);
   });
 });

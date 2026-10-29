@@ -1,5 +1,5 @@
 import type { ActivityGroup, GetActivityParams } from "@tadaima/api";
-import { DEFAULT_GROUPS, GROUP_ORDER } from "@/lib/activityFormat";
+import { GROUP_ORDER } from "@/lib/activityFormat";
 
 /**
  * Estado de los filtros de la pestaña Actividad. Vive en la URL
@@ -12,22 +12,27 @@ export interface ActivityFilterState {
   productIds: number[];
   userId: number | null;
   storeId: number | null;
-  /** Grupos activos. Vacío = todos menos Impresión (default). */
+  /** Grupos (chips) activos. Vacío = sin filtro de tipo (todos). */
   groups: ActivityGroup[];
   search: string;
   includeNoise: boolean;
   page: number;
   perPage: number;
+  /**
+   * El admin ya dio «Filtrar» (o llegó por un enlace con filtros): solo entonces
+   * se consulta al servidor. Al entrar la pestaña está vacía (Joel 2026-10-29:
+   * no tiene sentido cargar datos que no va a ver).
+   */
+  armed: boolean;
 }
 
 export const ACTIVITY_DEFAULT_PER_PAGE = 50;
 export const ACTIVITY_PAGE_SIZES = [25, 50, 100, 200] as const;
 
-/** Los grupos que mandamos al servidor: null = sin filtro (todos). */
+/** Los grupos que mandamos al servidor: null = sin filtro de tipo (todos). */
 export function effectiveGroups(groups: readonly ActivityGroup[]): ActivityGroup[] | null {
   const valid = GROUP_ORDER.filter((g) => groups.includes(g));
-  if (valid.length === 0) return [...DEFAULT_GROUPS];
-  if (valid.length === GROUP_ORDER.length) return null;
+  if (valid.length === 0 || valid.length === GROUP_ORDER.length) return null;
   return valid;
 }
 
@@ -88,6 +93,7 @@ export function filtersFromSearchParams(sp: URLSearchParams, defaults: { from: s
     includeNoise: sp.get("noise") === "1",
     page: Math.max(1, Number(sp.get("page")) || 1),
     perPage: (ACTIVITY_PAGE_SIZES as readonly number[]).includes(perPage) ? perPage : ACTIVITY_DEFAULT_PER_PAGE,
+    armed: sp.get("go") === "1",
   };
 }
 
@@ -105,5 +111,6 @@ export function filtersToSearchParams(state: ActivityFilterState, defaults: { fr
   set("noise", state.includeNoise ? "1" : null);
   set("page", state.page > 1 ? String(state.page) : null);
   set("pp", state.perPage !== ACTIVITY_DEFAULT_PER_PAGE ? String(state.perPage) : null);
+  set("go", state.armed ? "1" : null);
   return sp;
 }

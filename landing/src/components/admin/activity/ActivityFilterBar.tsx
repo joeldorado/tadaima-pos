@@ -6,7 +6,7 @@ import { useStoresQuery } from "@/hooks/queries/useStores";
 import { useUsersQuery } from "@/hooks/queries/useUsers";
 import { daysAgoLocal, getTodayLocal } from "@/lib/date";
 import { GROUP_ORDER, GROUP_STYLES } from "@/lib/activityFormat";
-import { effectiveGroups, type ActivityFilterState } from "@/lib/activityParams";
+import type { ActivityFilterState } from "@/lib/activityParams";
 import { ActivityProductSearch } from "./ActivityProductSearch";
 import { inputStyle, labelClass } from "./activityUi";
 
@@ -53,15 +53,13 @@ export function ActivityFilterBar({ state, onChange, onCommit, onApply, isDirty,
   const storesQuery = useStoresQuery({ active: true });
   const usersQuery = useUsersQuery();
   const today = getTodayLocal();
-  const activeGroups = effectiveGroups(state.groups) ?? [...GROUP_ORDER];
+  // Chips apagados = sin filtro de tipo (todos). Al entrar están todos apagados.
+  const activeGroups = state.groups;
 
   const toggleGroup = (g: ActivityGroup) => {
     const current = new Set(activeGroups);
     if (current.has(g)) current.delete(g); else current.add(g);
-    // Si quedó igual al default, guardamos vacío (URL corta).
-    const next = GROUP_ORDER.filter((x) => current.has(x));
-    const isDefault = next.length === GROUP_ORDER.length - 1 && !next.includes("impresion");
-    onChange({ groups: isDefault ? [] : next, page: 1 });
+    onChange({ groups: GROUP_ORDER.filter((x) => current.has(x)), page: 1 });
   };
 
   const quickActive = (days: number) => state.from === daysAgoLocal(days) && state.to === today;
@@ -172,6 +170,9 @@ export function ActivityFilterBar({ state, onChange, onCommit, onApply, isDirty,
 
       <div className="flex flex-wrap items-center gap-1.5">
         <span className={labelClass} style={{ color: "var(--td-text-lo)", marginRight: 4 }}>Tipo</span>
+        {activeGroups.length === 0 && (
+          <span className="text-[10px] font-bold mr-1" style={{ color: "var(--td-text-lo)" }}>todos ·</span>
+        )}
         {GROUP_ORDER.map((g) => {
           const on = activeGroups.includes(g);
           const s = GROUP_STYLES[g];

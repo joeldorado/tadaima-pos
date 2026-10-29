@@ -28,12 +28,10 @@ export const GROUP_STYLES: Record<ActivityGroup, GroupStyle> = {
   impresion: { label: "Impresión",  color: "#94A3B8", rgb: "148,163,184" },
 };
 
-/** Orden de los chips del filtro. Impresión va al final y apagada por default. */
+/** Orden de los chips del filtro (todos apagados al entrar = todos los tipos). */
 export const GROUP_ORDER: readonly ActivityGroup[] = [
   "stock", "producto", "venta", "caja", "paquete", "preventa", "insumo", "sistema", "impresion",
 ];
-
-export const DEFAULT_GROUPS: readonly ActivityGroup[] = GROUP_ORDER.filter((g) => g !== "impresion");
 
 export function groupStyle(group: string): GroupStyle {
   return GROUP_STYLES[group as ActivityGroup] ?? GROUP_STYLES.sistema;

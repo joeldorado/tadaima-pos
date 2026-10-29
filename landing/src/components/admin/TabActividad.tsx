@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { History } from "lucide-react";
+import { History, SlidersHorizontal } from "lucide-react";
 import { toast } from "sonner";
 import { exportActivityCsv } from "@tadaima/api";
 import { RefreshDataButton } from "@/components/layout/RefreshDataButton";
@@ -55,7 +55,7 @@ export function TabActividad() {
   }, [applied]);
 
   const applyDraft = useCallback(() => {
-    commit({ ...draft, page: 1 });
+    commit({ ...draft, page: 1, armed: true });
   }, [commit, draft]);
 
   const reset = useCallback(() => {
@@ -67,8 +67,9 @@ export function TabActividad() {
     }, { replace: true });
   }, [setSearchParams]);
 
-  const feedQuery = useActivityQuery(applied);
-  const summaryQuery = useActivitySummaryQuery(applied);
+  // Nada se consulta hasta que el admin arma su búsqueda y da «Filtrar».
+  const feedQuery = useActivityQuery(applied, { enabled: applied.armed });
+  const summaryQuery = useActivitySummaryQuery(applied, { enabled: applied.armed });
   const usersQuery = useUsersQuery();
 
   const events = feedQuery.data?.data ?? [];
@@ -90,8 +91,8 @@ export function TabActividad() {
   const focusProductId = applied.productIds.length === 1 ? applied.productIds[0]! : null;
   const focusUserName = applied.userId ? (usersQuery.data ?? []).find((u) => u.id === applied.userId)?.name ?? null : null;
 
-  const pickProduct = (id: number) => commit({ productIds: [id], page: 1 });
-  const pickUser = (id: number) => commit({ userId: id, page: 1 });
+  const pickProduct = (id: number) => commit({ productIds: [id], page: 1, armed: true });
+  const pickUser = (id: number) => commit({ userId: id, page: 1, armed: true });
 
   const onExport = async () => {
     setIsExporting(true);
@@ -117,18 +118,20 @@ export function TabActividad() {
         <div className="min-w-0">
           <h2 style={{ color: "var(--td-text-hi)", fontSize: 16, fontWeight: 900, margin: 0 }}>Actividad del sistema</h2>
           <p style={{ color: "var(--td-text-lo)", fontSize: 10, margin: 0, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em" }}>
-            Quién hizo qué · {pagination ? `${pagination.total.toLocaleString("es-MX")} eventos` : "cargando…"} · {applied.from} → {applied.to}
+            Quién hizo qué{applied.armed ? ` · ${pagination ? `${pagination.total.toLocaleString("es-MX")} eventos` : "cargando…"} · ${applied.from} → ${applied.to}` : " · elige qué buscar y da clic en Filtrar"}
           </p>
         </div>
-        <div className="ml-auto">
-          <RefreshDataButton variant="inline" updatedAt={feedQuery.dataUpdatedAt || undefined} />
-        </div>
+        {applied.armed && (
+          <div className="ml-auto">
+            <RefreshDataButton variant="inline" updatedAt={feedQuery.dataUpdatedAt || undefined} />
+          </div>
+        )}
       </div>
 
       <ActivityFilterBar
         state={draft}
         onChange={editDraft}
-        onCommit={(patch) => commit({ ...draft, ...patch })}
+        onCommit={(patch) => commit({ ...draft, ...patch, armed: true })}
         onApply={applyDraft}
         isDirty={isDirty}
         isFetching={feedQuery.isFetching}
@@ -138,6 +141,20 @@ export function TabActividad() {
         noiseHidden={noiseHidden}
       />
 
+      {!applied.armed && (
+        <div className="rounded-2xl flex flex-col items-center justify-center gap-3 py-16 px-6 text-center" style={{ background: "var(--td-card-bg)", border: "1px dashed var(--td-card-border)" }}>
+          <div className="w-12 h-12 rounded-2xl flex items-center justify-center" style={{ background: "rgba(255,68,34,0.12)", border: "1px solid rgba(255,68,34,0.30)" }}>
+            <SlidersHorizontal size={20} color="#FF6B4A" />
+          </div>
+          <p className="text-sm font-black" style={{ color: "var(--td-text-hi)" }}>Elige qué quieres ver</p>
+          <p className="text-[12px] max-w-md" style={{ color: "var(--td-text-md)" }}>
+            Busca un producto, elige a una persona o una tienda, marca los tipos que te interesan y da clic en <b>Filtrar</b>.
+            Sin tipos marcados se consultan todos. Al entrar no se carga nada para no esperar de más.
+          </p>
+        </div>
+      )}
+
+      {applied.armed && (<>
       <ActivityFocusHeader
         productId={focusProductId}
         userId={applied.userId}
@@ -169,6 +186,7 @@ export function TabActividad() {
         onPickProduct={pickProduct}
         onPickUser={pickUser}
       />
+      </>)}
     </div>
   );
 }

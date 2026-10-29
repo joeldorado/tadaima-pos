@@ -455,7 +455,7 @@
             "kind": "callout",
             "tone": "warn",
             "title": "Rango de fechas",
-            "text": "La pestaña abre con Hoy. Sin producto ni usuario el rango se limita a 92 días. Con un producto o una persona fijados puedes abrir el rango que quieras."
+            "text": "Al entrar no se carga nada: eliges qué buscar y das clic en Filtrar (el rango inicia en Hoy). Sin producto ni usuario el rango se limita a 92 días; con un producto o una persona fijados puedes abrir el rango que quieras."
           }
         ]
       },
@@ -516,7 +516,7 @@
           },
           {
             "kind": "prose",
-            "text": "Los chips de Tipo prenden y apagan grupos. Impresión (los avisos de QZ) viene apagado. Por default también se ocultan los ajustes sin cambio (0 → 0) que dejaba el modal de editar producto en versiones anteriores; la casilla «Mostrar sin cambio» los enseña."
+            "text": "Los chips de Tipo prenden y apagan grupos; entran todos apagados, que significa todos los tipos. Elegir producto, usuario o tienda consulta al momento; los chips, el rango y la búsqueda se aplican con Filtrar. Por default se ocultan los ajustes sin cambio (0 → 0) que dejaba el modal de editar producto en versiones anteriores y la telemetría de impresión; la casilla «Mostrar sin cambio» los enseña."
           },
           {
             "kind": "prose",
