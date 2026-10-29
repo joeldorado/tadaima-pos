@@ -32,6 +32,8 @@ import { discountPct } from "@/lib/promo";
 import { DISCOUNT_REASON_LABELS, SURCHARGE_REASON_LABELS } from "@/lib/discountReasons";
 import { finalPriceLine } from "@/lib/ticketLines";
 import { saleItemRevenue } from "@/lib/saleItemNet";
+import { normalizeSalesQuery, saleItemMatchesQuery, saleItemSearchTerms } from "@/lib/salesSearch";
+import { normalizeSearchText } from "@/lib/customerSearch";
 import { CancelTicketModal } from "@/components/cancel/CancelTicketModal";
 import { CorrectPaymentModal } from "@/components/sales/CorrectPaymentModal";
 import { useActiveSessionQuery } from "@/hooks/queries/useCashSession";
@@ -2276,8 +2278,9 @@ export function SalesPage() {
   );
   const cashiers = cashiersQuery.data ?? [];
 
-  // El backend clampea per_page a 100 (SalesController::index) — pedir 500
-  // solo engañaba: igual llegaban 100.
+  // El backend clampea per_page a 100 (SalesController::index). `useSalesQuery`
+  // recorre TODAS las páginas (2026-10-29): antes solo llegaban las 100 ventas
+  // más recientes del rango y el buscador no encontraba las anteriores.
   const salesParams: Record<string, unknown> = { per_page: 100 };
   if (effectiveStoreId) salesParams.store_id = effectiveStoreId;
   if (filterStartDate) salesParams.from = filterStartDate;
@@ -2881,8 +2884,9 @@ export function SalesPage() {
       sale: s,
     }));
     const merged = [...saleRows, ...preSaleMovementRows].sort((a, b) => b.ts - a.ts);
-    if (!searchSale.trim()) return merged;
-    const q = searchSale.toLowerCase();
+    // Sin acentos ni mayúsculas ni espacios sobrantes (lib/salesSearch.ts).
+    const q = normalizeSalesQuery(searchSale);
+    if (!q) return merged;
     // El ticket se pinta en pantalla como "#62" (línea ~608), así que el
     // usuario escribe el # de forma natural al buscar — sin este strip,
     // comparar "#62" contra el id crudo "62" nunca hacía match (QA Ruben
@@ -2893,23 +2897,21 @@ export function SalesPage() {
         const s = row.sale;
         return (
           (ticketQuery !== "" && String(s.id).includes(ticketQuery)) ||
-          (s.customer?.name || "").toLowerCase().includes(q) ||
-          getPaymentMethodName(s).toLowerCase().includes(q) ||
-          (s.items || []).some(i => {
-            const info = productMap[String(i.product_id)];
-            return (i.product?.name || i.product_name || info?.name || "").toLowerCase().includes(q) ||
-                   (i.product?.sku  || i.product_sku  || info?.sku  || "").toLowerCase().includes(q);
-          })
+          normalizeSearchText(s.customer?.name || "").includes(q) ||
+          normalizeSearchText(getPaymentMethodName(s)).includes(q) ||
+          // Nombre y SKU actuales + los que tenía al venderse (snapshot): si
+          // el producto cambió de nombre/código, el ticket se sigue encontrando.
+          (s.items || []).some(i => saleItemMatchesQuery(i, q, productMap[String(i.product_id)]))
         );
       }
       const o = row.order;
-      const movLabel = row.movement === "liquidacion" ? "liquidación" : row.movement === "cancelacion" ? "cancelación" : "anticipo";
+      const movLabel = row.movement === "liquidacion" ? "liquidacion" : row.movement === "cancelacion" ? "cancelacion" : "anticipo";
       return (
-        o.code.toLowerCase().includes(q) ||
-        (o.customer?.name || "").toLowerCase().includes(q) ||
-        getPreSaleMethodName(o).toLowerCase().includes(q) ||
+        normalizeSearchText(o.code).includes(q) ||
+        normalizeSearchText(o.customer?.name || "").includes(q) ||
+        normalizeSearchText(getPreSaleMethodName(o)).includes(q) ||
         movLabel.includes(q) ||
-        (o.items ?? []).some(it => (it.catalog?.product_name || "").toLowerCase().includes(q))
+        (o.items ?? []).some(it => normalizeSearchText(it.catalog?.product_name || "").includes(q))
       );
     });
   }, [sortedSales, preSaleMovementRows, searchSale, productMap]);
@@ -2955,6 +2957,8 @@ export function SalesPage() {
   // ── Agregado por producto ──────────────────────────────────────────────────
   interface ProductStat {
     product_id: string; name: string; sku: string; imagen: string;
+    /** Nombres/códigos normalizados con los que se buscó (actual + snapshot). */
+    searchTerms: string[];
     timesAppeared: number; totalUnits: number; totalRevenue: number;
     avgPrice: number;
   }
@@ -2970,9 +2974,14 @@ export function SalesPage() {
         const name = item.product?.name || (item.product_name ? `${item.product_name} (eliminado)` : info?.name || pid);
         const sku  = item.product?.sku  || item.product_sku || info?.sku  || "";
         const img  = item.product_image || item.product?.image || info?.imagen || "";
-        if (!map.has(pid)) map.set(pid, { product_id: pid, name, sku, imagen: img, timesAppeared: 0, totalUnits: 0, totalRevenue: 0, avgPrice: 0 });
+        if (!map.has(pid)) map.set(pid, { product_id: pid, name, sku, imagen: img, searchTerms: [], timesAppeared: 0, totalUnits: 0, totalRevenue: 0, avgPrice: 0 });
         const st = map.get(pid)!;
         if (!st.imagen && img) st.imagen = img;
+        // Todos los nombres/códigos con los que se vendió (actual + snapshot),
+        // para que el buscador encuentre el producto aunque haya cambiado.
+        for (const term of saleItemSearchTerms(item, info)) {
+          if (!st.searchTerms.includes(term)) st.searchTerms.push(term);
+        }
         if (!seen.has(pid)) { st.timesAppeared++; seen.add(pid); }
         st.totalUnits   += item.quantity;
         st.totalRevenue += saleItemRevenue(sale, item);
@@ -2983,9 +2992,9 @@ export function SalesPage() {
   }, [filteredSales, productMap]);
 
   const displayedProducts = useMemo(() => {
-    if (!searchProduct.trim()) return productStats;
-    const q = searchProduct.toLowerCase();
-    return productStats.filter(p => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q));
+    const q = normalizeSalesQuery(searchProduct);
+    if (!q) return productStats;
+    return productStats.filter(p => p.searchTerms.some(term => term.includes(q)));
   }, [productStats, searchProduct]);
 
   const topRevenue = displayedProducts[0]?.totalRevenue || 1;
