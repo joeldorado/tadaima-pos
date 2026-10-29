@@ -14,6 +14,7 @@ use App\Models\ProductMangaDetail;
 use App\Models\SystemLog;
 use App\Services\ProductDeletionService;
 use App\Support\BundleCost;
+use App\Support\ProductAuditSnapshot;
 use App\Support\StockSql;
 use App\Support\TomoCost;
 use Illuminate\Http\JsonResponse;
@@ -281,6 +282,7 @@ class MangaController extends Controller
         // Snapshot ANTES de mutar para construir diff en el log.
         $before = $manga->only(['name', 'sku', 'barcode', 'cost', 'active']);
         $beforeDetail = $manga->mangaDetails?->only(['volume_number', 'editorial', 'genre']) ?? [];
+        $beforeExtra = ProductAuditSnapshot::take($manga);
 
         // Se resuelve ANTES de la transacción: compara contra el precio A actual.
         $cost = $this->resolveCostForUpdate($manga, $data);
@@ -360,6 +362,8 @@ class MangaController extends Controller
                 $changes["details.{$field}"] = ['old' => $oldValue, 'new' => $newValue];
             }
         }
+        // Precios por nivel, métodos de pago y categorías (2026-10-29).
+        $changes += ProductAuditSnapshot::diff($beforeExtra, ProductAuditSnapshot::take($manga));
         if (! empty($changes)) {
             SystemLog::write(
                 action: 'manga.updated',

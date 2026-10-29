@@ -16,6 +16,11 @@ class SystemLogController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
+        // Solo admin (2026-10-29): la bitácora expone qué hizo cada usuario.
+        if ($resp = $this->adminOnlyError()) {
+            return $resp;
+        }
+
         $query = SystemLog::with('user')
             ->when($request->filled('user_id'), fn ($q) => $q->where('user_id', $request->integer('user_id')))
             ->when($request->filled('action'),  fn ($q) => $q->where('action', $request->action))

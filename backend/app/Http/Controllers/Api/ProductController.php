@@ -15,6 +15,7 @@ use App\Models\Store;
 use App\Models\SystemLog;
 use App\Services\ProductDeletionService;
 use App\Support\BundleCost;
+use App\Support\ProductAuditSnapshot;
 use App\Support\StockSql;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -597,6 +598,7 @@ class ProductController extends Controller
 
         // Snapshot ANTES de mutar — para construir el diff en el log.
         $before = $product->only(['name', 'sku', 'barcode', 'description', 'category_id', 'supplier_id', 'cost', 'active', 'product_type']);
+        $beforeExtra = ProductAuditSnapshot::take($product);
 
         $bundlesCost = DB::transaction(function () use ($request, $product) {
             $payload = $request->only([
@@ -632,8 +634,9 @@ class ProductController extends Controller
         $product->load(['category', 'categories:product_categories.id,name', 'supplier', 'price', 'images', 'paymentMethod', 'mangaDetails'])
                 ->loadSum('inventory', 'quantity');
 
-        // Diff: solo campos que cambiaron, con {old, new}. No registra precios
-        // ni payment methods (eso podría hacerse aparte si se necesita).
+        // Diff: solo campos que cambiaron, con {old, new}. Desde 2026-10-29
+        // incluye precios (`prices.price_N`), métodos de pago (`payment.*`) y
+        // categorías (`categories`); sin cambio real no se escribe log.
         $after = $product->only(array_keys($before));
         $changes = [];
         foreach ($before as $field => $oldValue) {
@@ -642,7 +645,8 @@ class ProductController extends Controller
                 $changes[$field] = ['old' => $oldValue, 'new' => $newValue];
             }
         }
-        if (! empty($changes) || $request->has('prices') || $request->hasAny(['allow_cash', 'allow_card'])) {
+        $changes += ProductAuditSnapshot::diff($beforeExtra, ProductAuditSnapshot::take($product));
+        if (! empty($changes)) {
             SystemLog::write(
                 action: 'product.updated',
                 description: "Producto editado: {$product->name} (SKU: {$product->sku})",
@@ -1000,6 +1004,8 @@ class ProductController extends Controller
             'price_5' => ['nullable', 'numeric', 'min:0'],
         ]);
 
+        $oldPrices = $this->storePriceLevels($product, $store);
+
         DB::transaction(function () use ($data, $product, $store) {
             foreach ($data as $key => $value) {
                 $level = (int) str_replace('price_', '', $key);
@@ -1019,10 +1025,22 @@ class ProductController extends Controller
         });
 
         // Return updated store prices for this store
-        $prices = ProductStorePrice::where('product_id', $product->id)
-            ->where('store_id', $store->id)
-            ->get()
-            ->mapWithKeys(fn ($r) => ["price_{$r->price_level}" => $r->price]);
+        $prices = $this->storePriceLevels($product, $store);
+
+        if ($prices !== $oldPrices) {
+            SystemLog::write(
+                action: 'product.store_price_updated',
+                description: "Precio por tienda actualizado: {$product->name} en {$store->name}",
+                entityType: 'product',
+                entityId: $product->id,
+                meta: [
+                    'store_id'   => $store->id,
+                    'store_name' => $store->name,
+                    'old'        => $oldPrices,
+                    'new'        => $prices,
+                ],
+            );
+        }
 
         return $this->success([
             'store_id'   => $store->id,
@@ -1044,11 +1062,44 @@ class ProductController extends Controller
             return $resp;
         }
 
+        $oldPrices = $this->storePriceLevels($product, $store);
+
         ProductStorePrice::where('product_id', $product->id)
             ->where('store_id', $store->id)
             ->delete();
 
+        if ($oldPrices !== []) {
+            SystemLog::write(
+                action: 'product.store_price_removed',
+                description: "Precio por tienda eliminado: {$product->name} en {$store->name}",
+                entityType: 'product',
+                entityId: $product->id,
+                meta: [
+                    'store_id'   => $store->id,
+                    'store_name' => $store->name,
+                    'old'        => $oldPrices,
+                    'new'        => [],
+                ],
+            );
+        }
+
         return $this->success(null, 'Precios por tienda eliminados. Se usarán los precios base.');
+    }
+
+    /**
+     * Niveles de precio override de un producto en una tienda, como
+     * `['price_1' => 150.0, ...]` ordenados por nivel (para respuesta y log).
+     *
+     * @return array<string, float>
+     */
+    private function storePriceLevels(Product $product, Store $store): array
+    {
+        return ProductStorePrice::where('product_id', $product->id)
+            ->where('store_id', $store->id)
+            ->orderBy('price_level')
+            ->get()
+            ->mapWithKeys(fn ($r) => ["price_{$r->price_level}" => (float) $r->price])
+            ->all();
     }
 
     // ─── Helpers privados ─────────────────────────────────────────────────────

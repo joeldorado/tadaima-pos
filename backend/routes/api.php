@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\CashRegisterController;
 use App\Http\Controllers\Api\CatalogController;
 use App\Http\Controllers\Api\CompanyController;
 use App\Http\Controllers\Api\SystemLogController;
+use App\Http\Controllers\Api\ActivityController;
 use App\Http\Controllers\Api\SystemSettingController;
 use App\Http\Controllers\Api\CustomerController;
 use App\Http\Controllers\Api\MangaController;
@@ -393,6 +394,13 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     Route::prefix('logs')->group(function () {
         Route::get('/',  [SystemLogController::class, 'index']);
         Route::post('/', [SystemLogController::class, 'store']);
+    });
+
+    // ── Actividad (solo admin, 2026-10-29): feed unificado movimientos + logs ─
+    Route::prefix('activity')->group(function () {
+        Route::get('/',        [ActivityController::class, 'index']);
+        Route::get('summary',  [ActivityController::class, 'summary']);
+        Route::get('export',   [ActivityController::class, 'export']);
     });
 
     // ── Insumos (Fase 2) — catálogo + compras con efectivo de caja ────────────

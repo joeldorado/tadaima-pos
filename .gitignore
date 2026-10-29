@@ -63,3 +63,6 @@ backend/storage/app/gcs-key.json
 pos-app/
 backend/tadaimaposlite
 *.sql.gz
+
+# Config local de Vite con proxy al backend prodro (ver .claude/launch.json)
+landing/vite.prodro.config.ts

@@ -24,7 +24,16 @@ class UserResource extends JsonResource
             // null si el usuario no tiene copia (creado antes del cambio → resetear).
             'password_plain' => $this->when(
                 $request->user()?->isAdminRole() ?? false,
-                fn () => $this->password_enc,
+                function () {
+                    // Una copia cifrada con otra APP_KEY (rotación de llave,
+                    // entorno local leyendo prod) no debe tumbar el login:
+                    // mejor "sin copia" que un 500 por MAC inválido.
+                    try {
+                        return $this->password_enc;
+                    } catch (\Illuminate\Contracts\Encryption\DecryptException) {
+                        return null;
+                    }
+                },
             ),
 
             'company_id'    => $this->company_id,

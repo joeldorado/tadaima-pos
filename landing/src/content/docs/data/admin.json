@@ -388,5 +388,142 @@
         ]
       }
     ]
+  },
+  {
+    "slug": "actividad-sistema",
+    "title": "Actividad: quién hizo qué",
+    "category": "Difusión y administración",
+    "icon": "clipboard-list",
+    "summary": "Historial de todo lo que pasa en el sistema: quién movió el stock de un producto, quién lo editó, qué hizo cada cajero. Solo admin.",
+    "roles": [
+      "admin"
+    ],
+    "updatedAt": "2026-10-29",
+    "keywords": [
+      "actividad",
+      "logs",
+      "bitácora",
+      "historial",
+      "auditoría",
+      "quién movió el stock",
+      "quién editó",
+      "movimientos",
+      "cajero",
+      "ajuste",
+      "0 a 0",
+      "exportar csv"
+    ],
+    "sections": [
+      {
+        "id": "que-es",
+        "heading": "Qué es",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Administración → Actividad junta en una sola línea de tiempo los movimientos de stock (ajustes, ventas, entradas, traslados, devoluciones, armado de paquetes) y la bitácora del sistema (productos creados, editados o borrados, cancelaciones, cortes borrados, cambios de método de pago). Cada renglón dice cuándo, quién, qué, con qué producto y en qué tienda."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Solo administradores",
+            "text": "Gerentes y cajeros no ven esta pestaña ni pueden consultar la bitácora por el API."
+          }
+        ]
+      },
+      {
+        "id": "producto",
+        "heading": "¿Qué pasó con un producto?",
+        "blocks": [
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Busca el producto",
+                "detail": "En el campo Producto escribe nombre, SKU o código y elígelo. Queda como chip; puedes agregar varios."
+              },
+              {
+                "title": "Lee su ficha",
+                "detail": "Arriba aparece el stock actual por tienda y abajo todo su historial: cada ajuste dice el stock antes y después (10 → 8) y quién lo hizo."
+              },
+              {
+                "title": "Abre el renglón",
+                "detail": "Clic en una fila muestra los campos que cambiaron (antes / después) y los datos técnicos."
+              }
+            ]
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "Rango de fechas",
+            "text": "Al entrar no se carga nada: eliges qué buscar y das clic en Filtrar (el rango inicia en Hoy). Sin producto ni usuario el rango se limita a 92 días; con un producto o una persona fijados puedes abrir el rango que quieras."
+          }
+        ]
+      },
+      {
+        "id": "cajero",
+        "heading": "¿Qué hizo un cajero?",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Elige a la persona en el filtro Usuario o haz clic en su nombre en cualquier renglón. El encabezado resume cuántos eventos hizo por tipo (stock, producto, venta…) y la tabla queda solo con lo suyo."
+          }
+        ]
+      },
+      {
+        "id": "filtros",
+        "heading": "Filtros y ruido",
+        "blocks": [
+          {
+            "kind": "chips",
+            "chips": [
+              {
+                "label": "Stock",
+                "tone": "blue"
+              },
+              {
+                "label": "Producto",
+                "tone": "amber"
+              },
+              {
+                "label": "Venta",
+                "tone": "green"
+              },
+              {
+                "label": "Caja",
+                "tone": "amber"
+              },
+              {
+                "label": "Paquete",
+                "tone": "blue"
+              },
+              {
+                "label": "Preventa",
+                "tone": "blue"
+              },
+              {
+                "label": "Insumo",
+                "tone": "amber"
+              },
+              {
+                "label": "Sistema",
+                "tone": "green"
+              },
+              {
+                "label": "Impresión",
+                "tone": "green"
+              }
+            ]
+          },
+          {
+            "kind": "prose",
+            "text": "Los chips de Tipo prenden y apagan grupos; entran todos apagados, que significa todos los tipos. Elegir producto, usuario o tienda consulta al momento; los chips, el rango y la búsqueda se aplican con Filtrar. Por default se ocultan los ajustes sin cambio (0 → 0) que dejaba el modal de editar producto en versiones anteriores y la telemetría de impresión; la casilla «Mostrar sin cambio» los enseña."
+          },
+          {
+            "kind": "prose",
+            "text": "Los filtros viajan en la dirección de la página: copia la URL y mándala a otro admin para que vea exactamente lo mismo. Exportar CSV descarga lo filtrado (hasta 20,000 renglones) para abrirlo en Excel."
+          }
+        ]
+      }
+    ]
   }
 ]

@@ -9,6 +9,7 @@ use App\Http\Resources\MangaInventoryResource;
 use App\Models\Inventory;
 use App\Models\Product;
 use App\Models\Warehouse;
+use App\Services\StockAdjustmentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -72,12 +73,17 @@ class MangaInventoryController extends Controller
             return $this->error('El producto no es de tipo manga o no existe.', 404);
         }
 
-        $item = Inventory::updateOrCreate(
-            ['product_id' => $mangaId, 'warehouse_id' => $warehouseId],
-            ['quantity' => (float) $request->quantity],
+        // Misma rutina que PUT /inventory: movimiento `ajuste` + log
+        // `inventory.adjusted` cuando la cantidad cambia (2026-10-29: antes el
+        // stock de tomos no dejaba rastro).
+        $result = (new StockAdjustmentService())->setAbsolute(
+            productId: $mangaId,
+            warehouseId: $warehouseId,
+            newQty: (float) $request->quantity,
+            userId: (int) $request->user()->id,
         );
 
-        $item->load('warehouse');
+        $item = $result['inventory']->load('warehouse');
 
         return $this->success(new MangaInventoryResource($item));
     }

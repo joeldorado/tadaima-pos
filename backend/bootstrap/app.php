@@ -19,7 +19,13 @@ return Application::configure(basePath: dirname(__DIR__))
         // Toca users.last_seen_at en cada request /api/* autenticada (dedupe 30s).
         // Admin/gerente lo lee vía GET /users/online para saber quién está
         // conectado al POS aunque no haya abierto caja todavía.
-        $middleware->api(append: [\App\Http\Middleware\TouchLastSeen::class]);
+        if (($_ENV['APP_ENV'] ?? getenv('APP_ENV') ?: null) === 'prodro') {
+            // Entorno local LEYENDO prod (ver ReadOnlyDatabase): la sesión de BD
+            // queda en solo lectura y no se toca users.last_seen_at.
+            $middleware->api(prepend: [\App\Http\Middleware\ReadOnlyDatabase::class]);
+        } else {
+            $middleware->api(append: [\App\Http\Middleware\TouchLastSeen::class]);
+        }
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         // No autenticado → 401 JSON (evita redirigir a ruta "login" inexistente)

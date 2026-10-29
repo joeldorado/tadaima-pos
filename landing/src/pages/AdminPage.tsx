@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "@tadaima/auth";
 import { canAccessAdmin, isAdmin } from "@tadaima/permissions";
 import { TabPermisos } from "@/components/admin/TabPermisos";
 import { TabCancelaciones } from "@/components/admin/TabCancelaciones";
 import { TabTadaimaUS } from "@/components/admin/TabTadaimaUS";
+import { TabActividad } from "@/components/admin/TabActividad";
 import { UserAvatar } from "@/components/UserAvatar";
 import { AvatarPicker } from "@/components/AvatarPicker";
 import { useActiveStore } from "@/contexts/StoreContext";
@@ -15,7 +16,7 @@ import {
   X, Check, ChevronDown, Loader2, AlertTriangle,
   Eye, EyeOff, Lock, Globe, Phone,
   Mail, MapPin, ToggleLeft, ToggleRight,
-  UserCheck, Key, Clock, Trash2, Percent, Sparkles, Search,
+  UserCheck, Key, Clock, Trash2, Percent, Sparkles, Search, History,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -1782,7 +1783,7 @@ function TabPreciosTienda() {
 }
 
 // ─── Main AdminPage ────────────────────────────────────────────────────────────
-type TabId = "sucursales" | "bodegas" | "usuarios" | /* "roles" | */ "categorias" | "inventario" | /* "precios_tienda" | */ "terminales" | "permisos" | "cancelaciones" | "tadaimaus";
+type TabId = "sucursales" | "bodegas" | "usuarios" | /* "roles" | */ "categorias" | "inventario" | /* "precios_tienda" | */ "terminales" | "permisos" | "cancelaciones" | "actividad" | "tadaimaus";
 
 const TABS: { id: TabId; label: string; icon: React.ElementType; sub: string }[] = [
   { id: "sucursales",     label: "Sucursales",       icon: Store,      sub: "STORES" },
@@ -1795,11 +1796,22 @@ const TABS: { id: TabId; label: string; icon: React.ElementType; sub: string }[]
   { id: "terminales",     label: "Terminales",       icon: Smartphone, sub: "PAYMENT_TERMINALS" },
   { id: "permisos",       label: "Permisos",         icon: Shield,     sub: "PRICE_PERMISSIONS" },
   { id: "cancelaciones",  label: "Cancelaciones",    icon: Trash2,     sub: "SALE_CANCELLATIONS" },
+  { id: "actividad",      label: "Actividad",        icon: History,    sub: "QUIÉN HIZO QUÉ" },
   { id: "tadaimaus",      label: "TadaimaUS",        icon: Globe,      sub: "TIENDA US" },
 ];
 
 export function AdminPage() {
-  const [activeTab, setActiveTab] = useState<TabId>("sucursales");
+  // `?tab=actividad` abre esa pestaña directo (enlaces compartidos de Actividad).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabFromUrl = searchParams.get("tab");
+  const [activeTab, setActiveTabState] = useState<TabId>(
+    TABS.some(t => t.id === tabFromUrl) ? (tabFromUrl as TabId) : "sucursales",
+  );
+  const setActiveTab = (tab: TabId) => {
+    setActiveTabState(tab);
+    // Al cambiar de pestaña se limpian los filtros de la anterior (viven en la URL).
+    setSearchParams(tab === "sucursales" ? {} : { tab }, { replace: true });
+  };
   const { user } = useAuth();
   const navigate = useNavigate();
 
@@ -1835,6 +1847,7 @@ export function AdminPage() {
       case "terminales":     return <TabTerminales />;
       case "permisos":       return <TabPermisos />;
       case "cancelaciones":  return <TabCancelaciones />;
+      case "actividad":      return <TabActividad />;
       case "tadaimaus":      return <TabTadaimaUS />;
     }
   };

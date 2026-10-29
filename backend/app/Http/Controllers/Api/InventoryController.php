@@ -11,8 +11,8 @@ use App\Http\Resources\InventoryResource;
 use App\Models\Inventory;
 use App\Models\InventoryMovement;
 use App\Models\Product;
-use App\Models\SystemLog;
 use App\Models\Warehouse;
+use App\Services\StockAdjustmentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -216,9 +216,12 @@ class InventoryController extends Controller
      * PUT /inventory/{productId}/{warehouseId}
      *
      * Establece el stock absoluto de un producto en una bodega.
-     * Siempre genera un movimiento de tipo 'ajuste' para mantener trazabilidad.
+     * Si la cantidad cambia, genera un movimiento de tipo 'ajuste' y un log
+     * `inventory.adjusted` (`StockAdjustmentService`). Si la cantidad es la
+     * misma que ya había, NO deja rastro (2026-10-29): el modal de editar
+     * producto manda todos los almacenes y generaba miles de "0 → 0".
      *
-     * Body: { quantity: float, notes?: string, user_id: int }
+     * Body: { quantity: float, notes?: string }
      */
     public function update(UpdateInventoryRequest $request, int $productId, int $warehouseId): JsonResponse
     {
@@ -234,52 +237,15 @@ class InventoryController extends Controller
             return $resp;
         }
 
-        $newQty = (float) $request->quantity;
+        $result = (new StockAdjustmentService())->setAbsolute(
+            productId: $productId,
+            warehouseId: $warehouseId,
+            newQty: (float) $request->quantity,
+            userId: (int) $request->user()->id,
+            notes: $request->notes,
+        );
 
-        [$record, $oldQty, $delta] = DB::transaction(function () use ($request, $productId, $warehouseId, $newQty) {
-            // Obtener o crear el registro de inventario
-            $inventory = Inventory::firstOrCreate(
-                ['product_id' => $productId, 'warehouse_id' => $warehouseId],
-                ['quantity'   => 0]
-            );
-
-            $oldQty = (float) $inventory->quantity;
-            $delta  = $newQty - $oldQty;
-
-            // Registrar ajuste (incluso si delta = 0, para dejar evidencia del intento)
-            InventoryMovement::create([
-                'product_id'   => $productId,
-                'warehouse_id' => $warehouseId,
-                'type'         => 'ajuste',
-                'quantity'     => $delta,
-                'notes'        => $request->notes ?? "Ajuste manual: {$inventory->quantity} → {$newQty}",
-                'user_id'      => $request->user()->id,
-            ]);
-
-            $inventory->update(['quantity' => $newQty]);
-
-            return [$inventory->load(['product', 'warehouse']), $oldQty, $delta];
-        });
-
-        // Log de auditoría — solo si la cantidad cambió realmente. El movimiento
-        // queda igualmente en `inventory_movements` para trazabilidad operativa.
-        if (abs($delta) > 0.0001) {
-            $productName   = $record->product?->name   ?? "Producto #{$productId}";
-            $warehouseName = $record->warehouse?->name ?? "Bodega #{$warehouseId}";
-            SystemLog::write(
-                action: 'inventory.adjusted',
-                description: "Stock ajustado: {$productName} en {$warehouseName}: {$oldQty} → {$newQty}",
-                entityType: 'inventory',
-                entityId: $productId,
-                meta: [
-                    'product_id'   => $productId,
-                    'warehouse_id' => $warehouseId,
-                    'old'          => $oldQty,
-                    'new'          => $newQty,
-                    'delta'        => $delta,
-                ],
-            );
-        }
+        $record = $result['inventory']->load(['product', 'warehouse']);
 
         return $this->success(new InventoryResource($record), 'Stock actualizado');
     }

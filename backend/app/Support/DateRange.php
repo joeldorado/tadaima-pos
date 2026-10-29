@@ -7,6 +7,7 @@ namespace App\Support;
 use Carbon\Carbon;
 use Illuminate\Contracts\Database\Query\Builder as QueryBuilder;
 use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Convierte fechas YYYY-MM-DD del frontend (hora LOCAL del usuario, MX por
@@ -33,6 +34,25 @@ class DateRange
     public static function timezone(): string
     {
         return (string) config('app.business_timezone', 'America/Tijuana');
+    }
+
+    /**
+     * Expresión SQL que convierte una columna timestamp (UTC) al DÍA de
+     * negocio (fecha local), para agrupar por día en el motor. Driver-aware;
+     * la zona viene de config, nunca del usuario. Úsala con selectRaw/groupByRaw.
+     *
+     * SQLite (solo tests) no conoce zonas: aplica el offset actual de la zona
+     * (un cambio de horario a mitad de rango desplaza una hora; aceptable).
+     */
+    public static function businessDayExpr(string $column): string
+    {
+        $tz = self::timezone();
+
+        return match (DB::getDriverName()) {
+            'pgsql'  => "(({$column} AT TIME ZONE 'UTC') AT TIME ZONE '{$tz}')::date",
+            'mysql', 'mariadb' => "DATE(CONVERT_TZ({$column}, '+00:00', '{$tz}'))",
+            default  => "date({$column}, '".Carbon::now($tz)->utcOffset()." minutes')",
+        };
     }
 
     /** Convierte 'YYYY-MM-DD' (hora local) a Carbon UTC al inicio del día. */
