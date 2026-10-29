@@ -20,7 +20,8 @@ import { ActivityFocusHeader } from "./activity/ActivityFocusHeader";
 import { ActivitySummaryCards } from "./activity/ActivitySummaryCards";
 import { ActivityTable } from "./activity/ActivityTable";
 
-const DEFAULT_RANGE_DAYS = 29;
+/** La pestaña abre con HOY (Joel 2026-10-29): 30 días cargaban demasiado al entrar. */
+const DEFAULT_RANGE_DAYS = 0;
 
 /**
  * Administración → Actividad (solo admin, 2026-10-29).

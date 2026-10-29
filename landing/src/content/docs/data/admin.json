@@ -455,7 +455,7 @@
             "kind": "callout",
             "tone": "warn",
             "title": "Rango de fechas",
-            "text": "Sin producto ni usuario el rango se limita a 92 días (por default los últimos 30). Con un producto o una persona fijados puedes abrir el rango que quieras."
+            "text": "La pestaña abre con Hoy. Sin producto ni usuario el rango se limita a 92 días. Con un producto o una persona fijados puedes abrir el rango que quieras."
           }
         ]
       },

@@ -252,7 +252,8 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   `GET /logs` también quedó solo admin (`POST /logs` sigue abierto: telemetría QZ).
 - Ruido oculto por default en el feed (`include_noise=0`): ajustes con `quantity=0`, `qz_print_*` y
   el log `inventory.adjusted` (duplica al movimiento `ajuste`; el antes/después se lee de `notes`).
-  Sin producto/usuario el rango se limita a 92 días (default 30).
+  La pestaña abre con **Hoy** (30 días cargaban mucho al entrar); sin producto/usuario el rango se
+  limita a 92 días (el API sin fechas usa los últimos 30).
 - **Ajuste absoluto de stock = `StockAdjustmentService::setAbsolute`** (`PUT /inventory/{p}/{w}` y
   `PUT /manga-inventory/{p}/{w}`): deja movimiento `ajuste` + log `inventory.adjusted`, y **sin cambio
   real no escribe nada** (antes el modal de editar producto dejaba miles de «0 → 0»; los tomos no
