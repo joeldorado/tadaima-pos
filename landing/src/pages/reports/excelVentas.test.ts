@@ -334,6 +334,9 @@ describe("Excel de Ventas en pestañas", () => {
     const taBlock = find(res, "TARJETA");
     expect(preRow.row).toBeGreaterThan(efBlock.row);
     expect(preRow.row).toBeLessThan(taBlock.row);
+    // Orden del bloque (Ruben 2026-10-30): Efectivo → Preventas → Efectivo Manga
+    expect(preRow.row).toBeGreaterThan(find(res, "Efectivo:").row);
+    expect(preRow.row).toBeLessThan(find(res, "Efectivo Manga:").row);
     // Total efectivo (utilidad) ya incluye la utilidad de la preventa ($150)
     const totalEf = find(res, "Total efectivo");
     const egresos = find(res, "Egresos");
