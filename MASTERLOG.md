@@ -4,6 +4,18 @@
 
 ---
 
+### Sesión 2026-10-30 — Excel de Ventas: Preventas antes que Manga en el Resumen (Ruben, PR #77) — rev tadaima-00108-pih
+
+**Pedido Joel:** bajar y validar el cambio de Ruben para deployar.
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00106-nug`. Sin migraciones, solo frontend.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00106-nug=100 --project tadaimapos --region us-east1`
+
+- Commit de Ruben `78c2d66` («ordenamiento de exel», en `develop`) traído a `main` con cherry-pick: `develop` estaba 20 commits atrás de `main`, pero el archivo no había cambiado desde su base, así que entró sin conflicto.
+- `excelVentas.ts` → `drawResumen`: en cada método del Resumen el orden queda Regular → **Preventas** → Manga (antes Preventas iba al final). El subtotal suma las filas por referencia, así que los totales no cambian.
+- Test nuevo en `excelVentas.test.ts` que fija el orden (falla con el código anterior). Vitest 793 ✓, `vite build` OK.
+- Candidate: `/`, `/login`, `/tadaimaus/` 200, API 401 sin token. Promovida al 100%. El Excel lo revisa Joel en prod (incógnito por la caché PWA).
+
 ### Sesión 2026-10-29 (b) — Módulo Actividad (solo admin) + huecos de registro (PR #75) — rev tadaima-00106-nug
 
 **Pedido Joel:** módulo nuevo solo para admin con los logs de actividad: que Pier pueda filtrar y buscar por producto o por cajero, porque no sabía quién modificaba el stock de un producto ni qué había pasado con uno o varios productos. Revisado primero en local con datos reales y pulido antes del deploy.
