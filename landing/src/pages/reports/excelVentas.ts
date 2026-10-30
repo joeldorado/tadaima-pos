@@ -275,7 +275,20 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
     const regRow = r;
     r++;
 
-    // Fila manga (si existe) — referencia cross-tab a la pestaña del método
+    // Fila Preventas (si existe) — va ANTES que Manga
+    let presaleRow = -1;
+    if (t.presaleTotals) {
+      sh.set(r, 2, "Preventas:", label);
+      sh.setF(r, ventaCol, xref(t.name, t.presaleTotals.apartado.ref), t.presaleTotals.apartado.value, money);
+      if (canViewCost) {
+        if (t.presaleTotals.costoNeto) sh.setF(r, costoCol, xref(t.name, t.presaleTotals.costoNeto.ref), t.presaleTotals.costoNeto.value, money);
+        if (t.presaleTotals.utilidad)  sh.setF(r, utilCol,  xref(t.name, t.presaleTotals.utilidad.ref),  t.presaleTotals.utilidad.value,  green);
+      }
+      presaleRow = r;
+      r++;
+    }
+
+    // Fila manga (si existe) — va DESPUÉS que Preventas
     let mangaRow = -1;
     if (hasManga) {
       sh.set(r, 2, nameManga, label);
@@ -288,20 +301,6 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
         if (mUtil)  sh.setF(r, utilCol,  xref(t.name, mUtil.ref),  mUtil.value,  green);
       }
       mangaRow = r;
-      r++;
-    }
-
-    // Fila Preventas (si este método tiene abonos/liquidaciones en el rango) —
-    // referencia cross-tab a "TOTAL PREVENTAS" de la sub-tabla 3 de este método.
-    let presaleRow = -1;
-    if (t.presaleTotals) {
-      sh.set(r, 2, "Preventas:", label);
-      sh.setF(r, ventaCol, xref(t.name, t.presaleTotals.apartado.ref), t.presaleTotals.apartado.value, money);
-      if (canViewCost) {
-        if (t.presaleTotals.costoNeto) sh.setF(r, costoCol, xref(t.name, t.presaleTotals.costoNeto.ref), t.presaleTotals.costoNeto.value, money);
-        if (t.presaleTotals.utilidad)  sh.setF(r, utilCol,  xref(t.name, t.presaleTotals.utilidad.ref),  t.presaleTotals.utilidad.value,  green);
-      }
-      presaleRow = r;
       r++;
     }
 
