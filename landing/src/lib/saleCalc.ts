@@ -107,6 +107,13 @@ export interface CalcLine {
    * dañados) no hay re-precio. Espejo de `base_price` en SaleCalculator.php.
    */
   basePrice?: number;
+  /**
+   * Regalo (2026-10-31): la línea sale en $0 — fuera de las promos (no se come
+   * la pieza gratis de un 2x1 ni se re-precia), sin descuento ni aumento.
+   * `unitPrice` sigue siendo el de catálogo (es lo que se manda al cobrar).
+   * Espejo de `gift` en SaleCalculator.php.
+   */
+  gift?: boolean;
 }
 
 export interface LineBenefit {
@@ -309,7 +316,7 @@ function assignPoolBenefits(lines: CalcLine[], promotions: PromoDef[]): PoolBene
   const promoById = new Map<number, PromoDef>();
   lines.forEach((l, idx) => {
     const units = Math.floor(l.qty);
-    if (l.skipPromo || units < 1) {
+    if (l.skipPromo || l.gift || units < 1) {
       candidateIdsByLine[idx] = [];
       return;
     }
@@ -487,7 +494,14 @@ export function recalculateSale(input: {
   // NORMAL y se reparte de nuevo. Siempre gana la promo. Espejo de
   // SaleCalculator::calculate.
   const repriced = new Set<number>();
-  const effLines = input.lines.map((l, idx) => {
+  const effLines = input.lines.map((l, idx): CalcLine => {
+    if (l.gift) {
+      // Regalo: $0 y sin ajustes (nunca está en un pool → no se re-precia).
+      const giftLine: CalcLine = { ...l, unitPrice: 0 };
+      delete giftLine.discount;
+      delete giftLine.surcharge;
+      return giftLine;
+    }
     const base = l.basePrice ?? 0;
     if (pool.pooled.has(idx) && base > 0 && Math.abs(base - l.unitPrice) > 0.001) {
       repriced.add(idx);

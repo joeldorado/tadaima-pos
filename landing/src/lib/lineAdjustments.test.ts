@@ -137,3 +137,35 @@ describe("isPlainLine / lineAdjustmentOf", () => {
     expect(lineAdjustmentOf(line({ surcharge: { kind: "percent", basis: "line", value: 5, reason: "envio" } }))?.direction).toBe("surcharge");
   });
 });
+
+describe("regalo (2026-10-31)", () => {
+  const regalo = { direction: "gift" as const, note: "  cliente frecuente " };
+
+  it("regalar 1 de 3 separa la línea y la marca como regalo con su nota", () => {
+    const out = applyLineAdjustment([line()], "L1", 1, regalo, newId);
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({ lineId: "L1", quantity: 2 });
+    expect(out[0]?.isGift).toBeUndefined();
+    expect(out[1]).toMatchObject({ quantity: 1, isGift: true, giftNote: "cliente frecuente", parentLineId: "L1" });
+  });
+
+  it("regalar quita el descuento o aumento previo de la línea", () => {
+    const conDesc = applyLineAdjustment([line()], "L1", 3, descuento, newId);
+    const out = applyLineAdjustment(conDesc, "L1", 3, { direction: "gift" }, newId);
+    expect(out[0]?.discount).toBeUndefined();
+    expect(out[0]?.isGift).toBe(true);
+    expect(out[0]?.giftNote).toBeUndefined();
+  });
+
+  it("una línea regalo no recibe piezas nuevas del lector", () => {
+    expect(acceptsNewUnits(line({ isGift: true }))).toBe(false);
+    expect(isPlainLine(line({ isGift: true }))).toBe(false);
+  });
+
+  it("quitar el regalo regresa las piezas a su línea padre", () => {
+    const partida = applyLineAdjustment([line()], "L1", 1, regalo, newId);
+    const out = removeLineAdjustment(partida, partida[1]!.lineId);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ lineId: "L1", quantity: 3 });
+  });
+});

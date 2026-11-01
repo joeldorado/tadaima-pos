@@ -521,7 +521,7 @@ class ReportsController extends Controller
         }
 
         // ── Tickets de la sesión, desglosados ────────────────────────────────
-        $tickets = Sale::with(['items.product:id,name,sku', 'payments.paymentMethod:id,name', 'customer:id,name', 'user:id,name'])
+        $tickets = Sale::with(['items.product:id,name,sku', 'items.gift:id,sale_item_id', 'payments.paymentMethod:id,name', 'customer:id,name', 'user:id,name'])
             ->where('register_session_id', $session->id)
             ->orderBy('sold_at')
             ->get()
@@ -552,6 +552,7 @@ class ReportsController extends Controller
                     'discount_amount'  => (float) ($i->discount_amount ?? 0),
                     'surcharge_amount' => (float) ($i->surcharge_amount ?? 0),
                     'net'              => round((float) $i->total - (float) ($i->discount_amount ?? 0) + (float) ($i->surcharge_amount ?? 0), 2),
+                    'is_gift'          => $i->gift !== null,
                 ])->values(),
                 'payments'            => $sale->payments->map(fn ($p) => [
                     'method' => $p->paymentMethod?->name ?? '—',
@@ -687,6 +688,9 @@ class ReportsController extends Controller
             $products = DB::table('sale_items')
                 ->join('sales',    'sales.id',    '=', 'sale_items.sale_id')
                 ->leftJoin('products', 'products.id', '=', 'sale_items.product_id')
+                // Regalos (2026-10-31): renglón aparte, no se mezcla con ventas
+                // reales del mismo producto que también traigan costo 0.
+                ->leftJoin('sale_gifts', 'sale_gifts.sale_item_id', '=', 'sale_items.id')
                 ->when($categoryId, fn ($q) => $q
                     ->join('product_category_assignments', 'product_category_assignments.product_id', '=', 'sale_items.product_id')
                     ->where('product_category_assignments.category_id', $categoryId)
@@ -709,6 +713,7 @@ class ReportsController extends Controller
                     CASE WHEN sale_items.product_id IS NULL THEN 1 ELSE 0 END as deleted,
                     sale_items.price as unit_price,
                     COALESCE(sale_items.cost, products.cost, 0) as unit_cost,
+                    CASE WHEN sale_gifts.id IS NULL THEN 0 ELSE 1 END as is_gift,
                     COUNT(DISTINCT sale_items.sale_id) as times_sold,
                     COALESCE(SUM(sale_items.quantity), 0) as total_quantity,
                     ' . self::LINE_REVENUE_SQL . ' as total_revenue
@@ -719,6 +724,7 @@ class ReportsController extends Controller
                     DB::raw('COALESCE(products.sku, sale_items.product_sku)'),
                     'sale_items.price',
                     DB::raw('COALESCE(sale_items.cost, products.cost, 0)'),
+                    DB::raw('CASE WHEN sale_gifts.id IS NULL THEN 0 ELSE 1 END'),
                 )
                 ->orderByRaw($orderSql('COALESCE(sale_items.cost, products.cost, 0)'))
                 ->limit($limit)
@@ -746,6 +752,7 @@ class ReportsController extends Controller
                     mangas.image_path as image_path,
                     sale_items.price as unit_price,
                     COALESCE(sale_items.cost, mangas.cost, 0) as unit_cost,
+                    0 as is_gift,
                     COUNT(DISTINCT sale_items.sale_id) as times_sold,
                     COALESCE(SUM(sale_items.quantity), 0) as total_quantity,
                     ' . self::LINE_REVENUE_SQL . ' as total_revenue
@@ -797,6 +804,7 @@ class ReportsController extends Controller
                 'times_sold'     => (int)   $r->times_sold,
                 'total_quantity' => round((float) $r->total_quantity, 2),
                 'total_revenue'  => round((float) $r->total_revenue,  2),
+                'is_gift'        => (bool) $r->is_gift,
             ]),
         ]);
     }

@@ -83,6 +83,11 @@ final class SalePaymentRules
 
         // ->values() para que el índice case posicionalmente con $v2Lines.
         foreach ($draftItems->values() as $idx => $item) {
+            // Un regalo (2026-10-31) no se cobra: su restricción de método no
+            // debe bloquear el pago del resto de la venta.
+            if ($v2Lines[$idx]['is_gift'] ?? false) {
+                continue;
+            }
             $restriction = $item->product?->paymentMethod;
             $allowCash   = $restriction?->allow_cash ?? true;
             $allowCard   = $restriction?->allow_card ?? true;

@@ -7,6 +7,7 @@ use App\Models\InventoryMovement;
 use App\Models\Payment;
 use App\Models\Product;
 use App\Models\Sale;
+use App\Models\SaleGift;
 use App\Models\SaleItem;
 use App\Models\SalesDraft;
 use App\Models\SalesDraftItem;
@@ -98,6 +99,10 @@ class CheckoutService
                     ->select('product_promotions.*', 'ppa.product_id as product_id')
                     ->get();
 
+                // Precio de catálogo que mandó Caja (ya validado): en un regalo
+                // es lo que se regaló y queda en sale_gifts.list_price.
+                $listPrices = array_map(static fn (array $i) => (float) $i['price'], $items);
+
                 $calc = $this->calculator->calculate(array_map(
                     static fn (array $i) => [
                         'product_id'     => (int) $i['product_id'],
@@ -107,6 +112,8 @@ class CheckoutService
                         'line_surcharge' => $i['line_surcharge'] ?? null,
                         // El cajero renunció a la promo de esta línea (2026-07-24).
                         'skip_promotion' => (bool) ($i['skip_promotion'] ?? false),
+                        // Regalo (2026-10-31): $0, fuera de promos, sin ajustes.
+                        'gift'           => (bool) ($i['is_gift'] ?? false),
                         // Promo vs precio socio (2026-09-30): con promo, la línea
                         // se cobra a NORMAL. Dañados llevan precio manual: nunca.
                         'base_price'     => empty($i['is_damaged'])
@@ -151,6 +158,11 @@ class CheckoutService
                         // Comentario corto de la línea (2026-10-03): recordatorio
                         // interno, no participa en ningún monto.
                         'comment'                 => trim((string) ($item['comment'] ?? '')) ?: null,
+                        // Regalo (2026-10-31): checkout() guarda cost=0 en la
+                        // línea y el detalle en sale_gifts.
+                        'is_gift'                 => (bool) ($item['is_gift'] ?? false),
+                        'gift_list_price'         => $listPrices[$idx],
+                        'gift_note'               => trim((string) ($item['gift_note'] ?? '')) ?: null,
                         // Llaves extra inertes: los SaleItem::create enumeran
                         // sus columnas explícitamente y las ignoran.
                         'promo_allow_cash'       => $promo !== null ? (bool) $promo->allow_cash : true,
@@ -261,6 +273,16 @@ class CheckoutService
             }
 
             // Validar que la suma de pagos coincida con el total (tolerancia 1 centavo)
+            // Pago de $0 solo cuando TODO es regalo (2026-10-31): con total > 0
+            // un pago en cero sería un renglón basura en el corte.
+            if ($total > 0) {
+                foreach ($paymentsData as $p) {
+                    if ((float) $p['amount'] < 0.01) {
+                        throw new \DomainException('Cada pago debe ser de al menos $0.01.');
+                    }
+                }
+            }
+
             $paymentsTotal = round(array_sum(array_column($paymentsData, 'amount')), 2);
             if (abs($paymentsTotal - $total) > 0.01) {
                 throw new \DomainException(
@@ -308,8 +330,9 @@ class CheckoutService
                 // (qty×price) — el neto es derivable (total − discount_amount) y
                 // sales.discount es el rollup, así los reportes viejos no cambian.
                 $meta = $v2Lines[$idx] ?? null;
+                $isGift = (bool) ($meta['is_gift'] ?? false);
 
-                SaleItem::create([
+                $saleItem = SaleItem::create([
                     'sale_id'    => $sale->id,
                     'product_id' => $draftItem->product_id,
                     'manga_id'   => $draftItem->manga_id,
@@ -327,7 +350,10 @@ class CheckoutService
                     'quantity'   => $draftItem->quantity,
                     'price'      => $draftItem->price,
                     'total'      => $draftItem->total,
-                    'cost'       => $draftItem->product?->cost,
+                    // Regalo: costo 0 SOLO en esta venta (nunca NULL — los
+                    // reportes caerían al costo del catálogo). products.cost
+                    // no se toca; el costo real queda en sale_gifts.
+                    'cost'       => $isGift ? 0 : $draftItem->product?->cost,
                     'benefit_type'           => $meta['benefit_type'] ?? null,
                     'discount_kind'          => $meta['discount_kind'] ?? null,
                     'discount_basis'         => $meta['discount_basis'] ?? null,
@@ -349,6 +375,20 @@ class CheckoutService
                     'surcharge_authorized_by' => $meta['surcharge_authorized_by'] ?? null,
                     'comment'                 => $meta['comment'] ?? null,
                 ]);
+
+                if ($isGift) {
+                    SaleGift::create([
+                        'sale_id'       => $sale->id,
+                        'sale_item_id'  => $saleItem->id,
+                        'product_id'    => $draftItem->product_id,
+                        'store_id'      => $sale->store_id,
+                        'quantity'      => $draftItem->quantity,
+                        'list_price'    => $meta['gift_list_price'] ?? 0,
+                        'unit_cost'     => $draftItem->product?->cost,
+                        'note'          => $meta['gift_note'] ?? null,
+                        'authorized_by' => $userId,
+                    ]);
+                }
             }
 
             // ── 7. Registrar Payments ─────────────────────────────────────────
@@ -382,7 +422,7 @@ class CheckoutService
             // ── 9. Cerrar draft ───────────────────────────────────────────────
             $draft->update(['status' => SalesDraft::STATUS_COMPLETED]);
 
-            return $sale->load(['items.product', 'items.product.images', 'payments.paymentMethod', 'customer']);
+            return $sale->load(['items.product', 'items.product.images', 'items.gift', 'payments.paymentMethod', 'customer']);
         });
     }
 

@@ -8,7 +8,7 @@
 > Detalle adicional: [`CLAUDE.md`](CLAUDE.md) (comandos y arquitectura del frontend) y
 > [`backend/AGENTS.md`](backend/AGENTS.md) (API, ADRs y referencia de endpoints).
 >
-> Última revisión: 2026-10-29.
+> Última revisión: 2026-10-31.
 
 ---
 
@@ -115,6 +115,12 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   TODA la línea se cobra a precio NORMAL (nivel A) con la promo encima, aunque diga
   SOCIO (siempre gana la promo). Lo aplican `saleCalc.ts` y `SaleCalculator.php`
   (`basePrice` / `base_price`); `sale_items.price` guarda ese precio efectivo.
+- **Regalo por línea (2026-10-31):** Caja → menú ⋮ → «Regalo» (cualquier rol, venta regular).
+  La línea va en `sale_items` con `price = total = cost = 0` y el detalle (precio de catálogo,
+  costo real, nota, quién) en `sale_gifts`; `products.cost` no se toca y el stock sí baja. El
+  cliente manda el precio de CATÁLOGO + `is_gift` (se valida igual) y `SaleCalculator`/`saleCalc.ts`
+  la dejan fuera de promos. Venta 100% regalo = pago Efectivo de $0 (el único pago en $0 permitido).
+  Etiqueta «Regalo» en Caja, Historial, Ventas, corte y los 3 tickets.
 - **Pagos:** `sales` no tiene método de pago; viven en `payments` (1:N) y deben sumar
   el total (±$0.01). "Mixto" = solo efectivo + transferencia, solo ventas regulares,
   sin dólares.

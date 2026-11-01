@@ -29,7 +29,7 @@ function productKey(item: TopProductsReportItem) {
 }
 // Clave única de renglón (producto + precio + costo)
 function rowKey(item: TopProductsReportItem) {
-  return `${item.type}:${item.id}:${item.unit_price}:${item.unit_cost ?? 0}`;
+  return `${item.type}:${item.id}:${item.unit_price}:${item.unit_cost ?? 0}${item.is_gift ? ":gift" : ""}`;
 }
 
 type ItemType = "all" | "product" | "manga";
@@ -116,7 +116,11 @@ export function EstadisticaPage() {
   // Al cambiar filtros de datos, reinicia apagados y ocultos (no pinned — el usuario los eligió)
   useEffect(() => { setExcluded(new Set()); setHidden(new Set()); }, [from, to, itemType, categoryId]);
 
-  const allItems = query.data?.data ?? [];
+  // Regalos (2026-10-31): renglón aparte en $0, marcado en el nombre.
+  const allItems = useMemo(
+    () => (query.data?.data ?? []).map(i => (i.is_gift ? { ...i, name: `${i.name} (Regalo)` } : i)),
+    [query.data],
+  );
 
   // Sugerencias del dropdown — deduplicadas por producto, filtradas por texto
   const suggestions = useMemo(() => {

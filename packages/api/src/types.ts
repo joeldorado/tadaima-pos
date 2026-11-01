@@ -383,6 +383,13 @@ export interface SaleItemDetail {
   /** Comentario corto del cajero en la línea (2026-10-03). Recordatorio interno: no se imprime en el ticket. */
   comment?: string | null
   /**
+   * Regalo (2026-10-31): la línea va en price/total/cost = 0. `gift.list_price`
+   * es el precio de catálogo regalado; `gift.unit_cost` (costo real) solo con
+   * permiso de ver costos.
+   */
+  is_gift?: boolean
+  gift?: { list_price: number; unit_cost: number | null; note: string | null } | null
+  /**
    * Cost snapshot al momento EXACTO del checkout. Solo viene cuando el caller
    * es admin (security gate en `SaleItemResource`). NULL para ventas pre-
    * migración cost_at_sale (2026-05-22). Esta es la verdad histórica:
@@ -463,6 +470,8 @@ export interface SaleDetail {
     gross_total?: number | null
     discount_cancelled?: number | null
     surcharge_cancelled?: number | null
+    /** La línea cancelada era un regalo ($0, 2026-10-31). */
+    is_gift?: boolean
     /** cost_at_sale del item cancelado (snapshot ADR-015). Solo para admin/can_view_cost; null si no. */
     cost?: number | null
     product_type?: ProductType
@@ -608,6 +617,13 @@ export interface SaleDirectItem {
   skip_promotion?: boolean
   /** Comentario corto de la línea (máx. 80; requiere calc_version: 2). No toca montos. */
   comment?: string
+  /**
+   * Regalo (2026-10-31; requiere calc_version: 2): `price` va con el precio de
+   * catálogo y el server guarda la línea en $0 con costo 0.
+   */
+  is_gift?: boolean
+  /** Nota opcional del regalo (máx. 80). */
+  gift_note?: string
 }
 export interface CreateSaleInput {
   draft_id?: number

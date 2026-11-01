@@ -71,6 +71,12 @@ class Sale extends Model
         return $this->hasMany(SaleItem::class);
     }
 
+    /** Líneas regaladas de la venta (detalle en sale_gifts, 2026-10-31). */
+    public function gifts(): HasMany
+    {
+        return $this->hasMany(SaleGift::class);
+    }
+
     public function cancellations(): HasMany
     {
         return $this->hasMany(SaleCancellation::class);
