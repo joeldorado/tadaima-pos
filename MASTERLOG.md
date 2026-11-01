@@ -4,6 +4,18 @@
 
 ---
 
+### Sesión 2026-11-01 — Abono de preventa repartido parejo por pieza (PR #81) — rev tadaima-00112-xen
+
+**Reporte del cliente:** en Delta Reign cada pieza se apartó con $200, pero el reporte decía que la Booster Box de Macro (10 apartadas) llevaba **$3,360.59** abonados en vez de $2,000; sospechaban que «le movieron el costo».
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00110-yaf`. Sin migraciones ni backend, solo frontend.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00110-yaf=100 --project tadaimapos --region us-east1`
+
+- **Diagnóstico (prod, solo lectura):** los pagos, la caja y los totales estaban bien (22 folios de Booster Box, todos a $200 por pieza; costo $2,151 sin cambios). Los pagos viven por folio y `buildReportData.ts` repartía cada anticipo entre las líneas **según el precio**: de un anticipo de $600 por ETB + Bundle + Box, la Box ($2,800) se llevaba $377.78 y el Bundle $74.18. Reproducido en SQL al centavo. El «Costo Unitario» $336.06 era abono ÷ piezas (modelo del dueño para apartadas), no el costo real.
+- **Fix:** `lib/presaleAllocation.ts` reparte cada pago parejo por pieza con tope en lo que falta por cubrir de cada línea, en orden cronológico (al liquidar cada línea queda exacta a su precio; sobrepago y folio en $0 se reparten por pieza). La usan los 4 puntos del reporte (tabla de productos, `buildPresaleRows`, `buildPresaleRowsByMethod`, `buildPresaleFolioRows`): pantalla, Excel y PDF. Macro: Box $3,360.59 → $2,000, Bundle $3,142.83 → $4,400, ETB $3,696.57 → $3,800; totales iguales.
+- Validación: `presaleAllocation.test.ts` 12 ✓ + `buildReportData.presaleAllocation.test.ts` con los 10 folios reales de Macro (sin datos de cliente) 6 ✓; vitest 822 ✓; tsc y eslint limpios en lo nuevo. Candidate: `/login`, `/tadaimaus/` 200, API 422 sin credenciales, bundle con el reparto nuevo. Promovida al 100%; no se abrió el reporte en el navegador contra prod (requiere cuenta de Joel): lo revisa Joel (incógnito por la caché PWA).
+- **Huecos vistos, sin tocar:** crear/editar catálogos y cupos, el paso masivo a «listo» y entregar una partida suelta no dejan `system_logs` (el 2026-11-01 13:54 Tijuana alguien recreó los cupos de Macro y solo se ve por IP en Cloud Run). La columna «Costo Unitario» de apartadas sigue siendo abono ÷ piezas (ahora $200) y confunde.
+
 ### Sesión 2026-10-31 — Botón «Regalo» por línea en Caja (PR #79) — rev tadaima-00110-yaf
 
 **Pedido Joel / cliente (punto 3 «Botón de Regalo»):** marcar piezas como regalo en Caja para que la venta registre precio y costo 0 y no meta ruido en los reportes; el costo del inventario no cambia.

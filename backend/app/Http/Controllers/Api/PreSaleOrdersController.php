@@ -16,6 +16,7 @@ use App\Models\PreSaleOrderLog;
 use App\Models\SaleCancellation;
 use App\Services\PreSaleOrderService;
 use App\Services\SaleCancellationService;
+use App\Support\PreSaleAudit;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Mail;
@@ -238,6 +239,7 @@ class PreSaleOrdersController extends Controller
             'status'       => $status,
             'delivered_at' => $status === 'delivered' ? now() : null,
         ]);
+        PreSaleAudit::itemDelivery($parentOrder, $item, $status, $request->user()->id);
 
         // Auto-close the folio when all items are now delivered
         if ($status === 'delivered') {
