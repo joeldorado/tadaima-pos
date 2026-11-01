@@ -10,7 +10,9 @@ use App\Http\Resources\PreSaleCatalogResource;
 use App\Models\PreSaleCatalog;
 use App\Models\PreSaleOrder;
 use App\Models\PreSaleOrderItem;
+use App\Models\PreSaleOrderLog;
 use App\Services\PreSaleCatalogCancellationService;
+use App\Support\PreSaleAudit;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -86,6 +88,7 @@ class PreSaleCatalogsController extends Controller
         ]);
 
         $this->syncStoreLimits($catalog, $data['store_limits'] ?? null, $this->storeLimitScope($request));
+        PreSaleAudit::created($catalog, $request->user()->id);
 
         return $this->success(
             new PreSaleCatalogResource($catalog->load(['category', 'supplier', 'product', 'createdBy', 'storeLimits'])),
@@ -205,8 +208,10 @@ class PreSaleCatalogsController extends Controller
         unset($data['store_limits']);
         $costChanged = array_key_exists('cost', $data)
             && (float) ($data['cost'] ?? 0) !== (float) ($catalog->cost ?? 0);
+        $before = PreSaleAudit::snapshot($catalog);
         $catalog->update($data);
         $this->syncStoreLimits($catalog, $storeLimits, $this->storeLimitScope($request));
+        PreSaleAudit::updated($catalog, $before, $request->user()->id);
 
         // Re-snap del costo a las partidas ABIERTAS (ADR-015 bis).
         // En preventa la mercancía NO está comprada al crear el folio, así que el
@@ -363,18 +368,38 @@ class PreSaleCatalogsController extends Controller
             return $this->success(new PreSaleCatalogResource($catalog->fresh()->load(self::STATUS_RELATIONS)));
         }
 
+        $from = $catalog->status;
         $catalog->update(['status' => $to]);
 
+        // "Llegó" pasa a LISTO los folios pendientes del catálogo, uno por uno,
+        // para dejar su log en `pre_sale_order_logs` (antes era un update masivo
+        // sin rastro: folios en "listo" cuyo historial solo decía "pending").
+        $ordersReady = [];
         if ($to === PreSaleCatalog::STATUS_ARRIVED) {
             $orderIds = \DB::table('pre_sale_order_items')
                 ->where('pre_sale_catalog_id', $catalog->id)
                 ->pluck('pre_sale_order_id')
                 ->unique();
 
-            PreSaleOrder::whereIn('id', $orderIds)
-                ->where('status', PreSaleOrder::STATUS_PENDING)
-                ->update(['status' => PreSaleOrder::STATUS_READY]);
+            \DB::transaction(function () use ($orderIds, $catalog, $request, &$ordersReady) {
+                $pending = PreSaleOrder::whereIn('id', $orderIds)
+                    ->where('status', PreSaleOrder::STATUS_PENDING)
+                    ->lockForUpdate()
+                    ->get();
+                foreach ($pending as $order) {
+                    $order->update(['status' => PreSaleOrder::STATUS_READY]);
+                    PreSaleOrderLog::create([
+                        'pre_sale_order_id' => $order->id,
+                        'user_id'           => $request->user()->id,
+                        'from_status'       => PreSaleOrder::STATUS_PENDING,
+                        'to_status'         => PreSaleOrder::STATUS_READY,
+                        'notes'             => "Llegó «{$catalog->product_name}» — folio listo para liquidar.",
+                    ]);
+                    $ordersReady[] = $order->id;
+                }
+            });
         }
+        PreSaleAudit::statusChanged($catalog, $from, $to, $ordersReady, $request->user()->id);
 
         return $this->success(new PreSaleCatalogResource($catalog->load(self::STATUS_RELATIONS)));
     }
