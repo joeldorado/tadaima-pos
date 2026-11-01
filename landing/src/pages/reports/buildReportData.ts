@@ -9,6 +9,7 @@
 // neteo de cancelaciones, split por costo, prorrateo de preventas y descuentos v2.
 import type { SaleDetail, PreSaleOrder, PreSaleOrderPayment } from "@tadaima/api";
 import { toLocalYmd } from "@/lib/date";
+import { allocatePresalePayments, sumByLine } from "@/lib/presaleAllocation";
 import { isLegacyGlobalDiscountSale, saleItemNet } from "@/lib/saleItemNet";
 import type { AdjustmentEntry, BenefitBucket, GroupedProduct, PresaleFolioRow, PresaleRow, ReportPaymentBreakdown } from "./reportTypes";
 import { assignCategories, categoryOf, compareCategories } from "./reportCategories";
@@ -50,6 +51,26 @@ export function presalePaymentsInRange(
     const ymd = toLocalYmd(new Date(p.created_at));
     return dateSet ? dateSet.has(ymd) : (ymd >= from && ymd <= to);
   });
+}
+
+/**
+ * Dinero de un folio repartido entre sus líneas (2026-11-01). Los pagos viven
+ * por folio; el reparto es parejo por pieza con tope en el precio de cada
+ * línea (`lib/presaleAllocation`), no proporcional al precio: la tienda aparta
+ * a $200 por pieza y repartir por precio cargaba el anticipo a la pieza cara.
+ * Los arreglos van en el mismo orden que `order.items`.
+ */
+function presaleLineMoney(order: PreSaleOrder, paymentsInRange: PreSaleOrderPayment[], from: string) {
+  const payments = order.payments ?? [];
+  const allocation = allocatePresalePayments(order.items ?? [], payments);
+  // Abonos previos al rango (created_at < desde): lo que ya se había cobrado antes.
+  const paymentsBefore = payments.filter((p) => toLocalYmd(new Date(p.created_at)) < from);
+  return {
+    allocation,
+    apartado: sumByLine(allocation.byPayment, paymentsInRange),
+    paidBefore: sumByLine(allocation.byPayment, paymentsBefore),
+    deuda: allocation.pendingByLine,
+  };
 }
 
 /** Folios de preventa que matchean los filtros activos de la barra. */
@@ -507,11 +528,7 @@ export function buildGroupedProducts(
       // Solo los pagos cuya fecha cae en el rango (anticipo y/o liquidación del
       // período). El monto reportado = lo COBRADO en el rango, no el acumulado.
       const paymentsInRange = presalePaymentsInRange(order.payments, from, to, dates);
-      const paidInRange = paymentsInRange.reduce((sum, p) => sum + (p.amount || 0), 0);
-      // Abonos previos al rango (para el modelo del dueño al liquidar).
-      const paidBeforeTotal = (order.payments ?? [])
-        .filter((p) => toLocalYmd(new Date(p.created_at)) < from)
-        .reduce((sum, p) => sum + (p.amount || 0), 0);
+      const lineMoney = presaleLineMoney(order, paymentsInRange, from);
 
       let payMethodName = "Efectivo";
       let mainPayment = paymentsInRange[0] || null;
@@ -524,23 +541,19 @@ export function buildGroupedProducts(
         payMethodName = mainPayment.payment_method?.name ?? "Efectivo";
       }
 
-      const orderItemsTotal = order.items ? order.items.reduce((sum, it) => sum + (it.unit_price * it.quantity), 0) : 0;
-
       if (order.items) {
-        for (const item of order.items) {
+        for (const [lineIdx, item] of order.items.entries()) {
           // If product_id is null, generate a unique negative ID based on catalog ID to avoid collisions
           const prodId = item.product_id ?? (item.catalog ? item.catalog.id * -1 : -999);
           const prodName = item.catalog?.product_name ?? `Preventa #${item.id}`;
           const prodSku = "PREVENTA";
           const qty = item.quantity;
-          const itemTotal = item.unit_price * item.quantity;
           const unitPrice = item.unit_price;
 
-          // Proportional allocation of paid-in-range and balance based on item's total value vs order items total
-          const ratio = orderItemsTotal > 0 ? (itemTotal / orderItemsTotal) : (1 / order.items.length);
-          const itemApartado = paidInRange * ratio;
-          const itemPaidBefore = paidBeforeTotal * ratio;
-          const itemDeuda = (order.balance || 0) * ratio;
+          // Abonado, abonos previos y pendiente de ESTA línea (reparto parejo por pieza).
+          const itemApartado = lineMoney.apartado[lineIdx] ?? 0;
+          const itemPaidBefore = lineMoney.paidBefore[lineIdx] ?? 0;
+          const itemDeuda = lineMoney.deuda[lineIdx] ?? 0;
           const itemCostoReal = (item.cost ?? 0) * qty;
 
           // Separamos la preventa por ESTADO (liquidada vs apartada), igual que la
@@ -670,21 +683,14 @@ export function buildPresaleRows(
     const map = new Map<string, { productId: number; baseName: string; entregado: boolean; qty: number; apartado: number; deuda: number; costoReal: number; paidBefore: number }>();
     for (const order of filteredPreSaleOrders) {
       const paymentsInRange = presalePaymentsInRange(order.payments, from, to, dates);
-      const paidInRange = paymentsInRange.reduce((sum, p) => sum + (p.amount || 0), 0);
-      // Abonos previos al rango (created_at < desde): lo que ya se había cobrado antes.
-      const paidBeforeTotal = (order.payments ?? [])
-        .filter((p) => toLocalYmd(new Date(p.created_at)) < from)
-        .reduce((sum, p) => sum + (p.amount || 0), 0);
-      const orderItemsTotal = order.items ? order.items.reduce((sum, it) => sum + (it.unit_price * it.quantity), 0) : 0;
-      for (const item of order.items ?? []) {
+      const lineMoney = presaleLineMoney(order, paymentsInRange, from);
+      for (const [lineIdx, item] of (order.items ?? []).entries()) {
         const prodId = item.product_id ?? (item.catalog ? item.catalog.id * -1 : -999);
         const baseName = item.catalog?.product_name ?? `Preventa #${item.id}`;
         const qty = item.quantity;
-        const itemTotal = item.unit_price * item.quantity;
-        const ratio = orderItemsTotal > 0 ? (itemTotal / orderItemsTotal) : (1 / (order.items?.length || 1));
-        const itemApartado = paidInRange * ratio;
-        const itemPaidBefore = paidBeforeTotal * ratio;
-        const itemDeuda = (order.balance || 0) * ratio;
+        const itemApartado = lineMoney.apartado[lineIdx] ?? 0;
+        const itemPaidBefore = lineMoney.paidBefore[lineIdx] ?? 0;
+        const itemDeuda = lineMoney.deuda[lineIdx] ?? 0;
         const itemCostoReal = (item.cost ?? 0) * qty;
         // Entregada EN EL RANGO = es la liquidación de este periodo.
         const deliveredInRange = item.status === "delivered" && !!item.delivered_at &&
@@ -745,19 +751,14 @@ export function buildPresaleRowsByMethod(
       // Abonos previos al rango (created_at < desde): lo que ya se había cobrado antes,
       // de cualquier método (es neteo de costo, no desglose de caja); a cada
       // método le toca su `methodShare`, igual que al costo.
-      const paidBeforeTotal = (order.payments ?? [])
-        .filter((p) => toLocalYmd(new Date(p.created_at)) < from)
-        .reduce((sum, p) => sum + (p.amount || 0), 0);
-      const orderItemsTotal = order.items ? order.items.reduce((sum, it) => sum + (it.unit_price * it.quantity), 0) : 0;
-      for (const item of order.items ?? []) {
+      const lineMoney = presaleLineMoney(order, paymentsInRange, from);
+      for (const [lineIdx, item] of (order.items ?? []).entries()) {
         const prodId = item.product_id ?? (item.catalog ? item.catalog.id * -1 : -999);
         const baseName = item.catalog?.product_name ?? `Preventa #${item.id}`;
         const qty = item.quantity;
-        const itemTotal = item.unit_price * item.quantity;
-        const ratio = orderItemsTotal > 0 ? (itemTotal / orderItemsTotal) : (1 / (order.items?.length || 1));
-        const itemApartado = paidInRange * ratio;
-        const itemPaidBefore = paidBeforeTotal * ratio * methodShare;
-        const itemDeuda = (order.balance || 0) * ratio;
+        const itemApartado = lineMoney.apartado[lineIdx] ?? 0;
+        const itemPaidBefore = (lineMoney.paidBefore[lineIdx] ?? 0) * methodShare;
+        const itemDeuda = lineMoney.deuda[lineIdx] ?? 0;
         const itemCostoReal = (item.cost ?? 0) * qty * methodShare;
         const deliveredInRange = item.status === "delivered" && !!item.delivered_at &&
           (() => { const d = toLocalYmd(new Date(item.delivered_at!)); return d >= from && d <= to; })();
@@ -815,17 +816,16 @@ export function buildPresaleFolioRows(
         (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
       );
       const lastPaymentId = sortedPayments[sortedPayments.length - 1]?.id ?? null;
-      const orderItemsTotal = order.items ? order.items.reduce((sum, it) => sum + (it.unit_price * it.quantity), 0) : 0;
+      const { allocation, deuda } = presaleLineMoney(order, paymentsInRange, from);
       const folio = order.code;
       const cliente = order.customer?.name ?? "Cliente mostrador";
       const tienda = order.store?.name ?? "—";
 
-      for (const item of order.items ?? []) {
+      for (const [lineIdx, item] of (order.items ?? []).entries()) {
         const prodId = item.product_id ?? (item.catalog ? item.catalog.id * -1 : -999);
         const prodName = item.catalog?.product_name ?? `Preventa #${item.id}`;
         const itemTotal = item.unit_price * item.quantity;
-        const ratio = orderItemsTotal > 0 ? (itemTotal / orderItemsTotal) : (1 / (order.items?.length || 1));
-        const itemDeuda = (order.balance || 0) * ratio;
+        const itemDeuda = deuda[lineIdx] ?? 0;
         const deliveredInRange = item.status === "delivered" && !!item.delivered_at &&
           (() => { const d = toLocalYmd(new Date(item.delivered_at!)); return d >= from && d <= to; })();
 
@@ -837,7 +837,7 @@ export function buildPresaleFolioRows(
             folio,
             cliente,
             total: itemTotal,
-            anticipo: (payment.amount || 0) * ratio,
+            anticipo: allocation.byPayment.get(payment)?.[lineIdx] ?? 0,
             pendiente: itemDeuda,
             estado,
             tienda,
