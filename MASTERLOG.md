@@ -4,6 +4,20 @@
 
 ---
 
+### Sesión 2026-10-31 — Botón «Regalo» por línea en Caja (PR #79) — rev tadaima-00110-yaf
+
+**Pedido Joel / cliente (punto 3 «Botón de Regalo»):** marcar piezas como regalo en Caja para que la venta registre precio y costo 0 y no meta ruido en los reportes; el costo del inventario no cambia.
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00108-pih`. Migración aditiva `2026_10_31_000001_create_sale_gifts_table` (tabla nueva, la versión anterior la ignora): no estorba al revertir.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00108-pih=100 --project tadaimapos --region us-east1`
+
+- **Modelo** (decisión Joel: tabla aparte): `sale_gifts` 1:1 con `sale_item_id` (`list_price`, `unit_cost`, `quantity`, `note`, `authorized_by`, `store_id`). La línea queda en `sale_items` con price/total/**cost = 0** (nunca NULL: los reportes caerían a `products.cost`), así todos los reportes cuadran sin tocar sus consultas. Stock se descuenta normal.
+- **Checkout:** `items.*.is_gift` + `gift_note` (solo `calc_version: 2`; app móvil igual). Caja manda el precio de catálogo y se valida igual. Regalo fuera de promos (`SaleCalculator` / `saleCalc.ts`) y de las restricciones de método de pago. Venta 100% regalo = pago Efectivo $0 (único pago en $0 permitido). Cualquier rol.
+- **Cancelación:** si solo quedan regalos la venta queda `partial` (antes `full` con piezas fuera); `sale_gifts.quantity` sigue la línea; snapshot con `is_gift`.
+- **UI:** menú ⋮ → «Regalo» (`LineGiftModal`, separa piezas como el descuento); etiqueta «Regalo» en Caja, Historial, Ventas, corte y los 3 tickets («★ REGALO»); renglón aparte «(Regalo)» en Ventas/Excel, Estadística, Reporte del Día y `top-products` (`is_gift`).
+- Validación: `GiftLineCheckoutTest` 10 ✓ (también en Postgres 17 local), suite backend 890 ✓ + 4 fallas preexistentes en `main` (3 `FullSalesQATest`, 1 `StoreScopeEnforcementTest`), vitest 804 ✓, `vite build` OK. Local: venta mixta $1,350 con 1 cable regalado y venta 100% regalo $0. Candidate: `/`, `/caja`, `/tadaimaus/` 200, API 401 sin token, migración DONE en el arranque. Promovida al 100%; falta que el equipo pruebe en tienda (incógnito por la caché PWA).
+- Follow-up: reporte «cuánto regalamos» = Σ `sale_gifts.quantity × list_price` / `× unit_cost`.
+
 ### Sesión 2026-10-30 — Excel de Ventas: Preventas antes que Manga en el Resumen (Ruben, PR #77) — rev tadaima-00108-pih
 
 **Pedido Joel:** bajar y validar el cambio de Ruben para deployar.
