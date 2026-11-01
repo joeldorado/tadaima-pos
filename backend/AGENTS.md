@@ -233,7 +233,7 @@ al dar de alta una tienda (y existe la migración de backfill
 | Método | Path | Notas |
 |---|---|---|
 | GET | `/sales` · GET `/sales/{id}` | Lista paginada (scoped por rol) / detalle |
-| POST | `/sales` | **Checkout.** `items[]` + `payments[]` directos (carrito client-authoritative). `items.*.comment` (opcional, máx. 80, exige `calc_version: 2`): comentario interno del cajero → `sale_items.comment`; no toca montos ni se imprime |
+| POST | `/sales` | **Checkout.** `items[]` + `payments[]` directos (carrito client-authoritative). `items.*.comment` (opcional, máx. 80, exige `calc_version: 2`): comentario interno del cajero → `sale_items.comment`; no toca montos ni se imprime. `items.*.is_gift` + `items.*.gift_note` (2026-10-31, exige `calc_version: 2`): regalo — `price` = el de catálogo (se valida), la línea se guarda en price/total/cost 0 y el detalle en `sale_gifts`; sin descuento/aumento/dañado. `payments.*.amount` acepta 0 solo si el total es 0 (venta 100% regalo) |
 | POST | `/sales/{sale}/return` | Devolución (restaura inventario) |
 | POST | `/sales/{sale}/cancel` | Cancelación parcial/total con log + reverso (también tarjeta desde 2026-09-30: sin salida de caja) |
 | PUT | `/sales/{sale}/payments` | Corregir el método de pago (2026-09-30): caja de la venta abierta o admin; misma suma; `SalePaymentCorrectionService` |

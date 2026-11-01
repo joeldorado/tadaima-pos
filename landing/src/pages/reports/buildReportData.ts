@@ -133,6 +133,11 @@ export function filterSales(
 }
 
 /** Renglones de "Ventas por producto": agrupa ventas + preventas del rango. */
+/** Llave de renglón: un regalo ($0, 2026-10-31) nunca se mezcla con lo vendido. */
+function giftKey(key: string, isGift: boolean | undefined): string {
+  return isGift ? `${key}::gift` : key;
+}
+
 export function buildGroupedProducts(
   filteredSales: SaleDetail[],
   filteredPreSaleOrders: PreSaleOrder[],
@@ -250,14 +255,16 @@ export function buildGroupedProducts(
         // Split por COSTO (2026-08): si el usuario ve costos, el MISMO producto
         // vendido con costos distintos se parte en renglones separados (badge con el
         // costo). Sin canViewCost → llave = producto (un solo renglón, como antes).
-        const groupKey = canViewCost ? `${prodId}::c${Math.round(unitCost * 100)}` : prodId;
+        // Regalo (2026-10-31): renglón aparte «(Regalo)» con $0 de venta y costo.
+        const isGift = Boolean(item.is_gift);
+        const groupKey = giftKey(canViewCost ? `${prodId}::c${Math.round(unitCost * 100)}` : prodId, isGift);
 
         if (!map.has(groupKey)) {
           map.set(groupKey, {
             id: groupKey,
             base_product_id: prodId,
             cost_tag: unitCost,
-            name: prodName,
+            name: isGift ? `${prodName} (Regalo)` : prodName,
             sku: prodSku,
             sales_count: 0,
             total_quantity: 0,
@@ -381,7 +388,8 @@ export function buildGroupedProducts(
                 // cancelled_items NO trae 'cost' (ver tipo en packages/api). Sin el
                 // costo, la cancelación restaría $0 de costo y la utilidad quedaría mal.
                 // Fallback: tomar el costo del item ORIGINAL de la venta por product_id.
-                const origItem = (sale.items ?? []).find((si) => si.product_id === ci.product_id);
+                const isGift = Boolean(ci.is_gift);
+                const origItem = (sale.items ?? []).find((si) => si.product_id === ci.product_id && Boolean(si.is_gift) === isGift);
                 const unitCost = Number(ci.cost ?? origItem?.cost ?? origItem?.product?.cost ?? 0);
                 return {
                   product_id: ci.product_id,
@@ -391,7 +399,8 @@ export function buildGroupedProducts(
                   line_total: Number(ci.line_total || 0),
                   price: Number(ci.price || 0),
                   cost: unitCost,
-                  product_type: ci.product_type ?? 'product'
+                  product_type: ci.product_type ?? 'product',
+                  is_gift: isGift,
                 };
               })
             : (sale.items || []).map((item: any) => ({
@@ -403,7 +412,8 @@ export function buildGroupedProducts(
                 line_total: Number(item.total || 0),
                 price: Number(item.price || 0),
                 cost: Number(item.cost ?? item.product?.cost ?? 0),
-                product_type: item.product?.product_type ?? 'product'
+                product_type: item.product?.product_type ?? 'product',
+                is_gift: Boolean(item.is_gift),
               }));
 
           for (const cItem of itemsToProcess) {
@@ -429,14 +439,14 @@ export function buildGroupedProducts(
 
             // Misma llave por costo que el bloque positivo, para que la devolución
             // caiga en el MISMO renglón (mismo producto + mismo costo) y netee bien.
-            const groupKey = canViewCost ? `${prodId}::c${Math.round(unitCost * 100)}` : prodId;
+            const groupKey = giftKey(canViewCost ? `${prodId}::c${Math.round(unitCost * 100)}` : prodId, cItem.is_gift);
 
             if (!map.has(groupKey)) {
               map.set(groupKey, {
                 id: groupKey,
                 base_product_id: prodId,
                 cost_tag: unitCost,
-                name: prodName,
+                name: cItem.is_gift ? `${prodName} (Regalo)` : prodName,
                 sku: prodSku,
                 sales_count: 0,
                 total_quantity: 0,

@@ -142,6 +142,17 @@ en cada deploy**. DB de producción: PostgreSQL en Supabase (MySQL/Cloud SQL ya 
 | `surcharge_authorized_by` | User que cobró el aumento |
 | `comment` | Comentario corto del cajero en la línea (desde 2026-10-03, máx. 80 caracteres), puesto desde el menú ⋮ de Caja. Recordatorio interno: se ve junto al nombre en Caja y Ventas; **no** toca montos ni se imprime en el ticket. NULL en ventas anteriores |
 
+**Regalo (desde 2026-10-31):** desde el menú ⋮ de Caja el cajero marca piezas como
+**Regalo**. La línea se guarda en `sale_items` con `price = total = cost = 0` (costo **0, nunca
+NULL**: con NULL los reportes caerían a `products.cost`), así no suma venta, costo ni utilidad en
+ningún reporte; `products.cost` NO cambia y el stock sí se descuenta. Lo que se regaló vive en la
+tabla **`sale_gifts`** (1:1 con `sale_item_id`): `list_price` (precio de catálogo por pieza),
+`unit_cost` (costo real por pieza al regalar), `quantity`, `note`, `authorized_by`, `store_id`.
+**Para "cuánto regalamos"**: `Σ sale_gifts.quantity × list_price` (precio) y `× unit_cost` (costo).
+Un regalo no lleva promo, descuento ni aumento; una venta 100% regalo se registra en $0 con un pago
+Efectivo de $0. Los reportes lo muestran en renglón aparte «(Regalo)» (`top-products` devuelve
+`is_gift`). Cancelar las piezas pagadas de una venta con regalos la deja `partial` (no `full`).
+
 **Regla de STACKING (desde 2026-07-17):** la promo NxM aplica PRIMERO y el descuento
 manual se calcula sobre el resultado. Cuando conviven, `benefit_type='discount'` pero
 los campos `promo_*` quedan poblados. Para separar las partes:

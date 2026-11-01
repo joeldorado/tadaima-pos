@@ -84,6 +84,7 @@ class SaleResource extends JsonResource
                         'gross_total'        => isset($i['gross_total']) ? (float) $i['gross_total'] : null,
                         'discount_cancelled' => isset($i['discount_cancelled']) ? (float) $i['discount_cancelled'] : null,
                         'surcharge_cancelled' => isset($i['surcharge_cancelled']) ? (float) $i['surcharge_cancelled'] : null,
+                        'is_gift'      => (bool) ($i['is_gift'] ?? false),
                         'cost'         => ($canViewCost && isset($i['cost']) && $i['cost'] !== null) ? (float) $i['cost'] : null,
                         'product_type' => isset($i['product_id']) ? ($productTypes[$i['product_id']] ?? 'product') : 'product',
                         'categories'   => isset($i['product_id'], $products[$i['product_id']])

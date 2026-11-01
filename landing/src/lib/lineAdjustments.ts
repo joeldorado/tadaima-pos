@@ -1,6 +1,7 @@
 /**
  * Ajuste manual por línea del carrito de Caja: DESCUENTO o AUMENTO de precio
- * (2026-09-29). Una línea lleva uno u otro, nunca ambos.
+ * (2026-09-29) o REGALO (2026-10-31, la línea sale en $0). Una línea lleva solo
+ * uno de los tres.
  *
  * Aplicar a menos unidades que la línea la separa en 2 (split): la original
  * conserva las unidades a precio normal y la nueva lleva el ajuste + referencia
@@ -26,15 +27,20 @@ export interface AdjustableLine {
   sellingCatalogId?: number | null;
   /** Comentario corto del cajero (2026-10-03). Viaja con la línea al separarla. */
   comment?: string;
+  /** Regalo (2026-10-31): se cobra en $0 y su costo en la venta es 0. */
+  isGift?: boolean;
+  /** Nota opcional del regalo («cliente frecuente»). */
+  giftNote?: string;
 }
 
 export type LineAdjustment =
   | { direction: "discount"; discount: LineDiscount }
-  | { direction: "surcharge"; surcharge: LineSurcharge };
+  | { direction: "surcharge"; surcharge: LineSurcharge }
+  | { direction: "gift"; note?: string };
 
 /** Línea "simple": sin ajuste, no dañada, no preventa. Solo estas se fusionan. */
 export function isPlainLine(l: AdjustableLine): boolean {
-  return !l.discount && !l.surcharge && !l.isDamaged && !l.isFromPreSale && l.sellingCatalogId == null;
+  return !l.discount && !l.surcharge && !l.isGift && !l.isDamaged && !l.isFromPreSale && l.sellingCatalogId == null;
 }
 
 /**
@@ -59,12 +65,18 @@ function stripAdjustment<T extends AdjustableLine>(line: T, dropParent = false):
   const copy = { ...line };
   delete copy.discount;
   delete copy.surcharge;
+  delete copy.isGift;
+  delete copy.giftNote;
   if (dropParent) delete copy.parentLineId;
   return copy;
 }
 
 function withAdjustment<T extends AdjustableLine>(line: T, adj: LineAdjustment): T {
   const base = stripAdjustment(line);
+  if (adj.direction === "gift") {
+    const note = adj.note?.trim();
+    return note ? { ...base, isGift: true, giftNote: note } : { ...base, isGift: true };
+  }
   return adj.direction === "discount"
     ? { ...base, discount: adj.discount }
     : { ...base, surcharge: adj.surcharge };
@@ -72,7 +84,7 @@ function withAdjustment<T extends AdjustableLine>(line: T, adj: LineAdjustment):
 
 /**
  * Aplica el ajuste a `units` unidades de la línea. Menos que la línea → split.
- * Reemplaza cualquier ajuste previo (descuento ↔ aumento son excluyentes).
+ * Reemplaza cualquier ajuste previo (descuento, aumento y regalo son excluyentes).
  */
 export function applyLineAdjustment<T extends AdjustableLine>(
   items: readonly T[],

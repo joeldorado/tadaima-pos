@@ -37,6 +37,9 @@ use App\Models\ProductPromotion;
  * $1,560 con socio; ahora $1,800. Siempre gana la promo, aunque el socio
  * sin promo saliera más barato. Cada línea devuelve su `unit_price` efectivo.
  *
+ * REGALO (2026-10-31): una línea `gift` sale en $0 — fuera de las promos (no se
+ * come la pieza gratis de un 2x1 ni se re-precia), sin descuento ni aumento.
+ *
  * El server NO confía en montos del cliente: recibe kind/basis/value y
  * recomputa el monto aquí. Si cambias el algoritmo, cambia también saleCalc.ts.
  */
@@ -56,6 +59,7 @@ final class SaleCalculator
      *   line_surcharge?: array{kind: string, basis: string, value: float, reason?: ?string, note?: ?string}|null,
      *   skip_promotion?: bool,
      *   base_price?: float|null,
+     *   gift?: bool,
      * }> $lines Líneas en el MISMO orden en que se persistirán (zip posicional).
      * @param iterable<\App\Models\ProductPromotion> $promotions Promos VIGENTES
      *   de los productos del carrito (el caller filtra con currentlyActive()).
@@ -138,6 +142,12 @@ final class SaleCalculator
         $surchargeSum   = 0.0;
 
         foreach ($lines as $idx => $line) {
+            // Regalo (2026-10-31): la línea vale $0 y no lleva ajustes.
+            if ($line['gift'] ?? false) {
+                $line['unit_price']     = 0.0;
+                $line['line_discount']  = null;
+                $line['line_surcharge'] = null;
+            }
             $gross = self::round2((float) $line['unit_price'] * (float) $line['qty']);
 
             $benefitType    = null;
@@ -276,7 +286,7 @@ final class SaleCalculator
         $promoById = [];
         foreach ($lines as $idx => $line) {
             $units = (int) floor((float) $line['qty']);
-            if (($line['skip_promotion'] ?? false) || $units < 1) {
+            if (($line['skip_promotion'] ?? false) || ($line['gift'] ?? false) || $units < 1) {
                 $candidateIdsByLine[$idx] = [];
                 continue;
             }

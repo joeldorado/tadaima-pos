@@ -28,6 +28,7 @@ import { getCashReport, storageUrl } from "@tadaima/api";
 import { buildPaymentSummary } from "@/lib/paymentSummary";
 import { saleMatchesPaymentFilter, type PaymentFilter } from "@/lib/paymentFilter";
 import { dispatchTicket } from "@/lib/ticketPrint";
+import { GIFT_COLOR } from "@/lib/giftLine";
 import { discountPct } from "@/lib/promo";
 import { DISCOUNT_REASON_LABELS, SURCHARGE_REASON_LABELS } from "@/lib/discountReasons";
 import { finalPriceLine } from "@/lib/ticketLines";
@@ -226,6 +227,10 @@ function printTicket(sale: SaleDetail) {
           : "",
         parts.manualAmount > 0
           ? `<tr><td style="padding:0 0 2px 8px;font-size:9px;font-weight:900">${esc(`Desc.${parts.reasonLabel ? ` ${parts.reasonLabel}` : ""}`)}</td><td></td><td style="text-align:right;font-size:10px;font-weight:900">-${fmt(parts.manualAmount)}</td></tr>`
+          : "",
+        // Regalo (2026-10-31): va en $0 con su marca.
+        i.is_gift
+          ? `<tr><td style="padding:0 0 2px 8px;font-size:9px;font-weight:900">★ REGALO</td><td></td><td></td></tr>`
           : "",
       ].join("");
       return `<tr>
@@ -744,8 +749,19 @@ function SaleRow({
                     {item.comment && <span className="ml-2 font-bold" style={{ color: "#60A5FA" }}>· {item.comment}</span>}
                   </p>
                   {sku && <p className="text-[9px] uppercase tracking-widest mt-0.5 truncate" style={{ color: "var(--td-text-lo)" }}>{sku}</p>}
-                  {(parts.promoAmount > 0 || parts.manualAmount > 0 || parts.surchargeAmount > 0) && (
+                  {(parts.promoAmount > 0 || parts.manualAmount > 0 || parts.surchargeAmount > 0 || item.is_gift) && (
                     <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                      {/* Regalo (2026-10-31): se cobró $0 y su costo en la venta es 0. */}
+                      {item.is_gift && (
+                        <span
+                          data-testid="sale-item-gift"
+                          className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase"
+                          style={{ color: GIFT_COLOR, background: "rgba(236,72,153,0.10)", border: "1px solid rgba(236,72,153,0.35)" }}
+                        >
+                          Regalo{item.gift ? ` · valía ${fmt(item.gift.list_price * item.quantity)}` : ""}
+                          {item.gift?.note ? ` · ${item.gift.note}` : ""}
+                        </span>
+                      )}
                       {parts.promoAmount > 0 && (
                         <span className="px-1.5 py-0.5 rounded text-[9px] font-black" style={{ color: "#34d399", background: "rgba(16,185,129,0.10)", border: "1px solid rgba(16,185,129,0.35)" }}>
                           Promo {parts.promoLabel ?? ""} ·{parts.freeQty > 0 ? ` ${parts.freeQty} gratis` : ""} −{fmt(parts.promoAmount)}
@@ -1244,6 +1260,8 @@ interface CorteProdRow {
    * en renglones separados: cant × precio = venta (Joel 2026-06-12). */
   precioUnit: number;
   cantidad: number; venta: number; costo: number; tieneCosto: boolean;
+  /** Regalo (2026-10-31): $0 de venta y costo a propósito — no es «sin costo». */
+  isGift?: boolean;
   /** Comisión de terminal repartida a esta línea (solo tabla Tarjeta).
    * Viene del snapshot commission_amount de cada venta — cada terminal puede
    * tener % distinto, por eso se calcula POR FILA y no con un % global. */
@@ -1524,7 +1542,7 @@ function CorteProdTable({
   const utilidad = (showComision ? ventaRealTotal : total.venta) - total.costo;
   // "Sin costo" = costo null O costo $0 guardado: en ambos casos la utilidad
   // sale inflada (venta completa) — el producto necesita captura de costo.
-  const sinCostoCount = rows.filter(r => !r.tieneCosto || r.costo <= 0).length;
+  const sinCostoCount = rows.filter(r => !r.isGift && (!r.tieneCosto || r.costo <= 0)).length;
   const formulaLabel = showComision
     ? `Comisión = Venta × % terminal · IVA = Comisión × ${fmtPct(ivaPct)} · Venta real = Venta − Comisión − IVA · Utilidad = Venta real − Costo`
     : "Utilidad = Venta − Costo";
@@ -1609,7 +1627,7 @@ function CorteProdTable({
                         // Sin costo = null O $0 guardado (cubre productos creados
                         // con costo 0): número en ROJO + flag, para que se vea de
                         // inmediato que la utilidad de esa fila está inflada.
-                        const sinCosto = !r.tieneCosto || r.costo <= 0;
+                        const sinCosto = !r.isGift && (!r.tieneCosto || r.costo <= 0);
                         return (
                           <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap"
                             style={{ color: sinCosto ? "#f87171" : "var(--td-text-md)", fontWeight: sinCosto ? 800 : undefined }}>
@@ -2709,10 +2727,12 @@ export function SalesPage() {
         const saleVenta = items.reduce((a, it) => a + (it.price ?? 0) * (it.quantity ?? 0), 0);
         const saleComision = withComision ? (s.commission_amount ?? 0) : 0;
         items.forEach((it, idx) => {
-          const name = it.product?.name ?? it.product_name ?? `#${it.product_id}`;
+          const isGift = Boolean(it.is_gift);
+          const baseName = it.product?.name ?? it.product_name ?? `#${it.product_id}`;
+          const name = isGift ? `${baseName} (Regalo)` : baseName;
           const precioUnit = it.price ?? 0;
           const key = `${fecha}|${name}|${precioUnit}`;
-          const row = map.get(key) ?? { key, name, fecha, precioUnit, cantidad: 0, venta: 0, costo: 0, tieneCosto: false, comision: 0 };
+          const row = map.get(key) ?? { key, name, fecha, precioUnit, cantidad: 0, venta: 0, costo: 0, tieneCosto: false, comision: 0, ...(isGift ? { isGift: true } : {}) };
           const qty = it.quantity ?? 0;
           const itemVenta = precioUnit * qty;
           // cost: snapshot histórico (item.cost) → fallback product.cost actual.

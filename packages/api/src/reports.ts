@@ -48,6 +48,8 @@ export interface TopProductsReportItem {
   times_sold: number
   total_quantity: number
   total_revenue: number
+  /** Renglón de piezas regaladas ($0, 2026-10-31): va aparte de las vendidas. */
+  is_gift?: boolean
 }
 
 export interface TopProductsReport {
@@ -207,6 +209,8 @@ export interface CashTicketItem {
   discount_amount?: number
   surcharge_amount?: number
   net?: number
+  /** Regalo (2026-10-31): la línea va en $0. */
+  is_gift?: boolean
 }
 
 export interface CashTicket {

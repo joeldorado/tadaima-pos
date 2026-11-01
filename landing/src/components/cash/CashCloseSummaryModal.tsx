@@ -46,7 +46,7 @@ function buildTicketsHtml(detail: CashSessionDetail | null): string {
     const items = t.items.map(i =>
       // Neto del renglón (2026-09-29: con descuento y aumento) → los renglones
       // suman el total del ticket. Detalles viejos sin `net` caen al bruto.
-      `<div class="row"><span>${i.quantity} × ${esc(i.name)}</span><span>${fmt(i.net ?? i.total)}</span></div>`
+      `<div class="row"><span>${i.quantity} × ${esc(i.name)}${i.is_gift ? " (REGALO)" : ""}</span><span>${fmt(i.net ?? i.total)}</span></div>`
     ).join("");
     const pays = t.payments.map(p => `${p.method} ${fmt(p.amount)}`).join(" + ");
     const usdLine = (t.cash_received_usd ?? 0) > 0
@@ -472,6 +472,7 @@ function TicketRow({ ticket: t }: { ticket: CashTicket }) {
         <div key={idx} style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--td-text-md)", padding: "1px 0" }}>
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginRight: 8 }}>
             {i.quantity} × {i.name}
+            {i.is_gift && <span style={{ marginLeft: 6, fontWeight: 900, color: GIFT_COLOR }}>REGALO</span>}
           </span>
           <span style={{ flexShrink: 0 }}>{fmt(i.total)}</span>
         </div>

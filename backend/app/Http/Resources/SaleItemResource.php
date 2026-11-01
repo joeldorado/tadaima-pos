@@ -71,6 +71,16 @@ class SaleItemResource extends JsonResource
             // interno: se ve en Caja y en Ventas, NO se imprime en el ticket.
             'comment' => $this->comment,
 
+            // Regalo (2026-10-31): la línea va en price/total/cost = 0 y el
+            // detalle vive en sale_gifts. `list_price` = precio de catálogo
+            // regalado; `unit_cost` (costo real) solo con canViewCost.
+            'is_gift' => $this->gift !== null,
+            'gift'    => $this->gift ? [
+                'list_price' => (float) $this->gift->list_price,
+                'unit_cost'  => $isAdmin && $this->gift->unit_cost !== null ? (float) $this->gift->unit_cost : null,
+                'note'       => $this->gift->note,
+            ] : null,
+
             // `cost` snapshot al momento del INSERT (lo que se vendió a ese costo).
             // Solo se expone a admins — gerente/cajero no ven margen. Esta es la
             // verdad histórica; `product.cost` puede mutar después, pero esta

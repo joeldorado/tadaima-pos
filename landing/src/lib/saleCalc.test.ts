@@ -764,3 +764,56 @@ describe("promo vs precio socio (Joel 2026-09-30) — no se suman, gana la promo
     expect(r.lines[0]!.promoRepriced).toBe(false);
   });
 });
+
+describe("recalculateSale — regalo por línea (2026-10-31)", () => {
+  const twoForOne: PromoDef = { id: 1, productId: "1", name: "2x1", buyN: 2, payM: 1, priority: 0 };
+
+  it("la línea regalo vale $0 y no cuenta en el subtotal", () => {
+    const r = recalculateSale({
+      lines: [
+        { lineId: "a", productId: "1", unitPrice: 200, qty: 1 },
+        { lineId: "g", productId: "2", unitPrice: 150, qty: 2, gift: true },
+      ],
+    });
+    expect(r.subtotal).toBe(200);
+    expect(r.total).toBe(200);
+    expect(r.lines[1]?.net).toBe(0);
+    expect(r.lines[1]?.unitPrice).toBe(0);
+  });
+
+  it("el regalo no se come la pieza gratis del 2x1 de las pagadas", () => {
+    const r = recalculateSale({
+      lines: [
+        { lineId: "a", productId: "1", unitPrice: 200, qty: 2 },
+        { lineId: "g", productId: "1", unitPrice: 200, qty: 1, gift: true },
+      ],
+      promotions: [twoForOne],
+    });
+    expect(r.total).toBe(200);
+    expect(r.lines[0]?.promoPart?.amount).toBe(200);
+    expect(r.lines[1]?.promoPart ?? null).toBeNull();
+  });
+
+  it("ignora descuento o aumento que trajera la línea", () => {
+    const r = recalculateSale({
+      lines: [{
+        lineId: "g", productId: "1", unitPrice: 150, qty: 1, gift: true,
+        surcharge: { kind: "fixed", basis: "line", value: 50, reason: "otro" },
+      }],
+    });
+    expect(r.total).toBe(0);
+    expect(r.lines[0]?.surchargePart).toBe(0);
+  });
+
+  it("no se re-precia a NORMAL aunque traiga basePrice", () => {
+    const r = recalculateSale({
+      lines: [
+        { lineId: "a", productId: "1", unitPrice: 180, qty: 2, basePrice: 200 },
+        { lineId: "g", productId: "1", unitPrice: 180, qty: 1, basePrice: 200, gift: true },
+      ],
+      promotions: [twoForOne],
+    });
+    expect(r.lines[1]?.promoRepriced).toBe(false);
+    expect(r.lines[1]?.net).toBe(0);
+  });
+});

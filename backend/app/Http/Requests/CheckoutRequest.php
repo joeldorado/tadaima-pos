@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests;
 
+use App\Models\SaleGift;
 use App\Models\SaleItem;
 use App\Services\SaleCalculator;
 use Illuminate\Foundation\Http\FormRequest;
@@ -51,7 +52,9 @@ class CheckoutRequest extends FormRequest
 
             'payments'                      => ['required', 'array', 'min:1'],
             'payments.*.payment_method_id'  => ['required', 'integer', 'exists:payment_methods,id'],
-            'payments.*.amount'             => ['required', 'numeric', 'min:0.01'],
+            // min:0 (2026-10-31): una venta 100% regalo se cobra con un pago de
+            // $0. Con total > 0, CheckoutService exige ≥ $0.01 por pago.
+            'payments.*.amount'             => ['required', 'numeric', 'min:0'],
             'payments.*.terminal_id'        => ['nullable', 'integer', 'exists:terminals,id'],
 
             // Shape B: items directos
@@ -89,6 +92,11 @@ class CheckoutRequest extends FormRequest
             // cajero, no toca montos ni se imprime. Solo en v2, igual que el
             // aumento: sin calc_version las columnas por línea no se llenan.
             'items.*.comment'               => [$isV2 ? 'nullable' : 'prohibited', 'string', 'max:' . SaleItem::COMMENT_MAX],
+            // Regalo (2026-10-31): la línea se cobra en $0 y su costo en la venta
+            // es 0 (products.cost no cambia). `price` sigue siendo el de catálogo
+            // (se valida igual) y queda en sale_gifts. Solo en v2.
+            'items.*.is_gift'               => [$isV2 ? 'sometimes' : 'prohibited', 'boolean'],
+            'items.*.gift_note'             => [$isV2 ? 'nullable' : 'prohibited', 'string', 'max:' . SaleGift::NOTE_MAX],
             'store_id'                      => [$hasItems ? 'required' : 'nullable', 'integer', 'exists:stores,id'],
             'register_session_id'           => [$hasItems ? 'required' : 'nullable', 'integer', 'exists:cash_register_sessions,id'],
             'customer_id'                   => ['nullable', 'integer', 'exists:customers,id'],
@@ -110,11 +118,21 @@ class CheckoutRequest extends FormRequest
      * toparía, pero es señal de captura errónea → 422 explícito. En el aumento
      * el mismo tope evita dedazos (para más, monto fijo). Una línea lleva
      * descuento O aumento, y la mercancía dañada (precio manual) no se aumenta.
+     * Un regalo no lleva descuento, aumento ni precio manual de dañado.
      */
     public function withValidator(\Illuminate\Validation\Validator $validator): void
     {
         $validator->after(function (\Illuminate\Validation\Validator $v): void {
             foreach ((array) $this->input('items', []) as $i => $item) {
+                if (! empty($item['is_gift'])) {
+                    if (! empty($item['line_discount']) || ! empty($item['line_surcharge'])) {
+                        $v->errors()->add("items.{$i}.is_gift", 'Un regalo no lleva descuento ni aumento.');
+                    }
+                    if (! empty($item['is_damaged'])) {
+                        $v->errors()->add("items.{$i}.is_gift", 'Un regalo no puede ir como mercancía dañada.');
+                    }
+                }
+
                 $d = $item['line_discount'] ?? null;
                 if (is_array($d) && ($d['kind'] ?? '') === 'percent' && (float) ($d['value'] ?? 0) > 100) {
                     $v->errors()->add("items.{$i}.line_discount.value", 'El porcentaje de descuento no puede exceder 100.');

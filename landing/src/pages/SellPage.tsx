@@ -4,7 +4,7 @@ import {
   Search, ShoppingBag, X, Plus, Minus, Check, SlidersHorizontal,
   ScanLine, Zap, Loader2, Settings2, Smartphone,
   AlertTriangle, ArrowLeftRight, Maximize2, Minimize2, Rows3, LayoutGrid,
-  Tag, ChevronDown, ChevronUp, ChevronRight, ChevronLeft, ArrowLeft, CreditCard, DollarSign,
+  Tag, Gift, ChevronDown, ChevronUp, ChevronRight, ChevronLeft, ArrowLeft, CreditCard, DollarSign,
   Users, UserPlus, User, Phone, AlertCircle,
   Mail,
   TriangleAlert, PackageX, Bookmark, Calendar, PackageCheck, ClipboardList, Banknote,
@@ -75,6 +75,8 @@ import { acceptsNewUnits, applyLineAdjustment, lineAdjustmentOf, removeLineAdjus
 import { finalPriceLine } from "@/lib/ticketLines";
 import { LineDiscountModal } from "@/components/sell/LineDiscountModal";
 import { LineCommentModal } from "@/components/sell/LineCommentModal";
+import { LineGiftModal } from "@/components/sell/LineGiftModal";
+import { GIFT_COLOR } from "@/lib/giftLine";
 import { PromoPaymentAlertModal } from "@/components/sell/PromoPaymentAlertModal";
 import { lineCommentPayload, withLineComment } from "@/lib/lineComment";
 import { DISCOUNT_REASON_LABELS, SURCHARGE_REASON_LABELS } from "@/lib/discountReasons";
@@ -155,6 +157,11 @@ interface CartItem {
   /** Comentario corto del cajero en ESTA línea (2026-10-03): recordatorio que se
    *  ve junto al nombre y se guarda con la venta. No toca montos ni el ticket. */
   comment?: string;
+  /** Regalo (2026-10-31): la línea se cobra en $0 y su costo en la venta es 0
+   *  (el del inventario no cambia). Excluyente con descuento/aumento. */
+  isGift?: boolean;
+  /** Nota opcional del regalo («cliente frecuente»). */
+  giftNote?: string;
   /** lineId de la línea origen cuando esta línea nació de un split por
    *  descuento parcial. Solo carrito (permite merge-back); NO viaja al backend. */
   parentLineId?: string;
@@ -177,7 +184,11 @@ interface CartItem {
  * aumento. Solo viaja tipo/base/valor/motivo/nota — el monto lo recomputa el
  * server (SaleCalculator), nunca se manda un monto.
  */
-function lineAdjustmentPayload(ci: Pick<CartItem, "discount" | "surcharge">) {
+function lineAdjustmentPayload(ci: Pick<CartItem, "discount" | "surcharge" | "isGift" | "giftNote">) {
+  // Regalo: el precio que viaja es el de catálogo; el server deja la línea en $0.
+  if (ci.isGift) {
+    return { is_gift: true, ...(ci.giftNote ? { gift_note: ci.giftNote } : {}) };
+  }
   if (ci.discount) {
     const d = ci.discount;
     return { line_discount: { kind: d.kind, basis: d.basis, value: d.value, reason: d.reason, ...(d.note ? { note: d.note } : {}) } };
@@ -826,6 +837,8 @@ export function SellPage() {
   const [discountModalLineId, setDiscountModalLineId] = useState<string | null>(null);
   // Comentario por línea (2026-10-03): se abre desde el menú ⋮ o tocando el comentario.
   const [commentModalLineId, setCommentModalLineId] = useState<string | null>(null);
+  /** Línea cuyo modal de Regalo está abierto (2026-10-31). */
+  const [giftModalLineId, setGiftModalLineId] = useState<string | null>(null);
   const [customerSearch, setCustomerSearch] = useState("");
   const [showCustDrop, setShowCustDrop]     = useState(false);
   const [requireCustomerFlash, setRequireCustomerFlash] = useState(false);
@@ -849,6 +862,8 @@ export function SellPage() {
       lineTotal?: number;
       /** Descuentos v2: monto y etiqueta del beneficio de esta línea (p.ej. "Desc. Dañado"). */
       discountAmount?: number; discountLabel?: string;
+      /** Regalo (2026-10-31): se imprime «REGALO» y va en $0. */
+      isGift?: boolean;
     }>;
     soldAt: string;
     // contexto del punto de venta
@@ -2469,6 +2484,8 @@ export function SellPage() {
         ...(i.surcharge ? { surcharge: i.surcharge } : {}),
         // El cajero renunció a la promo de esta línea a propósito.
         ...(i.skipPromo ? { skipPromo: true } : {}),
+        // Regalo (2026-10-31): la línea vale $0 y queda fuera de promos.
+        ...(i.isGift ? { gift: true } : {}),
       })),
       // Promos NxM vigentes de los productos del carrito (Fase 3). El motor
       // elige la mejor por línea; el backend recomputa igual al cobrar.
@@ -2516,6 +2533,13 @@ export function SellPage() {
     (ci: CartItem): number => lineCalcById[ci.lineId]?.unitPrice ?? getItemPrice(ci),
     [lineCalcById],
   );
+  /**
+   * Precio que viaja en `items[].price` al cobrar. Un regalo manda su precio de
+   * CATÁLOGO (el server lo valida y lo guarda en sale_gifts; la línea queda en
+   * $0); un dañado, su precio manual; el resto, el efectivo del motor.
+   */
+  const checkoutPriceOf = (ci: CartItem): number =>
+    ci.isGift ? getItemPrice(ci) : (ci.damagedPrice ?? priceOf(ci));
 
   /**
    * Renglón del ticket de una línea del carrito. Con aumento de precio va el
@@ -2537,6 +2561,7 @@ export function SellPage() {
       price,
       lineTotal,
       ...(benefitAmt > 0 && benefitLabel ? { discountAmount: benefitAmt, discountLabel: benefitLabel } : {}),
+      ...(ci.isGift ? { isGift: true } : {}),
     };
   };
 
@@ -2580,6 +2605,8 @@ export function SellPage() {
     const isCardMethod = method === "Tarjeta";
     // Preventa (catálogo) → no Tarjeta.
     if (item.sellingCatalogId != null) return !isCardMethod;
+    // Un regalo no se cobra: su restricción no bloquea el resto (2026-10-31).
+    if (item.isGift) return true;
     // Flags del producto.
     if (isCardMethod ? item.product.allow_card === false : item.product.allow_cash === false) return false;
     // Flags de la promo aplicada (si la hay).
@@ -3405,11 +3432,11 @@ export function SellPage() {
     // el detalle cant×precio queda chico pero en NEGRO + sangría (el gris #555
     // no imprimía en la Xprinter, se veía lavado). El color nunca debe cargar la
     // jerarquía en papel térmico — la dan tamaño y sangría.
-    const itemRows = (name: string, qty: number, unitPrice: number, discountAmount = 0, discountLabel = "", lineTotal = unitPrice * qty) => `
-      <tr><td colspan="3" style="padding:4px 0 0;font-size:11px;font-weight:700">${esc(name)}</td></tr>
+    const itemRows = (name: string, qty: number, unitPrice: number, discountAmount = 0, discountLabel = "", lineTotal = unitPrice * qty, isGift = false) => `
+      <tr><td colspan="3" style="padding:4px 0 0;font-size:11px;font-weight:700">${esc(name)}${isGift ? ` <span style="font-size:9px;font-weight:900">★ REGALO</span>` : ""}</td></tr>
       <tr><td colspan="2" style="padding:0 0 ${discountAmount > 0 ? "0" : "4px"} 8px;font-size:9px">${qty} × ${fmt(unitPrice)}</td><td style="text-align:right;font-size:11px;font-weight:900;vertical-align:bottom;padding-bottom:${discountAmount > 0 ? "0" : "4px"}">${fmt(lineTotal)}</td></tr>
       ${discountAmount > 0 ? `<tr><td colspan="2" style="padding:0 0 4px 8px;font-size:9px;font-weight:900">${esc(discountLabel || "Desc.")}</td><td style="text-align:right;font-size:10px;font-weight:900;padding-bottom:4px">-${fmt(discountAmount)}</td></tr>` : ""}`;
-    const regularRows = sale.items.map(i => itemRows(i.name, i.quantity, i.price, i.discountAmount ?? 0, i.discountLabel ?? "", i.lineTotal ?? i.price * i.quantity)).join("");
+    const regularRows = sale.items.map(i => itemRows(i.name, i.quantity, i.price, i.discountAmount ?? 0, i.discountLabel ?? "", i.lineTotal ?? i.price * i.quantity, i.isGift ?? false)).join("");
     // v2 = algún item trae beneficio por línea; legacy = solo el monto global.
     const hasLineBenefits = sale.items.some(i => (i.discountAmount ?? 0) > 0);
 
@@ -3816,12 +3843,12 @@ export function SellPage() {
 
         // 1. Crear venta regular primero (si aplica). Si truena, no se liquida la preventa.
         let regularSaleId: number | undefined;
-        if (regularItems.length > 0 && regularSubtotal > 0) {
+        if (regularItems.length > 0 && (regularSubtotal > 0 || regularItems.some(i => i.isGift))) {
           const directItems = regularItems
             .map(ci => ({
               product_id: parseInt(ci.product.id, 10),
               quantity: ci.quantity,
-              price: ci.damagedPrice ?? priceOf(ci),
+              price: checkoutPriceOf(ci),
               price_level: (lineCalcById[ci.lineId]?.promoRepriced ? "a" : ["a","b","c"].includes(ci.priceLevel) ? ci.priceLevel : "a") as "a" | "b" | "c",
               // Dañado → precio manual; el backend salta la validación de catálogo.
               ...(ci.isDamaged ? { is_damaged: true } : {}),
@@ -4080,7 +4107,7 @@ export function SellPage() {
             .map(ci => ({
               product_id: parseInt(ci.product.id, 10),
               quantity: ci.quantity,
-              price: ci.damagedPrice ?? priceOf(ci),
+              price: checkoutPriceOf(ci),
               price_level: (lineCalcById[ci.lineId]?.promoRepriced ? "a" : ["a","b","c"].includes(ci.priceLevel) ? ci.priceLevel : "a") as "a" | "b" | "c",
               // Dañado → precio manual; el backend salta la validación de catálogo.
               ...(ci.isDamaged ? { is_damaged: true } : {}),
@@ -4095,7 +4122,9 @@ export function SellPage() {
           const regularNet = regularItems.reduce(
             (sum, i) => sum + (lineCalcById[i.lineId]?.net ?? priceOf(i) * i.quantity), 0);
 
-          if (directItems.length > 0 && regularSubtotal > 0) {
+          // Regalos (2026-10-31): una parte regular solo de regalos vale $0 pero
+          // igual se registra (sale el stock).
+          if (directItems.length > 0 && (regularSubtotal > 0 || regularItems.some(i => i.isGift))) {
             // Efectivo del ticket (incluye USD convertido a TC) + cambio, para el
             // detalle/ticket. Se adjunta a la venta regular (única fila Sale del
             // ticket; el anticipo de preventa vive en pre_sale_orders).
@@ -4222,13 +4251,15 @@ export function SellPage() {
 
     // ── VENTA REGULAR ──────────────────────────────────────────────────────────
 
-    // Guard: total must be positive (prevents $0 sales)
-    if (total <= 0) {
+    // Guard: total must be positive (prevents $0 sales). Excepción (2026-10-31):
+    // una venta 100% regalo se registra en $0 con un pago Efectivo de $0.
+    const isGiftOnlySale = total <= 0.005 && activeMesa.items.some(i => i.isGift);
+    if (total <= 0 && !isGiftOnlySale) {
       toast.error("El total debe ser mayor a $0");
       return;
     }
 
-    if (activeMesa.paymentMethod === "Tarjeta" && !activeTerminal) {
+    if (!isGiftOnlySale && activeMesa.paymentMethod === "Tarjeta" && !activeTerminal) {
       toast.error("Selecciona una terminal antes de cobrar con tarjeta.", {
         style: { background: '#1a0a00', color: '#fbbf24', border: '1px solid #78350f' },
       });
@@ -4262,10 +4293,10 @@ export function SellPage() {
       const payMethodSnapshot = activeMesa.paymentMethod;
       // Pago Mixto: split contra el MISMO `total` del payload para que los 2
       // renglones sumen exacto (el backend valida Σ payments == total ±0.01).
-      const mixedSnapshot = payMethodSnapshot === "Mixto"
+      const mixedSnapshot = payMethodSnapshot === "Mixto" && !isGiftOnlySale
         ? computeMixedSplit(total, transferAmount)
         : null;
-      if (payMethodSnapshot === "Mixto" && !mixedSnapshot?.valid) {
+      if (payMethodSnapshot === "Mixto" && !isGiftOnlySale && !mixedSnapshot?.valid) {
         toast.error("Captura el monto de la transferencia para el pago mixto.");
         return;
       }
@@ -4289,7 +4320,7 @@ export function SellPage() {
         .map(ci => ({
           product_id: parseInt(ci.product.id, 10),
           quantity: ci.quantity,
-          price: ci.damagedPrice ?? priceOf(ci),
+          price: checkoutPriceOf(ci),
           price_level: (lineCalcById[ci.lineId]?.promoRepriced ? "a" : ["a","b","c"].includes(ci.priceLevel) ? ci.priceLevel : "a") as "a" | "b" | "c",
           // Dañado → precio manual; el backend salta la validación de catálogo.
           ...(ci.isDamaged ? { is_damaged: true } : {}),
@@ -4319,6 +4350,8 @@ export function SellPage() {
               { payment_method_id: PM_IDS["Efectivo"]!, amount: mixedSnapshot.cashPortion },
               { payment_method_id: PM_IDS["Transferencia"]!, amount: mixedSnapshot.transfer },
             ]
+          : isGiftOnlySale
+          ? [{ payment_method_id: PM_IDS["Efectivo"]!, amount: 0 }]
           : [{
               payment_method_id: paymentMethodId,
               amount: total,
@@ -5862,7 +5895,10 @@ export function SellPage() {
                     const lineDiscAmt = lineBenefit?.amount ?? 0;
                     const lineSurAmt = lineCalc?.surchargePart ?? 0;
                     const lineNet = lineDiscAmt > 0 || lineSurAmt > 0 ? (lineCalc?.net ?? lineTotal) : lineTotal;
-                    const canLineDiscount = item.sellingCatalogId == null && !item.isFromPreSale;
+                    const canLineDiscount = item.sellingCatalogId == null && !item.isFromPreSale && !item.isGift;
+                    // Regalo (2026-10-31): solo venta regular, no dañados (precio manual).
+                    const canLineGift = !activeMesa?.isPreventa && !activeMesa?.loadedPreSaleOrderId
+                      && !item.isFromPreSale && item.sellingCatalogId == null && !item.isDamaged;
                     const activePriceLabel = PRICE_LEVEL_LABELS[item.priceLevel] ?? "Precio";
                     const activePriceColor = item.isDamaged ? "#F97316" : (PRICE_LEVEL_COLORS[item.priceLevel] ?? "var(--td-text-hi)");
                     const activePriceRgb = item.isDamaged ? "249,115,22" : (PRICE_LEVEL_RGB[item.priceLevel] ?? "255,255,255");
@@ -5902,6 +5938,23 @@ export function SellPage() {
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
                         <h3 className={`${compactCart ? "text-lg" : "text-base"} font-black truncate leading-tight min-w-0 max-w-full`} style={{ color: THI }}>{item.product.name}</h3>
                         {item.product.product_type === "bundle" && <BundleBadge small />}
+                        {/* Regalo (2026-10-31): va en $0. Tocarlo edita la nota o lo quita. */}
+                        {item.isGift && (
+                          <button
+                            type="button"
+                            onClick={() => setGiftModalLineId(item.lineId)}
+                            title={`Regalo${item.giftNote ? ` · ${item.giftNote}` : ""} — toca para editar`}
+                            data-testid={`line-gift-${item.lineId}`}
+                            className="min-w-0 max-w-full inline-flex items-center gap-1 rounded-lg px-2 py-0.5 text-left text-[12px] font-black leading-snug"
+                            style={{ color: GIFT_COLOR, background: "rgba(236,72,153,0.12)", border: "1px solid rgba(236,72,153,0.4)", cursor: "pointer" }}
+                          >
+                            <Gift size={12} className="shrink-0" />
+                            <span className="truncate">
+                              <span className="uppercase tracking-wide">Regalo</span>
+                              {item.giftNote ? <span className="font-bold"> · {item.giftNote}</span> : null}
+                            </span>
+                          </button>
+                        )}
                         {/* Comentario de la línea (2026-10-03): recordatorio del cajero, a
                             lado del nombre. Tocarlo lo edita. No sale en el ticket. */}
                         {item.comment && (
@@ -6181,6 +6234,13 @@ export function SellPage() {
                           {lineNet > lineTotal + 0.005 && (
                             <p className="text-[11px] font-black" style={{ color: "#F59E0B" }}>catálogo {fmt(lineTotal)}</p>
                           )}
+                          {/* Regalo: lo que vale en catálogo, tachado (se cobra $0). */}
+                          {item.isGift && (
+                            <p className="text-[11px] font-black" data-testid={`line-gift-price-${item.lineId}`}>
+                              <span className="uppercase tracking-wide" style={{ color: GIFT_COLOR }}>Regalo</span>{" "}
+                              <span className="line-through" style={{ color: TLO }}>{fmt(getItemPrice(item) * item.quantity)}</span>
+                            </p>
+                          )}
                           <p className="mt-1 text-center text-[14px] font-black" style={{ color: TMD }}>
                             {item.quantity} × {fmt(unitPrice)}
                           </p>
@@ -6314,7 +6374,7 @@ export function SellPage() {
                         <div className="relative self-center shrink-0" data-rowmenu>
                           <button
                             onClick={() => setRowMenuLineId(prev => prev === item.lineId ? null : item.lineId)}
-                            title="Opciones de esta línea (descuento o aumento / comentario / eliminar)"
+                            title="Opciones de esta línea (descuento o aumento / regalo / comentario / eliminar)"
                             data-testid={`row-menu-btn-${item.lineId}`}
                             className={`relative inline-flex ${compactCart ? "h-10 w-10" : "h-[54px] w-12"} items-center justify-center rounded-2xl transition-colors`}
                             style={rowMenuLineId === item.lineId
@@ -6322,8 +6382,8 @@ export function SellPage() {
                               : { border: CARD_B, background: MUTED, color: TMD }}
                           >
                             <MoreVertical size={16} />
-                            {(item.discount || item.surcharge) && (
-                              <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full" style={{ background: item.surcharge ? "#F59E0B" : "var(--td-red)" }} />
+                            {(item.discount || item.surcharge || item.isGift) && (
+                              <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full" style={{ background: item.isGift ? GIFT_COLOR : item.surcharge ? "#F59E0B" : "var(--td-red)" }} />
                             )}
                           </button>
                           {rowMenuLineId === item.lineId && (
@@ -6340,6 +6400,17 @@ export function SellPage() {
                                 >
                                   <Tag size={14} />
                                   {item.discount ? "Editar descuento ✓" : item.surcharge ? "Editar aumento ✓" : "Descuento / aumento"}
+                                </button>
+                              )}
+                              {canLineGift && (
+                                <button
+                                  onClick={() => { setRowMenuLineId(null); setGiftModalLineId(item.lineId); }}
+                                  data-testid={`row-menu-gift-${item.lineId}`}
+                                  className="flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-[12px] font-black text-left transition-colors hover:bg-white/8"
+                                  style={{ color: item.isGift ? GIFT_COLOR : "var(--td-text-hi)" }}
+                                >
+                                  <Gift size={14} />
+                                  {item.isGift ? "Editar regalo ✓" : "Regalo"}
                                 </button>
                               )}
                               {/* Solo en venta regular: las preventas no guardan sale_items. */}
@@ -7602,6 +7673,25 @@ export function SellPage() {
             onConfirm={(units, adj) => applyLineAdjustmentTo(line.lineId, units, adj)}
             onRemove={line.discount || line.surcharge ? () => removeLineAdjustmentFrom(line.lineId) : undefined}
             onClose={() => setDiscountModalLineId(null)}
+          />
+        );
+      })()}
+
+      {/* Modal de regalo por LÍNEA (2026-10-31) */}
+      {giftModalLineId && (() => {
+        const line = activeMesa.items.find(i => i.lineId === giftModalLineId);
+        if (!line) return null;
+        return (
+          <LineGiftModal
+            key={line.lineId}
+            productName={line.product.name}
+            lineQty={line.quantity}
+            unitPrice={getItemPrice(line)}
+            isGift={Boolean(line.isGift)}
+            existingNote={line.giftNote}
+            onConfirm={(units, adj) => { applyLineAdjustmentTo(line.lineId, units, adj); setGiftModalLineId(null); }}
+            onRemove={() => { removeLineAdjustmentFrom(line.lineId); setGiftModalLineId(null); }}
+            onClose={() => setGiftModalLineId(null)}
           />
         );
       })()}
@@ -9166,6 +9256,7 @@ export function SellPage() {
                                       ].filter(Boolean).join(" + "),
                                     }
                                   : {}),
+                                ...(i.is_gift ? { isGift: true } : {}),
                               })),
                               soldAt: dateStr,
                               // Totales del ticket: Σ descuentos (v2 o legacy) + subtotal previo
@@ -9230,6 +9321,11 @@ export function SellPage() {
                                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                       <span style={{ flex: 1, fontSize: 11, fontWeight: 700, color: "var(--td-text-hi)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                         {item.product?.name || `#${item.product_id}`}
+                                        {item.is_gift && (
+                                          <span data-testid="hist-gift-badge" style={{ marginLeft: 6, fontWeight: 900, color: GIFT_COLOR, textTransform: "uppercase", fontSize: 9, letterSpacing: "0.08em" }}>
+                                            · Regalo{item.gift?.note ? ` (${item.gift.note})` : ""}
+                                          </span>
+                                        )}
                                         {item.comment && <span style={{ marginLeft: 6, fontWeight: 700, color: "#60A5FA" }}>· {item.comment}</span>}
                                       </span>
                                       {item.product?.sku && <span style={{ fontSize: 8, color: "var(--td-text-ghost)", textTransform: "uppercase", letterSpacing: "0.1em", flexShrink: 0 }}>{item.product.sku}</span>}

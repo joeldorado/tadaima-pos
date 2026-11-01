@@ -11,6 +11,7 @@ use App\Models\PreSaleOrderItem;
 use App\Models\PreSaleOrderPayment;
 use App\Models\Sale;
 use App\Models\SaleCancellation;
+use App\Models\SaleGift;
 use App\Models\SaleItem;
 use App\Models\SystemLog;
 use App\Models\User;
@@ -78,7 +79,7 @@ class SaleCancellationService
                 ->sum('amount');
             $cashRatio = $totalPaid > 0 ? $cashPaid / $totalPaid : 1.0;
 
-            $sale->load('items.product');
+            $sale->load(['items.product', 'items.gift']);
 
             $isFullCancel = empty($itemsToCancel);
             $itemMap      = $sale->items->keyBy('id');
@@ -145,6 +146,8 @@ class SaleCancellationService
                     'gross_total'         => $part['gross'],
                     'discount_cancelled'  => $part['discount'],
                     'surcharge_cancelled' => $part['surcharge'],
+                    // Regalo (2026-10-31): la línea se cobró en $0 y su costo fue 0.
+                    'is_gift'             => $item->gift !== null,
                 ];
 
                 // Restaurar stock en bodega de la tienda original. Si el
@@ -170,6 +173,9 @@ class SaleCancellationService
                         }
                     }
                     $item->save();
+                    // El detalle del regalo sigue a la línea (la fila completa
+                    // se va por cascade al borrar el sale_item).
+                    $item->gift?->update(['quantity' => $newQty]);
                 }
 
                 $runSubtotal  = round($runSubtotal - $part['gross'], 2);
@@ -202,8 +208,12 @@ class SaleCancellationService
             $sale->total     = $newTotal;
             $sale->last_cancelled_at = now();
 
-            // Determinar status final.
-            if (! $remainingItemsExist || $newTotal <= 0.01) {
+            // Determinar status final. Si solo quedan regalos ($0) la venta NO
+            // está cancelada: esas piezas siguen fuera y se pueden cancelar
+            // después (2026-10-31).
+            $remainingGifts = $remainingItemsExist
+                && SaleGift::whereIn('sale_item_id', $sale->items->pluck('id'))->exists();
+            if (! $remainingItemsExist || ($newTotal <= 0.01 && ! $remainingGifts)) {
                 $sale->status              = Sale::STATUS_RETURNED;
                 $sale->cancellation_status = Sale::CANCELLATION_FULL;
             } else {
