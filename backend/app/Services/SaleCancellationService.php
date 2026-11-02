@@ -16,6 +16,7 @@ use App\Models\SaleItem;
 use App\Models\SystemLog;
 use App\Models\User;
 use App\Models\Warehouse;
+use App\Support\GiftAudit;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -149,6 +150,10 @@ class SaleCancellationService
                     // Regalo (2026-10-31): la línea se cobró en $0 y su costo fue 0.
                     'is_gift'             => $item->gift !== null,
                 ];
+
+                if ($item->gift !== null) {
+                    GiftAudit::cancelled($sale, $item, $item->gift, $qtyToCancel, $cancelledBy->id);
+                }
 
                 // Restaurar stock en bodega de la tienda original. Si el
                 // producto fue ELIMINADO del catálogo (product_id NULL) no hay

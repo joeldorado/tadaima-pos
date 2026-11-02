@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Support\ActivityFilters;
 use App\Support\ActivityGroups;
+use App\Support\GiftAudit;
 use App\Support\DateRange;
 use Carbon\Carbon;
 use Illuminate\Database\Query\Builder;
@@ -287,8 +288,9 @@ final class ActivityFeedService
             $q->whereIn('l.entity_type', ActivityGroups::PRODUCT_ENTITY_TYPES)->whereIn('l.entity_id', $f->productIds);
         }
         if ($f->storeId !== null) {
-            // Los logs no guardan tienda: con filtro de tienda solo quedan los movimientos.
-            $q->whereRaw('1 = 0');
+            // Los logs no guardan tienda: con filtro de tienda solo quedan los
+            // movimientos y los regalos, que la traen en meta (string: GiftAudit).
+            $q->whereIn('l.action', GiftAudit::ACTIONS)->where('l.meta->store_id', (string) $f->storeId);
         }
         if ($f->action !== null) {
             if (ActivityGroups::isMovementAction($f->action)) {

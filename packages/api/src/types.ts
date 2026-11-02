@@ -388,7 +388,7 @@ export interface SaleItemDetail {
    * permiso de ver costos.
    */
   is_gift?: boolean
-  gift?: { list_price: number; unit_cost: number | null; note: string | null } | null
+  gift?: { list_price: number; unit_cost: number | null; note: string | null; given_by?: string | null } | null
   /**
    * Cost snapshot al momento EXACTO del checkout. Solo viene cuando el caller
    * es admin (security gate en `SaleItemResource`). NULL para ventas pre-

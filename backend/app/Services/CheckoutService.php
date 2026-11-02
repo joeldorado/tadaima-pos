@@ -11,6 +11,7 @@ use App\Models\SaleGift;
 use App\Models\SaleItem;
 use App\Models\SalesDraft;
 use App\Models\SalesDraftItem;
+use App\Support\GiftAudit;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -377,7 +378,7 @@ class CheckoutService
                 ]);
 
                 if ($isGift) {
-                    SaleGift::create([
+                    $gift = SaleGift::create([
                         'sale_id'       => $sale->id,
                         'sale_item_id'  => $saleItem->id,
                         'product_id'    => $draftItem->product_id,
@@ -388,6 +389,7 @@ class CheckoutService
                         'note'          => $meta['gift_note'] ?? null,
                         'authorized_by' => $userId,
                     ]);
+                    GiftAudit::given($sale, $saleItem, $gift, $userId);
                 }
             }
 
@@ -422,7 +424,7 @@ class CheckoutService
             // ── 9. Cerrar draft ───────────────────────────────────────────────
             $draft->update(['status' => SalesDraft::STATUS_COMPLETED]);
 
-            return $sale->load(['items.product', 'items.product.images', 'items.gift', 'payments.paymentMethod', 'customer']);
+            return $sale->load(['items.product', 'items.product.images', 'items.gift.authorizer:id,name', 'payments.paymentMethod', 'customer']);
         });
     }
 

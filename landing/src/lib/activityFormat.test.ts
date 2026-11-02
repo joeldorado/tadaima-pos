@@ -84,3 +84,32 @@ describe("groupStyle", () => {
     expect(groupStyle("lo-que-sea").label).toBe("Sistema");
   });
 });
+
+describe("describeEvent — regalos (2026-11-02)", () => {
+  const gift: ActivityEvent = {
+    ...base,
+    source: "log",
+    group: "regalo",
+    action: "sale.gift",
+    title: "Regalo",
+    warehouse: null,
+    store: { id: 1, name: "Centro" },
+    stock_before: null,
+    stock_after: null,
+    qty_delta: null,
+    meta: { sale_id: 1251, quantity: 2, value: 300, cost_value: 180, note: "cliente frecuente" },
+  };
+
+  it("dice cuánto, lo que valía, el costo, la venta, la tienda y la nota", () => {
+    expect(describeEvent(gift)).toBe("2 pzas · valía $300 · costo $180 · Venta #1251 · Centro · cliente frecuente");
+  });
+
+  it("sin costo ni nota no deja huecos", () => {
+    expect(describeEvent({ ...gift, action: "sale.gift_cancelled", meta: { sale_id: 7, quantity: 1, value: 150, cost_value: null, note: null } }))
+      .toBe("1 pza · valía $150 · Venta #7 · Centro");
+  });
+
+  it("el grupo Regalos tiene su estilo y su chip", () => {
+    expect(groupStyle("regalo").label).toBe("Regalos");
+  });
+});
