@@ -7,6 +7,7 @@ use App\Http\Requests\StoreWarehouseRequest;
 use App\Http\Requests\UpdateWarehouseRequest;
 use App\Http\Resources\WarehouseResource;
 use App\Models\Warehouse;
+use App\Support\ModelAudit;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -48,6 +49,7 @@ class WarehouseController extends Controller
 
         $warehouse = Warehouse::create($data);
         $warehouse->refresh()->load('store');
+        ModelAudit::created($warehouse, 'warehouse.created', "Bodega «{$warehouse->name}» creada", 'warehouse', ['name', 'type', 'store_id', 'active'], $request->user()->id);
 
         return $this->success(new WarehouseResource($warehouse), 'Bodega creada.', 201);
     }
@@ -61,7 +63,10 @@ class WarehouseController extends Controller
             return $resp;
         }
 
+        $fields = array_keys($request->validated());
+        $before = ModelAudit::snapshot($warehouse, $fields);
         $warehouse->update($request->validated());
+        ModelAudit::updated($warehouse, $before, 'warehouse.updated', "Bodega «{$warehouse->name}» editada", 'warehouse', $fields, $request->user()->id);
         $warehouse->load('store');
 
         return $this->success(new WarehouseResource($warehouse), 'Bodega actualizada.');
@@ -83,6 +88,7 @@ class WarehouseController extends Controller
             return $this->error('No se puede eliminar la bodega porque tiene inventario activo.', 422);
         }
 
+        ModelAudit::deleted($warehouse, 'warehouse.deleted', "Bodega «{$warehouse->name}» eliminada", 'warehouse', ['name', 'type', 'store_id', 'active'], request()->user()?->id);
         $warehouse->delete();
 
         return $this->success(null, 'Bodega eliminada.');

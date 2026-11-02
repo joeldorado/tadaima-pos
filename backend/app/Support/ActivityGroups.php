@@ -16,7 +16,7 @@ namespace App\Support;
  */
 final class ActivityGroups
 {
-    public const GROUPS = ['stock', 'producto', 'venta', 'caja', 'paquete', 'preventa', 'insumo', 'sistema', 'impresion'];
+    public const GROUPS = ['stock', 'producto', 'venta', 'caja', 'paquete', 'preventa', 'apartado', 'promo', 'cliente', 'usuario', 'catalogo', 'config', 'insumo', 'sistema', 'impresion'];
 
     /** Prefijo que distingue un tipo de movimiento de una acción de log en el filtro `action`. */
     public const MOVEMENT_ACTION_PREFIX = 'mov.';
@@ -76,6 +76,56 @@ final class ActivityGroups
         'pre_sale_catalog.updated'    => ['preventa',  'Catálogo de preventa editado'],
         'pre_sale_catalog.status_changed' => ['preventa', 'Estado de catálogo cambiado'],
         'pre_sale_catalog.cancelled'  => ['preventa',  'Catálogo de preventa cancelado'],
+        // Cobertura total (2026-11-02): promos, usuarios/roles, clientes, configuración,
+        // catálogo online, apartados y operación de caja. Ver App\Support\ModelAudit.
+        'promo.created'               => ['promo',     'Promoción creada'],
+        'promo.updated'               => ['promo',     'Promoción editada'],
+        'promo.deleted'               => ['promo',     'Promoción eliminada'],
+        'promo.products_attached'     => ['promo',     'Productos asignados a promoción'],
+        'promo.products_detached'     => ['promo',     'Productos quitados de promoción'],
+        'user.created'                => ['usuario',   'Usuario creado'],
+        'user.updated'                => ['usuario',   'Usuario editado'],
+        'user.deactivated'            => ['usuario',   'Usuario desactivado'],
+        'user.role_assigned'          => ['usuario',   'Rol asignado'],
+        'user.role_removed'           => ['usuario',   'Rol quitado'],
+        'role.created'                => ['usuario',   'Rol creado'],
+        'role.updated'                => ['usuario',   'Rol editado'],
+        'role.permissions_updated'    => ['usuario',   'Permisos de rol cambiados'],
+        'customer.created'            => ['cliente',   'Cliente creado'],
+        'customer.updated'            => ['cliente',   'Cliente editado'],
+        'customer.deleted'            => ['cliente',   'Cliente eliminado'],
+        'customer.credit_added'       => ['cliente',   'Crédito de cliente registrado'],
+        'store.created'               => ['config',    'Tienda creada'],
+        'store.updated'               => ['config',    'Tienda editada'],
+        'store.payment_method_assigned' => ['config',  'Método de pago asignado a tienda'],
+        'warehouse.created'           => ['config',    'Bodega creada'],
+        'warehouse.updated'           => ['config',    'Bodega editada'],
+        'warehouse.deleted'           => ['config',    'Bodega eliminada'],
+        'terminal.created'            => ['config',    'Terminal creada'],
+        'terminal.updated'            => ['config',    'Terminal editada'],
+        'terminal.deleted'            => ['config',    'Terminal eliminada'],
+        'payment_method.created'      => ['config',    'Método de pago creado'],
+        'payment_method.updated'      => ['config',    'Método de pago editado'],
+        'supplier.created'            => ['config',    'Proveedor creado'],
+        'supplier.updated'            => ['config',    'Proveedor editado'],
+        'supplier.deleted'            => ['config',    'Proveedor eliminado'],
+        'supply.created'              => ['insumo',    'Insumo creado'],
+        'supply.updated'              => ['insumo',    'Insumo editado'],
+        'supply_movement.created'     => ['insumo',    'Registro de insumo'],
+        'catalog.settings_updated'    => ['catalogo',  'Configuración de catálogo online'],
+        'catalog.product_added'       => ['catalogo',  'Producto añadido al catálogo online'],
+        'catalog.product_visibility'  => ['catalogo',  'Visibilidad en catálogo online'],
+        'catalog.product_removed'     => ['catalogo',  'Producto quitado del catálogo online'],
+        'catalog.product_flags_updated' => ['catalogo', 'Destacado / visible en catálogo'],
+        'catalog.featured_reordered'  => ['catalogo',  'Orden de destacados guardado'],
+        'layaway.created'             => ['apartado',  'Apartado creado'],
+        'layaway.updated'             => ['apartado',  'Apartado editado'],
+        'layaway.payment_added'       => ['apartado',  'Abono de apartado'],
+        'layaway.delivered'           => ['apartado',  'Apartado entregado'],
+        'layaway.cancelled'           => ['apartado',  'Apartado cancelado'],
+        'cash_session.opened'         => ['caja',      'Caja abierta'],
+        'cash_session.closed'         => ['caja',      'Caja cerrada'],
+        'cash_movement.created'       => ['caja',      'Movimiento de caja'],
         'products.tomos_depurados'        => ['sistema', 'Depuración de tomos (comando)'],
         'products.tomos_costo_homologado' => ['sistema', 'Costo de tomos homologado (comando)'],
         'products.tomos_costo_revertido'  => ['sistema', 'Costo de tomos revertido (comando)'],
@@ -116,6 +166,36 @@ final class ActivityGroups
         'details.volume_number' => 'número de tomo',
         'details.editorial' => 'editorial',
         'details.genre'    => 'género',
+        'phone'            => 'teléfono',
+        'email'            => 'correo',
+        'address'          => 'dirección',
+        'store_id'         => 'tienda',
+        'can_view_cost'    => 've costos',
+        'can_edit_catalog' => 'edita catálogo',
+        'can_manage_promos' => 'gestiona promos',
+        'buy_n'            => 'lleva N',
+        'pay_m'            => 'paga M',
+        'min_qty'          => 'mínimo de piezas',
+        'discount_per_unit' => 'descuento por pieza',
+        'allow_cash'       => 'con efectivo',
+        'allow_card'       => 'con tarjeta',
+        'priority'         => 'prioridad',
+        'status'           => 'estado',
+        'starts_at'        => 'inicia',
+        'ends_at'          => 'termina',
+        'commission_percent' => '% comisión',
+        'is_active'        => 'activo',
+        'unit'             => 'unidad',
+        'category'         => 'categoría',
+        'show_price'       => 'muestra precio',
+        'show_stock'       => 'muestra stock',
+        'featured'         => 'destacado',
+        'catalog_visible'  => 'visible en catálogo',
+        'notes'            => 'notas',
+        'expires_at'       => 'vence',
+        'loyalty_tier'     => 'nivel de lealtad',
+        'points'           => 'puntos',
+        'type'             => 'tipo',
     ];
 
     public static function movementGroup(string $type, ?string $reference): string
@@ -153,7 +233,7 @@ final class ActivityGroups
     {
         $base = self::LOG_ACTIONS[$action][1] ?? $action;
 
-        if (in_array($action, ['product.updated', 'manga.updated', 'bundle.updated'], true)) {
+        if (str_ends_with($action, '.updated')) {
             $changes = is_array($meta['changes'] ?? null) ? $meta['changes'] : [];
             $keys = array_values(array_filter(array_keys($changes), 'is_string'));
             if ($keys === []) {

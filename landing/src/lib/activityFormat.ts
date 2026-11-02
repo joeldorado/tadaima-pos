@@ -23,6 +23,12 @@ export const GROUP_STYLES: Record<ActivityGroup, GroupStyle> = {
   caja:      { label: "Caja",       color: "#FBBF24", rgb: "251,191,36" },
   paquete:   { label: "Paquete",    color: "#F472B6", rgb: "244,114,182" },
   preventa:  { label: "Preventa",   color: "#22D3EE", rgb: "34,211,238" },
+  apartado:  { label: "Apartado",   color: "#2DD4BF", rgb: "45,212,191" },
+  promo:     { label: "Promo",      color: "#E879F9", rgb: "232,121,249" },
+  cliente:   { label: "Cliente",    color: "#A3E635", rgb: "163,230,53" },
+  usuario:   { label: "Usuario",    color: "#F87171", rgb: "248,113,113" },
+  catalogo:  { label: "Catálogo",   color: "#38BDF8", rgb: "56,189,248" },
+  config:    { label: "Config",     color: "#C4B5FD", rgb: "196,181,253" },
   insumo:    { label: "Insumo",     color: "#FB923C", rgb: "251,146,60" },
   sistema:   { label: "Sistema",    color: "#9CA3AF", rgb: "156,163,175" },
   impresion: { label: "Impresión",  color: "#94A3B8", rgb: "148,163,184" },
@@ -30,7 +36,7 @@ export const GROUP_STYLES: Record<ActivityGroup, GroupStyle> = {
 
 /** Orden de los chips del filtro (todos apagados al entrar = todos los tipos). */
 export const GROUP_ORDER: readonly ActivityGroup[] = [
-  "stock", "producto", "venta", "caja", "paquete", "preventa", "insumo", "sistema", "impresion",
+  "stock", "producto", "venta", "caja", "paquete", "preventa", "apartado", "promo", "cliente", "usuario", "catalogo", "config", "insumo", "sistema", "impresion",
 ];
 
 export function groupStyle(group: string): GroupStyle {

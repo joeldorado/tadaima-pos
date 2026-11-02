@@ -7,6 +7,7 @@ use App\Http\Requests\StoreTerminalRequest;
 use App\Http\Requests\UpdateTerminalRequest;
 use App\Http\Resources\TerminalResource;
 use App\Models\Terminal;
+use App\Support\ModelAudit;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -38,6 +39,7 @@ class TerminalController extends Controller
         }
 
         $terminal = Terminal::create($request->validated());
+        ModelAudit::created($terminal, 'terminal.created', "Terminal «{$terminal->name}» creada", 'terminal', array_keys($request->validated()), $request->user()->id);
         $terminal->refresh()->load('store');
 
         return $this->success(new TerminalResource($terminal), 'Terminal creada.', 201);
@@ -52,7 +54,10 @@ class TerminalController extends Controller
             return $resp;
         }
 
+        $fields = array_keys($request->validated());
+        $before = ModelAudit::snapshot($terminal, $fields);
         $terminal->update($request->validated());
+        ModelAudit::updated($terminal, $before, 'terminal.updated', "Terminal «{$terminal->name}» editada", 'terminal', $fields, $request->user()->id);
         $terminal->load('store');
 
         return $this->success(new TerminalResource($terminal), 'Terminal actualizada.');
@@ -67,6 +72,7 @@ class TerminalController extends Controller
             return $resp;
         }
 
+        ModelAudit::deleted($terminal, 'terminal.deleted', "Terminal «{$terminal->name}» eliminada", 'terminal', ['name', 'store_id', 'commission_percent', 'active'], request()->user()?->id);
         $terminal->delete();
 
         return $this->success(null, 'Terminal eliminada.');

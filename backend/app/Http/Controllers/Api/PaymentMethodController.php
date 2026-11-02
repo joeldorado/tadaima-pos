@@ -7,6 +7,7 @@ use App\Http\Requests\StorePaymentMethodRequest;
 use App\Http\Requests\UpdatePaymentMethodRequest;
 use App\Http\Resources\PaymentMethodResource;
 use App\Models\PaymentMethod;
+use App\Support\ModelAudit;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -32,6 +33,7 @@ class PaymentMethodController extends Controller
     public function store(StorePaymentMethodRequest $request): JsonResponse
     {
         $method = PaymentMethod::create($request->validated());
+        ModelAudit::created($method, 'payment_method.created', "Método de pago «{$method->name}» creado", 'payment_method', array_keys($request->validated()), $request->user()->id);
         $method->refresh();
 
         return $this->success(new PaymentMethodResource($method), 'Método de pago creado.', 201);
@@ -42,7 +44,10 @@ class PaymentMethodController extends Controller
      */
     public function update(UpdatePaymentMethodRequest $request, PaymentMethod $payment_method): JsonResponse
     {
+        $fields = array_keys($request->validated());
+        $before = ModelAudit::snapshot($payment_method, $fields);
         $payment_method->update($request->validated());
+        ModelAudit::updated($payment_method, $before, 'payment_method.updated', "Método de pago «{$payment_method->name}» editado", 'payment_method', $fields, $request->user()->id);
 
         return $this->success(new PaymentMethodResource($payment_method), 'Método de pago actualizado.');
     }

@@ -10,6 +10,7 @@ use App\Http\Resources\CustomerCreditResource;
 use App\Http\Resources\CustomerResource;
 use App\Models\Customer;
 use App\Services\TadaimaMemberService;
+use App\Support\ModelAudit;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use RuntimeException;
@@ -23,6 +24,9 @@ class CustomerController extends Controller
      *   ?search=   filtra por name / email / phone / external_member_id
      *   ?tier=     filtra por loyalty_tier  (Bronce|Plata|Oro|Leyenda)
      */
+    /** Campos del cliente que se auditan (ver ModelAudit). */
+    public const AUDIT_FIELDS = ['name', 'phone', 'email', 'address', 'notes', 'external_member_id', 'loyalty_tier', 'points', 'member_status', 'member_level'];
+
     public function index(Request $request): JsonResponse
     {
         $customers = Customer::query()
@@ -73,6 +77,9 @@ class CustomerController extends Controller
             $customer = Customer::create($data);
         }
 
+        if ($customer->wasRecentlyCreated) {
+            ModelAudit::created($customer, 'customer.created', "Cliente «{$customer->name}» creado", 'customer', self::AUDIT_FIELDS, $request->user()->id);
+        }
         $customer->loadSum('credit', 'amount');
 
         return $this->success(
@@ -87,6 +94,7 @@ class CustomerController extends Controller
      */
     public function update(UpdateCustomerRequest $request, Customer $customer): JsonResponse
     {
+        $before = ModelAudit::snapshot($customer, self::AUDIT_FIELDS);
         $customer->update(
             $request->only([
                 'name', 'phone', 'email', 'address',
@@ -94,6 +102,7 @@ class CustomerController extends Controller
                 'member_status', 'member_level', 'member_expires_at', 'member_debt',
             ])
         );
+        ModelAudit::updated($customer, $before, 'customer.updated', "Cliente «{$customer->name}» editado", 'customer', self::AUDIT_FIELDS, $request->user()->id);
 
         $customer->loadSum('credit', 'amount');
 
@@ -105,6 +114,7 @@ class CustomerController extends Controller
      */
     public function destroy(Customer $customer): JsonResponse
     {
+        ModelAudit::deleted($customer, 'customer.deleted', "Cliente «{$customer->name}» eliminado", 'customer', self::AUDIT_FIELDS, request()->user()?->id);
         $customer->delete();
 
         return $this->success(null, 'Cliente eliminado');
@@ -181,6 +191,9 @@ class CustomerController extends Controller
     public function addCredit(StoreCreditRequest $request, Customer $customer): JsonResponse
     {
         $entry = $customer->credit()->create($request->only(['amount', 'reason']));
+        ModelAudit::event('customer.credit_added', sprintf('Cliente «%s»: crédito %s%.2f', $customer->name, (float) $entry->amount < 0 ? '−$' : '$', abs((float) $entry->amount)), 'customer', $customer->id, [
+            'amount' => (float) $entry->amount, 'reason' => $entry->reason, 'entry_id' => $entry->id,
+        ], $request->user()->id);
 
         $customer->loadSum('credit', 'amount');
 

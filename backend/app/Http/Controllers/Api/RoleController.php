@@ -7,6 +7,7 @@ use App\Http\Requests\StoreRoleRequest;
 use App\Http\Resources\RoleResource;
 use App\Models\Permission;
 use App\Models\Role;
+use App\Support\ModelAudit;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -32,6 +33,7 @@ class RoleController extends Controller
             'name'       => $request->name,
             'guard_name' => $request->input('guard_name', 'api'),
         ]);
+        ModelAudit::created($role, 'role.created', "Rol «{$role->name}» creado", 'role', ['name', 'guard_name'], $request->user()->id);
 
         return $this->success(new RoleResource($role->load('permissions')), 'Rol creado.', 201);
     }
@@ -45,7 +47,9 @@ class RoleController extends Controller
             'name' => ['sometimes', 'string', 'max:100', "unique:roles,name,{$role->id}"],
         ]);
 
+        $before = ModelAudit::snapshot($role, ['name']);
         $role->update($request->only('name'));
+        ModelAudit::updated($role, $before, 'role.updated', "Rol «{$role->name}» editado", 'role', ['name'], $request->user()->id);
 
         return $this->success(new RoleResource($role->load('permissions')), 'Rol actualizado.');
     }
@@ -74,7 +78,14 @@ class RoleController extends Controller
             'permissions.*' => ['integer', 'exists:permissions,id'],
         ]);
 
+        $before = $role->permissions()->pluck('name')->sort()->values()->all();
         $role->permissions()->sync($request->permissions);
+        $after = $role->permissions()->get()->pluck('name')->sort()->values()->all();
+        if ($before !== $after) {
+            ModelAudit::event('role.permissions_updated', "Rol «{$role->name}»: permisos cambiados", 'role', $role->id, [
+                'added' => array_values(array_diff($after, $before)), 'removed' => array_values(array_diff($before, $after)),
+            ], $request->user()->id);
+        }
 
         return $this->success(new RoleResource($role->load('permissions')), 'Permisos actualizados.');
     }
