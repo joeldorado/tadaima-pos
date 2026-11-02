@@ -10,6 +10,7 @@ use App\Models\Store;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use App\Support\ModelAudit;
 use Illuminate\Support\Facades\DB;
 
 class UserController extends Controller
@@ -22,6 +23,9 @@ class UserController extends Controller
      * limitan a su propia tienda. Útil para que admin vea cajeros logueados
      * antes de que abran caja registradora.
      */
+    /** Campos del usuario que se auditan; nunca password ni password_enc (ver ModelAudit). */
+    public const AUDIT_FIELDS = ['name', 'email', 'phone', 'address', 'company_id', 'store_id', 'active', 'can_view_cost', 'can_edit_catalog', 'can_manage_promos'];
+
     public function online(Request $request): JsonResponse
     {
         $authUser = $request->user();
@@ -160,6 +164,7 @@ class UserController extends Controller
 
             return $user->load('store');
         });
+        ModelAudit::created($user, 'user.created', "Usuario «{$user->name}» creado", 'user', self::AUDIT_FIELDS, $request->user()->id, ['role_id' => $request->filled('role_id') ? (int) $request->role_id : null]);
 
         return $this->success(new UserResource($user), 'Usuario creado.', 201);
     }
@@ -208,7 +213,9 @@ class UserController extends Controller
             $data['password_enc'] = $request->password; // copia reversible (cast 'encrypted') para que el admin la vea
         }
 
+        $before = ModelAudit::snapshot($user, self::AUDIT_FIELDS);
         $user->update($data);
+        ModelAudit::updated($user, $before, 'user.updated', "Usuario «{$user->name}» editado", 'user', self::AUDIT_FIELDS, $authUser->id, isset($data['password']) ? ['password_changed' => true] : []);
 
         return $this->success(new UserResource($user->fresh('store')), 'Usuario actualizado.');
     }
@@ -234,6 +241,7 @@ class UserController extends Controller
         }
 
         $user->update(['active' => false]);
+        ModelAudit::event('user.deactivated', "Usuario «{$user->name}» desactivado", 'user', $user->id, [], $authUser?->id);
 
         return $this->success(null, 'Usuario desactivado.');
     }
@@ -290,6 +298,8 @@ class UserController extends Controller
         // el flag cuando cambia la categoría (cajero↔gerente) — así una
         // revocación explícita del admin sobrevive a re-asignar el mismo rol.
         $grantedBefore = $user->isAdminRole() || $user->hasRole(['gerente', 'manager']);
+        $rolesBefore   = DB::table('model_has_roles')->join('roles', 'roles.id', '=', 'model_has_roles.role_id')
+            ->where('model_type', User::class)->where('model_id', $user->id)->pluck('roles.name')->all();
 
         DB::transaction(function () use ($request, $user) {
             DB::table('model_has_roles')
@@ -314,6 +324,10 @@ class UserController extends Controller
         if ($grantedBefore !== $grantsNow) {
             $user->update(['can_manage_promos' => $grantsNow]);
         }
+        $roleName = (string) DB::table('roles')->where('id', $request->role_id)->value('name');
+        ModelAudit::event('user.role_assigned', "Usuario «{$user->name}»: rol {$roleName}", 'user', $user->id, [
+            'from' => $rolesBefore, 'to' => [$roleName], 'can_manage_promos' => $grantsNow,
+        ], $authUser->id);
 
         return $this->success(['roles' => $user->fresh()->roles], 'Rol asignado.');
     }
@@ -323,6 +337,8 @@ class UserController extends Controller
      */
     public function removeRole(User $user, int $roleId): JsonResponse
     {
+        $roleName = (string) DB::table('roles')->where('id', $roleId)->value('name');
+        ModelAudit::event('user.role_removed', "Usuario «{$user->name}»: rol {$roleName} quitado", 'user', $user->id, ['role' => $roleName], request()->user()?->id);
         DB::table('model_has_roles')
             ->where('role_id',    $roleId)
             ->where('model_type', User::class)

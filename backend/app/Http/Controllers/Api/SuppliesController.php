@@ -11,6 +11,7 @@ use App\Models\Supply;
 use App\Models\SupplyMovement;
 use App\Services\SupplyService;
 use App\Support\DateRange;
+use App\Support\ModelAudit;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -82,6 +83,8 @@ class SuppliesController extends Controller
             ],
         ));
 
+        ModelAudit::created($supply, 'supply.created', "Insumo «{$supply->name}» creado", 'supply', ['name', 'category', 'unit', 'store_id', 'is_active'], $user->id);
+
         return $this->success($supply, 'Insumo creado.', 201);
     }
 
@@ -109,11 +112,14 @@ class SuppliesController extends Controller
             ? ['store_id' => $request->filled('store_id') ? (int) $request->input('store_id') : null]
             : [];
 
+        $before = ModelAudit::snapshot($supply, ['name', 'category', 'unit', 'store_id', 'is_active']);
         $supply->update(array_merge(
             $request->only(['name', 'category', 'unit']),
             $request->has('is_active') ? ['is_active' => $request->boolean('is_active')] : [],
             $storeUpdate,
         ));
+
+        ModelAudit::updated($supply, $before, 'supply.updated', "Insumo «{$supply->name}» editado", 'supply', ['name', 'category', 'unit', 'store_id', 'is_active'], $user->id);
 
         return $this->success($supply->fresh(), 'Insumo actualizado.');
     }
@@ -176,7 +182,13 @@ class SuppliesController extends Controller
             return $this->error($e->getMessage(), 422);
         }
 
-        return $this->success($movement->load('supply'), 'Movimiento registrado.', 201);
+        $movement->load('supply');
+        ModelAudit::event('supply_movement.created', sprintf('Insumo «%s»: %s $%.2f (%s)', $movement->supply?->name ?? "#{$movement->supply_id}", $movement->type, (float) $movement->amount, (string) ($movement->money_source ?? '')), 'supply_movement', $movement->id, [
+            'supply_id' => $movement->supply_id, 'type' => $movement->type, 'quantity' => (float) $movement->quantity, 'amount' => (float) $movement->amount,
+            'money_source' => $movement->money_source, 'store_id' => $movement->store_id,
+        ], $request->user()->id);
+
+        return $this->success($movement, 'Movimiento registrado.', 201);
     }
 
     /**

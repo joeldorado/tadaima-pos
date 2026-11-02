@@ -10,6 +10,7 @@ use App\Http\Resources\PaymentMethodResource;
 use App\Http\Resources\StoreResource;
 use App\Models\Store;
 use App\Models\Warehouse;
+use App\Support\ModelAudit;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -77,6 +78,7 @@ class StoreController extends Controller
         });
 
         $store->refresh()->load(['company', 'manager']);
+        ModelAudit::created($store, 'store.created', "Tienda «{$store->name}» creada", 'store', array_keys($store->getAttributes()), $request->user()->id);
 
         return $this->success(new StoreResource($store), 'Tienda creada.', 201);
     }
@@ -90,7 +92,10 @@ class StoreController extends Controller
             return $resp;
         }
 
+        $fields = array_keys($request->validated());
+        $before = ModelAudit::snapshot($store, $fields);
         $store->update($request->validated());
+        ModelAudit::updated($store, $before, 'store.updated', "Tienda «{$store->name}» editada", 'store', $fields, $request->user()->id);
         $store->load(['company', 'manager']);
 
         return $this->success(new StoreResource($store), 'Tienda actualizada.');
@@ -128,6 +133,7 @@ class StoreController extends Controller
         ]);
 
         $store->load('paymentMethods');
+        ModelAudit::event('store.payment_method_assigned', sprintf('Tienda «%s»: método de pago #%d %s', $store->name, $methodId, $active ? 'activo' : 'inactivo'), 'store', $store->id, ['payment_method_id' => (int) $methodId, 'active' => (bool) $active], $request->user()->id);
 
         return $this->success(PaymentMethodResource::collection($store->paymentMethods), 'Método de pago asignado.');
     }

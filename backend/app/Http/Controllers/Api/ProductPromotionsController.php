@@ -9,6 +9,7 @@ use App\Http\Requests\StoreProductPromotionRequest;
 use App\Models\Product;
 use App\Models\ProductPromotion;
 use App\Services\PromotionService;
+use App\Support\ModelAudit;
 use Illuminate\Http\JsonResponse;
 
 /**
@@ -110,6 +111,7 @@ class ProductPromotionsController extends Controller
                 'product_id' => $product->id,
             ],
         ));
+        ModelAudit::created($promotion, 'promo.created', "Promoción «{$promotion->name}» creada para «{$product->name}»", 'promotion', PromotionsController::AUDIT_FIELDS, $request->user()->id, ['product_ids' => [$product->id]]);
 
         return $this->success($promotion, 'Promoción creada.', 201);
     }
@@ -152,6 +154,7 @@ class ProductPromotionsController extends Controller
         }
 
         $promotion->products()->detach($product->id);
+        ModelAudit::event('promo.products_detached', "Promoción «{$promotion->name}»: producto «{$product->name}» quitado", 'promotion', $promotion->id, ['product_ids' => [$product->id]], request()->user()?->id);
         if ((int) $promotion->product_id === (int) $product->id) {
             // Sin esto una revisión vieja seguiría aplicando la promo aquí.
             $promotion->update(['product_id' => null]);
@@ -160,6 +163,7 @@ class ProductPromotionsController extends Controller
         // Semántica vieja preservada: si ya no aplica a NINGÚN producto, la
         // promo desaparece — pero una multi-asignada sobrevive para los demás.
         if ($promotion->products()->count() === 0) {
+            ModelAudit::deleted($promotion, 'promo.deleted', "Promoción «{$promotion->name}» eliminada (sin productos)", 'promotion', PromotionsController::AUDIT_FIELDS, request()->user()?->id);
             $promotion->delete();
         }
 

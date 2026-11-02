@@ -30,7 +30,7 @@ describe("effectiveGroups", () => {
     expect(effectiveGroups([])).toBeNull();
   });
   it("todos marcados = sin filtro", () => {
-    expect(effectiveGroups(["stock", "producto", "venta", "caja", "paquete", "preventa", "insumo", "sistema", "impresion"])).toBeNull();
+    expect(effectiveGroups(["stock", "producto", "venta", "caja", "paquete", "preventa", "apartado", "promo", "cliente", "usuario", "catalogo", "config", "insumo", "sistema", "impresion"])).toBeNull();
   });
   it("respeta el orden canónico", () => {
     expect(effectiveGroups(["venta", "stock"])).toEqual(["stock", "venta"]);
@@ -79,7 +79,7 @@ describe("filtersEqual", () => {
   it("ignora la página y el tamaño, compara lo demás", () => {
     expect(filtersEqual(state, { ...state, page: 3 })).toBe(true);
     expect(filtersEqual(state, { ...state, search: "x" })).toBe(false);
-    expect(filtersEqual(state, { ...state, groups: ["stock", "producto", "venta", "caja", "paquete", "preventa", "insumo", "sistema", "impresion"] })).toBe(true);
+    expect(filtersEqual(state, { ...state, groups: ["stock", "producto", "venta", "caja", "paquete", "preventa", "apartado", "promo", "cliente", "usuario", "catalogo", "config", "insumo", "sistema", "impresion"] })).toBe(true);
     expect(filtersEqual(state, { ...state, groups: ["stock"] })).toBe(false);
   });
 });

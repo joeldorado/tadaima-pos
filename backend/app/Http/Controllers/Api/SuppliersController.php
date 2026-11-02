@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Supplier;
+use App\Support\ModelAudit;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -32,6 +33,7 @@ class SuppliersController extends Controller
         ]);
 
         $supplier = Supplier::create($data);
+        ModelAudit::created($supplier, 'supplier.created', "Proveedor «{$supplier->name}» creado", 'supplier', ['name', 'active'], $request->user()->id);
 
         return $this->success($supplier, 'Proveedor creado.', 201);
     }
@@ -48,7 +50,9 @@ class SuppliersController extends Controller
             'active' => ['boolean'],
         ]);
 
+        $before = ModelAudit::snapshot($supplier, ['name', 'active']);
         $supplier->update($data);
+        ModelAudit::updated($supplier, $before, 'supplier.updated', "Proveedor «{$supplier->name}» editado", 'supplier', ['name', 'active'], $request->user()->id);
 
         return $this->success($supplier, 'Proveedor actualizado.');
     }
@@ -60,6 +64,7 @@ class SuppliersController extends Controller
             return $resp;
         }
 
+        ModelAudit::deleted($supplier, 'supplier.deleted', "Proveedor «{$supplier->name}» eliminado", 'supplier', ['name', 'active'], request()->user()?->id);
         $supplier->delete();
 
         return $this->success(null, 'Proveedor eliminado.');

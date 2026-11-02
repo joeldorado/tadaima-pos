@@ -13,6 +13,7 @@ use App\Http\Resources\SaleResource;
 use App\Models\Layaway;
 use App\Services\LayawayService;
 use App\Support\DateRange;
+use App\Support\ModelAudit;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -88,6 +89,8 @@ class LayawayController extends Controller
             return $this->error($e->getMessage(), 422);
         }
 
+        ModelAudit::created($layaway, 'layaway.created', "Apartado {$layaway->code} creado", 'layaway', ['code', 'store_id', 'customer_id', 'product_id', 'quantity', 'price', 'total', 'down_payment', 'status', 'expires_at', 'notes'], $request->user()->id);
+
         return $this->success(new LayawayResource($layaway), 'Apartado creado.', 201);
     }
 
@@ -139,7 +142,9 @@ class LayawayController extends Controller
             return $this->error("No se puede editar el apartado (estado: {$layaway->status}).", 422);
         }
 
+        $before = ModelAudit::snapshot($layaway, ['notes', 'expires_at']);
         $layaway->update($request->only(['notes', 'expires_at']));
+        ModelAudit::updated($layaway, $before, 'layaway.updated', "Apartado {$layaway->code} editado", 'layaway', ['notes', 'expires_at'], $request->user()->id);
         $layaway->load(['product', 'customer', 'payments.paymentMethod', 'logs']);
 
         return $this->success(new LayawayResource($layaway), 'Apartado actualizado.');
@@ -160,6 +165,7 @@ class LayawayController extends Controller
         try {
             if ($newStatus === 'delivered') {
                 $sale = $this->service->deliver($layaway, $userId);
+                ModelAudit::event('layaway.delivered', "Apartado {$layaway->code} entregado (venta #{$sale->id})", 'layaway', $layaway->id, ['sale_id' => $sale->id, 'store_id' => $layaway->store_id], $userId);
 
                 return $this->success(new SaleResource($sale), 'Apartado entregado. Venta generada.');
             }
@@ -168,6 +174,8 @@ class LayawayController extends Controller
         } catch (\DomainException $e) {
             return $this->error($e->getMessage(), 422);
         }
+
+        ModelAudit::event('layaway.cancelled', "Apartado {$layaway->code} cancelado", 'layaway', $layaway->id, ['notes' => $request->input('notes'), 'store_id' => $layaway->store_id], $userId);
 
         return $this->success(new LayawayResource($layaway), 'Apartado cancelado. Inventario liberado.');
     }
@@ -192,6 +200,9 @@ class LayawayController extends Controller
         }
 
         $layaway->load('payments');
+        ModelAudit::event('layaway.payment_added', sprintf('Apartado %s: abono $%.2f', $layaway->code, (float) $payment->amount), 'layaway', $layaway->id, [
+            'amount' => (float) $payment->amount, 'payment_method_id' => $payment->payment_method_id, 'payment_id' => $payment->id, 'store_id' => $layaway->store_id,
+        ], $request->user()->id);
 
         return $this->success([
             'payment'     => new LayawayPaymentResource($payment),

@@ -268,6 +268,12 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   dejaban rastro). El diff de `product.updated` / `manga.updated` incluye precios
   (`prices.price_N`), métodos de pago (`payment.*`) y categorías (`ProductAuditSnapshot`); sin
   cambio real no hay log. Precios por tienda: `product.store_price_updated/removed`.
+- **Cobertura total (2026-11-02, `App\Support\ModelAudit`):** promos, usuarios y roles (nunca la
+  contraseña: solo `password_changed`), clientes y crédito, tiendas/bodegas/terminales/métodos de pago,
+  proveedores e insumos (catálogo y cada registro), catálogo online, apartados y abrir/cerrar/mover caja
+  dejan `system_logs` con diff antes→después; sin cambio real no escriben. Grupos nuevos del feed:
+  `apartado`, `promo`, `cliente`, `usuario`, `catalogo`, `config` (espejo en `activityFormat.ts` y
+  `packages/api/src/activity.ts`). Preventas (catálogo, cupos, «llegó», partidas): `PreSaleAudit` (2026-11-01).
 - Follow-up pendiente: `inventory_movements.product_id/user_id` son `cascadeOnDelete` → borrar un
   producto o usuario borra su historial (solo queda el log de borrado con `meta.snapshot`).
 

@@ -11,6 +11,7 @@ use App\Models\CatalogSetting;
 use App\Models\Product;
 use App\Models\Store;
 use App\Services\CatalogConfigService;
+use App\Support\ModelAudit;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -49,7 +50,9 @@ class CatalogController extends Controller
             ['show_price' => true, 'show_stock' => false]
         );
 
+        $before = ModelAudit::snapshot($settings, ['catalog_url', 'whatsapp_number', 'show_price', 'show_stock', 'show_search', 'show_categories', 'show_description', 'cart_enabled', 'hide_out_of_stock']);
         $settings->update($request->validated());
+        ModelAudit::updated($settings, $before, 'catalog.settings_updated', "Catálogo online de «{$store->name}»: configuración editada", 'catalog_setting', ['catalog_url', 'whatsapp_number', 'show_price', 'show_stock', 'show_search', 'show_categories', 'show_description', 'cart_enabled', 'hide_out_of_stock'], $request->user()->id, ['store_id' => $store->id]);
 
         return $this->success($this->formatSettings($settings, $store), 'Configuración de catálogo actualizada.');
     }
@@ -100,6 +103,7 @@ class CatalogController extends Controller
         );
 
         $cp->load(['product.price', 'product.images', 'product.category']);
+        ModelAudit::event('catalog.product_added', sprintf('Catálogo online de «%s»: «%s» añadido', $store->name, $cp->product?->name ?? "#{$data['product_id']}"), 'product', (int) $data['product_id'], ['store_id' => $store->id, 'visible' => (bool) $cp->visible], $request->user()->id);
 
         return $this->success($this->formatCatalogProduct($cp), 'Producto añadido al catálogo.', 201);
     }
@@ -119,7 +123,11 @@ class CatalogController extends Controller
             ->where('product_id', $product->id)
             ->firstOrFail();
 
+        $wasVisible = (bool) $cp->visible;
         $cp->update(['visible' => $request->boolean('visible')]);
+        if ($wasVisible !== $request->boolean('visible')) {
+            ModelAudit::event('catalog.product_visibility', sprintf('Catálogo online de «%s»: «%s» %s', $store->name, $product->name, $request->boolean('visible') ? 'visible' : 'oculto'), 'product', $product->id, ['store_id' => $store->id, 'visible' => $request->boolean('visible')], $request->user()->id);
+        }
         $cp->load(['product.price', 'product.images', 'product.category']);
 
         return $this->success($this->formatCatalogProduct($cp), 'Visibilidad actualizada.');
@@ -134,9 +142,12 @@ class CatalogController extends Controller
         if ($resp = $this->catalogEditError()) return $resp;
         if ($resp = $this->storeScopeError(request(), $store->id)) return $resp;
 
-        CatalogProduct::where('store_id', $store->id)
+        $removed = CatalogProduct::where('store_id', $store->id)
             ->where('product_id', $product->id)
             ->delete();
+        if ($removed > 0) {
+            ModelAudit::event('catalog.product_removed', "Catálogo online de «{$store->name}»: «{$product->name}» quitado", 'product', $product->id, ['store_id' => $store->id], request()->user()?->id);
+        }
 
         return $this->success(null, 'Producto eliminado del catálogo.');
     }
@@ -435,6 +446,8 @@ class CatalogController extends Controller
     {
         if ($resp = $this->catalogEditError()) return $resp;
 
+        $fields = array_keys($request->validated());
+        $before = ModelAudit::snapshot($product, $fields);
         $product->update($request->validated());
 
         // Catálogo v5: quitar la ★ saca al producto del top acomodado. Si no,
@@ -443,6 +456,7 @@ class CatalogController extends Controller
         if ($product->wasChanged('featured') && !$product->featured) {
             $product->forceFill(['catalog_position' => null])->save();
         }
+        ModelAudit::updated($product, $before, 'catalog.product_flags_updated', "Catálogo: «{$product->name}» destacado/visible editado", 'product', $fields, $request->user()->id);
 
         return $this->success([
             'id'              => $product->id,
@@ -492,6 +506,8 @@ class CatalogController extends Controller
 
         // Devuelve la lista canónica: el front reemplaza su estado con esto en
         // vez de asumir que su optimista quedó.
+        ModelAudit::event('catalog.featured_reordered', sprintf('Catálogo: orden de %d destacado(s) guardado', count($ordered)), 'catalog', 0, ['order' => $ordered], $request->user()->id);
+
         return $this->success(['order' => $ordered], 'Orden guardado.');
     }
 

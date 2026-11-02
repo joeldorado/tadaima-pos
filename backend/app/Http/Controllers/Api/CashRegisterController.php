@@ -16,6 +16,7 @@ use App\Models\SystemLog;
 use App\Models\User;
 use App\Services\CashRegisterService;
 use App\Services\CashSessionDeletionService;
+use App\Support\ModelAudit;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -182,6 +183,8 @@ class CashRegisterController extends Controller
             return $this->error($e->getMessage(), 422);
         }
 
+        ModelAudit::event('cash_session.opened', sprintf('Caja abierta con fondo $%.2f', (float) $session->opening_cash), 'cash_session', $session->id, ['opening_cash' => (float) $session->opening_cash, 'register_id' => $session->register_id], $request->user()->id);
+
         return $this->success(new CashRegisterSessionResource($session), 'Caja abierta.', 201);
     }
 
@@ -263,6 +266,10 @@ class CashRegisterController extends Controller
             return $this->error($e->getMessage(), 422);
         }
 
+        ModelAudit::event('cash_session.closed', sprintf('Caja cerrada con $%.2f contados', (float) $session->closing_cash), 'cash_session', $session->id, [
+            'opening_cash' => (float) $session->opening_cash, 'closing_cash' => (float) $session->closing_cash, 'closing_cash_usd' => $session->closing_cash_usd, 'local_date' => $session->local_date?->format('Y-m-d'),
+        ], $request->user()->id);
+
         return $this->success(new CashRegisterSessionResource($session), 'Caja cerrada.');
     }
 
@@ -289,6 +296,10 @@ class CashRegisterController extends Controller
         } catch (\DomainException $e) {
             return $this->error($e->getMessage(), 422);
         }
+
+        ModelAudit::event('cash_movement.created', sprintf('Caja: %s $%.2f%s', $movement->type, (float) $movement->amount, $movement->description ? " — {$movement->description}" : ''), 'cash_session', $session->id, [
+            'movement_id' => $movement->id, 'type' => $movement->type, 'amount' => (float) $movement->amount, 'description' => $movement->description,
+        ], $request->user()->id);
 
         return $this->success(new CashMovementResource($movement), 'Movimiento registrado.', 201);
     }

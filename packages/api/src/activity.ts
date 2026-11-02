@@ -11,12 +11,18 @@ export type ActivityGroup =
   | 'caja'
   | 'paquete'
   | 'preventa'
+  | 'apartado'
+  | 'promo'
+  | 'cliente'
+  | 'usuario'
+  | 'catalogo'
+  | 'config'
   | 'insumo'
   | 'sistema'
   | 'impresion'
 
 export const ACTIVITY_GROUPS: readonly ActivityGroup[] = [
-  'stock', 'producto', 'venta', 'caja', 'paquete', 'preventa', 'insumo', 'sistema', 'impresion',
+  'stock', 'producto', 'venta', 'caja', 'paquete', 'preventa', 'apartado', 'promo', 'cliente', 'usuario', 'catalogo', 'config', 'insumo', 'sistema', 'impresion',
 ] as const
 
 export interface ActivityRef {

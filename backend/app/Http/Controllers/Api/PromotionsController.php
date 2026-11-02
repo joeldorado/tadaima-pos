@@ -11,6 +11,7 @@ use App\Http\Requests\StoreProductPromotionRequest;
 use App\Models\Product;
 use App\Models\ProductPromotion;
 use App\Services\PromotionService;
+use App\Support\ModelAudit;
 use Illuminate\Http\JsonResponse;
 
 /**
@@ -25,6 +26,9 @@ use Illuminate\Http\JsonResponse;
  */
 class PromotionsController extends Controller
 {
+    /** Campos de la promo que se auditan (ver ModelAudit). */
+    public const AUDIT_FIELDS = ['name', 'type', 'buy_n', 'pay_m', 'min_qty', 'discount_per_unit', 'allow_cash', 'allow_card', 'priority', 'status', 'store_id', 'starts_at', 'ends_at'];
+
     public function __construct(private readonly PromotionService $promotions)
     {
     }
@@ -85,6 +89,7 @@ class PromotionsController extends Controller
                 'store_id' => $this->promotions->scopedStoreId($request),
             ],
         ));
+        ModelAudit::created($promotion, 'promo.created', "Promoción «{$promotion->name}» creada", 'promotion', self::AUDIT_FIELDS, $request->user()->id);
 
         return $this->success($promotion->loadCount('products'), 'Promoción creada.', 201);
     }
@@ -144,12 +149,14 @@ class PromotionsController extends Controller
             }
         }
 
+        $before = ModelAudit::snapshot($promotion, self::AUDIT_FIELDS);
         $promotion->update(array_merge(
             $request->only(['name', 'buy_n', 'pay_m', 'min_qty', 'discount_per_unit', 'allow_cash', 'allow_card', 'priority']),
             $this->promotions->vigencyDates($request->input('starts_at'), $request->input('ends_at')),
             $request->has('status') ? ['status' => $request->input('status')] : [],
             $request->has('store_id') ? ['store_id' => $this->promotions->scopedStoreId($request)] : [],
         ));
+        ModelAudit::updated($promotion, $before, 'promo.updated', "Promoción «{$promotion->name}» editada", 'promotion', self::AUDIT_FIELDS, $request->user()->id);
 
         return $this->success(
             $promotion->fresh()->loadCount('products')->load('products:products.id,name'),
@@ -171,6 +178,7 @@ class PromotionsController extends Controller
             return $resp;
         }
 
+        ModelAudit::deleted($promotion, 'promo.deleted', "Promoción «{$promotion->name}» eliminada", 'promotion', self::AUDIT_FIELDS, request()->user()?->id, ['products' => $promotion->products()->pluck('products.id')->all()]);
         $promotion->delete();
 
         return $this->success(null, 'Promoción eliminada.');
@@ -210,6 +218,7 @@ class PromotionsController extends Controller
         }
 
         $promotion->products()->syncWithoutDetaching($newIds);
+        ModelAudit::event('promo.products_attached', sprintf('Promoción «%s»: %d producto(s) asignado(s)', $promotion->name, count($newIds)), 'promotion', $promotion->id, ['product_ids' => array_values($newIds)], $request->user()->id);
 
         return $this->success(
             $promotion->fresh()->loadCount('products')->load('products:products.id,name'),
@@ -231,6 +240,7 @@ class PromotionsController extends Controller
         }
 
         $promotion->products()->detach($product->id);
+        ModelAudit::event('promo.products_detached', "Promoción «{$promotion->name}»: producto «{$product->name}» quitado", 'promotion', $promotion->id, ['product_ids' => [$product->id]], request()->user()?->id);
 
         // El puntero legacy DEBE anularse si apuntaba a este producto: una
         // revisión vieja de Cloud Run lee product_id directo y seguiría
@@ -264,6 +274,7 @@ class PromotionsController extends Controller
         $ids = array_values(array_unique(array_map('intval', $request->input('product_ids'))));
 
         $promotion->products()->detach($ids);
+        ModelAudit::event('promo.products_detached', sprintf('Promoción «%s»: %d producto(s) quitado(s)', $promotion->name, count($ids)), 'promotion', $promotion->id, ['product_ids' => $ids], $request->user()->id);
 
         // Mismo null-out del puntero legacy que detachProduct().
         if ($promotion->product_id !== null && in_array((int) $promotion->product_id, $ids, true)) {
