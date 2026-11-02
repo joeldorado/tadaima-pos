@@ -4,6 +4,16 @@
 
 ---
 
+### Sesión 2026-11-01 (b) — Rastro de catálogos, cupos, «llegó» y entrega de partidas en Actividad (PR #82) — rev tadaima-00114-jar
+
+**Origen:** el caso Delta Reign dejó ver que editar catálogos y cupos de preventa no dejaba `system_logs` (la edición de cupos de Macro de ese día solo se atribuyó por IP en Cloud Run).
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00112-xen`. Sin migraciones ni cambios de API.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00112-xen=100 --project tadaimapos --region us-east1`
+
+- `backend/app/Support/PreSaleAudit.php` escribe `pre_sale_catalog.created` / `.updated` (solo con cambio real; `changes` y `store_limits` con antes/después) / `.status_changed` y `pre_sale_order_item.delivered` / `.reverted`. «Llegó» pasa los folios a listo uno por uno, en transacción y con su `PreSaleOrderLog` (antes un `update` masivo sin rastro). Las 5 actions tituladas en `ActivityGroups` (grupo «preventa»): se ven en Actividad sin tocar el front.
+- Validación: `ActivityPreSaleLoggingTest` 6 ✓ y suite de preventas 69 ✓ en local. Candidate: `/login`, `/tadaimaus/` 200, API 422 sin credenciales, `/activity` 401 sin token, sin errores en el arranque. Promovida al 100%; falta que Joel edite un cupo y lo vea en Actividad.
+
 ### Sesión 2026-11-01 — Abono de preventa repartido parejo por pieza (PR #81) — rev tadaima-00112-xen
 
 **Reporte del cliente:** en Delta Reign cada pieza se apartó con $200, pero el reporte decía que la Booster Box de Macro (10 apartadas) llevaba **$3,360.59** abonados en vez de $2,000; sospechaban que «le movieron el costo».
