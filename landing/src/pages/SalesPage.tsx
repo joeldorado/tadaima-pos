@@ -760,6 +760,7 @@ function SaleRow({
                         >
                           Regalo{item.gift ? ` · valía ${fmt(item.gift.list_price * item.quantity)}` : ""}
                           {item.gift?.note ? ` · ${item.gift.note}` : ""}
+                          {item.gift?.given_by ? ` · Regaló ${item.gift.given_by}` : ""}
                         </span>
                       )}
                       {parts.promoAmount > 0 && (

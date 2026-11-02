@@ -152,6 +152,7 @@ tabla **`sale_gifts`** (1:1 con `sale_item_id`): `list_price` (precio de catálo
 Un regalo no lleva promo, descuento ni aumento; una venta 100% regalo se registra en $0 con un pago
 Efectivo de $0. Los reportes lo muestran en renglón aparte «(Regalo)» (`top-products` devuelve
 `is_gift`). Cancelar las piezas pagadas de una venta con regalos la deja `partial` (no `full`).
+Quién dio cada regalo: Administración → Actividad, chip «Regalos» + filtro de usuario (`sale.gift`).
 
 **Regla de STACKING (desde 2026-07-17):** la promo NxM aplica PRIMERO y el descuento
 manual se calcula sobre el resultado. Cuando conviven, `benefit_type='discount'` pero

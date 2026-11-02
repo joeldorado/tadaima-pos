@@ -79,6 +79,8 @@ class SaleItemResource extends JsonResource
                 'list_price' => (float) $this->gift->list_price,
                 'unit_cost'  => $isAdmin && $this->gift->unit_cost !== null ? (float) $this->gift->unit_cost : null,
                 'note'       => $this->gift->note,
+                // Quién lo marcó (2026-11-02): visible para quien ve la venta.
+                'given_by'   => $this->gift->authorizer?->name,
             ] : null,
 
             // `cost` snapshot al momento del INSERT (lo que se vendió a ese costo).

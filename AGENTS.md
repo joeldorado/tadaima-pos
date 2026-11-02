@@ -274,6 +274,10 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   dejan `system_logs` con diff antes→después; sin cambio real no escriben. Grupos nuevos del feed:
   `apartado`, `promo`, `cliente`, `usuario`, `catalogo`, `config` (espejo en `activityFormat.ts` y
   `packages/api/src/activity.ts`). Preventas (catálogo, cupos, «llegó», partidas): `PreSaleAudit` (2026-11-01).
+- **Regalos en Actividad (2026-11-02, `App\Support\GiftAudit`):** cada línea regalada deja `sale.gift` y
+  cancelarla `sale.gift_cancelled` (grupo `regalo`, `entity_type=product`), con qué, cuánto valía, costo
+  real, venta y nota. Chip «Regalos» + filtro de usuario = quién dio qué. Son los únicos logs que el filtro de
+  tienda encuentra (`meta.store_id` como string). Los regalos anteriores a este cambio no tienen log.
 - Follow-up pendiente: `inventory_movements.product_id/user_id` son `cascadeOnDelete` → borrar un
   producto o usuario borra su historial (solo queda el log de borrado con `meta.snapshot`).
 

@@ -16,7 +16,7 @@ namespace App\Support;
  */
 final class ActivityGroups
 {
-    public const GROUPS = ['stock', 'producto', 'venta', 'caja', 'paquete', 'preventa', 'apartado', 'promo', 'cliente', 'usuario', 'catalogo', 'config', 'insumo', 'sistema', 'impresion'];
+    public const GROUPS = ['stock', 'producto', 'venta', 'caja', 'paquete', 'preventa', 'apartado', 'regalo', 'promo', 'cliente', 'usuario', 'catalogo', 'config', 'insumo', 'sistema', 'impresion'];
 
     /** Prefijo que distingue un tipo de movimiento de una acción de log en el filtro `action`. */
     public const MOVEMENT_ACTION_PREFIX = 'mov.';
@@ -61,6 +61,9 @@ final class ActivityGroups
         'inventory.restore_failed'    => ['stock',     'Falló restaurar stock'],
         'sale.cancelled'              => ['venta',     'Venta cancelada'],
         'sale.payment_changed'        => ['venta',     'Método de pago corregido'],
+        // Regalos de Caja (2026-11-02). Ver App\Support\GiftAudit.
+        'sale.gift'                   => ['regalo',    'Regalo'],
+        'sale.gift_cancelled'         => ['regalo',    'Regalo cancelado'],
         'cash_session.deleted'        => ['caja',      'Corte eliminado'],
         'cash_session.force_closed'   => ['caja',      'Corte cerrado por admin'],
         'supply_movement.deleted'     => ['insumo',    'Registro de insumo borrado'],

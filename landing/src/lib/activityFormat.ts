@@ -1,5 +1,6 @@
 import type { ActivityEvent, ActivityGroup } from "@tadaima/api";
 import { BUSINESS_TZ } from "@/lib/date";
+import { GIFT_COLOR } from "@/lib/giftLine";
 
 /**
  * Formato del feed de Actividad (Administración → Actividad). Espejo en
@@ -24,6 +25,7 @@ export const GROUP_STYLES: Record<ActivityGroup, GroupStyle> = {
   paquete:   { label: "Paquete",    color: "#F472B6", rgb: "244,114,182" },
   preventa:  { label: "Preventa",   color: "#22D3EE", rgb: "34,211,238" },
   apartado:  { label: "Apartado",   color: "#2DD4BF", rgb: "45,212,191" },
+  regalo:    { label: "Regalos",    color: GIFT_COLOR, rgb: "236,72,153" },
   promo:     { label: "Promo",      color: "#E879F9", rgb: "232,121,249" },
   cliente:   { label: "Cliente",    color: "#A3E635", rgb: "163,230,53" },
   usuario:   { label: "Usuario",    color: "#F87171", rgb: "248,113,113" },
@@ -36,7 +38,7 @@ export const GROUP_STYLES: Record<ActivityGroup, GroupStyle> = {
 
 /** Orden de los chips del filtro (todos apagados al entrar = todos los tipos). */
 export const GROUP_ORDER: readonly ActivityGroup[] = [
-  "stock", "producto", "venta", "caja", "paquete", "preventa", "apartado", "promo", "cliente", "usuario", "catalogo", "config", "insumo", "sistema", "impresion",
+  "stock", "producto", "venta", "caja", "paquete", "preventa", "apartado", "regalo", "promo", "cliente", "usuario", "catalogo", "config", "insumo", "sistema", "impresion",
 ];
 
 export function groupStyle(group: string): GroupStyle {
@@ -127,6 +129,7 @@ export function formatChanges(meta: Record<string, unknown> | null | undefined):
  *  - ajuste:  "10 → 8 (−2) · Tadaima CENTRO"
  *  - venta:   "−1 · VENTA-3300 · Tadaima CENTRO"
  *  - edición: "Nombre: «Fig SHF Gon mx» → «Fig SHF Gon mx OF»"
+ *  - regalo:  "2 pzas · valía $300 · costo $180 · Venta #1251 · Centro · cliente frecuente"
  *  - otros:   la descripción del log.
  */
 export function describeEvent(e: ActivityEvent): string {
@@ -165,6 +168,22 @@ export function describeEvent(e: ActivityEvent): string {
     const modeLabel = mode === "full" ? "total" : mode === "partial_items" ? "parcial" : mode;
     const bits = [modeLabel && `cancelación ${modeLabel}`, Number.isFinite(refunded) && refunded > 0 ? `devuelto ${money(refunded)}` : ""].filter(Boolean);
     if (bits.length) return bits.join(" · ");
+  }
+
+  if (e.action === "sale.gift" || e.action === "sale.gift_cancelled") {
+    const qty = Number(e.meta?.["quantity"]);
+    const value = Number(e.meta?.["value"]);
+    const costValue = e.meta?.["cost_value"];
+    const saleId = e.meta?.["sale_id"];
+    const note = e.meta?.["note"];
+    return [
+      Number.isFinite(qty) ? `${qtyFmt(qty)} ${qty === 1 ? "pza" : "pzas"}` : "",
+      Number.isFinite(value) ? `valía ${money(value)}` : "",
+      typeof costValue === "number" ? `costo ${money(costValue)}` : "",
+      typeof saleId === "number" ? `Venta #${saleId}` : "",
+      e.store?.name ?? "",
+      typeof note === "string" ? note : "",
+    ].filter(Boolean).join(" · ");
   }
 
   if (e.action === "bundle.assembled" || e.action === "bundle.disassembled") {
