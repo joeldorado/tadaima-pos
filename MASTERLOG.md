@@ -4,6 +4,19 @@
 
 ---
 
+### Sesión 2026-11-02 — Regalos en Actividad: quién dio qué (PR #87) — rev tadaima-00118-fos
+
+**Pedido Joel:** saber quién dio cada regalo de Caja desde el panel admin, con filtro.
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00116-qut`. Sin migraciones.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00116-qut=100 --project tadaimapos --region us-east1`
+
+- `GiftAudit`: `sale.gift` por línea regalada y `sale.gift_cancelled` al cancelarla (producto, cantidad, valor, costo real, venta, tienda, nota). Grupo y chip **Regalos** en Actividad; con el filtro de usuario se ve quién dio qué.
+- El filtro de tienda de Actividad ahora también encuentra los regalos (`meta.store_id`); los demás logs siguen fuera porque no guardan tienda.
+- Ventas: la etiqueta dice «Regaló {nombre}» (`gift.given_by`).
+- Validación: backend 916 ✓ (`ActivityGiftLoggingTest` 9 nuevos), Postgres 17 local ✓ en regalos/Actividad/cancelaciones, vitest 825 ✓, `vite build` OK. Local: regalo desde Caja y chip Regalos muestra solo ese renglón. Candidate: `/`, `/caja`, `/tadaimaus/` 200, API 401 sin token, sin errores en logs. Promovida al 100%.
+- Al deploy, `sale_gifts` en prod tenía 0 registros: el botón aún no se usa en tienda; falta probar ticket con QZ, corte y Excel con un regalo real.
+
 ### Sesión 2026-11-02 — Actividad cubre promos, usuarios, clientes, configuración, catálogo online, apartados y caja (PR #85) — rev tadaima-00116-qut
 
 **Pedido Joel («dale para tener visión de todo»):** tras tapar preventas, un barrido de todos los controllers mostró que promos, usuarios y roles, clientes y crédito, tiendas/bodegas/terminales/métodos de pago, proveedores e insumos, el catálogo online, los apartados y abrir/cerrar/mover caja no dejaban `system_logs`.
