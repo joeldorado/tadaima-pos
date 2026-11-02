@@ -4,6 +4,18 @@
 
 ---
 
+### Sesión 2026-11-02 — Actividad cubre promos, usuarios, clientes, configuración, catálogo online, apartados y caja (PR #85) — rev tadaima-00116-qut
+
+**Pedido Joel («dale para tener visión de todo»):** tras tapar preventas, un barrido de todos los controllers mostró que promos, usuarios y roles, clientes y crédito, tiendas/bodegas/terminales/métodos de pago, proveedores e insumos, el catálogo online, los apartados y abrir/cerrar/mover caja no dejaban `system_logs`.
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00114-jar`. Sin migraciones ni cambios de API.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00114-jar=100 --project tadaimapos --region us-east1`
+
+- `backend/app/Support/ModelAudit.php`: receta única — `snapshot()` antes del `update()`, `updated()` escribe el diff antes→después y **sin cambio real no escribe**; `created()`/`deleted()` guardan la foto. Nunca entran `password`/`password_enc`/tokens (usuarios: solo `password_changed`). 48 actions nuevas tituladas en `ActivityGroups::LOG_ACTIONS`; `logTitle` enumera campos para cualquier `.updated`; etiquetas en español para los campos nuevos.
+- Grupos nuevos del feed (chips): `apartado`, `promo`, `cliente`, `usuario`, `catalogo`, `config`, con espejo en `landing/src/lib/activityFormat.ts` y `packages/api/src/activity.ts`. Controllers tocados: Promotions, ProductPromotions, User, Role, Customer, Store, Warehouse, Terminal, PaymentMethod, Suppliers, Supplies (catálogo y cada registro con origen del dinero), Catalog (online), Layaway, CashRegister.
+- Validación: `ActivityCoverageTest` 7 ✓ (uno por módulo + uno que exige que toda action apunte a un grupo conocido); suite backend 907 ✓ / 4,288 aserciones; `activityFormat`/`activityParams` 20 ✓; tsc sin errores nuevos. Candidate: `/login` 200, API 401 sin token, bundle `index-zkiIHZFc.js`. Promovida al 100% (con OK de Joel); no se probó en el navegador contra prod. Aplica solo de ahora en adelante.
+- **Queda sin pantalla:** el historial interno de cada folio de preventa (`pre_sale_order_logs`) y de cada apartado (`layaway_logs`) existe en la base pero no se muestra en la UI.
+
 ### Sesión 2026-11-01 (b) — Rastro de catálogos, cupos, «llegó» y entrega de partidas en Actividad (PR #82) — rev tadaima-00114-jar
 
 **Origen:** el caso Delta Reign dejó ver que editar catálogos y cupos de preventa no dejaba `system_logs` (la edición de cupos de Macro de ese día solo se atribuyó por IP en Cloud Run).
