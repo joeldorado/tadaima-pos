@@ -11,7 +11,8 @@ import {
 } from "@tadaima/api";
 import { useAuth } from "@tadaima/auth";
 import { queryKeys } from "@/lib/queryKeys";
-import { useIncomeMovementsQuery, useActiveSessionQuery } from "@/hooks/queries";
+import { useIncomeMovementsQuery } from "@/hooks/queries/useIncome";
+import { useActiveSessionQuery } from "@/hooks/queries/useCashSession";
 import { isAdmin as isAdminRole } from "@/lib/permisos";
 import { getTodayLocal, BUSINESS_TZ } from "@/lib/date";
 import { DateRangePicker } from "@/components/ui/DateRangePicker";
