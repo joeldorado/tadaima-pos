@@ -59,7 +59,7 @@ const PRESALE_FOLIO: PresaleFolioRow = {
   fecha: "2026-10-03T18:00:00Z", method: "cash",
 };
 
-function buildBook(canViewCost = false): ExcelJS.Workbook {
+function buildBook(canViewCost = false, incomeMovements: ReportExportParams["incomeMovements"] = []): ExcelJS.Workbook {
   const groupedProducts = buildGroupedProducts(SALES, [], ["all"], "2026-10-03", "2026-10-03", canViewCost);
   const params: ReportExportParams = {
     presaleRows: [PRESALE],
@@ -74,6 +74,7 @@ function buildBook(canViewCost = false): ExcelJS.Workbook {
     activeTab: "ventas", canViewCost, ivaRate: 0.16,
     effectiveStoreId: null, selectedUserId: null, stores: [], users: [],
     supplyMovements: [],
+    incomeMovements,
     title: "TADAIMA - CORTE DE CAJA",
   };
   const wb = new ExcelJS.Workbook();
@@ -344,6 +345,26 @@ describe("Excel de Ventas en pestañas", () => {
     // TOTALES FINALES incluye la preventa en Venta/Costo/Utilidad
     const finalRow = find(res, "TOTALES FINALES:");
     expect(result(res, finalRow.row, 4)).toBeGreaterThanOrEqual(400);
+  });
+
+  it("Ingresos: cada método suma lo suyo a su total y TOTALES FINALES los incluye una sola vez", () => {
+    const income = (id: number, payment_method: "cash" | "card", amount: number): ReportExportParams["incomeMovements"][number] => ({
+      id, register_session_id: 1, store_id: 1, type: "other", payment_method, amount, description: null,
+      cash_movement_id: null, user: null, user_id: 1, created_at: "2026-10-03T18:00:00Z",
+    });
+    const utilFinal = (wb: ExcelJS.Workbook): number => {
+      const res = sheet(wb, "Resumen");
+      return result(res, find(res, "TOTALES FINALES:").row, 5) as number;
+    };
+    const base = utilFinal(buildBook(true));
+    const wb = buildBook(true, [income(1, "cash", 100), income(2, "card", 50)]);
+    const res = sheet(wb, "Resumen");
+
+    expect(utilFinal(wb)).toBeCloseTo(base + 150, 2);
+    expect(formula(res, find(res, "Total efectivo").row, 5)).toContain("+");
+    expect(() => find(res, "Total tarjeta")).not.toThrow();
+    expect(() => find(res, "Total Ingreso:")).not.toThrow();
+    expect(() => find(res, "INGRESOS — DINERO QUE ENTRA")).not.toThrow();
   });
 
   it("TOTALES FINALES: la fórmula del Costo suma cada subtotal una sola vez y da su valor guardado", () => {

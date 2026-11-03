@@ -21,6 +21,7 @@ import { AdminPage } from '@/pages/AdminPage'
 import { LayawaysPage } from '@/pages/LayawaysPage'
 import { OnlineCatalogPage } from '@/pages/OnlineCatalogPage'
 import { SuppliesPage } from '@/pages/SuppliesPage'
+import { IncomePage } from '@/pages/IncomePage'
 import { PromosPage } from '@/pages/PromosPage'
 import { BundlesPage } from '@/pages/BundlesPage'
 import { DocsPage } from '@/pages/DocsPage'
@@ -82,6 +83,7 @@ export const router = createBrowserRouter([
       { path: 'buscar-tiendas', element: <ProtectedRoute requiresPage="stock_search"><StockSearchPage /></ProtectedRoute> },
       { path: 'transfers', element: <ProtectedRoute requiresPage="transfers"><TransfersPage /></ProtectedRoute> },
       { path: 'insumos', element: <ProtectedRoute requiresPage="supplies"><SuppliesPage /></ProtectedRoute> },
+      { path: 'ingresos', element: <ProtectedRoute requiresPage="cash_cuts"><IncomePage /></ProtectedRoute> },
       { path: 'promos',  element: <ProtectedRoute requiresPage="promos"><PromosPage /></ProtectedRoute> },
       // Paquetes: combos de productos con stock propio por tienda (los 3 roles).
       { path: 'paquetes', element: <ProtectedRoute requiresPage="bundles"><BundlesPage /></ProtectedRoute> },

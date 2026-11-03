@@ -1,7 +1,7 @@
 // Tablas "de auditoría" del Excel de Ventas: Egresos y, por método, descuentos/
 // ofertas y aumentos por ticket. Mismo molde que la app:
 // Producto · Motivo (combinada) · Ticket · Cobró · Fecha · Monto.
-import type { SupplyMovementRecord, Store as StoreType } from "@tadaima/api";
+import type { SupplyMovementRecord, IncomeMovementRecord, Store as StoreType, IncomeType } from "@tadaima/api";
 import { DISCOUNT_REASON_SHORT, SURCHARGE_REASON_SHORT } from "@/lib/discountReasons";
 import type { AdjustmentEntry, BenefitBucket, GroupedProduct } from "./reportTypes";
 import { fmtDate } from "./reportFormat";
@@ -11,6 +11,17 @@ import {
 } from "./excelSheet";
 
 const SUPPLY_SOURCE_LABEL: Record<string, string> = { caja: "Caja", caja_chica: "Caja chica", propio: "Dinero propio" };
+const INCOME_TYPE_LABEL: Record<IncomeType, string> = {
+  service_fee: "Comisión/Servicio",
+  equipment_sale: "Venta de Equipo",
+  vendor_refund: "Dev. Proveedor",
+  other: "Otro",
+};
+const INCOME_PAYMENT_METHOD_LABEL: Record<"cash" | "card" | "transfer", string> = {
+  cash: "Efectivo",
+  card: "Tarjeta",
+  transfer: "Depósito",
+};
 
 const DISC_BG = "B8860B";
 const DISC_SUB_BG = "D4A82A";
@@ -98,6 +109,35 @@ export function drawEgresos(
   });
   const totalRow = r0 + supplyMovements.length;
   total(sh, totalRow, L, r0, "TOTAL EGRESOS", sum, EGRESO);
+  return totalRow;
+}
+
+/** Devuelve la última fila escrita. */
+export function drawIngresos(
+  sh: SheetBuilder, startRow: number, L: BottomLayout, incomeMovements: readonly IncomeMovementRecord[],
+  stores: readonly StoreType[], num: number,
+): number {
+  const INGRESO = "34D399";
+  header(sh, startRow, L, ` ${num}. INGRESOS — DINERO QUE ENTRA`, ["Tipo", "Descripción", "Método de pago", "Registró", "Tienda", "Monto"], "1F8659", "2DB877");
+  const r0 = startRow + 2;
+  if (incomeMovements.length === 0) {
+    sh.set(r0, L.ins, "Sin ingresos en el periodo", EMPTY_STYLE);
+    return r0;
+  }
+  let sum = 0;
+  incomeMovements.forEach((m, i) => {
+    const storeId = m.store_id;
+    sum += m.amount || 0;
+    row(sh, r0 + i, L, [
+      INCOME_TYPE_LABEL[m.type],
+      m.description ?? "",
+      INCOME_PAYMENT_METHOD_LABEL[m.payment_method],
+      m.user?.name ?? "—",
+      storeId ? (stores.find((s) => s.id === storeId)?.name ?? `Tienda ${storeId}`) : "Toda la empresa",
+    ], m.amount || 0, INGRESO);
+  });
+  const totalRow = r0 + incomeMovements.length;
+  total(sh, totalRow, L, r0, "TOTAL INGRESOS", sum, INGRESO);
   return totalRow;
 }
 

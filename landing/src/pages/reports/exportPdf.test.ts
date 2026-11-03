@@ -34,7 +34,7 @@ const params = (over: Partial<ReportExportParams> = {}): ReportExportParams => {
     invReport: null, topReport: null, custReport: null,
     from: "2026-09-28", to: "2026-10-02", today: "2026-10-03", activeTab: "ventas",
     canViewCost: true, ivaRate: 0.16, effectiveStoreId: null, selectedUserId: null,
-    stores: [], users: [], supplyMovements: [],
+    stores: [], users: [], supplyMovements: [], incomeMovements: [],
     ...over,
   };
 };

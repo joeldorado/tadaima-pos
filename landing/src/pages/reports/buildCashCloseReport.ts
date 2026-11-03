@@ -11,8 +11,8 @@
 // esto hace un fetch de una sola vez al presionar el botón: el corte se descarga
 // y se cierra, no necesita polling.
 import {
-  getPreSaleOrders, getSupplyMovements,
-  type SaleDetail, type PreSaleOrder, type SupplyMovementRecord,
+  getPreSaleOrders, getSupplyMovements, getIncomeMovements,
+  type SaleDetail, type PreSaleOrder, type SupplyMovementRecord, type IncomeMovementRecord,
 } from "@tadaima/api";
 import { fetchAllSales } from "@/lib/fetchAllPages";
 import {
@@ -73,15 +73,17 @@ export async function buildCashCloseReportParams(
     per_page: 500,
   };
 
-  const [salesRes, preSaleRes, suppliesRes] = await Promise.all([
+  const [salesRes, preSaleRes, suppliesRes, incomeRes] = await Promise.all([
     fetchAllSales(baseParams),
     getPreSaleOrders(preSaleParams),
     getSupplyMovements(baseParams).catch(() => [] as SupplyMovementRecord[]),
+    getIncomeMovements(baseParams).catch(() => [] as IncomeMovementRecord[]),
   ]);
 
   const sales: SaleDetail[] = salesRes?.data ?? [];
   const preSaleOrders: PreSaleOrder[] = preSaleRes?.data ?? [];
   const supplyMovements: SupplyMovementRecord[] = suppliesRes ?? [];
+  const incomeMovements: IncomeMovementRecord[] = incomeRes ?? [];
 
   const ALL = ["all"] as const;
   const filteredSales = filterSales(sales, [...ALL]);
@@ -121,5 +123,6 @@ export async function buildCashCloseReportParams(
     fileSuffix: userId !== null ? "turno" : "tienda",
     title: "TADAIMA - CORTE DE CAJA",
     supplyMovements,
+    incomeMovements,
   };
 }

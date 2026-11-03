@@ -11,11 +11,10 @@ import { toast } from "sonner";
 import { useAuth } from "@tadaima/auth";
 import {
   getSalesReport, getInventoryReport, getTopProductsReport, getCustomersReport,
-  getPreSaleOrders, getSupplyMovements,
+  getPreSaleOrders, getSupplyMovements, getIncomeMovements,
 } from "@tadaima/api";
-import type { SupplyMoneySource, SupplyMovementRecord } from "@tadaima/api";
+import type { SupplyMoneySource, SupplyMovementRecord, IncomeType, IncomeMovementRecord } from "@tadaima/api";
 import { ReportsSkeleton } from "@/components/reports/ReportsSkeleton";
-import { exportReportPdf } from "./reports/exportPdf";
 import { exportReportExcel } from "./reports/exportExcel";
 import type { ReportExportParams, PresaleRow, SurchargeEntry } from "./reports/reportTypes";
 import { groupProductsByCategory } from "./reports/reportCategories";
@@ -36,6 +35,19 @@ import type { SaleDetail, Store as StoreType, PreSaleOrder } from "@tadaima/api"
 import { DateRangePicker } from "@/components/ui/DateRangePicker";
 import { MultiDatePicker } from "@/components/ui/MultiDatePicker";
 import { RefreshDataButton } from "@/components/layout/RefreshDataButton";
+
+// ─── Income Type Labels ───────────────────────────────────────────────────────
+const INCOME_TYPE_LABELS: Record<IncomeType, string> = {
+  service_fee: "Comisión/Servicio",
+  equipment_sale: "Venta de Equipo",
+  vendor_refund: "Dev. Proveedor",
+  other: "Otro",
+};
+const INCOME_PAYMENT_METHOD_LABELS: Record<"cash" | "card" | "transfer", string> = {
+  cash: "Efectivo",
+  card: "Tarjeta",
+  transfer: "Depósito",
+};
 
 // ─── Design tokens ─────────────────────────────────────────────────────────────
 const BG   = "var(--td-page-bg)";
@@ -349,6 +361,35 @@ export function ReportsPage() {
     return order.filter((s) => groups.has(s)).map((s) => ({ source: s, ...groups.get(s)! }));
   }, [supplyMovements]);
 
+  // INGRESOS QUERY
+  const incomeMovementsQuery = useQuery({
+    queryKey: ["reports-income-movements", datesFrom, datesTo, datesParam, effectiveStoreId, selectedUserId],
+    queryFn: () => getIncomeMovements({ from: datesFrom, to: datesTo, ...(datesParam ? { dates: datesParam } : {}), ...(effectiveStoreId ? { store_id: effectiveStoreId } : {}), ...(selectedUserId ? { user_id: selectedUserId } : {}) }),
+    enabled: activeTab === "ventas",
+    staleTime: REPORTS_STALE,
+  });
+  const incomeMovements: IncomeMovementRecord[] = incomeMovementsQuery.data ?? [];
+  const ingresosTotal = incomeMovements.reduce((a, m) => a + (m.amount || 0), 0);
+  // Separado por método de pago: solo "cash" afecta el cajón físico (igual que
+  // cajaInsumosTotal con los egresos); card/transfer son informativos y pegan
+  // a sus propias tarjetas (Pago con Tarjeta / Depósitos).
+  const ingresosCashTotal = incomeMovements.filter((m) => m.payment_method === "cash").reduce((a, m) => a + (m.amount || 0), 0);
+  const ingresosCardTotal = incomeMovements.filter((m) => m.payment_method === "card").reduce((a, m) => a + (m.amount || 0), 0);
+  const ingresosTransferTotal = incomeMovements.filter((m) => m.payment_method === "transfer").reduce((a, m) => a + (m.amount || 0), 0);
+  // Agrupado por tipo de ingreso
+  const incomeByType = useMemo(() => {
+    const types: IncomeType[] = ["service_fee", "equipment_sale", "vendor_refund", "other"];
+    const groups = new Map<IncomeType, { total: number; items: IncomeMovementRecord[] }>();
+    for (const m of incomeMovements) {
+      const t = m.type;
+      const g = groups.get(t) ?? { total: 0, items: [] };
+      g.total += m.amount || 0;
+      g.items.push(m);
+      groups.set(t, g);
+    }
+    return types.filter((t) => groups.has(t)).map((t) => ({ type: t, ...groups.get(t)! }));
+  }, [incomeMovements]);
+
   const salesReport: SalesReport | null = salesReportQuery.data ?? null;
   const sales: SaleDetail[] = salesListQuery.data?.data ?? [];
   const filteredSales = useMemo(
@@ -476,14 +517,13 @@ export function ReportsPage() {
     groupedProducts, regularProducts, tomoProducts, paymentBreakdown,
     invReport, topReport, custReport, from: datesFrom, to: datesTo, today, activeTab,
     canViewCost, ivaRate, effectiveStoreId, selectedUserId, stores, users,
-    supplyMovements,
+    supplyMovements, incomeMovements,
     presaleRows, presaleRowsByMethod, presaleFolioRows,
     // Fechas sueltas (no consecutivas): el encabezado del Excel/PDF muestra la
     // lista en vez de "del X al Y" — periodLabel ya existía como override libre.
     ...(usingDates ? { periodLabel: sortedDates.map(fmtDate).join(", ") } : {}),
   });
 
-  const handleExportPDF = () => exportReportPdf(buildExportParams());
   const handleExportExcel = () => { void exportReportExcel(buildExportParams()); };
 
 
@@ -824,19 +864,6 @@ export function ReportsPage() {
               Excel
             </button>
 
-            {/* PDF button */}
-            <button
-              onClick={handleExportPDF}
-              disabled={isFetchingActive}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-50"
-              style={{ background: "rgba(224,34,26,0.1)", border: "1px solid rgba(224,34,26,0.2)", color: "var(--td-red)" }}
-              title="Exportar reporte actual a PDF"
-            >
-              <FileSpreadsheet size={13} />
-              PDF
-            </button>
-
-
           </div>
         </div>
 
@@ -997,10 +1024,10 @@ export function ReportsPage() {
                 {/* ── KPI Cards ── */}
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
                   {[
-                    { label: "Total cobrado", val: fmt(paymentBreakdown.total), color: "#00CC66", icon: DollarSign, sub: `${paymentBreakdown.transactionCount} ${paymentBreakdown.transactionCount === 1 ? 'transacción' : 'transacciones'}` },
-                    { label: "Pago con tarjeta", val: fmt(paymentBreakdown.card), color: "#4499FF", icon: Store, sub: paymentBreakdown.card > 0 ? "TPV / débito / crédito" : "sin movimientos" },
-                    { label: "Pago en efectivo", val: fmt(paymentBreakdown.cash), color: "#33CC88", icon: ShoppingBag, sub: cajaInsumosTotal > 0 ? `− insumos de caja ${fmt(cajaInsumosTotal)} = ${fmt(paymentBreakdown.cash - cajaInsumosTotal)}` : (paymentBreakdown.usd > 0 ? `incluye ${paymentBreakdown.usd} USD recibidos` : (paymentBreakdown.cash > 0 ? "cobro en MXN" : "sin movimientos")) },
-                    { label: "Depósitos", val: fmt(paymentBreakdown.deposits), color: "#BB77FF", icon: Clock, sub: paymentBreakdown.deposits > 0 ? "transferencias / SPEI" : "sin depósitos" },
+                    { label: "Total cobrado", val: fmt(paymentBreakdown.total + ingresosTotal), color: "#00CC66", icon: DollarSign, sub: ingresosTotal > 0 ? `${paymentBreakdown.transactionCount} ${paymentBreakdown.transactionCount === 1 ? 'transacción' : 'transacciones'} + ingresos ${fmt(ingresosTotal)}` : `${paymentBreakdown.transactionCount} ${paymentBreakdown.transactionCount === 1 ? 'transacción' : 'transacciones'}` },
+                    { label: "Pago con tarjeta", val: fmt(paymentBreakdown.card + ingresosCardTotal), color: "#4499FF", icon: Store, sub: ingresosCardTotal > 0 ? `${fmt(paymentBreakdown.card)} + ingresos ${fmt(ingresosCardTotal)}` : (paymentBreakdown.card > 0 ? "TPV / débito / crédito" : "sin movimientos") },
+                    { label: "Pago en efectivo", val: fmt(paymentBreakdown.cash + ingresosCashTotal - cajaInsumosTotal), color: "#33CC88", icon: ShoppingBag, sub: (cajaInsumosTotal > 0 || ingresosCashTotal > 0) ? [paymentBreakdown.cash > 0 ? fmt(paymentBreakdown.cash) : null, ingresosCashTotal > 0 ? `+ ingresos ${fmt(ingresosCashTotal)}` : null, cajaInsumosTotal > 0 ? `− insumos ${fmt(cajaInsumosTotal)}` : null].filter(Boolean).join(" ") : (paymentBreakdown.usd > 0 ? `incluye ${paymentBreakdown.usd} USD recibidos` : (paymentBreakdown.cash > 0 ? "cobro en MXN" : "sin movimientos")) },
+                    { label: "Depósitos", val: fmt(paymentBreakdown.deposits + ingresosTransferTotal), color: "#BB77FF", icon: Clock, sub: ingresosTransferTotal > 0 ? `${fmt(paymentBreakdown.deposits)} + ingresos ${fmt(ingresosTransferTotal)}` : (paymentBreakdown.deposits > 0 ? "transferencias / SPEI" : "sin depósitos") },
                   ].map((kpi, i) => (
                     <div key={i} className="min-h-[124px] flex flex-col" style={{ ...GLASS, borderRadius: 20, padding: "12px 20px" }}>
                       <div className="flex items-center gap-2">
@@ -1223,6 +1250,51 @@ export function ReportsPage() {
                           </div>
                         );
                       })}
+                    </div>
+                  </div>
+                )}
+
+                {/* INGRESOS */}
+                {incomeMovements.length > 0 && (
+                  <div className="mt-2 p-5 rounded-2xl" style={{ ...GLASS, border: "1px solid rgba(52,211,153,0.2)" }}>
+                    <div className="flex items-center justify-between mb-3">
+                      <p style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.14em", color: TM }}>
+                        Ingresos — Dinero que entra
+                      </p>
+                      <p className="text-lg font-black" style={{ color: "#34d399" }}>+{fmt(ingresosTotal)}</p>
+                    </div>
+                    <div className="flex flex-col gap-3" style={{ maxHeight: "50vh", overflowY: "auto" }}>
+                      {incomeByType.map((g) => (
+                        <div key={g.type} className="rounded-xl overflow-hidden" style={{ background: "var(--td-card-bg)", border: "1px solid var(--td-card-border)" }}>
+                          {/* Encabezado del tipo */}
+                          <div className="flex items-center justify-between py-2.5 px-3" style={{ borderBottom: "1px solid var(--td-card-border)" }}>
+                            <div className="flex flex-col">
+                              <span style={{ fontSize: 12, fontWeight: 800, color: "#34d399" }}>{INCOME_TYPE_LABELS[g.type]}</span>
+                              <span style={{ fontSize: 9, color: TM, fontWeight: 600 }}>
+                                {g.items.length} {g.items.length === 1 ? "registro" : "registros"} · suma a la caja
+                              </span>
+                            </div>
+                            <span style={{ fontSize: 14, fontWeight: 900, color: "#34d399" }}>+{fmt(g.total)}</span>
+                          </div>
+                          {/* Ingresos de este tipo */}
+                          {g.items.map((m) => {
+                            const storeName = m.store_id
+                              ? (stores.find((s) => s.id === m.store_id)?.name ?? `Tienda ${m.store_id}`)
+                              : "Toda la empresa";
+                            return (
+                              <div key={m.id} className="flex items-center justify-between py-2 px-3" style={{ borderTop: "1px solid rgba(255,255,255,0.03)" }}>
+                                <div className="flex flex-col">
+                                  <span style={{ fontSize: 11, fontWeight: 700, color: TP }}>{m.description || INCOME_TYPE_LABELS[m.type]}</span>
+                                  <span style={{ fontSize: 9, color: TM }}>
+                                    {m.user?.name ?? "—"} · {storeName} · {INCOME_PAYMENT_METHOD_LABELS[m.payment_method]}
+                                  </span>
+                                </div>
+                                <span style={{ fontSize: 12, fontWeight: 800, color: "#34d399" }}>+{fmt(m.amount)}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
