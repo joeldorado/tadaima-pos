@@ -247,7 +247,6 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
     Transferencias: p.incomeMovements.filter((m) => m.payment_method === "transfer").reduce((a, m) => a + (m.amount || 0), 0),
   };
   const ingresosTotal = p.incomeMovements.reduce((a, m) => a + (m.amount || 0), 0);
-  let egRow = -1;
 
   tabs.forEach((t, i) => {
     if (i > 0) {
@@ -342,6 +341,7 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
     const methodEgresos = isCash ? egresos : 0;
     if (methodIngresos > 0 || methodEgresos > 0) {
       let ingRow = -1;
+      let egRow = -1;
       if (methodIngresos > 0) {
         ingRow = r;
         sh.set(r, 2, "Ingresos", greenLabel);
@@ -442,9 +442,17 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
     sh.set(er, egListMoneyCol, egresos, egAmtStyle);
     sh.height(er, 18);
     er++;
-    er++; // fila en blanco antes de TOTAL FINAL
   }
   if (p.incomeMovements.length > 0 || p.supplyMovements.length > 0) {
+    // Neto de SOLO esta lista (Ingresos − Egresos), separado de la utilidad
+    // global del negocio que viene abajo — sin esto "TOTAL FINAL" confundía,
+    // porque parecía ser el total de la lista cuando en realidad es la
+    // utilidad de TODO el periodo (ventas + ingresos − costo − egresos).
+    sh.set(er, egListCol, "Neto Ingresos−Egresos:", { font: font({ sz: 9, bold: true, color: "333333" }), alignment: align("right") });
+    sh.set(er, egListMoneyCol, ingresosTotal - egresos, { numFmt: MONEY_FMT, font: font({ sz: 9, bold: true, color: "333333" }), alignment: align("left") });
+    sh.height(er, 18);
+    er++;
+    er++; // fila en blanco antes de TOTAL FINAL
     sh.set(er, egListCol, "TOTAL FINAL:", { font: font({ sz: 10, bold: true, color: "333333" }), alignment: align("right") });
     sh.set(er, egListMoneyCol, totalUtil, { numFmt: MONEY_FMT, font: font({ sz: 10, bold: true, color: "333333" }), fill: fill("F5DEB3"), alignment: align("left") });
   }
