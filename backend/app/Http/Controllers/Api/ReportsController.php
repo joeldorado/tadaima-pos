@@ -583,7 +583,7 @@ class ReportsController extends Controller
                 'status'     => $p->order_status,
                 'method'     => $p->method ?? '—',
                 'amount'     => (float) $p->amount,
-                'created_at' => $p->created_at,
+                'created_at' => $this->rawUtcToIso($p->created_at),
             ]);
 
         // ── Movimientos de caja (incluye reversos de cancelación) ────────────
@@ -596,7 +596,7 @@ class ReportsController extends Controller
                 'type'        => $m->type,
                 'amount'      => (float) $m->amount,
                 'description' => $m->description,
-                'created_at'  => $m->created_at,
+                'created_at'  => $this->rawUtcToIso($m->created_at),
             ]);
 
         return $this->success([
@@ -637,9 +637,19 @@ class ReportsController extends Controller
                     'quantity'   => (float) $p->quantity,
                     'amount'     => (float) $p->amount,
                     'note'       => $p->note,
-                    'created_at' => $p->created_at,
+                    'created_at' => $this->rawUtcToIso($p->created_at),
                 ]),
         ]);
+    }
+
+    /**
+     * DB::table devuelve los timestamps como texto sin zona ("2026-11-03 21:23:20",
+     * guardado en UTC). Sin la zona, el navegador los toma como hora local y
+     * Cortes de Caja enseña la hora UTC como si fuera la de Tijuana (2026-11-03).
+     */
+    private function rawUtcToIso(string $timestamp): string
+    {
+        return Carbon::parse($timestamp, 'UTC')->toISOString();
     }
 
     // ─── Top Products ─────────────────────────────────────────────────────────
