@@ -24,7 +24,6 @@ import { fetchAllSales } from "@/lib/fetchAllPages";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useStoresQuery } from "@/hooks/queries/useStores";
 import { useUsersQuery } from "@/hooks/queries/useUsers";
-import { useIncomeMovementsQuery } from "@/hooks/queries/useIncome";
 import { getTodayLocal, daysAgoLocal, BUSINESS_TZ } from "@/lib/date";
 import {
   filterSales, filterPreSaleOrders, buildGroupedProducts, buildPresaleRows, buildPresaleRowsByMethod,
@@ -1031,7 +1030,7 @@ export function ReportsPage() {
                   {[
                     { label: "Total cobrado", val: fmt(paymentBreakdown.total), color: "#00CC66", icon: DollarSign, sub: `${paymentBreakdown.transactionCount} ${paymentBreakdown.transactionCount === 1 ? 'transacción' : 'transacciones'}` },
                     { label: "Pago con tarjeta", val: fmt(paymentBreakdown.card), color: "#4499FF", icon: Store, sub: paymentBreakdown.card > 0 ? "TPV / débito / crédito" : "sin movimientos" },
-                    { label: "Pago en efectivo", val: fmt(paymentBreakdown.cash), color: "#33CC88", icon: ShoppingBag, sub: cajaInsumosTotal > 0 ? `− insumos de caja ${fmt(cajaInsumosTotal)} = ${fmt(paymentBreakdown.cash - cajaInsumosTotal)}` : (paymentBreakdown.usd > 0 ? `incluye ${paymentBreakdown.usd} USD recibidos` : (paymentBreakdown.cash > 0 ? "cobro en MXN" : "sin movimientos")) },
+                    { label: "Pago en efectivo", val: fmt(paymentBreakdown.cash + ingresosTotal - cajaInsumosTotal), color: "#33CC88", icon: ShoppingBag, sub: (cajaInsumosTotal > 0 || ingresosTotal > 0) ? [paymentBreakdown.cash > 0 ? fmt(paymentBreakdown.cash) : null, ingresosTotal > 0 ? `+ ingresos ${fmt(ingresosTotal)}` : null, cajaInsumosTotal > 0 ? `− insumos ${fmt(cajaInsumosTotal)}` : null].filter(Boolean).join(" ") : (paymentBreakdown.usd > 0 ? `incluye ${paymentBreakdown.usd} USD recibidos` : (paymentBreakdown.cash > 0 ? "cobro en MXN" : "sin movimientos")) },
                     { label: "Depósitos", val: fmt(paymentBreakdown.deposits), color: "#BB77FF", icon: Clock, sub: paymentBreakdown.deposits > 0 ? "transferencias / SPEI" : "sin depósitos" },
                   ].map((kpi, i) => (
                     <div key={i} className="min-h-[124px] flex flex-col" style={{ ...GLASS, borderRadius: 20, padding: "12px 20px" }}>
