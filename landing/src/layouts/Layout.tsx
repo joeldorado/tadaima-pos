@@ -80,8 +80,9 @@ const NAV_TREE: NavEntry[] = [
       { to: "/transfers",      label: "Traslados",   icon: ArrowLeftRight, page: "transfers"   },
     ],
   },
-  { to: "/insumos", label: "Insumos", icon: ShoppingBasket, page: "supplies" },
-  { to: "/promos",  label: "Promos",  icon: TicketPercent,  page: "promos"   },
+  { to: "/insumos",  label: "Insumos",  icon: ShoppingBasket, page: "supplies"   },
+  { to: "/ingresos", label: "Ingresos", icon: TrendingUp,     page: "cash_cuts" },
+  { to: "/promos",   label: "Promos",   icon: TicketPercent,  page: "promos"    },
   // "Documentación" NO va en el sidebar (pedido Joel 2026-07-17: liberar
   // espacio) — vive en el menú del avatar, junto a Configuración.
   // TadaimaUS AL FINAL del menú (pedido Joel 2026-08-06): backoffice de la
