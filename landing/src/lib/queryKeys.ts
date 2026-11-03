@@ -60,6 +60,10 @@ export const queryKeys = {
     movements: (params?: Record<string, unknown>) => ['supplies', 'movements', params ?? {}] as const,
     report: (params?: Record<string, unknown>) => ['supplies', 'report', params ?? {}] as const,
   },
+  income: {
+    all: ['income'] as const,
+    movements: (params?: Record<string, unknown>) => ['income', 'movements', params ?? {}] as const,
+  },
   inventory: {
     all: ['inventory'] as const,
     byProduct: (productId: number) => ['inventory', 'byProduct', productId] as const,
