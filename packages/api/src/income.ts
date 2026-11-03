@@ -1,4 +1,4 @@
-import { client } from './client';
+import { apiClient } from './client';
 
 export type IncomeType = 'service_fee' | 'equipment_sale' | 'vendor_refund' | 'other';
 
@@ -21,8 +21,8 @@ export async function registerIncome(input: {
   description?: string;
   store_id?: number | null;
 }): Promise<IncomeMovementRecord> {
-  const { data } = await client.post('/income-movements', input);
-  return data.data;
+  const { data } = await apiClient.post('/income-movements', input);
+  return data;
 }
 
 export async function getIncomeMovements(filters?: {
@@ -34,10 +34,10 @@ export async function getIncomeMovements(filters?: {
   dates?: string;
   whole_store?: boolean;
 }): Promise<IncomeMovementRecord[]> {
-  const { data } = await client.get('/income-movements', { params: filters });
-  return data.data || [];
+  const { data } = await apiClient.get('/income-movements', { params: filters });
+  return data || [];
 }
 
 export async function deleteIncomeMovement(id: number): Promise<void> {
-  await client.delete(`/income-movements/${id}`);
+  await apiClient.delete(`/income-movements/${id}`);
 }
