@@ -235,18 +235,12 @@ class SalesController extends Controller
             );
         }
 
-        $tz = config('app.business_timezone', 'America/Tijuana');
-        $openedLocal = $session->opened_at?->copy()->timezone($tz);
-        if ($openedLocal) {
-            $isPrevBusinessDay = $openedLocal->toDateString() < now($tz)->toDateString();
-            $isOldEnough = $session->opened_at->diffInHours(now()) >= 12;
-            if ($isPrevBusinessDay && $isOldEnough) {
-                return $this->error(
-                    "Tu caja quedó abierta desde el {$openedLocal->format('d/m/Y')}. Haz el corte antes de vender.",
-                    422,
-                    ['code' => ['CASH_SESSION_STALE']]
-                );
-            }
+        if ($openedLocal = $session->staleSince()) {
+            return $this->error(
+                "Tu caja quedó abierta desde el {$openedLocal->format('d/m/Y')}. Haz el corte antes de vender.",
+                422,
+                ['code' => ['CASH_SESSION_STALE']]
+            );
         }
 
         return null;

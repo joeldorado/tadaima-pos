@@ -388,7 +388,7 @@ class CashRegisterController extends Controller
 
     /**
      * DELETE /cash/sessions/{session} — solo admin. Body: { confirm: "BORRAR",
-     * expected: {sales, presales, movements, supplies}, acknowledge_cross? }.
+     * expected: {sales, presales, movements, supplies, incomes}, acknowledge_cross? }.
      * Definitivo: deja el snapshot en system_logs ('cash_session.deleted').
      */
     public function destroySession(Request $request, CashRegisterSession $session, CashSessionDeletionService $deletion): JsonResponse
@@ -406,6 +406,7 @@ class CashRegisterController extends Controller
             'expected.presales'  => ['required', 'integer', 'min:0'],
             'expected.movements' => ['required', 'integer', 'min:0'],
             'expected.supplies'  => ['required', 'integer', 'min:0'],
+            'expected.incomes'   => ['required', 'integer', 'min:0'],
             'acknowledge_cross'  => ['nullable', 'boolean'],
         ]);
 

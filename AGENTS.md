@@ -176,11 +176,14 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
 - **Ingresos (2026-11-03, Ruben):** `/ingresos` registra dinero que entra sin ser venta (comisión,
   venta de equipo, devolución de proveedor, otro) en `income_movements`. Pide caja abierta. Solo el
   **efectivo** crea un `cash_movement` tipo `entrada` y mueve el esperado del corte; tarjeta y depósito
-  son informativos y no tocan el cajón. Cajero y gerente quedan en su tienda; el admin registra sin
-  tienda («Toda la empresa») y entonces su ingreso no sale al filtrar por tienda. **Borrar** (solo
-  admin) pasa por `IncomeService::deleteMovement()`, que también borra su `cash_movement`. En Reportes
-  y Excel los ingresos suman a su método y a la utilidad de TOTALES FINALES. `ReportExportParams`
-  exige `incomeMovements`: Reportes y el corte (`buildCashCloseReport`) lo arman por separado.
+  son informativos y no tocan el cajón. Cajero y gerente quedan en su tienda; el admin puede elegir
+  tienda y, si no, cuenta la de su caja. Una caja vieja (`CashRegisterSession::staleSince()`, la misma
+  regla de `CASH_SESSION_STALE`) no recibe ingresos. **Borrar** (solo admin) pasa por
+  `IncomeService::deleteMovement()`, que también borra su `cash_movement`; borrar un corte los enseña en
+  la vista previa, los cuenta en `expected.incomes` y los respalda en `system_logs`. Con rango de fechas
+  `GET /income-movements` trae hasta 5,000 (sin rango, los últimos 200). En Reportes y Excel los ingresos
+  suman a su método y a la utilidad de TOTALES FINALES. `ReportExportParams` exige `incomeMovements`:
+  Reportes y el corte (`buildCashCloseReport`) lo arman por separado.
 
 ### Productos e inventario
 - **Dos almacenes por tienda:** Exhibición (`warehouses.type='store'`, lo único que se

@@ -21,6 +21,12 @@ use Illuminate\Http\Request;
  */
 class IncomeMovementsController extends Controller
 {
+    /** Sin rango: los últimos, para no traer todo el historial. */
+    private const LIMIT_WITHOUT_RANGE = 200;
+
+    /** Con rango: mismo techo que los reportes de ventas (`fetchAllPages`: 5,000 por consulta). */
+    private const LIMIT_WITH_RANGE = 5000;
+
     public function __construct(private readonly IncomeService $service)
     {
     }
@@ -33,7 +39,8 @@ class IncomeMovementsController extends Controller
         $isCashier = $user->hasRole(['cajero']) && ! $isAdmin;
         $cashierWholeStore = $isCashier && $request->boolean('whole_store');
 
-        if ($request->filled('store_id') && ($resp = $this->storeScopeError($request, $request->input('store_id')))) {
+        // El cajero no recibe 403: su consulta ya queda anclada a lo suyo o a su tienda.
+        if (! $isCashier && $request->filled('store_id') && ($resp = $this->storeScopeError($request, $request->input('store_id')))) {
             return $resp;
         }
 
@@ -68,7 +75,7 @@ class IncomeMovementsController extends Controller
                 fn ($q) => $q->where('store_id', $user->store_id ?? -1)
             )
             ->orderByDesc('created_at')
-            ->limit(200)
+            ->limit($from || $to || $dates !== [] ? self::LIMIT_WITH_RANGE : self::LIMIT_WITHOUT_RANGE)
             ->get();
 
         return $this->success($movements);
@@ -101,7 +108,7 @@ class IncomeMovementsController extends Controller
             return $this->error($e->getMessage(), 422);
         }
 
-        ModelAudit::event('income_movement.created', sprintf('Ingreso %s: $%.2f (%s)', $movement->type, (float) $movement->amount, $movement->payment_method), 'income_movement', $movement->id, [
+        ModelAudit::event('income_movement.created', sprintf('Ingreso %s: $%.2f (%s)', IncomeMovement::typeLabel($movement->type), (float) $movement->amount, $movement->payment_method), 'income_movement', $movement->id, [
             'type' => $movement->type, 'payment_method' => $movement->payment_method, 'amount' => (float) $movement->amount,
             'description' => $movement->description, 'store_id' => $movement->store_id, 'register_session_id' => $movement->register_session_id,
         ], $user->id);

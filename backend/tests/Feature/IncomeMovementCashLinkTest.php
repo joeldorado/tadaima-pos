@@ -120,7 +120,7 @@ class IncomeMovementCashLinkTest extends TestCase
         $cashMovement = CashMovement::find($movement->cash_movement_id);
         $this->assertSame('entrada', $cashMovement->type);
         $this->assertSame(500.50, (float) $cashMovement->amount);
-        $this->assertStringContainsString('Ingreso: equipment_sale', $cashMovement->description);
+        $this->assertStringContainsString('Ingreso: Venta de Equipo', $cashMovement->description);
         $this->assertSame($this->session->id, $cashMovement->register_session_id);
     }
 
@@ -482,6 +482,108 @@ class IncomeMovementCashLinkTest extends TestCase
         ]);
         $this->assertSame('caja', ActivityGroups::logGroup('income_movement.created'));
         $this->assertSame('caja', ActivityGroups::logGroup('income_movement.deleted'));
+    }
+
+    // ── Huecos cerrados (2026-11-03) ─────────────────────────────────────────
+
+    public function test_admin_sin_elegir_tienda_usa_la_de_su_caja(): void
+    {
+        $storeB = Store::where('name', 'Tienda B')->firstOrFail();
+        $this->adminSession->register->update(['store_id' => $storeB->id]);
+
+        $this->actingAs($this->admin)->postJson('/api/v1/income-movements', [
+            'type' => 'other', 'amount' => 100,
+        ])->assertStatus(201);
+
+        $this->assertSame($storeB->id, IncomeMovement::firstOrFail()->store_id);
+    }
+
+    public function test_la_entrada_del_corte_y_el_log_usan_el_tipo_legible(): void
+    {
+        $this->actingAs($this->cashier)->postJson('/api/v1/income-movements', [
+            'type' => 'service_fee', 'amount' => 100, 'description' => 'Reparación',
+        ])->assertStatus(201);
+
+        $this->assertSame('Ingreso: Comisión/Servicio · Reparación', CashMovement::firstOrFail()->description);
+        $this->assertStringContainsString('Comisión/Servicio', (string) \DB::table('system_logs')
+            ->where('action', 'income_movement.created')->value('description'));
+    }
+
+    public function test_con_rango_de_fechas_no_topa_en_200_y_sin_rango_si(): void
+    {
+        for ($i = 0; $i < 201; $i++) {
+            $this->incomeInStore($this->storeA->id, 1);
+        }
+        $today = now('America/Tijuana')->toDateString();
+
+        $this->actingAs($this->admin)
+            ->getJson("/api/v1/income-movements?from={$today}&to={$today}")
+            ->assertStatus(200)->assertJsonCount(201, 'data');
+
+        $this->actingAs($this->admin)
+            ->getJson('/api/v1/income-movements')
+            ->assertStatus(200)->assertJsonCount(200, 'data');
+    }
+
+    public function test_nota_de_255_caracteres_cabe_en_la_entrada_del_corte(): void
+    {
+        $this->actingAs($this->cashier)->postJson('/api/v1/income-movements', [
+            'type' => 'service_fee', 'amount' => 100, 'description' => str_repeat('x', 255),
+        ])->assertStatus(201);
+
+        $this->assertSame(255, mb_strlen((string) CashMovement::firstOrFail()->description));
+        $this->assertSame(255, mb_strlen((string) IncomeMovement::firstOrFail()->description));
+    }
+
+    public function test_caja_vieja_de_12_horas_no_recibe_ingresos(): void
+    {
+        $this->session->update(['opened_at' => now()->subDays(2)]);
+
+        $resp = $this->actingAs($this->cashier)->postJson('/api/v1/income-movements', [
+            'type' => 'other', 'amount' => 100,
+        ])->assertStatus(422);
+
+        $this->assertStringContainsString('Haz el corte', (string) $resp->json('error'));
+        $this->assertSame(0, IncomeMovement::count());
+        $this->assertSame(0, CashMovement::count());
+    }
+
+    public function test_borrar_corte_muestra_y_respalda_sus_ingresos(): void
+    {
+        foreach ([['cash', 300], ['card', 100]] as [$method, $amount]) {
+            $this->actingAs($this->cashier)->postJson('/api/v1/income-movements', [
+                'type' => 'other', 'amount' => $amount, 'payment_method' => $method,
+            ])->assertStatus(201);
+        }
+
+        $preview = $this->actingAs($this->admin)
+            ->getJson("/api/v1/cash/sessions/{$this->session->id}/delete-preview")
+            ->assertStatus(200)->json('data');
+        $this->assertSame(2, $preview['counts']['incomes']);
+        $this->assertCount(2, $preview['incomes']);
+
+        $this->actingAs($this->admin)->deleteJson("/api/v1/cash/sessions/{$this->session->id}", [
+            'confirm' => 'BORRAR', 'expected' => $preview['counts'],
+        ])->assertStatus(200);
+
+        $this->assertSame(0, IncomeMovement::count());
+        $meta = json_decode((string) \DB::table('system_logs')->where('action', 'cash_session.deleted')->value('meta'), true);
+        $this->assertCount(2, $meta['archive']['incomes']);
+    }
+
+    public function test_borrar_corte_no_procede_si_entro_un_ingreso_tras_la_vista_previa(): void
+    {
+        $preview = $this->actingAs($this->admin)
+            ->getJson("/api/v1/cash/sessions/{$this->session->id}/delete-preview")
+            ->assertStatus(200)->json('data');
+
+        $this->incomeInStore($this->storeA->id, 50);
+
+        $this->actingAs($this->admin)->deleteJson("/api/v1/cash/sessions/{$this->session->id}", [
+            'confirm' => 'BORRAR', 'expected' => $preview['counts'],
+        ])->assertStatus(422);
+
+        $this->assertSame(1, IncomeMovement::count());
     }
 
     private function incomeInStore(int $storeId, float $amount): void
