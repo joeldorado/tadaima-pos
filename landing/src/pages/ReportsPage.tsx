@@ -15,7 +15,6 @@ import {
 } from "@tadaima/api";
 import type { SupplyMoneySource, SupplyMovementRecord, IncomeType, IncomeMovementRecord } from "@tadaima/api";
 import { ReportsSkeleton } from "@/components/reports/ReportsSkeleton";
-import { exportReportPdf } from "./reports/exportPdf";
 import { exportReportExcel } from "./reports/exportExcel";
 import type { ReportExportParams, PresaleRow, SurchargeEntry } from "./reports/reportTypes";
 import { groupProductsByCategory } from "./reports/reportCategories";
@@ -525,7 +524,6 @@ export function ReportsPage() {
     ...(usingDates ? { periodLabel: sortedDates.map(fmtDate).join(", ") } : {}),
   });
 
-  const handleExportPDF = () => exportReportPdf(buildExportParams());
   const handleExportExcel = () => { void exportReportExcel(buildExportParams()); };
 
 
@@ -865,19 +863,6 @@ export function ReportsPage() {
               <FileSpreadsheet size={13} />
               Excel
             </button>
-
-            {/* PDF button */}
-            <button
-              onClick={handleExportPDF}
-              disabled={isFetchingActive}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-50"
-              style={{ background: "rgba(224,34,26,0.1)", border: "1px solid rgba(224,34,26,0.2)", color: "var(--td-red)" }}
-              title="Exportar reporte actual a PDF"
-            >
-              <FileSpreadsheet size={13} />
-              PDF
-            </button>
-
 
           </div>
         </div>
