@@ -19,7 +19,7 @@ import {
   isCardMethod, isCashLike, isManga, isTransferMethod, methodTable, tableWidth, withMethod,
   type PresaleTotals, type TableResult,
 } from "./excelTopTables";
-import { bottomLayout, drawEgresos, drawMethodAdjustments } from "./excelBottomTables";
+import { bottomLayout, drawEgresos, drawIngresos, drawMethodAdjustments } from "./excelBottomTables";
 import { sortPresaleFolioRows } from "./buildReportData";
 
 /** Columnas vacías entre dos tablas de la misma pestaña. */
@@ -218,6 +218,7 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
   const green: CellStyle = { ...money, font: font({ sz: 10, bold: true, color: "059669" }) };
   const red: CellStyle = { font: font({ sz: 10, bold: true, color: EGRESO }), alignment: align("right") };
   const egresoMoney: CellStyle = { ...money, font: font({ sz: 10, bold: true, color: EGRESO }) };
+  const greenLabel: CellStyle = { font: font({ sz: 10, bold: true, color: "059669" }), alignment: align("right") };
   const sep = fill("E8E8E8");
   const sepDark = fill("DDDDDD");
 
@@ -238,7 +239,14 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
   const totalVentaRows: number[] = [];
 
   const egresos = p.supplyMovements.reduce((a, m) => a + (m.amount || 0), 0);
-  let egRow = -1;
+  // Ingresos por método de pago: cada método suma solo lo suyo a "Total {método}"
+  // (igual que Egresos solo resta de Efectivo, porque solo "cash" movió el cajón).
+  const ingresosByMethod: Record<string, number> = {
+    Efectivo: p.incomeMovements.filter((m) => m.payment_method === "cash").reduce((a, m) => a + (m.amount || 0), 0),
+    Tarjeta: p.incomeMovements.filter((m) => m.payment_method === "card").reduce((a, m) => a + (m.amount || 0), 0),
+    Transferencias: p.incomeMovements.filter((m) => m.payment_method === "transfer").reduce((a, m) => a + (m.amount || 0), 0),
+  };
+  const ingresosTotal = p.incomeMovements.reduce((a, m) => a + (m.amount || 0), 0);
 
   tabs.forEach((t, i) => {
     if (i > 0) {
@@ -326,36 +334,46 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
     totalCostoRows.push(r);
     r++;
 
-    // Egresos y Total Efectivo — solo para el bloque de Efectivo
-    if (isCash) {
-      egRow = r;
-      sh.set(r, 2, "Egresos", red);
-      sh.set(r, utilCol, egresos > 0 ? egresos : 0, egresoMoney);
-      sh.set(r, ventaCol, "", {});
-      if (canViewCost) sh.set(r, costoCol, "", {});
-      r++;
-
-      const cashUtil = subUtil - egresos;
-      const totalEfRow = r;
-      sh.set(r, 2, "Total efectivo", { font: font({ sz: 10, bold: true, color: "333333" }), alignment: align("left") });
-      // Solo la columna de Utilidad (igual que el reference): Subtotal util − Egresos
-      if (canViewCost) {
-        sh.setF(r, utilCol,
-          `${cellRef(subtotalRow, utilCol)}-${cellRef(egRow, utilCol)}`,
-          cashUtil,
-          { ...green, fill: fill("E8F5E9") },
-        );
-      } else {
-        sh.setF(r, ventaCol,
-          `${cellRef(subtotalRow, ventaCol)}-${cellRef(egRow, utilCol)}`,
-          subVenta - egresos,
-          { ...money, fill: fill("E8F5E9") },
-        );
+    // Ingresos de este método + Egresos (solo Efectivo, porque solo "cash"
+    // movió el cajón) → "Total {método}". Antes solo Efectivo tenía este
+    // ajuste; ahora cualquier método con ingresos propios también lo tiene.
+    const methodIngresos = ingresosByMethod[t.name] ?? 0;
+    const methodEgresos = isCash ? egresos : 0;
+    if (methodIngresos > 0 || methodEgresos > 0) {
+      let ingRow = -1;
+      let egRow = -1;
+      if (methodIngresos > 0) {
+        ingRow = r;
+        sh.set(r, 2, "Ingresos", greenLabel);
+        sh.set(r, utilCol, methodIngresos, green);
+        sh.set(r, ventaCol, "", {});
+        if (canViewCost) sh.set(r, costoCol, "", {});
+        r++;
       }
-      totalUtilRows.push(totalEfRow); // para que TOTALES FINALES sume este row
-      // El costo no cambia con egresos: su subtotal ya entró a `totalCostoRows`
-      // arriba, igual que en Tarjeta y Transferencias. Agregarlo otra vez
-      // duplicaba el costo de Efectivo en la fórmula de TOTALES FINALES.
+      if (methodEgresos > 0) {
+        egRow = r;
+        sh.set(r, 2, "Egresos", red);
+        sh.set(r, utilCol, methodEgresos, egresoMoney);
+        sh.set(r, ventaCol, "", {});
+        if (canViewCost) sh.set(r, costoCol, "", {});
+        r++;
+      }
+
+      const methodUtilFinal = subUtil + methodIngresos - methodEgresos;
+      const totalRow = r;
+      sh.set(r, 2, `Total ${t.name.toLowerCase()}`, { font: font({ sz: 10, bold: true, color: "333333" }), alignment: align("left") });
+      // Solo la columna de Utilidad (igual que el reference): Subtotal util + Ingresos − Egresos
+      const parts = [cellRef(subtotalRow, canViewCost ? utilCol : ventaCol)];
+      if (ingRow >= 0) parts.push(`+${cellRef(ingRow, utilCol)}`);
+      if (egRow >= 0) parts.push(`-${cellRef(egRow, utilCol)}`);
+      if (canViewCost) {
+        sh.setF(r, utilCol, parts.join(""), methodUtilFinal, { ...green, fill: fill("E8F5E9") });
+      } else {
+        sh.setF(r, ventaCol, parts.join(""), subVenta + methodIngresos - methodEgresos, { ...money, fill: fill("E8F5E9") });
+      }
+      totalUtilRows.push(totalRow); // para que TOTALES FINALES sume este row
+      // El costo no cambia con ingresos/egresos: su subtotal ya entró a
+      // `totalCostoRows` arriba. Agregarlo otra vez lo duplicaría.
       r++;
     } else {
       totalUtilRows.push(subtotalRow);
@@ -372,7 +390,7 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
   const finalStyle: CellStyle = { ...money, fill: fill("B8732E"), font: font({ sz: 11, bold: true, color: "FFFFFF" }) };
   const totalVenta = tabs.reduce((a, t) => a + (t.result.totals[t.ventaKey]?.value ?? 0), 0);
   const totalCosto = tabs.reduce((a, t) => a + (t.result.totals["costo"]?.value ?? 0), 0);
-  const totalUtil  = tabs.reduce((a, t) => a + (t.result.totals["util"]?.value ?? 0), 0) - egresos;
+  const totalUtil  = tabs.reduce((a, t) => a + (t.result.totals["util"]?.value ?? 0), 0) - egresos + ingresosTotal;
 
   sh.set(r, 2, "TOTALES FINALES:", { font: font({ sz: 11, bold: true, color: "FFFFFF" }), fill: fill("B8732E"), alignment: align("right") });
   sh.set(r, 1, "", { fill: fill("B8732E") });
@@ -384,14 +402,33 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
   sh.height(r, 24);
   r++;
 
-  // Lista de egresos a la derecha del resumen principal
+  // Lista de ingresos y egresos a la derecha del resumen principal
   const egListCol = totalCols + 2; // columna donde empieza la lista (deja 1 col de separación)
   const egListMoneyCol = egListCol + 1;
   const egListCatCol   = egListCol + 2;
   const egLabelStyle: CellStyle = { font: font({ sz: 10, bold: true, color: EGRESO }), alignment: align("right") };
   const egAmtStyle: CellStyle   = { numFmt: MONEY_FMT, font: font({ sz: 10, bold: true, color: EGRESO }), alignment: align("left") };
   const egCatStyle: CellStyle   = { font: font({ sz: 9, color: EGRESO }), alignment: align("left") };
+  const ingLabelStyle: CellStyle = { font: font({ sz: 10, bold: true, color: "059669" }), alignment: align("right") };
+  const ingAmtStyle: CellStyle   = { numFmt: MONEY_FMT, font: font({ sz: 10, bold: true, color: "059669" }), alignment: align("left") };
+  const ingDescStyle: CellStyle  = { font: font({ sz: 9, color: "059669" }), alignment: align("left") };
+  const INCOME_PAYMENT_METHOD_LABEL: Record<string, string> = { cash: "Efectivo", card: "Tarjeta", transfer: "Depósito" };
   let er = FIRST_TABLE_ROW; // fila de inicio a la derecha
+  p.incomeMovements.forEach((m, mi) => {
+    if (mi === 0) sh.set(er, egListCol, "Ingresos:", ingLabelStyle);
+    sh.set(er, egListMoneyCol, m.amount, ingAmtStyle);
+    const desc = [m.description, INCOME_PAYMENT_METHOD_LABEL[m.payment_method] ?? m.payment_method].filter(Boolean).join(" · ");
+    if (desc) sh.set(er, egListCatCol, `(${desc})`, ingDescStyle);
+    sh.height(er, 18);
+    er++;
+  });
+  if (p.incomeMovements.length > 0) {
+    sh.set(er, egListCol, "Total Ingreso:", ingLabelStyle);
+    sh.set(er, egListMoneyCol, ingresosTotal, ingAmtStyle);
+    sh.height(er, 18);
+    er++;
+    er++; // fila en blanco antes de Egresos
+  }
   p.supplyMovements.forEach((m, mi) => {
     if (mi === 0) sh.set(er, egListCol, "Egresos:", egLabelStyle);
     sh.set(er, egListMoneyCol, m.amount, egAmtStyle);
@@ -405,6 +442,16 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
     sh.set(er, egListMoneyCol, egresos, egAmtStyle);
     sh.height(er, 18);
     er++;
+  }
+  if (p.incomeMovements.length > 0 || p.supplyMovements.length > 0) {
+    // Neto de SOLO esta lista (Ingresos − Egresos), separado de la utilidad
+    // global del negocio que viene abajo — sin esto "TOTAL FINAL" confundía,
+    // porque parecía ser el total de la lista cuando en realidad es la
+    // utilidad de TODO el periodo (ventas + ingresos − costo − egresos).
+    sh.set(er, egListCol, "Neto Ingresos−Egresos:", { font: font({ sz: 9, bold: true, color: "333333" }), alignment: align("right") });
+    sh.set(er, egListMoneyCol, ingresosTotal - egresos, { numFmt: MONEY_FMT, font: font({ sz: 9, bold: true, color: "333333" }), alignment: align("left") });
+    sh.height(er, 18);
+    er++;
     er++; // fila en blanco antes de TOTAL FINAL
     sh.set(er, egListCol, "TOTAL FINAL:", { font: font({ sz: 10, bold: true, color: "333333" }), alignment: align("right") });
     sh.set(er, egListMoneyCol, totalUtil, { numFmt: MONEY_FMT, font: font({ sz: 10, bold: true, color: "333333" }), fill: fill("F5DEB3"), alignment: align("left") });
@@ -413,11 +460,13 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
   sh.width(egListMoneyCol, 12);
   sh.width(egListCatCol, 16);
 
-  // Tablas de detalle (descuentos/aumentos/egresos) debajo del resumen
+  // Tablas de detalle (descuentos/aumentos/egresos/ingresos) debajo del resumen
   const blocksTop = r + STACK_GAP;
   const cashEnd = drawMethodAdjustments(sh, blocksTop, leftL, groups, "cash", "EFECTIVO", 1);
   const egTop = cashEnd + STACK_GAP + 1;
-  drawEgresos(sh, egTop, leftL, p.supplyMovements, p.stores, 6);
+  const egEnd = drawEgresos(sh, egTop, leftL, p.supplyMovements, p.stores, 6);
+  const ingTop = egEnd + STACK_GAP + 1;
+  drawIngresos(sh, ingTop, leftL, p.incomeMovements, p.stores, 7);
   const cardEnd = drawMethodAdjustments(sh, blocksTop, bottomLayout(rightCol, BLOCK_WIDTH), groups, "card", "TARJETA", 2);
   drawMethodAdjustments(sh, cardEnd + STACK_GAP + 1, bottomLayout(rightCol, BLOCK_WIDTH), groups, "transfer", "TRANSFERENCIAS", 3);
   blockWidths(sh, 1);

@@ -1,6 +1,6 @@
 // Tipos compartidos por los generadores de reporte (Excel y PDF), extraídos de
 // ReportsPage.tsx para poder separar la lógica de exportación en archivos aparte.
-import type { InventoryReport, TopProductsReport, CustomersReport, Store as StoreType, SupplyMovementRecord, ProductType } from "@tadaima/api";
+import type { InventoryReport, TopProductsReport, CustomersReport, Store as StoreType, SupplyMovementRecord, IncomeMovementRecord, ProductType } from "@tadaima/api";
 
 export type TabId = "ventas" | "inventario" | "productos" | "clientes";
 
@@ -160,6 +160,8 @@ export interface ReportExportParams {
   users: { id: number; name: string }[];
   /** Compras de insumos del rango (egresos) para la tabla 5. EGRESOS. */
   supplyMovements: SupplyMovementRecord[];
+  /** Ingresos del rango (entrada de dinero) para la tabla 6. INGRESOS. */
+  incomeMovements: IncomeMovementRecord[];
   /** Sufijo del nombre de archivo (p.ej. "turno" / "tienda" desde el corte). */
   fileSuffix?: string;
   /** Título del Excel (por defecto "TADAIMA - REPORTE DE AUDITORÍA Y VENTAS"). */

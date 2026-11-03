@@ -33,6 +33,7 @@ use App\Http\Controllers\Api\SalesController;
 use App\Http\Controllers\Api\StoreController;
 use App\Http\Controllers\Api\BundlesController;
 use App\Http\Controllers\Api\SuppliesController;
+use App\Http\Controllers\Api\IncomeMovementsController;
 use App\Http\Controllers\Api\TerminalController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\UsAccountController;
@@ -412,6 +413,10 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
         Route::delete('movements/{movement}', [SuppliesController::class, 'destroyMovement']);
         Route::put('{supply}',     [SuppliesController::class, 'update']);
     });
+
+    // ── Ingresos (Fase 3) — entrada de dinero (venta equipo, comisión, devolución, etc.) ──
+    Route::apiResource('income-movements', IncomeMovementsController::class)
+        ->only(['index', 'store', 'destroy']);
 
     // ── Paquetes (2026-10-07) — definición global, stock por tienda ──────────
     Route::prefix('bundles')->group(function () {
