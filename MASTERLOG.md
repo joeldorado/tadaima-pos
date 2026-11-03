@@ -4,6 +4,22 @@
 
 ---
 
+### Sesión 2026-11-03 (b) — Huecos de Ingresos y aislamiento de insumos por tienda (PR #91) — rev tadaima-00122-dum
+
+**Pedido Joel:** arreglar los huecos que quedaron de la revisión del módulo Ingresos y subirlos con el mismo proceso.
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00120-woy`. Sin migraciones.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00120-woy=100 --project tadaimapos --region us-east1`
+
+- **Ingresos:** el admin sin tienda elegida cuenta la de su caja; corte y logs con el tipo legible («Comisión/Servicio»); con rango de fechas `/income-movements` trae hasta 5,000 (sin rango, 200) y el historial filtra en el servidor; una caja vieja ya no recibe ingresos (`CashRegisterSession::staleSince()`, la regla de ventas en un solo lugar).
+- **Borrar corte:** la vista previa enseña los ingresos, `expected.incomes` es requerido y `archive.incomes` los respalda en `system_logs`.
+- **Bug nuevo:** una nota de 255 caracteres reventaba la entrada del corte en Postgres (`cash_movements.description` es string(255)); ahora se recorta solo ahí.
+- **Insumos:** el gerente queda anclado a su tienda en `/supplies/movements` (403 si pide otra) y en `/reports/supplies`; el cajero también en el reporte. Un cajero con `store_id` ajeno en movimientos NO recibe 403 a propósito: queda anclado a lo suyo (`WholeStoreReportScopeTest`).
+- **Cambia para el equipo:** los gerentes dejan de ver registros y gasto de insumos de otras tiendas, y los registros viejos de «toda la empresa».
+- **Validación:** backend 948 ✓ en SQLite y Postgres local, vitest 828 ✓, `vite build` OK, sin errores de tipos nuevos. Local con base temporal: historial por fechas, tienda del admin, etiqueta en el corte y borrar corte con respaldo. Candidate: «Nothing to migrate», `/`, `/login`, `/tadaimaus/` 200, rutas con token 401, bundle con el modal nuevo. Tras promover: smoke igual en el dominio.
+- **No probado en prod:** registrar o borrar un ingreso real y borrar un corte con ingresos (regla de oro 1). Sigue pendiente la prueba en tienda de ingresos y Excel del corte.
+- **Aparte, sin deploy:** el detalle del corte muestra la hora de movimientos en UTC; arreglo en PR #92, abierto.
+
 ### Sesión 2026-11-03 — Módulo Ingresos de Ruben + arreglos de revisión (PR #89) — rev tadaima-00120-woy
 
 **Pedido Joel:** bajar lo que subió Ruben a `develop` y deployarlo directo a prod, con rollback y revisando que no truene nada de lo que ya existe. `develop` iba 14 adelante y 44 atrás de `main`: entró por merge en `release/2026-11-03`, sin conflictos.
