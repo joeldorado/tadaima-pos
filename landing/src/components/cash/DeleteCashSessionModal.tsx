@@ -148,6 +148,9 @@ export function DeleteCashSessionModal({ sessionId, onClose, onDeleted }: Delete
               <Table title={`Insumos pagados de esta caja (${data.supplies.length})`} empty="Sin insumos"
                 head={['Insumo', 'Cantidad', 'Monto']}
                 rows={data.supplies.map(s => [s.supply ?? '—', String(s.quantity), fmt(s.amount)])} />
+              <Table title={`Ingresos registrados en esta caja (${data.incomes.length})`} empty="Sin ingresos"
+                head={['Tipo', 'Descripción', 'Monto']}
+                rows={data.incomes.map(i => [i.type, i.description ?? '—', fmt(i.amount)])} />
 
               {!blocked && needsAck && (
                 <label className="flex items-start gap-2 text-xs font-bold" style={{ color: '#fca5a5' }}>

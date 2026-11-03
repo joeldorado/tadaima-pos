@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -12,6 +13,7 @@ class CashRegisterSession extends Model
 
     const STATUS_OPEN   = 'open';
     const STATUS_CLOSED = 'closed';
+    const STALE_AFTER_HOURS = 12;
 
     protected $table = 'cash_register_sessions';
 
@@ -28,6 +30,24 @@ class CashRegisterSession extends Model
         'closing_cash'     => 'float',
         'closing_cash_usd' => 'float',
     ];
+
+    /**
+     * Caja de un día de negocio anterior con 12 h o más abierta: no opera hasta hacer el
+     * corte (`CASH_SESSION_STALE`). Devuelve cuándo abrió en hora del negocio, o null.
+     */
+    public function staleSince(): ?CarbonInterface
+    {
+        $tz = config('app.business_timezone', 'America/Tijuana');
+        $openedLocal = $this->opened_at?->copy()->timezone($tz);
+        if (! $openedLocal) {
+            return null;
+        }
+
+        $isPrevBusinessDay = $openedLocal->toDateString() < now($tz)->toDateString();
+        $isOldEnough = $this->opened_at->diffInHours(now()) >= self::STALE_AFTER_HOURS;
+
+        return $isPrevBusinessDay && $isOldEnough ? $openedLocal : null;
+    }
 
     public function register(): BelongsTo
     {

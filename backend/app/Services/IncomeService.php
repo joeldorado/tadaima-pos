@@ -23,6 +23,9 @@ use Illuminate\Support\Facades\DB;
  */
 class IncomeService
 {
+    /** `cash_movements.description` es string(255): la nota del ingreso ya puede medir eso sola. */
+    private const CASH_DESCRIPTION_MAX = 255;
+
     public function __construct(
         private readonly CashRegisterService $cashService = new CashRegisterService(),
     ) {
@@ -50,6 +53,15 @@ class IncomeService
             );
         }
 
+        if ($openedAt = $session->staleSince()) {
+            throw new \DomainException(
+                "Tu caja quedó abierta desde el {$openedAt->format('d/m/Y')}. Haz el corte antes de registrar ingresos."
+            );
+        }
+
+        // Sin tienda elegida (admin): el dinero entró a esta caja, así que es de su tienda.
+        $storeId ??= $session->register?->store_id;
+
         return DB::transaction(function () use ($type, $amount, $description, $userId, $session, $storeId, $paymentMethod) {
             $cashMovementId = null;
 
@@ -58,7 +70,11 @@ class IncomeService
                     'register_session_id' => $session->id,
                     'type'                => 'entrada',
                     'amount'              => round($amount, 2),
-                    'description'         => "Ingreso: {$type}" . ($description ? " · {$description}" : ''),
+                    'description'         => mb_substr(
+                        'Ingreso: ' . IncomeMovement::typeLabel($type) . ($description ? " · {$description}" : ''),
+                        0,
+                        self::CASH_DESCRIPTION_MAX,
+                    ),
                 ]);
                 $cashMovementId = $cashMovement->id;
             }
@@ -94,7 +110,7 @@ class IncomeService
                 'income_movement.deleted',
                 sprintf(
                     'Ingreso borrado: %s · %s (%s)',
-                    $movement->type,
+                    IncomeMovement::typeLabel($movement->type),
                     number_format((float) $movement->amount, 2),
                     $movement->description ?? '(sin descripción)',
                 ),

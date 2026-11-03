@@ -219,6 +219,13 @@ class SuppliesController extends Controller
         $isAdmin   = $user->isAdminRole();
         $isCashier = $user->hasRole(['cajero']) && ! $isAdmin;
         $cashierWholeStore = $isCashier && $request->boolean('whole_store');
+        // Gerente: siempre anclado a su tienda (aislamiento por tienda, 2026-11-03).
+        $ownStoreOnly = $cashierWholeStore || (! $isAdmin && ! $isCashier);
+
+        // El cajero no recibe 403: su consulta ya queda anclada a lo suyo o a su tienda.
+        if (! $isCashier && $request->filled('store_id') && ($resp = $this->storeScopeError($request, $request->input('store_id')))) {
+            return $resp;
+        }
 
         // Rango de fechas opcional (día-negocio), MISMO helper que /reports/supplies
         // para que la lista detallada del Reporte cuadre con el agregado.
@@ -258,7 +265,7 @@ class SuppliesController extends Controller
             // ?whole_store=1 (reporte de toda la tienda desde el corte, 2026-09-27):
             // el cajero ve lo de todos, pero anclado a los insumos de SU tienda.
             ->when(
-                $cashierWholeStore,
+                $ownStoreOnly,
                 fn ($q) => $q->where(fn ($qq) => $qq
                     ->where('supply_movements.store_id', $user->store_id ?? -1)
                     ->orWhere(fn ($qqq) => $qqq
@@ -285,12 +292,22 @@ class SuppliesController extends Controller
 
         $fromUtc = DateRange::fromUtc($from);
         $toUtc   = DateRange::toUtc($to);
+        $user    = $request->user();
 
         $base = DB::table('supply_movements')
             ->join('supplies', 'supplies.id', '=', 'supply_movements.supply_id')
             // Scoping por empresa (fix 2026-07-18): el gasto es de UNA empresa.
-            ->where('supplies.company_id', $request->user()->company_id)
+            ->where('supplies.company_id', $user->company_id)
             ->where('supply_movements.type', SupplyMovement::TYPE_PURCHASE)
+            // Solo el admin ve el gasto de toda la empresa. Misma tienda que /supplies/movements:
+            // la del movimiento y, en registros viejos, la de la categoría.
+            ->when(! $user->isAdminRole(), fn ($q) => $q->where(fn ($qq) => $qq
+                ->where('supply_movements.store_id', $user->store_id ?? -1)
+                ->orWhere(fn ($qqq) => $qqq
+                    ->whereNull('supply_movements.store_id')
+                    ->where('supplies.store_id', $user->store_id ?? -1)
+                )
+            ))
             ->when($fromUtc, fn ($q) => $q->where('supply_movements.created_at', '>=', $fromUtc))
             ->when($toUtc,   fn ($q) => $q->where('supply_movements.created_at', '<=', $toUtc));
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Models\CashMovement;
+use App\Models\IncomeMovement;
 use App\Models\CashRegisterSession;
 use App\Models\Customer;
 use App\Models\Inventory;
@@ -61,6 +62,7 @@ final class CashSessionDeletionService
 
         $movements = CashMovement::where('register_session_id', $session->id)->orderBy('id')->get();
         $supplies  = SupplyMovement::with('supply:id,name')->where('register_session_id', $session->id)->get();
+        $incomes   = IncomeMovement::where('register_session_id', $session->id)->orderBy('id')->get();
 
         return [
             'session'   => $this->sessionSummary($session),
@@ -81,9 +83,13 @@ final class CashSessionDeletionService
             'supplies'  => $supplies->map(fn (SupplyMovement $m) => [
                 'id' => $m->id, 'supply' => $m->supply?->name, 'quantity' => (float) $m->quantity, 'amount' => (float) $m->amount,
             ])->all(),
+            'incomes'   => $incomes->map(fn (IncomeMovement $m) => [
+                'id' => $m->id, 'type' => IncomeMovement::typeLabel($m->type), 'payment_method' => $m->payment_method,
+                'amount' => (float) $m->amount, 'description' => $m->description,
+            ])->all(),
             'counts'    => [
                 'sales' => $sales->count(), 'presales' => count($folios['rows']),
-                'movements' => $movements->count(), 'supplies' => $supplies->count(),
+                'movements' => $movements->count(), 'supplies' => $supplies->count(), 'incomes' => $incomes->count(),
             ],
             'cross'     => $cross,
             'warnings'  => $session->status === CashRegisterSession::STATUS_OPEN
@@ -96,7 +102,7 @@ final class CashSessionDeletionService
     /**
      * Borra el corte y todo lo suyo en una transacción. Devuelve el preview.
      *
-     * @param  array{sales?: int, presales?: int, movements?: int, supplies?: int}  $expected
+     * @param  array{sales?: int, presales?: int, movements?: int, supplies?: int, incomes?: int}  $expected
      *         Conteos que el admin vio en el preview.
      * @return array<string, mixed>
      * @throws DomainException si hay bloqueos, cambió el corte o falta confirmar otros cortes (→ 422)
@@ -126,6 +132,7 @@ final class CashSessionDeletionService
             $this->deletePresales($folioIds);
             $this->deleteSales($saleIds);
             SupplyMovement::where('register_session_id', $session->id)->delete();
+            IncomeMovement::where('register_session_id', $session->id)->delete();
             $session->delete(); // cascade: cash_movements, sales_drafts
 
             return $preview;
@@ -317,6 +324,7 @@ final class CashSessionDeletionService
                 ->orWhereIn('pre_sale_order_id', $folioIds)->get()->toArray(),
             'movements'     => CashMovement::where('register_session_id', $session->id)->get()->toArray(),
             'supplies'      => SupplyMovement::where('register_session_id', $session->id)->get()->toArray(),
+            'incomes'       => IncomeMovement::where('register_session_id', $session->id)->get()->toArray(),
             'presales'      => PreSaleOrder::with(['items', 'payments'])->whereIn('id', $folioIds)->get()->toArray(),
         ];
     }

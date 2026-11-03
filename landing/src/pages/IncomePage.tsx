@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -13,7 +13,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import { useIncomeMovementsQuery } from "@/hooks/queries/useIncome";
 import { useActiveSessionQuery } from "@/hooks/queries/useCashSession";
 import { isAdmin as isAdminRole } from "@/lib/permisos";
-import { getTodayLocal, BUSINESS_TZ } from "@/lib/date";
+import { getTodayLocal } from "@/lib/date";
 import { DateRangePicker } from "@/components/ui/DateRangePicker";
 
 const PANEL  = "var(--td-panel-bg)";
@@ -73,7 +73,10 @@ export function IncomePage() {
   const queryClient = useQueryClient();
 
   const [tab, setTab] = useState<Tab>("registrar");
-  const movementsQuery = useIncomeMovementsQuery({});
+  // El rango viaja al servidor: el historial nunca filtra sobre lo que ya cargó.
+  const [from, setFrom] = useState(getTodayLocal());
+  const [to, setTo] = useState(getTodayLocal());
+  const movementsQuery = useIncomeMovementsQuery({ from, to });
   const sessionQuery = useActiveSessionQuery();
   const hasOpenSession = !!sessionQuery.data;
 
@@ -99,7 +102,7 @@ export function IncomePage() {
       });
       toast.success(`+${fmt(a)} registrado`);
       setAmount(""); setDescription(""); setType("service_fee"); setPaymentMethod("cash");
-      void queryClient.invalidateQueries({ queryKey: queryKeys.income.movements() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.income.all });
       void queryClient.invalidateQueries({ queryKey: queryKeys.reports.cash() });
       void queryClient.invalidateQueries({ queryKey: ["cash"] });
     } catch (err: unknown) {
@@ -117,7 +120,7 @@ export function IncomePage() {
     try {
       await deleteIncomeMovement(id);
       toast.success("Ingreso borrado");
-      void queryClient.invalidateQueries({ queryKey: queryKeys.income.movements() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.income.all });
       void queryClient.invalidateQueries({ queryKey: queryKeys.reports.cash() });
     } catch (err: unknown) {
       toast.error((err as { message?: string }).message ?? "No se pudo borrar");
@@ -126,16 +129,7 @@ export function IncomePage() {
     }
   };
 
-  // ── Filtro de fechas ────────────────────────────────────────────────────
-  const [from, setFrom] = useState(getTodayLocal());
-  const [to, setTo] = useState(getTodayLocal());
-  const filteredMovements = useMemo(() => {
-    if (!movementsQuery.data) return [];
-    return movementsQuery.data.filter(m => {
-      const mDate = new Date(m.created_at).toLocaleDateString("en-CA", { timeZone: BUSINESS_TZ });
-      return mDate >= from && mDate <= to;
-    });
-  }, [movementsQuery.data, from, to]);
+  const filteredMovements = movementsQuery.data ?? [];
 
   const tabs: Array<{ key: Tab; label: string; icon: typeof Wallet }> = [
     { key: "registrar",   label: "Registrar ingreso", icon: Wallet },

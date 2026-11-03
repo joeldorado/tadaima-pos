@@ -228,6 +228,7 @@ export interface CashSessionDeleteCounts {
   presales: number
   movements: number
   supplies: number
+  incomes: number
 }
 
 export interface CashSessionDeletePreview {
@@ -247,6 +248,7 @@ export interface CashSessionDeletePreview {
   presales: Array<{ id: number; code: string; status: string; customer: string | null; paid: number }>
   movements: Array<{ id: number; type: 'entrada' | 'salida' | 'ajuste'; amount: number; description: string | null; created_at: string | null }>
   supplies: Array<{ id: number; supply: string | null; quantity: number; amount: number }>
+  incomes: Array<{ id: number; type: string; payment_method: string; amount: number; description: string | null }>
   /** Lo que el admin vio: el DELETE los manda de vuelta y si cambiaron no borra. */
   counts: CashSessionDeleteCounts
   /** El borrado mueve OTROS cortes: hay que confirmarlo (`acknowledge_cross`). */

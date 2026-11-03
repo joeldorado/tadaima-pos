@@ -24,6 +24,14 @@ class IncomeMovement extends Model
         self::TYPE_OTHER,
     ];
 
+    /** Lo que lee la gente: corte de caja y Actividad. */
+    public const TYPE_LABELS = [
+        self::TYPE_SERVICE_FEE    => 'Comisión/Servicio',
+        self::TYPE_EQUIPMENT_SALE => 'Venta de Equipo',
+        self::TYPE_VENDOR_REFUND  => 'Dev. Proveedor',
+        self::TYPE_OTHER          => 'Otro',
+    ];
+
     public const PAYMENT_METHOD_CASH     = 'cash';
     public const PAYMENT_METHOD_CARD     = 'card';
     public const PAYMENT_METHOD_TRANSFER = 'transfer';
@@ -53,6 +61,11 @@ class IncomeMovement extends Model
     protected static function booted(): void
     {
         static::creating(static fn ($m) => $m->created_at ??= now());
+    }
+
+    public static function typeLabel(string $type): string
+    {
+        return self::TYPE_LABELS[$type] ?? $type;
     }
 
     public function session(): BelongsTo
