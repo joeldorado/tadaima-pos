@@ -4,6 +4,18 @@
 
 ---
 
+### Sesión 2026-11-03 (c) — Hora de Tijuana en el detalle del corte (PR #92) — rev tadaima-00124-bov
+
+**Origen:** al probar Ingresos en local, un movimiento de la 1:23 p.m. salía como 9:23 p.m. al desplegar un corte. Joel pidió subir el arreglo.
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00122-dum`. Sin migraciones.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00122-dum=100 --project tadaimapos --region us-east1`
+
+- **Causa:** `ReportsController::cashDetail` arma `movements`, `pre_sale_payments` y `supply_purchases` con `DB::table`, que devuelve `created_at` como texto sin zona; `new Date()` lo tomaba como hora local. Ahora van en ISO 8601 UTC (`rawUtcToIso`). Sin cambios en el frontend.
+- **Confirmado en prod por SQL de solo lectura:** la base está en UTC, las tres columnas son `NOT NULL` y sin nulos, y en 63 preventas de 14 días el primer cobro coincide con la creación del folio (±2 s). Las horas guardadas no se tocan: solo cambia cómo se envían.
+- **Validación:** backend 951 ✓ en SQLite y Postgres local sobre el merge con `main` (`CashDetailTimezoneTest` nueva). Candidate: «Nothing to migrate», `/`, `/login`, `/tadaimaus/` 200, `/reports/cash/{id}/detail` 401 sin token.
+- **No probado en prod con sesión:** abrir un corte real y ver la hora; Joel lo revisa en Cortes de Caja.
+
 ### Sesión 2026-11-03 (b) — Huecos de Ingresos y aislamiento de insumos por tienda (PR #91) — rev tadaima-00122-dum
 
 **Pedido Joel:** arreglar los huecos que quedaron de la revisión del módulo Ingresos y subirlos con el mismo proceso.
@@ -18,7 +30,7 @@
 - **Cambia para el equipo:** los gerentes dejan de ver registros y gasto de insumos de otras tiendas, y los registros viejos de «toda la empresa».
 - **Validación:** backend 948 ✓ en SQLite y Postgres local, vitest 828 ✓, `vite build` OK, sin errores de tipos nuevos. Local con base temporal: historial por fechas, tienda del admin, etiqueta en el corte y borrar corte con respaldo. Candidate: «Nothing to migrate», `/`, `/login`, `/tadaimaus/` 200, rutas con token 401, bundle con el modal nuevo. Tras promover: smoke igual en el dominio.
 - **No probado en prod:** registrar o borrar un ingreso real y borrar un corte con ingresos (regla de oro 1). Sigue pendiente la prueba en tienda de ingresos y Excel del corte.
-- **Aparte, sin deploy:** el detalle del corte muestra la hora de movimientos en UTC; arreglo en PR #92, abierto.
+- **Aparte:** el detalle del corte mostraba la hora de movimientos en UTC; se arregló en la entrada de arriba (PR #92).
 
 ### Sesión 2026-11-03 — Módulo Ingresos de Ruben + arreglos de revisión (PR #89) — rev tadaima-00120-woy
 
