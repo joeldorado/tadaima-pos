@@ -38,9 +38,15 @@ class IncomeMovementsController extends Controller
         $dates = DateRange::parseDatesParam($request->input('dates'));
 
         $movements = IncomeMovement::with(['session:id,user_id', 'user:id,name'])
-            ->whereHas('session', fn ($q) => $q->where('store_id', $user->store_id ?? -1))
+            // Scoping por empresa (mismo patrón que SuppliesController::movements):
+            // sin esto el historial mezclaba movimientos de otras empresas.
+            ->whereHas('user', fn ($q) => $q->where('company_id', $user->company_id))
             ->when($request->input('type'), fn ($q, $t) => $q->where('type', $t))
             ->tap(fn ($q) => DateRange::applyDates($q, 'income_movements.created_at', $dates, $from, $to))
+            // Filtro por tienda: SOLO si el request lo manda (admin eligiendo tienda
+            // en Reportes/Ingresos, o cajero con whole_store). Antes forzaba siempre
+            // a la tienda del usuario que CONSULTA, lo que dejaba la lista vacía para
+            // un admin sin store_id propio.
             ->when(
                 $request->filled('store_id') && ! $cashierWholeStore,
                 fn ($q) => $q->where('store_id', $request->integer('store_id'))
