@@ -19,7 +19,7 @@ import {
   isCardMethod, isCashLike, isManga, isTransferMethod, methodTable, tableWidth, withMethod,
   type PresaleTotals, type TableResult,
 } from "./excelTopTables";
-import { bottomLayout, drawEgresos, drawMethodAdjustments } from "./excelBottomTables";
+import { bottomLayout, drawEgresos, drawIngresos, drawMethodAdjustments } from "./excelBottomTables";
 import { sortPresaleFolioRows } from "./buildReportData";
 
 /** Columnas vacías entre dos tablas de la misma pestaña. */
@@ -413,11 +413,13 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
   sh.width(egListMoneyCol, 12);
   sh.width(egListCatCol, 16);
 
-  // Tablas de detalle (descuentos/aumentos/egresos) debajo del resumen
+  // Tablas de detalle (descuentos/aumentos/egresos/ingresos) debajo del resumen
   const blocksTop = r + STACK_GAP;
   const cashEnd = drawMethodAdjustments(sh, blocksTop, leftL, groups, "cash", "EFECTIVO", 1);
   const egTop = cashEnd + STACK_GAP + 1;
-  drawEgresos(sh, egTop, leftL, p.supplyMovements, p.stores, 6);
+  const egEnd = drawEgresos(sh, egTop, leftL, p.supplyMovements, p.stores, 6);
+  const ingTop = egEnd + STACK_GAP + 1;
+  drawIngresos(sh, ingTop, leftL, p.incomeMovements, p.stores, 7);
   const cardEnd = drawMethodAdjustments(sh, blocksTop, bottomLayout(rightCol, BLOCK_WIDTH), groups, "card", "TARJETA", 2);
   drawMethodAdjustments(sh, cardEnd + STACK_GAP + 1, bottomLayout(rightCol, BLOCK_WIDTH), groups, "transfer", "TRANSFERENCIAS", 3);
   blockWidths(sh, 1);
