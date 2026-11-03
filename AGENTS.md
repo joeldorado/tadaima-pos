@@ -8,7 +8,7 @@
 > Detalle adicional: [`CLAUDE.md`](CLAUDE.md) (comandos y arquitectura del frontend) y
 > [`backend/AGENTS.md`](backend/AGENTS.md) (API, ADRs y referencia de endpoints).
 >
-> Última revisión: 2026-10-31.
+> Última revisión: 2026-11-03.
 
 ---
 
@@ -173,6 +173,14 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   `SupplyService::deleteMovement()`: borra también su `cash_movement` (el esperado del corte
   regresa) y deja snapshot en `system_logs` (`supply_movement.deleted`). Nunca
   `$movement->delete()` a secas: el cajón quedaría descuadrado.
+- **Ingresos (2026-11-03, Ruben):** `/ingresos` registra dinero que entra sin ser venta (comisión,
+  venta de equipo, devolución de proveedor, otro) en `income_movements`. Pide caja abierta. Solo el
+  **efectivo** crea un `cash_movement` tipo `entrada` y mueve el esperado del corte; tarjeta y depósito
+  son informativos y no tocan el cajón. Cajero y gerente quedan en su tienda; el admin registra sin
+  tienda («Toda la empresa») y entonces su ingreso no sale al filtrar por tienda. **Borrar** (solo
+  admin) pasa por `IncomeService::deleteMovement()`, que también borra su `cash_movement`. En Reportes
+  y Excel los ingresos suman a su método y a la utilidad de TOTALES FINALES. `ReportExportParams`
+  exige `incomeMovements`: Reportes y el corte (`buildCashCloseReport`) lo arman por separado.
 
 ### Productos e inventario
 - **Dos almacenes por tienda:** Exhibición (`warehouses.type='store'`, lo único que se

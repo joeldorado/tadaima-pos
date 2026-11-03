@@ -4,6 +4,19 @@
 
 ---
 
+### Sesión 2026-11-03 — Módulo Ingresos de Ruben + arreglos de revisión (PR #89) — rev tadaima-00120-woy
+
+**Pedido Joel:** bajar lo que subió Ruben a `develop` y deployarlo directo a prod, con rollback y revisando que no truene nada de lo que ya existe. `develop` iba 14 adelante y 44 atrás de `main`: entró por merge en `release/2026-11-03`, sin conflictos.
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00118-fos`. Las 2 migraciones solo crean `income_movements` (batch 17); la revisión anterior la ignora y no hay que revertirlas.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00118-fos=100 --project tadaimapos --region us-east1`
+
+- **De Ruben:** pantalla `/ingresos`, API `/income-movements`, tabla `income_movements` con método de pago, ingresos en KPI y Excel de Reportes (tablas nuevas y Preventas antes de Manga). Solo el efectivo crea `cash_movement` y mueve el esperado del corte. Quitó el botón PDF de Reportes: Joel decidió dejarlo así (`exportPdf.ts` sigue en el repo).
+- **Arreglado antes de subir:** (1) el Excel del corte tronaba porque `buildCashCloseReport` no mandaba `incomeMovements`; ahora los trae. (2) Borrar un ingreso siempre daba 404: la ruta usaba `{income_movement}` y el controlador `$movement`; la prueba de Ruben llamaba al servicio y no lo veía. (3) Un gerente leía ingresos de otras tiendas. (4) Registrar no dejaba log; se agregó `income_movement.created` y las dos actions al catálogo de Actividad (grupo `caja`). (5) El bloque de Efectivo del Excel perdía Egresos y Total efectivo con egresos en $0; regresan.
+- **Validación:** backend 937 ✓ en SQLite y Postgres local, vitest 828 ✓, `vite build` OK, sin errores de tipos nuevos. Local con base temporal: registrar, historial, borrar y KPI de Reportes, y gerente con 403 en tienda ajena. Candidate: migraciones DONE, `/`, `/login`, `/tadaimaus/` 200, `/income-movements` 401 sin token (404 en la revisión vieja). Tras promover: sin errores ni 5xx en los primeros minutos con tráfico real.
+- **No probado en prod:** registrar o borrar un ingreso real, ni descargar el Excel del corte con ingresos (regla de oro 1: sin datos de prueba en prod). `income_movements` tenía 0 filas al deploy. Falta la prueba en tienda.
+- **Huecos que quedan:** borrar un corte no guarda snapshot de sus ingresos; `/income-movements` topa en 200 filas sin avisar y el historial filtra fechas en el navegador; en el corte la entrada se lee «Ingreso: service_fee»; lo que registra un admin queda sin tienda y no sale al filtrar por tienda; una caja de 12 h o más puede recibir ingresos; el gerente tampoco tiene límite de tienda en `/supplies/movements` (ya estaba).
+
 ### Sesión 2026-11-02 — Regalos en Actividad: quién dio qué (PR #87) — rev tadaima-00118-fos
 
 **Pedido Joel:** saber quién dio cada regalo de Caja desde el panel admin, con filtro.
