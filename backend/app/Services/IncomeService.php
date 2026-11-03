@@ -11,13 +11,15 @@ use App\Models\User;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Ingresos (Fase 3). La operación clave es el INGRESO pagado por efectivo del
- * cajón del usuario: crea el `cash_movements type='entrada'` y el
- * `income_movements` linkeado en UNA transacción (patrón ADR-016). Si algo
- * truena, no queda ni la entrada ni el movimiento — nunca un cajón descuadrado.
+ * Ingresos (Fase 3). Solo el ingreso pagado en EFECTIVO mueve el cajón: crea el
+ * `cash_movements type='entrada'` y el `income_movements` linkeado en UNA
+ * transacción (patrón ADR-016). Si algo truena, no queda ni la entrada ni el
+ * movimiento — nunca un cajón descuadrado. Tarjeta/transferencia NO generan
+ * cash_movement (igual que supplies.money_source != 'caja'): el dinero no pasó
+ * por el cajón físico, así que no debe sumar al esperado del corte.
  *
- * El corte ya suma todas las entradas en expected_cash, así que el ingreso se
- * auto-balancea sin tocar la fórmula del reporte.
+ * El corte ya suma todas las entradas en expected_cash, así que el ingreso en
+ * efectivo se auto-balancea sin tocar la fórmula del reporte.
  */
 class IncomeService
 {
@@ -28,7 +30,8 @@ class IncomeService
 
     /**
      * Registrar un ingreso de dinero (venta equipo, comisión, devolución proveedor, etc.).
-     * Crea una ENTRADA de caja ligada y el registro del ingreso en UNA transacción atómica.
+     * Si `paymentMethod` es 'cash', crea una ENTRADA de caja ligada; si es 'card'/
+     * 'transfer' el registro queda solo informativo (sin cash_movement_id).
      *
      * @throws \DomainException si el usuario no tiene caja abierta
      */
@@ -38,29 +41,36 @@ class IncomeService
         ?string $description,
         int $userId,
         ?int $storeId = null,
+        string $paymentMethod = IncomeMovement::PAYMENT_METHOD_CASH,
     ): IncomeMovement {
         $session = $this->cashService->activeSession($userId);
         if (! $session) {
             throw new \DomainException(
-                'Necesitas una caja abierta para registrar un ingreso (el efectivo entra a tu caja).'
+                'Necesitas una caja abierta para registrar un ingreso.'
             );
         }
 
-        return DB::transaction(function () use ($type, $amount, $description, $userId, $session, $storeId) {
-            $cashMovement = CashMovement::create([
-                'register_session_id' => $session->id,
-                'type'                => 'entrada',
-                'amount'              => round($amount, 2),
-                'description'         => "Ingreso: {$type}" . ($description ? " · {$description}" : ''),
-            ]);
+        return DB::transaction(function () use ($type, $amount, $description, $userId, $session, $storeId, $paymentMethod) {
+            $cashMovementId = null;
+
+            if ($paymentMethod === IncomeMovement::PAYMENT_METHOD_CASH) {
+                $cashMovement = CashMovement::create([
+                    'register_session_id' => $session->id,
+                    'type'                => 'entrada',
+                    'amount'              => round($amount, 2),
+                    'description'         => "Ingreso: {$type}" . ($description ? " · {$description}" : ''),
+                ]);
+                $cashMovementId = $cashMovement->id;
+            }
 
             return IncomeMovement::create([
                 'register_session_id' => $session->id,
                 'store_id'            => $storeId,
                 'type'                => $type,
+                'payment_method'      => $paymentMethod,
                 'amount'              => round($amount, 2),
                 'description'         => $description,
-                'cash_movement_id'    => $cashMovement->id,
+                'cash_movement_id'    => $cashMovementId,
                 'user_id'             => $userId,
             ]);
         });

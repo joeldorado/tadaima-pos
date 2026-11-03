@@ -80,11 +80,12 @@ class IncomeMovementsController extends Controller
 
         try {
             $movement = $this->service->registerIncome(
-                type:        (string) $request->input('type'),
-                amount:      (float) $request->input('amount'),
-                description: $request->input('description') ? trim((string) $request->input('description')) : null,
-                userId:      $user->id,
-                storeId:     $storeId,
+                type:          (string) $request->input('type'),
+                amount:        (float) $request->input('amount'),
+                description:   $request->input('description') ? trim((string) $request->input('description')) : null,
+                userId:        $user->id,
+                storeId:       $storeId,
+                paymentMethod: $request->input('payment_method') ? (string) $request->input('payment_method') : IncomeMovement::PAYMENT_METHOD_CASH,
             );
         } catch (\DomainException $e) {
             return $this->error($e->getMessage(), 422);

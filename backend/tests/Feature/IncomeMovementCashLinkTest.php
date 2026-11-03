@@ -133,7 +133,7 @@ class IncomeMovementCashLinkTest extends TestCase
                 'amount' => 100,
             ])
             ->assertStatus(422)
-            ->assertJsonPath('error', 'Necesitas una caja abierta para registrar un ingreso (el efectivo entra a tu caja).');
+            ->assertJsonPath('error', 'Necesitas una caja abierta para registrar un ingreso.');
 
         $this->assertSame(0, IncomeMovement::count());
         $this->assertSame(0, CashMovement::count());
@@ -341,5 +341,69 @@ class IncomeMovementCashLinkTest extends TestCase
 
         $movement = IncomeMovement::first();
         $this->assertSame('Samsung Galaxy S21 (usado)', $movement->description);
+    }
+
+    public function test_cash_payment_method_creates_cash_movement(): void
+    {
+        $this->actingAs($this->cashier)
+            ->postJson('/api/v1/income-movements', [
+                'type' => 'other', 'amount' => 100, 'payment_method' => 'cash',
+            ])
+            ->assertStatus(201);
+
+        $movement = IncomeMovement::first();
+        $this->assertSame('cash', $movement->payment_method);
+        $this->assertNotNull($movement->cash_movement_id);
+        $this->assertSame(1, CashMovement::count());
+    }
+
+    public function test_card_payment_method_does_not_create_cash_movement(): void
+    {
+        $this->actingAs($this->cashier)
+            ->postJson('/api/v1/income-movements', [
+                'type' => 'other', 'amount' => 100, 'payment_method' => 'card',
+            ])
+            ->assertStatus(201);
+
+        $movement = IncomeMovement::first();
+        $this->assertSame('card', $movement->payment_method);
+        $this->assertNull($movement->cash_movement_id);
+        $this->assertSame(0, CashMovement::count());
+    }
+
+    public function test_transfer_payment_method_does_not_create_cash_movement(): void
+    {
+        $this->actingAs($this->cashier)
+            ->postJson('/api/v1/income-movements', [
+                'type' => 'other', 'amount' => 100, 'payment_method' => 'transfer',
+            ])
+            ->assertStatus(201);
+
+        $movement = IncomeMovement::first();
+        $this->assertSame('transfer', $movement->payment_method);
+        $this->assertNull($movement->cash_movement_id);
+        $this->assertSame(0, CashMovement::count());
+    }
+
+    public function test_payment_method_defaults_to_cash_when_omitted(): void
+    {
+        $this->actingAs($this->cashier)
+            ->postJson('/api/v1/income-movements', [
+                'type' => 'other', 'amount' => 100,
+            ])
+            ->assertStatus(201);
+
+        $movement = IncomeMovement::first();
+        $this->assertSame('cash', $movement->payment_method);
+        $this->assertNotNull($movement->cash_movement_id);
+    }
+
+    public function test_invalid_payment_method_rejected(): void
+    {
+        $this->actingAs($this->cashier)
+            ->postJson('/api/v1/income-movements', [
+                'type' => 'other', 'amount' => 100, 'payment_method' => 'bitcoin',
+            ])
+            ->assertStatus(422);
     }
 }

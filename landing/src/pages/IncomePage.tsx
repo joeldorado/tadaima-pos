@@ -3,11 +3,11 @@ import { motion as Motion } from "motion/react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  Plus, Loader2, Wallet, AlertTriangle, Trash2, X,
+  Plus, Loader2, Wallet, AlertTriangle, Trash2, X, Banknote, CreditCard, Landmark,
 } from "lucide-react";
 import {
   registerIncome, deleteIncomeMovement,
-  type IncomeType, type IncomeMovementRecord,
+  type IncomeType, type IncomeMovementRecord, type IncomePaymentMethod,
 } from "@tadaima/api";
 import { useAuth } from "@tadaima/auth";
 import { queryKeys } from "@/lib/queryKeys";
@@ -59,18 +59,28 @@ const typeLabel = (type: IncomeType): string => {
   return found?.label || type;
 };
 
+const PAYMENT_METHODS: Array<{ key: IncomePaymentMethod; label: string; icon: typeof Banknote }> = [
+  { key: "cash",     label: "Efectivo",  icon: Banknote },
+  { key: "card",     label: "Tarjeta",   icon: CreditCard },
+  { key: "transfer", label: "Depósito",  icon: Landmark },
+];
+
+const paymentMethodLabel = (pm: IncomePaymentMethod): string =>
+  PAYMENT_METHODS.find(p => p.key === pm)?.label || pm;
+
 export function IncomePage() {
   const { user } = useAuth();
   const isAdmin = isAdminRole(user?.roles);
   const queryClient = useQueryClient();
 
   const [tab, setTab] = useState<Tab>("registrar");
-  const movementsQuery = useIncomeMovementsQuery({ type: undefined });
+  const movementsQuery = useIncomeMovementsQuery({});
   const sessionQuery = useActiveSessionQuery();
   const hasOpenSession = !!sessionQuery.data;
 
   // ── Registrar ingreso ────────────────────────────────────────────────────
   const [type, setType] = useState<IncomeType>("service_fee");
+  const [paymentMethod, setPaymentMethod] = useState<IncomePaymentMethod>("cash");
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [saving, setSaving] = useState(false);
@@ -85,10 +95,11 @@ export function IncomePage() {
       await registerIncome({
         type,
         amount: a,
+        payment_method: paymentMethod,
         ...(description.trim() ? { description: description.trim().slice(0, 255) } : {}),
       });
       toast.success(`+${fmt(a)} registrado`);
-      setAmount(""); setDescription(""); setType("service_fee");
+      setAmount(""); setDescription(""); setType("service_fee"); setPaymentMethod("cash");
       void queryClient.invalidateQueries({ queryKey: queryKeys.income.movements() });
       void queryClient.invalidateQueries({ queryKey: queryKeys.reports.cash() });
       void queryClient.invalidateQueries({ queryKey: ["cash"] });
@@ -196,6 +207,32 @@ export function IncomePage() {
             })}
           </div>
 
+          <label className="mt-4 block text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>¿Cómo entró el dinero?</label>
+          <div className="mt-2 grid grid-cols-3 gap-2">
+            {PAYMENT_METHODS.map(pm => {
+              const active = paymentMethod === pm.key;
+              return (
+                <button
+                  key={pm.key}
+                  type="button"
+                  onClick={() => setPaymentMethod(pm.key)}
+                  className="flex flex-col items-center gap-1 rounded-2xl px-3 py-2.5 text-[10px] font-black uppercase tracking-widest transition-colors"
+                  style={active
+                    ? { background: "rgba(52,211,153,0.14)", border: "1px solid rgba(52,211,153,0.45)", color: "#34d399" }
+                    : { background: SOFT, border: CARD_B, color: TLO, cursor: "pointer" }}
+                >
+                  <pm.icon size={15} />
+                  {pm.label}
+                </button>
+              );
+            })}
+          </div>
+          {paymentMethod !== "cash" && (
+            <p className="mt-1.5 text-[10px] font-bold" style={{ color: TLO }}>
+              No afecta el conteo de efectivo de tu corte — solo queda registrado.
+            </p>
+          )}
+
           <label className="mt-4 block text-[10px] font-black uppercase tracking-wider" style={{ color: TLO }}>Monto ($)</label>
           <input type="number" min={0.01} step={0.5} value={amount} onChange={e => setAmount(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter") void submitIncome(); }}
@@ -240,7 +277,9 @@ export function IncomePage() {
               {filteredMovements.map(m => (
                 <div key={m.id} className="flex items-center gap-3 rounded-2xl px-4 py-2.5" style={{ background: CARD, border: CARD_B }}>
                   <div className="min-w-0 flex-1">
-                    <p className="text-[12px] font-black" style={{ color: THI }}>{typeLabel(m.type)}</p>
+                    <p className="text-[12px] font-black" style={{ color: THI }}>
+                      {typeLabel(m.type)} <span style={{ color: TLO, fontWeight: 700 }}>· {paymentMethodLabel(m.payment_method)}</span>
+                    </p>
                     <p className="text-[10px] font-bold" style={{ color: TLO }}>
                       {new Date(m.created_at).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" })}
                       {m.user?.name ? ` · ${m.user.name}` : ""}

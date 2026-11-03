@@ -44,6 +44,11 @@ const INCOME_TYPE_LABELS: Record<IncomeType, string> = {
   vendor_refund: "Dev. Proveedor",
   other: "Otro",
 };
+const INCOME_PAYMENT_METHOD_LABELS: Record<"cash" | "card" | "transfer", string> = {
+  cash: "Efectivo",
+  card: "Tarjeta",
+  transfer: "Depósito",
+};
 
 // ─── Design tokens ─────────────────────────────────────────────────────────────
 const BG   = "var(--td-page-bg)";
@@ -366,6 +371,12 @@ export function ReportsPage() {
   });
   const incomeMovements: IncomeMovementRecord[] = incomeMovementsQuery.data ?? [];
   const ingresosTotal = incomeMovements.reduce((a, m) => a + (m.amount || 0), 0);
+  // Separado por método de pago: solo "cash" afecta el cajón físico (igual que
+  // cajaInsumosTotal con los egresos); card/transfer son informativos y pegan
+  // a sus propias tarjetas (Pago con Tarjeta / Depósitos).
+  const ingresosCashTotal = incomeMovements.filter((m) => m.payment_method === "cash").reduce((a, m) => a + (m.amount || 0), 0);
+  const ingresosCardTotal = incomeMovements.filter((m) => m.payment_method === "card").reduce((a, m) => a + (m.amount || 0), 0);
+  const ingresosTransferTotal = incomeMovements.filter((m) => m.payment_method === "transfer").reduce((a, m) => a + (m.amount || 0), 0);
   // Agrupado por tipo de ingreso
   const incomeByType = useMemo(() => {
     const types: IncomeType[] = ["service_fee", "equipment_sale", "vendor_refund", "other"];
@@ -1029,9 +1040,9 @@ export function ReportsPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
                   {[
                     { label: "Total cobrado", val: fmt(paymentBreakdown.total), color: "#00CC66", icon: DollarSign, sub: `${paymentBreakdown.transactionCount} ${paymentBreakdown.transactionCount === 1 ? 'transacción' : 'transacciones'}` },
-                    { label: "Pago con tarjeta", val: fmt(paymentBreakdown.card), color: "#4499FF", icon: Store, sub: paymentBreakdown.card > 0 ? "TPV / débito / crédito" : "sin movimientos" },
-                    { label: "Pago en efectivo", val: fmt(paymentBreakdown.cash + ingresosTotal - cajaInsumosTotal), color: "#33CC88", icon: ShoppingBag, sub: (cajaInsumosTotal > 0 || ingresosTotal > 0) ? [paymentBreakdown.cash > 0 ? fmt(paymentBreakdown.cash) : null, ingresosTotal > 0 ? `+ ingresos ${fmt(ingresosTotal)}` : null, cajaInsumosTotal > 0 ? `− insumos ${fmt(cajaInsumosTotal)}` : null].filter(Boolean).join(" ") : (paymentBreakdown.usd > 0 ? `incluye ${paymentBreakdown.usd} USD recibidos` : (paymentBreakdown.cash > 0 ? "cobro en MXN" : "sin movimientos")) },
-                    { label: "Depósitos", val: fmt(paymentBreakdown.deposits), color: "#BB77FF", icon: Clock, sub: paymentBreakdown.deposits > 0 ? "transferencias / SPEI" : "sin depósitos" },
+                    { label: "Pago con tarjeta", val: fmt(paymentBreakdown.card + ingresosCardTotal), color: "#4499FF", icon: Store, sub: ingresosCardTotal > 0 ? `${fmt(paymentBreakdown.card)} + ingresos ${fmt(ingresosCardTotal)}` : (paymentBreakdown.card > 0 ? "TPV / débito / crédito" : "sin movimientos") },
+                    { label: "Pago en efectivo", val: fmt(paymentBreakdown.cash + ingresosCashTotal - cajaInsumosTotal), color: "#33CC88", icon: ShoppingBag, sub: (cajaInsumosTotal > 0 || ingresosCashTotal > 0) ? [paymentBreakdown.cash > 0 ? fmt(paymentBreakdown.cash) : null, ingresosCashTotal > 0 ? `+ ingresos ${fmt(ingresosCashTotal)}` : null, cajaInsumosTotal > 0 ? `− insumos ${fmt(cajaInsumosTotal)}` : null].filter(Boolean).join(" ") : (paymentBreakdown.usd > 0 ? `incluye ${paymentBreakdown.usd} USD recibidos` : (paymentBreakdown.cash > 0 ? "cobro en MXN" : "sin movimientos")) },
+                    { label: "Depósitos", val: fmt(paymentBreakdown.deposits + ingresosTransferTotal), color: "#BB77FF", icon: Clock, sub: ingresosTransferTotal > 0 ? `${fmt(paymentBreakdown.deposits)} + ingresos ${fmt(ingresosTransferTotal)}` : (paymentBreakdown.deposits > 0 ? "transferencias / SPEI" : "sin depósitos") },
                   ].map((kpi, i) => (
                     <div key={i} className="min-h-[124px] flex flex-col" style={{ ...GLASS, borderRadius: 20, padding: "12px 20px" }}>
                       <div className="flex items-center gap-2">
@@ -1290,7 +1301,7 @@ export function ReportsPage() {
                                 <div className="flex flex-col">
                                   <span style={{ fontSize: 11, fontWeight: 700, color: TP }}>{m.description || INCOME_TYPE_LABELS[m.type]}</span>
                                   <span style={{ fontSize: 9, color: TM }}>
-                                    {m.user?.name ?? "—"} · {storeName}
+                                    {m.user?.name ?? "—"} · {storeName} · {INCOME_PAYMENT_METHOD_LABELS[m.payment_method]}
                                   </span>
                                 </div>
                                 <span style={{ fontSize: 12, fontWeight: 800, color: "#34d399" }}>+{fmt(m.amount)}</span>

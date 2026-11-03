@@ -24,10 +24,21 @@ class IncomeMovement extends Model
         self::TYPE_OTHER,
     ];
 
+    public const PAYMENT_METHOD_CASH     = 'cash';
+    public const PAYMENT_METHOD_CARD     = 'card';
+    public const PAYMENT_METHOD_TRANSFER = 'transfer';
+
+    public const PAYMENT_METHODS = [
+        self::PAYMENT_METHOD_CASH,
+        self::PAYMENT_METHOD_CARD,
+        self::PAYMENT_METHOD_TRANSFER,
+    ];
+
     protected $fillable = [
         'register_session_id',
         'store_id',
         'type',
+        'payment_method',
         'amount',
         'description',
         'cash_movement_id',

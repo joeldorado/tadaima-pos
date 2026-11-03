@@ -1,12 +1,14 @@
 import { apiClient } from './client';
 
 export type IncomeType = 'service_fee' | 'equipment_sale' | 'vendor_refund' | 'other';
+export type IncomePaymentMethod = 'cash' | 'card' | 'transfer';
 
 export interface IncomeMovementRecord {
   id: number;
   register_session_id: number;
   store_id: number | null;
   type: IncomeType;
+  payment_method: IncomePaymentMethod;
   amount: number;
   description: string | null;
   cash_movement_id: number | null;
@@ -20,6 +22,7 @@ export async function registerIncome(input: {
   amount: number;
   description?: string;
   store_id?: number | null;
+  payment_method?: IncomePaymentMethod;
 }): Promise<IncomeMovementRecord> {
   const { data } = await apiClient.post('/income-movements', input);
   return data;

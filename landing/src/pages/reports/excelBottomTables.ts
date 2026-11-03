@@ -17,6 +17,11 @@ const INCOME_TYPE_LABEL: Record<IncomeType, string> = {
   vendor_refund: "Dev. Proveedor",
   other: "Otro",
 };
+const INCOME_PAYMENT_METHOD_LABEL: Record<"cash" | "card" | "transfer", string> = {
+  cash: "Efectivo",
+  card: "Tarjeta",
+  transfer: "Depósito",
+};
 
 const DISC_BG = "B8860B";
 const DISC_SUB_BG = "D4A82A";
@@ -113,7 +118,7 @@ export function drawIngresos(
   stores: readonly StoreType[], num: number,
 ): number {
   const INGRESO = "34D399";
-  header(sh, startRow, L, ` ${num}. INGRESOS — DINERO QUE ENTRA`, ["Tipo", "Descripción", "Tipo", "Registró", "Tienda", "Monto"], "1F8659", "2DB877");
+  header(sh, startRow, L, ` ${num}. INGRESOS — DINERO QUE ENTRA`, ["Tipo", "Descripción", "Método de pago", "Registró", "Tienda", "Monto"], "1F8659", "2DB877");
   const r0 = startRow + 2;
   if (incomeMovements.length === 0) {
     sh.set(r0, L.ins, "Sin ingresos en el periodo", EMPTY_STYLE);
@@ -126,7 +131,7 @@ export function drawIngresos(
     row(sh, r0 + i, L, [
       INCOME_TYPE_LABEL[m.type],
       m.description ?? "",
-      m.type,
+      INCOME_PAYMENT_METHOD_LABEL[m.payment_method],
       m.user?.name ?? "—",
       storeId ? (stores.find((s) => s.id === storeId)?.name ?? `Tienda ${storeId}`) : "Toda la empresa",
     ], m.amount || 0, INGRESO);

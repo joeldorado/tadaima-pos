@@ -26,10 +26,11 @@ class StoreIncomeMovementRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'type'        => ['required', Rule::in(IncomeMovement::TYPES)],
-            'amount'      => ['required', 'numeric', 'min:0.01'],
-            'description' => ['nullable', 'string', 'max:255'],
-            'store_id'    => ['nullable', 'integer', 'exists:stores,id'],
+            'type'           => ['required', Rule::in(IncomeMovement::TYPES)],
+            'payment_method' => ['nullable', Rule::in(IncomeMovement::PAYMENT_METHODS)],
+            'amount'         => ['required', 'numeric', 'min:0.01'],
+            'description'    => ['nullable', 'string', 'max:255'],
+            'store_id'       => ['nullable', 'integer', 'exists:stores,id'],
         ];
     }
 
@@ -43,6 +44,7 @@ class StoreIncomeMovementRequest extends FormRequest
         return [
             'type.required' => 'El tipo de ingreso es obligatorio.',
             'type.in'       => 'Tipo de ingreso inválido.',
+            'payment_method.in' => 'Método de pago inválido.',
             'amount.required' => 'El monto es obligatorio.',
             'amount.min'    => 'El monto debe ser mayor a 0.',
         ];
