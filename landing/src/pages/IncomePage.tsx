@@ -1,13 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
-import { motion as Motion } from "motion/react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  Plus, Loader2, Wallet, AlertTriangle, Trash2, X, Banknote, CreditCard, Landmark,
+  Plus, Loader2, Wallet, AlertTriangle, Trash2, Banknote, CreditCard, Landmark,
 } from "lucide-react";
 import {
   registerIncome, deleteIncomeMovement,
-  type IncomeType, type IncomeMovementRecord, type IncomePaymentMethod,
+  type IncomeType, type IncomePaymentMethod,
 } from "@tadaima/api";
 import { useAuth } from "@tadaima/auth";
 import { queryKeys } from "@/lib/queryKeys";

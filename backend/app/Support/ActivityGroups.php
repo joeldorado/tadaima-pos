@@ -66,6 +66,8 @@ final class ActivityGroups
         'sale.gift_cancelled'         => ['regalo',    'Regalo cancelado'],
         'cash_session.deleted'        => ['caja',      'Corte eliminado'],
         'cash_session.force_closed'   => ['caja',      'Corte cerrado por admin'],
+        'income_movement.created'     => ['caja',      'Ingreso registrado'],
+        'income_movement.deleted'     => ['caja',      'Ingreso borrado'],
         'supply_movement.deleted'     => ['insumo',    'Registro de insumo borrado'],
         'bundle.created'              => ['paquete',   'Paquete creado'],
         'bundle.updated'              => ['paquete',   'Paquete editado'],

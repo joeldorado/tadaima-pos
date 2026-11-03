@@ -416,7 +416,8 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
 
     // ── Ingresos (Fase 3) — entrada de dinero (venta equipo, comisión, devolución, etc.) ──
     Route::apiResource('income-movements', IncomeMovementsController::class)
-        ->only(['index', 'store', 'destroy']);
+        ->only(['index', 'store', 'destroy'])
+        ->parameters(['income-movements' => 'movement']);
 
     // ── Paquetes (2026-10-07) — definición global, stock por tienda ──────────
     Route::prefix('bundles')->group(function () {

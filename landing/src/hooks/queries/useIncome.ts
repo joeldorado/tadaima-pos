@@ -14,7 +14,7 @@ export interface IncomeFilters {
 
 export function useIncomeMovementsQuery(filters?: IncomeFilters, enabled: boolean = true) {
   return useQuery({
-    queryKey: queryKeys.income.movements(filters || {}),
+    queryKey: queryKeys.income.movements({ ...filters }),
     queryFn: () => getIncomeMovements(filters),
     staleTime: 1000 * 30, // 30s
     gcTime: 1000 * 60 * 5, // 5m (formerly cacheTime)

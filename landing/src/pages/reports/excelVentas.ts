@@ -335,11 +335,11 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
     r++;
 
     // Ingresos de este método + Egresos (solo Efectivo, porque solo "cash"
-    // movió el cajón) → "Total {método}". Antes solo Efectivo tenía este
-    // ajuste; ahora cualquier método con ingresos propios también lo tiene.
+    // movió el cajón) → "Total {método}". Efectivo siempre lleva Egresos y su
+    // total, aunque sean $0; los demás métodos solo si tienen ingresos propios.
     const methodIngresos = ingresosByMethod[t.name] ?? 0;
     const methodEgresos = isCash ? egresos : 0;
-    if (methodIngresos > 0 || methodEgresos > 0) {
+    if (methodIngresos > 0 || isCash) {
       let ingRow = -1;
       let egRow = -1;
       if (methodIngresos > 0) {
@@ -350,7 +350,7 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
         if (canViewCost) sh.set(r, costoCol, "", {});
         r++;
       }
-      if (methodEgresos > 0) {
+      if (isCash) {
         egRow = r;
         sh.set(r, 2, "Egresos", red);
         sh.set(r, utilCol, methodEgresos, egresoMoney);

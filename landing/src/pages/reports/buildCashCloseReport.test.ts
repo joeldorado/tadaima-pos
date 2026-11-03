@@ -5,9 +5,11 @@ import ExcelJS from "exceljs";
 // Excel que Reportes (2026-10-03): solo cambia el alcance de los datos.
 const fetchAllSales = vi.fn<(params: unknown) => Promise<{ data: unknown[] }>>();
 vi.mock("@/lib/fetchAllPages", () => ({ fetchAllSales: (params: unknown) => fetchAllSales(params) }));
+const getIncomeMovements = vi.fn<(params: unknown) => Promise<unknown[]>>(() => Promise.resolve([]));
 vi.mock("@tadaima/api", () => ({
   getPreSaleOrders: vi.fn(() => Promise.resolve({ data: [] })),
   getSupplyMovements: vi.fn(() => Promise.resolve([])),
+  getIncomeMovements: (params: unknown) => getIncomeMovements(params),
 }));
 
 const { buildCashCloseReportParams } = await import("./buildCashCloseReport");
@@ -57,5 +59,23 @@ describe("Excel del cierre de caja", () => {
     }
     expect(text).toContain("TOTAL TRANSFERENCIAS");
     expect(fetchAllSales).toHaveBeenLastCalledWith(expect.objectContaining({ from: "2026-10-03", to: "2026-10-03", store_id: 1, ...scope }));
+    expect(getIncomeMovements).toHaveBeenLastCalledWith(expect.objectContaining({ from: "2026-10-03", to: "2026-10-03", store_id: 1, ...scope }));
+  });
+
+  it("incluye los ingresos del turno en el Resumen", async () => {
+    getIncomeMovements.mockResolvedValueOnce([{
+      id: 1, register_session_id: 1, store_id: 1, type: "other", payment_method: "cash", amount: 250,
+      description: "Consola", cash_movement_id: 1, user: { id: 7, name: "Ana" }, user_id: 7, created_at: "2026-10-03T18:00:00Z",
+    }]);
+    const text = allText(await bookFor(7));
+    expect(text).toContain("Total Ingreso:");
+    expect(text.some((t) => t.includes("INGRESOS"))).toBe(true);
+  });
+
+  it("si fallan los ingresos, el Excel del corte sale igual", async () => {
+    getIncomeMovements.mockRejectedValueOnce(new Error("500"));
+    const text = allText(await bookFor(7));
+    expect(text).toContain("RESUMEN DE VENTAS");
+    expect(text).not.toContain("Total Ingreso:");
   });
 });

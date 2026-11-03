@@ -12,6 +12,7 @@ use App\Models\IncomeMovement;
 use App\Models\Store;
 use App\Models\User;
 use App\Services\IncomeService;
+use App\Support\ActivityGroups;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -405,5 +406,105 @@ class IncomeMovementCashLinkTest extends TestCase
                 'type' => 'other', 'amount' => 100, 'payment_method' => 'bitcoin',
             ])
             ->assertStatus(422);
+    }
+
+    // ── Regresiones del release 2026-11-03 ───────────────────────────────────
+
+    public function test_admin_borra_ingreso_por_http_y_el_esperado_del_corte_baja(): void
+    {
+        $this->actingAs($this->cashier)->postJson('/api/v1/income-movements', [
+            'type' => 'other', 'amount' => 300,
+        ])->assertStatus(201);
+        $movement = IncomeMovement::firstOrFail();
+
+        $this->assertEquals(800.0, (float) $this->expectedCash());
+
+        $this->actingAs($this->admin)
+            ->deleteJson("/api/v1/income-movements/{$movement->id}")
+            ->assertStatus(200);
+
+        $this->assertSame(0, IncomeMovement::count());
+        $this->assertSame(0, CashMovement::count());
+        $this->assertEquals(500.0, (float) $this->expectedCash());
+    }
+
+    public function test_cajero_y_gerente_no_pueden_borrar_ingresos(): void
+    {
+        $this->actingAs($this->cashier)->postJson('/api/v1/income-movements', [
+            'type' => 'other', 'amount' => 300,
+        ])->assertStatus(201);
+        $movement = IncomeMovement::firstOrFail();
+
+        foreach ([$this->cashier, $this->manager] as $user) {
+            $this->actingAs($user)
+                ->deleteJson("/api/v1/income-movements/{$movement->id}")
+                ->assertStatus(403);
+        }
+        $this->assertSame(1, IncomeMovement::count());
+    }
+
+    public function test_gerente_no_puede_ver_ingresos_de_otra_tienda(): void
+    {
+        $storeB = Store::where('name', 'Tienda B')->firstOrFail();
+        $this->incomeInStore($this->storeA->id, 100);
+        $this->incomeInStore($storeB->id, 200);
+
+        $this->actingAs($this->manager)
+            ->getJson("/api/v1/income-movements?store_id={$storeB->id}")
+            ->assertStatus(403);
+
+        // Sin filtro tampoco se cuela lo de la otra tienda.
+        $this->actingAs($this->manager)
+            ->getJson('/api/v1/income-movements')
+            ->assertStatus(200)
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.store_id', $this->storeA->id);
+
+        // El admin sí ve las dos.
+        $this->actingAs($this->admin)
+            ->getJson('/api/v1/income-movements')
+            ->assertStatus(200)
+            ->assertJsonCount(2, 'data');
+    }
+
+    public function test_registrar_ingreso_deja_rastro_en_actividad(): void
+    {
+        $this->actingAs($this->cashier)->postJson('/api/v1/income-movements', [
+            'type' => 'equipment_sale', 'amount' => 450, 'payment_method' => 'card', 'description' => 'Consola',
+        ])->assertStatus(201);
+
+        $movement = IncomeMovement::firstOrFail();
+        $this->assertDatabaseHas('system_logs', [
+            'action'      => 'income_movement.created',
+            'entity_type' => 'income_movement',
+            'entity_id'   => $movement->id,
+            'user_id'     => $this->cashier->id,
+        ]);
+        $this->assertSame('caja', ActivityGroups::logGroup('income_movement.created'));
+        $this->assertSame('caja', ActivityGroups::logGroup('income_movement.deleted'));
+    }
+
+    private function incomeInStore(int $storeId, float $amount): void
+    {
+        IncomeMovement::create([
+            'register_session_id' => $this->session->id,
+            'store_id'            => $storeId,
+            'type'                => 'other',
+            'payment_method'      => 'card',
+            'amount'              => $amount,
+            'user_id'             => $this->cashier->id,
+        ]);
+    }
+
+    /** Esperado del corte de la caja del cajero, calculado por el backend. */
+    private function expectedCash(): mixed
+    {
+        $range = 'from='.now()->subDay()->toDateString().'&to='.now()->addDay()->toDateString();
+        $rows = $this->actingAs($this->admin)
+            ->getJson("/api/v1/reports/cash?{$range}")
+            ->assertStatus(200)
+            ->json('data.sessions');
+
+        return collect($rows)->firstWhere('id', $this->session->id)['expected_cash'] ?? null;
     }
 }

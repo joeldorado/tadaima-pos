@@ -9,6 +9,7 @@ use App\Http\Requests\StoreIncomeMovementRequest;
 use App\Models\IncomeMovement;
 use App\Services\IncomeService;
 use App\Support\DateRange;
+use App\Support\ModelAudit;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -31,6 +32,10 @@ class IncomeMovementsController extends Controller
         $isAdmin = $user->isAdminRole();
         $isCashier = $user->hasRole(['cajero']) && ! $isAdmin;
         $cashierWholeStore = $isCashier && $request->boolean('whole_store');
+
+        if ($request->filled('store_id') && ($resp = $this->storeScopeError($request, $request->input('store_id')))) {
+            return $resp;
+        }
 
         // Rango de fechas opcional (día-negocio)
         $from = $request->input('from') ? (string) $request->input('from') : null;
@@ -55,6 +60,11 @@ class IncomeMovementsController extends Controller
             ->when($isCashier && ! $cashierWholeStore, fn ($q) => $q->where('user_id', $user->id))
             ->when(
                 $cashierWholeStore,
+                fn ($q) => $q->where('store_id', $user->store_id ?? -1)
+            )
+            // Gerente: solo su tienda, aunque no mande filtro (aislamiento por tienda).
+            ->when(
+                ! $isAdmin && ! $isCashier,
                 fn ($q) => $q->where('store_id', $user->store_id ?? -1)
             )
             ->orderByDesc('created_at')
@@ -90,6 +100,11 @@ class IncomeMovementsController extends Controller
         } catch (\DomainException $e) {
             return $this->error($e->getMessage(), 422);
         }
+
+        ModelAudit::event('income_movement.created', sprintf('Ingreso %s: $%.2f (%s)', $movement->type, (float) $movement->amount, $movement->payment_method), 'income_movement', $movement->id, [
+            'type' => $movement->type, 'payment_method' => $movement->payment_method, 'amount' => (float) $movement->amount,
+            'description' => $movement->description, 'store_id' => $movement->store_id, 'register_session_id' => $movement->register_session_id,
+        ], $user->id);
 
         return $this->success($movement->load('user'), 'Ingreso registrado.', 201);
     }
