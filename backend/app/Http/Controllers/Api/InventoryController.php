@@ -29,7 +29,7 @@ class InventoryController extends Controller
      *
      * Query params:
      *   ?search=              filtro por nombre / SKU / código de barras
-     *   ?per_page=            registros por página (default 50, max 200)
+     *   ?per_page=            registros por página (default 50, max 1000: el Excel recorre todo el catálogo)
      *   ?page=                página
      *   ?primary_store_id=    ordena por el stock de exhibición de esta tienda
      *   ?compare_store_id=    segunda tienda para ordenar por diferencia (primary - compare)
@@ -41,10 +41,10 @@ class InventoryController extends Controller
      */
     public function productsStock(Request $request): JsonResponse
     {
-        $perPage        = min((int) $request->get('per_page', 50), 200);
+        $perPage        = min((int) $request->get('per_page', 50), 1000);
         $primaryStoreId = $request->integer('primary_store_id') ?: null;
         $compareStoreId = $request->integer('compare_store_id') ?: null;
-        $sortDir        = $request->get('sort_dir', 'desc') === 'asc' ? 'asc' : 'desc';
+        $sortDir       = $request->get('sort_dir', 'desc') === 'asc' ? 'asc' : 'desc';
 
         $categoryId = $request->integer('category_id') ?: null;
 
@@ -79,6 +79,8 @@ class InventoryController extends Controller
         } else {
             $query->orderBy('name');
         }
+        // Desempate estable: sin él, un nombre repetido puede repetirse o perderse entre páginas.
+        $query->orderBy('products.id');
 
         $products = $query
             ->with([
