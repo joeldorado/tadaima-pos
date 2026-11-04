@@ -4,6 +4,18 @@
 
 ---
 
+### Sesión 2026-11-03 (d) — El lector de Caja recortaba códigos (PR #95) — rev tadaima-00126-qoz
+
+**Origen:** Tadaima Centro mandó foto y mensaje: «se queda el dragón y no siempre registra los productos que escaneamos… al escanearlo varias veces de la nada agarra». En la foto el buscador tenía `060913035` y el código real era `7503060913035`.
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00124-bov`. Sin migraciones.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00124-bov=100 --project tadaimapos --region us-east1`
+
+- **Causa:** el detector global del lector (`useBarcodeScanner`, activo cuando el cursor no está en el campo de producto) medía el intervalo entre teclas con `performance.now()` al PROCESAR cada tecla; un re-render de Caja entre dos teclas abría un hueco > 35 ms, hacía `reset()` y mandaba el resto como código → «Sin coincidencias». El Charizard no es un loader: es el fondo nítido con el carrito vacío. Agravantes: dedupe de 3 s registrado antes de consultar (re-escaneo ignorado en silencio), sin indicador de búsqueda, error de red = «sin coincidencias», y el código fallido se quedaba en el campo (el siguiente escaneo se concatenaba).
+- **Fix:** heurística pura en `landing/src/lib/scanBurst.ts` (16 tests): tiempo = `ev.timeStamp`, 100 ms entre teclas fuera de un input / 40 ms dentro, flush por tiempo 400 ms, `incomplete` → «Lectura incompleta del lector» (nunca se busca un código recortado; toast por default en todas las pantallas que usan el hook), `carry` cuando el foco entra al campo a mitad de la ráfaga, Shift no rompe la ráfaga. `handleScannedCode`: dedupe solo de escaneos resueltos, «Buscando …» con spinner mientras consulta (`networkMode: 'always'`), aviso de conexión aparte, «Sin coincidencia exacta» deja el código seleccionado, el listado filtra también por barcode. Regla en `AGENTS.md` §5 Frontend.
+- **Validación:** vitest 844 ✓, type-check 456 = `main`, `vite build` OK, lint limpio en lo nuevo; navegador con emulador del lector (foco en body, pausa de 80 ms a mitad, foco entrando al campo con y sin Shift, foco en efectivo, código inexistente dos veces, backend caído). Revisión de código: 1 HIGH + 3 MEDIUM corregidos antes del merge. Candidate: `/`, `/login`, `/caja`, `/tadaimaus/` 200, API sin token 401, bundle con los textos nuevos, «Nothing to migrate». Tras promover: smoke igual en el dominio.
+- **No probado en prod:** el lector físico en tienda. La tienda debe cerrar Caja y volver a entrar (o Ctrl+F5) por la caché PWA.
+
 ### Sesión 2026-11-03 (c) — Hora de Tijuana en el detalle del corte (PR #92) — rev tadaima-00124-bov
 
 **Origen:** al probar Ingresos en local, un movimiento de la 1:23 p.m. salía como 9:23 p.m. al desplegar un corte. Joel pidió subir el arreglo.
