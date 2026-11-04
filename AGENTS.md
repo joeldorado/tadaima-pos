@@ -332,6 +332,16 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   (decisión de Joel); el cambio automático con aviso sigue siendo solo para restricciones
   del PRODUCTO y de preventa. El modal no roba el foco ni tiene botón por defecto: el
   lector sigue activo y un Enter no elige por el cajero.
+- **Lector USB en Caja (2026-11-03, `hooks/useBarcodeScanner.ts` + `lib/scanBurst.ts`):** el
+  detector global mide las teclas con `ev.timeStamp` (hora del sistema, no cuándo se procesó: un
+  re-render entre dos teclas partía el código y Caja buscaba `060913035` en vez de `7503060913035`),
+  tolera 100 ms entre teclas fuera de un input y 40 ms dentro, y nunca entrega un código recortado
+  como bueno (`incomplete` → «Lectura incompleta»). Si el foco entra al campo de producto a mitad del
+  escaneo, lo acumulado se inserta ahí (`carry`). En `handleScannedCode` el dedupe de 3 s solo cuenta
+  escaneos resueltos; mientras consulta al servidor el campo dice «Buscando …»; sin red avisa de
+  conexión (no «sin coincidencias»); «sin coincidencia» deja el código seleccionado para que el
+  siguiente escaneo lo reemplace. La heurística es pura y con tests (`scanBurst.test.ts`): cualquier
+  cambio de umbral va con su test.
 - Estado de servidor en TanStack Query, persistido en IndexedDB (soporte offline).
 - La lógica de negocio pura va en `landing/src/lib/` con su test al lado.
 - **Botón global "Actualizar"** (2026-10-01, `lib/screenRefresh.ts`): vive en el sidebar
