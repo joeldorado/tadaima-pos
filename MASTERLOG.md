@@ -4,6 +4,19 @@
 
 ---
 
+### Sesión 2026-11-04 — Excel de Existencias por Tienda de Ruben (PR #97) — rev tadaima-00128-yuw
+
+**Origen:** Ruben subió a `develop` el botón **Excel** de Existencias por Tienda (`35bd377`). Joel pidió bajarlo, revisarlo y publicarlo. `develop` había divergido (le faltaba #95): entró por `release/2026-11-04` con merge.
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00126-qoz`. Sin migraciones.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00126-qoz=100 --project tadaimapos --region us-east1`
+
+- **Bug que se corrigió antes de publicar:** el Excel pedía `per_page=5000`, pero `GET /inventory/products-stock` topaba en 200: bajaba solo 200 productos aunque el encabezado dijera el total real.
+- **Fix:** tope a 1000 y `fetchAllProductsStock` (`lib/fetchAllPages.ts`) recorre todas las páginas: ~14 peticiones con 14k productos, contra el límite de 120/min por usuario. Desempate `products.id` para no repetir ni perder nombres iguales al paginar. Quita repetidos y avisa si el total no cuadra (una venta durante la descarga puede mover filas con orden por stock). Avisos si falla o no hay productos. Nombre del archivo con fecha de Tijuana.
+- **Sin cambiar, para decidir:** el filtro por tienda cuenta solo Exhibición y las columnas suman Exhibición + Bodega; «Centro = 0» puede listar una fila con Centro = 5. La pantalla ya se comportaba así. Las preventas no salen en el Excel.
+- **Validación:** backend 953 ✓ en SQLite y Postgres local, vitest 846 ✓, type-check 456 = `main`, `vite build` OK. La prueba del tope falla contra `main` (200 de 202) y la de desempate sin el `orderBy`. Descarga real en Chrome con SQLite local y 14,000 productos: 14 peticiones, 14,000 filas sin SKU repetidos, 5.3 s, 467 KB. Página de 1000: pico de ~56 MB (1,250 productos sembrados, 2 tiendas) contra 512 MB de prod. Candidate y dominio: `/`, `/login`, `/caja`, `/tadaimaus/` 200, API sin token 401, bundle con los textos nuevos, «Nothing to migrate», sin errores en logs del candidato.
+- **No probado en prod:** la descarga con sesión real y el catálogo completo. Usar incógnito o recarga forzada por la caché PWA.
+
 ### Sesión 2026-11-03 (d) — El lector de Caja recortaba códigos (PR #95) — rev tadaima-00126-qoz
 
 **Origen:** Tadaima Centro mandó foto y mensaje: «se queda el dragón y no siempre registra los productos que escaneamos… al escanearlo varias veces de la nada agarra». En la foto el buscador tenía `060913035` y el código real era `7503060913035`.
