@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { Search, PackageSearch, Loader2, ChevronRight, X, Scan, Store, Phone, MessageCircle, Package } from 'lucide-react'
+import { Search, PackageSearch, Loader2, ChevronRight, X, Scan, Store, Phone, MessageCircle, Package, Download } from 'lucide-react'
 import { useAuth } from '@tadaima/auth'
 import type { PreSaleCatalog } from '@tadaima/api'
 import type { ProductStockItem } from '@tadaima/api'
+import { getProductsStock } from '@tadaima/api'
 import { useProductsSearchQuery } from '@/hooks/queries/useProducts'
 import { usePreSaleCatalogsQuery } from '@/hooks/queries/usePreSales'
 import { useStoresQuery } from '@/hooks/queries/useStores'
@@ -179,6 +180,181 @@ const STOCK_ACCENT = {
 
 const PER_PAGE = 50
 
+interface ExportMeta {
+  searchText?: string | undefined
+  categoryName?: string | undefined
+  primaryStoreName?: string | undefined
+  compareStoreName?: string | undefined
+  primaryOp?: string | undefined
+  primaryQty?: string | undefined
+  compareOp?: string | undefined
+  compareQty?: string | undefined
+  total: number
+}
+
+async function exportStockExcel(
+  params: Parameters<typeof getProductsStock>[0],
+  meta: ExportMeta,
+) {
+  const ExcelJS = (await import('exceljs')).default
+  const { downloadWithRetry } = await import('@/lib/downloadFile')
+
+  const result = await getProductsStock({ ...params, page: 1, per_page: 5000 })
+  const items = result.data
+  if (items.length === 0) return
+
+  // Tiendas únicas presentes en los datos
+  const storeMap = new Map<number, string>()
+  for (const item of items) {
+    for (const s of item.stock) storeMap.set(s.store_id, s.store_name)
+  }
+  const stores = Array.from(storeMap.entries()).sort((a, b) => a[1].localeCompare(b[1]))
+  const totalCols = 2 + stores.length + 1 // Nombre + SKU + tiendas + TOTAL
+
+  const wb = new ExcelJS.Workbook()
+  wb.creator = 'Tadaima POS'
+  wb.created = new Date()
+  const ws = wb.addWorksheet('Existencias por Tienda', {
+    pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
+  })
+
+  // Paleta de colores por tienda (header oscuro + cuerpo claro)
+  const storePalette = [
+    { header: 'FF1D4ED8', body: 'FFE0F2FE' }, // azul
+    { header: 'FF7C3AED', body: 'FFEDE9FE' }, // violeta
+    { header: 'FF059669', body: 'FFD1FAE5' }, // verde
+    { header: 'FFD97706', body: 'FFFEF3C7' }, // ámbar
+    { header: 'FFDB2777', body: 'FFFCE7F3' }, // rosa
+    { header: 'FF0891B2', body: 'FFE0F7FA' }, // cyan
+  ]
+
+  const now = new Date()
+  const dateStr = now.toLocaleDateString('es-MX', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'America/Tijuana' })
+  const timeStr = now.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Tijuana' })
+
+  // ── Fila 1: Título ──────────────────────────────────────────────────────────
+  ws.addRow(['Existencias por Tienda — Tadaima POS'])
+  ws.mergeCells(1, 1, 1, totalCols)
+  const titleCell = ws.getRow(1).getCell(1)
+  titleCell.font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } }
+  titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } }
+  titleCell.alignment = { horizontal: 'center', vertical: 'middle' }
+  ws.getRow(1).height = 28
+
+  // ── Fila 2: Fecha y hora ────────────────────────────────────────────────────
+  ws.addRow([`Generado el ${dateStr} a las ${timeStr}`])
+  ws.mergeCells(2, 1, 2, totalCols)
+  const dateCell = ws.getRow(2).getCell(1)
+  dateCell.font = { size: 10, color: { argb: 'FF94A3B8' } }
+  dateCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } }
+  dateCell.alignment = { horizontal: 'center', vertical: 'middle' }
+  ws.getRow(2).height = 16
+
+  // ── Fila 3: Resumen de filtros ──────────────────────────────────────────────
+  const filterParts: string[] = []
+  if (meta.searchText) filterParts.push(`Búsqueda: "${meta.searchText}"`)
+  if (meta.categoryName) filterParts.push(`Categoría: ${meta.categoryName}`)
+  if (meta.primaryStoreName) {
+    let f = `Tienda: ${meta.primaryStoreName}`
+    if (meta.primaryQty !== '') f += ` ${meta.primaryOp} ${meta.primaryQty}`
+    filterParts.push(f)
+  }
+  if (meta.compareStoreName) {
+    let f = `vs. ${meta.compareStoreName}`
+    if (meta.compareQty !== '') f += ` ${meta.compareOp} ${meta.compareQty}`
+    filterParts.push(f)
+  }
+  filterParts.push(`${meta.total.toLocaleString('es-MX')} productos`)
+
+  ws.addRow([filterParts.join('   ·   ')])
+  ws.mergeCells(3, 1, 3, totalCols)
+  const filterCell = ws.getRow(3).getCell(1)
+  filterCell.font = { size: 10, italic: true, color: { argb: 'FFCBD5E1' } }
+  filterCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } }
+  filterCell.alignment = { horizontal: 'center', vertical: 'middle' }
+  ws.getRow(3).height = 18
+
+  // ── Fila 4: Fila vacía separadora ───────────────────────────────────────────
+  ws.addRow([])
+  ws.getRow(4).height = 6
+
+  // ── Fila 5: Cabeceras ───────────────────────────────────────────────────────
+  const headerValues = ['Nombre', 'SKU', ...stores.map(([, n]) => n), 'TOTAL']
+  ws.addRow(headerValues)
+  const headerRow = ws.getRow(5)
+  headerRow.height = 22
+  headerRow.eachCell((cell, colNum) => {
+    cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 }
+    cell.alignment = { horizontal: colNum <= 2 ? 'left' : 'center', vertical: 'middle' }
+    if (colNum === 1 || colNum === 2) {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF334155' } }
+    } else if (colNum === totalCols) {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } }
+    } else {
+      const palette = storePalette[(colNum - 3) % storePalette.length] ?? storePalette[0]!
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: palette.header } }
+    }
+    cell.border = { bottom: { style: 'medium', color: { argb: 'FF0F172A' } } }
+  })
+
+  // ── Filas de datos ──────────────────────────────────────────────────────────
+  items.forEach((item, rowIdx) => {
+    const stockByStore = new Map(item.stock.map(s => [s.store_id, s.exhibicion + s.bodega]))
+    const storeCols = stores.map(([id]) => stockByStore.get(id) ?? 0)
+    const total = storeCols.reduce((a, b) => a + b, 0)
+
+    const row = ws.addRow([item.name, item.sku ?? '', ...storeCols, total])
+    const isEven = rowIdx % 2 === 0
+
+    row.eachCell({ includeEmpty: true }, (cell, colNum) => {
+      const isTotal = colNum === totalCols
+      const isStoreCol = colNum >= 3 && !isTotal
+
+      if (colNum === 1) {
+        cell.font = { size: 10 }
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: isEven ? 'FFF8FAFC' : 'FFFFFFFF' } }
+      } else if (colNum === 2) {
+        cell.font = { size: 9, color: { argb: 'FF64748B' } }
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: isEven ? 'FFF1F5F9' : 'FFF8FAFC' } }
+        cell.alignment = { horizontal: 'center' }
+      } else if (isTotal) {
+        const val = cell.value as number
+        cell.font = { bold: true, size: 10, color: { argb: val > 0 ? 'FF0F172A' : 'FFCBD5E1' } }
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: isEven ? 'FFE2E8F0' : 'FFCBD5E1' } }
+        cell.alignment = { horizontal: 'center' }
+      } else if (isStoreCol) {
+        const palette = storePalette[(colNum - 3) % storePalette.length] ?? storePalette[0]!
+        const val = cell.value as number
+        const hasStock = val > 0
+        cell.font = { bold: hasStock, size: 10, color: { argb: hasStock ? 'FF0F172A' : 'FFCBD5E1' } }
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: isEven ? palette.body : 'FFFFFFFF' } }
+        cell.alignment = { horizontal: 'center' }
+      }
+
+      cell.border = {
+        bottom: { style: 'hair', color: { argb: 'FFE2E8F0' } },
+      }
+    })
+    row.height = 18
+  })
+
+  // ── Anchos de columnas ──────────────────────────────────────────────────────
+  ws.getColumn(1).width = 44
+  ws.getColumn(2).width = 14
+  stores.forEach((_, i) => { ws.getColumn(3 + i).width = 20 })
+  ws.getColumn(totalCols).width = 12
+
+  // ── Freeze: filas de meta + header ─────────────────────────────────────────
+  ws.views = [{ state: 'frozen', ySplit: 5, xSplit: 2 }]
+
+  const buffer = await wb.xlsx.writeBuffer()
+  const dateFile = now.toISOString().slice(0, 10)
+  downloadWithRetry(
+    new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+    `existencias-por-tienda-${dateFile}.xlsx`,
+  )
+}
+
 /**
  * "Existencias por Tienda" — listado de productos con stock por sucursal.
  *
@@ -193,6 +369,7 @@ export function StockSearchPage() {
   const [debounced, setDebounced] = useState('')
   const [page, setPage] = useState(1)
   const [selectedId, setSelectedId] = useState<{ type: 'product' | 'presale'; id: number } | null>(null)
+  const [exporting, setExporting] = useState(false)
   const lastScanRef = useRef<string | null>(null)
 
   // Filtros de comparación entre tiendas
@@ -326,11 +503,37 @@ export function StockSearchPage() {
             Todos los productos con stock de cada sucursal · Escanea o escribe para filtrar
           </p>
         </div>
-        <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl shrink-0"
-          style={{ background: STOCK_ACCENT.greenBg, border: `1px solid ${STOCK_ACCENT.greenBorder}` }}
-          title="Scanner USB activo">
-          <Scan size={12} style={{ color: STOCK_ACCENT.greenText }} />
-          <span className="text-[10px] font-black uppercase tracking-wider" style={{ color: STOCK_ACCENT.greenText }}>Scanner listo</span>
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl"
+            style={{ background: STOCK_ACCENT.greenBg, border: `1px solid ${STOCK_ACCENT.greenBorder}` }}
+            title="Scanner USB activo">
+            <Scan size={12} style={{ color: STOCK_ACCENT.greenText }} />
+            <span className="text-[10px] font-black uppercase tracking-wider" style={{ color: STOCK_ACCENT.greenText }}>Scanner listo</span>
+          </div>
+          <button
+            onClick={async () => {
+              setExporting(true)
+              try {
+                await exportStockExcel(stockParams, {
+                  searchText: debounced || undefined,
+                  categoryName: categoryId ? (allCategories.find(c => c.id === categoryId)?.name) : undefined,
+                  primaryStoreName: primaryStoreId ? (stores.find(s => s.id === primaryStoreId)?.name) : undefined,
+                  compareStoreName: compareStoreId ? (stores.find(s => s.id === compareStoreId)?.name) : undefined,
+                  primaryOp,
+                  primaryQty,
+                  compareOp,
+                  compareQty,
+                  total: pagination?.total ?? products.length,
+                })
+              } finally { setExporting(false) }
+            }}
+            disabled={exporting}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition-colors disabled:opacity-50"
+            style={{ background: STOCK_ACCENT.blueBg, border: `1px solid ${STOCK_ACCENT.blueBorder}`, color: STOCK_ACCENT.blueText }}
+            title="Descargar Excel con existencias">
+            {exporting ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+            <span className="text-[10px] font-black uppercase tracking-wider">Excel</span>
+          </button>
         </div>
       </div>
 
