@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { flushSync } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import {
   Search, ShoppingBag, X, Plus, Minus, Check, SlidersHorizontal,
@@ -1090,7 +1091,9 @@ export function SellPage() {
   // Bug prueba real 2026-09-28: tras agregar o cobrar, el cursor se quedaba
   // en otro lado y había que volver con el mouse al campo de código. En
   // escritorio regresa solo; no se roba si el cajero escribe en otro campo.
-  const focusCodeInput = useCallback(() => {
+  // `selectAll`: deja seleccionado lo que haya en el campo (el código que no se
+  // encontró) para que el siguiente escaneo lo REEMPLACE en vez de pegarse al final.
+  const focusCodeInput = useCallback((opts?: { selectAll?: boolean }) => {
     if (isNarrow) return;
     requestAnimationFrame(() => {
       const el = prodInputRef.current;
@@ -1100,7 +1103,9 @@ export function SellPage() {
         && active !== el
         && active !== cashInputRef.current
         && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT" || active.isContentEditable);
-      if (!typingElsewhere) el.focus();
+      if (typingElsewhere) return;
+      el.focus();
+      if (opts?.selectAll) el.select();
     });
   }, [isNarrow]);
   const trackCashKey = (key: string) => {
@@ -2853,15 +2858,24 @@ export function SellPage() {
     }
   };
 
-  // Dedupe: ignora el mismo código si llega dentro de los 1500ms del último escaneo.
-  // Cubre doble-lectura del HID, StrictMode y rebote físico del lector.
-  // Subido de 500ms → 1500ms porque ciertos scanners siguen reportando duplicados a ~700-1200ms.
+  // Dedupe: ignora el mismo código si llega dentro de los 3 s del último escaneo
+  // que SÍ se resolvió (agregado, "ya está", abrió Agregar stock). Cubre doble
+  // lectura del HID, StrictMode y rebote físico del lector. Un escaneo que falló
+  // (sin coincidencia, sin red) NO se registra: re-escanear lo reintenta.
   const lastScanRef = useRef<{ code: string; at: number }>({ code: '', at: 0 });
+  // Código que se está consultando al servidor (tienda 2026-11-03: sin indicador
+  // el cajero re-escaneaba y el dedupe se lo tragaba en silencio).
+  const scanInFlightRef = useRef<string | null>(null);
+  const [scanLookupCode, setScanLookupCode] = useState<string | null>(null);
 
   // Maneja un código escaneado (USB HID o cámara). Rutea PREV-* → folio, sino → producto por SKU.
   const handleScannedCode = async (raw: string) => {
     const code = raw.trim();
     if (!code) return;
+    if (scanInFlightRef.current === code) {
+      toast.info(`Buscando «${code}»… espera un momento.`);
+      return;
+    }
     const now = Date.now();
     // Dedup window 3s — defensiva contra lectores HID que emiten doble Enter,
     // o cajeros que escanean dos veces creyendo que la primera "no funcionó".
@@ -2869,14 +2883,16 @@ export function SellPage() {
     if (lastScanRef.current.code === code && now - lastScanRef.current.at < 3000) {
       return;
     }
-    lastScanRef.current = { code, at: now };
+    const markHandled = () => { lastScanRef.current = { code, at: Date.now() }; };
     if (/^PREV-\d+/i.test(code)) {
+      markHandled();
       toast.info(`Cargando folio ${code.toUpperCase()}…`);
       await searchByFolio(code.toUpperCase());
       return;
     }
     // Socio Tadaima (códigos TAD + dígitos en tarjetas de lealtad).
     if (/^TAD\d+$/i.test(code)) {
+      markHandled();
       // Si la mesa ya tiene cliente asignado, skip silencioso para evitar abrir
       // popup en cada re-escaneo accidental durante la misma venta.
       if (activeMesa.customerId) {
@@ -2895,6 +2911,7 @@ export function SellPage() {
       p.sku.toLowerCase() === lc
       || (p.barcode ?? '').toLowerCase() === lc);
     if (local) {
+      markHandled();
       // No asignado a esta tienda → no se vende; abre "Agregar stock".
       if (local.is_assigned === false) { openStockFor(local); return; }
       // addScanToCart maneja internamente el "ya está" → no duplicar ni sumar
@@ -2906,8 +2923,11 @@ export function SellPage() {
     // 2. Cache miss → hit backend directly (no debounce, scanner is an
     //    explicit action). Use the search query cache so a re-scan of the
     //    same SKU within 60s doesn't refetch.
+    scanInFlightRef.current = code;
+    setScanLookupCode(code);
+    let fresh: Awaited<ReturnType<typeof getProductsLight>> | null = null;
     try {
-      const fresh = await queryClient.fetchQuery({
+      fresh = await queryClient.fetchQuery({
         queryKey: [...queryKeys.products.all, 'light', 'search', code, activeStore?.id ?? null],
         queryFn: () => getProductsLight({
           search: code,
@@ -2916,32 +2936,52 @@ export function SellPage() {
           ...(activeStore?.id ? { store_id: activeStore.id, include_unassigned: true } : {}),
         } as Parameters<typeof getProductsLight>[0]),
         staleTime: 60_000,
+        // Sin red, TanStack pausaría la consulta hasta que vuelva (networkMode
+        // 'online') y «Buscando…» se quedaría pegado: mejor que falle y avise.
+        networkMode: 'always',
       });
-      const exact = fresh.data.find(p =>
-        p.sku.toLowerCase() === code.toLowerCase()
-        || (p.barcode ?? '').toLowerCase() === code.toLowerCase()
-      );
-      if (exact) {
-        const adapted: Product = toCartProduct(exact, categoryNames);
-        // No asignado → abre "Agregar stock" en vez de intentar vender.
-        if (adapted.is_assigned === false) { openStockFor(adapted); return; }
-        // Scanner usa addScanToCart (nunca suma). Si ya está en venta, toast info.
-        addScanToCart(adapted, "a");
-        focusCodeInput();
-        return;
-      }
     } catch {
-      // Network error — fall through to the "not found" path.
+      fresh = null;
+    } finally {
+      if (scanInFlightRef.current === code) scanInFlightRef.current = null;
+      setScanLookupCode(current => (current === code ? null : current));
     }
-    setSearch(code);
-    toast.warning(`Sin coincidencias para "${code}"`);
-    focusCodeInput();
+    if (!fresh) {
+      // Sin red o el servidor falló: no es "no existe". Que vuelva a escanear.
+      toast.error("No se pudo consultar el código. Revisa la conexión y vuelve a escanear.");
+      focusCodeInput();
+      return;
+    }
+    const exact = fresh.data.find(p =>
+      p.sku.toLowerCase() === code.toLowerCase()
+      || (p.barcode ?? '').toLowerCase() === code.toLowerCase()
+    );
+    if (exact) {
+      markHandled();
+      const adapted: Product = toCartProduct(exact, categoryNames);
+      // No asignado → abre "Agregar stock" en vez de intentar vender.
+      if (adapted.is_assigned === false) { openStockFor(adapted); return; }
+      // Scanner usa addScanToCart (nunca suma). Si ya está en venta, toast info.
+      addScanToCart(adapted, "a");
+      focusCodeInput();
+      return;
+    }
+    // El código queda en el buscador (el listado por coincidencia parcial suele
+    // traer el producto) pero SELECCIONADO: el siguiente escaneo lo reemplaza.
+    flushSync(() => setSearch(code));
+    toast.warning(`Sin coincidencia exacta para «${code}»: elige del listado o vuelve a escanear.`);
+    focusCodeInput({ selectAll: true });
   };
 
   // Lector USB HID activo siempre que estemos en SellPage y no haya un modal de form abierto.
   // El modal de cámara desactiva el HID para evitar doble lectura.
   useBarcodeScanner({
     onScan: code => { void handleScannedCode(code); },
+    // El detector perdió el principio de la ráfaga: avisa y NO busca el código recortado.
+    onIncomplete: code => {
+      toast.warning(`Lectura incompleta del lector («${code}»). Vuelve a escanear.`);
+      focusCodeInput();
+    },
     enabled: !showCameraScanner && !showCatalog && !showApartarModal && !showOpenCashModal && !showCloseCashModal,
   });
 
@@ -3234,7 +3274,8 @@ export function SellPage() {
     return products.filter(p => {
       const name = (p.name ?? "").toLowerCase();
       const sku  = (p.sku  ?? "").toLowerCase();
-      const matchesSearch = (!q || name.includes(q) || sku.includes(q));
+      const barcode = (p.barcode ?? "").toLowerCase();
+      const matchesSearch = (!q || name.includes(q) || sku.includes(q) || barcode.includes(q));
 
       if (activeMesa.isPreventa) {
         return matchesSearch && (p.stock_details?.preventa || 0) > 0;
@@ -5510,8 +5551,8 @@ export function SellPage() {
             {/* Buscador de Productos (Manual) */}
             <div className="flex gap-3">
               <div className="relative flex-1">
-                <div className="absolute left-4 top-1/2 -translate-y-1/2" style={{ color: TLO }}>
-                  <Plus size={16} />
+                <div className="absolute left-4 top-1/2 -translate-y-1/2" style={{ color: scanLookupCode ? RED : TLO }}>
+                  {scanLookupCode ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
                 </div>
                 <input
                   ref={prodInputRef}
@@ -5519,7 +5560,7 @@ export function SellPage() {
                   type="text"
                   data-tour="sell-search"
                   data-scan-target="product"
-                  placeholder="Añadir producto, escanear código o tipear folio (PREV-…)"
+                  placeholder={scanLookupCode ? `Buscando ${scanLookupCode}…` : "Añadir producto, escanear código o tipear folio (PREV-…)"}
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   onKeyDown={e => {
