@@ -2,8 +2,11 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { Search, PackageSearch, Loader2, ChevronRight, X, Scan, Store, Phone, MessageCircle, Package, Download } from 'lucide-react'
 import { useAuth } from '@tadaima/auth'
 import type { PreSaleCatalog } from '@tadaima/api'
-import type { ProductStockItem } from '@tadaima/api'
-import { getProductsStock } from '@tadaima/api'
+import type { ProductStockItem, ProductsStockParams } from '@tadaima/api'
+import { toast } from 'sonner'
+import { toLocalYmd } from '@/lib/date'
+import { errorMessage } from '@/lib/deletePreviewFormat'
+import { fetchAllProductsStock } from '@/lib/fetchAllPages'
 import { useProductsSearchQuery } from '@/hooks/queries/useProducts'
 import { usePreSaleCatalogsQuery } from '@/hooks/queries/usePreSales'
 import { useStoresQuery } from '@/hooks/queries/useStores'
@@ -189,19 +192,21 @@ interface ExportMeta {
   primaryQty?: string | undefined
   compareOp?: string | undefined
   compareQty?: string | undefined
-  total: number
 }
 
 async function exportStockExcel(
-  params: Parameters<typeof getProductsStock>[0],
+  params: ProductsStockParams,
   meta: ExportMeta,
 ) {
   const ExcelJS = (await import('exceljs')).default
   const { downloadWithRetry } = await import('@/lib/downloadFile')
 
-  const result = await getProductsStock({ ...params, page: 1, per_page: 5000 })
+  const result = await fetchAllProductsStock(params)
   const items = result.data
-  if (items.length === 0) return
+  if (items.length === 0) {
+    toast.info('No hay productos con esos filtros para descargar')
+    return
+  }
 
   // Tiendas únicas presentes en los datos
   const storeMap = new Map<number, string>()
@@ -264,7 +269,7 @@ async function exportStockExcel(
     if (meta.compareQty !== '') f += ` ${meta.compareOp} ${meta.compareQty}`
     filterParts.push(f)
   }
-  filterParts.push(`${meta.total.toLocaleString('es-MX')} productos`)
+  filterParts.push(`${items.length.toLocaleString('es-MX')} productos`)
 
   ws.addRow([filterParts.join('   ·   ')])
   ws.mergeCells(3, 1, 3, totalCols)
@@ -348,11 +353,16 @@ async function exportStockExcel(
   ws.views = [{ state: 'frozen', ySplit: 5, xSplit: 2 }]
 
   const buffer = await wb.xlsx.writeBuffer()
-  const dateFile = now.toISOString().slice(0, 10)
+  const dateFile = toLocalYmd(now)
   downloadWithRetry(
     new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
     `existencias-por-tienda-${dateFile}.xlsx`,
   )
+  if (result.total !== items.length) {
+    toast.warning('El inventario cambió durante la descarga', {
+      description: `El archivo trae ${items.length.toLocaleString('es-MX')} de ${result.total.toLocaleString('es-MX')} productos. Descárgalo otra vez para tener la lista completa.`,
+    })
+  }
 }
 
 /**
@@ -489,6 +499,26 @@ export function StockSearchPage() {
     ? matchedCatalogs.find(c => c.id === selectedId.id) ?? null
     : null
 
+  const handleExportExcel = async () => {
+    setExporting(true)
+    try {
+      await exportStockExcel(stockParams, {
+        searchText: debounced || undefined,
+        categoryName: categoryId ? (allCategories.find(c => c.id === categoryId)?.name) : undefined,
+        primaryStoreName: primaryStoreId ? (stores.find(s => s.id === primaryStoreId)?.name) : undefined,
+        compareStoreName: compareStoreId ? (stores.find(s => s.id === compareStoreId)?.name) : undefined,
+        primaryOp,
+        primaryQty,
+        compareOp,
+        compareQty,
+      })
+    } catch (err) {
+      toast.error('No se pudo generar el Excel', { description: errorMessage(err, 'Revisa tu conexión e intenta de nuevo.') })
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto">
       {/* Header */}
@@ -511,22 +541,7 @@ export function StockSearchPage() {
             <span className="text-[10px] font-black uppercase tracking-wider" style={{ color: STOCK_ACCENT.greenText }}>Scanner listo</span>
           </div>
           <button
-            onClick={async () => {
-              setExporting(true)
-              try {
-                await exportStockExcel(stockParams, {
-                  searchText: debounced || undefined,
-                  categoryName: categoryId ? (allCategories.find(c => c.id === categoryId)?.name) : undefined,
-                  primaryStoreName: primaryStoreId ? (stores.find(s => s.id === primaryStoreId)?.name) : undefined,
-                  compareStoreName: compareStoreId ? (stores.find(s => s.id === compareStoreId)?.name) : undefined,
-                  primaryOp,
-                  primaryQty,
-                  compareOp,
-                  compareQty,
-                  total: pagination?.total ?? products.length,
-                })
-              } finally { setExporting(false) }
-            }}
+            onClick={() => { void handleExportExcel() }}
             disabled={exporting}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition-colors disabled:opacity-50"
             style={{ background: STOCK_ACCENT.blueBg, border: `1px solid ${STOCK_ACCENT.blueBorder}`, color: STOCK_ACCENT.blueText }}

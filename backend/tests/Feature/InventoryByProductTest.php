@@ -199,6 +199,55 @@ class InventoryByProductTest extends TestCase
         $this->assertEquals(1, $pagination['per_page']);
     }
 
+    public function test_products_stock_acepta_hasta_1000_por_pagina(): void
+    {
+        // El Excel de Existencias pide páginas de 1000: con el tope viejo de 200
+        // se cortaba sin avisar aunque el encabezado dijera el total real.
+        $now = now();
+        \Illuminate\Support\Facades\DB::table('products')->insert(
+            collect(range(1, 201))->map(fn (int $i) => [
+                'name' => "Lote {$i}", 'sku' => "LOTE-{$i}", 'active' => true,
+                'product_type' => 'product', 'created_at' => $now, 'updated_at' => $now,
+            ])->all()
+        );
+        $esperados = \App\Models\Product::count();
+        $this->assertGreaterThan(200, $esperados);
+
+        $res = $this->actingAs($this->cajero)
+            ->getJson('/api/v1/inventory/products-stock?per_page=1000');
+
+        $res->assertOk();
+        $this->assertCount($esperados, $res->json('data.data'));
+        $this->assertEquals(1000, $res->json('data.pagination.per_page'));
+
+        // Y el tope sigue existiendo.
+        $this->actingAs($this->cajero)
+            ->getJson('/api/v1/inventory/products-stock?per_page=5000')
+            ->assertJsonPath('data.pagination.per_page', 1000);
+    }
+
+    public function test_products_stock_desempata_nombres_iguales_por_id(): void
+    {
+        // Sin desempate, al paginar un mismo nombre puede repetirse o perderse. En
+        // SQLite el orden sale bien de todos modos, así que se revisa el SQL.
+        \Illuminate\Support\Facades\DB::enableQueryLog();
+
+        foreach (['', "?primary_store_id={$this->storeA->id}", "?primary_store_id={$this->storeA->id}&compare_store_id={$this->storeB->id}"] as $qs) {
+            \Illuminate\Support\Facades\DB::flushQueryLog();
+
+            $this->actingAs($this->cajero)
+                ->getJson("/api/v1/inventory/products-stock{$qs}")
+                ->assertOk();
+
+            $select = collect(\Illuminate\Support\Facades\DB::getQueryLog())
+                ->pluck('query')
+                ->first(fn (string $sql) => str_contains($sql, 'from "products"') && str_contains($sql, 'order by'));
+
+            $this->assertNotNull($select, "Debe consultar productos con orden ({$qs})");
+            $this->assertStringEndsWith('"products"."id" asc limit 50 offset 0', $select);
+        }
+    }
+
     public function test_products_stock_no_expone_costo(): void
     {
         $res = $this->actingAs($this->cajero)
