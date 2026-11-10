@@ -1,10 +1,11 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { TrendingUp, Search, Package, BookOpen, X, ChevronDown, ChevronUp, ArrowUp, Trash2, Check } from "lucide-react";
-import { getTopProductsReport, getCategories, getStores, type TopProductsReportItem } from "@tadaima/api";
+import { getTopProductsReport, getCategories, type TopProductsReportItem } from "@tadaima/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { DateRangePicker } from "@/components/ui/DateRangePicker";
 import { useScreenRefresh } from "@/hooks/useScreenRefresh";
+import { useStoresQuery } from "@/hooks/queries/useStores";
 import { getTodayLocal } from "@/lib/date";
 
 // Día de negocio (Tijuana), no UTC: después de las 5 pm la fecha UTC ya es mañana.
@@ -101,12 +102,7 @@ export function EstadisticaPage() {
     refetchOnWindowFocus: false,
   });
 
-  const storesQuery = useQuery({
-    queryKey: ["stores"],
-    queryFn: () => getStores(),
-    staleTime: 1000 * 60 * 15,
-    refetchOnWindowFocus: false,
-  });
+  const storesQuery = useStoresQuery();
 
   useScreenRefresh(() => { void query.refetch(); });
 

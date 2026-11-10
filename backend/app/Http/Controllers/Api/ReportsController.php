@@ -711,7 +711,11 @@ class ReportsController extends Controller
                 ->where(fn ($q) => $q
                     ->whereNotNull('sale_items.product_id')
                     ->orWhereNotNull('sale_items.product_name'))
-                ->when($itemType === 'product', fn ($q) => $q->where('products.product_type', 'product'))
+                // 'product' = todo menos tomos: paquetes y productos ya borrados
+                // (sin fila en products, tipo NULL) también son «Productos».
+                ->when($itemType === 'product', fn ($q) => $q->where(fn ($w) => $w
+                    ->whereNull('products.product_type')
+                    ->orWhere('products.product_type', '!=', 'manga')))
                 ->when($itemType === 'manga',   fn ($q) => $q->where('products.product_type', 'manga'))
                 ->when($storeId, fn ($q) => $q->where('sales.store_id', $storeId))
                 ->when($search !== '', fn ($q) => $q->where(fn ($w) => $w

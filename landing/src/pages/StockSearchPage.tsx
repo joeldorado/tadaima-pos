@@ -183,6 +183,8 @@ const STOCK_ACCENT = {
 
 const PER_PAGE = 50
 
+const PRODUCT_TYPE_LABELS = { product: 'Productos', manga: 'Tomos', bundle: 'Paquetes' } as const
+
 interface ExportMeta {
   searchText?: string | undefined
   categoryName?: string | undefined
@@ -192,6 +194,7 @@ interface ExportMeta {
   primaryQty?: string | undefined
   compareOp?: string | undefined
   compareQty?: string | undefined
+  typeName?: string | undefined
 }
 
 async function exportStockExcel(
@@ -258,6 +261,7 @@ async function exportStockExcel(
   // ── Fila 3: Resumen de filtros ──────────────────────────────────────────────
   const filterParts: string[] = []
   if (meta.searchText) filterParts.push(`Búsqueda: "${meta.searchText}"`)
+  if (meta.typeName) filterParts.push(`Tipo: ${meta.typeName}`)
   if (meta.categoryName) filterParts.push(`Categoría: ${meta.categoryName}`)
   if (meta.primaryStoreName) {
     let f = `Tienda: ${meta.primaryStoreName}`
@@ -507,6 +511,7 @@ export function StockSearchPage() {
       await exportStockExcel(stockParams, {
         searchText: debounced || undefined,
         categoryName: categoryId ? (allCategories.find(c => c.id === categoryId)?.name) : undefined,
+        typeName: productType ? PRODUCT_TYPE_LABELS[productType] : undefined,
         primaryStoreName: primaryStoreId ? (stores.find(s => s.id === primaryStoreId)?.name) : undefined,
         compareStoreName: compareStoreId ? (stores.find(s => s.id === compareStoreId)?.name) : undefined,
         primaryOp,

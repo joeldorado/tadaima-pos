@@ -132,6 +132,34 @@ class TopProductsReportTest extends TestCase
         $this->assertSame([$buscado->id], $ids);
     }
 
+    public function test_filtro_de_tipo_separa_tomos_sin_perder_paquetes_ni_borrados(): void
+    {
+        // «Productos» = todo lo que no es tomo: también paquetes y productos ya
+        // borrados (sin fila en products). «Mangas» = tomos (product_type='manga').
+        $regular = $this->makeProduct(100, 40);
+        $tomo = $this->makeProduct(150, 105);
+        $tomo->update(['product_type' => 'manga']);
+        $paquete = $this->makeProduct(300, 120);
+        $paquete->update(['product_type' => 'bundle']);
+        $borrado = $this->makeProduct(80, 30);
+        foreach ([$regular, $tomo, $paquete, $borrado] as $p) {
+            $this->sell($p, 1, (float) $p->price->price_1);
+        }
+        $nombreBorrado = $borrado->name;
+        DB::table('sale_items')->where('product_id', $borrado->id)->update(['product_id' => null]);
+        DB::table('inventory')->where('product_id', $borrado->id)->delete();
+        DB::table('product_prices')->where('product_id', $borrado->id)->delete();
+        DB::table('products')->where('id', $borrado->id)->delete();
+
+        $admin = $this->makeUser('admin@test.com', 'admin');
+        $names = fn (string $type) => $this->rowsFor($admin, "item_type={$type}")->pluck('name')->sort()->values()->all();
+        $sorted = fn (array $a) => collect($a)->sort()->values()->all();
+
+        $this->assertSame($sorted([$regular->name, $paquete->name, $nombreBorrado]), $names('product'));
+        $this->assertSame([$tomo->name], $names('manga'));
+        $this->assertSame($sorted([$regular->name, $tomo->name, $paquete->name, $nombreBorrado]), $names('all'));
+    }
+
     private function rowsFor(User $user, string $extra = ''): \Illuminate\Support\Collection
     {
         $range = 'from=' . now()->subDay()->toDateString() . '&to=' . now()->addDay()->toDateString();
