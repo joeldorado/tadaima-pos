@@ -57,6 +57,8 @@ export interface ProductsStockParams {
   compare_stock_op?: '<' | '=' | '>'
   /** Cantidad a comparar para la tienda de comparación (entero ≥ 0). */
   compare_stock_qty?: number
+  /** Filtrar por tipo de producto: 'product' | 'manga' | 'bundle'. Sin valor = todos. */
+  product_type?: 'product' | 'manga' | 'bundle'
 }
 
 export interface ProductsStockResponse {

@@ -5,6 +5,7 @@ import { getTopProductsReport, getCategories, type TopProductsReportItem } from 
 import { queryKeys } from "@/lib/queryKeys";
 import { DateRangePicker } from "@/components/ui/DateRangePicker";
 import { useScreenRefresh } from "@/hooks/useScreenRefresh";
+import { useStoresQuery } from "@/hooks/queries/useStores";
 import { getTodayLocal } from "@/lib/date";
 
 // Día de negocio (Tijuana), no UTC: después de las 5 pm la fecha UTC ya es mañana.
@@ -42,6 +43,7 @@ export function EstadisticaPage() {
   const [search, setSearch]         = useState("");
   const [itemType, setItemType]     = useState<ItemType>("all");
   const [categoryId, setCategoryId] = useState<number | null>(null);
+  const [storeId, setStoreId]       = useState<number | null>(null);
   const [sortCol, setSortCol]       = useState<SortCol>("total_revenue");
   const [sortDir, setSortDir]       = useState<SortDir>("desc");
   // Set de rowKeys apagados (excluidos del resumen)
@@ -83,7 +85,8 @@ export function EstadisticaPage() {
     sort_by: sortCol,
     sort_dir: sortDir,
     ...(categoryId ? { category_id: categoryId } : {}),
-  }), [from, to, itemType, categoryId, sortCol, sortDir]);
+    ...(storeId    ? { store_id: storeId }        : {}),
+  }), [from, to, itemType, categoryId, storeId, sortCol, sortDir]);
 
   const query = useQuery({
     queryKey: queryKeys.reports.topProducts(params),
@@ -98,6 +101,8 @@ export function EstadisticaPage() {
     staleTime: 1000 * 60 * 10,
     refetchOnWindowFocus: false,
   });
+
+  const storesQuery = useStoresQuery();
 
   useScreenRefresh(() => { void query.refetch(); });
 
@@ -114,7 +119,7 @@ export function EstadisticaPage() {
   }, []);
 
   // Al cambiar filtros de datos, reinicia apagados y ocultos (no pinned — el usuario los eligió)
-  useEffect(() => { setExcluded(new Set()); setHidden(new Set()); }, [from, to, itemType, categoryId]);
+  useEffect(() => { setExcluded(new Set()); setHidden(new Set()); }, [from, to, itemType, categoryId, storeId]);
 
   // Regalos (2026-10-31): renglón aparte en $0, marcado en el nombre.
   const allItems = useMemo(
@@ -339,6 +344,28 @@ export function EstadisticaPage() {
           </select>
           <ChevronDown size={11} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" style={{ color: "var(--td-text-lo)" }} />
         </div>
+
+        {/* Tienda */}
+        {(storesQuery.data ?? []).length > 1 && (
+          <div className="relative">
+            <select
+              value={storeId ?? ""}
+              onChange={(e) => setStoreId(e.target.value ? Number(e.target.value) : null)}
+              className="appearance-none rounded-full h-[34px] pl-4 pr-8 text-[10px] font-black uppercase tracking-widest outline-none cursor-pointer"
+              style={{
+                background: storeId ? "rgba(220,38,38,0.15)" : "var(--td-input-bg, rgba(255,255,255,0.04))",
+                border: `1px solid ${storeId ? "rgba(220,38,38,0.5)" : "var(--td-panel-border)"}`,
+                color: storeId ? "var(--td-text-hi)" : "var(--td-text-lo)",
+              }}
+            >
+              <option value="">Todas las tiendas</option>
+              {(storesQuery.data ?? []).map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+            <ChevronDown size={11} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" style={{ color: "var(--td-text-lo)" }} />
+          </div>
+        )}
 
         {/* DateRangePicker — derecha */}
         <div className="ml-auto">

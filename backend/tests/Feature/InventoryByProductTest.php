@@ -174,6 +174,22 @@ class InventoryByProductTest extends TestCase
         $this->assertEquals(3, $sA['bodega']);
     }
 
+    public function test_products_stock_filtra_por_tipo(): void
+    {
+        $tomo = \App\Models\Product::create(['name' => 'Tomo Uno', 'sku' => 'TOM-001', 'active' => true, 'product_type' => 'manga']);
+
+        $ids = fn (string $qs) => collect($this->actingAs($this->cajero)
+            ->getJson("/api/v1/inventory/products-stock?{$qs}")
+            ->assertOk()
+            ->json('data.data'))->pluck('id')->all();
+
+        $this->assertSame([$tomo->id], $ids('product_type=manga'));
+        $this->assertNotContains($tomo->id, $ids('product_type=product'));
+        $this->assertContains($this->product->id, $ids('product_type=product'));
+        // Un valor desconocido no filtra.
+        $this->assertContains($tomo->id, $ids('product_type=otro'));
+    }
+
     public function test_products_stock_filtra_por_busqueda(): void
     {
         \App\Models\Product::create(['name' => 'Otro Producto', 'sku' => 'OTR-001', 'active' => true, 'product_type' => 'product']);
