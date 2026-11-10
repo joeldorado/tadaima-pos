@@ -4,6 +4,20 @@
 
 ---
 
+### Sesión 2026-11-10 — Estadística por tienda y tomos + chips de tipo en Existencias (PR #98) — rev tadaima-00130-rah
+
+**Origen:** Ruben subió a `develop` `0c0b3f8` («cambios en estadística y api para filtrar por manga»). Joel pidió bajarlo, revisarlo y publicarlo. `develop` iba 1 adelante de `main`, sin divergir.
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00128-yuw`. Sin migraciones.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00128-yuw=100 --project tadaimapos --region us-east1`
+
+- **De Ruben:** Estadística filtra «Mangas» por `products.product_type='manga'` (antes solo veía los legacy por `manga_id`, casi nada) y tiene selector de tienda (`store_id`; no-admin queda en su tienda por `scopedStoreId`). Existencias por Tienda tiene chips Todos / Productos / Tomos / Paquetes (`product_type` en `GET /inventory/products-stock`), que también filtran el Excel.
+- **Bug que se corrigió antes de publicar:** «Productos» exigía `product_type='product'`; los paquetes (`bundle`) y las líneas de productos borrados (sin fila en `products`) no salían en ningún filtro, solo en «Todos». Ahora «Productos» = todo menos tomos.
+- **Ajustes:** Estadística usa `useStoresQuery` (no un query ad hoc con key `["stores"]`); el encabezado del Excel dice el tipo filtrado.
+- **Limitación conocida:** un tomo ya borrado cae en «Productos» (`sale_items` no congela el tipo). La suma de los chips cuadra con «Todos».
+- **Validación:** backend 955 ✓ en SQLite y Postgres local; la prueba nueva de top-products falla con el código de Ruben y contra `main`. Vitest 846 ✓, type-check 456 = `main`, `vite build` OK, el lint no sube. Local en Chrome: chip Tomos filtra lista y Excel; Estadística manda `store_id` e `item_type`, sin errores de consola. Candidate y dominio: `/`, `/login`, `/caja`, `/tadaimaus/` 200, API sin token 401, bundle nuevo, «Nothing to migrate», sin errores en logs.
+- **No probado en prod con sesión:** lo valida Ruben (incógnito por la caché PWA).
+
 ### Sesión 2026-11-04 — Excel de Existencias por Tienda de Ruben (PR #97) — rev tadaima-00128-yuw
 
 **Origen:** Ruben subió a `develop` el botón **Excel** de Existencias por Tienda (`35bd377`). Joel pidió bajarlo, revisarlo y publicarlo. `develop` había divergido (le faltaba #95): entró por `release/2026-11-04` con merge.

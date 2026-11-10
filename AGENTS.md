@@ -8,7 +8,7 @@
 > Detalle adicional: [`CLAUDE.md`](CLAUDE.md) (comandos y arquitectura del frontend) y
 > [`backend/AGENTS.md`](backend/AGENTS.md) (API, ADRs y referencia de endpoints).
 >
-> Última revisión: 2026-11-04.
+> Última revisión: 2026-11-10.
 
 ---
 
@@ -360,6 +360,9 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   sale de `pagination.total`; nunca filtres ni cuentes en el navegador sobre lo cargado (así
   Tomos mostraba "50 tomos" con el badge de Agotados en 2,206). Cada chip usa la misma
   definición que `GET /products/stats` (`App\Support\StockSql`): tabla y badge deben cuadrar.
+- **Tipo de producto en filtros** (2026-11-10): tomos = `product_type='manga'`; «Productos» en Estadística
+  (`/reports/top-products?item_type=product`) = todo menos tomos, incluye paquetes y productos borrados
+  (sin fila en `products`). `sale_items` no congela el tipo: un tomo borrado cuenta como producto.
 - **Exportar = todas las páginas** (2026-11-04): el backend topa `per_page` sin dar error, así que
   un Excel que pide "5000" recibe solo el tope y se corta en silencio (Existencias bajaba 200 de
   ~14k). Usa `lib/fetchAllPages.ts`, con páginas grandes para no gastar el límite de 120
