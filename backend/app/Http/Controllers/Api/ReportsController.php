@@ -676,8 +676,9 @@ class ReportsController extends Controller
         $itemType    = $request->input('item_type', 'all'); // product | manga | all
         $canViewCost = (bool) $request->user()?->canViewCost();
 
-        $includeProducts = $itemType !== 'manga';
-        $includeMangas   = $itemType !== 'product';
+        // 'product' → solo regulares; 'manga' → solo tomos (product_type='manga' + legacy manga_id); 'all' → todo
+        $includeProducts = true; // la query de productos siempre corre, se filtra por product_type
+        $includeMangas   = $itemType !== 'product'; // legacy manga_id solo cuando no es filtro 'product'
 
         $sortBy  = $request->input('sort_by', 'total_revenue');
         $sortDir = strtolower((string) $request->input('sort_dir', 'desc')) === 'asc' ? 'asc' : 'desc';
@@ -710,6 +711,8 @@ class ReportsController extends Controller
                 ->where(fn ($q) => $q
                     ->whereNotNull('sale_items.product_id')
                     ->orWhereNotNull('sale_items.product_name'))
+                ->when($itemType === 'product', fn ($q) => $q->where('products.product_type', 'product'))
+                ->when($itemType === 'manga',   fn ($q) => $q->where('products.product_type', 'manga'))
                 ->when($storeId, fn ($q) => $q->where('sales.store_id', $storeId))
                 ->when($search !== '', fn ($q) => $q->where(fn ($w) => $w
                     ->whereLike(DB::raw('COALESCE(products.name, sale_items.product_name)'), "%{$search}%", caseSensitive: false)

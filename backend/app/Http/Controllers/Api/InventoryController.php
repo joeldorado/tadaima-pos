@@ -38,6 +38,7 @@ class InventoryController extends Controller
      *   ?primary_stock_qty=N       cantidad a comparar (entero ≥ 0)
      *   ?compare_stock_op=<|=|>   operador para filtrar stock en tienda de comparación
      *   ?compare_stock_qty=N       cantidad a comparar (entero ≥ 0)
+     *   ?product_type=product|manga|bundle  filtrar por tipo de producto
      */
     public function productsStock(Request $request): JsonResponse
     {
@@ -46,7 +47,10 @@ class InventoryController extends Controller
         $compareStoreId = $request->integer('compare_store_id') ?: null;
         $sortDir       = $request->get('sort_dir', 'desc') === 'asc' ? 'asc' : 'desc';
 
-        $categoryId = $request->integer('category_id') ?: null;
+        $categoryId  = $request->integer('category_id') ?: null;
+        $productType = in_array($request->get('product_type'), ['product', 'manga', 'bundle'])
+            ? $request->get('product_type')
+            : null;
 
         $primaryOp  = in_array($request->get('primary_stock_op'), ['<', '=', '>']) ? $request->get('primary_stock_op') : null;
         $primaryQty = $request->filled('primary_stock_qty') ? max(0, (int) $request->get('primary_stock_qty')) : null;
@@ -64,6 +68,7 @@ class InventoryController extends Controller
         $query = Product::query()
             ->when($request->filled('search'), fn ($q) => $q->search($request->search))
             ->when($categoryId, fn ($q) => $q->whereHas('categories', fn ($c) => $c->where('product_categories.id', $categoryId)))
+            ->when($productType, fn ($q) => $q->where('product_type', $productType))
             ->when($hasPrimaryFilter, fn ($q) => $q->whereRaw("({$stockSubSql}) {$primaryOp} ?", [$primaryStoreId, $primaryQty]))
             ->when($hasCompareFilter, fn ($q) => $q->whereRaw("({$stockSubSql}) {$compareOp} ?", [$compareStoreId, $compareQty]));
 

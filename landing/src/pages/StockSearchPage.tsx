@@ -391,6 +391,7 @@ export function StockSearchPage() {
   const [compareQty, setCompareQty] = useState<string>('')
   const [categoryId, setCategoryId] = useState<number | ''>('')
   const [categorySearch, setCategorySearch] = useState('')
+  const [productType, setProductType] = useState<'product' | 'manga' | 'bundle' | ''>('')
   // Dropdown abierto con el listado completo al hacer clic (2026-10-10), no
   // solo al escribir — antes había que teclear para verlo.
   const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false)
@@ -413,7 +414,7 @@ export function StockSearchPage() {
   }, [search])
 
   // Resetear página al cambiar filtros de tienda
-  useEffect(() => { setPage(1) }, [primaryStoreId, compareStoreId, primaryOp, primaryQty, compareOp, compareQty, categoryId])
+  useEffect(() => { setPage(1) }, [primaryStoreId, compareStoreId, primaryOp, primaryQty, compareOp, compareQty, categoryId, productType])
 
   const myStoreId = user?.store_id ?? undefined
 
@@ -437,6 +438,7 @@ export function StockSearchPage() {
     ...(primaryStoreId ? { primary_store_id: primaryStoreId as number } : {}),
     ...(primaryStoreId && compareStoreId ? { compare_store_id: compareStoreId as number } : {}),
     ...(categoryId ? { category_id: categoryId as number } : {}),
+    ...(productType ? { product_type: productType } : {}),
     ...(primaryStoreId && primaryQty !== '' ? { primary_stock_op: primaryOp, primary_stock_qty: Number(primaryQty) } : {}),
     ...(compareStoreId && compareQty !== '' ? { compare_stock_op: compareOp, compare_stock_qty: Number(compareQty) } : {}),
   }
@@ -595,6 +597,29 @@ export function StockSearchPage() {
               )}
             </div>
           )}
+
+          {/* Chips de tipo de producto */}
+          <div className="flex items-center gap-1">
+            {([
+              { value: '', label: 'Todos' },
+              { value: 'product', label: 'Productos' },
+              { value: 'manga', label: 'Tomos' },
+              { value: 'bundle', label: 'Paquetes' },
+            ] as { value: '' | 'product' | 'manga' | 'bundle'; label: string }[]).map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => setProductType(opt.value)}
+                className="px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors"
+                style={{
+                  background: productType === opt.value ? 'rgba(99,102,241,0.15)' : 'var(--td-input-bg)',
+                  border: `1px solid ${productType === opt.value ? 'rgba(99,102,241,0.4)' : 'var(--td-input-border)'}`,
+                  color: productType === opt.value ? '#6366F1' : 'var(--td-text-lo)',
+                }}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
 
           {/* Tienda primaria */}
           <div className="flex items-center gap-1.5">
