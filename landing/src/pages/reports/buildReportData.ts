@@ -815,7 +815,11 @@ export function buildPresaleFolioRows(
       const sortedPayments = [...(order.payments ?? [])].sort(
         (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
       );
-      const lastPaymentId = sortedPayments[sortedPayments.length - 1]?.id ?? null;
+      // Pagos que liquidaron una entrega registrada: no pueden «liquidar» además
+      // una partida de otra visita. En folios sin registro el conjunto está vacío
+      // y el resultado es el de siempre (el último pago del folio).
+      const deliveryPaymentIds = new Set((order.items ?? []).map((it) => it.delivery_payment_id).filter((id) => id != null));
+      const lastFreePaymentId = [...sortedPayments].reverse().find((p) => !deliveryPaymentIds.has(p.id))?.id ?? null;
       const { allocation, deuda } = presaleLineMoney(order, paymentsInRange, from);
       const folio = order.code;
       const cliente = order.customer?.name ?? "Cliente mostrador";
@@ -830,7 +834,11 @@ export function buildPresaleFolioRows(
           (() => { const d = toLocalYmd(new Date(item.delivered_at!)); return d >= from && d <= to; })();
 
         for (const payment of paymentsInRange) {
-          const estado: PresaleFolioRow["estado"] = (payment.id === lastPaymentId && deliveredInRange) ? "Liquidada" : "Apartada";
+          // El pago que liquidó ESTA partida: el de su entrega (folio entregado en
+          // dos visitas). Sin ese dato —folio anterior al registro, o entrega sin
+          // cobro— es el último pago que no liquidó OTRA entrega.
+          const liquidationPaymentId = item.delivery_payment_id ?? lastFreePaymentId;
+          const estado: PresaleFolioRow["estado"] = (payment.id === liquidationPaymentId && deliveredInRange) ? "Liquidada" : "Apartada";
           rows.push({
             productId: prodId,
             productName: prodName,

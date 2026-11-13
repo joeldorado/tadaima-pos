@@ -108,6 +108,7 @@ class PreSaleCatalog extends Model
     public function reservedCountForStore(int $storeId): int
     {
         return (int) $this->orderItems()
+            ->where('status', '!=', PreSaleOrderItem::STATUS_DELIVERED)
             ->whereHas('order', fn ($q) => $q
                 ->whereIn('status', [PreSaleOrder::STATUS_PENDING, PreSaleOrder::STATUS_READY])
                 ->where('store_id', $storeId)
@@ -146,10 +147,15 @@ class PreSaleCatalog extends Model
         return $this->reservedCountForCustomerIds($customer->sameIdentityIds());
     }
 
-    /** Items belonging to active (pending or ready) orders only. */
+    /**
+     * Partidas por entregar de folios abiertos (pending o ready). Una partida ya
+     * entregada de un folio que sigue abierto (entrega parcial) no cuenta aquí:
+     * cuenta en `deliveredOrderItems`.
+     */
     public function activeOrderItems(): HasMany
     {
         return $this->hasMany(PreSaleOrderItem::class, 'pre_sale_catalog_id')
+            ->where('status', '!=', PreSaleOrderItem::STATUS_DELIVERED)
             ->whereHas('order', fn ($q) => $q->whereIn('status', [
                 PreSaleOrder::STATUS_PENDING,
                 PreSaleOrder::STATUS_READY,
@@ -163,11 +169,16 @@ class PreSaleCatalog extends Model
             ->whereHas('order', fn ($q) => $q->where('status', '!=', PreSaleOrder::STATUS_CANCELLED));
     }
 
-    /** Items belonging to delivered orders only. */
+    /**
+     * Partidas ya entregadas al cliente. Se cuenta por PARTIDA, no por folio
+     * cerrado (2026-11-13): con entrega parcial el folio sigue en «listo» y sus
+     * piezas entregadas no aparecían como liquidadas.
+     */
     public function deliveredOrderItems(): HasMany
     {
         return $this->hasMany(PreSaleOrderItem::class, 'pre_sale_catalog_id')
-            ->whereHas('order', fn ($q) => $q->where('status', PreSaleOrder::STATUS_DELIVERED));
+            ->where('status', PreSaleOrderItem::STATUS_DELIVERED)
+            ->whereHas('order', fn ($q) => $q->where('status', '!=', PreSaleOrder::STATUS_CANCELLED));
     }
 
     // ── Computed ──────────────────────────────────────────────────────────────

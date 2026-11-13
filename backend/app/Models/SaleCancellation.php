@@ -30,12 +30,13 @@ class SaleCancellation extends Model
         'sale_id', 'pre_sale_order_id', 'mode',
         'reason_code', 'reason_text',
         'amount_refunded', 'cash_movement_id', 'cash_session_id',
-        'items_snapshot', 'cancelled_by', 'cancelled_at',
+        'items_snapshot', 'payment_snapshot', 'cancelled_by', 'cancelled_at',
     ];
 
     protected $casts = [
         'amount_refunded' => 'decimal:2',
         'items_snapshot'  => 'array',
+        'payment_snapshot' => 'array',
         'cancelled_at'    => 'datetime',
     ];
 

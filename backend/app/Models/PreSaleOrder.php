@@ -63,6 +63,11 @@ class PreSaleOrder extends Model
         return $this->hasMany(PreSaleOrderPayment::class)->latest('created_at');
     }
 
+    public function deliveries(): HasMany
+    {
+        return $this->hasMany(PreSaleDelivery::class);
+    }
+
     public function cancellations(): HasMany
     {
         return $this->hasMany(SaleCancellation::class);

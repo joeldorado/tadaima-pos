@@ -23,9 +23,16 @@
 export interface AllocationLine {
   quantity: number;
   unit_price: number;
+  /**
+   * Pago que liquidó esta línea al entregarla (entrega elegida en Caja, desde
+   * 2026-11-13). Ese pago tapa primero sus líneas. Sin el dato (folios
+   * anteriores, líneas pendientes) el reparto es el de siempre.
+   */
+  delivery_payment_id?: number | null;
 }
 
 export interface AllocationPayment {
+  id?: number;
   amount: number;
   created_at: string;
 }
@@ -57,7 +64,7 @@ export function allocatePresalePayments<P extends AllocationPayment>(
 
   for (const payment of ordered) {
     const capacity = lineTotals.map((total, i) => Math.max(0, total - paidByLine[i]!));
-    const share = splitByPiece(Math.max(0, payment.amount || 0), pieces, capacity);
+    const share = splitPayment(payment, lines, pieces, capacity);
     byPayment.set(payment, share);
     paidByLine = paidByLine.map((paid, i) => paid + share[i]!);
   }
@@ -83,6 +90,127 @@ export function sumByLine<P extends AllocationPayment>(
     for (let i = 0; i < share.length; i++) totals[i] = (totals[i] ?? 0) + share[i]!;
   }
   return totals;
+}
+
+/**
+ * Reparto de UN pago. Si el pago liquidó una entrega, primero tapa las líneas
+ * de esa entrega (lo que les faltaba) y solo el resto se reparte parejo por
+ * pieza: en un folio entregado en dos visitas, el cobro de la primera no debe
+ * aparecer abonado a la pieza que el cliente todavía no se lleva.
+ */
+function splitPayment(
+  payment: AllocationPayment,
+  lines: readonly AllocationLine[],
+  pieces: readonly number[],
+  capacity: readonly number[],
+): number[] {
+  const amount = Math.max(0, payment.amount || 0);
+  const isOwn = (line: AllocationLine) => payment.id != null && line.delivery_payment_id === payment.id;
+  if (!lines.some(isOwn)) return splitByPiece(amount, pieces, capacity);
+
+  let remaining = amount;
+  const own = lines.map((line, i) => {
+    if (!isOwn(line)) return 0;
+    const take = Math.min(capacity[i]!, remaining);
+    remaining -= take;
+    return take;
+  });
+  const rest = splitByPiece(remaining, pieces, capacity.map((cap, i) => cap - own[i]!));
+  return own.map((taken, i) => taken + rest[i]!);
+}
+
+export interface DeliveryLine extends AllocationLine {
+  /** La línea ya se entregó al cliente. */
+  delivered: boolean;
+}
+
+export interface PresaleDeliveryCharge {
+  /** Lo que falta por cobrar de cada línea (0 en las ya entregadas), en pesos con centavos exactos. */
+  pendingByLine: readonly number[];
+  /**
+   * Saldo de piezas ya entregadas que nunca se cobró (folios viejos donde se
+   * marcó «entregado» sin cobrar). Se cobra completo en la siguiente entrega.
+   */
+  oldDebt: number;
+  /** Cobro de esta entrega: lo pendiente de las líneas elegidas + la deuda vieja. */
+  charge: number;
+}
+
+/**
+ * Cuánto cobrar al entregar SOLO algunas líneas de un folio (2026-11-13).
+ *
+ * Las líneas ya entregadas se dan por pagadas completas; lo que sobra de lo
+ * pagado es el anticipo de las pendientes, parejo por pieza y con tope en el
+ * precio de cada una. El cobro de hoy es lo que les falta a las líneas que el
+ * cliente se lleva: la que se queda conserva su anticipo y su saldo.
+ *
+ * Todo se cierra en centavos enteros: elegir todas las pendientes da exacto el
+ * saldo del folio y, para cualquier selección, lo pagado después del cobro
+ * cubre lo entregado (la regla que valida el servidor).
+ *
+ * @param selected índices (posición en `lines`) de las líneas que se entregan hoy.
+ */
+export function presaleDeliveryCharge(
+  lines: readonly DeliveryLine[],
+  paid: number,
+  selected: readonly number[],
+): PresaleDeliveryCharge {
+  const totals = lines.map((l) => toCents(Math.max(0, (l.unit_price || 0) * (l.quantity || 0))));
+  const deliveredTotal = totals.reduce((sum, total, i) => sum + (lines[i]!.delivered ? total : 0), 0);
+  const pool = toCents(Math.max(0, paid || 0)) - deliveredTotal;
+
+  const pieces = lines.map((l) => (l.delivered ? 0 : Math.max(0, l.quantity || 0)));
+  const capacity = totals.map((total, i) => (lines[i]!.delivered ? 0 : total));
+  const shares = wholeCents(splitByPiece(Math.max(0, pool), pieces, capacity), Math.max(0, pool), capacity);
+
+  const pending = totals.map((total, i) => (lines[i]!.delivered ? 0 : Math.max(0, total - shares[i]!)));
+  const oldDebt = Math.max(0, -pool);
+  const chosen = new Set(selected);
+  const charge = pending.reduce((sum, cents, i) => sum + (chosen.has(i) ? cents : 0), 0)
+    + (chosen.size > 0 ? oldDebt : 0);
+
+  return {
+    pendingByLine: pending.map(fromCents),
+    oldDebt: fromCents(oldDebt),
+    charge: fromCents(charge),
+  };
+}
+
+/**
+ * Cobro de las partidas de un folio que siguen en el carrito de Caja: lo que
+ * les falta a esas partidas más la deuda vieja del folio. Sin partidas no se
+ * cobra nada (el folio se descarga de la mesa).
+ */
+export function chargeForLoadedLines(pendings: readonly number[], oldDebt: number): number {
+  if (pendings.length === 0) return 0;
+  const cents = pendings.reduce((sum, pending) => sum + toCents(Math.max(0, pending || 0)), 0);
+  return fromCents(cents + toCents(Math.max(0, oldDebt || 0)));
+}
+
+const toCents = (amount: number): number => Math.round(amount * 100);
+const fromCents = (cents: number): number => cents / 100;
+
+/**
+ * Pasa un reparto en centavos fraccionados a centavos enteros sin perder ni
+ * inventar dinero: redondea hacia abajo y entrega los centavos sobrantes a las
+ * líneas con mayor fracción que todavía tengan capacidad.
+ */
+function wholeCents(shares: readonly number[], total: number, capacity: readonly number[]): number[] {
+  const floors = shares.map((share) => Math.floor(share + EPSILON));
+  let leftover = Math.round(Math.min(total, shares.reduce((sum, share) => sum + share, 0)))
+    - floors.reduce((sum, cents) => sum + cents, 0);
+  const byFraction = shares
+    .map((share, i) => ({ i, fraction: share - floors[i]! }))
+    .sort((a, b) => b.fraction - a.fraction || a.i - b.i);
+
+  const result = [...floors];
+  for (const { i } of byFraction) {
+    if (leftover <= 0) break;
+    if (capacity[i]! > 0 && result[i]! >= capacity[i]!) continue;
+    result[i] = result[i]! + 1;
+    leftover -= 1;
+  }
+  return result;
 }
 
 /**

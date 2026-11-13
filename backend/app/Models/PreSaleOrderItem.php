@@ -14,7 +14,7 @@ class PreSaleOrderItem extends Model
 
     protected $fillable = [
         'pre_sale_order_id', 'pre_sale_catalog_id', 'product_id',
-        'quantity', 'price_level', 'unit_price', 'cost', 'status', 'delivered_at',
+        'quantity', 'price_level', 'unit_price', 'cost', 'status', 'delivered_at', 'delivery_id',
     ];
 
     protected $casts = [
@@ -41,6 +41,12 @@ class PreSaleOrderItem extends Model
     public function product(): BelongsTo
     {
         return $this->belongsTo(Product::class);
+    }
+
+    /** Entrega en la que se llevó esta partida (null = pendiente o folio anterior al registro). */
+    public function delivery(): BelongsTo
+    {
+        return $this->belongsTo(PreSaleDelivery::class, 'delivery_id');
     }
 
     // ── Computed ──────────────────────────────────────────────────────────────
