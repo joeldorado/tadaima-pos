@@ -30,7 +30,7 @@ use Tests\TestCase;
  *  - Dinero reversado crea cash_movement type='salida'.
  *  - Snapshot inmutable preserva cost_at_sale (ADR-015).
  *  - sale.status/cancellation_status reflejan el cambio.
- *  - Liquidation rollback: preventa delivered → ready, items vuelven a pending.
+ *  - Liquidation rollback: preventa delivered → ready, items vuelven a pending (sin tocar stock).
  */
 class SaleCancellationTest extends TestCase
 {
@@ -238,7 +238,7 @@ class SaleCancellationTest extends TestCase
         $this->service->cancelSale($sale->refresh(), [], SaleCancellation::REASON_OTRO, null, $this->admin, $this->session->id);
     }
 
-    public function test_liquidation_rollback_reverts_delivered_to_ready_and_returns_stock(): void
+    public function test_liquidation_rollback_reverts_delivered_to_ready_without_touching_stock(): void
     {
         $product = $this->makeProduct(cost: 70.0);
         Inventory::create(['product_id' => $product->id, 'warehouse_id' => $this->warehouse->id, 'quantity' => 10]);
@@ -297,9 +297,11 @@ class SaleCancellationTest extends TestCase
         $this->assertNull($item->delivered_at);
         $this->assertSame('pending', $item->status);
 
-        // Stock restaurado (+ qty=2)
+        // El stock NO se mueve (2026-11-13): entregar una preventa nunca lo
+        // descuenta (PreSalePartialDeliveryTest::test_entregar_no_mueve_el_inventario),
+        // así que sumarlo al revertir inflaba el inventario.
         $stockAfter = (float) Inventory::where('product_id', $product->id)->value('quantity');
-        $this->assertEquals($stockBefore + 2, $stockAfter, 'inventory +2 por items reversados');
+        $this->assertEquals($stockBefore, $stockAfter, 'revertir una preventa no toca inventario');
 
         // Reverso solo del payment de liquidación (300)
         $this->assertEquals(300.0, (float) $cancellation->amount_refunded);

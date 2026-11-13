@@ -983,6 +983,10 @@ export interface PreSaleOrderItem {
   subtotal: number
   status: 'pending' | 'delivered'
   delivered_at: string | null
+  /** Entrega (visita) en la que el cliente se llevó la partida. Null en pendientes y en folios anteriores a 2026-11-13. */
+  delivery_id?: number | null
+  /** Pago que liquidó esa entrega (null si fue sin cobro). El reporte reparte ese pago primero a sus partidas. */
+  delivery_payment_id?: number | null
   created_at: string
   /** Costo snapshot (ADR-015). Solo admin (null para gerente/cajero). Para utilidad real de preventas. */
   cost?: number | null
@@ -1096,6 +1100,13 @@ export interface UpdatePreSaleOrderStatusInput {
   status: 'ready' | 'delivered' | 'expired' | 'cancelled'
   pickup_deadline?: string
   notes?: string
+  /**
+   * Entrega elegida (solo con `status: 'delivered'`, 2026-11-13): las partidas
+   * que el cliente se lleva hoy. Sin esto se entregan todas las que ya llegaron.
+   */
+  item_ids?: number[]
+  /** Cobro de esa entrega, en la misma llamada (si falla la entrega, el pago no queda). */
+  payment?: { amount: number; payment_method_id?: number }
 }
 
 // ─── Manga / Librería ─────────────────────────────────────────────────────────

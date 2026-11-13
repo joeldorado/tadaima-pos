@@ -8,7 +8,7 @@
 > Detalle adicional: [`CLAUDE.md`](CLAUDE.md) (comandos y arquitectura del frontend) y
 > [`backend/AGENTS.md`](backend/AGENTS.md) (API, ADRs y referencia de endpoints).
 >
-> Última revisión: 2026-11-10.
+> Última revisión: 2026-11-13.
 
 ---
 
@@ -258,6 +258,38 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   cobrados **no bloquean**, se avisa que ese dinero NO se devuelve solo (para devolverlo se cancela
   el folio desde Caja). El flag `BLOCK_WHEN_MONEY` del servicio cambia esa regla. El modal nuevo
   ignora el "No mostrar de nuevo" viejo (`td_confirm_skip_catalog_cancel`).
+
+- **Entrega parcial (2026-11-13, caso: folio de 3 productos y llegaron 2):** en Caja el cajero carga el
+  folio y QUITA del carrito las piezas que el cliente no se lleva hoy; se cobra solo lo que les falta a las
+  que sí se lleva y la pendiente conserva su anticipo y su saldo. El anticipo se reparte parejo por pieza
+  (`lib/presaleAllocation.ts` → `presaleDeliveryCharge`, en centavos enteros). Cobro y entrega viajan en UNA
+  llamada: `PATCH /pre-sale-orders/{id}/status` con `item_ids` + `payment` (`PreSaleOrderService::liquidate`);
+  si la entrega no procede, el pago tampoco queda. Invariante del servidor: **pagado ≥ Σ total de partidas
+  entregadas** (±$0.01). Cada entrega queda en `pre_sale_deliveries` (su pago en `payment_id`, null = sin
+  cobro) y las partidas apuntan con `delivery_id`. Sin `item_ids`/`payment` el endpoint hace lo de siempre
+  (app móvil): entrega todo lo llegado, sin validar dinero ni registrar entrega. El folio cierra al entregar
+  la última partida. El botón «✓ Entregado» por línea ya no existe en Caja (entregaba sin cobrar).
+- **Revertir una entrega de preventa (2026-11-13).** `POST /pre-sale-orders/{id}/cancel` con
+  `liquidation_rollback` deshace la ÚLTIMA entrega del folio y SU pago; nunca el anticipo (antes borraba «el
+  último pago», que con una liquidación de $0 era el anticipo). Vale para folio liquidado o con entrega
+  parcial; dos entregas se revierten de la más nueva a la más vieja. Folios anteriores al registro: el último
+  pago cuenta como liquidación salvo que sea el «Anticipo inicial» (entrega sin cobro); no se comparan fechas
+  (el pago lo fecha la base y la entrega la app). Caja → historial vuelve a mostrar el botón en folios
+  liquidados (del 2026-06-13 a esta fecha no lo tenían). Con **tarjeta** nada se revierte (regla de siempre).
+  - **Cancelar el folio completo** (`full`) se bloquea mientras tenga partidas entregadas: primero se
+    revierten las entregas.
+  - **Las preventas no tocan inventario:** ni entregar ni revertir mueven stock (antes revertir SUMABA stock
+    que la entrega nunca restó). No vuelvas a meter `restoreInventory` en preventas.
+  - Una partida entregada con cobro desde Caja no se regresa a pendiente con el endpoint viejo por partida
+    (`PATCH …/items/{id}/deliver` → 422): se revierte la entrega.
+  - El pago borrado por una reversa deja su snapshot (monto, método, cajero, fecha) en
+    `sale_cancellations.payment_snapshot`, y la reversa queda en el historial del folio (`pre_sale_order_logs`).
+  - **Reporte:** una partida trae `delivery_payment_id` (el pago que la liquidó); `allocatePresalePayments`
+    reparte ese pago primero a sus partidas. Sin el dato (todo lo anterior) el reparto es idéntico al de antes.
+  - Pendiente conocido: el Reporte del Día de Ventas (`SalesPage.tsx`) clasifica el folio entero por su
+    estado, así que una entrega parcial sale como «anticipo» hasta que el folio cierra (los totales cuadran).
+    El ticket no imprime «queda N pendiente». Reversas de errores de usuario (anular un abono, reactivar un
+    folio cancelado, deshacer «Llegó») están programadas en la rama `feat/preventas-reversas`, sin subir.
 
 ### Actividad y auditoría (2026-10-29)
 - **Administración → Actividad** (solo admin, `/admin?tab=actividad`): feed unificado de

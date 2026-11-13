@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allocatePresalePayments, sumByLine } from "./presaleAllocation";
+import { allocatePresalePayments, chargeForLoadedLines, presaleDeliveryCharge, sumByLine } from "./presaleAllocation";
 
 // Reparto de los pagos de un folio entre sus líneas (2026-11-01). Los pagos se
 // guardan por folio, no por producto: la tienda aparta a $200 por pieza, y el
@@ -121,5 +121,139 @@ describe("sumByLine", () => {
     expect(sumByLine(byPayment, [previo])).toEqual([100, 100, 100]);
     expect(sumByLine(byPayment, [previo, enRango])).toEqual([300, 300, 300]);
     expect(sumByLine(byPayment, [])).toEqual([0, 0, 0]);
+  });
+});
+
+// Entrega parcial (2026-11-13). Caso de tienda: un folio de 3 productos y solo
+// llegaron 2. Caja cobra lo que falta de las piezas que el cliente se lleva; la
+// que se queda conserva su anticipo.
+
+const dline = (unit_price: number, delivered = false, quantity = 1) => ({ quantity, unit_price, delivered });
+
+describe("presaleDeliveryCharge — cobro de una entrega parcial", () => {
+  const folio = [dline(1000), dline(500), dline(300)];
+
+  it("anticipo $600 en 3 piezas, se lleva 2: cobra lo que les falta a esas 2", () => {
+    const result = presaleDeliveryCharge(folio, 600, [0, 1]);
+
+    expect(result.pendingByLine).toEqual([800, 300, 100]);
+    expect(result.charge).toBe(1100);
+    expect(result.oldDebt).toBe(0);
+  });
+
+  it("cuando llega la tercera, cobra solo su saldo", () => {
+    const afterFirstVisit = [dline(1000, true), dline(500, true), dline(300)];
+    const result = presaleDeliveryCharge(afterFirstVisit, 1700, [2]);
+
+    expect(result.pendingByLine).toEqual([0, 0, 100]);
+    expect(result.charge).toBe(100);
+  });
+
+  it("llevarse todas las pendientes cobra exacto el saldo del folio", () => {
+    expect(presaleDeliveryCharge(folio, 600, [0, 1, 2]).charge).toBe(1200);
+  });
+
+  it("no pierde centavos: tres piezas de $333.33 con $100 de anticipo", () => {
+    const lines = [dline(333.33), dline(333.33), dline(333.33)];
+    const all = presaleDeliveryCharge(lines, 100, [0, 1, 2]);
+    const two = presaleDeliveryCharge(lines, 100, [0, 1]);
+
+    expect(all.charge).toBe(899.99);
+    expect(all.pendingByLine.reduce((a, b) => a + b, 0)).toBeCloseTo(899.99, 2);
+    // Lo pagado tras cobrar 2 cubre esas 2 (regla que valida el servidor).
+    expect(100 + two.charge).toBeGreaterThanOrEqual(666.66);
+  });
+
+  it("el anticipo que no cabe en una pieza barata pasa a las otras", () => {
+    // $600 en 3 piezas serían $200 c/u, pero la de $100 solo admite $100.
+    const result = presaleDeliveryCharge([dline(100), dline(1000), dline(1000)], 600, [0]);
+
+    expect(result.pendingByLine).toEqual([0, 750, 750]);
+    expect(result.charge).toBe(0);
+  });
+
+  it("folio ya pagado completo: no cobra nada", () => {
+    expect(presaleDeliveryCharge(folio, 1800, [0, 1]).charge).toBe(0);
+  });
+
+  it("sin anticipo cobra el precio completo de lo que se lleva", () => {
+    expect(presaleDeliveryCharge(folio, 0, [1]).charge).toBe(500);
+  });
+
+  it("una línea de 2 piezas pesa doble en el reparto del anticipo", () => {
+    const result = presaleDeliveryCharge([dline(550, false, 2), dline(1100)], 600, [1]);
+
+    expect(result.pendingByLine).toEqual([700, 900]);
+    expect(result.charge).toBe(900);
+  });
+
+  it("folio viejo con una pieza entregada sin cobrar: la deuda vieja se cobra en la siguiente entrega", () => {
+    // A ($1,000) se marcó entregada con solo $600 pagados: faltan $400 de A.
+    const result = presaleDeliveryCharge([dline(1000, true), dline(500)], 600, [1]);
+
+    expect(result.oldDebt).toBe(400);
+    expect(result.pendingByLine).toEqual([0, 500]);
+    expect(result.charge).toBe(900);
+  });
+
+  it("sin líneas elegidas no cobra nada", () => {
+    expect(presaleDeliveryCharge(folio, 600, []).charge).toBe(0);
+  });
+});
+
+describe("allocatePresalePayments — pagos ligados a una entrega", () => {
+  const deliveredLine = (quantity: number, unit_price: number, delivery_payment_id: number | null) =>
+    ({ quantity, unit_price, delivery_payment_id });
+  const paid = (id: number, amount: number, created_at: string) => ({ id, amount, created_at });
+
+  it("el cobro de la primera entrega no se abona a la pieza que sigue pendiente", () => {
+    const lines = [deliveredLine(1, 1000, 2), deliveredLine(1, 500, 2), deliveredLine(1, 300, null)];
+    const payments = [paid(1, 600, T1), paid(2, 1100, T2)];
+    const result = allocatePresalePayments(lines, payments);
+
+    expect([...result.byPayment.get(payments[0]!)!]).toEqual([200, 200, 200]);
+    expect([...result.byPayment.get(payments[1]!)!]).toEqual([800, 300, 0]);
+    expect(result.pendingByLine).toEqual([0, 0, 100]);
+  });
+
+  it("la segunda entrega termina de pagar la pieza que faltaba", () => {
+    const lines = [deliveredLine(1, 1000, 2), deliveredLine(1, 500, 2), deliveredLine(1, 300, 3)];
+    const payments = [paid(1, 600, T1), paid(2, 1100, T2), paid(3, 100, T3)];
+    const result = allocatePresalePayments(lines, payments);
+
+    expect([...result.byPayment.get(payments[2]!)!]).toEqual([0, 0, 100]);
+    expect(result.pendingByLine).toEqual([0, 0, 0]);
+  });
+
+  it("sin el dato de entrega reparte igual que siempre (folios anteriores)", () => {
+    const withIds = allocatePresalePayments(
+      [line(1, 1000), line(1, 300)],
+      [paid(1, 200, T1), paid(2, 1100, T2)],
+    );
+
+    expect(withIds.paidByLine).toEqual([1000, 300]);
+    expect([...withIds.byPayment.values()].map((share) => [...share])).toEqual([[100, 100], [900, 200]]);
+  });
+});
+
+describe("chargeForLoadedLines — cobro de las partidas que quedan en el carrito", () => {
+  it("suma lo pendiente de las partidas presentes", () => {
+    expect(chargeForLoadedLines([800, 300], 0)).toBe(1100);
+  });
+
+  it("al quitar una partida el cobro baja a lo de las que quedan", () => {
+    expect(chargeForLoadedLines([800], 0)).toBe(800);
+  });
+
+  it("suma la deuda vieja del folio mientras quede alguna partida", () => {
+    expect(chargeForLoadedLines([500], 400)).toBe(900);
+  });
+
+  it("sin partidas no cobra nada, ni la deuda vieja", () => {
+    expect(chargeForLoadedLines([], 400)).toBe(0);
+  });
+
+  it("no arrastra errores de punto flotante", () => {
+    expect(chargeForLoadedLines([0.1, 0.2], 0)).toBe(0.3);
   });
 });

@@ -30,7 +30,7 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { PaymentRestrictionBadge, getPayRestriction } from "@/components/ui/PaymentRestrictionBadge";
 import { SingleDatePicker } from "@/components/ui/SingleDatePicker";
 import { toast } from "sonner";
-import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, forceCloseSession, getActiveSession, createLayaway, getCustomers, createCustomer, refreshMember, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, addPreSaleOrderPayment, updatePreSaleOrderStatus, markPreSaleOrderItemDelivered, getPreSaleOrders, getSales, getProductsLight, getCategories, storageUrl, sendPreSaleAssignAlert, getCatalogCustomerUsage } from "@tadaima/api";
+import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, forceCloseSession, getActiveSession, createLayaway, getCustomers, createCustomer, refreshMember, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, updatePreSaleOrderStatus, getPreSaleOrders, getSales, getProductsLight, getCategories, storageUrl, sendPreSaleAssignAlert, getCatalogCustomerUsage } from "@tadaima/api";
 import type { OpenSessionConflict } from "@tadaima/api";
 import type { CashSessionReport } from "@tadaima/api";
 import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
@@ -87,6 +87,7 @@ import { useActiveStore } from "@/contexts/StoreContext";
 import { useAuth } from "@tadaima/auth";
 import { isAdmin as isAdminRole } from "@/lib/permisos";
 import { cartUnitLimit, storeAvailability } from "@/lib/presaleAvailability";
+import { chargeForLoadedLines, presaleDeliveryCharge } from "@/lib/presaleAllocation";
 import { CancelTicketModal } from "@/components/cancel/CancelTicketModal";
 import { CorrectPaymentModal } from "@/components/sales/CorrectPaymentModal";
 import { motion as Motion, AnimatePresence } from "motion/react";
@@ -175,6 +176,9 @@ interface CartItem {
   isFromPreSale?: boolean;
   preSaleOrderItemId?: number; // id del PreSaleOrderItem en backend
   preSaleItemDelivered?: boolean;
+  /** Lo que falta por cobrar de esta partida del folio cargado (entrega parcial,
+   *  2026-11-13). Quitar la línea = «no se entrega hoy» y baja el cobro. */
+  preSalePending?: number;
   sellingCatalogId?: number; // ID del PreSaleCatalog que se está reservando
   unitLimit?: number; // límite de unidades por cliente (catálogo.limit_per_customer)
   syncError?: boolean; // true si addDraftItem/updateDraftItem falló — bloquea checkout
@@ -204,6 +208,18 @@ function lineAdjustmentPayload(ci: Pick<CartItem, "discount" | "surcharge" | "is
 /** Historial sin data todavía: referencia estable (ver historialEntries). */
 const EMPTY_HISTORIAL: HistorialEntry[] = [];
 
+/**
+ * Cobro de liquidación de las partidas de un folio que siguen en el carrito.
+ * Un carrito guardado antes de la entrega parcial no trae `preSalePending`:
+ * cae a precio × cantidad, que era el saldo prorrateado de esa línea.
+ */
+function presaleLoadedCharge(lines: readonly CartItem[], oldDebt: number): number {
+  return chargeForLoadedLines(
+    lines.map(i => i.preSalePending ?? (i.product.price_a || 0) * i.quantity),
+    oldDebt,
+  );
+}
+
 interface Mesa {
   id: string;
   name: string;
@@ -226,6 +242,9 @@ interface Mesa {
   absorbCommission?: boolean;
   loadedPreSaleOrderId?: number; // folio de preventa cargado para liquidar en caja
   loadedPreSaleOrderCode?: string; // código PREV-XXXXX del folio cargado, para ticket
+  /** Saldo de piezas ya entregadas que nunca se cobró (folios viejos): se cobra
+   *  completo en la siguiente entrega, junto con lo de las piezas de hoy. */
+  loadedPreSaleOldDebt?: number | undefined;
   // Lo que el cliente entregó en esta caja. Persiste por mesa: al cambiar entre
   // Caja 1/2/3 cada una recuerda su propio efectivo recibido (fix 2026-05-27).
   cashReceived?: string;
@@ -1980,7 +1999,21 @@ export function SellPage() {
    */
   const removeFromCart = (lineId: string) => {
     const mesaId = activeMesa.id;
-    updMesa(mesaId, m => ({ ...m, items: m.items.filter(i => i.lineId !== lineId) }));
+    updMesa(mesaId, m => {
+      const removed = m.items.find(i => i.lineId === lineId);
+      const items = m.items.filter(i => i.lineId !== lineId);
+      if (!removed?.isFromPreSale || !m.loadedPreSaleOrderId) return { ...m, items };
+
+      // Partida de un folio cargado: quitarla = «no se entrega hoy». El cobro
+      // baja a lo que falta de las partidas que quedan; la que se quita conserva
+      // su anticipo y su saldo en el folio. Sin partidas, el folio se descarga.
+      const remaining = items.filter(i => i.isFromPreSale);
+      if (remaining.length === 0) {
+        const { loadedPreSaleOrderId: _orderId, loadedPreSaleOrderCode: _orderCode, ...unloaded } = m;
+        return { ...unloaded, items, depositAmount: 0, loadedPreSaleOldDebt: undefined };
+      }
+      return { ...m, items, depositAmount: presaleLoadedCharge(remaining, m.loadedPreSaleOldDebt ?? 0) };
+    });
   };
 
   /**
@@ -2387,7 +2420,7 @@ export function SellPage() {
       ...m, items: [], customerId: undefined, customerName: undefined,
       customerPhone: "", customerEmail: "", customerIsSocio: false, customerSocioEligible: false, isNewCustomer: false, depositAmount: 0,
       absorbCommission: true,
-      isPreventa: false, loadedPreSaleOrderId: undefined, loadedPreSaleOrderCode: undefined,
+      isPreventa: false, loadedPreSaleOrderId: undefined, loadedPreSaleOrderCode: undefined, loadedPreSaleOldDebt: undefined,
       cashReceived: "",
       cashReceivedUsd: "",
       transferAmount: "",
@@ -2749,15 +2782,16 @@ export function SellPage() {
   // Mixed cart (catálogo + regular sin modo preventa explícito): cobra regular + anticipos.
   const currentPayAmount = useMemo(() => {
     if (activeMesa.loadedPreSaleOrderId) {
-      // Items de preventa ya vienen con precio proporcional al saldo (ratio del
-      // balance → precios con decimales repetidos). Aquí se suma RAW, sin el
-      // redondeo por línea de saleCalc: el pago real que se postea al backend
-      // es order.balance, y redondear por línea puede mostrar/gatear 1¢ menos
-      // de lo que se cobra (review Fase 0 2026-07-14). Paridad exacta con el
-      // math previo: subtotal crudo − descuento.
-      const rawSubtotal = activeMesa.items.reduce((s, i) => s + priceOf(i) * i.quantity, 0);
+      // Folio cargado: se cobra lo que falta de las partidas que siguen en el
+      // carrito (`depositAmount`, que se recalcula al quitar una) más lo regular.
+      // No se suma precio × cantidad de las líneas del folio: ese es solo el
+      // desglose en pantalla y el redondeo por línea podía gatear 1¢ distinto de
+      // lo que de verdad se cobra (review Fase 0 2026-07-14).
+      const regularSubtotal = activeMesa.items
+        .filter(i => !i.isFromPreSale)
+        .reduce((s, i) => s + priceOf(i) * i.quantity, 0);
       // Clamp ≥0: un descuento ≥ subtotal no debe mostrar/gatear un total negativo.
-      return Math.max(0, rawSubtotal - discountAmt + surchargeAmt);
+      return (activeMesa.depositAmount || 0) + Math.max(0, regularSubtotal - discountAmt + surchargeAmt);
     }
     if (activeMesa.isPreventa) {
       // Modo preventa explícito: solo se cobran los anticipos.
@@ -2773,7 +2807,7 @@ export function SellPage() {
       .filter(i => i.sellingCatalogId != null)
       .reduce((s, i) => s + (i.depositAmount ?? 0), 0);
     return computeRegularChargeAmount({ regularSubtotal, catalogDeposit, discountAmt, surchargeAmt });
-  }, [activeMesa.loadedPreSaleOrderId, activeMesa.isPreventa, activeMesa.items, totalDeposit, totalBeforeComm, discountAmt, surchargeAmt, priceOf]);
+  }, [activeMesa.loadedPreSaleOrderId, activeMesa.isPreventa, activeMesa.items, activeMesa.depositAmount, totalDeposit, totalBeforeComm, discountAmt, surchargeAmt, priceOf]);
     
   const totalUSD       = tc > 0 ? currentPayAmount / tc : 0;
 
@@ -2993,21 +3027,28 @@ export function SellPage() {
 
     const levelMap: Record<number, PriceLevel> = { 1: "a", 2: "b", 3: "c", 4: "d", 5: "e" };
 
-    const toCartItem = (it: PreSaleOrderItem, delivered: boolean): CartItem => ({
-      lineId: newLineId(),
-      product: {
-        id: String(it.product_id ?? `catalog-${it.pre_sale_catalog_id}`),
-        name: it.catalog?.product_name ?? "Producto preventa",
-        sku: "",
-        category: "",
-        price_a: it.unit_price,
-      },
-      quantity: it.quantity,
-      priceLevel: levelMap[it.price_level] ?? "a",
-      isFromPreSale: true,
-      preSaleOrderItemId: it.id,
-      preSaleItemDelivered: delivered,
-    });
+    const toCartItem = (it: PreSaleOrderItem, pending: number): CartItem => {
+      const lineTotal = it.unit_price * it.quantity;
+      return {
+        lineId: newLineId(),
+        product: {
+          id: String(it.product_id ?? `catalog-${it.pre_sale_catalog_id}`),
+          name: it.catalog?.product_name ?? "Producto preventa",
+          sku: "",
+          category: "",
+          // El precio que se ve en la línea es lo que FALTA por cobrar de la partida.
+          price_a: it.quantity > 0 ? pending / it.quantity : pending,
+        },
+        quantity: it.quantity,
+        priceLevel: levelMap[it.price_level] ?? "a",
+        isFromPreSale: true,
+        preSaleOrderItemId: it.id,
+        preSaleItemDelivered: false,
+        preSalePending: pending,
+        // Anticipo ya abonado a esta partida (solo display).
+        depositAmount: Math.round(Math.max(0, lineTotal - pending) * 100) / 100,
+      };
+    };
 
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const rawPending = order.items.filter(it =>
@@ -3015,7 +3056,8 @@ export function SellPage() {
       it.catalog?.status === 'arrived' &&
       !(it.catalog?.pickup_deadline && new Date(it.catalog.pickup_deadline) < today)
     );
-    const deliveredItems: CartItem[] = order.items.filter(it => it.status === 'delivered').map(it => toCartItem(it, true));
+    const alreadyDelivered = order.items.filter(it => it.status === 'delivered').length;
+    const stillOnTheWay = order.items.filter(it => it.status !== 'delivered' && it.catalog?.status !== 'arrived').length;
 
     // Candado de costo: liquidar CONGELA el costo de la partida. Sin costo real
     // (null o 0) el reporte mostraría toda la venta como utilidad. Se corta aquí
@@ -3046,12 +3088,13 @@ export function SellPage() {
       })
     );
 
-    const itemsWithStock = stockChecks.filter(s => s.hasStock).map(s => toCartItem(s.item, false));
-    const skippedCount = stockChecks.filter(s => !s.hasStock).length;
-    const preSaleItems = [...itemsWithStock, ...deliveredItems];
+    const deliverable = stockChecks.filter(s => s.hasStock).map(s => s.item);
+    const skippedCount = stockChecks.length - deliverable.length;
 
-    if (!preSaleItems.length) {
-      toast.error("No hay stock disponible en esta tienda para esta preventa");
+    if (!deliverable.length) {
+      toast.error(rawPending.length > 0
+        ? "No hay stock disponible en esta tienda para esta preventa"
+        : "Este folio no tiene productos por entregar todavía");
       return;
     }
 
@@ -3059,29 +3102,16 @@ export function SellPage() {
       toast.warning(`${skippedCount} producto(s) sin stock en esta tienda — no se agregaron a la venta`);
     }
 
-    const balance = order.balance ?? order.total ?? 0;
-
-    // Distribute balance proportionally across PENDING items; delivered show at $0
-    const pendingTotal = itemsWithStock.reduce((s, i) => s + (i.product.price_a || 0) * i.quantity, 0);
-    const ratio = pendingTotal > 0 ? balance / pendingTotal : 1;
-    const round2 = (n: number) => Math.round(n * 100) / 100;
-    const balancedItems: CartItem[] = preSaleItems.map(i => {
-      const origLineTotal = (i.product.price_a || 0) * i.quantity;
-      const delivered = i.preSaleItemDelivered;
-      const saldoShare = delivered ? 0 : origLineTotal * ratio;
-      // Anticipo ya pagado (share por línea): total original − saldo restante.
-      // Invariante: depositAmount + lineTotal(escalado) = total original.
-      // Es SOLO display; el cobro de liquidación usa activeMesa.depositAmount.
-      const paidShare = round2(Math.max(0, origLineTotal - saldoShare));
-      return {
-        ...i,
-        depositAmount: paidShare,
-        product: {
-          ...i.product,
-          price_a: delivered ? 0 : (i.product.price_a || 0) * ratio,
-        },
-      };
-    });
+    // Entrega parcial (2026-11-13): cada partida entra con lo que LE falta por
+    // cobrar (anticipo parejo por pieza), no con el saldo de todo el folio. Las
+    // que no llegan o se quitan del carrito conservan su anticipo y su saldo.
+    const { pendingByLine, oldDebt } = presaleDeliveryCharge(
+      order.items.map(it => ({ quantity: it.quantity, unit_price: it.unit_price, delivered: it.status === 'delivered' })),
+      order.paid_amount ?? 0,
+      [],
+    );
+    const preSaleItems = deliverable.map(it => toCartItem(it, pendingByLine[order.items!.indexOf(it)] ?? 0));
+    const balance = presaleLoadedCharge(preSaleItems, oldDebt);
 
     // Política: liquidación de preventa no se cobra con Tarjeta. Si la mesa
     // estaba en Tarjeta, forzar Efectivo + avisar.
@@ -3096,9 +3126,10 @@ export function SellPage() {
       ...m,
       paymentMethod: m.paymentMethod === "Tarjeta" ? "Efectivo" : m.paymentMethod,
       ...(m.paymentMethod === "Tarjeta" ? { selectedTerminalId: undefined } : {}),
-      items: [...balancedItems, ...m.items.filter(i => !i.isFromPreSale)],
+      items: [...preSaleItems, ...m.items.filter(i => !i.isFromPreSale)],
       loadedPreSaleOrderId: order.id,
       loadedPreSaleOrderCode: order.code,
+      loadedPreSaleOldDebt: oldDebt > 0 ? oldDebt : undefined,
       depositAmount: balance,
       customerId: order.customer ? String(order.customer.id) : m.customerId,
       customerName: order.customer?.name ?? m.customerName,
@@ -3108,7 +3139,17 @@ export function SellPage() {
 
     setShowPreSalesModal(false);
     setFolioInput("");
-    toast.success(`Preventa ${order.code} cargada · Saldo: ${fmt(balance)}`);
+    const notes = [
+      alreadyDelivered > 0 ? `${alreadyDelivered} ya entregado(s)` : null,
+      stillOnTheWay > 0 ? `${stillOnTheWay} en camino` : null,
+      oldDebt > 0 ? `incluye ${fmt(oldDebt)} de una entrega anterior sin cobrar` : null,
+    ].filter(Boolean);
+    toast.success(
+      `Preventa ${order.code} cargada · Por cobrar: ${fmt(balance)}${notes.length ? ` · ${notes.join(" · ")}` : ""}`,
+      preSaleItems.length > 1
+        ? { description: "Si el cliente no se lleva alguna pieza hoy, quítala del carrito: conserva su anticipo y queda pendiente.", duration: 7000 }
+        : undefined,
+    );
   };
 
   // Adds a catalog item to the cart for reservation. Creates the PreSaleOrder at checkout.
@@ -3871,7 +3912,11 @@ export function SellPage() {
       const priceLevelMap: Record<PriceLevel, 1 | 2 | 3 | 4 | 5> = { a: 1, b: 2, c: 3, d: 4, e: 5 };
 
       // Split en 3 grupos: items a liquidar / productos regulares / catálogos de preventa nueva
-      const liquidationItems = activeMesa.items.filter(i => i.isFromPreSale);
+      // Solo las partidas que el cliente se lleva HOY: las que siguen en el carrito.
+      const liquidationItems = activeMesa.items.filter(i => i.isFromPreSale && !i.preSaleItemDelivered);
+      const liquidationItemIds = liquidationItems
+        .map(i => i.preSaleOrderItemId)
+        .filter((id): id is number => typeof id === "number");
       const newCatalogItems  = activeMesa.items.filter(i => i.sellingCatalogId != null);
       const regularItems     = activeMesa.items.filter(i => !i.isFromPreSale && i.sellingCatalogId == null);
 
@@ -3962,19 +4007,22 @@ export function SellPage() {
           prependPreSaleOrderToCaches(queryClient, newOrder, activeStore.id);
         }
 
-        // 3. Liquidar la preventa cargada (al final → si algo trona arriba, queda sin liquidar)
-        if (liquidationAmount > 0) {
-          await addPreSaleOrderPayment(activeMesa.loadedPreSaleOrderId, {
-            amount: liquidationAmount,
-            payment_method_id: payMethodId,
-          });
-        }
-        const deliveredOrder = await updatePreSaleOrderStatus(activeMesa.loadedPreSaleOrderId, { status: "delivered" });
-        // Liquidación visible al instante: el folio cacheado pasa a delivered
-        // (saldo 0) sin esperar el refetch. Solo copiamos los computados si el
-        // endpoint los trae (dependen de relaciones cargadas).
-        patchPreSaleOrderInCaches(queryClient, activeMesa.loadedPreSaleOrderId, {
+        // 3. Entregar las partidas del folio y cobrar lo que les falta, en UNA
+        // llamada (2026-11-13): si la entrega no procede, el pago tampoco queda.
+        // Va al final → si algo truena arriba, el folio queda sin tocar.
+        const deliveredOrder = await updatePreSaleOrderStatus(activeMesa.loadedPreSaleOrderId, {
           status: "delivered",
+          ...(liquidationItemIds.length > 0 ? { item_ids: liquidationItemIds } : {}),
+          ...(liquidationAmount > 0 ? { payment: { amount: liquidationAmount, payment_method_id: payMethodId } } : {}),
+        });
+        // Entrega parcial: el folio sigue en «listo» con lo que falta por entregar.
+        const pendingAfter = (deliveredOrder?.items ?? []).filter(it => it.status !== "delivered").length;
+        const isPartialDelivery = deliveredOrder?.status !== "delivered";
+        // Visible al instante con lo que devolvió el servidor, sin esperar el refetch.
+        patchPreSaleOrderInCaches(queryClient, activeMesa.loadedPreSaleOrderId, {
+          status: deliveredOrder?.status ?? "delivered",
+          ...(deliveredOrder?.items ? { items: deliveredOrder.items } : {}),
+          ...(deliveredOrder?.payments ? { payments: deliveredOrder.payments } : {}),
           ...(deliveredOrder?.paid_amount != null ? { paid_amount: deliveredOrder.paid_amount } : {}),
           balance: deliveredOrder?.balance ?? 0,
         });
@@ -3986,6 +4034,7 @@ export function SellPage() {
         const customerEmailSnap  = activeMesa.customerEmail;
         const payMethodSnap      = activeMesa.paymentMethod;
         const liquidatedCodeSnap = activeMesa.loadedPreSaleOrderCode;
+        const oldDebtSnap        = liquidationItems.length > 0 ? (activeMesa.loadedPreSaleOldDebt ?? 0) : 0;
         const cashReceivedUsdSnap = usdAppliedRef.current ? (parseFloat(cashReceivedUsd) || 0) : 0;
         const cashReceivedSnap    = (parseFloat(cashReceived) || 0) + cashReceivedUsdSnap * tc;
 
@@ -4007,7 +4056,16 @@ export function SellPage() {
             name: liquidatedCodeSnap ? `${i.product.name} (Folio ${liquidatedCodeSnap})` : i.product.name,
             quantity: i.quantity,
             price: getItemPrice(i),
+            // El importe exacto de la partida: precio × cantidad puede bailar 1¢.
+            ...(i.preSalePending != null ? { lineTotal: i.preSalePending } : {}),
           })),
+          // Saldo de una entrega anterior que nunca se cobró: va en su renglón
+          // para que el ticket sume lo mismo que se cobró.
+          ...(oldDebtSnap > 0 ? [{
+            name: `Saldo de entrega anterior${liquidatedCodeSnap ? ` (Folio ${liquidatedCodeSnap})` : ""}`,
+            quantity: 1,
+            price: oldDebtSnap,
+          }] : []),
           ...regularItems.map(i => ticketItemFor(i)),
         ];
 
@@ -4041,7 +4099,9 @@ export function SellPage() {
         setPendingMesaCloseId(mesaId);
         triggerPrintFlow(mixedTicket);
 
-        const parts: string[] = [`Preventa liquidada · ${fmt(liquidationAmount)}`];
+        const parts: string[] = [isPartialDelivery
+          ? `Entrega parcial · ${fmt(liquidationAmount)} · ${pendingAfter === 1 ? "queda 1 pieza pendiente" : `quedan ${pendingAfter} piezas pendientes`} en el folio`
+          : `Preventa liquidada · ${fmt(liquidationAmount)}`];
         if (regularNetTicket > 0) parts.push(`Venta ${fmt(regularNetTicket)}`);
         if (newOrderCode) parts.push(`Nuevo folio ${newOrderCode} · Anticipo ${fmt(newPreventaDeposit)}`);
         toast.success(parts.join(" · "), {
@@ -6018,7 +6078,7 @@ export function SellPage() {
                         {item.isFromPreSale && !item.preSaleItemDelivered && (
                           <span className="px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-[7px] font-black text-amber-400 uppercase tracking-widest flex items-center gap-1">
                             <PackageCheck size={8} />
-                            Pendiente
+                            Se entrega hoy
                           </span>
                         )}
                         {item.preSaleItemDelivered && (
@@ -6384,28 +6444,6 @@ export function SellPage() {
                           <p className="text-[9px] line-through" style={{ color: TLO }}>{fmt(original)}</p>
                         ) : null;
                       })()}
-                      {item.isFromPreSale && item.preSaleOrderItemId && activeMesa.loadedPreSaleOrderId && (
-                        <button
-                          onClick={() => {
-                            const newStatus = item.preSaleItemDelivered ? 'pending' : 'delivered';
-                            void markPreSaleOrderItemDelivered(activeMesa.loadedPreSaleOrderId!, item.preSaleOrderItemId!, newStatus)
-                              .then(() => {
-                                updMesa(activeMesa.id, m => ({
-                                  ...m,
-                                  items: m.items.map(i =>
-                                    i.preSaleOrderItemId === item.preSaleOrderItemId
-                                      ? { ...i, preSaleItemDelivered: newStatus === 'delivered', product: { ...i.product, price_a: newStatus === 'delivered' ? 0 : i.product.price_a } }
-                                      : i
-                                  ),
-                                }));
-                              })
-                              .catch(() => toast.error("No se pudo actualizar el estado"));
-                          }}
-                          className={`text-[10px] font-bold mt-1 transition-colors ${item.preSaleItemDelivered ? "text-emerald-500/60 hover:text-white/40" : "text-white/20 hover:text-emerald-500"}`}
-                        >
-                          {item.preSaleItemDelivered ? "↩ Pendiente" : "✓ Entregado"}
-                        </button>
-                      )}
                       </div>
 
                       {/* Menú ⋮ de la línea (Joel 2026-07-30): Desc./Borrar dejan de
@@ -6415,7 +6453,9 @@ export function SellPage() {
                         <div className="relative self-center shrink-0" data-rowmenu>
                           <button
                             onClick={() => setRowMenuLineId(prev => prev === item.lineId ? null : item.lineId)}
-                            title="Opciones de esta línea (descuento o aumento / regalo / comentario / eliminar)"
+                            title={item.isFromPreSale
+                              ? "Si el cliente no se lleva esta pieza hoy, quítala: queda pendiente en el folio con su anticipo"
+                              : "Opciones de esta línea (descuento o aumento / regalo / comentario / eliminar)"}
                             data-testid={`row-menu-btn-${item.lineId}`}
                             className={`relative inline-flex ${compactCart ? "h-10 w-10" : "h-[54px] w-12"} items-center justify-center rounded-2xl transition-colors`}
                             style={rowMenuLineId === item.lineId
@@ -6471,7 +6511,8 @@ export function SellPage() {
                                 className="flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-[12px] font-black text-left text-[#FF8A80] transition-colors hover:bg-[#E0221A]/16 hover:text-white"
                               >
                                 <Trash2 size={14} />
-                                Eliminar
+                                {/* Partida de un folio: no se borra, solo no se entrega hoy. */}
+                                {item.isFromPreSale ? "No se la lleva hoy" : "Eliminar"}
                               </button>
                             </div>
                           )}
@@ -6623,7 +6664,8 @@ export function SellPage() {
                   <div className="flex flex-col gap-0.5 pt-1" style={{ borderTop: CARD_B }}>
                     <div className="flex items-center justify-between gap-3">
                       <p className="text-[9px] font-black text-amber-400 uppercase tracking-widest flex items-center gap-1">
-                        <PackageCheck size={9} /> Anticipo
+                        {/* Lo que falta de las piezas del folio que se entregan hoy. */}
+                        <PackageCheck size={9} /> Por cobrar del folio
                       </p>
                       <p className="text-sm font-black text-amber-400">{fmt(activeMesa.depositAmount || 0)}</p>
                     </div>
@@ -9542,12 +9584,15 @@ export function SellPage() {
                           onMouseLeave={e => { e.currentTarget.style.background = isMixed ? "rgba(139,92,246,0.08)" : "rgba(245,158,11,0.08)"; e.currentTarget.style.color = isMixed ? "rgba(139,92,246,0.6)" : "rgba(245,158,11,0.6)"; }}>
                           <Printer size={13} />
                         </button>
-                        {/* Liquidada (delivered) ya NO se puede cancelar: el botón
-                            solo aparece para folios con anticipo pendiente
-                            (Joel 2026-06-13). */}
-                        {order.status !== "cancelled" && order.status !== "delivered" && (
+                        {/* Folio sin entregas → cancelar completo. Con piezas ya
+                            entregadas (liquidado o entrega parcial) → revertir la
+                            última entrega y su cobro, para corregir un folio que
+                            se cobró por error (Joel 2026-11-13; del 2026-06-13 a
+                            esa fecha un folio liquidado no tenía botón). */}
+                        {order.status !== "cancelled" && (
                           <button type="button" onClick={e => { e.stopPropagation(); setCancelTarget({ kind: 'presale', order }); }}
-                            title="Cancelar folio" aria-label={`Cancelar folio ${order.code}`}
+                            title={orderItems.some(it => it.status === "delivered") || order.status === "delivered" ? "Revertir la última entrega" : "Cancelar folio"}
+                            aria-label={`${orderItems.some(it => it.status === "delivered") || order.status === "delivered" ? "Revertir entrega del" : "Cancelar"} folio ${order.code}`}
                             style={{ flexShrink: 0, padding: 0, width: 32, height: 32, borderRadius: 9, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.22)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "rgba(239,68,68,0.7)" }}
                             onMouseEnter={e => { e.currentTarget.style.background = "rgba(239,68,68,0.18)"; e.currentTarget.style.color = "#f87171"; }}
                             onMouseLeave={e => { e.currentTarget.style.background = "rgba(239,68,68,0.08)"; e.currentTarget.style.color = "rgba(239,68,68,0.7)"; }}>

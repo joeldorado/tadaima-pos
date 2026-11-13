@@ -40,7 +40,7 @@ class PreSaleOrdersController extends Controller
         $isAdminUser = $user->hasRole(['admin', 'super_admin', 'owner', 'dueño']);
         // payments.paymentMethod se carga para que la lista de Ventas (frontend)
         // muestre el método de pago de anticipos/liquidaciones sin caer en N+1.
-        $query = PreSaleOrder::with(['store', 'user', 'customer', 'items.catalog.product', 'items.product', 'payments.paymentMethod', 'cancellations'])
+        $query = PreSaleOrder::with(['store', 'user', 'customer', 'items.catalog.product', 'items.product', 'items.delivery:id,payment_id', 'payments.paymentMethod', 'cancellations'])
             ->when(!$isAdminUser,                   fn ($q) => $q->where('store_id', $user->store_id))
             // `mine=1`: solo los folios DEL usuario actual — los que creó (user_id)
             // o en los que cobró un anticipo/liquidación (payments.cashier_id).
@@ -136,7 +136,7 @@ class PreSaleOrdersController extends Controller
     {
         $order = PreSaleOrder::with([
             'store', 'user', 'customer',
-            'items.catalog', 'items.product',
+            'items.catalog', 'items.product', 'items.delivery:id,payment_id',
             'payments.paymentMethod', 'payments.cashier',
             'logs.user',
         ])->findOrFail($id);
@@ -197,7 +197,13 @@ class PreSaleOrdersController extends Controller
                                    $request->validated()['pickup_deadline'] ?? null,
                                    $notes
                                ),
-                'delivered' => $this->service->liquidate($order, $request->user()->id, $notes),
+                'delivered' => $this->service->liquidate(
+                                   $order,
+                                   $request->user()->id,
+                                   $notes,
+                                   $request->validated()['item_ids'] ?? null,
+                                   $request->validated()['payment'] ?? null,
+                               ),
                 'expired'   => $this->service->expire($order, $request->user()->id, $notes),
                 'cancelled' => $this->service->cancel($order, $request->user()->id, $notes),
             };
@@ -222,6 +228,16 @@ class PreSaleOrdersController extends Controller
 
         $item   = PreSaleOrderItem::where('pre_sale_order_id', $id)->findOrFail($itemId);
         $status = $request->validate(['status' => 'required|in:pending,delivered'])['status'];
+
+        // Una partida entregada desde Caja pertenece a una entrega con su pago
+        // (2026-11-13): se deshace revirtiendo esa entrega, que también devuelve
+        // el dinero. Regresarla a pendiente aquí la dejaría cobrada y sin entregar.
+        if ($status === 'pending' && $item->delivery_id !== null) {
+            return $this->error(
+                'Esta partida se entregó con cobro desde Caja. Para regresarla, revierte la entrega del folio.',
+                422
+            );
+        }
 
         // Mismo candado que liquidate(): entregar CONGELA el costo de la partida.
         // Sin costo capturado congelaríamos un vacío y el reporte diría utilidad =
@@ -311,7 +327,7 @@ class PreSaleOrdersController extends Controller
             return $this->error($e->getMessage(), 422);
         }
 
-        $order->refresh()->load(['items.product', 'payments', 'customer']);
+        $order->refresh()->load(['items.product', 'items.delivery:id,payment_id', 'payments', 'customer']);
         return $this->success([
             'order'        => new PreSaleOrderResource($order),
             'cancellation' => [

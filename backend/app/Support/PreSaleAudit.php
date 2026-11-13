@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Support;
 
 use App\Models\PreSaleCatalog;
+use App\Models\PreSaleDelivery;
 use App\Models\PreSaleOrder;
 use App\Models\PreSaleOrderItem;
 use App\Models\SystemLog;
@@ -133,6 +134,45 @@ final class PreSaleAudit
                 'product_name'        => $name,
                 'quantity'            => (int) $item->quantity,
                 'store_id'            => $order->store_id,
+            ],
+        );
+    }
+
+    /**
+     * Entrega de partidas elegida en Caja (2026-11-13): qué se llevó el cliente,
+     * cuánto se cobró en esa visita y cuántas partidas siguen pendientes.
+     *
+     * @param  iterable<PreSaleOrderItem>  $items
+     */
+    public static function delivery(PreSaleOrder $order, PreSaleDelivery $delivery, iterable $items, int $pendingCount, int $userId): void
+    {
+        $names = [];
+        $ids   = [];
+        foreach ($items as $item) {
+            $names[] = ($item->catalog?->product_name ?? "Partida #{$item->id}") . ' × ' . (int) $item->quantity;
+            $ids[]   = $item->id;
+        }
+
+        SystemLog::write(
+            'pre_sale_order.delivery',
+            sprintf(
+                '%s del folio %s: %s · cobrado $%s%s',
+                $pendingCount > 0 ? 'Entrega parcial' : 'Entrega',
+                $order->code,
+                implode(', ', $names),
+                number_format((float) $delivery->amount, 2),
+                $pendingCount > 0 ? " · {$pendingCount} pendiente(s)" : '',
+            ),
+            $userId,
+            'pre_sale_order',
+            $order->id,
+            [
+                'delivery_id'   => $delivery->id,
+                'payment_id'    => $delivery->payment_id,
+                'amount'        => (float) $delivery->amount,
+                'item_ids'      => $ids,
+                'pending_items' => $pendingCount,
+                'store_id'      => $order->store_id,
             ],
         );
     }

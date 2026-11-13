@@ -6,8 +6,10 @@ use App\Models\CashMovement;
 use App\Models\CashRegisterSession;
 use App\Models\Inventory;
 use App\Models\InventoryMovement;
+use App\Models\PreSaleDelivery;
 use App\Models\PreSaleOrder;
 use App\Models\PreSaleOrderItem;
+use App\Models\PreSaleOrderLog;
 use App\Models\PreSaleOrderPayment;
 use App\Models\Sale;
 use App\Models\SaleCancellation;
@@ -25,11 +27,12 @@ use Illuminate\Support\Facades\DB;
  * Tres modos:
  *  - cancelSaleFull         — anula todo el ticket regular. status='returned'.
  *  - cancelSalePartial      — quita items específicos (qty editable). Sale sigue activa.
- *  - cancelPreSaleOrderFull — anula preventa completa. status='cancelled'.
- *  - rollbackLiquidation    — preventa delivered → ready (revierte solo el pago de liquidación).
+ *  - cancelPreSaleOrderFull — anula preventa completa (sin entregas). status='cancelled'.
+ *  - rollbackLiquidation    — deshace la última entrega de una preventa y su pago; folio → ready.
  *
  * Invariantes:
- *  - Stock SIEMPRE se restaura (entra a inventory + InventoryMovement type='devolucion').
+ *  - En VENTAS el stock siempre se restaura (inventory + InventoryMovement type='devolucion').
+ *    Las PREVENTAS no tocan inventario: ni al entregar ni al revertir.
  *  - Del cajón sale solo la porción COBRADA EN EFECTIVO (cash_movement
  *    type='salida' en la sesión activa); lo de tarjeta/transferencia se
  *    devuelve por la terminal o el banco, fuera del sistema.
@@ -308,12 +311,17 @@ class SaleCancellationService
     }
 
     /**
-     * Cancela una preventa entera o reversa solo la liquidación.
+     * Cancela una preventa entera o revierte su última entrega.
      *
      * Modos:
-     *  - 'full'                  → status='cancelled'. Restaura stock si fue entregada. Reversa todos los pagos.
-     *  - 'liquidation_rollback'  → status delivered → ready. Reversa SOLO el último payment (la liquidación).
-     *                              Stock entregado se devuelve. Items.delivered_at = null.
+     *  - 'full'                 → status='cancelled'. Reversa TODOS los pagos. Solo para folios sin
+     *                             partidas entregadas: con entregas primero hay que revertirlas (si
+     *                             no, se devolvería todo el dinero con piezas ya en manos del cliente).
+     *  - 'liquidation_rollback' → deshace la ÚLTIMA entrega: sus partidas vuelven a pendiente y se
+     *                             reversa SU pago (2026-11-13; antes borraba «el último pago», que
+     *                             con una liquidación de $0 era el anticipo). El folio queda en «listo».
+     *
+     * Las preventas no tocan inventario (entregar no descuenta), así que aquí tampoco se suma stock.
      */
     public function cancelPreSaleOrder(
         PreSaleOrder $order,
@@ -329,82 +337,79 @@ class SaleCancellationService
         if ($order->status === PreSaleOrder::STATUS_CANCELLED) {
             throw new \DomainException('Esta preventa ya está cancelada.');
         }
-        if ($mode === SaleCancellation::MODE_LIQUIDATION_ROLLBACK && $order->status !== PreSaleOrder::STATUS_DELIVERED) {
-            throw new \DomainException('Solo se puede revertir la liquidación de una preventa entregada (status=delivered).');
-        }
-
-        // Regla de negocio (Joel 2026-06-10): pagos con tarjeta no se reversan.
-        // full → revisa TODOS los pagos del folio; rollback → solo el último
-        // (la liquidación, que es lo único que se reversa en ese modo).
-        $paymentsToCheck = $mode === SaleCancellation::MODE_LIQUIDATION_ROLLBACK
-            ? collect([$order->payments()->with('paymentMethod')->orderByDesc('id')->first()])->filter()
-            : $order->payments()->with('paymentMethod')->get();
-        $this->assertNoCardPayments($paymentsToCheck, 'preventa');
 
         return DB::transaction(function () use ($order, $mode, $reasonCode, $reasonText, $cancelledBy, $activeSessionId) {
-            $order->load(['items.product', 'payments.paymentMethod']);
-            $wasDelivered = $order->status === PreSaleOrder::STATUS_DELIVERED;
+            $order = PreSaleOrder::lockForUpdate()->findOrFail($order->id);
+            $order->load(['items.product', 'items.catalog:id,product_name', 'payments.paymentMethod', 'payments.cashier:id,name']);
 
-            $snapshot       = [];
-            $amountRefunded = 0.0;
+            $delivered = $order->items->where('status', PreSaleOrderItem::STATUS_DELIVERED);
 
-            // Snapshot de items siempre (para auditoría aunque no se mueva stock).
-            foreach ($order->items as $item) {
+            if ($mode === SaleCancellation::MODE_LIQUIDATION_ROLLBACK) {
+                if ($delivered->isEmpty()) {
+                    throw new \DomainException('Este folio no tiene entregas que revertir.');
+                }
+                [$items, $payments, $delivery] = $this->lastPreSaleDelivery($order, $delivered);
+            } else {
+                if ($delivered->isNotEmpty()) {
+                    throw new \DomainException(
+                        'Este folio ya tiene partidas entregadas. Primero revierte la entrega y después cancela el folio.'
+                    );
+                }
+                $items    = $order->items;
+                $payments = $order->payments;
+                $delivery = null;
+            }
+
+            // Regla de negocio (Joel 2026-06-10): pagos con tarjeta no se reversan.
+            // Solo se revisan los pagos que ESTA operación va a devolver.
+            $this->assertNoCardPayments($payments, 'preventa');
+
+            $snapshot = [];
+            foreach ($items as $item) {
                 $snapshot[] = [
                     'pre_sale_order_item_id' => $item->id,
                     'product_id'             => $item->product_id,
-                    'name'                   => $item->product?->name ?? $order->code,
+                    'name'                   => $item->catalog?->product_name ?? $item->product?->name ?? $order->code,
                     'qty_cancelled'          => (float) $item->quantity,
                     'price'                  => (float) $item->unit_price,
                     'cost'                   => $item->cost !== null ? (float) $item->cost : null,
                     'line_total'             => (float) $item->quantity * (float) $item->unit_price,
                     'was_delivered'          => (bool) ($item->delivered_at ?? null),
                 ];
-
-                // Restaura stock SOLO si el item fue entregado (mes movió inventory).
-                // Preventa pending/ready no descontó inventory todavía.
-                $hadInventory = $wasDelivered && $item->product_id !== null;
-                if ($hadInventory) {
-                    $this->restoreInventory(
-                        productId: (int) $item->product_id,
-                        storeId: $order->store_id,
-                        quantity: (float) $item->quantity,
-                        userId: $cancelledBy->id,
-                        notes: "Cancelación preventa {$order->code}",
-                    );
-                    // Liquidation rollback: marca el item como no entregado.
-                    if ($mode === SaleCancellation::MODE_LIQUIDATION_ROLLBACK) {
-                        $item->delivered_at = null;
-                        $item->status       = PreSaleOrderItem::STATUS_PENDING;
-                        $item->save();
-                    }
-                }
             }
 
-            // Pago mixto (2026-08-05): del cajón solo sale lo pagado con
-            // métodos cash-like — anticipos por transferencia se reversan por
-            // el banco, nunca entraron al cajón.
-            $cashRefund = 0.0;
+            // Pago mixto (2026-08-05): del cajón solo sale lo pagado con métodos
+            // cash-like — lo de transferencia se reversa por el banco.
+            $amountRefunded = (float) $payments->sum('amount');
+            $cashRefund     = (float) $payments
+                ->filter(fn ($p) => $p->paymentMethod?->isCashLike() ?? true)
+                ->sum('amount');
+            // El pago se borra: aquí queda quién, cuándo, cuánto y con qué método.
+            $paymentSnapshot = $payments->map(fn (PreSaleOrderPayment $p) => [
+                'payment_id'     => $p->id,
+                'amount'         => (float) $p->amount,
+                'payment_method' => $p->paymentMethod?->name,
+                'cashier'        => $p->cashier?->name,
+                'cashier_id'     => $p->cashier_id,
+                'paid_at'        => $p->created_at?->toISOString(),
+                'notes'          => $p->notes,
+            ])->values();
+
+            $fromStatus = $order->status;
             if ($mode === SaleCancellation::MODE_LIQUIDATION_ROLLBACK) {
-                // Reversa SOLO el último payment (la liquidación que se acaba de hacer).
-                $lastPayment = $order->payments()->with('paymentMethod')->orderByDesc('id')->first();
-                if ($lastPayment) {
-                    $amountRefunded = (float) $lastPayment->amount;
-                    $cashRefund     = ($lastPayment->paymentMethod?->isCashLike() ?? true) ? $amountRefunded : 0.0;
-                    $lastPayment->delete();
-                }
-                $order->status               = PreSaleOrder::STATUS_READY;
-                $order->cancellation_status  = PreSaleOrder::CANCELLATION_PARTIAL;
+                PreSaleOrderItem::whereIn('id', $items->pluck('id'))->update([
+                    'status'       => PreSaleOrderItem::STATUS_PENDING,
+                    'delivered_at' => null,
+                    'delivery_id'  => null,
+                ]);
+                $delivery?->update(['reverted_at' => now(), 'reverted_by' => $cancelledBy->id]);
+                $order->status              = PreSaleOrder::STATUS_READY;
+                $order->cancellation_status = PreSaleOrder::CANCELLATION_PARTIAL;
             } else {
-                // FULL: reversa todos los payments y cancela el folio.
-                $amountRefunded = (float) $order->payments->sum('amount');
-                $cashRefund     = (float) $order->payments
-                    ->filter(fn ($p) => $p->paymentMethod?->isCashLike() ?? true)
-                    ->sum('amount');
-                $order->payments()->delete();
-                $order->status               = PreSaleOrder::STATUS_CANCELLED;
-                $order->cancellation_status  = PreSaleOrder::CANCELLATION_FULL;
+                $order->status              = PreSaleOrder::STATUS_CANCELLED;
+                $order->cancellation_status = PreSaleOrder::CANCELLATION_FULL;
             }
+            PreSaleOrderPayment::whereIn('id', $payments->pluck('id'))->delete();
             $order->last_cancelled_at = now();
             $order->save();
 
@@ -428,8 +433,24 @@ class SaleCancellationService
                 'cash_movement_id'  => $cashMovement?->id,
                 'cash_session_id'   => $activeSessionId,
                 'items_snapshot'    => $snapshot,
+                // Un solo pago (reversa de entrega) se guarda plano; varios, en lista.
+                'payment_snapshot'  => $paymentSnapshot->count() === 1
+                    ? $paymentSnapshot->first()
+                    : ($paymentSnapshot->isEmpty() ? null : ['payments' => $paymentSnapshot->all()]),
                 'cancelled_by'      => $cancelledBy->id,
                 'cancelled_at'      => now(),
+            ]);
+
+            // Historial del folio: antes la reversa solo quedaba en system_logs.
+            $names = $items->map(fn ($it) => $it->catalog?->product_name ?? "Partida #{$it->id}")->implode(', ');
+            PreSaleOrderLog::create([
+                'pre_sale_order_id' => $order->id,
+                'user_id'           => $cancelledBy->id,
+                'from_status'       => $fromStatus,
+                'to_status'         => $order->status,
+                'notes'             => $mode === SaleCancellation::MODE_LIQUIDATION_ROLLBACK
+                    ? sprintf('Entrega revertida (%s): %s · devuelto $%s', $reasonCode, $names, number_format($amountRefunded, 2))
+                    : sprintf('Folio cancelado (%s) · devuelto $%s', $reasonCode, number_format($amountRefunded, 2)),
             ]);
 
             SystemLog::write(
@@ -443,11 +464,58 @@ class SaleCancellationService
                     'reason_code'      => $reasonCode,
                     'amount_refunded'  => $amountRefunded,
                     'cash_movement_id' => $cashMovement?->id,
+                    'delivery_id'      => $delivery?->id,
+                    'item_ids'         => $items->pluck('id')->all(),
+                    'payments'         => $paymentSnapshot->all(),
+                    'store_id'         => $order->store_id,
                 ],
             );
 
             return $cancellation;
         });
+    }
+
+    /**
+     * Nota con la que `PreSaleOrderService::createOrder` guarda el primer pago
+     * de un folio. En un folio SIN registro de entrega, si el último pago es
+     * este, la liquidación fue de $0 y no hay nada que devolver.
+     */
+    private const INITIAL_ADVANCE_NOTE = 'Anticipo inicial';
+
+    /**
+     * La última entrega vigente de un folio: sus partidas, los pagos que la
+     * liquidaron y su registro.
+     *
+     * Con registro (`pre_sale_deliveries`, desde 2026-11-13) es exacto. Los
+     * folios anteriores no lo tienen: se toman todas las partidas entregadas
+     * sin registro y, como pago, el último del folio — salvo que sea el
+     * «Anticipo inicial» (el cliente ya había pagado todo y se entregó sin
+     * cobro): ese no se toca. No se comparan fechas: `created_at` del pago lo
+     * pone la base y `delivered_at` la app, y sus relojes no tienen por qué
+     * coincidir.
+     *
+     * @param  \Illuminate\Support\Collection<int, PreSaleOrderItem>  $delivered
+     * @return array{0: \Illuminate\Support\Collection, 1: \Illuminate\Support\Collection, 2: ?PreSaleDelivery}
+     */
+    private function lastPreSaleDelivery(PreSaleOrder $order, $delivered): array
+    {
+        $delivery = PreSaleDelivery::where('pre_sale_order_id', $order->id)
+            ->whereNull('reverted_at')
+            ->orderByDesc('id')
+            ->first();
+
+        if ($delivery) {
+            $items    = $delivered->where('delivery_id', $delivery->id)->values();
+            $payments = $order->payments->where('id', $delivery->payment_id)->values();
+
+            return [$items, $payments, $delivery];
+        }
+
+        $items         = $delivered->whereNull('delivery_id')->values();
+        $last          = $order->payments->sortByDesc('id')->first();
+        $isLiquidation = $last !== null && $last->notes !== self::INITIAL_ADVANCE_NOTE;
+
+        return [$items, $isLiquidation ? collect([$last]) : collect(), null];
     }
 
     /**
@@ -518,7 +586,7 @@ class SaleCancellationService
      * Salida de caja por reverso de dinero. Asociada a la sesión activa al
      * momento de la cancelación (no a la sesión original de la venta).
      */
-    private function createRefundCashMovement(float $amount, string $description, ?int $sessionId): ?CashMovement
+    public function createRefundCashMovement(float $amount, string $description, ?int $sessionId): ?CashMovement
     {
         if ($amount <= 0) return null;
         // Sin caja no hay salida, pero la venta sí contaría en el corte: el

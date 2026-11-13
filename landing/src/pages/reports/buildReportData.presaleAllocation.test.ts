@@ -114,3 +114,57 @@ describe("Preventas — abono repartido parejo por pieza (caso Delta Reign)", ()
     expect(rows.filter((r) => r.productName !== CATALOGS[4].name).every((r) => Math.abs(r.anticipo - 200) < 1e-6)).toBe(true);
   });
 });
+
+// Entrega parcial (2026-11-13): un folio de 3 productos entregado en dos
+// visitas. El cobro de la primera visita liquida SOLO las 2 piezas que el
+// cliente se llevó; la tercera sigue apartada con su anticipo.
+describe("Preventas — folio entregado en dos visitas", () => {
+  const NOVIEMBRE = ["2026-11-01", "2026-11-30"] as const;
+  const ANTICIPO = "2026-11-02T18:00:00Z";
+  const VISITA = "2026-11-10T18:00:00Z";
+  const delivered = (base: PreSaleOrderItem): PreSaleOrderItem =>
+    ({ ...base, status: "delivered", delivered_at: VISITA, delivery_id: 1, delivery_payment_id: 9002 });
+
+  const etb = delivered(item(3, 1, ANTICIPO));
+  const box = delivered(item(5, 1, ANTICIPO));
+  const bundle = item(4, 1, ANTICIPO);
+  const partial: PreSaleOrder = {
+    id: 900, code: "PREV-00900", status: "ready",
+    linked_sale_id: null, pickup_deadline: null, notes: null, created_at: ANTICIPO, updated_at: VISITA,
+    store: { id: 3, name: "Tadaima MACRO" }, user: null, customer: null,
+    items: [etb, box, bundle],
+    payments: [
+      { id: 9001, amount: 600, notes: "Anticipo inicial", created_at: ANTICIPO, payment_method: { id: 1, name: "Efectivo" }, cashier: null },
+      { id: 9002, amount: 3500, notes: "Liquidación", created_at: VISITA, payment_method: { id: 1, name: "Efectivo" }, cashier: null },
+    ],
+    total: 4450, paid_amount: 4100, balance: 350,
+  };
+
+  it("la pieza que no se llevó sigue con $200 abonados y $350 pendientes", () => {
+    const rows = buildPresaleFolioRows([partial], ...NOVIEMBRE).filter((r) => r.productName === CATALOGS[4].name);
+
+    expect(rows.reduce((sum, r) => sum + r.anticipo, 0)).toBeCloseTo(200);
+    expect(rows.every((r) => r.estado === "Apartada")).toBe(true);
+    expect(rows[0]!.pendiente).toBeCloseTo(350);
+  });
+
+  it("una pieza entregada sin cobro no se marca liquidada con el pago de otra visita", () => {
+    // El Bundle ($550) quedó cubierto y se entrega después sin cobro: su entrega
+    // no tiene pago. El cobro de la primera visita (9002) no lo liquida.
+    const free: PreSaleOrderItem = { ...bundle, status: "delivered", delivered_at: VISITA, delivery_id: 2, delivery_payment_id: null };
+    const rows = buildPresaleFolioRows([{ ...partial, items: [etb, box, free] }], ...NOVIEMBRE)
+      .filter((r) => r.productName === CATALOGS[4].name);
+
+    expect(rows.filter((r) => r.estado === "Liquidada").map((r) => r.fecha)).toEqual([ANTICIPO]);
+  });
+
+  it("las 2 piezas entregadas salen liquidadas con el cobro de esa visita", () => {
+    const rows = buildPresaleFolioRows([partial], ...NOVIEMBRE);
+    const liquidadas = rows.filter((r) => r.estado === "Liquidada");
+
+    expect(liquidadas.map((r) => r.productName).sort()).toEqual([CATALOGS[5].name, CATALOGS[3].name].sort());
+    expect(liquidadas.find((r) => r.productName === CATALOGS[5].name)!.anticipo).toBeCloseTo(2600);
+    expect(liquidadas.find((r) => r.productName === CATALOGS[3].name)!.anticipo).toBeCloseTo(900);
+    expect(liquidadas.every((r) => r.pendiente === 0)).toBe(true);
+  });
+});

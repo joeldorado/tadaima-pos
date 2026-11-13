@@ -123,7 +123,8 @@ export interface CancelPreSaleOrderResult {
 /**
  * POST /pre-sale-orders/{id}/cancel — ADR-016.
  * - mode='full' → cancela todo el folio, reversa todos los pagos.
- * - mode='liquidation_rollback' → delivered → ready, reversa solo último pago.
+ * - mode='liquidation_rollback' → deshace la ÚLTIMA entrega del folio y su pago
+ *   (folio liquidado o con entrega parcial); el folio queda en ready.
  */
 export async function cancelPreSaleOrder(
   id: number,

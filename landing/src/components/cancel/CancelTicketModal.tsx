@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react'
 import { X, AlertTriangle, Loader2, RotateCcw, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { estimateSaleRefund, splitRefundByCash, type RefundSale } from '@/lib/refundEstimate'
+import { lastPresaleDelivery } from '@/lib/presaleLastDelivery'
 import {
   cancelSale, cancelPreSaleOrder,
   type SaleDetail, type PreSaleOrder,
@@ -206,13 +207,16 @@ interface PreSaleBodyProps extends PreSaleProps {
 }
 
 function PreSaleCancelBody({ order, onClose, onSuccess, cashSessionId, reasonCode, setReasonCode, reasonText, setReasonText, submitting, setSubmitting }: PreSaleBodyProps) {
-  const isDelivered = order.status === 'delivered'
-  // Modo determinístico (Joel 2026-06-13): ya NO se le da a elegir al cajero.
-  //  - Liquidada (delivered) → SOLO rollback: el folio vuelve a "Listo ·
-  //    Liquidar", el stock entregado regresa y se reversa SOLO el cobro de la
-  //    liquidación (la venta de ese día). El anticipo se mantiene.
-  //  - Solo anticipo (no delivered) → cancelación completa (regresa anticipo +
-  //    stock), que ya funcionaba bien.
+  // Modo determinístico (Joel 2026-06-13): no se le da a elegir al cajero.
+  //  - Con partidas entregadas (folio liquidado o entrega parcial) → se revierte
+  //    la ÚLTIMA entrega: sus partidas vuelven a pendiente y se reversa el cobro
+  //    de esa visita. El anticipo se mantiene. Si el folio tuvo dos entregas,
+  //    se revierten de la más reciente a la más antigua (2026-11-13).
+  //  - Sin entregas → cancelación completa (regresa el anticipo).
+  const lastDelivery = lastPresaleDelivery(order.items, order.payments)
+  // Un folio liquidado que llegó sin sus partidas cargadas igual se revierte
+  // (el servidor decide qué entrega); nunca se manda una cancelación completa.
+  const isDelivered = lastDelivery !== null || order.status === 'delivered'
   const mode: 'full' | 'liquidation_rollback' = isDelivered ? 'liquidation_rollback' : 'full'
 
   const handleSubmit = async () => {
@@ -236,12 +240,10 @@ function PreSaleCancelBody({ order, onClose, onSuccess, cashSessionId, reasonCod
     }
   }
 
-  const refundEstimate = mode === 'full'
-    ? (order.paid_amount ?? 0)
-    : (order.payments?.[order.payments.length - 1]?.amount ?? 0)
+  const refundEstimate = lastDelivery ? lastDelivery.refund : (order.paid_amount ?? 0)
 
   return (
-    <Shell title={`Cancelar Preventa ${order.code}`} onClose={onClose}>
+    <Shell title={`${isDelivered ? 'Revertir entrega' : 'Cancelar Preventa'} ${order.code}`} onClose={onClose}>
       {/* Explicación de la acción única (sin elección de modo). */}
       <div
         className="flex items-start gap-3 px-4 py-3 rounded-2xl mb-4"
@@ -252,12 +254,12 @@ function PreSaleCancelBody({ order, onClose, onSuccess, cashSessionId, reasonCod
         </div>
         <div className="flex-1">
           <p className="text-sm font-black" style={{ color: '#f87171' }}>
-            {isDelivered ? 'Revertir liquidación' : 'Cancelar folio completo'}
+            {isDelivered ? 'Revertir la última entrega' : 'Cancelar folio completo'}
           </p>
           <p className="text-[11px] mt-0.5" style={{ color: 'var(--td-text-lo)' }}>
             {isDelivered
-              ? 'Se cancela SOLO la venta de hoy: el folio vuelve a "Listo · Liquidar", el stock entregado regresa al inventario y se reversa el cobro de la liquidación. El anticipo se mantiene.'
-              : 'El folio queda CANCELADO. El anticipo se reversa como salida de caja y el stock regresa al inventario.'}
+              ? `Se deshace solo esa entrega${lastDelivery ? ` (${lastDelivery.names.join(', ')})` : ''}: esas piezas vuelven a pendiente, el folio queda en "Listo · Liquidar" y se reversa el cobro de esa visita. El anticipo se mantiene. Para cancelar el folio completo, primero revierte sus entregas.`
+              : 'El folio queda CANCELADO y el anticipo se reversa como salida de caja.'}
           </p>
         </div>
       </div>

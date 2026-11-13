@@ -166,7 +166,8 @@ export function describeEvent(e: ActivityEvent): string {
     const modeRaw = e.meta?.["mode"];
     const mode = typeof modeRaw === "string" ? modeRaw : "";
     const modeLabel = mode === "full" ? "total" : mode === "partial_items" ? "parcial" : mode;
-    const bits = [modeLabel && `cancelación ${modeLabel}`, Number.isFinite(refunded) && refunded > 0 ? `devuelto ${money(refunded)}` : ""].filter(Boolean);
+    // Preventas (2026-11-13): revertir deshace solo la última entrega del folio.
+    const bits = [mode === "liquidation_rollback" ? "entrega revertida" : modeLabel && `cancelación ${modeLabel}`, Number.isFinite(refunded) && refunded > 0 ? `devuelto ${money(refunded)}` : ""].filter(Boolean);
     if (bits.length) return bits.join(" · ");
   }
 

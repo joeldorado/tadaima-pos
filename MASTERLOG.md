@@ -4,6 +4,22 @@
 
 ---
 
+### Sesión 2026-11-13 — Preventas: entrega parcial elegida en Caja + reversa exacta de la entrega (PR #99) — rev tadaima-00132-qiq
+
+**Origen:** la tienda preguntó cómo proceder con un folio de preventa de 3 productos distintos del que solo llegaron 2. Caja cobraba el saldo de TODO el folio y, al cobrar, el backend marcaba entregadas todas las partidas con catálogo llegado aunque el cajero las quitara del carrito (el folio podía quedar «Liquidado» con piezas sin entregar).
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00130-rah`. **Con migración** (aditiva: tabla `pre_sale_deliveries`, `pre_sale_order_items.delivery_id`, `sale_cancellations.payment_snapshot`); el código anterior funciona con ella puesta, no hay que revertirla.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00130-rah=100 --project tadaimapos --region us-east1`
+
+- **Entrega parcial:** Caja carga cada partida con lo que LE falta por cobrar (anticipo parejo por pieza, en centavos enteros: `lib/presaleAllocation.ts` → `presaleDeliveryCharge`). Menú ⋮ → «No se la lleva hoy» quita la línea, baja el cobro y la pieza conserva su anticipo y su saldo. Cobro y entrega van en UNA llamada (`PATCH /pre-sale-orders/{id}/status` con `item_ids` + `payment`); el servidor exige pagado ≥ total de partidas entregadas. Cada entrega queda en `pre_sale_deliveries` con su pago. Sin `item_ids`/`payment` el endpoint hace lo de siempre (app móvil). Se quitó de Caja el botón «✓ Entregado» por línea (entregaba sin cobrar).
+- **Reversa exacta:** `liquidation_rollback` deshace la ÚLTIMA entrega y SU pago, no «el último pago» (con una liquidación de $0 devolvía el anticipo). Vale en folio liquidado o con entrega parcial. Folios sin registro de entrega: el último pago es la liquidación salvo que sea el «Anticipo inicial». Cancelar el folio completo se bloquea mientras tenga partidas entregadas. El pago borrado queda en `sale_cancellations.payment_snapshot` y la reversa en el historial del folio.
+- **Cambios de comportamiento a propósito:** (1) el historial de Caja vuelve a mostrar el botón de revertir en folios LIQUIDADOS (estaba oculto desde 2026-06-13); (2) revertir una preventa ya NO suma stock: entregar nunca lo restaba, así que inflaba el inventario; (3) `delivered_count` del catálogo cuenta por partida entregada, no por folio cerrado.
+- **Reporte de preventas:** el pago de una entrega se reparte primero a sus partidas (`delivery_payment_id`); los folios anteriores salen idénticos.
+- **Revisión de código independiente:** 5 hallazgos corregidos con prueba antes del merge (cobro sin partidas que entregar, botón viejo por partida sobre una entrega registrada, candados folio → catálogo, «Liquidada» con el pago de otra visita, regla de folios viejos sin comparar relojes).
+- **Validación:** backend 971 ✓ en SQLite y en Postgres 17 local; vitest 873 ✓; type-check 455 vs 456 de `main`; `vite build` OK. En local (SQLite) en Chrome: folio de 3 catálogos con 2 llegados y anticipo $600 → carga $800 + $300, quitar una línea baja el cobro a $800, cobrar deja el folio en «Listo» con 2 pendientes, segunda entrega por $300, revertir la última entrega devuelve $300 (salida de caja) y deja el anticipo y la primera entrega. Candidato y dominio: `/login` y `/tadaimaus/` 200, API sin token 401, bundle con los textos nuevos, migración «DONE» en 0.7 s, sin errores en logs.
+- **No probado en prod con sesión:** el flujo con un folio real. Usar incógnito o recarga forzada por la caché PWA.
+- **Pendiente:** el ticket no imprime «queda N pendiente»; el Reporte del Día de Ventas clasifica el folio entero por su estado (una entrega parcial sale como «anticipo» hasta que el folio cierra; los totales cuadran). Reversas de errores de usuario (anular un abono, reactivar un folio cancelado, deshacer «Llegó») programadas y con pruebas en la rama local `feat/preventas-reversas`, sin subir: Joel pidió sacar primero la entrega parcial.
+
 ### Sesión 2026-11-10 — Estadística por tienda y tomos + chips de tipo en Existencias (PR #98) — rev tadaima-00130-rah
 
 **Origen:** Ruben subió a `develop` `0c0b3f8` («cambios en estadística y api para filtrar por manga»). Joel pidió bajarlo, revisarlo y publicarlo. `develop` iba 1 adelante de `main`, sin divergir.

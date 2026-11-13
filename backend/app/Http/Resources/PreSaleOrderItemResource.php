@@ -19,6 +19,12 @@ class PreSaleOrderItemResource extends JsonResource
             'subtotal'            => $this->subtotal,
             'status'              => $this->status,
             'delivered_at'        => $this->delivered_at,
+            // Entrega en la que se llevó la partida y el pago que la liquidó
+            // (2026-11-13). Null en pendientes, en folios anteriores al registro
+            // y en entregas sin cobro. El reporte reparte ese pago primero a
+            // sus partidas.
+            'delivery_id'         => $this->delivery_id,
+            'delivery_payment_id' => $this->relationLoaded('delivery') ? $this->delivery?->payment_id : null,
             'created_at'          => $this->created_at,
             'product_type'        => $this->product?->product_type ?? ($this->catalog?->product?->product_type ?? 'product'),
 
