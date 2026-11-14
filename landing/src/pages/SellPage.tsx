@@ -9,7 +9,7 @@ import {
   Users, UserPlus, User, Phone, AlertCircle,
   Mail,
   TriangleAlert, PackageX, Bookmark, Calendar, PackageCheck, ClipboardList, Banknote,
-  Truck, CheckCircle2, Printer, History, RefreshCw,
+  Truck, CheckCircle2, Printer, History, RefreshCw, RotateCcw,
   Trash2, XCircle, Clock, Bell, Scissors, MoreVertical, MessageSquare,
   Split,
 } from "lucide-react";
@@ -88,6 +88,7 @@ import { useAuth } from "@tadaima/auth";
 import { isAdmin as isAdminRole } from "@/lib/permisos";
 import { cartUnitLimit, storeAvailability } from "@/lib/presaleAvailability";
 import { chargeForLoadedLines, presaleDeliveryCharge } from "@/lib/presaleAllocation";
+import { canRevertPresaleDelivery } from "@/lib/presaleLastDelivery";
 import { CancelTicketModal } from "@/components/cancel/CancelTicketModal";
 import { CorrectPaymentModal } from "@/components/sales/CorrectPaymentModal";
 import { motion as Motion, AnimatePresence } from "motion/react";
@@ -8038,7 +8039,7 @@ export function SellPage() {
             const pendingItems = (order.items ?? []).filter(it => it.status !== 'delivered');
             const allItems = isDelivered ? (order.items ?? []) : [];
 
-            return (
+            const card = (
               <button
                 disabled={!isClickable}
                 onClick={() => {
@@ -8126,6 +8127,27 @@ export function SellPage() {
                   <p style={{ margin: 0, fontSize: 16, fontWeight: 900, color: isVencida ? "#EF4444" : isAwaitingArrival ? "#666" : (balance <= 0 ? "#22C55E" : itemColor) }}>{fmt(balance)}</p>
                 </div>
               </button>
+            );
+
+            // «Revertir entrega» aquí mismo (2026-11-13): es donde el cajero busca
+            // un folio que se cobró por error. Va FUERA de la tarjeta porque la
+            // tarjeta es un botón (y en «Liquidadas» está deshabilitado).
+            if (!canRevertPresaleDelivery(order)) return card;
+            return (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {card}
+                <button
+                  type="button"
+                  onClick={() => setCancelTarget({ kind: 'presale', order })}
+                  title="Se cobró o entregó por error: deshace la última entrega y regresa ese cobro"
+                  aria-label={`Revertir la última entrega del folio ${order.code}`}
+                  data-testid={`presale-revert-${order.id}`}
+                  className="flex items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-widest text-red-400 transition-colors hover:bg-red-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-400"
+                  style={{ border: "1px solid rgba(248,113,113,0.35)", background: "transparent", cursor: "pointer" }}
+                >
+                  <RotateCcw size={11} /> Revertir entrega
+                </button>
+              </div>
             );
           };
 
