@@ -275,7 +275,9 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   parcial; dos entregas se revierten de la más nueva a la más vieja. Folios anteriores al registro: el último
   pago cuenta como liquidación salvo que sea el «Anticipo inicial» (entrega sin cobro); no se comparan fechas
   (el pago lo fecha la base y la entrega la app). Caja → historial vuelve a mostrar el botón en folios
-  liquidados (del 2026-06-13 a esta fecha no lo tenían). Con **tarjeta** nada se revierte (regla de siempre).
+  liquidados (del 2026-06-13 a esta fecha no lo tenían); como ese historial solo lista folios con cobro de
+  HOY, el mismo botón («Revertir entrega») está en Preventas → Folios para cualquier fecha
+  (`canRevertPresaleDelivery`). Con **tarjeta** nada se revierte (regla de siempre).
   - **Cancelar el folio completo** (`full`) se bloquea mientras tenga partidas entregadas: primero se
     revierten las entregas.
   - **Las preventas no tocan inventario:** ni entregar ni revertir mueven stock (antes revertir SUMABA stock

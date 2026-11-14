@@ -4,6 +4,10 @@ import { PreSalesSkeleton } from "./PreSalesSkeleton";
 import type { PreSaleOrder, PreSaleOrderStatus } from "@tadaima/api";
 import { useAuth } from "@tadaima/auth";
 import { isAdmin as isAdminRole } from "@/lib/permisos";
+import { useActiveSessionQuery } from "@/hooks/queries/useCashSession";
+import { invalidateAfterSale } from "@/lib/optimisticSale";
+import { canRevertPresaleDelivery } from "@/lib/presaleLastDelivery";
+import { CancelTicketModal } from "@/components/cancel/CancelTicketModal";
 import { useActiveStore } from "@/contexts/StoreContext";
 import { useQueryClient } from "@tanstack/react-query";
 import { usePreSaleOrdersQuery } from "@/hooks/queries/usePreSales";
@@ -11,7 +15,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import {
   Search, Loader2, RefreshCw, ChevronLeft, ChevronRight,
   Package, User, Calendar, Banknote, Clock, CheckCircle2,
-  XCircle, PackageCheck, AlertTriangle, AlertCircle,
+  XCircle, PackageCheck, AlertTriangle, AlertCircle, RotateCcw,
 } from "lucide-react";
 
 const todayStart = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
@@ -45,6 +49,12 @@ export function PreSaleOrdersPanel() {
   // 2026-06-10): gerente queda anclado a su tienda igual que cajero. Antes
   // gerente entraba como "admin" aquí y veía el dropdown de TODAS las tiendas.
   const isAdmin = isAdminRole(user?.roles);
+  // Revertir una entrega desde aquí (2026-11-13): el Historial de Caja solo
+  // lista folios con cobro de HOY, así que un cobro por error de otro día no
+  // tenía botón en ninguna pantalla. La salida de efectivo cae en la caja
+  // abierta de quien revierte, igual que desde Caja.
+  const cashSession = useActiveSessionQuery().data ?? null;
+  const [revertTarget, setRevertTarget] = useState<PreSaleOrder | null>(null);
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<PreSaleOrderStatus | "all">("all");
@@ -181,7 +191,7 @@ export function PreSaleOrdersPanel() {
           <table className="w-full text-left border-collapse">
             <thead style={{ position: "sticky", top: 0, zIndex: 10 }}>
               <tr style={{ borderBottom: ORDER_THEME.borderSubtle, background: ORDER_THEME.tableHead }}>
-                {["Folio", "Cliente", "Productos", "Total", "Anticipo", "Pendiente", "Estado", "Tienda", "Fecha"].map(h => (
+                {["Folio", "Cliente", "Productos", "Total", "Anticipo", "Pendiente", "Estado", "Tienda", "Fecha", "Corregir"].map(h => (
                   <th key={h} className="px-4 py-3 text-[9px] font-black uppercase tracking-widest" style={{ color: ORDER_THEME.textMuted, background: ORDER_THEME.tableHead }}>{h}</th>
                 ))}
               </tr>
@@ -300,6 +310,22 @@ export function PreSaleOrdersPanel() {
                         </div>
                       )}
                     </td>
+
+                    {/* Corregir: revertir la última entrega (cobro por error) */}
+                    <td className="px-4 py-3">
+                      {canRevertPresaleDelivery(order) && (
+                        <button
+                          type="button"
+                          onClick={() => setRevertTarget(order)}
+                          title="Se cobró o entregó por error: deshace la última entrega y regresa ese cobro"
+                          aria-label={`Revertir la última entrega del folio ${order.code}`}
+                          className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-xl px-2.5 py-1.5 text-[10px] font-black uppercase tracking-widest text-red-400 transition-colors hover:bg-red-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-400"
+                          style={{ border: "1px solid rgba(248,113,113,0.35)" }}
+                        >
+                          <RotateCcw size={11} /> Revertir entrega
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -333,6 +359,22 @@ export function PreSaleOrdersPanel() {
             </button>
           </div>
         </div>
+      )}
+
+      {revertTarget && (
+        <CancelTicketModal
+          kind="presale"
+          order={revertTarget}
+          {...(cashSession?.id != null ? { cashSessionId: cashSession.id } : {})}
+          onClose={() => setRevertTarget(null)}
+          onSuccess={() => {
+            setRevertTarget(null);
+            // La reversa saca efectivo de caja y regresa piezas a pendiente.
+            void queryClient.invalidateQueries({ queryKey: ["saleCancellations"] });
+            invalidateAfterSale(queryClient, { presale: true });
+            void fetchOrders();
+          }}
+        />
       )}
     </div>
   );

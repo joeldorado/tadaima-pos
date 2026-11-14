@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { lastPresaleDelivery } from "./presaleLastDelivery";
+import { canRevertPresaleDelivery, lastPresaleDelivery } from "./presaleLastDelivery";
 
 // «Revertir entrega» deshace la ÚLTIMA entrega de un folio y su cobro, nunca el
 // anticipo (2026-11-13). Antes el modal estimaba «el último pago del folio».
@@ -58,5 +58,33 @@ describe("lastPresaleDelivery", () => {
     const items = [item(1, "A", { status: "delivered", delivered_at: VISITA_1 })];
 
     expect(lastPresaleDelivery(items, [pay(1, 200, ANTICIPO, "Anticipo inicial")])?.refund).toBe(0);
+  });
+});
+
+// Botón «Revertir entrega» en Preventas → Folios (2026-11-13): el Historial de
+// Caja solo lista los folios con cobro de HOY; un cobro por error de otro día
+// no tenía botón en ninguna pantalla.
+describe("canRevertPresaleDelivery", () => {
+  const delivered = item(1, "A", { status: "delivered", delivered_at: VISITA_1, delivery_id: 7, delivery_payment_id: 2 });
+
+  it("folio liquidado: se puede revertir", () => {
+    expect(canRevertPresaleDelivery({ status: "delivered", items: [delivered], payments: [] })).toBe(true);
+  });
+
+  it("folio abierto con entrega parcial: se puede revertir", () => {
+    expect(canRevertPresaleDelivery({ status: "ready", items: [delivered, item(2, "B")], payments: [] })).toBe(true);
+  });
+
+  it("folio abierto sin nada entregado: no hay entrega que revertir", () => {
+    expect(canRevertPresaleDelivery({ status: "ready", items: [item(1, "A")], payments: [] })).toBe(false);
+    expect(canRevertPresaleDelivery({ status: "pending", items: [item(1, "A")], payments: [] })).toBe(false);
+  });
+
+  it("folio cancelado: no se revierte aunque conserve piezas entregadas", () => {
+    expect(canRevertPresaleDelivery({ status: "cancelled", items: [delivered], payments: [] })).toBe(false);
+  });
+
+  it("folio liquidado que llegó sin partidas cargadas: el servidor decide", () => {
+    expect(canRevertPresaleDelivery({ status: "delivered" })).toBe(true);
   });
 });

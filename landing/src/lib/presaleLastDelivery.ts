@@ -62,3 +62,18 @@ export function lastPresaleDelivery(
   const isLiquidation = !!last && last.notes !== INITIAL_ADVANCE_NOTE;
   return summary(delivered, isLiquidation ? last.amount : 0);
 }
+
+/**
+ * ¿El folio tiene una entrega que se pueda revertir? Sí cuando tiene piezas
+ * entregadas (liquidado o con entrega parcial) y no está cancelado. Un folio
+ * liquidado que llegó sin sus partidas cargadas también cuenta: el servidor
+ * decide qué entrega deshace.
+ */
+export function canRevertPresaleDelivery(order: {
+  status: string;
+  items?: readonly DeliveryItem[] | null;
+  payments?: readonly DeliveryPayment[] | null;
+}): boolean {
+  if (order.status === "cancelled") return false;
+  return order.status === "delivered" || lastPresaleDelivery(order.items, order.payments) !== null;
+}
