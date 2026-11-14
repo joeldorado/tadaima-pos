@@ -4,6 +4,19 @@
 
 ---
 
+### Sesión 2026-11-13 (b) — «Revertir entrega» en Preventas → Folios para cualquier fecha (PR #100) — rev tadaima-00134-doc
+
+**Origen:** duda del cliente tras el PR #99: «si se cobró por error, ¿dónde está el botón?». El botón de revertir vivía solo en Caja → Historial, que lista los folios con cobro de HOY: una preventa liquidada otro día (caso PREV-00084) no tenía botón en ninguna pantalla. La tarjeta de Caja → Preventas → «Liquidadas» es solo de consulta.
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00132-qiq`. Sin migraciones.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00132-qiq=100 --project tadaimapos --region us-east1`
+
+- **Cambio:** Preventas → Folios tiene la columna «Corregir» con **Revertir entrega** en los folios con piezas entregadas (liquidados o con entrega parcial; `canRevertPresaleDelivery` en `lib/presaleLastDelivery.ts`). Abre el mismo modal que Caja (`CancelTicketModal`): deshace la última entrega y regresa ese cobro; el efectivo sale de la caja abierta de quien revierte. Solo frontend: el endpoint ya no dependía de la fecha y conserva sus reglas (alcance por tienda, caja abierta, tarjeta bloqueada).
+- **Ojo con folios anteriores al registro de entregas (antes del 2026-11-13):** revertir regresa TODAS sus piezas a pendiente y devuelve el último pago del folio (salvo que sea el «Anticipo inicial»). El modal muestra el monto en «Salida estimada»: revisarlo antes de confirmar.
+- **Validación:** vitest 878 ✓, type-check 455 = `main`, `vite build` OK. En local (SQLite) en Chrome: el botón sale en un folio con entrega parcial, revertir devolvió $800, el folio volvió a $600 de anticipo y el botón desapareció. Candidato y dominio: `/login` y `/tadaimaus/` 200, API sin token 401, bundle con los textos nuevos, «Nothing to migrate», sin errores en logs.
+- **No probado en prod con sesión.** Recargar con Ctrl+F5 por la caché PWA.
+- **Pendiente:** el historial del folio (`pre_sale_order_logs`) no se muestra en ninguna pantalla. La rama local `feat/preventas-reversas` toca el mismo panel (misma columna «Corregir»): habrá conflicto al unirla.
+
 ### Sesión 2026-11-13 — Preventas: entrega parcial elegida en Caja + reversa exacta de la entrega (PR #99) — rev tadaima-00132-qiq
 
 **Origen:** la tienda preguntó cómo proceder con un folio de preventa de 3 productos distintos del que solo llegaron 2. Caja cobraba el saldo de TODO el folio y, al cobrar, el backend marcaba entregadas todas las partidas con catálogo llegado aunque el cajero las quitara del carrito (el folio podía quedar «Liquidado» con piezas sin entregar).
