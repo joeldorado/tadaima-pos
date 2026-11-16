@@ -194,7 +194,7 @@ interface Producto {
   // Solo viene con store_id; default true para la vista global admin.
   isAssigned?: boolean;
   /** Promos NxM vigentes (embed del backend) — para el badge y filtro "Con promo". */
-  promos?: { id: number; name: string; type?: string; buyN: number | null; payM: number | null; minQty?: number | null; discountPerUnit?: number | null; endsAt: string | null }[];
+  promos?: { id: number; name: string; type?: string; buyN: number | null; payM: number | null; minQty?: number | null; discountPerUnit?: number | null; priceMode?: string | null; specialValue?: number | null; endsAt: string | null }[];
 }
 
 const fmt = (n: number) =>
@@ -237,6 +237,7 @@ function apiProductToProducto(p: Product): Producto {
       id: pr.id, name: pr.name, ...(pr.type ? { type: pr.type } : {}),
       buyN: pr.buy_n, payM: pr.pay_m,
       minQty: pr.min_qty ?? null, discountPerUnit: pr.discount_per_unit ?? null,
+      priceMode: pr.price_mode ?? null, specialValue: pr.special_value ?? null,
       endsAt: pr.ends_at ?? null,
     })),
   }
@@ -2387,10 +2388,10 @@ export function ProductsPage() {
                 <span
                   className="inline-flex items-center gap-1 mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wide"
                   style={{ color: "#34d399", background: "rgba(16,185,129,0.10)", border: "1px solid rgba(16,185,129,0.35)" }}
-                  title={`${promo.name} · ${promoDetailLabel({ type: promo.type, buy_n: promo.buyN, pay_m: promo.payM, min_qty: promo.minQty, discount_per_unit: promo.discountPerUnit })}`}
+                  title={`${promo.name} · ${promoDetailLabel({ type: promo.type, buy_n: promo.buyN, pay_m: promo.payM, min_qty: promo.minQty, discount_per_unit: promo.discountPerUnit, price_mode: promo.priceMode, special_value: promo.specialValue })}`}
                 >
                   <TicketPercent size={9} />
-                  {promoShortLabel({ type: promo.type, buy_n: promo.buyN, pay_m: promo.payM, min_qty: promo.minQty, discount_per_unit: promo.discountPerUnit })}
+                  {promoShortLabel({ type: promo.type, buy_n: promo.buyN, pay_m: promo.payM, min_qty: promo.minQty, discount_per_unit: promo.discountPerUnit, price_mode: promo.priceMode, special_value: promo.specialValue })}
                   {promo.endsAt
                     ? ` · hasta ${new Date(promo.endsAt).toLocaleDateString("es-MX", { day: "2-digit", month: "short" })}`
                     : " · sin vencimiento"}

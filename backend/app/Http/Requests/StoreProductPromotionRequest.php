@@ -20,6 +20,7 @@ class StoreProductPromotionRequest extends FormRequest
     {
         $type = $this->promoType();
         $esMayoreo = $type === ProductPromotion::TYPE_QTY_DISCOUNT;
+        $esEspecial = $type === ProductPromotion::TYPE_SPECIAL_PRICE;
 
         // En PUT los campos van 'sometimes': `toggleStatus` (pausar/reanudar)
         // reenvía la promo por este mismo FormRequest, y un bundle rezagado no
@@ -43,6 +44,19 @@ class StoreProductPromotionRequest extends FormRequest
                 : ['prohibited'],
             'discount_per_unit' => $esMayoreo
                 ? [$presence, 'numeric', 'gt:0', 'max:999999']
+                : ['prohibited'],
+            // Precio especial (2026-11-15): desde 1 pieza. 'fixed' = precio
+            // final por pieza; 'percent' = % de descuento entero-o-decimal 1–99.
+            'price_mode'    => $esEspecial
+                ? [$presence, Rule::in(ProductPromotion::PRICE_MODES)]
+                : ['prohibited'],
+            'special_value' => $esEspecial
+                ? array_merge(
+                    [$presence, 'numeric'],
+                    $this->input('price_mode') === ProductPromotion::PRICE_MODE_PERCENT
+                        ? ['min:1', 'max:99']
+                        : ['gt:0', 'max:999999'],
+                )
                 : ['prohibited'],
             // Restricción de método de pago de la PROMO (espejo del producto).
             // Sin presencia condicional: el default de la columna cubre la
@@ -102,6 +116,16 @@ class StoreProductPromotionRequest extends FormRequest
             'discount_per_unit.required' => 'Falta el descuento por pieza. Si no ves ese campo, recarga la app (Ctrl+Shift+R): traes una versión vieja.',
             'discount_per_unit.gt'       => 'El descuento por pieza debe ser mayor a $0.',
             'discount_per_unit.prohibited' => 'El descuento por pieza solo aplica a promos de mayoreo.',
+
+            'price_mode.required'    => 'Elige si el precio especial es un precio fijo ($) o un porcentaje (%). Si no ves esa opción, recarga la app (Ctrl+Shift+R).',
+            'price_mode.in'          => 'El precio especial solo puede ser precio fijo ($) o porcentaje (%).',
+            'price_mode.prohibited'  => 'El precio fijo o porcentaje solo aplica a promos de precio especial.',
+            'special_value.required' => 'Falta el precio o el porcentaje del precio especial.',
+            'special_value.numeric'  => 'El precio o porcentaje debe ser un número.',
+            'special_value.gt'       => 'El precio especial debe ser mayor a $0.',
+            'special_value.min'      => 'El porcentaje debe ser de 1% a 99%.',
+            'special_value.max'      => 'El porcentaje debe ser de 1% a 99%.',
+            'special_value.prohibited' => 'El precio o porcentaje solo aplica a promos de precio especial.',
         ];
     }
 }

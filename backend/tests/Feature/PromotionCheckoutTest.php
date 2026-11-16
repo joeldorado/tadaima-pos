@@ -568,4 +568,147 @@ class PromotionCheckoutTest extends TestCase
             ->assertStatus(201)
             ->assertJsonPath('data.total', 1000);
     }
+
+    // ── Precio especial (T-001/T-002, 2026-11-15): desde 1 pieza ────────────
+
+    private function makeSpecialPromo(Product $product, string $mode, float $value, array $extra = []): ProductPromotion
+    {
+        return ProductPromotion::create(array_merge([
+            'product_id' => $product->id, 'name' => $mode === 'fixed' ? "Precio especial \${$value}" : "Buen Fin {$value}%",
+            'type' => 'special_price', 'price_mode' => $mode, 'special_value' => $value,
+        ], $extra));
+    }
+
+    public function test_precio_especial_fijo_desde_una_pieza(): void
+    {
+        $product = $this->makeProduct(499);
+        $promo = $this->makeSpecialPromo($product, 'fixed', 350);
+
+        $this->checkout([
+            ['product_id' => $product->id, 'quantity' => 1, 'price' => 499.0],
+        ], 350.0)
+            ->assertStatus(201)
+            ->assertJsonPath('data.subtotal', 499)
+            ->assertJsonPath('data.discount', 149)
+            ->assertJsonPath('data.total', 350);
+
+        $item = SaleItem::firstOrFail();
+        $this->assertSame('promo', $item->benefit_type);
+        $this->assertSame($promo->id, (int) $item->applied_promotion_id);
+        $this->assertSame(0, (int) $item->promo_free_qty);
+        $this->assertEqualsWithDelta(149.0, (float) $item->promo_amount, 0.001);
+        $this->assertEqualsWithDelta(499.0, (float) $item->total, 0.001, 'total sigue siendo el BRUTO');
+    }
+
+    public function test_precio_especial_porcentaje_cada_pieza(): void
+    {
+        // Buen Fin 45%: 3 × $199.90 = 599.70; 45% = 269.865 → 269.87.
+        $product = $this->makeProduct(199.90);
+        $this->makeSpecialPromo($product, 'percent', 45);
+
+        $this->checkout([
+            ['product_id' => $product->id, 'quantity' => 3, 'price' => 199.90],
+        ], 329.83)
+            ->assertStatus(201)
+            ->assertJsonPath('data.discount', 269.87)
+            ->assertJsonPath('data.total', 329.83);
+    }
+
+    public function test_precio_especial_mayor_al_de_catalogo_no_aplica(): void
+    {
+        $product = $this->makeProduct(300);
+        $this->makeSpecialPromo($product, 'fixed', 350);
+
+        $this->checkout([
+            ['product_id' => $product->id, 'quantity' => 1, 'price' => 300.0],
+        ], 300.0)
+            ->assertStatus(201)
+            ->assertJsonPath('data.discount', 0)
+            ->assertJsonPath('data.total', 300);
+
+        $this->assertNull(SaleItem::firstOrFail()->applied_promotion_id);
+    }
+
+    public function test_precio_especial_socio_pasa_a_normal(): void
+    {
+        // $1,100 normal / $980 socio. 45% sobre NORMAL: 1,100 − 495 = 605.
+        $product = $this->makeSocioProduct();
+        $this->makeSpecialPromo($product, 'percent', 45);
+
+        $this->checkout([
+            ['product_id' => $product->id, 'quantity' => 1, 'price' => 980.0, 'price_level' => 'b'],
+        ], 605.0)
+            ->assertStatus(201)
+            ->assertJsonPath('data.total', 605);
+
+        $this->assertEqualsWithDelta(1100.0, (float) SaleItem::firstOrFail()->price, 0.001);
+    }
+
+    public function test_precio_especial_fijo_mas_caro_que_el_socio_conserva_el_socio(): void
+    {
+        // Precio fijo $1,000 vs socio $980: a precio socio la promo no rinde,
+        // así que no entra y el socio conserva su $980.
+        $product = $this->makeSocioProduct();
+        $this->makeSpecialPromo($product, 'fixed', 1000);
+
+        $this->checkout([
+            ['product_id' => $product->id, 'quantity' => 1, 'price' => 980.0, 'price_level' => 'b'],
+        ], 980.0)
+            ->assertStatus(201)
+            ->assertJsonPath('data.total', 980);
+    }
+
+    public function test_manual_stackea_sobre_precio_especial(): void
+    {
+        // 2 × $500 con precio especial $400 → neto 800; 10% manual = 80 → 720.
+        $product = $this->makeProduct(500);
+        $this->makeSpecialPromo($product, 'fixed', 400);
+
+        $this->checkout([
+            ['product_id' => $product->id, 'quantity' => 2, 'price' => 500.0,
+             'line_discount' => ['kind' => 'percent', 'basis' => 'line', 'value' => 10, 'reason' => 'otro']],
+        ], 720.0)
+            ->assertStatus(201)
+            ->assertJsonPath('data.discount', 280)
+            ->assertJsonPath('data.total', 720);
+
+        $item = SaleItem::firstOrFail();
+        $this->assertSame('discount', $item->benefit_type);
+        $this->assertEqualsWithDelta(200.0, (float) $item->promo_amount, 0.001);
+    }
+
+    public function test_precio_especial_solo_efectivo_bloquea_tarjeta(): void
+    {
+        $product = $this->makeProduct(499);
+        $this->makeSpecialPromo($product, 'fixed', 350, ['name' => 'Especial de contado', 'allow_card' => false]);
+
+        $resp = $this->checkoutConTarjeta([
+            ['product_id' => $product->id, 'quantity' => 1, 'price' => 499.0],
+        ], 350.0);
+
+        $resp->assertStatus(422);
+        $this->assertStringContainsString('Especial de contado', (string) $resp->json('error'));
+    }
+
+    public function test_precio_especial_en_productos_distintos_no_se_combina(): void
+    {
+        // Misma promo en dos productos: cada pieza baja sola; la de $300 no
+        // entra (precio menor al especial) y conserva su precio.
+        $a = $this->makeProduct(500);
+        $b = $this->makeProduct(300);
+        $promo = $this->makeSpecialPromo($a, 'fixed', 350);
+        $promo->products()->syncWithoutDetaching([$b->id]);
+
+        $this->checkout([
+            ['product_id' => $a->id, 'quantity' => 1, 'price' => 500.0],
+            ['product_id' => $b->id, 'quantity' => 1, 'price' => 300.0],
+        ], 650.0)
+            ->assertStatus(201)
+            ->assertJsonPath('data.discount', 150)
+            ->assertJsonPath('data.total', 650);
+
+        $items = SaleItem::orderBy('id')->get();
+        $this->assertNotNull($items[0]->applied_promotion_id);
+        $this->assertNull($items[1]->applied_promotion_id);
+    }
 }

@@ -2538,6 +2538,9 @@ export function SellPage() {
           // Mayoreo: "desde minQty pzas, −discountPerUnit a cada una".
           minQty: ap.min_qty ?? null,
           discountPerUnit: ap.discount_per_unit ?? null,
+          // Precio especial (2026-11-15): $ fijo por pieza o % menos, desde 1.
+          priceMode: ap.price_mode ?? null,
+          specialValue: ap.special_value ?? null,
           // Restricción de pago de la promo: no entra al cálculo, la usa el
           // bloqueo de Caja sobre la promo que GANÓ la línea.
           allowCash: ap.allow_cash !== false,
@@ -2609,14 +2612,23 @@ export function SellPage() {
    * el badge lo dice para que el cajero entienda por qué la gratis cayó en
    * otra línea.
    */
+  const promoPoolItems = activeMesa?.items;
   const promoPoolCounts = useMemo(() => {
+    // El precio especial (2026-11-15) se aplica pieza por pieza: aunque varias
+    // líneas usen la misma promo, no es "combinada".
+    const porPieza = new Set<number>();
+    for (const i of promoPoolItems ?? []) {
+      for (const ap of i.product.active_promotions ?? []) {
+        if (ap.type === "special_price") porPieza.add(ap.id);
+      }
+    }
     const counts: Record<number, number> = {};
     for (const l of saleCalcResult.lines) {
       const id = l.promoPart?.promoId ?? l.poolPromoId;
-      if (id != null) counts[id] = (counts[id] ?? 0) + 1;
+      if (id != null && !porPieza.has(id)) counts[id] = (counts[id] ?? 0) + 1;
     }
     return counts;
-  }, [saleCalcResult]);
+  }, [saleCalcResult, promoPoolItems]);
 
   /** Flags de pago de cada promo del carrito, indexados por id de promo. */
   const promoFlagsById = useMemo(() => {
@@ -6379,7 +6391,7 @@ export function SellPage() {
                               style={{ background: "rgba(16,185,129,0.12)", color: "#34d399", border: "1px solid rgba(16,185,129,0.4)" }}
                               title={`Promoción automática: ${lineCalc?.promoPart?.promoLabel ?? ""}`}
                             >
-                              {/* qty_discount no regala piezas (freeQty 0) — solo monto */}
+                              {/* qty_discount y special_price no regalan piezas (freeQty 0) — solo monto */}
                               {lineCalc?.promoPart?.promoLabel ?? "Promo"}{(promoPoolCounts[lineCalc?.promoPart?.promoId ?? -1] ?? 0) > 1 ? " (combinada)" : ""} ·{(lineCalc?.promoPart?.freeQty ?? 0) > 0 ? ` ${lineCalc?.promoPart?.freeQty} gratis` : ""} −{fmt(lineCalc?.promoPart?.amount ?? 0)}
                             </span>
                           )}

@@ -21,7 +21,13 @@ export function promoToInput(promo: Promotion): ProductPromotionInput {
   return {
     name: promo.name,
     // Mandar los campos de SU tipo (el backend prohíbe los del otro).
-    ...(promo.type === "qty_discount"
+    ...(promo.type === "special_price"
+      ? {
+          type: "special_price" as const,
+          ...(promo.price_mode != null ? { price_mode: promo.price_mode } : {}),
+          ...(promo.special_value != null ? { special_value: promo.special_value } : {}),
+        }
+      : promo.type === "qty_discount"
       ? {
           type: "qty_discount" as const,
           ...(promo.min_qty != null ? { min_qty: promo.min_qty } : {}),

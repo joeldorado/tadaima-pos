@@ -72,6 +72,7 @@ export function PromoCard({
   const count = promo.products_count ?? promo.products?.length ?? 0;
   const payment = paymentRestrictionLabel(promo);
   const isMayoreo = promo.type === "qty_discount";
+  const isEspecial = promo.type === "special_price";
 
   return (
     <article
@@ -81,7 +82,7 @@ export function PromoCard({
     >
       <div className="flex flex-wrap items-start gap-4 p-4 sm:p-5" style={{ opacity: status === "vencida" ? 0.7 : 1 }}>
         <span
-          className={`flex min-h-16 min-w-20 shrink-0 items-center justify-center rounded-2xl px-3 text-center font-black leading-none ${isMayoreo ? "text-[17px]" : "text-[30px]"}`}
+          className={`flex min-h-16 min-w-20 shrink-0 items-center justify-center rounded-2xl px-3 text-center font-black leading-none ${isMayoreo ? "text-[17px]" : isEspecial ? "text-[22px]" : "text-[30px]"}`}
           style={tint(status === "sin_configurar" ? RED_SOFT : GREEN)}
         >
           {isMayoreo ? "Mayoreo" : promoShortLabel(promo)}

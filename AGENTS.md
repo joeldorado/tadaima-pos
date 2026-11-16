@@ -8,7 +8,7 @@
 > Detalle adicional: [`CLAUDE.md`](CLAUDE.md) (comandos y arquitectura del frontend) y
 > [`backend/AGENTS.md`](backend/AGENTS.md) (API, ADRs y referencia de endpoints).
 >
-> Última revisión: 2026-11-13.
+> Última revisión: 2026-11-15.
 
 ---
 
@@ -115,6 +115,17 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   TODA la línea se cobra a precio NORMAL (nivel A) con la promo encima, aunque diga
   SOCIO (siempre gana la promo). Lo aplican `saleCalc.ts` y `SaleCalculator.php`
   (`basePrice` / `base_price`); `sale_items.price` guarda ese precio efectivo.
+- **Precio especial (2026-11-15, `type='special_price'`):** promo desde **1 pieza**, a cada pieza
+  de la línea, para precios fijos ($350, $450) y Buen Fin (45%). `price_mode='fixed'` +
+  `special_value` = precio final por pieza (ahorro = piezas × máx(0, precio − valor));
+  `price_mode='percent'` + `special_value` 1–99 (ahorro = round2(piezas × precio × %/100)). Piezas =
+  `floor(qty)`, tope al bruto de la línea. No junta piezas entre líneas: una línea que ya cuesta
+  igual o menos que el precio fijo no entra (ni se re-precia de socio a normal). Todo lo demás es
+  igual que las otras promos: socio → normal si entra, descuento manual encima, `allow_cash/card`,
+  vigencia, tienda, prioridad, gana la que más ahorra. **Exclusividad de tipos** sigue: un producto
+  no tiene 2x1, mayoreo y precio especial vigentes a la vez (para Buen Fin se pausa la otra). El
+  «Descuento por cantidad» (mayoreo) sigue exigiendo 2+ piezas a propósito: no lo toques para esto.
+  La app móvil (repo aparte) aún no conoce este tipo.
 - **Regalo por línea (2026-10-31):** Caja → menú ⋮ → «Regalo» (cualquier rol, venta regular).
   La línea va en `sale_items` con `price = total = cost = 0` y el detalle (precio de catálogo,
   costo real, nota, quién) en `sale_gifts`; `products.cost` no se toca y el stock sí baja. El

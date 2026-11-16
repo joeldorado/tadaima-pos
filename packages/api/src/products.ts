@@ -176,7 +176,7 @@ export interface ProductLight {
   has_cost?: boolean
   /** Promos NxM vigentes (Descuentos v2 Fase 3) — el backend ya las embebe.
    *  Con ?store_id el embed viene FILTRADO a esa tienda (o globales). */
-  active_promotions?: { id: number; name: string; type?: 'nxm' | 'qty_discount'; buy_n: number | null; pay_m: number | null; min_qty?: number | null; discount_per_unit?: number | null; allow_cash?: boolean; allow_card?: boolean; priority: number; store_id?: number | null }[]
+  active_promotions?: { id: number; name: string; type?: 'nxm' | 'qty_discount' | 'special_price'; buy_n: number | null; pay_m: number | null; min_qty?: number | null; discount_per_unit?: number | null; price_mode?: 'fixed' | 'percent' | null; special_value?: number | null; allow_cash?: boolean; allow_card?: boolean; priority: number; store_id?: number | null }[]
 }
 
 /**

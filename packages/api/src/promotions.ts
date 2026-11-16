@@ -1,5 +1,5 @@
 import { apiClient } from './client'
-import type { ProductPromotion, Promotion } from './types'
+import type { ProductPromotion, Promotion, PromoPriceMode, PromoType } from './types'
 
 /**
  * Promociones (Descuentos v2). Desde 2026-07-25 la promo es una entidad
@@ -11,14 +11,19 @@ import type { ProductPromotion, Promotion } from './types'
 
 export interface ProductPromotionInput {
   name: string
-  /** 'nxm' (default) usa buy_n/pay_m; 'qty_discount' = mayoreo, usa min_qty/discount_per_unit. */
-  type?: 'nxm' | 'qty_discount'
+  /** 'nxm' (default) usa buy_n/pay_m; 'qty_discount' = mayoreo, usa min_qty/discount_per_unit;
+   *  'special_price' usa price_mode/special_value (2026-11-15). */
+  type?: PromoType
   buy_n?: number
   pay_m?: number
   /** Mayoreo: desde cuántas piezas aplica (>= 2). */
   min_qty?: number
   /** Mayoreo: cuánto se le descuenta a CADA pieza. */
   discount_per_unit?: number
+  /** Precio especial: 'fixed' = precio final por pieza; 'percent' = % de descuento. */
+  price_mode?: PromoPriceMode
+  /** Precio especial: el precio ($350) o el porcentaje (45). */
+  special_value?: number
   /** Restricción de pago de la promo: si el método no sirve, bloquea el cobro. */
   allow_cash?: boolean
   allow_card?: boolean

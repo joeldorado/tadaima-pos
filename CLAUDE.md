@@ -182,7 +182,14 @@ del renglón que queda (y los rollups de `sales`). En `sale_cancellations.items_
 `line_total` = lo devuelto por la línea, con el desglose `gross_total`,
 `discount_cancelled` y `surcharge_cancelled`.
 
-**Promos (`product_promotions`):** NxM por producto (`buy_n`/`pay_m`), `status`
+**Precio especial (desde 2026-11-15):** `product_promotions.type='special_price'` con
+`price_mode` (`fixed` = `special_value` es el precio final por pieza; `percent` = % de descuento
+1–99) y `special_value`. Aplica desde 1 pieza; en `sale_items` queda igual que cualquier promo:
+`promo_amount` = lo que bajó la línea, `promo_free_qty = 0`, `promo_name` = nombre de la promo,
+`total` sigue en BRUTO. Para reportes no hay columnas nuevas en `sale_items`.
+
+**Promos (`product_promotions`):** tres tipos — NxM (`buy_n`/`pay_m`), mayoreo
+`qty_discount` (`min_qty`/`discount_per_unit`, 2+ piezas) y precio especial (arriba). `status`
 (`active/paused/expired`), vigencia `starts_at/ends_at` (ancladas a día-negocio
 America/Tijuana), `priority` (desempate cuando 2 promos ahorran igual) y `store_id`
 (**null = todas las tiendas**; con valor = solo esa sucursal — el motor solo aplica
