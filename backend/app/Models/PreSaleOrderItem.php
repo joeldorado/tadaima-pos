@@ -15,6 +15,9 @@ class PreSaleOrderItem extends Model
     protected $fillable = [
         'pre_sale_order_id', 'pre_sale_catalog_id', 'product_id',
         'quantity', 'price_level', 'unit_price', 'cost', 'status', 'delivered_at', 'delivery_id',
+        // Descuento manual al liquidar (2026-11-16): espejo de sale_items.discount_*.
+        'discount_kind', 'discount_basis', 'discount_value', 'discount_amount',
+        'discount_reason', 'discount_note', 'discount_authorized_by',
     ];
 
     protected $casts = [
@@ -22,6 +25,8 @@ class PreSaleOrderItem extends Model
         'price_level'  => 'integer',
         'unit_price'   => 'float',
         'cost'         => 'float',
+        'discount_value'  => 'float',
+        'discount_amount' => 'float',
         'delivered_at' => 'datetime',
         'created_at'   => 'datetime',
     ];
@@ -51,7 +56,18 @@ class PreSaleOrderItem extends Model
 
     // ── Computed ──────────────────────────────────────────────────────────────
 
+    /**
+     * Neto de la partida: precio pactado × piezas − su descuento manual
+     * (2026-11-16). Es lo que el cliente paga por ella; sin descuento es el
+     * bruto de siempre.
+     */
     public function getSubtotalAttribute(): float
+    {
+        return \App\Support\PresaleItemDiscount::lineTotal($this);
+    }
+
+    /** Bruto de la partida (precio pactado × piezas), sin descuento. */
+    public function getGrossTotalAttribute(): float
     {
         return round($this->quantity * $this->unit_price, 2);
     }

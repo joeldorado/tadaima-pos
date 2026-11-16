@@ -294,7 +294,7 @@ function printTicket(sale: SaleDetail) {
       ${o.items.map(it => `
         <div style="font-size:9px;display:flex;justify-content:space-between;margin-bottom:1px">
           <span>${it.catalog?.product_name ?? "Producto"} ×${it.quantity}</span>
-          <span>${fmt(it.unit_price * it.quantity)}</span>
+          <span>${fmt(it.subtotal ?? it.unit_price * it.quantity)}</span>
         </div>
       `).join("")}
       <div style="font-size:9px;margin-top:3px;border-top:1px dashed #000;padding-top:2px">
@@ -899,7 +899,7 @@ function SaleRow({
                         <div className="flex items-center gap-4 text-right">
                           <span className="text-[10px] font-black" style={{ color: "var(--td-text-md)" }}>×{it.quantity}</span>
                           <span className="text-[10px] font-bold w-[60px]" style={{ color: "var(--td-text-md)" }}>{fmt(it.unit_price)}</span>
-                          <span className="text-xs font-black w-[70px]" style={{ color: "var(--td-text-hi)" }}>{fmt(it.unit_price * it.quantity)}</span>
+                          <span className="text-xs font-black w-[70px]" style={{ color: "var(--td-text-hi)" }} title={(it.discount_amount ?? 0) > 0 ? `Descuento −${fmt(it.discount_amount ?? 0)}` : undefined}>{fmt(it.subtotal ?? it.unit_price * it.quantity)}</span>
                         </div>
                       </div>
                     ))}
@@ -1201,8 +1201,8 @@ function PreSaleMovementRow({
                   <p className="text-[8px] uppercase" style={{ color: "var(--td-text-lo)" }}>unit.</p>
                 </div>
                 <div className="text-right w-[70px]">
-                  <p className="text-sm font-black" style={{ color: "var(--td-text-hi)" }}>{fmt(it.unit_price * it.quantity)}</p>
-                  <p className="text-[8px] uppercase" style={{ color: "var(--td-text-lo)" }}>subtotal</p>
+                  <p className="text-sm font-black" style={{ color: "var(--td-text-hi)" }}>{fmt(it.subtotal ?? it.unit_price * it.quantity)}</p>
+                  <p className="text-[8px] uppercase" style={{ color: "var(--td-text-lo)" }}>{(it.discount_amount ?? 0) > 0 ? `desc. −${fmt(it.discount_amount ?? 0)}` : "subtotal"}</p>
                 </div>
               </div>
             </div>
@@ -2725,11 +2725,15 @@ export function SalesPage() {
         (p.items ?? []).forEach(it => {
           const name = it.catalog?.product_name ?? `#${it.product_id ?? "?"}`;
           const qty = it.quantity ?? 0;
-          const precioUnit = it.unit_price ?? (qty > 0 ? (it.subtotal ?? 0) / qty : 0);
-          const key = `${fecha}|${name}|${precioUnit}`;
-          const row = map.get(key) ?? { key, name, fecha, precioUnit, cantidad: 0, venta: 0, costo: 0, tieneCosto: false, comision: 0 };
-          // Venta del item de preventa: subtotal si viene, si no unit_price*qty.
-          row.venta += it.subtotal ?? ((it.unit_price ?? 0) * qty);
+          // Venta del item de preventa: su neto (subtotal, con el descuento manual
+          // al entregar, 2026-11-16); si no viene, unit_price*qty. P. Unit = neto
+          // por pieza para que cant × P. Unit = venta; el de lista va tachado.
+          const venta = it.subtotal ?? ((it.unit_price ?? 0) * qty);
+          const precioUnit = qty > 0 ? Math.round((venta / qty) * 100) / 100 : (it.unit_price ?? 0);
+          const precioLista = it.unit_price ?? precioUnit;
+          const key = `${fecha}|${name}|${precioLista}|${precioUnit}`;
+          const row = map.get(key) ?? { key, name, fecha, precioUnit, precioLista, cantidad: 0, venta: 0, costo: 0, tieneCosto: false, comision: 0 };
+          row.venta += venta;
           row.cantidad += qty;
           if (it.cost != null) { row.costo += it.cost * qty; row.tieneCosto = true; }
           map.set(key, row);

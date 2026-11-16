@@ -88,6 +88,7 @@ import { useAuth } from "@tadaima/auth";
 import { isAdmin as isAdminRole } from "@/lib/permisos";
 import { cartUnitLimit, storeAvailability } from "@/lib/presaleAvailability";
 import { chargeForLoadedLines, presaleDeliveryCharge } from "@/lib/presaleAllocation";
+import { presaleDiscountPayload, presaleGrossUnitPrice, presaleLineCharge, presaleLineDiscount } from "@/lib/presaleDiscount";
 import { CancelTicketModal } from "@/components/cancel/CancelTicketModal";
 import { CorrectPaymentModal } from "@/components/sales/CorrectPaymentModal";
 import { motion as Motion, AnimatePresence } from "motion/react";
@@ -179,6 +180,9 @@ interface CartItem {
   /** Lo que falta por cobrar de esta partida del folio cargado (entrega parcial,
    *  2026-11-13). Quitar la línea = «no se entrega hoy» y baja el cobro. */
   preSalePending?: number;
+  /** Precio pactado por pieza de la partida del folio (bruto). Base del
+   *  descuento manual al liquidar (2026-11-16, lib/presaleDiscount.ts). */
+  preSaleUnitPrice?: number;
   sellingCatalogId?: number; // ID del PreSaleCatalog que se está reservando
   unitLimit?: number; // límite de unidades por cliente (catálogo.limit_per_customer)
   syncError?: boolean; // true si addDraftItem/updateDraftItem falló — bloquea checkout
@@ -214,8 +218,9 @@ const EMPTY_HISTORIAL: HistorialEntry[] = [];
  * cae a precio × cantidad, que era el saldo prorrateado de esa línea.
  */
 function presaleLoadedCharge(lines: readonly CartItem[], oldDebt: number): number {
+  // Cada partida cobra lo que le falta menos su descuento manual (2026-11-16).
   return chargeForLoadedLines(
-    lines.map(i => i.preSalePending ?? (i.product.price_a || 0) * i.quantity),
+    lines.map(i => presaleLineCharge(i, (i.product.price_a || 0) * i.quantity)),
     oldDebt,
   );
 }
@@ -2518,7 +2523,9 @@ export function SellPage() {
         ...(!i.isDamaged && !i.isFromPreSale && i.sellingCatalogId == null && (i.product.price_a ?? 0) > 0
           ? { basePrice: i.product.price_a }
           : {}),
-        ...(i.discount ? { discount: i.discount } : {}),
+        // El descuento de una pieza de preventa no entra aquí: se resta de lo que
+        // le falta pagar al folio (`depositAmount`, lib/presaleDiscount.ts).
+        ...(i.discount && !i.isFromPreSale ? { discount: i.discount } : {}),
         ...(i.surcharge ? { surcharge: i.surcharge } : {}),
         // El cajero renunció a la promo de esta línea a propósito.
         ...(i.skipPromo ? { skipPromo: true } : {}),
@@ -2782,12 +2789,19 @@ export function SellPage() {
   // manda un monto). Quitar el descuento de una línea spliteada la re-fusiona.
   // Descuento o aumento por línea (2026-09-29): split y merge-back viven en
   // lib/lineAdjustments.ts (lógica pura con tests).
+  // Folio cargado: el cobro de la liquidación se recalcula con el descuento de
+  // sus piezas (2026-11-16). Sin folio, la mesa queda igual.
+  const withPresaleCharge = (m: Mesa, items: CartItem[]): Mesa =>
+    m.loadedPreSaleOrderId
+      ? { ...m, items, depositAmount: presaleLoadedCharge(items.filter(i => i.isFromPreSale), m.loadedPreSaleOldDebt ?? 0) }
+      : { ...m, items };
+
   const applyLineAdjustmentTo = (lineId: string, units: number, adjustment: LineAdjustment) => {
-    updMesa(activeMesa.id, m => ({ ...m, items: applyLineAdjustment(m.items, lineId, units, adjustment, newLineId) }));
+    updMesa(activeMesa.id, m => withPresaleCharge(m, applyLineAdjustment(m.items, lineId, units, adjustment, newLineId)));
   };
 
   const removeLineAdjustmentFrom = (lineId: string) => {
-    updMesa(activeMesa.id, m => ({ ...m, items: removeLineAdjustment(m.items, lineId) }));
+    updMesa(activeMesa.id, m => withPresaleCharge(m, removeLineAdjustment(m.items, lineId)));
   };
 
   // El monto real a cobrar en la transacción actual (sin comisión, la tienda absorbe).
@@ -3057,6 +3071,7 @@ export function SellPage() {
         preSaleOrderItemId: it.id,
         preSaleItemDelivered: false,
         preSalePending: pending,
+        preSaleUnitPrice: it.unit_price,
         // Anticipo ya abonado a esta partida (solo display).
         depositAmount: Math.round(Math.max(0, lineTotal - pending) * 100) / 100,
       };
@@ -3118,7 +3133,8 @@ export function SellPage() {
     // cobrar (anticipo parejo por pieza), no con el saldo de todo el folio. Las
     // que no llegan o se quitan del carrito conservan su anticipo y su saldo.
     const { pendingByLine, oldDebt } = presaleDeliveryCharge(
-      order.items.map(it => ({ quantity: it.quantity, unit_price: it.unit_price, delivered: it.status === 'delivered' })),
+      // Las ya entregadas cuentan a su neto (con el descuento que llevaron, 2026-11-16).
+      order.items.map(it => ({ quantity: it.quantity, unit_price: it.unit_price, discount_amount: it.discount_amount ?? 0, delivered: it.status === 'delivered' })),
       order.paid_amount ?? 0,
       [],
     );
@@ -3933,6 +3949,7 @@ export function SellPage() {
       const regularItems     = activeMesa.items.filter(i => !i.isFromPreSale && i.sellingCatalogId == null);
 
       const liquidationAmount = activeMesa.depositAmount || 0;
+      const presaleItemDiscounts = presaleDiscountPayload(liquidationItems);
       const regularSubtotal   = regularItems.reduce((s, i) => s + priceOf(i) * i.quantity, 0);
       const newPreventaDeposit = newCatalogItems.reduce((s, i) => s + (i.depositAmount ?? 0), 0);
 
@@ -4026,6 +4043,8 @@ export function SellPage() {
           status: "delivered",
           ...(liquidationItemIds.length > 0 ? { item_ids: liquidationItemIds } : {}),
           ...(liquidationAmount > 0 ? { payment: { amount: liquidationAmount, payment_method_id: payMethodId } } : {}),
+          // Descuento manual de las piezas que se llevan hoy (2026-11-16).
+          ...(presaleItemDiscounts.length > 0 ? { item_discounts: presaleItemDiscounts } : {}),
         });
         // Entrega parcial: el folio sigue en «listo» con lo que falta por entregar.
         const pendingAfter = (deliveredOrder?.items ?? []).filter(it => it.status !== "delivered").length;
@@ -4070,6 +4089,10 @@ export function SellPage() {
             price: getItemPrice(i),
             // El importe exacto de la partida: precio × cantidad puede bailar 1¢.
             ...(i.preSalePending != null ? { lineTotal: i.preSalePending } : {}),
+            // Descuento de la pieza (2026-11-16): renglón aparte, como en una venta.
+            ...(i.discount && presaleLineDiscount(i) > 0
+              ? { discountAmount: presaleLineDiscount(i), discountLabel: `Desc. ${DISCOUNT_REASON_LABELS[i.discount.reason]}` }
+              : {}),
           })),
           // Saldo de una entrega anterior que nunca se cobró: va en su renglón
           // para que el ticket sume lo mismo que se cobró.
@@ -6007,8 +6030,17 @@ export function SellPage() {
                     const lineBenefit = lineCalc?.benefit ?? null;
                     const lineDiscAmt = lineBenefit?.amount ?? 0;
                     const lineSurAmt = lineCalc?.surchargePart ?? 0;
-                    const lineNet = lineDiscAmt > 0 || lineSurAmt > 0 ? (lineCalc?.net ?? lineTotal) : lineTotal;
-                    const canLineDiscount = item.sellingCatalogId == null && !item.isFromPreSale && !item.isGift;
+                    // Pieza de preventa al liquidar: su descuento se resta de lo que
+                    // le falta pagar (lineTotal), nunca más que eso (2026-11-16).
+                    const presaleDiscAmt = item.isFromPreSale ? Math.min(presaleLineDiscount(item), lineTotal) : 0;
+                    const lineNet = item.isFromPreSale
+                      ? Math.max(0, lineTotal - presaleDiscAmt)
+                      : lineDiscAmt > 0 || lineSurAmt > 0 ? (lineCalc?.net ?? lineTotal) : lineTotal;
+                    const manualDiscAmt = item.isFromPreSale ? presaleDiscAmt : (lineCalc?.manualPart ?? 0);
+                    // Pieza de un folio cargado (2026-11-16): sí lleva descuento al
+                    // liquidar, con tope en lo que le falta pagar.
+                    const canLineDiscount = item.sellingCatalogId == null && !item.isGift
+                      && (!item.isFromPreSale || (!!activeMesa?.loadedPreSaleOrderId && !item.preSaleItemDelivered));
                     // Regalo (2026-10-31): solo venta regular, no dañados (precio manual).
                     const canLineGift = !activeMesa?.isPreventa && !activeMesa?.loadedPreSaleOrderId
                       && !item.isFromPreSale && item.sellingCatalogId == null && !item.isDamaged;
@@ -6359,14 +6391,14 @@ export function SellPage() {
                           </p>
                           {/* Badge del descuento MANUAL: solo la parte manual (stacking
                               2026-07-17 — se acumula sobre el resultado de la promo). */}
-                          {item.discount && (lineCalc?.manualPart ?? 0) > 0 && (
+                          {item.discount && manualDiscAmt > 0 && (
                             <button
                               onClick={() => removeLineAdjustmentFrom(item.lineId)}
                               title={`Quitar descuento${item.discount.note ? ` · ${item.discount.note}` : ""}`}
                               className="mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-black"
                               style={{ background: "rgba(224,34,26,0.14)", color: "var(--td-red)", border: "1px solid rgba(224,34,26,0.4)" }}
                             >
-                              −{fmt(lineCalc?.manualPart ?? 0)} · {DISCOUNT_REASON_LABELS[item.discount.reason]} <X size={10} />
+                              −{fmt(manualDiscAmt)} · {DISCOUNT_REASON_LABELS[item.discount.reason]} <X size={10} />
                             </button>
                           )}
                           {/* Badge del AUMENTO de precio (2026-09-29): ámbar, removible. */}
@@ -6466,7 +6498,7 @@ export function SellPage() {
                           <button
                             onClick={() => setRowMenuLineId(prev => prev === item.lineId ? null : item.lineId)}
                             title={item.isFromPreSale
-                              ? "Si el cliente no se lleva esta pieza hoy, quítala: queda pendiente en el folio con su anticipo"
+                              ? "Descuento (pieza dañada…) o quitarla si el cliente no se la lleva hoy: queda pendiente en el folio con su anticipo"
                               : "Opciones de esta línea (descuento o aumento / regalo / comentario / eliminar)"}
                             data-testid={`row-menu-btn-${item.lineId}`}
                             className={`relative inline-flex ${compactCart ? "h-10 w-10" : "h-[54px] w-12"} items-center justify-center rounded-2xl transition-colors`}
@@ -6492,7 +6524,7 @@ export function SellPage() {
                                   style={{ color: item.discount ? "var(--td-red)" : item.surcharge ? "#F59E0B" : "var(--td-text-hi)" }}
                                 >
                                   <Tag size={14} />
-                                  {item.discount ? "Editar descuento ✓" : item.surcharge ? "Editar aumento ✓" : "Descuento / aumento"}
+                                  {item.discount ? "Editar descuento ✓" : item.surcharge ? "Editar aumento ✓" : item.isFromPreSale ? "Descuento" : "Descuento / aumento"}
                                 </button>
                               )}
                               {canLineGift && (
@@ -7761,10 +7793,11 @@ export function SellPage() {
             key={line.lineId}
             productName={line.product.name}
             lineQty={line.quantity}
-            unitPrice={priceOf(line)}
-            promoAmount={lineCalcById[line.lineId]?.promoPart?.amount ?? 0}
+            unitPrice={line.isFromPreSale ? presaleGrossUnitPrice(line) : priceOf(line)}
+            promoAmount={line.isFromPreSale ? 0 : lineCalcById[line.lineId]?.promoPart?.amount ?? 0}
             existing={lineAdjustmentOf(line)}
-            allowSurcharge={!line.isDamaged}
+            allowSurcharge={!line.isDamaged && !line.isFromPreSale}
+            presalePending={line.isFromPreSale ? (line.preSalePending ?? 0) : undefined}
             onConfirm={(units, adj) => applyLineAdjustmentTo(line.lineId, units, adj)}
             onRemove={line.discount || line.surcharge ? () => removeLineAdjustmentFrom(line.lineId) : undefined}
             onClose={() => setDiscountModalLineId(null)}

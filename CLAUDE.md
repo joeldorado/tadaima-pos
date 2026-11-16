@@ -142,6 +142,13 @@ en cada deploy**. DB de producción: PostgreSQL en Supabase (MySQL/Cloud SQL ya 
 | `surcharge_authorized_by` | User que cobró el aumento |
 | `comment` | Comentario corto del cajero en la línea (desde 2026-10-03, máx. 80 caracteres), puesto desde el menú ⋮ de Caja. Recordatorio interno: se ve junto al nombre en Caja y Ventas; **no** toca montos ni se imprime en el ticket. NULL en ventas anteriores |
 
+**Descuento en preventas (desde 2026-11-16):** `pre_sale_order_items` lleva las mismas columnas
+`discount_kind/basis/value/amount/reason/note/authorized_by` que `sale_items`, puestas al entregar la pieza en Caja
+(pieza dañada, etc.). `unit_price` sigue siendo el precio pactado; **neto de la partida = `quantity × unit_price −
+discount_amount`** (el `subtotal` del API ya es el neto; `gross_total` es el bruto). Tope: lo que le faltaba pagar a
+la pieza, así que nunca hay devolución. Revertir la entrega lo quita. Para «cuánto se descontó en preventas»:
+`Σ pre_sale_order_items.discount_amount` de las partidas entregadas.
+
 **Regalo (desde 2026-10-31):** desde el menú ⋮ de Caja el cajero marca piezas como
 **Regalo**. La línea se guarda en `sale_items` con `price = total = cost = 0` (costo **0, nunca
 NULL**: con NULL los reportes caerían a `products.cost`), así no suma venta, costo ni utilidad en

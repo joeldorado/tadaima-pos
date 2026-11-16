@@ -517,6 +517,9 @@ export interface SaleDetail {
       product_id: number | null
       quantity: number
       unit_price: number
+      /** Neto (precio × piezas − descuento manual, 2026-11-16). */
+      subtotal?: number
+      discount_amount?: number
       price_level: number
       status: string
       catalog: { id: number; product_name: string } | null
@@ -996,7 +999,17 @@ export interface PreSaleOrderItem {
   quantity: number
   price_level: number
   unit_price: number
+  /** Neto de la partida: precio × piezas − su descuento manual (2026-11-16). */
   subtotal: number
+  /** Bruto (precio × piezas), sin descuento. */
+  gross_total?: number
+  /** Descuento manual que se le puso al entregarla (2026-11-16). 0 = sin descuento. */
+  discount_amount?: number
+  discount_kind?: 'fixed' | 'percent' | null
+  discount_basis?: 'unit' | 'line' | null
+  discount_value?: number | null
+  discount_reason?: 'danado' | 'caducidad' | 'exhibicion' | 'cortesia' | 'otro' | null
+  discount_note?: string | null
   status: 'pending' | 'delivered'
   delivered_at: string | null
   /** Entrega (visita) en la que el cliente se llevó la partida. Null en pendientes y en folios anteriores a 2026-11-13. */
@@ -1123,6 +1136,21 @@ export interface UpdatePreSaleOrderStatusInput {
   item_ids?: number[]
   /** Cobro de esa entrega, en la misma llamada (si falla la entrega, el pago no queda). */
   payment?: { amount: number; payment_method_id?: number }
+  /**
+   * Descuento manual por pieza (2026-11-16): solo de partidas de `item_ids`.
+   * El servidor calcula el monto y lo topa en lo que le falta pagar a la pieza.
+   */
+  item_discounts?: PreSaleItemDiscountInput[]
+}
+
+/** Descuento manual de una partida de preventa al liquidar (mismo shape que `line_discount` de una venta). */
+export interface PreSaleItemDiscountInput {
+  item_id: number
+  kind: 'fixed' | 'percent'
+  basis: 'unit' | 'line'
+  value: number
+  reason: 'danado' | 'caducidad' | 'exhibicion' | 'cortesia' | 'otro'
+  note?: string
 }
 
 // ─── Manga / Librería ─────────────────────────────────────────────────────────

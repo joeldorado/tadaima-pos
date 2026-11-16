@@ -141,6 +141,9 @@ class SaleResource extends JsonResource
                         'product_id'   => $it->product_id,
                         'quantity'     => $it->quantity,
                         'unit_price'   => $it->unit_price,
+                        // Neto y descuento manual de la partida (2026-11-16).
+                        'subtotal'        => $it->subtotal,
+                        'discount_amount' => (float) ($it->discount_amount ?? 0),
                         'price_level'  => $it->price_level,
                         'status'       => $it->status,
                         'catalog'      => $it->relationLoaded('catalog') && $it->catalog ? [

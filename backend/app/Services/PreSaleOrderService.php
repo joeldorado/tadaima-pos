@@ -9,6 +9,7 @@ use App\Models\PreSaleOrderItem;
 use App\Models\PreSaleOrderLog;
 use App\Models\PreSaleOrderPayment;
 use App\Support\PreSaleAudit;
+use App\Support\PresaleItemDiscount;
 use Illuminate\Support\Facades\DB;
 
 class PreSaleOrderService
@@ -312,8 +313,9 @@ class PreSaleOrderService
         ?string $notes = null,
         ?array $itemIds = null,
         ?array $payment = null,
+        ?array $itemDiscounts = null,
     ): PreSaleOrder {
-        return DB::transaction(function () use ($order, $userId, $notes, $itemIds, $payment) {
+        return DB::transaction(function () use ($order, $userId, $notes, $itemIds, $payment, $itemDiscounts) {
             $order = PreSaleOrder::lockForUpdate()->find($order->id);
 
             if ($order->status !== PreSaleOrder::STATUS_READY) {
@@ -356,6 +358,13 @@ class PreSaleOrderService
                     "No se puede liquidar el folio {$order->code}: falta capturar el costo real de: {$nombres}. "
                     . 'Captúralo en el catálogo de preventa (pestaña Precios → Costo).'
                 );
+            }
+
+            // Descuento manual por partida (2026-11-16): se aplica ANTES del
+            // cobro, así el saldo del folio ya lo trae y el cobro de hoy cuadra.
+            if ($itemDiscounts) {
+                $this->applyItemDiscounts($order, $items, $itemDiscounts, $userId);
+                $items = $items->fresh(['catalog:id,product_name,status']);
             }
 
             $paymentRow = $tracked ? $this->chargeDelivery($order, $payment, $userId) : null;
@@ -463,6 +472,54 @@ class PreSaleOrderService
     }
 
     /**
+     * Pone el descuento manual a las partidas que se entregan hoy. Cada
+     * descuento es de una partida de esta entrega y nunca supera lo que le
+     * falta pagar a esa pieza (`PresaleItemDiscount::pendingByItem`).
+     *
+     * @param  \Illuminate\Database\Eloquent\Collection<int, PreSaleOrderItem>  $items
+     * @param  array<int, array{item_id: int, kind: string, basis: string, value: float|int|string, reason: string, note?: string|null}>  $discounts
+     * @throws \DomainException
+     */
+    private function applyItemDiscounts(PreSaleOrder $order, $items, array $discounts, int $userId): void
+    {
+        $byId = $items->keyBy('id');
+        $order->load(['items', 'payments']);
+        $pending = PresaleItemDiscount::pendingByItem($order->items, $order->paid_amount);
+
+        foreach ($discounts as $d) {
+            $item = $byId->get((int) $d['item_id']);
+            if ($item === null) {
+                throw new \DomainException('El descuento es de una pieza que no se entrega hoy. Vuelve a cargar el folio en Caja.');
+            }
+
+            $nombre = $item->catalog?->product_name ?? "Partida #{$item->id}";
+            $amount = PresaleItemDiscount::amount(
+                (string) $d['kind'], (string) $d['basis'], (float) $d['value'], (float) $item->unit_price, (int) $item->quantity
+            );
+            $max = (float) ($pending[$item->id] ?? 0);
+            // Medio centavo de holgura solo por redondeo: el tope es exacto.
+            if ($amount > $max + 0.005) {
+                $tope = number_format($max, 2);
+                throw new \DomainException(
+                    "El descuento de \"{$nombre}\" no puede ser mayor a lo que le falta pagar (\${$tope})."
+                );
+            }
+
+            $item->update([
+                'discount_kind'          => $d['kind'],
+                'discount_basis'         => $d['basis'],
+                'discount_value'         => round((float) $d['value'], 2),
+                'discount_amount'        => $amount,
+                'discount_reason'        => $d['reason'],
+                'discount_note'          => $d['note'] ?? null,
+                'discount_authorized_by' => $userId,
+            ]);
+        }
+
+        $order->unsetRelation('items');
+    }
+
+    /**
      * Cobro de una entrega. Null si la entrega no lleva cobro (el anticipo ya
      * cubría). No acepta cobrar más que el saldo del folio.
      *
@@ -500,7 +557,7 @@ class PreSaleOrderService
         $delivered = (float) PreSaleOrderItem::where('pre_sale_order_id', $order->id)
             ->where('status', PreSaleOrderItem::STATUS_DELIVERED)
             ->get()
-            ->sum(fn (PreSaleOrderItem $it) => $it->quantity * $it->unit_price);
+            ->sum(fn (PreSaleOrderItem $it) => $it->subtotal);
         $paid = (float) PreSaleOrderPayment::where('pre_sale_order_id', $order->id)->sum('amount');
 
         if ($paid + self::MONEY_TOLERANCE < $delivered) {

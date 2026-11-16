@@ -82,6 +82,18 @@ describe("removeLineAdjustment", () => {
     expect(out[1]!.discount).toBeUndefined();
     expect(out[0]!.surcharge).toBeDefined();
   });
+
+  it("una pieza de preventa con descuento nunca se fusiona con la venta normal del mismo producto (2026-11-16)", () => {
+    const items = [
+      line({ lineId: "REG", quantity: 1 }),
+      line({ lineId: "PRE", quantity: 1, isFromPreSale: true, discount: { kind: "percent", basis: "line", value: 20, reason: "danado" } }),
+    ];
+    const out = removeLineAdjustment(items, "PRE");
+    expect(out).toHaveLength(2);
+    expect(out[0]!.quantity).toBe(1);
+    expect(out[1]).toMatchObject({ lineId: "PRE", isFromPreSale: true, quantity: 1 });
+    expect(out[1]!.discount).toBeUndefined();
+  });
 });
 
 describe("comentario de la línea", () => {

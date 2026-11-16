@@ -203,6 +203,7 @@ class PreSaleOrdersController extends Controller
                                    $notes,
                                    $request->validated()['item_ids'] ?? null,
                                    $request->validated()['payment'] ?? null,
+                                   $request->validated()['item_discounts'] ?? null,
                                ),
                 'expired'   => $this->service->expire($order, $request->user()->id, $notes),
                 'cancelled' => $this->service->cancel($order, $request->user()->id, $notes),

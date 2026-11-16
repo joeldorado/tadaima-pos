@@ -828,7 +828,8 @@ export function buildPresaleFolioRows(
       for (const [lineIdx, item] of (order.items ?? []).entries()) {
         const prodId = item.product_id ?? (item.catalog ? item.catalog.id * -1 : -999);
         const prodName = item.catalog?.product_name ?? `Preventa #${item.id}`;
-        const itemTotal = item.unit_price * item.quantity;
+        // Neto de la partida (con su descuento manual al entregar, 2026-11-16).
+        const itemTotal = item.subtotal ?? item.unit_price * item.quantity;
         const itemDeuda = deuda[lineIdx] ?? 0;
         const deliveredInRange = item.status === "delivered" && !!item.delivered_at &&
           (() => { const d = toLocalYmd(new Date(item.delivered_at!)); return d >= from && d <= to; })();

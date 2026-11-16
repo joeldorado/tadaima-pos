@@ -16,7 +16,17 @@ class PreSaleOrderItemResource extends JsonResource
             'quantity'            => $this->quantity,
             'price_level'         => $this->price_level,
             'unit_price'          => $this->unit_price,
+            // Neto (precio × piezas − descuento manual); `gross_total` es el bruto.
             'subtotal'            => $this->subtotal,
+            'gross_total'         => $this->gross_total,
+            // Descuento manual que se le puso al entregarla (2026-11-16). Monto 0
+            // y campos null = sin descuento. Espejo de sale_items.discount_*.
+            'discount_amount'     => (float) ($this->discount_amount ?? 0),
+            'discount_kind'       => $this->discount_kind,
+            'discount_basis'      => $this->discount_basis,
+            'discount_value'      => $this->discount_value !== null ? (float) $this->discount_value : null,
+            'discount_reason'     => $this->discount_reason,
+            'discount_note'       => $this->discount_note,
             'status'              => $this->status,
             'delivered_at'        => $this->delivered_at,
             // Entrega en la que se llevó la partida y el pago que la liquidó
