@@ -4,6 +4,19 @@
 
 ---
 
+### Sesión 2026-11-16 — «Revertir entrega» en Caja → Preventas + guía con el descuento (PR #101) — rev tadaima-00142-niz
+
+**Origen:** el cajero buscaba el folio cobrado por error en Caja → Preventas → Liquidadas (caso PREV-00084) y esa tarjeta era solo de consulta. El PR estaba abierto desde el 14-nov y chocaba con `main` tras la entrega parcial (#99/#100) y el descuento (#104).
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00140-fub`. **Sin migración**, solo frontend.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00140-fub=100 --project tadaimapos --region us-east1`
+
+- **Caja → Preventas (Liquidadas y Apartadas):** botón «Revertir entrega» debajo de la tarjeta del folio, solo con piezas entregadas (`canRevertPresaleDelivery`). Abre el mismo modal del Historial.
+- **Guía in-app:** Preventas con «Si no llegó todo el pedido», «Descuento a una pieza (llegó dañada)» (tope y ejemplo) y «Si se cobró o entregó por error» (revertir también quita el descuento); Caja, Ayuda, Glosario y tutoriales al día. Las capturas de la guía no se actualizaron.
+- **Merge con `main`:** el único conflicto era de imports en `SellPage.tsx`.
+- **Validación:** vitest 910 ✓ (contenido 65 ✓); type-check 455 = `main`; `vite build` ✓.
+- **En prod 2026-11-16 (Tijuana):** candidato y dominio `/`, `/login`, `/caja`, `/tadaimaus/` 200, API sin token 401; bundle con «Descuento a una pieza» y «Revertir entrega». No probado en prod con sesión: lo prueba la tienda.
+
 ### Sesión 2026-11-15 (b) — Descuento por pieza al liquidar una preventa (PR #104, T-003) — rev tadaima-00140-fub
 
 **Origen:** la tienda pidió (audio de WhatsApp, T-003) poder hacer descuento a una preventa al liquidarla, por ejemplo si la pieza llega dañada, «casi como en Caja». Hasta hoy una pieza de preventa solo se podía quitar del carrito («No se la lleva hoy»).
