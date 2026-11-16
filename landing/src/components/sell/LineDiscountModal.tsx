@@ -29,6 +29,12 @@ interface Props {
   existing?: LineAdjustment | undefined;
   /** false en mercancía dañada: ahí solo se permite descuento. */
   allowSurcharge?: boolean;
+  /**
+   * Pieza de preventa al liquidar (2026-11-16): lo que le falta pagar. Con
+   * esto el modal solo hace descuento, sobre la línea completa (sin split) y
+   * con tope en este monto: nunca sale dinero de la caja.
+   */
+  presalePending?: number | undefined;
   onConfirm: (unitsToAdjust: number, adjustment: LineAdjustment) => void;
   onRemove?: (() => void) | undefined;
   onClose: () => void;
@@ -62,7 +68,8 @@ const AMBER = "#F59E0B";
  * cálculo que el checkout — lo que ves es lo que se cobra (y el backend lo
  * recomputa de todos modos: nunca viaja un monto).
  */
-export function LineDiscountModal({ productName, lineQty, unitPrice, promoAmount = 0, existing, allowSurcharge = true, onConfirm, onRemove, onClose }: Props) {
+export function LineDiscountModal({ productName, lineQty, unitPrice, promoAmount = 0, existing, allowSurcharge = true, presalePending, onConfirm, onRemove, onClose }: Props) {
+  const isPresale = presalePending !== undefined;
   const current = existing?.direction === "discount" ? existing.discount
     : existing?.direction === "surcharge" ? existing.surcharge
     : undefined;
@@ -77,9 +84,9 @@ export function LineDiscountModal({ productName, lineQty, unitPrice, promoAmount
     existing?.direction === "surcharge" ? existing.surcharge.reason : "precio_especial");
   const [note, setNote] = useState<string>(current?.note ?? "");
 
-  const isUp = direction === "surcharge";
+  const isUp = !isPresale && direction === "surcharge";
 
-  const unitsNum = Math.max(1, Math.min(Math.floor(parseFloat(units) || 0), lineQty));
+  const unitsNum = isPresale ? lineQty : Math.max(1, Math.min(Math.floor(parseFloat(units) || 0), lineQty));
   const valueNum = parseFloat(value) || 0;
 
   const preview = useMemo(() => {
@@ -95,11 +102,15 @@ export function LineDiscountModal({ productName, lineQty, unitPrice, promoAmount
       return { amount, net: base + amount, promoOnBase };
     }
     const amount = computeLineDiscountAmount({ kind, basis, value: valueNum, reason: discountReason }, line, base);
+    // Preventa: el descuento se resta de lo que le falta pagar a la pieza.
+    if (isPresale) return { amount, net: Math.max(0, (presalePending ?? 0) - amount), promoOnBase };
     return { amount, net: Math.max(0, base - amount), promoOnBase };
-  }, [isUp, kind, basis, valueNum, discountReason, surchargeReason, unitPrice, unitsNum, lineQty, promoAmount]);
+  }, [isUp, isPresale, presalePending, kind, basis, valueNum, discountReason, surchargeReason, unitPrice, unitsNum, lineQty, promoAmount]);
 
   const invalidPct = kind === "percent" && valueNum > 100;
-  const canConfirm = valueNum > 0 && !invalidPct && unitsNum >= 1 && (!isUp || allowSurcharge);
+  // Tope de preventa: no más de lo que le falta pagar (el servidor lo vuelve a revisar).
+  const overMax = isPresale && preview !== null && preview.amount > (presalePending ?? 0) + 0.005;
+  const canConfirm = valueNum > 0 && !invalidPct && !overMax && unitsNum >= 1 && (!isUp || allowSurcharge);
   // Aviso suave de dedazo: el aumento por pieza supera el precio de catálogo.
   const bigIncrease = isUp && preview !== null && preview.amount > unitPrice * unitsNum;
 
@@ -151,8 +162,8 @@ export function LineDiscountModal({ productName, lineQty, unitPrice, promoAmount
           </button>
         </div>
 
-        {/* Dirección: bajar o subir el precio (2026-09-29) */}
-        <div className="flex gap-2">
+        {/* Dirección: bajar o subir el precio (2026-09-29). Preventa: solo descuento. */}
+        {!isPresale && <div className="flex gap-2">
           <button data-testid="ld-dir-discount" style={segBtn(!isUp)} onClick={() => setDirection("discount")}>
             Descuento (−)
           </button>
@@ -164,10 +175,10 @@ export function LineDiscountModal({ productName, lineQty, unitPrice, promoAmount
           >
             Aumento (+)
           </button>
-        </div>
+        </div>}
 
-        {/* Unidades a ajustar (menos que la línea → split automático) */}
-        <div>
+        {/* Unidades a ajustar (menos que la línea → split automático). Preventa: la línea completa. */}
+        {!isPresale && <div>
           <label className="text-[10px] font-black uppercase tracking-wider" style={{ color: TM }}>
             Unidades a ajustar (de {lineQty})
           </label>
@@ -184,7 +195,7 @@ export function LineDiscountModal({ productName, lineQty, unitPrice, promoAmount
               </span>
             )}
           </div>
-        </div>
+        </div>}
 
         {/* Tipo $ / % */}
         <div>
@@ -225,6 +236,11 @@ export function LineDiscountModal({ productName, lineQty, unitPrice, promoAmount
               El porcentaje no puede exceder 100.{isUp ? " Para más, usa un monto fijo." : ""}
             </p>
           )}
+          {isPresale && (
+            <p data-testid="ld-presale-max" className="text-[11px] font-bold mt-1" style={{ color: overMax ? "var(--td-red)" : TS }}>
+              Máximo {fmt(presalePending ?? 0)}: lo que le falta pagar a la pieza. El anticipo no se devuelve.
+            </p>
+          )}
           {bigIncrease && (
             <p className="text-[11px] font-bold mt-1" style={{ color: AMBER }}>
               Ojo: el aumento es mayor que el precio de catálogo. Revisa el monto.
@@ -262,8 +278,10 @@ export function LineDiscountModal({ productName, lineQty, unitPrice, promoAmount
             ? { background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.3)" }
             : { background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.25)" }}>
             <p className="text-[11px] font-bold" style={{ color: TS }}>
-              {unitsNum} ud{unitsNum !== 1 ? "s" : ""} × {fmt(unitPrice)}
-              {preview.promoOnBase > 0 ? ` − promo ${fmt(preview.promoOnBase)}` : ""} {isUp ? "+" : "−"} {fmt(preview.amount)}
+              {isPresale
+                ? `Le falta ${fmt(presalePending ?? 0)} − ${fmt(preview.amount)}`
+                : <>{unitsNum} ud{unitsNum !== 1 ? "s" : ""} × {fmt(unitPrice)}
+                  {preview.promoOnBase > 0 ? ` − promo ${fmt(preview.promoOnBase)}` : ""} {isUp ? "+" : "−"} {fmt(preview.amount)}</>}
             </p>
             <p className="text-lg font-black" style={{ color: isUp ? AMBER : "#10b981" }}>= {fmt(preview.net)}</p>
           </div>

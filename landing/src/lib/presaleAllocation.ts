@@ -29,6 +29,16 @@ export interface AllocationLine {
    * anteriores, líneas pendientes) el reparto es el de siempre.
    */
   delivery_payment_id?: number | null;
+  /**
+   * Descuento manual que se le puso a la línea al entregarla (2026-11-16). El
+   * total de la línea es precio × cantidad − descuento.
+   */
+  discount_amount?: number | null;
+}
+
+/** Total de una línea: precio pactado × piezas − su descuento (nunca negativo). */
+export function presaleLineTotal(l: AllocationLine): number {
+  return Math.max(0, (l.unit_price || 0) * (l.quantity || 0) - (l.discount_amount || 0));
 }
 
 export interface AllocationPayment {
@@ -53,7 +63,7 @@ export function allocatePresalePayments<P extends AllocationPayment>(
   lines: readonly AllocationLine[],
   payments: readonly P[],
 ): PresaleAllocation<P> {
-  const lineTotals = lines.map((l) => Math.max(0, (l.unit_price || 0) * (l.quantity || 0)));
+  const lineTotals = lines.map(presaleLineTotal);
   const pieces = lines.map((l) => Math.max(0, l.quantity || 0));
   const ordered = [...payments].sort(
     (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
@@ -155,7 +165,7 @@ export function presaleDeliveryCharge(
   paid: number,
   selected: readonly number[],
 ): PresaleDeliveryCharge {
-  const totals = lines.map((l) => toCents(Math.max(0, (l.unit_price || 0) * (l.quantity || 0))));
+  const totals = lines.map((l) => toCents(presaleLineTotal(l)));
   const deliveredTotal = totals.reduce((sum, total, i) => sum + (lines[i]!.delivered ? total : 0), 0);
   const pool = toCents(Math.max(0, paid || 0)) - deliveredTotal;
 

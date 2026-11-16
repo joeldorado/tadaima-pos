@@ -29,10 +29,14 @@
       "deshacer liquidación",
       "rollback",
       "liquidadas",
-      "apartadas"
+      "apartadas",
+      "descuento preventa",
+      "pieza dañada",
+      "producto dañado",
+      "descuento al liquidar"
     ],
     "tourId": "preventas",
-    "updatedAt": "2026-11-15",
+    "updatedAt": "2026-11-16",
     "sections": [
       {
         "id": "como-funciona",
@@ -173,12 +177,80 @@
         ]
       },
       {
+        "id": "descuento-pieza",
+        "heading": "Descuento a una pieza (llegó dañada)",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Al liquidar puedes descontarle a una pieza del folio, por ejemplo si llegó dañada. Es el mismo descuento de una venta normal ($ o %, con motivo y nota), sobre el precio pactado de esa pieza."
+          },
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Carga el folio en Caja",
+                "detail": "Solo las piezas que ya llegaron y que se van a entregar hoy pueden llevar descuento."
+              },
+              {
+                "title": "Menú ⋮ de la pieza → «Descuento»",
+                "detail": "Elige $ o %, el motivo (dañado, exhibición, cortesía…) y, si quieres, una nota. El aviso te dice cuánto le falta pagar a la pieza y cuánto quedaría."
+              },
+              {
+                "title": "Cobra como siempre",
+                "detail": "La pieza se ve con su descuento en el carrito (por ejemplo «−$160 · Dañado») y el total a cobrar ya lo trae."
+              }
+            ]
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "Tope: lo que le falta pagar a la pieza",
+            "text": "El descuento no puede ser mayor a lo que le falta pagar a esa pieza (su precio menos su parte del anticipo). El anticipo nunca se devuelve por un descuento: si el sistema no te deja confirmar, es porque te pasaste del tope."
+          },
+          {
+            "kind": "table",
+            "head": [
+              "Ejemplo: Figura A $1,000, anticipo de la pieza $200",
+              "Le falta",
+              "Descuento",
+              "Se cobra"
+            ],
+            "rows": [
+              [
+                "Sin descuento",
+                "$800",
+                "—",
+                "$800"
+              ],
+              [
+                "20% por daño",
+                "$800",
+                "$200",
+                "$600"
+              ],
+              [
+                "90% (más de lo que le falta)",
+                "$800",
+                "$900 → no deja confirmar",
+                "—"
+              ]
+            ]
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Si se revierte la entrega",
+            "text": "Revertir la entrega también le quita el descuento: la pieza vuelve a su precio pactado. Queda registrado en Administración → Actividad, junto con la entrega."
+          }
+        ]
+      },
+      {
         "id": "revertir-entrega",
         "heading": "Si se cobró o entregó por error",
         "blocks": [
           {
             "kind": "prose",
-            "text": "«Revertir entrega» deshace la ÚLTIMA entrega del folio: esas piezas vuelven a pendiente, se devuelve el cobro de esa visita y el folio regresa a «Listo · Liquidar». El anticipo se queda. Si el folio se entregó en dos visitas, se revierte primero la más reciente."
+            "text": "«Revertir entrega» deshace la ÚLTIMA entrega del folio: esas piezas vuelven a pendiente, se devuelve el cobro de esa visita y el folio regresa a «Listo · Liquidar». El anticipo se queda. Si el folio se entregó en dos visitas, se revierte primero la más reciente. Si alguna pieza llevaba descuento, también se le quita."
           },
           {
             "kind": "table",

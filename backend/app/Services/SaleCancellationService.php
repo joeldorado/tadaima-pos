@@ -373,7 +373,10 @@ class SaleCancellationService
                     'qty_cancelled'          => (float) $item->quantity,
                     'price'                  => (float) $item->unit_price,
                     'cost'                   => $item->cost !== null ? (float) $item->cost : null,
-                    'line_total'             => (float) $item->quantity * (float) $item->unit_price,
+                    // Neto de la partida (con su descuento manual, 2026-11-16).
+                    'line_total'             => $item->subtotal,
+                    'gross_total'            => $item->gross_total,
+                    'discount_cancelled'     => (float) ($item->discount_amount ?? 0),
                     'was_delivered'          => (bool) ($item->delivered_at ?? null),
                 ];
             }
@@ -397,10 +400,19 @@ class SaleCancellationService
 
             $fromStatus = $order->status;
             if ($mode === SaleCancellation::MODE_LIQUIDATION_ROLLBACK) {
+                // Revertir la entrega también quita el descuento que se le puso
+                // al entregarla (Joel 2026-11-16): la pieza vuelve a su precio.
                 PreSaleOrderItem::whereIn('id', $items->pluck('id'))->update([
-                    'status'       => PreSaleOrderItem::STATUS_PENDING,
-                    'delivered_at' => null,
-                    'delivery_id'  => null,
+                    'status'                 => PreSaleOrderItem::STATUS_PENDING,
+                    'delivered_at'           => null,
+                    'delivery_id'            => null,
+                    'discount_kind'          => null,
+                    'discount_basis'         => null,
+                    'discount_value'         => null,
+                    'discount_amount'        => 0,
+                    'discount_reason'        => null,
+                    'discount_note'          => null,
+                    'discount_authorized_by' => null,
                 ]);
                 $delivery?->update(['reverted_at' => now(), 'reverted_by' => $cancelledBy->id]);
                 $order->status              = PreSaleOrder::STATUS_READY;

@@ -117,6 +117,11 @@ export function applyLineAdjustment<T extends AdjustableLine>(
 export function removeLineAdjustment<T extends AdjustableLine>(items: readonly T[], lineId: string): T[] {
   const line = items.find(i => i.lineId === lineId);
   if (!line) return [...items];
+  // Pieza de preventa (folio cargado o catálogo nuevo, 2026-11-16): nunca se
+  // fusiona con una línea de venta normal del mismo producto — se iría del folio.
+  if (line.isFromPreSale || line.sellingCatalogId != null) {
+    return items.map(i => (i.lineId === lineId ? stripAdjustment(i, true) : i));
+  }
 
   const isPlainSibling = (i: T) =>
     i.lineId !== lineId &&

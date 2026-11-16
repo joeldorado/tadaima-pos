@@ -124,3 +124,36 @@ describe("draftFromPromo y draftLabel", () => {
     expect(draftNamePrefix(draftFromPromo(promo))).toBe("Mayoreo");
   });
 });
+
+describe("precio especial (2026-11-15)", () => {
+  const especial = { ...emptyDraft(), kind: "special_price" as const };
+
+  it("valida: elige $ o %, precio > 0 y porcentaje de 1 a 99", () => {
+    expect(validateWhat({ ...especial, priceMode: "fixed", specialValue: "" })).toMatch(/precio/i);
+    expect(validateWhat({ ...especial, priceMode: "fixed", specialValue: "0" })).toMatch(/precio/i);
+    expect(validateWhat({ ...especial, priceMode: "percent", specialValue: "0" })).toMatch(/1% y 99%/);
+    expect(validateWhat({ ...especial, priceMode: "percent", specialValue: "100" })).toMatch(/1% y 99%/);
+    expect(validateWhat({ ...especial, priceMode: "fixed", specialValue: "350" })).toBeNull();
+    expect(validateWhat({ ...especial, priceMode: "percent", specialValue: "45" })).toBeNull();
+  });
+
+  it("draftToInput manda price_mode y special_value, sin campos de otros tipos", () => {
+    const input = draftToInput({ ...especial, name: "Buen Fin", priceMode: "percent", specialValue: "45" }, ADMIN);
+    expect(input).toMatchObject({ type: "special_price", price_mode: "percent", special_value: 45 });
+    expect(input).not.toHaveProperty("buy_n");
+    expect(input).not.toHaveProperty("min_qty");
+  });
+
+  it("draftFromPromo prellena y la etiqueta dice $350 c/u o −45%", () => {
+    const promo: Promotion = {
+      id: 8, name: "Especial", type: "special_price", buy_n: null, pay_m: null,
+      price_mode: "fixed", special_value: 350, allow_cash: true, allow_card: true,
+      starts_at: null, ends_at: null, status: "active", priority: 0, store_id: null,
+    };
+    const d = draftFromPromo(promo);
+    expect(d).toMatchObject({ kind: "special_price", priceMode: "fixed", specialValue: "350" });
+    expect(draftLabel(d)).toBe("$350 c/u");
+    expect(draftLabel({ ...especial, priceMode: "percent", specialValue: "45" })).toBe("−45%");
+    expect(draftNamePrefix(d)).toBe("$350 c/u");
+  });
+});

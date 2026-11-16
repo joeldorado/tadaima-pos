@@ -183,6 +183,8 @@ final class ActivityGroups
         'pay_m'            => 'paga M',
         'min_qty'          => 'mínimo de piezas',
         'discount_per_unit' => 'descuento por pieza',
+        'price_mode'       => 'precio especial ($ o %)',
+        'special_value'    => 'valor del precio especial',
         'allow_cash'       => 'con efectivo',
         'allow_card'       => 'con tarjeta',
         'priority'         => 'prioridad',

@@ -85,7 +85,7 @@
             "kind": "callout",
             "tone": "info",
             "title": "Cargar una preventa",
-            "text": "Escribe el folio (empieza con PREV-) en el buscador, o usa el botón Preventas → Apartadas, y se cargan las piezas que ya llegaron con el cliente y lo que falta por cobrar. Si el cliente no se lleva alguna pieza hoy, quítala con el menú ⋮ → «No se la lleva hoy»: conserva su anticipo y queda pendiente en el folio."
+            "text": "Escribe el folio (empieza con PREV-) en el buscador, o usa el botón Preventas → Apartadas, y se cargan las piezas que ya llegaron con el cliente y lo que falta por cobrar. Si el cliente no se lleva alguna pieza hoy, quítala con el menú ⋮ → «No se la lleva hoy»: conserva su anticipo y queda pendiente en el folio. Si una pieza llegó dañada, el mismo menú ⋮ → «Descuento» le baja el precio (hasta lo que le falta pagar)."
           },
           {
             "kind": "link",

@@ -146,10 +146,26 @@ final class PreSaleAudit
      */
     public static function delivery(PreSaleOrder $order, PreSaleDelivery $delivery, iterable $items, int $pendingCount, int $userId): void
     {
-        $names = [];
-        $ids   = [];
+        $names     = [];
+        $ids       = [];
+        $discounts = [];
         foreach ($items as $item) {
-            $names[] = ($item->catalog?->product_name ?? "Partida #{$item->id}") . ' × ' . (int) $item->quantity;
+            $label = ($item->catalog?->product_name ?? "Partida #{$item->id}") . ' × ' . (int) $item->quantity;
+            $off   = (float) ($item->discount_amount ?? 0);
+            // Descuento manual al entregar (2026-11-16): qué, cuánto y por qué.
+            if ($off > 0) {
+                $label .= sprintf(' (desc. $%s · %s)', number_format($off, 2), $item->discount_reason ?? 'otro');
+                $discounts[] = [
+                    'item_id' => $item->id,
+                    'amount'  => $off,
+                    'kind'    => $item->discount_kind,
+                    'basis'   => $item->discount_basis,
+                    'value'   => $item->discount_value,
+                    'reason'  => $item->discount_reason,
+                    'note'    => $item->discount_note,
+                ];
+            }
+            $names[] = $label;
             $ids[]   = $item->id;
         }
 
@@ -173,6 +189,7 @@ final class PreSaleAudit
                 'item_ids'      => $ids,
                 'pending_items' => $pendingCount,
                 'store_id'      => $order->store_id,
+                'discounts'     => $discounts,
             ],
         );
     }

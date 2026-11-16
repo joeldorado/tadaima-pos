@@ -147,6 +147,10 @@
                 "Carga el folio en Caja y quita la pieza que no se lleva con el menú ⋮ → «No se la lleva hoy». Se cobra solo lo que se lleva y lo demás queda pendiente en el folio."
               ],
               [
+                "Una pieza de preventa llegó dañada",
+                "Al liquidar en Caja, menú ⋮ de la pieza → «Descuento» ($ o %, con motivo). El tope es lo que le falta pagar a la pieza: el anticipo no se devuelve."
+              ],
+              [
                 "Se cobró o entregó una preventa por error",
                 "Usa «Revertir entrega»: en Caja → Historial si fue hoy, o en Preventas → Folios (columna Corregir) para cualquier fecha. Revisa la «Salida estimada» antes de confirmar."
               ]

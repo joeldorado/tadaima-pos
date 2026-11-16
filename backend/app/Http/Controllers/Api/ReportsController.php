@@ -909,7 +909,8 @@ class ReportsController extends Controller
             ->whereDate('pre_sale_orders.created_at', '>=', $from)
             ->whereDate('pre_sale_orders.created_at', '<=', $to)
             ->when($storeId, fn ($q) => $q->where('pre_sale_orders.store_id', $storeId))
-            ->sum(DB::raw('pre_sale_order_items.quantity * pre_sale_order_items.unit_price'));
+            // Neto: con el descuento manual por partida (2026-11-16).
+            ->sum(DB::raw('pre_sale_order_items.quantity * pre_sale_order_items.unit_price - COALESCE(pre_sale_order_items.discount_amount, 0)'));
 
         $newCollected = DB::table('pre_sale_order_payments')
             ->join('pre_sale_orders', 'pre_sale_orders.id', '=', 'pre_sale_order_payments.pre_sale_order_id')

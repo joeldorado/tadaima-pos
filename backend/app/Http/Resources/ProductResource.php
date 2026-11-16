@@ -142,6 +142,10 @@ class ProductResource extends JsonResource
                     // Mayoreo (2026-07-23) — `tiers` ya no viaja (ver ProductLightResource).
                     'min_qty'           => $p->min_qty !== null ? (int) $p->min_qty : null,
                     'discount_per_unit' => $p->discount_per_unit !== null ? (float) $p->discount_per_unit : null,
+                    // Precio especial (2026-11-15): 'fixed' = precio final por pieza,
+                    // 'percent' = % de descuento. Null en los otros tipos.
+                    'price_mode'        => $p->price_mode,
+                    'special_value'     => $p->special_value !== null ? (float) $p->special_value : null,
                     // Restricción de pago de la promo (2026-07-24): si el método
                     // no le sirve, bloquea el cobro igual que la del producto.
                     'allow_cash'        => (bool) ($p->allow_cash ?? true),

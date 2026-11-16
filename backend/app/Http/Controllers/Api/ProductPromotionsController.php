@@ -102,7 +102,7 @@ class ProductPromotionsController extends Controller
         // `product_id` legacy A PROPÓSITO: el hook created() del modelo lo
         // asigna al pivote, y una revisión vieja (rollout) lo sigue viendo.
         $promotion = ProductPromotion::create(array_merge(
-            $request->only(['name', 'buy_n', 'pay_m', 'min_qty', 'discount_per_unit', 'allow_cash', 'allow_card', 'priority']),
+            $request->only(['name', 'buy_n', 'pay_m', 'min_qty', 'discount_per_unit', 'price_mode', 'special_value', 'allow_cash', 'allow_card', 'priority']),
             $dates,
             [
                 'type'       => $request->promoType(),

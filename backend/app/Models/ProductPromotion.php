@@ -32,10 +32,25 @@ class ProductPromotion extends Model
      * semántica anterior era "−$X por cada grupo de N" con `tiers`.
      */
     public const TYPE_QTY_DISCOUNT = 'qty_discount';
+    /**
+     * PRECIO ESPECIAL (2026-11-15): desde 1 pieza, a CADA pieza. Usa
+     * price_mode ('fixed' = special_value es el precio final por pieza;
+     * 'percent' = special_value es el % de descuento, 1–99).
+     */
+    public const TYPE_SPECIAL_PRICE = 'special_price';
 
     public const TYPES = [
         self::TYPE_NXM,
         self::TYPE_QTY_DISCOUNT,
+        self::TYPE_SPECIAL_PRICE,
+    ];
+
+    public const PRICE_MODE_FIXED   = 'fixed';
+    public const PRICE_MODE_PERCENT = 'percent';
+
+    public const PRICE_MODES = [
+        self::PRICE_MODE_FIXED,
+        self::PRICE_MODE_PERCENT,
     ];
 
     // `tiers` NO está en fillable a propósito (mayoreo, 2026-07-23): quedó como
@@ -50,6 +65,8 @@ class ProductPromotion extends Model
         'pay_m',
         'min_qty',
         'discount_per_unit',
+        'price_mode',
+        'special_value',
         'allow_cash',
         'allow_card',
         'starts_at',
@@ -64,6 +81,7 @@ class ProductPromotion extends Model
         'pay_m'             => 'integer',
         'min_qty'           => 'integer',
         'discount_per_unit' => 'float',
+        'special_value'     => 'float',
         // Restricción de método de pago de la promo (espejo del producto).
         'allow_cash'        => 'boolean',
         'allow_card'        => 'boolean',

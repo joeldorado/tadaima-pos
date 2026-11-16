@@ -151,12 +151,15 @@ export interface GlobalCatalogItem {
   active_promotions?: Array<{
     id: number
     name: string
-    /** 'nxm' (2x1) | 'qty_discount' = mayoreo (desde N pzas, −$X c/u). */
-    type?: 'nxm' | 'qty_discount'
+    /** 'nxm' (2x1) | 'qty_discount' = mayoreo (desde N pzas, −$X c/u) | 'special_price'. */
+    type?: 'nxm' | 'qty_discount' | 'special_price'
     buy_n: number | null
     pay_m: number | null
     min_qty?: number | null
     discount_per_unit?: number | null
+    /** Precio especial (2026-11-15): 'fixed' = $ por pieza, 'percent' = % de descuento. */
+    price_mode?: 'fixed' | 'percent' | null
+    special_value?: number | null
     ends_at: string | null
     store_id: number | null
   }>

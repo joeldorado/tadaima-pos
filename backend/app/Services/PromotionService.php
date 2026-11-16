@@ -65,6 +65,8 @@ final class PromotionService
     /**
      * Exclusividad de TIPOS (Joel 2026-07-20): un producto no puede tener a la
      * vez una NxM y una de mayoreo vigentes con ventana y ámbito encimados.
+     * Desde 2026-11-15 aplica igual al precio especial: para un Buen Fin hay
+     * que pausar primero el 2x1 o el mayoreo del producto.
      */
     public function typeConflictMessage(
         Product $product,
@@ -82,18 +84,27 @@ final class PromotionService
             return null;
         }
 
-        $existingLabel = $existing->type === ProductPromotion::TYPE_NXM
-            ? "{$existing->buy_n}x{$existing->pay_m}"
-            : 'de mayoreo';
+        $existingLabel = $this->typeLabel($existing);
 
-        return "El producto \"{$product->name}\" ya tiene la promo \"{$existing->name}\" ({$existingLabel}) vigente en esas fechas. Un producto no puede tener al mismo tiempo una promo tipo 2x1 y una de descuento por cantidad: pausa o borra esa primero.";
+        return "El producto \"{$product->name}\" ya tiene la promo \"{$existing->name}\" ({$existingLabel}) vigente en esas fechas. Un producto no puede tener al mismo tiempo promos de distinto tipo (2x1, descuento por cantidad o precio especial): pausa o borra esa primero.";
+    }
+
+    /** Cómo se nombra una promo existente en los mensajes de conflicto. */
+    private function typeLabel(ProductPromotion $promo): string
+    {
+        return match ($promo->type) {
+            ProductPromotion::TYPE_QTY_DISCOUNT  => 'de mayoreo',
+            ProductPromotion::TYPE_SPECIAL_PRICE => 'de precio especial',
+            default                              => "{$promo->buy_n}x{$promo->pay_m}",
+        };
     }
 
     /**
      * Anti-duplicados (Joel 2026-07-18): otra promo con el MISMO NxM se permite
      * SOLO si su vigencia NO se encima (2x1 de julio + 2x1 de diciembre = OK).
-     * Mayoreo: cualquier otra del mismo tipo encimada es duplicado. Ámbito de
-     * tienda EXACTO — una local sobre la global es reemplazo deliberado.
+     * Mayoreo y precio especial: cualquier otra del mismo tipo encimada es
+     * duplicado. Ámbito de tienda EXACTO — una local sobre la global es
+     * reemplazo deliberado.
      */
     public function duplicateMessage(
         Product $product,
@@ -117,9 +128,11 @@ final class PromotionService
             return null;
         }
 
-        $label = $type === ProductPromotion::TYPE_NXM
-            ? "una promo {$buyN}x{$payM}"
-            : 'una promo de mayoreo';
+        $label = match ($type) {
+            ProductPromotion::TYPE_QTY_DISCOUNT  => 'una promo de mayoreo',
+            ProductPromotion::TYPE_SPECIAL_PRICE => 'una promo de precio especial',
+            default                              => "una promo {$buyN}x{$payM}",
+        };
 
         return "Ya existe {$label} para el producto \"{$product->name}\" que se encima en fechas (\"{$existing->name}\"). Pausa o elimina esa, o usa un rango de fechas que no se encime.";
     }

@@ -8,7 +8,7 @@
 > Detalle adicional: [`CLAUDE.md`](CLAUDE.md) (comandos y arquitectura del frontend) y
 > [`backend/AGENTS.md`](backend/AGENTS.md) (API, ADRs y referencia de endpoints).
 >
-> Última revisión: 2026-11-13.
+> Última revisión: 2026-11-16.
 
 ---
 
@@ -115,6 +115,17 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   TODA la línea se cobra a precio NORMAL (nivel A) con la promo encima, aunque diga
   SOCIO (siempre gana la promo). Lo aplican `saleCalc.ts` y `SaleCalculator.php`
   (`basePrice` / `base_price`); `sale_items.price` guarda ese precio efectivo.
+- **Precio especial (2026-11-15, `type='special_price'`):** promo desde **1 pieza**, a cada pieza
+  de la línea, para precios fijos ($350, $450) y Buen Fin (45%). `price_mode='fixed'` +
+  `special_value` = precio final por pieza (ahorro = piezas × máx(0, precio − valor));
+  `price_mode='percent'` + `special_value` 1–99 (ahorro = round2(piezas × precio × %/100)). Piezas =
+  `floor(qty)`, tope al bruto de la línea. No junta piezas entre líneas: una línea que ya cuesta
+  igual o menos que el precio fijo no entra (ni se re-precia de socio a normal). Todo lo demás es
+  igual que las otras promos: socio → normal si entra, descuento manual encima, `allow_cash/card`,
+  vigencia, tienda, prioridad, gana la que más ahorra. **Exclusividad de tipos** sigue: un producto
+  no tiene 2x1, mayoreo y precio especial vigentes a la vez (para Buen Fin se pausa la otra). El
+  «Descuento por cantidad» (mayoreo) sigue exigiendo 2+ piezas a propósito: no lo toques para esto.
+  La app móvil (repo aparte) aún no conoce este tipo.
 - **Regalo por línea (2026-10-31):** Caja → menú ⋮ → «Regalo» (cualquier rol, venta regular).
   La línea va en `sale_items` con `price = total = cost = 0` y el detalle (precio de catálogo,
   costo real, nota, quién) en `sale_gifts`; `products.cost` no se toca y el stock sí baja. El
@@ -269,6 +280,17 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   cobro) y las partidas apuntan con `delivery_id`. Sin `item_ids`/`payment` el endpoint hace lo de siempre
   (app móvil): entrega todo lo llegado, sin validar dinero ni registrar entrega. El folio cierra al entregar
   la última partida. El botón «✓ Entregado» por línea ya no existe en Caja (entregaba sin cobrar).
+- **Descuento al liquidar (2026-11-16, T-003, caso: la pieza llegó dañada):** en Caja, menú ⋮ de una pieza del
+  folio cargado → «Descuento»: el mismo descuento de una venta ($ o %, por pieza o por línea, motivo y nota), sobre
+  el precio pactado de la pieza. **Tope: lo que le falta pagar a la pieza** (anticipo parejo por pieza): nunca sale
+  dinero de la caja (decisión de Joel). Viaja en `item_discounts` de `PATCH /pre-sale-orders/{id}/status` (solo
+  partidas de `item_ids`); el servidor calcula el monto y valida el tope con `App\Support\PresaleItemDiscount`
+  (espejo de `presaleDeliveryCharge`: si cambias el reparto en uno, cámbialo en el otro). Se guarda en
+  `pre_sale_order_items.discount_*` (espejo de `sale_items`) y el **neto** de la partida es `quantity × unit_price −
+  discount_amount`: con él se calculan el total y el saldo del folio, la regla «pagado ≥ entregado», los reportes y
+  el reparto de pagos (`presaleLineTotal`). **Revertir la entrega quita el descuento** (la pieza vuelve a su precio).
+  Queda en Actividad dentro del log de la entrega (`pre_sale_order.delivery`, `meta.discounts`). La app móvil no
+  manda `item_discounts` y sigue igual.
 - **Revertir una entrega de preventa (2026-11-13).** `POST /pre-sale-orders/{id}/cancel` con
   `liquidation_rollback` deshace la ÚLTIMA entrega del folio y SU pago; nunca el anticipo (antes borraba «el
   último pago», que con una liquidación de $0 era el anticipo). Vale para folio liquidado o con entrega

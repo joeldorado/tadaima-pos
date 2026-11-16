@@ -80,9 +80,10 @@ class PreSaleOrder extends Model
 
     // ── Computed (require relations loaded) ───────────────────────────────────
 
+    /** Total del folio: Σ neto de sus partidas (con su descuento manual, 2026-11-16). */
     public function getTotalAttribute(): float
     {
-        return round($this->items->sum(fn ($i) => $i->quantity * $i->unit_price), 2);
+        return round($this->items->sum(fn ($i) => $i->subtotal), 2);
     }
 
     public function getPaidAmountAttribute(): float

@@ -65,7 +65,7 @@
     {
       "id": "entrega-parcial",
       "title": "¿No llegó todo? Entrega por partes",
-      "body": "Si el folio trae varios productos, solo se cargan los que ya llegaron. Si el cliente no se lleva alguno, quítalo con el menú ⋮ → «No se la lleva hoy». Se cobra solo lo que se lleva; lo demás queda pendiente en el folio con su parte del anticipo, y lo cobras cuando llegue."
+      "body": "Si el folio trae varios productos, solo se cargan los que ya llegaron. Si el cliente no se lleva alguno, quítalo con el menú ⋮ → «No se la lleva hoy». Se cobra solo lo que se lleva; lo demás queda pendiente en el folio con su parte del anticipo, y lo cobras cuando llegue. Si una pieza llegó dañada, el mismo menú ⋮ → «Descuento» le baja el precio."
     },
     {
       "id": "revertir",

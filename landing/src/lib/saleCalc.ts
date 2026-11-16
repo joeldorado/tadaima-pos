@@ -51,14 +51,19 @@ export interface PromoDef {
   /** product.id del catálogo de Caja (string — así viaja en el carrito). */
   productId: string;
   name: string;
-  /** 'nxm' (default, usa buyN/payM) | 'qty_discount' = MAYOREO (usa minQty/discountPerUnit). */
-  type?: "nxm" | "qty_discount";
+  /** 'nxm' (default, usa buyN/payM) | 'qty_discount' = MAYOREO (usa minQty/discountPerUnit)
+   *  | 'special_price' = PRECIO ESPECIAL (usa priceMode/specialValue, 2026-11-15). */
+  type?: "nxm" | "qty_discount" | "special_price";
   buyN: number;
   payM: number;
   /** Mayoreo: desde cuántas piezas aplica. */
   minQty?: number | null;
   /** Mayoreo: cuánto se descuenta a CADA pieza. */
   discountPerUnit?: number | null;
+  /** Precio especial: 'fixed' = specialValue es el precio final por pieza;
+   *  'percent' = specialValue es el % de descuento (1–99). */
+  priceMode?: "fixed" | "percent" | null;
+  specialValue?: number | null;
   /**
    * Restricción de método de pago de la promo (2026-07-24). No entra al
    * cálculo: la promo se aplica igual y el BLOQUEO del cobro lo hace Caja
@@ -237,6 +242,33 @@ export function mayoreoAmount(
 }
 
 /**
+ * PRECIO ESPECIAL (2026-11-15): desde 1 pieza, a CADA pieza de la línea.
+ *  - fixed:   ahorro = units × max(0, precio − valor)  (valor = precio final).
+ *  - percent: ahorro = round2(units × precio × valor/100)  (valor 1–99).
+ * units = floor(qty); tope al bruto REAL de la línea. 0 si la promo está mal
+ * configurada o no rinde. Espejo exacto de specialPricePerLine en
+ * SaleCalculator.php (mismo orden de operaciones o divergen en centavos).
+ */
+export function specialPriceAmount(
+  promo: Pick<PromoDef, "priceMode" | "specialValue">,
+  line: { unitPrice: number; qty: number },
+): number {
+  const value = promo.specialValue;
+  if (value == null || !Number.isFinite(value) || value <= 0) return 0;
+  if (promo.priceMode === "percent") {
+    if (value >= 100) return 0;
+  } else if (promo.priceMode !== "fixed") {
+    return 0;
+  }
+  const units = Math.floor(line.qty);
+  const raw = promo.priceMode === "percent"
+    ? units * line.unitPrice * (value / 100)
+    : units * Math.max(0, line.unitPrice - value);
+  const gross = round2(line.unitPrice * line.qty);
+  return Math.min(round2(raw), gross);
+}
+
+/**
  * Beneficio de una promo sobre UNA línea aislada. Desde mix & match
  * (2026-07-23) el motor real agrupa por POOL (assignPoolBenefits — las líneas
  * split del mismo producto y los productos hermanos SÍ combinan; cambió la
@@ -246,6 +278,7 @@ export function mayoreoAmount(
  *   completo. freeQty > 0.
  * - 'qty_discount' = MAYOREO: desde minQty piezas, −discountPerUnit a CADA una
  *   (freeQty = 0), clampeado al bruto de la línea.
+ * - 'special_price' = PRECIO ESPECIAL: desde 1 pieza (specialPriceAmount).
  * Devuelve null si la promo no alcanza a aplicar o es inválida.
  * Espejo de bestPromoBenefit en SaleCalculator.php.
  */
@@ -253,6 +286,11 @@ export function computePromoBenefit(
   promo: PromoDef,
   line: { unitPrice: number; qty: number },
 ): LineBenefit | null {
+  if (promo.type === "special_price") {
+    const amount = specialPriceAmount(promo, line);
+    if (amount <= 0) return null;
+    return { type: "promo", amount, promoId: promo.id, promoLabel: promo.name, freeQty: 0 };
+  }
   if (promo.type === "qty_discount") {
     // Clamp con la cantidad REAL (no floor): en líneas fraccionarias el bruto
     // es mayor y clampear con floor recortaría de más.
@@ -307,6 +345,8 @@ interface PoolBenefits {
  *     índice asc — comparar productId como NÚMERO: '10' < '9' en string).
  *   · Mayoreo: U ≥ minQty → cada línea recibe min(round2(units×perUnit),
  *     bruto real de la línea).
+ *   · Precio especial (2026-11-15): cada línea sola, desde 1 pieza
+ *     (specialPriceAmount); solo las líneas que ahorran forman pool.
  *   · Gana: ahorro desc → priority desc → id asc. Al aplicar, TODO el pool
  *     queda consumido (también contribuyentes). Una línea = una promo.
  */
@@ -374,7 +414,10 @@ function assignPoolBenefits(lines: CalcLine[], promotions: PromoDef[]): PoolBene
           (promo.priority > best.promo.priority ||
             (promo.priority === best.promo.priority && promo.id < best.promo.id)))
       ) {
-        best = { promo, amount: amountPool, perLine, pool: poolIdxs };
+        // El pool que se consume = las líneas que la promo reparte. NxM y
+        // mayoreo devuelven TODO el pool (contribuyentes incluidas); el precio
+        // especial solo las que ahorran. Espejo de SaleCalculator.php.
+        best = { promo, amount: amountPool, perLine, pool: [...perLine.keys()] };
       }
     }
 
@@ -416,6 +459,16 @@ function poolBenefitPerLine(
   let totalUnits = 0;
   for (const idx of poolIdxs) totalUnits += Math.floor(lines[idx]!.qty);
   if (totalUnits < 1) return null;
+
+  if (promo.type === "special_price") {
+    // Cada línea por su cuenta (no se juntan piezas); solo las que ahorran.
+    const perLine = new Map<number, PoolAssignment>();
+    for (const idx of poolIdxs) {
+      const amount = specialPriceAmount(promo, lines[idx]!);
+      if (amount > 0) perLine.set(idx, { amount, freeQty: 0 });
+    }
+    return perLine.size > 0 ? perLine : null;
+  }
 
   if (promo.type === "qty_discount") {
     const minQty = promo.minQty;
