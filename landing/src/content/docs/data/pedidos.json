@@ -4,7 +4,7 @@
     "title": "Preventas",
     "category": "Pedidos",
     "icon": "clipboard-list",
-    "summary": "Pre-órdenes con anticipo que se liquidan al recoger. El núcleo del negocio.",
+    "summary": "Pre-órdenes con anticipo que se liquidan al recoger, completas o por partes. El núcleo del negocio.",
     "keywords": [
       "preventa",
       "preorden",
@@ -20,10 +20,23 @@
       "difusión",
       "vencidos",
       "límite por cliente",
-      "borrador"
+      "borrador",
+      "entrega parcial",
+      "no llegó todo",
+      "faltó una pieza",
+      "revertir entrega",
+      "cobro por error",
+      "deshacer liquidación",
+      "rollback",
+      "liquidadas",
+      "apartadas",
+      "descuento preventa",
+      "pieza dañada",
+      "producto dañado",
+      "descuento al liquidar"
     ],
     "tourId": "preventas",
-    "updatedAt": "2026-09-30",
+    "updatedAt": "2026-11-16",
     "sections": [
       {
         "id": "como-funciona",
@@ -60,11 +73,11 @@
               },
               {
                 "title": "Liquidar al recoger",
-                "detail": "En Caja escribe el folio (PREV-…) y se carga el pedido con productos y cliente para cobrar el saldo."
+                "detail": "En Caja escribe el folio (PREV-…) en el buscador, o abre el botón Preventas → pestaña Apartadas y elige el folio en «Listo · Liquidar». Se cargan las piezas que ya llegaron, con el cliente y lo que falta por cobrar."
               },
               {
                 "title": "Seguimiento por folios",
-                "detail": "Los tabs Folios (Pendiente / Listo / Entregado / Vencido), Difusión (avisar por WhatsApp/email) y Vencidos organizan el estatus."
+                "detail": "En el menú Preventas, el tab Folios (Pendiente / Listo / Entregado / Vencido) muestra cada pedido con su anticipo y su saldo; Difusión avisa por WhatsApp o correo y Vencidos junta lo que expiró."
               }
             ]
           },
@@ -84,6 +97,222 @@
             "kind": "link",
             "toTopic": "cobro-caja",
             "label": "Cómo cobrar el folio en Caja"
+          }
+        ]
+      },
+      {
+        "id": "entrega-parcial",
+        "heading": "Si no llegó todo el pedido",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Un folio puede traer varios productos que llegan en fechas distintas. No hay que esperar a que llegue todo: entregas lo que ya está y la pieza que falta se queda apartada, con su parte del anticipo, hasta que llegue."
+          },
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Carga el folio en Caja",
+                "detail": "Entran solo las piezas que ya llegaron (su catálogo está en «Llegó»). Cada línea muestra lo que le falta por cobrar y, abajo, el anticipo que ya tiene. Las que siguen en camino no aparecen."
+              },
+              {
+                "title": "Quita lo que el cliente no se lleva hoy",
+                "detail": "Si alguna pieza ya llegó pero no se la lleva, abre el menú ⋮ de esa línea y elige «No se la lleva hoy». El total a cobrar baja al momento."
+              },
+              {
+                "title": "Cobra como siempre",
+                "detail": "Se cobra solo lo que falta de las piezas que se lleva. El aviso dice «Entrega parcial · queda N pieza(s) pendiente(s) en el folio» y el folio sigue en «Listo»."
+              },
+              {
+                "title": "Cuando llegue lo demás",
+                "detail": "Vuelve a cargar el mismo folio: ya solo aparece lo pendiente, con su saldo. Al entregar la última pieza el folio pasa a Entregado."
+              }
+            ]
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "¿Cómo se reparte el anticipo?",
+            "text": "Parejo por pieza, sin importar el precio de cada una. Así ninguna pieza se queda sin su parte del anticipo."
+          },
+          {
+            "kind": "table",
+            "head": [
+              "Ejemplo: anticipo $600, 3 piezas",
+              "Precio",
+              "Anticipo de la pieza",
+              "Por cobrar"
+            ],
+            "rows": [
+              [
+                "Figura A (se la lleva hoy)",
+                "$1,000",
+                "$200",
+                "$800"
+              ],
+              [
+                "Figura B (se la lleva hoy)",
+                "$500",
+                "$200",
+                "$300"
+              ],
+              [
+                "Figura C (todavía no llega)",
+                "$300",
+                "$200",
+                "$100 — se cobra cuando llegue"
+              ]
+            ]
+          },
+          {
+            "kind": "prose",
+            "text": "En ese ejemplo, hoy se cobran $1,100 por A y B; cuando llegue C se cobran sus $100 y el folio queda liquidado."
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "El ticket",
+            "text": "El ticket lista solo las piezas que se entregaron en esa visita. Todavía no imprime cuáles quedan pendientes: díselo al cliente al entregar."
+          }
+        ]
+      },
+      {
+        "id": "descuento-pieza",
+        "heading": "Descuento a una pieza (llegó dañada)",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Al liquidar puedes descontarle a una pieza del folio, por ejemplo si llegó dañada. Es el mismo descuento de una venta normal ($ o %, con motivo y nota), sobre el precio pactado de esa pieza."
+          },
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Carga el folio en Caja",
+                "detail": "Solo las piezas que ya llegaron y que se van a entregar hoy pueden llevar descuento."
+              },
+              {
+                "title": "Menú ⋮ de la pieza → «Descuento»",
+                "detail": "Elige $ o %, el motivo (dañado, exhibición, cortesía…) y, si quieres, una nota. El aviso te dice cuánto le falta pagar a la pieza y cuánto quedaría."
+              },
+              {
+                "title": "Cobra como siempre",
+                "detail": "La pieza se ve con su descuento en el carrito (por ejemplo «−$160 · Dañado») y el total a cobrar ya lo trae."
+              }
+            ]
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "Tope: lo que le falta pagar a la pieza",
+            "text": "El descuento no puede ser mayor a lo que le falta pagar a esa pieza (su precio menos su parte del anticipo). El anticipo nunca se devuelve por un descuento: si el sistema no te deja confirmar, es porque te pasaste del tope."
+          },
+          {
+            "kind": "table",
+            "head": [
+              "Ejemplo: Figura A $1,000, anticipo de la pieza $200",
+              "Le falta",
+              "Descuento",
+              "Se cobra"
+            ],
+            "rows": [
+              [
+                "Sin descuento",
+                "$800",
+                "—",
+                "$800"
+              ],
+              [
+                "20% por daño",
+                "$800",
+                "$200",
+                "$600"
+              ],
+              [
+                "90% (más de lo que le falta)",
+                "$800",
+                "$900 → no deja confirmar",
+                "—"
+              ]
+            ]
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Si se revierte la entrega",
+            "text": "Revertir la entrega también le quita el descuento: la pieza vuelve a su precio pactado. Queda registrado en Administración → Actividad, junto con la entrega."
+          }
+        ]
+      },
+      {
+        "id": "revertir-entrega",
+        "heading": "Si se cobró o entregó por error",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "«Revertir entrega» deshace la ÚLTIMA entrega del folio: esas piezas vuelven a pendiente, se devuelve el cobro de esa visita y el folio regresa a «Listo · Liquidar». El anticipo se queda. Si el folio se entregó en dos visitas, se revierte primero la más reciente. Si alguna pieza llevaba descuento, también se le quita."
+          },
+          {
+            "kind": "table",
+            "head": [
+              "Dónde está el botón",
+              "Qué folios muestra"
+            ],
+            "rows": [
+              [
+                "Caja → Historial (reloj de arriba) → botón rojo del folio",
+                "Solo los que tuvieron cobro HOY"
+              ],
+              [
+                "Caja → botón Preventas → pestaña Liquidadas (o Apartadas) → «Revertir entrega» debajo de la tarjeta",
+                "Cualquier fecha"
+              ],
+              [
+                "Menú Preventas → tab Folios → columna Corregir → «Revertir entrega»",
+                "Cualquier fecha; busca por PREV-"
+              ]
+            ]
+          },
+          {
+            "kind": "steps",
+            "items": [
+              {
+                "title": "Presiona «Revertir entrega»",
+                "detail": "El aviso dice qué piezas se regresan a pendiente."
+              },
+              {
+                "title": "Revisa la «Salida estimada»",
+                "detail": "Es lo que se devuelve. Si no coincide con lo que se cobró por error, NO confirmes y avisa al admin."
+              },
+              {
+                "title": "Elige el motivo y confirma",
+                "detail": "Lo devuelto en efectivo sale como salida de TU caja abierta."
+              }
+            ]
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "Antes de confirmar",
+            "text": "Necesitas tu caja abierta si hay efectivo que devolver. Si el pago a devolver fue con tarjeta, el sistema no deja revertir. Admin, gerente y cajero pueden hacerlo, cada uno solo en folios de su tienda (el admin en todas)."
+          },
+          {
+            "kind": "callout",
+            "tone": "warn",
+            "title": "Folios liquidados antes del 13 de noviembre de 2026",
+            "text": "Antes de esa fecha el sistema no guardaba qué se entregó en cada visita. Revertir esos folios regresa TODAS sus piezas a pendiente y devuelve el último pago del folio (nunca el anticipo inicial). Revisa bien la «Salida estimada»."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Cancelar el folio completo",
+            "text": "Un folio con piezas ya entregadas no se cancela completo: primero se revierten sus entregas y después se cancela, si hace falta. Cancelar un folio que solo tiene anticipo sigue igual."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "Queda registrado",
+            "text": "Cada reversa guarda quién la hizo, el motivo, el monto devuelto y el pago que se quitó. El admin lo ve en Administración (Cancelaciones y Actividad)."
           }
         ]
       },

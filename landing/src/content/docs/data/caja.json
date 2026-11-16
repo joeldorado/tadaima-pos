@@ -31,7 +31,7 @@
       "pagos de esta venta"
     ],
     "tourId": "venta-caja",
-    "updatedAt": "2026-10-01",
+    "updatedAt": "2026-11-15",
     "sections": [
       {
         "id": "abrir-caja",
@@ -85,7 +85,12 @@
             "kind": "callout",
             "tone": "info",
             "title": "Cargar una preventa",
-            "text": "Escribe el folio (empieza con PREV-) en el buscador y se carga el pedido con sus productos y cliente."
+            "text": "Escribe el folio (empieza con PREV-) en el buscador, o usa el botón Preventas → Apartadas, y se cargan las piezas que ya llegaron con el cliente y lo que falta por cobrar. Si el cliente no se lleva alguna pieza hoy, quítala con el menú ⋮ → «No se la lleva hoy»: conserva su anticipo y queda pendiente en el folio. Si una pieza llegó dañada, el mismo menú ⋮ → «Descuento» le baja el precio (hasta lo que le falta pagar)."
+          },
+          {
+            "kind": "link",
+            "toTopic": "preventas",
+            "label": "Entregas parciales y cómo revertir un cobro de preventa"
           },
           {
             "kind": "image",
@@ -151,7 +156,7 @@
           },
           {
             "kind": "prose",
-            "text": "Al cobrar, el ticket se imprime solo — ya no aparece ninguna ventana de confirmación. Si necesitas otra copia, se reimprime desde el historial de ventas."
+            "text": "Al cobrar, el ticket se imprime solo — ya no aparece ninguna ventana de confirmación. Si necesitas otra copia: si es de hoy, en Caja → Historial con el ícono de impresora del renglón; si es de otro día, desde el menú Ventas."
           },
           {
             "kind": "link",
@@ -572,9 +577,13 @@
       "excel",
       "pdf",
       "no. ticket",
-      "método de pago"
+      "método de pago",
+      "impresora",
+      "otra copia",
+      "historial de caja",
+      "revertir preventa"
     ],
-    "updatedAt": "2026-10-08",
+    "updatedAt": "2026-11-15",
     "sections": [
       {
         "id": "lista-ventas",
@@ -609,17 +618,38 @@
         "heading": "Reimprimir un ticket",
         "blocks": [
           {
+            "kind": "table",
+            "head": [
+              "Si el ticket es…",
+              "Dónde se reimprime"
+            ],
+            "rows": [
+              [
+                "De hoy",
+                "Caja → botón Historial (reloj de arriba) → ícono de impresora a la derecha del renglón. Sirve para ventas y para folios de preventa."
+              ],
+              [
+                "De otro día",
+                "Menú Ventas → Lista de Ventas → elige la fecha o busca por No. de ticket, cliente o producto → clic en la fila → botón «Ticket»."
+              ]
+            ]
+          },
+          {
             "kind": "steps",
             "items": [
               {
-                "title": "Abre la venta",
-                "detail": "Clic en su fila para expandir el detalle."
+                "title": "Desde Caja → Historial",
+                "detail": "Busca la venta o el folio (puedes filtrar por método o escribir en el buscador) y presiona la impresora del renglón."
               },
               {
-                "title": "Botón “Ticket”",
-                "detail": "Imprime otra copia igual que en Caja: directo a la térmica si la caja tiene QZ Tray, o con la ventana de siempre."
+                "title": "Desde el menú Ventas",
+                "detail": "Clic en la fila para expandir el detalle y presiona «Ticket»."
               }
             ]
+          },
+          {
+            "kind": "prose",
+            "text": "La copia sale igual que en Caja: directo a la térmica si la caja tiene QZ Tray, o con la ventana de impresión de siempre."
           },
           {
             "kind": "link",
@@ -658,6 +688,17 @@
             "tone": "info",
             "title": "Ventas con tarjeta o transferencia",
             "text": "También se cancelan: el stock regresa y queda el registro, pero NO sale efectivo del cajón. El dinero se le devuelve al cliente por la terminal (tarjeta) o por el banco (transferencia), y la comisión de la terminal no se recupera."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "¿Es una preventa?",
+            "text": "Los folios PREV- no se cancelan desde aquí. Si se cobró o entregó por error, usa «Revertir entrega» (en Caja → Historial si fue hoy, o en Preventas → Folios para cualquier fecha). Un folio que solo tiene anticipo cobrado hoy se cancela desde Caja → Historial."
+          },
+          {
+            "kind": "link",
+            "toTopic": "preventas",
+            "label": "Revertir una entrega de preventa"
           }
         ]
       },

@@ -1,7 +1,7 @@
 {
   "id": "preventas",
   "title": "Preventas: del anticipo a la entrega",
-  "description": "Catálogos, folios PREV- y cómo cobrar anticipos y liquidaciones en Caja.",
+  "description": "Catálogos, folios PREV-, cómo cobrar anticipos y liquidaciones (completas o por partes) y cómo revertir un cobro por error.",
   "icon": "clipboard-list",
   "topicSlug": "preventas",
   "steps": [
@@ -24,7 +24,7 @@
       "waitFor": true,
       "placement": "bottom",
       "title": "Una pestaña para cada cosa",
-      "body": "Folios concentra los pedidos (Pendiente, Listo, Entregado, Vencido), Difusión avisa a los clientes por WhatsApp o correo, y Vencidos junta lo que ya expiró. Si eres cajero, Disponibles te muestra qué catálogos puedes vender hoy."
+      "body": "Folios concentra los pedidos (Pendiente, Listo, Entregado, Vencido) con su anticipo y su saldo, y en la columna Corregir está «Revertir entrega» para un cobro por error. Difusión avisa a los clientes por WhatsApp o correo, y Vencidos junta lo que ya expiró. Si eres cajero, Disponibles te muestra qué catálogos puedes vender hoy."
     },
     {
       "id": "nuevo-catalogo",
@@ -55,7 +55,7 @@
         "allowSkip": true
       },
       "title": "Cobra con el folio",
-      "body": "Escribe el folio PREV- aquí y el pedido se carga completo: productos, cliente y saldo. Cobras el anticipo o la liquidación como cualquier venta."
+      "body": "Escribe el folio PREV- aquí (o abre el botón Preventas → Apartadas) y se cargan las piezas que ya llegaron, con el cliente y lo que falta por cobrar de cada una. Cobras como cualquier venta."
     },
     {
       "id": "anticipo",
@@ -63,9 +63,19 @@
       "body": "El anticipo aparta el producto. Cuando llega, el cliente paga el saldo y el folio pasa a Entregado. Si no recoge a tiempo, el pedido cae a Vencidos para darle seguimiento."
     },
     {
+      "id": "entrega-parcial",
+      "title": "¿No llegó todo? Entrega por partes",
+      "body": "Si el folio trae varios productos, solo se cargan los que ya llegaron. Si el cliente no se lleva alguno, quítalo con el menú ⋮ → «No se la lleva hoy». Se cobra solo lo que se lleva; lo demás queda pendiente en el folio con su parte del anticipo, y lo cobras cuando llegue. Si una pieza llegó dañada, el mismo menú ⋮ → «Descuento» le baja el precio."
+    },
+    {
+      "id": "revertir",
+      "title": "¿Se cobró por error? Revertir entrega",
+      "body": "«Revertir entrega» deshace la última entrega del folio: las piezas vuelven a pendiente y se devuelve el cobro de esa visita (el anticipo se queda). Si fue hoy, está en Caja → Historial; para cualquier fecha, en Preventas → Folios o en Caja → Preventas → Liquidadas. Revisa la «Salida estimada» antes de confirmar."
+    },
+    {
       "id": "cierre",
       "title": "Listo",
-      "body": "Ya conoces el ciclo completo de una preventa: catálogo → folio → anticipo → liquidación. Cualquier duda extra está en la guía de Preventas del Centro de Documentación."
+      "body": "Ya conoces el ciclo completo de una preventa: catálogo → folio → anticipo → liquidación, completa o por partes, y cómo revertirla. Cualquier duda extra está en la guía de Preventas del Centro de Documentación."
     }
   ]
 }
