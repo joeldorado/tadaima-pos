@@ -261,6 +261,8 @@ final class SaleCalculator
      *     determinista: precio efectivo asc → product_id asc → índice asc.
      *   · Mayoreo: U ≥ min_qty → CADA línea del pool recibe
      *     min(round2(units×per_unit), bruto real de la línea) — clamp como hoy.
+     *   · Precio especial (2026-11-15): cada línea por su cuenta, desde 1
+     *     pieza (specialPricePerLine); solo las líneas que ahorran forman pool.
      *   · Gana el pool con: ahorro desc → priority desc → id asc (mismo
      *     desempate que el bestPromoBenefit que este método reemplaza).
      *   · Al aplicar, TODAS las líneas del pool quedan consumidas — también
@@ -354,7 +356,11 @@ final class SaleCalculator
                     'priority' => (int) $promo->priority,
                     'id'       => $promoId,
                     'per_line' => $perLine,
-                    'pool'     => $poolIdxs,
+                    // El pool que se consume = las líneas que la promo reparte.
+                    // NxM y mayoreo devuelven TODO el pool (contribuyentes
+                    // incluidas); el precio especial solo las que ahorran —
+                    // una pieza más barata que el especial no se re-precia.
+                    'pool'     => array_keys($perLine),
                 ];
                 if (
                     $best === null
@@ -405,6 +411,10 @@ final class SaleCalculator
         }
         if ($totalUnits < 1) {
             return null;
+        }
+
+        if (($promo->type ?? ProductPromotion::TYPE_NXM) === ProductPromotion::TYPE_SPECIAL_PRICE) {
+            return $this->specialPricePerLine($promo, $lines, $poolIdxs);
         }
 
         if (($promo->type ?? ProductPromotion::TYPE_NXM) === ProductPromotion::TYPE_QTY_DISCOUNT) {
@@ -469,6 +479,51 @@ final class SaleCalculator
         }
 
         return $perLine;
+    }
+
+    /**
+     * PRECIO ESPECIAL (2026-11-15): desde 1 pieza, a CADA pieza de cada línea,
+     * sin juntar piezas (no es mix & match: cada línea se evalúa sola).
+     *  - fixed:   ahorro = units × max(0, precio − valor)  (valor = precio final).
+     *  - percent: ahorro = round2(units × precio × valor/100)  (valor 1–99).
+     * units = floor(qty); tope al bruto REAL de la línea. Solo devuelve las
+     * líneas con ahorro > 0: una pieza que ya cuesta menos que el especial no
+     * entra al pool (no se re-precia de socio a normal). Espejo exacto de
+     * specialPricePerLine en saleCalc.ts.
+     *
+     * @param array<int, int> $poolIdxs
+     * @return array<int, array{amount: float, free_qty: int}>|null
+     */
+    private function specialPricePerLine(ProductPromotion $promo, array $lines, array $poolIdxs): ?array
+    {
+        $mode  = (string) ($promo->price_mode ?? '');
+        $value = $promo->special_value !== null ? (float) $promo->special_value : null;
+        if ($value === null || ! is_finite($value) || $value <= 0) {
+            return null;
+        }
+        if ($mode === ProductPromotion::PRICE_MODE_PERCENT) {
+            if ($value >= 100) {
+                return null;
+            }
+        } elseif ($mode !== ProductPromotion::PRICE_MODE_FIXED) {
+            return null;
+        }
+
+        $perLine = [];
+        foreach ($poolIdxs as $idx) {
+            $units = (int) floor((float) $lines[$idx]['qty']);
+            $price = (float) $lines[$idx]['unit_price'];
+            $raw = $mode === ProductPromotion::PRICE_MODE_PERCENT
+                ? $units * $price * ($value / 100)
+                : $units * max(0.0, $price - $value);
+            $gross  = self::round2($price * (float) $lines[$idx]['qty']);
+            $amount = min(self::round2($raw), $gross);
+            if ($amount > 0) {
+                $perLine[$idx] = ['amount' => $amount, 'free_qty' => 0];
+            }
+        }
+
+        return $perLine === [] ? null : $perLine;
     }
 
     /**

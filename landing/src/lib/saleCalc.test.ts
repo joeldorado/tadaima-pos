@@ -817,3 +817,105 @@ describe("recalculateSale — regalo por línea (2026-10-31)", () => {
     expect(r.lines[1]?.net).toBe(0);
   });
 });
+
+describe("precio especial (2026-11-15) — desde 1 pieza, gemelo de PromotionCheckoutTest", () => {
+  const especial = (mode: "fixed" | "percent", value: number, over: Partial<PromoDef> = {}): PromoDef => ({
+    id: 70,
+    productId: "1",
+    name: mode === "fixed" ? `Precio especial ${value}` : `Buen Fin ${value}%`,
+    type: "special_price",
+    buyN: 0,
+    payM: 0,
+    priceMode: mode,
+    specialValue: value,
+    priority: 0,
+    ...over,
+  });
+
+  it("fijo: 1 pieza de $499 con especial $350 → cobra $350", () => {
+    const r = recalculateSale({ lines: [line({ unitPrice: 499, qty: 1 })], promotions: [especial("fixed", 350)] });
+    expect(r.total).toBe(350);
+    expect(r.lineBenefitTotal).toBe(149);
+    expect(r.lines[0]!.promoPart).toEqual(expect.objectContaining({ amount: 149, freeQty: 0, promoId: 70 }));
+  });
+
+  it("porcentaje: 3 × $199.90 con 45% → 269.87 de ahorro, total 329.83", () => {
+    const r = recalculateSale({ lines: [line({ unitPrice: 199.9, qty: 3 })], promotions: [especial("percent", 45)] });
+    expect(r.lineBenefitTotal).toBe(269.87);
+    expect(r.total).toBe(329.83);
+  });
+
+  it("precio fijo mayor o igual al de catálogo no aplica", () => {
+    expect(recalculateSale({ lines: [line({ unitPrice: 300 })], promotions: [especial("fixed", 350)] }).total).toBe(300);
+    expect(recalculateSale({ lines: [line({ unitPrice: 350 })], promotions: [especial("fixed", 350)] }).lines[0]!.promoPart).toBeNull();
+  });
+
+  it("socio pasa a NORMAL con el %: $1,100 − 45% = $605", () => {
+    const r = recalculateSale({
+      lines: [line({ unitPrice: 980, basePrice: 1100, qty: 1 })],
+      promotions: [especial("percent", 45)],
+    });
+    expect(r.total).toBe(605);
+    expect(r.lines[0]!.unitPrice).toBe(1100);
+    expect(r.lines[0]!.promoRepriced).toBe(true);
+  });
+
+  it("socio más barato que el precio fijo conserva su precio ($980 < $1,000)", () => {
+    const r = recalculateSale({
+      lines: [line({ unitPrice: 980, basePrice: 1100, qty: 1 })],
+      promotions: [especial("fixed", 1000)],
+    });
+    expect(r.total).toBe(980);
+    expect(r.lines[0]!.promoRepriced).toBe(false);
+  });
+
+  it("el descuento manual se apila encima: 2 × $500 con $400 → 800, −10% → 720", () => {
+    const r = recalculateSale({
+      lines: [line({ unitPrice: 500, qty: 2, discount: { kind: "percent", basis: "line", value: 10, reason: "otro" } })],
+      promotions: [especial("fixed", 400)],
+    });
+    expect(r.total).toBe(720);
+    expect(r.lineBenefitTotal).toBe(280);
+    expect(r.lines[0]!.promoPart?.amount).toBe(200);
+  });
+
+  it("gana la que más ahorra contra un 2x1 (2 pzas: 2x1; 1 pza: especial)", () => {
+    const dosPorUno: PromoDef = { id: 71, productId: "1", name: "2x1", type: "nxm", buyN: 2, payM: 1, priority: 0 };
+    const r = recalculateSale({ lines: [line({ unitPrice: 500, qty: 2 })], promotions: [especial("fixed", 350), dosPorUno] });
+    expect(r.lines[0]!.promoPart?.promoId).toBe(71);
+    const r1 = recalculateSale({ lines: [line({ unitPrice: 500, qty: 1 })], promotions: [especial("fixed", 350), dosPorUno] });
+    expect(r1.lines[0]!.promoPart?.promoId).toBe(70);
+    expect(r1.total).toBe(350);
+  });
+
+  it("qty con fracción: units = floor(qty), tope al bruto real", () => {
+    // 1.5 × $100 con 50% → 1 unidad con descuento: −$50; bruto 150 → neto 100.
+    const r = recalculateSale({ lines: [line({ unitPrice: 100, qty: 1.5 })], promotions: [especial("percent", 50)] });
+    expect(r.lineBenefitTotal).toBe(50);
+    expect(r.total).toBe(100);
+  });
+
+  it("misma promo en dos productos: cada línea sola; la más barata que el especial no entra ni se marca", () => {
+    const r = recalculateSale({
+      lines: [line({ productId: "1", unitPrice: 500 }), line({ productId: "2", unitPrice: 300, basePrice: 320 })],
+      promotions: [especial("fixed", 350), especial("fixed", 350, { productId: "2" })],
+    });
+    expect(r.total).toBe(650);
+    expect(r.lines[1]!.promoPart).toBeNull();
+    expect(r.lines[1]!.poolPromoId).toBeUndefined();
+    expect(r.lines[1]!.promoRepriced).toBe(false);
+  });
+
+  it("valores inválidos no aplican (sin modo, 0, % ≥ 100)", () => {
+    const l = [line({ unitPrice: 500 })];
+    expect(recalculateSale({ lines: l, promotions: [especial("fixed", 0)] }).total).toBe(500);
+    expect(recalculateSale({ lines: l, promotions: [especial("percent", 100)] }).total).toBe(500);
+    expect(recalculateSale({ lines: l, promotions: [especial("fixed", 350, { priceMode: null })] }).total).toBe(500);
+  });
+
+  it("computePromoBenefit (preview de una línea) usa la misma matemática", () => {
+    expect(computePromoBenefit(especial("fixed", 350), { unitPrice: 499, qty: 2 })?.amount).toBe(298);
+    expect(computePromoBenefit(especial("percent", 45), { unitPrice: 1000, qty: 1 })?.amount).toBe(450);
+    expect(computePromoBenefit(especial("fixed", 350), { unitPrice: 300, qty: 1 })).toBeNull();
+  });
+});

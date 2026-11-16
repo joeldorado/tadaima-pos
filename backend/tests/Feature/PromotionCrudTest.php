@@ -412,4 +412,118 @@ class PromotionCrudTest extends TestCase
         $this->assertTrue($promo->allow_cash);
         $this->assertFalse($promo->allow_card);
     }
+
+    // ── Precio especial (T-001/T-002, 2026-11-15) ───────────────────────────
+
+    /** @return array<string, mixed> */
+    private function specialFields(string $mode = 'fixed', float $value = 350.0): array
+    {
+        return ['type' => 'special_price', 'price_mode' => $mode, 'special_value' => $value];
+    }
+
+    public function test_crea_precio_especial_fijo_y_viaja_en_el_payload(): void
+    {
+        $this->actingAs($this->admin)
+            ->postJson('/api/v1/promotions', ['name' => 'Precio especial $350', ...$this->specialFields()])
+            ->assertStatus(201)
+            ->assertJsonPath('data.type', 'special_price')
+            ->assertJsonPath('data.price_mode', 'fixed')
+            ->assertJsonPath('data.special_value', 350);
+
+        $this->actingAs($this->admin)
+            ->postJson("/api/v1/products/{$this->product->id}/promotions", ['name' => 'Buen Fin', ...$this->specialFields('percent', 45)])
+            ->assertStatus(201);
+
+        $this->actingAs($this->admin)
+            ->getJson("/api/v1/products/{$this->product->id}")
+            ->assertJsonPath('data.active_promotions.0.type', 'special_price')
+            ->assertJsonPath('data.active_promotions.0.price_mode', 'percent')
+            ->assertJsonPath('data.active_promotions.0.special_value', 45);
+    }
+
+    public function test_precio_especial_valida_sus_campos(): void
+    {
+        $post = fn (array $body) => $this->actingAs($this->admin)
+            ->postJson('/api/v1/promotions', ['name' => 'Mal', 'type' => 'special_price', ...$body]);
+
+        $post([])->assertStatus(422)->assertJsonValidationErrors(['price_mode', 'special_value']);
+        $post(['price_mode' => 'otro', 'special_value' => 10])->assertStatus(422)->assertJsonValidationErrors(['price_mode']);
+        $post(['price_mode' => 'fixed', 'special_value' => 0])->assertStatus(422)->assertJsonValidationErrors(['special_value']);
+        $post(['price_mode' => 'percent', 'special_value' => 100])->assertStatus(422)->assertJsonValidationErrors(['special_value']);
+        $post(['price_mode' => 'percent', 'special_value' => 0.5])->assertStatus(422)->assertJsonValidationErrors(['special_value']);
+        // Con los campos de otro tipo encima → 422.
+        $post(['price_mode' => 'fixed', 'special_value' => 350, 'buy_n' => 2, 'pay_m' => 1])->assertStatus(422);
+        $post(['price_mode' => 'fixed', 'special_value' => 350, 'min_qty' => 2])->assertStatus(422);
+
+        // Y los campos nuevos están prohibidos en NxM y mayoreo.
+        $this->actingAs($this->admin)->postJson('/api/v1/promotions', [
+            'name' => '2x1', 'buy_n' => 2, 'pay_m' => 1, 'price_mode' => 'fixed',
+        ])->assertStatus(422)->assertJsonValidationErrors(['price_mode']);
+        $this->actingAs($this->admin)->postJson('/api/v1/promotions', [
+            'name' => 'Mayoreo', ...$this->mayoreoFields(), 'special_value' => 10,
+        ])->assertStatus(422)->assertJsonValidationErrors(['special_value']);
+
+        $post(['price_mode' => 'percent', 'special_value' => 99])->assertStatus(201);
+    }
+
+    public function test_exclusividad_precio_especial_contra_2x1(): void
+    {
+        ProductPromotion::create([
+            'product_id' => $this->product->id, 'name' => '2x1 Verano', 'buy_n' => 2, 'pay_m' => 1,
+        ]);
+
+        $resp = $this->actingAs($this->admin)
+            ->postJson("/api/v1/products/{$this->product->id}/promotions", ['name' => 'Buen Fin', ...$this->specialFields('percent', 45)]);
+        $resp->assertStatus(422);
+        $this->assertStringContainsString('2x1 Verano', (string) $resp->json('error'));
+        $this->assertStringContainsString('precio especial', (string) $resp->json('error'));
+
+        // Al revés: con precio especial vigente no entra un mayoreo encimado.
+        ProductPromotion::query()->delete();
+        ProductPromotion::create([
+            'product_id' => $this->product->id, 'name' => 'Especial $350',
+            'type' => 'special_price', 'price_mode' => 'fixed', 'special_value' => 350,
+        ]);
+        $resp2 = $this->actingAs($this->admin)
+            ->postJson("/api/v1/products/{$this->product->id}/promotions", ['name' => 'Mayoreo', ...$this->mayoreoFields()]);
+        $resp2->assertStatus(422);
+        $this->assertStringContainsString('Especial $350', (string) $resp2->json('error'));
+        $this->assertStringContainsString('precio especial', (string) $resp2->json('error'));
+    }
+
+    public function test_dup_precio_especial_encimado_rechazado(): void
+    {
+        ProductPromotion::create([
+            'product_id' => $this->product->id, 'name' => 'Especial $350',
+            'type' => 'special_price', 'price_mode' => 'fixed', 'special_value' => 350,
+        ]);
+
+        $resp = $this->actingAs($this->admin)
+            ->postJson("/api/v1/products/{$this->product->id}/promotions", ['name' => 'Buen Fin', ...$this->specialFields('percent', 45)]);
+        $resp->assertStatus(422);
+        $this->assertStringContainsString('precio especial', (string) $resp->json('error'));
+    }
+
+    public function test_put_parcial_preserva_el_precio_especial(): void
+    {
+        $promo = ProductPromotion::create([
+            'product_id' => $this->product->id, 'name' => 'Especial',
+            'type' => 'special_price', 'price_mode' => 'fixed', 'special_value' => 350,
+        ]);
+
+        $this->actingAs($this->admin)
+            ->putJson("/api/v1/promotions/{$promo->id}", ['name' => 'Especial', 'type' => 'special_price', 'status' => 'paused'])
+            ->assertOk();
+
+        $fresh = $promo->fresh();
+        $this->assertSame('paused', $fresh->status);
+        $this->assertSame('fixed', $fresh->price_mode);
+        $this->assertEqualsWithDelta(350.0, (float) $fresh->special_value, 0.001);
+
+        // Editar el valor sí lo cambia.
+        $this->actingAs($this->admin)
+            ->putJson("/api/v1/promotions/{$promo->id}", ['name' => 'Especial', ...$this->specialFields('fixed', 450)])
+            ->assertOk()
+            ->assertJsonPath('data.special_value', 450);
+    }
 }

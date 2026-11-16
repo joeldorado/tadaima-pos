@@ -94,6 +94,8 @@ export function promoSignature(promos: readonly PromoSnapshot[] | undefined): st
       p.pay_m ?? "",
       p.min_qty ?? "",
       p.discount_per_unit ?? "",
+      p.price_mode ?? "",
+      p.special_value ?? "",
       p.priority,
       p.store_id ?? "",
       p.allow_cash !== false ? 1 : 0,

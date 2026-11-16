@@ -355,6 +355,10 @@ class CatalogController extends Controller
                     // Mayoreo (2026-07-23) — `tiers` ya no viaja (ver ProductLightResource).
                     'min_qty'           => $pr->min_qty !== null ? (int) $pr->min_qty : null,
                     'discount_per_unit' => $pr->discount_per_unit !== null ? (float) $pr->discount_per_unit : null,
+                    // Precio especial (2026-11-15): 'fixed' = precio final por pieza,
+                    // 'percent' = % de descuento. Null en los otros tipos.
+                    'price_mode'        => $pr->price_mode,
+                    'special_value'     => $pr->special_value !== null ? (float) $pr->special_value : null,
                     'ends_at'  => $pr->ends_at?->toIso8601String(),
                     'store_id' => $pr->store_id !== null ? (int) $pr->store_id : null,
                 ])->values(),

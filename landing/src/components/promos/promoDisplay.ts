@@ -1,4 +1,4 @@
-import { promoBadge, promoBannerCopy, promoShortLabel } from "@/lib/promoLabel";
+import { promoBadge, promoBannerCopy, promoShortLabel, specialPrice } from "@/lib/promoLabel";
 import type { LightPromo } from "@/lib/promoVigentes";
 
 const fmt = (n: number) =>
@@ -18,6 +18,17 @@ export function promoDisplay(promo: LightPromo, price: number) {
     return { badge, badgeScale, sub: `${promoShortLabel(promo)} · ${promo.name}`, cta };
   }
 
+  // Precio especial (2026-11-15): el CTA dice a cuánto queda la pieza.
+  if (promo.type === "special_price") {
+    const final = specialPriceFinal(promo, price);
+    return {
+      badge,
+      badgeScale,
+      sub: `Precio especial · ${promo.name}`,
+      cta: final != null && final < price ? `${cta} · antes ${fmt(price)}, ahora ${fmt(final)}` : cta,
+    };
+  }
+
   const free = (promo.buy_n ?? 0) - (promo.pay_m ?? 0);
   return {
     badge,
@@ -25,4 +36,12 @@ export function promoDisplay(promo: LightPromo, price: number) {
     sub: `${free === 1 ? "1 gratis" : `${free} gratis`} · ${promo.name}`,
     cta: `${cta} · ${fmt(price * (promo.pay_m ?? 0))}`,
   };
+}
+
+/** Precio final de UNA pieza con el precio especial, o null si no aplica. */
+function specialPriceFinal(promo: LightPromo, price: number): number | null {
+  const sp = specialPrice(promo);
+  if (!sp || price <= 0) return null;
+  if (sp.mode === "fixed") return sp.value < price ? sp.value : null;
+  return Math.round(price * (1 - sp.value / 100) * 100) / 100;
 }

@@ -27,7 +27,7 @@ use Illuminate\Http\JsonResponse;
 class PromotionsController extends Controller
 {
     /** Campos de la promo que se auditan (ver ModelAudit). */
-    public const AUDIT_FIELDS = ['name', 'type', 'buy_n', 'pay_m', 'min_qty', 'discount_per_unit', 'allow_cash', 'allow_card', 'priority', 'status', 'store_id', 'starts_at', 'ends_at'];
+    public const AUDIT_FIELDS = ['name', 'type', 'buy_n', 'pay_m', 'min_qty', 'discount_per_unit', 'price_mode', 'special_value', 'allow_cash', 'allow_card', 'priority', 'status', 'store_id', 'starts_at', 'ends_at'];
 
     public function __construct(private readonly PromotionService $promotions)
     {
@@ -81,7 +81,7 @@ class PromotionsController extends Controller
         // Sin productos asignados no hay contra qué validar duplicados/tope —
         // esas reglas corren al ASIGNAR (attachProducts) y al reactivar.
         $promotion = ProductPromotion::create(array_merge(
-            $request->only(['name', 'buy_n', 'pay_m', 'min_qty', 'discount_per_unit', 'allow_cash', 'allow_card', 'priority']),
+            $request->only(['name', 'buy_n', 'pay_m', 'min_qty', 'discount_per_unit', 'price_mode', 'special_value', 'allow_cash', 'allow_card', 'priority']),
             $this->promotions->vigencyDates($request->input('starts_at'), $request->input('ends_at')),
             [
                 'type'     => $request->promoType(),
@@ -151,7 +151,7 @@ class PromotionsController extends Controller
 
         $before = ModelAudit::snapshot($promotion, self::AUDIT_FIELDS);
         $promotion->update(array_merge(
-            $request->only(['name', 'buy_n', 'pay_m', 'min_qty', 'discount_per_unit', 'allow_cash', 'allow_card', 'priority']),
+            $request->only(['name', 'buy_n', 'pay_m', 'min_qty', 'discount_per_unit', 'price_mode', 'special_value', 'allow_cash', 'allow_card', 'priority']),
             $this->promotions->vigencyDates($request->input('starts_at'), $request->input('ends_at')),
             $request->has('status') ? ['status' => $request->input('status')] : [],
             $request->has('store_id') ? ['store_id' => $this->promotions->scopedStoreId($request)] : [],

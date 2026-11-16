@@ -9,7 +9,10 @@ import type { PromoViewer } from "@/lib/promoList";
  * que espera el server. Mismas reglas que `StoreProductPromotionRequest`.
  */
 
-export type PromoKind = "nxm" | "qty_discount";
+export type PromoKind = "nxm" | "qty_discount" | "special_price";
+
+/** Precio especial: la pieza cuesta $X ("fixed") o baja un % ("percent"). */
+export type PromoPriceMode = "fixed" | "percent";
 
 export interface PromoDraft {
   kind: PromoKind;
@@ -20,6 +23,9 @@ export interface PromoDraft {
   /** Descuento por cantidad: desde cuántas piezas y cuánto baja cada una. */
   minQty: string;
   perUnit: string;
+  /** Precio especial (2026-11-15): desde 1 pieza, $ fijo por pieza o % menos. */
+  priceMode: PromoPriceMode;
+  specialValue: string;
   allowCash: boolean;
   allowCard: boolean;
   /** Fechas planas YYYY-MM-DD; "" = sin fecha. */
@@ -40,6 +46,8 @@ export function emptyDraft(): PromoDraft {
     payM: "1",
     minQty: "5",
     perUnit: "",
+    priceMode: "fixed",
+    specialValue: "",
     allowCash: true,
     allowCard: true,
     startsAt: "",
@@ -52,12 +60,14 @@ export function emptyDraft(): PromoDraft {
 export function draftFromPromo(promo: Promotion): PromoDraft {
   const base = emptyDraft();
   return {
-    kind: promo.type === "qty_discount" ? "qty_discount" : "nxm",
+    kind: promo.type === "qty_discount" || promo.type === "special_price" ? promo.type : "nxm",
     name: promo.name,
     buyN: String(promo.buy_n ?? base.buyN),
     payM: String(promo.pay_m ?? base.payM),
     minQty: String(promo.min_qty ?? base.minQty),
     perUnit: promo.discount_per_unit != null ? String(Number(promo.discount_per_unit)) : "",
+    priceMode: promo.price_mode === "percent" ? "percent" : "fixed",
+    specialValue: promo.special_value != null ? String(Number(promo.special_value)) : "",
     allowCash: promo.allow_cash !== false,
     allowCard: promo.allow_card !== false,
     startsAt: toDateInput(promo.starts_at),
@@ -79,6 +89,13 @@ export function validateWhat(draft: PromoDraft): string | null {
     if (pay < 1 || pay >= buy) return "Lo que paga debe ser menos de lo que se lleva (por ejemplo 2x1).";
     return null;
   }
+  if (draft.kind === "special_price") {
+    const value = toMoney(draft.specialValue);
+    if (draft.priceMode === "percent") {
+      return value >= 1 && value <= 99 ? null : "El porcentaje de descuento debe estar entre 1% y 99% (por ejemplo 45).";
+    }
+    return value > 0 ? null : "Escribe el precio especial de cada pieza (por ejemplo $350).";
+  }
   if (toInt(draft.minQty) < MIN_PIECES) return "El descuento por cantidad empieza desde 2 piezas.";
   if (toMoney(draft.perUnit) <= 0) return "Escribe cuánto se le descuenta a cada pieza (por ejemplo $20).";
   return null;
@@ -99,13 +116,9 @@ export function validateDetails(draft: PromoDraft): string | null {
  * reenvía la promo completa y omitirlas borraría la vigencia sin querer.
  */
 export function draftToInput(draft: PromoDraft, viewer: PromoViewer): ProductPromotionInput {
-  const typed: Partial<ProductPromotionInput> = draft.kind === "nxm"
-    ? { type: "nxm", buy_n: toInt(draft.buyN), pay_m: toInt(draft.payM) }
-    : { type: "qty_discount", min_qty: toInt(draft.minQty), discount_per_unit: toMoney(draft.perUnit) };
-
   return {
     name: draft.name.trim(),
-    ...typed,
+    ...typedFields(draft),
     allow_cash: draft.allowCash,
     allow_card: draft.allowCard,
     starts_at: draft.startsAt || null,
@@ -132,14 +145,23 @@ export function withReactivation(
   return endsInThePast ? input : { ...input, status: "active" };
 }
 
-/** Etiqueta corta del borrador: "2x1" o "5+ pzas −$20 c/u". */
-export function draftLabel(draft: PromoDraft): string {
-  return promoShortLabel(draft.kind === "nxm"
-    ? { type: "nxm", buy_n: toInt(draft.buyN), pay_m: toInt(draft.payM) }
-    : { type: "qty_discount", min_qty: toInt(draft.minQty), discount_per_unit: toMoney(draft.perUnit) });
+/** Solo los campos del tipo del borrador (el server prohíbe los de los otros). */
+function typedFields(draft: PromoDraft): Partial<ProductPromotionInput> {
+  if (draft.kind === "special_price") {
+    return { type: "special_price", price_mode: draft.priceMode, special_value: toMoney(draft.specialValue) };
+  }
+  if (draft.kind === "qty_discount") {
+    return { type: "qty_discount", min_qty: toInt(draft.minQty), discount_per_unit: toMoney(draft.perUnit) };
+  }
+  return { type: "nxm", buy_n: toInt(draft.buyN), pay_m: toInt(draft.payM) };
 }
 
-/** Arranque del nombre sugerido: "2x1" o "Mayoreo" (la etiqueta de mayoreo es muy larga). */
+/** Etiqueta corta del borrador: "2x1", "5+ pzas −$20 c/u", "$350 c/u" o "−45%". */
+export function draftLabel(draft: PromoDraft): string {
+  return promoShortLabel(typedFields(draft));
+}
+
+/** Arranque del nombre sugerido: "2x1", "$350 c/u", "−45%" o "Mayoreo" (la etiqueta de mayoreo es muy larga). */
 export function draftNamePrefix(draft: PromoDraft): string {
-  return draft.kind === "nxm" ? draftLabel(draft) : "Mayoreo";
+  return draft.kind === "qty_discount" ? "Mayoreo" : draftLabel(draft);
 }

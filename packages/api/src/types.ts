@@ -102,6 +102,22 @@ export interface MayoreoFields {
   discount_per_unit?: number | null
 }
 
+/** Tipos de promo: 2x1 · mayoreo · precio especial (2026-11-15). */
+export type PromoType = 'nxm' | 'qty_discount' | 'special_price'
+
+/** Precio especial: precio final fijo por pieza o % de descuento. */
+export type PromoPriceMode = 'fixed' | 'percent'
+
+/**
+ * Campos del PRECIO ESPECIAL (2026-11-15): desde 1 pieza, a cada pieza.
+ * 'fixed' → special_value = precio final por pieza ($350);
+ * 'percent' → special_value = % de descuento (1–99).
+ */
+export interface SpecialPriceFields {
+  price_mode?: PromoPriceMode | null
+  special_value?: number | null
+}
+
 /**
  * Restricción de método de pago de la PROMO (2026-07-24). Si el método de cobro
  * no le sirve, BLOQUEA el cobro igual que la restricción del producto — no
@@ -113,11 +129,11 @@ export interface PromoPaymentFlags {
 }
 
 /** Promo vigente tal como viaja en el payload de producto (Caja). */
-export interface ActiveProductPromotion extends MayoreoFields, PromoPaymentFlags {
+export interface ActiveProductPromotion extends MayoreoFields, SpecialPriceFields, PromoPaymentFlags {
   id: number
   name: string
-  /** 'nxm' (2x1, usa buy_n/pay_m) | 'qty_discount' = mayoreo. */
-  type?: 'nxm' | 'qty_discount'
+  /** 'nxm' (2x1, usa buy_n/pay_m) | 'qty_discount' = mayoreo | 'special_price'. */
+  type?: PromoType
   buy_n: number | null
   pay_m: number | null
   priority: number
@@ -128,13 +144,13 @@ export interface ActiveProductPromotion extends MayoreoFields, PromoPaymentFlags
 }
 
 /** Promo completa (CRUD del editor de producto — incluye pausadas/vencidas). */
-export interface ProductPromotion extends MayoreoFields, PromoPaymentFlags {
+export interface ProductPromotion extends MayoreoFields, SpecialPriceFields, PromoPaymentFlags {
   id: number
   product_id: number
   /** null = todas las tiendas; con valor = solo esa sucursal. */
   store_id?: number | null
   name: string
-  type?: 'nxm' | 'qty_discount'
+  type?: PromoType
   buy_n: number | null
   pay_m: number | null
   starts_at: string | null
@@ -151,14 +167,14 @@ export interface ProductPromotion extends MayoreoFields, PromoPaymentFlags {
  * que ProductPromotion pero SIN product_id requerido (quedó como puntero
  * legacy del shim anidado).
  */
-export interface Promotion extends MayoreoFields, PromoPaymentFlags {
+export interface Promotion extends MayoreoFields, SpecialPriceFields, PromoPaymentFlags {
   id: number
   /** Puntero legacy del shim /products/{id}/promotions — null en promos nuevas. */
   product_id?: number | null
   /** null = todas las tiendas; con valor = solo esa sucursal. */
   store_id?: number | null
   name: string
-  type?: 'nxm' | 'qty_discount'
+  type?: PromoType
   buy_n: number | null
   pay_m: number | null
   starts_at: string | null
