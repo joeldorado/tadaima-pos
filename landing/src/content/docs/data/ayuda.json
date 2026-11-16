@@ -31,7 +31,7 @@
       "caja abierta",
       "no puedo vender"
     ],
-    "updatedAt": "2026-09-30",
+    "updatedAt": "2026-11-15",
     "sections": [
       {
         "id": "glosario",
@@ -55,6 +55,14 @@
               [
                 "Liquidación",
                 "El pago del resto cuando el cliente recoge su producto."
+              ],
+              [
+                "Entrega parcial",
+                "Entregar solo las piezas de un folio que ya llegaron. La que falta se queda apartada con su parte del anticipo y se cobra cuando llegue."
+              ],
+              [
+                "Revertir entrega",
+                "Deshacer la última entrega de un folio cobrada por error: las piezas vuelven a pendiente y se devuelve el cobro de esa visita. El anticipo se queda."
               ],
               [
                 "Corte (de caja)",
@@ -120,7 +128,7 @@
               ],
               [
                 "No imprime el ticket",
-                "Revisa papel y cable de la impresora. Si esa caja usa QZ Tray, confirma que esté abierto (su icono junto al reloj). El ticket siempre se puede reimprimir desde Ventas."
+                "Revisa papel y cable de la impresora. Si esa caja usa QZ Tray, confirma que esté abierto (su icono junto al reloj). El ticket siempre se puede reimprimir: si es de hoy desde Caja → Historial (ícono de impresora), si es de otro día desde Ventas."
               ],
               [
                 "No puedo vender: caja de un día anterior abierta",
@@ -133,6 +141,14 @@
               [
                 "Me equivoqué en una venta ya cobrada",
                 "Se cancela desde Ventas o Caja → Historial (completa o solo algunos artículos, con motivo), también si se pagó con tarjeta o transferencia (ese dinero se devuelve por la terminal o el banco). Si solo se marcó mal el método de pago, usa “Corregir pago” mientras la caja siga abierta."
+              ],
+              [
+                "El cliente no se lleva todo su pedido de preventa",
+                "Carga el folio en Caja y quita la pieza que no se lleva con el menú ⋮ → «No se la lleva hoy». Se cobra solo lo que se lleva y lo demás queda pendiente en el folio."
+              ],
+              [
+                "Se cobró o entregó una preventa por error",
+                "Usa «Revertir entrega»: en Caja → Historial si fue hoy, o en Preventas → Folios (columna Corregir) para cualquier fecha. Revisa la «Salida estimada» antes de confirmar."
               ]
             ]
           },

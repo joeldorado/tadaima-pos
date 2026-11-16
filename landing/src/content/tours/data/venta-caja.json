@@ -30,7 +30,7 @@
         "failBody": "Captura el efectivo con el que arranca el cajón y presiona Abrir Caja. En cuanto la abras, el tour continúa solo."
       },
       "title": "Busca, escanea o teclea",
-      "body": "Escribe el nombre o SKU, o escanea el código de barras con el lector. También acepta folios de preventa: teclea PREV- y el número para cargar el pedido completo. Ojo: re-escanear el mismo producto no suma — la cantidad se ajusta con + y −."
+      "body": "Escribe el nombre o SKU, o escanea el código de barras con el lector. También acepta folios de preventa: teclea PREV- y el número para cargar las piezas que ya llegaron. Ojo: re-escanear el mismo producto no suma — la cantidad se ajusta con + y −."
     },
     {
       "id": "carrito",
@@ -74,7 +74,7 @@
       "target": "sell-printer",
       "placement": "bottom",
       "title": "El ticket sale solo",
-      "body": "Al cobrar, el ticket se imprime en automático. Con este botón configuras la impresora de esta máquina (impresión silenciosa). Si necesitas reimprimir uno, lo haces desde Historial."
+      "body": "Al cobrar, el ticket se imprime en automático. Con este botón configuras la impresora de esta máquina (impresión silenciosa). ¿Otra copia? Si es de hoy, en Historial con el ícono de impresora del renglón; si es de otro día, desde el menú Ventas."
     },
     {
       "id": "cierre",
