@@ -4,6 +4,21 @@
 
 ---
 
+### Sesión 2026-11-15 (b) — Descuento por pieza al liquidar una preventa (PR #104, T-003) — rev tadaima-00140-fub
+
+**Origen:** la tienda pidió (audio de WhatsApp, T-003) poder hacer descuento a una preventa al liquidarla, por ejemplo si la pieza llega dañada, «casi como en Caja». Hasta hoy una pieza de preventa solo se podía quitar del carrito («No se la lleva hoy»).
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00138-zij`. **Con migración** aditiva (`pre_sale_order_items.discount_*`, en 0/NULL para todo lo existente); el código anterior funciona con ella puesta, no hay que revertirla. Ojo: si se regresa a 00138 después de que la tienda haya dado descuentos, esas partidas volverían a contar a su precio bruto en total/saldo (el dinero cobrado no cambia).
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00138-zij=100 --project tadaimapos --region us-east1`
+
+- **Caja:** menú ⋮ de una pieza del folio cargado → «Descuento»: el mismo modal de los productos ($ o %, por pieza o por línea, motivo y nota), sobre el precio pactado. **Tope: lo que le falta pagar a la pieza** (decisión de Joel: nunca sale dinero de la caja). La línea, el cobro del folio y el ticket salen con el neto.
+- **API:** `PATCH /pre-sale-orders/{id}/status` acepta `item_discounts[]` (solo partidas de `item_ids`); el servidor calcula el monto y valida el tope con `App\Support\PresaleItemDiscount` (espejo de `presaleDeliveryCharge`). Sin `item_discounts`, igual que antes (app móvil).
+- **Neto de la partida** = `quantity × unit_price − discount_amount`: total/saldo del folio, «pagado ≥ entregado», `/reports/pre-sales`, reparto de pagos, Reporte del Día, Ventas y Reportes. **Revertir la entrega quita el descuento** (decisión de Joel).
+- **Revisión independiente:** quitar el descuento de una pieza de preventa la fusionaba con una venta normal del mismo producto (se salía del folio). Corregido con prueba.
+- **Validación:** backend 994 ✓ en SQLite y Postgres 17 local; vitest 910 ✓; type-check 455 = `main`. En local (SQLite) en navegador: figura de $800 con $200 de anticipo, 20% por dañada → $440; 80% bloqueado (tope $600); revertir devolvió $640 y quitó el descuento.
+- **En prod 2026-11-15 ~20:40 (Tijuana):** migración «DONE» en 0.9 s al arrancar el candidato; candidato y dominio: `/`, `/login`, `/caja`, `/tadaimaus/` 200, API sin token 401, bundle con el texto nuevo del tope. No probado en prod con sesión: lo prueba la tienda.
+- **Pendiente:** prueba en tienda; la guía in-app de preventas (rama del PR #101) no menciona el descuento.
+
 ### Sesión 2026-11-15 — Promo «Precio especial» (PR #102) + Reporte del Día con lo cobrado (PR #103) — rev tadaima-00138-zij
 
 **Origen:** la tienda reportó por WhatsApp (T-001, T-002) que no podía poner precio fijo a ciertas piezas ($350, $450) ni un Buen Fin del 45% desde 1 pieza. Al probarlo salió que el Reporte del Día de Ventas sumaba el bruto e ignoraba promos y descuentos (T-004, ya existía). Joel pidió probarlo en local y publicarlo esa noche, con rollback si la tienda encuentra un error.
