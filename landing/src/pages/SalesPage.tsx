@@ -33,6 +33,7 @@ import { discountPct } from "@/lib/promo";
 import { DISCOUNT_REASON_LABELS, SURCHARGE_REASON_LABELS } from "@/lib/discountReasons";
 import { finalPriceLine } from "@/lib/ticketLines";
 import { saleItemRevenue } from "@/lib/saleItemNet";
+import { accSaleItems, sortCorteRows, type CorteProdRow } from "@/lib/dailyCorte";
 import { normalizeSalesQuery, saleItemMatchesQuery, saleItemSearchTerms } from "@/lib/salesSearch";
 import { normalizeSearchText } from "@/lib/customerSearch";
 import { CancelTicketModal } from "@/components/cancel/CancelTicketModal";
@@ -1253,21 +1254,8 @@ function loadIvaComisionPct(): number {
   return Number.isFinite(v) && v > 0 && v <= 100 ? v : DEFAULT_IVA_COMISION_PCT;
 }
 
-// Fila de producto en el corte del gerente (tablas 1,2,4,5). Costo/utilidad
-// gateados por canViewCost; `tieneCosto` indica si hubo costo registrado.
-interface CorteProdRow {
-  key: string; name: string; fecha: string; // fecha YYYY-MM-DD (zona negocio)
-  /** Precio unitario de la línea — el mismo producto a precios distintos sale
-   * en renglones separados: cant × precio = venta (Joel 2026-06-12). */
-  precioUnit: number;
-  cantidad: number; venta: number; costo: number; tieneCosto: boolean;
-  /** Regalo (2026-10-31): $0 de venta y costo a propósito — no es «sin costo». */
-  isGift?: boolean;
-  /** Comisión de terminal repartida a esta línea (solo tabla Tarjeta).
-   * Viene del snapshot commission_amount de cada venta — cada terminal puede
-   * tener % distinto, por eso se calcula POR FILA y no con un % global. */
-  comision: number;
-}
+// Fila de producto en el corte del gerente (tablas 1,2,4,5): `CorteProdRow`
+// en lib/dailyCorte.ts. Costo/utilidad gateados por canViewCost.
 // Apartados con costo + fórmulas del Excel (Joel 2026-06-12): Venta = precio
 // total apartado, Resta = Venta − Abono (por liquidar), Utilidad esperada =
 // Venta − Costo (se realiza al liquidar). Costo del snapshot ADR-015.
@@ -1602,7 +1590,16 @@ function CorteProdTable({
                       <td className="py-2.5 px-3 font-bold truncate" style={{ color: "var(--td-text-hi)" }} title={r.name}>{r.name}</td>
                       {/* Desglose por detalle: cant × precio unit = venta. */}
                       <td className="py-2.5 px-3 text-right tabular-nums" style={{ color: "var(--td-text-md)" }}>{r.cantidad}</td>
-                      <td className="py-2.5 px-3 text-right tabular-nums" style={{ color: "var(--td-text-md)" }}>{fmt(r.precioUnit)}</td>
+                      <td className="py-2.5 px-3 text-right tabular-nums" style={{ color: "var(--td-text-md)" }}>
+                        {/* P. Unit = neto cobrado por pieza; si la línea llevó
+                            promo/descuento/aumento, el de lista va tachado arriba. */}
+                        {r.precioLista != null && Math.abs(r.precioLista - r.precioUnit) >= 0.005 && (
+                          <span className="block text-[10px] line-through" style={{ color: "var(--td-text-lo)" }} title="Precio de lista">
+                            {fmt(r.precioLista)}
+                          </span>
+                        )}
+                        {fmt(r.precioUnit)}
+                      </td>
                       <td className="py-2.5 px-3 text-right font-black tabular-nums" style={{ color: "var(--td-text-hi)" }}>{fmt(r.venta)}</td>
                       {showComision && (
                         <td className="py-2.5 px-3 text-right tabular-nums font-bold whitespace-nowrap" style={{ color: "#F59E0B" }}>
@@ -2706,48 +2703,18 @@ export function SalesPage() {
       });
 
     // Acumulador por producto con venta/costo/utilidad (+comisión en Tarjeta).
-    type ProdCorte = {
-      key: string; name: string; fecha: string; precioUnit: number;
-      cantidad: number; venta: number; costo: number; tieneCosto: boolean;
-      comision: number;
-    };
-    // Agrupamos por PRODUCTO + FECHA + PRECIO UNITARIO (Joel 2026-06-12): el
-    // mismo producto vendido a precios distintos (Normal vs Socio, dañado,
-    // re-precio) sale en renglones separados → cant × precio = venta, sin
-    // promedios que confundan.
+    // Ventas regulares → `accSaleItems` (lib/dailyCorte.ts): venta = lo
+    // COBRADO por línea (neto de promo/descuento/aumento, 2026-11-15), P. Unit
+    // = neto por pieza (cant × P. Unit = venta, Joel 2026-06-12) y se agrupa
+    // por producto + fecha + precio de lista + neto unitario.
     //
     // withComision (tabla Tarjeta): cada terminal puede tener % de comisión
     // distinto, así que NO se aplica un % global — se reparte el snapshot
-    // commission_amount de CADA venta entre sus items, proporcional a la venta
-    // del item. La suma de la columna = suma real de comisiones del periodo.
-    const accSaleItems = (sales: SaleDetail[], withComision = false): ProdCorte[] => {
-      const map = new Map<string, ProdCorte>();
-      sales.forEach(s => {
-        const fecha = toLocalYmd(new Date(s.sold_at || s.created_at));
-        const items = s.items ?? [];
-        const saleVenta = items.reduce((a, it) => a + (it.price ?? 0) * (it.quantity ?? 0), 0);
-        const saleComision = withComision ? (s.commission_amount ?? 0) : 0;
-        items.forEach((it, idx) => {
-          const isGift = Boolean(it.is_gift);
-          const baseName = it.product?.name ?? it.product_name ?? `#${it.product_id}`;
-          const name = isGift ? `${baseName} (Regalo)` : baseName;
-          const precioUnit = it.price ?? 0;
-          const key = `${fecha}|${name}|${precioUnit}`;
-          const row = map.get(key) ?? { key, name, fecha, precioUnit, cantidad: 0, venta: 0, costo: 0, tieneCosto: false, comision: 0, ...(isGift ? { isGift: true } : {}) };
-          const qty = it.quantity ?? 0;
-          const itemVenta = precioUnit * qty;
-          // cost: snapshot histórico (item.cost) → fallback product.cost actual.
-          const unitCost = it.cost ?? it.product?.cost;
-          row.cantidad += qty;
-          row.venta    += itemVenta;
-          // Reparto proporcional; fallback: todo al primer item si la venta es 0.
-          row.comision += saleVenta > 0 ? saleComision * (itemVenta / saleVenta) : (idx === 0 ? saleComision : 0);
-          if (unitCost != null) { row.costo += unitCost * qty; row.tieneCosto = true; }
-          map.set(key, row);
-        });
-      });
-      return Array.from(map.values()).sort((a, b) => b.fecha.localeCompare(a.fecha) || a.name.localeCompare(b.name) || b.venta - a.venta);
-    };
+    // commission_amount de CADA venta entre sus items, proporcional a lo
+    // cobrado por item. La suma de la columna = suma real de comisiones.
+    type ProdCorte = CorteProdRow;
+    const fechaOfSale = (s: { sold_at?: string | null; created_at: string }) =>
+      toLocalYmd(new Date(s.sold_at || s.created_at));
 
     // Para preventa el item NO trae `product` ni `price`: usa catalog.product_name
     // y unit_price/subtotal (ver PreSaleOrderItem en @tadaima/api).
@@ -2768,13 +2735,13 @@ export function SalesPage() {
           map.set(key, row);
         });
       });
-      return Array.from(map.values()).sort((a, b) => b.fecha.localeCompare(a.fecha) || a.name.localeCompare(b.name) || b.venta - a.venta);
+      return sortCorteRows(Array.from(map.values()));
     };
 
     // Tablas 1 y 2: ventas regulares (excluye preventas, ya separadas).
     // Tarjeta lleva la comisión repartida por fila (withComision).
-    const ventasNormalesRows = accSaleItems(filteredSales.filter(s => !isCardSale(s) && s.status !== "returned"));
-    const ventasTarjetaRows  = accSaleItems(filteredSales.filter(s => isCardSale(s) && s.status !== "returned"), true);
+    const ventasNormalesRows = accSaleItems(filteredSales.filter(s => !isCardSale(s) && s.status !== "returned"), { fechaOf: fechaOfSale });
+    const ventasTarjetaRows  = accSaleItems(filteredSales.filter(s => isCardSale(s) && s.status !== "returned"), { fechaOf: fechaOfSale, withComision: true });
 
     // Tabla 3: Abonos preventa (status pending | ready). Se agrupa por PRODUCTO.
     // Decisión sobre el reparto del `paid_amount` (anticipo) del folio:
