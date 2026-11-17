@@ -4,6 +4,17 @@
 
 ---
 
+### Sesión 2026-11-16 (noche) — Excel de Reportes: negativos en rojo (Ruben, develop 1f7bf06) — rev tadaima-00144-doj
+
+**Origen:** Ruben subió a `develop` un commit de formato del Excel de Reportes → Ventas.
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00142-niz`. **Sin migración**, solo frontend.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00142-niz=100 --project tadaimapos --region us-east1`
+
+- `excelTopTables.ts` / `excelVentas.ts`: utilidad por método, neto y utilidad de tarjeta, renglones del resumen, subtotal, utilidad final, «Neto Ingresos−Egresos» y «TOTAL FINAL» salen en ROJO cuando son negativos (antes siempre verdes). Solo cambia el color; montos y fórmulas iguales.
+- `main` fast-forward a `develop` (1f7bf06).
+- **Validación:** vitest 910 ✓; type-check 455 = `main`; `vite build` ✓. Candidato y dominio `/`, `/login`, `/caja`, `/reportes`, `/tadaimaus/` 200, API sin token 401; bundle nuevo con el cambio. No probado con sesión: el Excel lo revisa Ruben/la tienda.
+
 ### Sesión 2026-11-16 — «Revertir entrega» en Caja → Preventas + guía con el descuento (PR #101) — rev tadaima-00142-niz
 
 **Origen:** el cajero buscaba el folio cobrado por error en Caja → Preventas → Liquidadas (caso PREV-00084) y esa tarjeta era solo de consulta. El PR estaba abierto desde el 14-nov y chocaba con `main` tras la entrega parcial (#99/#100) y el descuento (#104).
