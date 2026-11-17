@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   presaleDiscountPayload,
   presaleGrossUnitPrice,
+  presaleLineBreakdown,
   presaleLineCharge,
   presaleLineDiscount,
 } from "./presaleDiscount";
@@ -72,5 +73,42 @@ describe("reparto del anticipo con una pieza ya entregada con descuento", () => 
       [],
     );
     expect(pendingByLine).toEqual([0, 300, 100]);
+  });
+});
+
+// Caso de tienda 2026-11-17: 2 piezas de $599 con $400 de anticipo. Caja enseñaba
+// «2 × $399» (lo que falta por pieza) y parecía que no había restado el anticipo.
+describe("presaleLineBreakdown — la línea del folio enseña el precio pactado", () => {
+  const bundle = { quantity: 2, preSaleUnitPrice: 599, preSalePending: 798, depositAmount: 400, preSaleOrderItemId: 9 };
+
+  it("precio pactado, total, anticipo y lo que falta", () => {
+    expect(presaleLineBreakdown(bundle)).toEqual({
+      unitPrice: 599, gross: 1198, deposit: 400, pending: 798, discount: 0, charge: 798,
+    });
+  });
+
+  it("con descuento: el cobro baja y el precio pactado no cambia", () => {
+    const b = presaleLineBreakdown({ ...bundle, discount: { kind: "fixed", basis: "line", value: 98, reason: "otro" } });
+    expect(b.unitPrice).toBe(599);
+    expect(b.discount).toBe(98);
+    expect(b.charge).toBe(700);
+  });
+
+  it("el descuento nunca pasa de lo que falta", () => {
+    const b = presaleLineBreakdown({ ...bundle, discount: { kind: "percent", basis: "line", value: 90, reason: "danado" } });
+    expect(b.discount).toBe(798);
+    expect(b.charge).toBe(0);
+  });
+
+  it("pieza ya pagada: falta $0 y el anticipo es el total", () => {
+    expect(presaleLineBreakdown({ quantity: 1, preSaleUnitPrice: 400, preSalePending: 0, depositAmount: 400 })).toEqual({
+      unitPrice: 400, gross: 400, deposit: 400, pending: 0, discount: 0, charge: 0,
+    });
+  });
+
+  it("carrito viejo sin precio pactado ni pendiente: lo reconstruye del anticipo y el respaldo", () => {
+    expect(presaleLineBreakdown({ quantity: 2, depositAmount: 400 }, 798)).toEqual({
+      unitPrice: 599, gross: 1198, deposit: 400, pending: 798, discount: 0, charge: 798,
+    });
   });
 });

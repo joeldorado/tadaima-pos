@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computePromoDiscount, computeRegularChargeAmount, discountPct } from "./promo";
+import { computeLoadedFolioChargeAmount, computePromoDiscount, computeRegularChargeAmount, discountPct } from "./promo";
 
 describe("computePromoDiscount", () => {
   it("calcula el descuento por porcentaje", () => {
@@ -73,5 +73,25 @@ describe("discountPct", () => {
     expect(discountPct(60, 0)).toBe(0);
     expect(discountPct(-10, 360)).toBe(0);
     expect(discountPct(60, NaN)).toBe(0);
+  });
+});
+
+// Folio de preventa cargado en Caja + cosas nuevas en la misma mesa (2026-11-17).
+describe("computeLoadedFolioChargeAmount", () => {
+  it("solo el folio: lo que falta de sus piezas", () => {
+    expect(computeLoadedFolioChargeAmount({ folioCharge: 798, regularSubtotal: 0, catalogDeposit: 0, discountAmt: 0 })).toBe(798);
+  });
+
+  it("una preventa NUEVA en la mesa suma su anticipo, no su precio completo", () => {
+    // Antes sumaba los $798 del catálogo nuevo y el botón se bloqueaba en «Faltan $398».
+    expect(computeLoadedFolioChargeAmount({ folioCharge: 798, regularSubtotal: 0, catalogDeposit: 400, discountAmt: 0 })).toBe(1198);
+  });
+
+  it("producto regular con promo y aumento: neto de lo regular más el folio", () => {
+    expect(computeLoadedFolioChargeAmount({ folioCharge: 700, regularSubtotal: 360, catalogDeposit: 0, discountAmt: 60, surchargeAmt: 20 })).toBe(1020);
+  });
+
+  it("un descuento mayor a lo regular no le quita al folio", () => {
+    expect(computeLoadedFolioChargeAmount({ folioCharge: 700, regularSubtotal: 100, catalogDeposit: 0, discountAmt: 150 })).toBe(700);
   });
 });

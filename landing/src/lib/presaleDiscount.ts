@@ -42,6 +42,48 @@ export function presaleLineCharge(line: PresaleDiscountLine, pendingFallback = 0
   return round2(Math.max(0, pending - presaleLineDiscount(line)));
 }
 
+/** Desglose de una línea de folio cargado en Caja, para enseñarlo completo. */
+export interface PresaleLineBreakdown {
+  /** Precio pactado por pieza. */
+  unitPrice: number;
+  /** Precio pactado × piezas. */
+  gross: number;
+  /** Anticipo que ya cubre a esta línea. */
+  deposit: number;
+  /** Lo que le falta antes del descuento. */
+  pending: number;
+  /** Descuento manual, topado a lo que falta. */
+  discount: number;
+  /** Lo que se cobra hoy. */
+  charge: number;
+}
+
+/**
+ * Lo que Caja enseña de una línea de folio: precio pactado, anticipo y lo que
+ * falta. Antes la línea decía «2 × $399» con lo que FALTA por pieza y parecía
+ * que el anticipo no se había restado (caso de tienda 2026-11-17: 2 × $599 con
+ * $400 de anticipo). Carritos guardados sin `preSaleUnitPrice`: anticipo + saldo.
+ */
+export function presaleLineBreakdown(line: PresaleDiscountLine, pendingFallback = 0): PresaleLineBreakdown {
+  const qty = Math.max(1, line.quantity || 1);
+  const pending = round2(Math.max(0, line.preSalePending ?? pendingFallback));
+  const gross = line.preSaleUnitPrice != null
+    ? round2(line.preSaleUnitPrice * qty)
+    : round2((line.depositAmount ?? 0) + pending);
+  const unitPrice = line.preSaleUnitPrice ?? round2(gross / qty);
+  const discount = line.discount
+    ? round2(Math.min(pending, Math.max(0, computeLineDiscountAmount(line.discount, { unitPrice, qty: line.quantity }))))
+    : 0;
+  return {
+    unitPrice,
+    gross,
+    deposit: round2(Math.max(0, gross - pending)),
+    pending,
+    discount,
+    charge: round2(pending - discount),
+  };
+}
+
 /** Descuentos de las piezas que se entregan, como los espera `PATCH /pre-sale-orders/{id}/status`. */
 export function presaleDiscountPayload(lines: readonly PresaleDiscountLine[]): PreSaleItemDiscountInput[] {
   return lines.flatMap((l) => {
