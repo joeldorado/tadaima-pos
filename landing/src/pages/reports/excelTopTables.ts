@@ -51,6 +51,8 @@ interface ColumnSpec {
   header: string;
   qty?: boolean;
   color: string;
+  /** Si se provee, sobreescribe `color` según el valor calculado (ej. rojo cuando es negativo). */
+  colorFn?: (v: number) => string;
   bold?: boolean;
   /** Valor ya calculado del renglón (también es el `cached` de la fórmula). */
   value: (g: GroupedProduct) => number;
@@ -100,7 +102,8 @@ function sumRow(
     if (c.noSum) return; // columnas informativas (ej. Costo Unitario) no se suman
     const value = groups.reduce((a, g) => a + c.value(g), 0);
     const cached = c.qty ? Number(value.toFixed(1)) : value;
-    const style = c.qty ? styles.qty : styles.money(c.color);
+    const color = c.colorFn ? c.colorFn(value) : c.color;
+    const style = c.qty ? styles.qty : styles.money(color);
     if (rows.length > 0) sh.setF(r, t.col + 1 + i, sumFormula(t.col + 1 + i, rows), cached, style);
     else sh.set(r, t.col + 1 + i, 0, style);
   });
@@ -132,7 +135,8 @@ export function drawProductTable(sh: SheetBuilder, t: ProductTable, groups: read
     sh.set(r, t.col, displayName(g), isManga(g) ? cellNameManga : cellName);
     t.columns.forEach((c, ci) => {
       const v = c.value(g);
-      const style = c.qty ? cellQty : cellMoney(c.color, c.bold);
+      const color = c.colorFn ? c.colorFn(v) : c.color;
+      const style = c.qty ? cellQty : cellMoney(color, c.bold);
       const cached = c.qty ? Number(v.toFixed(1)) : v;
       if (c.formula) sh.setF(r, t.col + 1 + ci, c.formula(r, ref), cached, style);
       else sh.set(r, t.col + 1 + ci, cached, style);
@@ -176,7 +180,7 @@ export function methodTable(col: number, pred: (n: string) => boolean, label: st
       }] : []),
       { key: "venta", header: `Venta ${label}`, color: GREEN, bold: true, value: revenue },
       ...(canViewCost ? [{
-        key: "util", header: `Utilidad ${label}`, color: GREEN, bold: true,
+        key: "util", header: `Utilidad ${label}`, color: GREEN, colorFn: (v: number) => v < 0 ? RED : GREEN, bold: true,
         value: (g: GroupedProduct) => revenue(g) - cost(g),
         formula: (r: number, ref: (k: string, r: number) => string) => `${ref("venta", r)}-${ref("costo", r)}`,
       }] : []),
@@ -208,11 +212,11 @@ export function cardTable(col: number, canViewCost: boolean, ivaRate: number, to
         formula: (r, ref) => `${ref("comm", r)}*${ivaRate}`,
       },
       {
-        key: "neto", header: "Neto Tarjeta", color: GREEN, bold: true, value: net,
+        key: "neto", header: "Neto Tarjeta", color: GREEN, colorFn: (v: number) => v < 0 ? RED : GREEN, bold: true, value: net,
         formula: (r, ref) => `${ref("bruto", r)}-${ref("comm", r)}-${ref("iva", r)}`,
       },
       ...(canViewCost ? [{
-        key: "util", header: "Utilidad Tarjeta", color: GREEN, bold: true,
+        key: "util", header: "Utilidad Tarjeta", color: GREEN, colorFn: (v: number) => v < 0 ? RED : GREEN, bold: true,
         value: (g: GroupedProduct) => net(g) - cost(g),
         formula: (r: number, ref: (k: string, r: number) => string) => `${ref("neto", r)}-${ref("costo", r)}`,
       }] : []),

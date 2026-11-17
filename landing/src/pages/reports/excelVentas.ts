@@ -147,7 +147,7 @@ function productSheet(
       const v2 = r2?.totals[c.key];
       const vp = presaleFor(c.key);
       const combined = (v1?.value ?? 0) + (v2?.value ?? 0) + (vp?.value ?? 0);
-      const style = c.qty ? totalQty : totalMoney(c.color);
+      const style = c.qty ? totalQty : totalMoney(c.colorFn ? c.colorFn(combined) : c.color);
       const parts = [v1?.ref, v2?.ref, vp?.ref].filter((ref): ref is string => !!ref);
       if (parts.length > 0) {
         sh.setF(grandRow, colN, parts.join("+"), combined, style);
@@ -278,7 +278,7 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
     if (regVenta) sh.setF(r, ventaCol, xref(t.name, regVenta.ref), regVenta.value, money);
     if (canViewCost) {
       if (regCosto) sh.setF(r, costoCol, xref(t.name, regCosto.ref), regCosto.value, money);
-      if (regUtil)  sh.setF(r, utilCol,  xref(t.name, regUtil.ref),  regUtil.value,  green);
+      if (regUtil)  sh.setF(r, utilCol,  xref(t.name, regUtil.ref),  regUtil.value,  regUtil.value < 0 ? red : green);
     }
     const regRow = r;
     r++;
@@ -290,7 +290,7 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
       sh.setF(r, ventaCol, xref(t.name, t.presaleTotals.apartado.ref), t.presaleTotals.apartado.value, money);
       if (canViewCost) {
         if (t.presaleTotals.costoNeto) sh.setF(r, costoCol, xref(t.name, t.presaleTotals.costoNeto.ref), t.presaleTotals.costoNeto.value, money);
-        if (t.presaleTotals.utilidad)  sh.setF(r, utilCol,  xref(t.name, t.presaleTotals.utilidad.ref),  t.presaleTotals.utilidad.value,  green);
+        if (t.presaleTotals.utilidad)  sh.setF(r, utilCol,  xref(t.name, t.presaleTotals.utilidad.ref),  t.presaleTotals.utilidad.value,  t.presaleTotals.utilidad.value < 0 ? red : green);
       }
       presaleRow = r;
       r++;
@@ -306,7 +306,7 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
       if (mVenta) sh.setF(r, ventaCol, xref(t.name, mVenta.ref), mVenta.value, money);
       if (canViewCost) {
         if (mCosto) sh.setF(r, costoCol, xref(t.name, mCosto.ref), mCosto.value, money);
-        if (mUtil)  sh.setF(r, utilCol,  xref(t.name, mUtil.ref),  mUtil.value,  green);
+        if (mUtil)  sh.setF(r, utilCol,  xref(t.name, mUtil.ref),  mUtil.value,  mUtil.value < 0 ? red : green);
       }
       mangaRow = r;
       r++;
@@ -327,7 +327,7 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
     sh.setF(r, ventaCol, subRows.map((x) => cellRef(x, ventaCol)).join("+"), subVenta, money);
     if (canViewCost) {
       sh.setF(r, costoCol, subRows.map((x) => cellRef(x, costoCol)).join("+"), subCosto, money);
-      sh.setF(r, utilCol,  subRows.map((x) => cellRef(x, utilCol)).join("+"),  subUtil,  green);
+      sh.setF(r, utilCol,  subRows.map((x) => cellRef(x, utilCol)).join("+"),  subUtil,  subUtil < 0 ? red : green);
     }
     const subtotalRow = r;
     totalVentaRows.push(r);
@@ -367,9 +367,11 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
       if (ingRow >= 0) parts.push(`+${cellRef(ingRow, utilCol)}`);
       if (egRow >= 0) parts.push(`-${cellRef(egRow, utilCol)}`);
       if (canViewCost) {
-        sh.setF(r, utilCol, parts.join(""), methodUtilFinal, { ...green, fill: fill("E8F5E9") });
+        const utilFinalStyle = methodUtilFinal < 0 ? { ...red, fill: fill("FFE8E8") } : { ...green, fill: fill("E8F5E9") };
+        sh.setF(r, utilCol, parts.join(""), methodUtilFinal, utilFinalStyle);
       } else {
-        sh.setF(r, ventaCol, parts.join(""), subVenta + methodIngresos - methodEgresos, { ...money, fill: fill("E8F5E9") });
+        const ventaFinalVal = subVenta + methodIngresos - methodEgresos;
+        sh.setF(r, ventaCol, parts.join(""), ventaFinalVal, { ...money, fill: fill("E8F5E9") });
       }
       totalUtilRows.push(totalRow); // para que TOTALES FINALES sume este row
       // El costo no cambia con ingresos/egresos: su subtotal ya entró a
@@ -448,13 +450,14 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
     // global del negocio que viene abajo — sin esto "TOTAL FINAL" confundía,
     // porque parecía ser el total de la lista cuando en realidad es la
     // utilidad de TODO el periodo (ventas + ingresos − costo − egresos).
+    const netoIngEgr = ingresosTotal - egresos;
     sh.set(er, egListCol, "Neto Ingresos−Egresos:", { font: font({ sz: 9, bold: true, color: "333333" }), alignment: align("right") });
-    sh.set(er, egListMoneyCol, ingresosTotal - egresos, { numFmt: MONEY_FMT, font: font({ sz: 9, bold: true, color: "333333" }), alignment: align("left") });
+    sh.set(er, egListMoneyCol, netoIngEgr, { numFmt: MONEY_FMT, font: font({ sz: 9, bold: true, color: netoIngEgr < 0 ? EGRESO : "333333" }), alignment: align("left") });
     sh.height(er, 18);
     er++;
     er++; // fila en blanco antes de TOTAL FINAL
     sh.set(er, egListCol, "TOTAL FINAL:", { font: font({ sz: 10, bold: true, color: "333333" }), alignment: align("right") });
-    sh.set(er, egListMoneyCol, totalUtil, { numFmt: MONEY_FMT, font: font({ sz: 10, bold: true, color: "333333" }), fill: fill("F5DEB3"), alignment: align("left") });
+    sh.set(er, egListMoneyCol, totalUtil, { numFmt: MONEY_FMT, font: font({ sz: 10, bold: true, color: totalUtil < 0 ? EGRESO : "333333" }), fill: fill(totalUtil < 0 ? "FFE8E8" : "F5DEB3"), alignment: align("left") });
   }
   sh.width(egListCol, 14);
   sh.width(egListMoneyCol, 12);
