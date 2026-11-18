@@ -723,6 +723,8 @@ export interface MixedCheckoutResult {
 export const MIXED_CHECKOUT_FOLIO_CODES = {
   alreadyDelivered: 'PRESALE_ORDER_ALREADY_DELIVERED',
   notReady: 'PRESALE_ORDER_NOT_READY',
+  /** El folio solo se recoge en la tienda donde se apartó (regla de Pier, 2026-11-18). */
+  wrongStore: 'PRESALE_ORDER_WRONG_STORE',
 } as const
 
 // ─── Layaways (Apartados) ─────────────────────────────────────────────────────

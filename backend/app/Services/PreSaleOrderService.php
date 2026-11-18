@@ -184,15 +184,17 @@ class PreSaleOrderService
             );
         }
 
-        // Límite POR CLIENTE (de por vida en este catálogo: cuenta
-        // pending+ready+delivered, no cancelados). null = sin límite.
+        // Límite POR CLIENTE y POR TIENDA (regla de Pier, 2026-11-18; antes era
+        // global): cada sucursal se maneja aparte, así que un socio puede apartar
+        // el límite en Macro y otra vez en Centro. De por vida en esa tienda:
+        // cuenta pending+ready+delivered, no cancelados. null = sin límite.
         $perCustomerLimit = $catalog->limit_per_customer;
         if ($perCustomerLimit !== null) {
-            $customerReserved = $catalog->reservedCountForCustomerIds($customerIds);
+            $customerReserved = $catalog->reservedCountForCustomerIds($customerIds, $storeId);
             if ($customerReserved + $qty > $perCustomerLimit) {
                 $left = max(0, $perCustomerLimit - $customerReserved);
                 throw new \DomainException(
-                    "'{$catalog->product_name}' tiene un límite de {$perCustomerLimit} por cliente. "
+                    "'{$catalog->product_name}' tiene un límite de {$perCustomerLimit} por cliente en esta tienda. "
                     . ($left > 0
                         ? "Este cliente ya tiene {$customerReserved}, solo puede llevar {$left} más."
                         : "Este cliente ya tiene {$customerReserved} — no se le puede vender más.")

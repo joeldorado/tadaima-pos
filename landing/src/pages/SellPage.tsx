@@ -80,7 +80,7 @@ import { LineGiftModal } from "@/components/sell/LineGiftModal";
 import { GIFT_COLOR } from "@/lib/giftLine";
 import { PromoPaymentAlertModal } from "@/components/sell/PromoPaymentAlertModal";
 import { withLineComment } from "@/lib/lineComment";
-import { buildMixedCheckout, buildSaleDirectItems, findMesaWithFolio, staleFolioError, unloadFolioFromMesa } from "@/lib/mixedCheckout";
+import { buildMixedCheckout, buildSaleDirectItems, findMesaWithFolio, folioWrongStoreMessage, staleFolioError, unloadFolioFromMesa } from "@/lib/mixedCheckout";
 import { DISCOUNT_REASON_LABELS, SURCHARGE_REASON_LABELS } from "@/lib/discountReasons";
 import type { HistorialEntry } from "@/hooks/queries/useHistorial";
 import { useCartDraftStore } from "@/stores/cartDraftStore";
@@ -1212,12 +1212,12 @@ export function SellPage() {
 
   const activeMesa = useMemo(() => mesas.find(m => m.id === activeMesaId) ?? mesas[0], [mesas, activeMesaId]);
 
-  // Al cambiar de cliente (asignar otro, quitar, o saltar de mesa) se limpian
-  // los bloqueos de límite por cliente — son específicos del cliente anterior.
+  // Al cambiar de cliente (asignar otro, quitar, o saltar de mesa) o de tienda se
+  // limpian los bloqueos de límite por cliente: son de ese cliente en esa tienda.
   useEffect(() => {
     setPresaleLimitBlocks({});
     setCustomerLimitWarning(null);
-  }, [activeMesa.customerId]);
+  }, [activeMesa.customerId, activeStore?.id]);
 
   // cashReceived es por caja: cada mesa guarda lo que el cliente entregó.
   // Antes era un useState global → al saltar entre Caja 1/2/3 se perdía lo
@@ -1572,9 +1572,9 @@ export function SellPage() {
 
   /** Asigna el candidato al mesa actual. Si es externo, primero lo crea en BD. */
   /**
-   * Pre-check del límite de preventa POR CLIENTE: por cada catálogo de preventa
-   * en el carrito, consulta cuánto ya tiene ese cliente (identidad amplia en el
-   * backend: id/teléfono/socio Tadaima) y devuelve un mensaje si la venta lo
+   * Pre-check del límite de preventa POR CLIENTE Y TIENDA: por cada catálogo de
+   * preventa en el carrito, consulta cuánto ya tiene ese cliente en esta tienda
+   * (identidad amplia en el backend: id/teléfono/socio Tadaima) y avisa si la venta lo
    * pasaría del tope. Devuelve null si todo OK. El backend igual valida al cobrar.
    */
   const checkPreventaCustomerLimit = async (customerId: number): Promise<string | null> => {
@@ -1589,12 +1589,12 @@ export function SellPage() {
     }
     for (const [catalogId, { qty, name }] of byCatalog) {
       try {
-        const usage = await getCatalogCustomerUsage(catalogId, customerId);
+        const usage = await getCatalogCustomerUsage(catalogId, customerId, activeStore?.id);
         if (usage.limit != null && usage.used + qty > usage.limit) {
           const left = Math.max(0, usage.limit - usage.used);
           return left > 0
-            ? `Este cliente ya tiene ${usage.used} de "${name}" (límite ${usage.limit} por cliente). Solo puede llevar ${left} más.`
-            : `Este cliente ya tiene ${usage.used}/${usage.limit} de "${name}" — no se le puede vender más.`;
+            ? `Este cliente ya tiene ${usage.used} de "${name}" en esta tienda (límite ${usage.limit} por cliente). Solo puede llevar ${left} más.`
+            : `Este cliente ya tiene ${usage.used}/${usage.limit} de "${name}" en esta tienda — no se le puede vender más.`;
         }
       } catch {
         // Si la consulta falla no bloqueamos en UI — el backend valida al cobrar.
@@ -2925,7 +2925,9 @@ export function SellPage() {
         const detail = await getPreSaleOrder(found.id);
         await loadPreSaleOrderIntoCart(detail);
       } else {
-        toast.error(`No se encontró el folio "${query}"`);
+        toast.error(`No se encontró el folio "${query}" en esta tienda`, {
+          description: "Las preventas se recogen en la tienda donde se apartaron.",
+        });
       }
     } catch {
       toast.error("Error al buscar la preventa");
@@ -3064,6 +3066,14 @@ export function SellPage() {
   const loadPreSaleOrderIntoCart = async (order: PreSaleOrder) => {
     if (!order.items?.length) {
       toast.error("Esta preventa no tiene productos para cargar");
+      return;
+    }
+
+    // Se recoge solo en la tienda donde se apartó (regla de Pier, 2026-11-18).
+    // Cajero y gerente ni ven folios ajenos; esto es para el admin.
+    const wrongStoreMessage = folioWrongStoreMessage(order, activeStore?.id);
+    if (wrongStoreMessage) {
+      toast.error(wrongStoreMessage, { duration: 7000 });
       return;
     }
 
@@ -3223,22 +3233,22 @@ export function SellPage() {
   const addCatalogToCart = async (catalog: PreSaleCatalog, priceLevel: PriceLevel = "a") => {
     // Pre-check del LÍMITE POR CLIENTE en vivo, AL AGREGAR (no solo al asignar
     // cliente o al cobrar): si la mesa ya tiene cliente y éste ya alcanzó su
-    // tope de por vida en este catálogo (folios previos pending+ready+delivered),
+    // tope de por vida en esta tienda (folios previos pending+ready+delivered),
     // avisa de inmediato y NO agrega. El backend igual valida al cobrar.
     if (activeMesa.customerId) {
       const cartQty = activeMesa.items
         .filter(i => i.sellingCatalogId === catalog.id)
         .reduce((s, i) => s + i.quantity, 0);
       try {
-        const usage = await getCatalogCustomerUsage(catalog.id, Number(activeMesa.customerId));
+        const usage = await getCatalogCustomerUsage(catalog.id, Number(activeMesa.customerId), activeStore?.id);
         if (usage.limit != null && usage.used + cartQty + 1 > usage.limit) {
           const left = Math.max(0, usage.limit - usage.used - cartQty);
           // Marca la card como bloqueada para este cliente → se deshabilita y
           // muestra el motivo bajo el nombre (persistente, no solo el toast).
           setPresaleLimitBlocks(prev => ({ ...prev, [catalog.id]: { used: usage.used, limit: usage.limit! } }));
           const msg = left > 0
-            ? `Este cliente ya tiene ${usage.used} de "${catalog.product_name}" (límite ${usage.limit} por cliente). Solo puede llevar ${left} más.`
-            : `Este cliente ya tiene ${usage.used}/${usage.limit} de "${catalog.product_name}" — no se le puede vender más.`;
+            ? `Este cliente ya tiene ${usage.used} de "${catalog.product_name}" en esta tienda (límite ${usage.limit} por cliente). Solo puede llevar ${left} más.`
+            : `Este cliente ya tiene ${usage.used}/${usage.limit} de "${catalog.product_name}" en esta tienda — no se le puede vender más.`;
           setCustomerLimitWarning(msg);
           toast.error(msg, { duration: 7000 });
           return;
@@ -3273,7 +3283,7 @@ export function SellPage() {
         // (limit_per_customer — nunca preorder_limit, que es el tope global viejo).
         const limit = cartUnitLimit(catalog) ?? Infinity;
         if (existing.quantity + 1 > limit) {
-          toast.error(`Límite por cliente alcanzado: ${limit} unidad(es)`);
+          toast.error(`Límite por cliente en esta tienda alcanzado: ${limit} unidad(es)`);
           return m;
         }
         return {
@@ -4131,11 +4141,13 @@ export function SellPage() {
           updMesa(checkoutMesaId, m => m.loadedPreSaleOrderId === loadedOrderId ? unloadFolioFromMesa(m) : m);
           invalidateAfterSale(queryClient, { presale: true });
           toast.error(
-            stale.alreadyDelivered ? "Este folio ya se entregó. No se cobró nada." : "Este folio ya no está listo para entregar. No se cobró nada.",
+            stale.wrongStore
+              ? "Este folio se recoge en otra tienda. No se cobró nada."
+              : stale.alreadyDelivered ? "Este folio ya se entregó. No se cobró nada." : "Este folio ya no está listo para entregar. No se cobró nada.",
             {
               description: stale.alreadyDelivered
                 ? "Quité el folio de la mesa y dejé los productos. Si al folio le quedan piezas, vuelve a cargarlo."
-                // Cancelado, vencido o sin piezas: el servidor dice cuál fue.
+                // Otra tienda, cancelado, vencido o sin piezas: el servidor dice cuál fue.
                 : `${stale.message} Quité el folio de la mesa y dejé los productos.`.trim(),
               duration: 10000,
             },
@@ -7968,7 +7980,7 @@ export function SellPage() {
                     borderRadius: 8, padding: "5px 8px",
                   }}>
                     <AlertTriangle size={12} style={{ flexShrink: 0 }} />
-                    <span>Límite por cliente: ya tiene {limitBlock.used}/{limitBlock.limit} — no se le puede vender más.</span>
+                    <span>Límite en esta tienda: ya tiene {limitBlock.used}/{limitBlock.limit} — no se le puede vender más.</span>
                   </div>
                 )}
                 <div
@@ -8017,7 +8029,7 @@ export function SellPage() {
                     }}
                   >
                     <span style={{ fontSize: 10, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--td-text-ghost)" }}>
-                      Máx. por cliente
+                      Máx. cliente / tienda
                     </span>
                     <span style={{ fontSize: 13, fontWeight: 900, color: "var(--td-text-md)" }}>
                       {catalog.limit_per_customer}

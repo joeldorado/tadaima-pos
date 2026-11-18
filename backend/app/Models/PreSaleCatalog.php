@@ -117,14 +117,19 @@ class PreSaleCatalog extends Model
     }
 
     /**
-     * Unidades de este catálogo que ya tiene un cliente (DE POR VIDA):
-     * cuenta folios pending + ready + delivered (todo menos cancelled/expired).
-     * Recibe los IDs de cliente ya resueltos por identidad amplia
-     * (mismo cliente / teléfono / socio Tadaima) — ver Customer::sameIdentityIds().
+     * Unidades de este catálogo que ya tiene un cliente EN UNA TIENDA (de por
+     * vida): cuenta folios pending + ready + delivered (todo menos
+     * cancelled/expired). Recibe los IDs de cliente ya resueltos por identidad
+     * amplia (mismo cliente / teléfono / socio Tadaima) — ver
+     * Customer::sameIdentityIds().
+     *
+     * El límite por cliente es POR SUCURSAL (regla de Pier, 2026-11-18): lo
+     * apartado en Macro no gasta el límite de Centro. `$storeId` null cuenta
+     * todas las tiendas; solo para quien no tiene tienda (admin sin asignar).
      *
      * @param array<int,int> $customerIds
      */
-    public function reservedCountForCustomerIds(array $customerIds): int
+    public function reservedCountForCustomerIds(array $customerIds, ?int $storeId): int
     {
         if (empty($customerIds)) {
             return 0;
@@ -137,14 +142,15 @@ class PreSaleCatalog extends Model
                     PreSaleOrder::STATUS_DELIVERED,
                 ])
                 ->whereIn('customer_id', $customerIds)
+                ->when($storeId !== null, fn ($q) => $q->where('store_id', $storeId))
             )
             ->sum('quantity');
     }
 
     /** Conveniencia: resuelve la identidad del cliente y cuenta sus unidades. */
-    public function reservedCountForCustomer(Customer $customer): int
+    public function reservedCountForCustomer(Customer $customer, ?int $storeId): int
     {
-        return $this->reservedCountForCustomerIds($customer->sameIdentityIds());
+        return $this->reservedCountForCustomerIds($customer->sameIdentityIds(), $storeId);
     }
 
     /**

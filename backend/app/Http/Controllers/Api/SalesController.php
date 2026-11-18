@@ -249,6 +249,9 @@ class SalesController extends Controller
         if ($order !== null && ($resp = $this->storeScopeError($request, $order->store_id))) {
             return $resp;
         }
+        if ($order !== null && ($resp = $this->presalePickupStoreError($order, $data['store_id']))) {
+            return $resp;
+        }
         if ($resp = $this->cashSessionGuardError($request)) {
             return $resp;
         }

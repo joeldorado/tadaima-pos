@@ -157,15 +157,25 @@ class PreSaleCatalogsController extends Controller
     }
 
     /**
-     * GET /pre-sale-catalogs/{id}/customer-usage?customer_id=X
+     * GET /pre-sale-catalogs/{id}/customer-usage?customer_id=X&store_id=Y
      *
      * Cuántas unidades de este catálogo ya tiene el cliente (identidad amplia)
-     * y cuál es el límite por cliente. Lo usa Caja para avisar/bloquear al
-     * asignar el cliente, ANTES de cobrar. La misma regla se enforce en
-     * PreSaleOrderService::createOrder.
+     * EN ESA TIENDA y cuál es el límite por cliente. Lo usa Caja para
+     * avisar/bloquear al asignar el cliente, ANTES de cobrar. La misma regla se
+     * enforce en PreSaleOrderService::assertCapacity.
+     *
+     * Sin `store_id` (bundle viejo de la PWA) usa la tienda del usuario.
      */
     public function customerUsage(\Illuminate\Http\Request $request, int $id): JsonResponse
     {
+        $request->validate(['store_id' => ['nullable', 'integer']]);
+        $storeId = $request->filled('store_id')
+            ? (int) $request->query('store_id')
+            : $request->user()?->store_id;
+        if ($storeId !== null && ($resp = $this->storeScopeError($request, $storeId))) {
+            return $resp;
+        }
+
         $catalog    = PreSaleCatalog::findOrFail($id);
         $customerId = (int) $request->query('customer_id');
         $customer   = \App\Models\Customer::find($customerId);
@@ -174,7 +184,7 @@ class PreSaleCatalogsController extends Controller
         }
 
         $limit = $catalog->limit_per_customer; // null = sin límite
-        $used  = $catalog->reservedCountForCustomer($customer);
+        $used  = $catalog->reservedCountForCustomer($customer, $storeId !== null ? (int) $storeId : null);
 
         return $this->success([
             'catalog_id'  => $catalog->id,

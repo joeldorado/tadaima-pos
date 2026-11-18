@@ -16,7 +16,9 @@ use Tests\TestCase;
 
 /**
  * Límite de unidades POR CLIENTE por catálogo de preventa (2026-06-17):
- *  - Por catálogo, de por vida (cuenta pending+ready+delivered, no cancelados).
+ *  - Por catálogo y POR TIENDA (regla de Pier, 2026-11-18): lo apartado en una
+ *    sucursal no gasta el límite de otra. Antes era global.
+ *  - De por vida en esa tienda (cuenta pending+ready+delivered, no cancelados).
  *  - Bloquea (422) al superarlo.
  *  - Identidad amplia: mismo id / teléfono / socio Tadaima cuentan juntos.
  */
@@ -166,5 +168,123 @@ class PreSaleCustomerLimitTest extends TestCase
         $this->assertSame(5, $resp['limit']);
         $this->assertSame(2, $resp['used']);
         $this->assertSame(3, $resp['remaining']);
+    }
+
+    // ── Límite por sucursal (regla de Pier, 2026-11-18) ───────────────────────
+
+    /** Segunda sucursal con cupo en el catálogo y un cajero propio. */
+    private function secondStore(PreSaleCatalog $catalog): array
+    {
+        $store = Store::create(['company_id' => $this->store->company_id, 'name' => 'Macro']);
+        $catalog->storeLimits()->create(['store_id' => $store->id, 'limit_qty' => 999]);
+        $cashier = User::create([
+            'name' => 'Cajero Macro', 'email' => 'macro@test.com', 'password' => bcrypt('x'),
+            'company_id' => $this->store->company_id, 'store_id' => $store->id,
+        ]);
+
+        return [$store, $cashier];
+    }
+
+    /** Aparta desde la segunda sucursal. */
+    private function orderAt(Store $store, User $cashier, PreSaleCatalog $catalog, int $customerId, int $qty): \Illuminate\Testing\TestResponse
+    {
+        return $this->actingAs($cashier)->postJson('/api/v1/pre-sale-orders', [
+            'store_id' => $store->id,
+            'customer_id' => $customerId,
+            'items' => [['catalog_id' => $catalog->id, 'quantity' => $qty, 'price_level' => 1]],
+        ]);
+    }
+
+    public function test_el_limite_se_cuenta_por_separado_en_cada_tienda(): void
+    {
+        $catalog = $this->makeCatalog(2);
+        [$macro, $cajeroMacro] = $this->secondStore($catalog);
+
+        // 2 en Centro y 2 en Macro: cada tienda tiene su propio límite.
+        $this->actingAs($this->user)
+            ->postJson('/api/v1/pre-sale-orders', $this->payload($catalog, $this->customer->id, 2))
+            ->assertStatus(200);
+        $this->orderAt($macro, $cajeroMacro, $catalog, $this->customer->id, 2)->assertStatus(200);
+
+        // La tercera en Macro ya pasa el límite de esa tienda.
+        $res = $this->orderAt($macro, $cajeroMacro, $catalog, $this->customer->id, 1)->assertStatus(422);
+        $this->assertStringContainsString('por cliente en esta tienda', (string) $res->json('error'));
+    }
+
+    public function test_duplicado_por_telefono_bloquea_en_su_tienda_y_no_suma_entre_tiendas(): void
+    {
+        $catalog = $this->makeCatalog(2);
+        [$macro, $cajeroMacro] = $this->secondStore($catalog);
+        $a = Customer::create(['name' => 'Juan A', 'phone' => '5512345678']);
+        $b = Customer::create(['name' => 'Juan B (dup)', 'phone' => '55 1234 5678']);
+
+        $this->seedFolio($catalog, $a->id, 2, PreSaleOrder::STATUS_PENDING); // en Centro
+
+        // Misma persona, misma tienda: bloquea.
+        $this->actingAs($this->user)
+            ->postJson('/api/v1/pre-sale-orders', $this->payload($catalog, $b->id, 1))
+            ->assertStatus(422);
+
+        // Misma persona, otra tienda: lo de Centro no cuenta aquí.
+        $this->orderAt($macro, $cajeroMacro, $catalog, $b->id, 2)->assertStatus(200);
+    }
+
+    public function test_entregados_de_otra_tienda_no_gastan_el_limite(): void
+    {
+        $catalog = $this->makeCatalog(2);
+        [$macro, $cajeroMacro] = $this->secondStore($catalog);
+        $this->seedFolio($catalog, $this->customer->id, 2, PreSaleOrder::STATUS_DELIVERED); // en Centro
+
+        $this->orderAt($macro, $cajeroMacro, $catalog, $this->customer->id, 2)->assertStatus(200);
+    }
+
+    public function test_customer_usage_cuenta_solo_la_tienda_pedida(): void
+    {
+        $catalog = $this->makeCatalog(2);
+        [$macro, $cajeroMacro] = $this->secondStore($catalog);
+        $this->seedFolio($catalog, $this->customer->id, 2, PreSaleOrder::STATUS_PENDING); // en Centro
+        $url = "/api/v1/pre-sale-catalogs/{$catalog->id}/customer-usage?customer_id={$this->customer->id}";
+
+        $centro = $this->actingAs($this->user)->getJson("{$url}&store_id={$this->store->id}")->assertStatus(200)->json('data');
+        $this->assertSame(2, $centro['used']);
+        $this->assertSame(0, $centro['remaining']);
+
+        $enMacro = $this->actingAs($cajeroMacro)->getJson("{$url}&store_id={$macro->id}")->assertStatus(200)->json('data');
+        $this->assertSame(0, $enMacro['used']);
+        $this->assertSame(2, $enMacro['remaining']);
+    }
+
+    public function test_customer_usage_sin_tienda_usa_la_del_usuario(): void
+    {
+        // Es lo que manda un bundle viejo de la PWA tras el deploy.
+        $catalog = $this->makeCatalog(2);
+        [, $cajeroMacro] = $this->secondStore($catalog);
+        $this->seedFolio($catalog, $this->customer->id, 2, PreSaleOrder::STATUS_PENDING); // en Centro
+
+        $resp = $this->actingAs($cajeroMacro)
+            ->getJson("/api/v1/pre-sale-catalogs/{$catalog->id}/customer-usage?customer_id={$this->customer->id}")
+            ->assertStatus(200)
+            ->json('data');
+
+        $this->assertSame(0, $resp['used']);
+    }
+
+    public function test_customer_usage_rechaza_una_tienda_que_no_es_numero(): void
+    {
+        $catalog = $this->makeCatalog(2);
+
+        $this->actingAs($this->user)
+            ->getJson("/api/v1/pre-sale-catalogs/{$catalog->id}/customer-usage?customer_id={$this->customer->id}&store_id=abc")
+            ->assertStatus(422);
+    }
+
+    public function test_customer_usage_de_otra_tienda_recibe_403(): void
+    {
+        $catalog = $this->makeCatalog(2);
+        [$macro] = $this->secondStore($catalog);
+
+        $this->actingAs($this->user)
+            ->getJson("/api/v1/pre-sale-catalogs/{$catalog->id}/customer-usage?customer_id={$this->customer->id}&store_id={$macro->id}")
+            ->assertStatus(403);
     }
 }

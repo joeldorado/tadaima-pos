@@ -121,25 +121,28 @@ export async function getPreSaleCatalogCancelPreview(id: number): Promise<Catalo
 export interface CatalogCustomerUsage {
   catalog_id: number
   customer_id: number
-  /** Límite por cliente del catálogo (null = sin límite). */
+  /** Límite por cliente del catálogo, por tienda (null = sin límite). */
   limit: number | null
-  /** Unidades que el cliente ya tiene de este catálogo (de por vida). */
+  /** Unidades que el cliente ya tiene de este catálogo en esa tienda (de por vida). */
   used: number
   /** Disponibles para ese cliente (null = sin límite). */
   remaining: number | null
 }
 
 /**
- * Cuánto ha usado un cliente de un catálogo (para el límite por cliente).
- * GET /pre-sale-catalogs/{id}/customer-usage?customer_id=X
+ * Cuánto ha usado un cliente de un catálogo EN UNA TIENDA (el límite por cliente
+ * se cuenta por sucursal desde 2026-11-18). Sin `storeId` el servidor usa la
+ * tienda del usuario.
+ * GET /pre-sale-catalogs/{id}/customer-usage?customer_id=X&store_id=Y
  */
 export async function getCatalogCustomerUsage(
   catalogId: number,
-  customerId: number
+  customerId: number,
+  storeId?: number
 ): Promise<CatalogCustomerUsage> {
   const response = await apiClient.get<CatalogCustomerUsage>(
     `/pre-sale-catalogs/${catalogId}/customer-usage`,
-    { params: { customer_id: customerId } }
+    { params: { customer_id: customerId, ...(storeId != null ? { store_id: storeId } : {}) } }
   )
   return response.data
 }

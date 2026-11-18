@@ -5,6 +5,7 @@ import {
   findMesaWithFolio,
   lineAdjustmentPayload,
   splitMesaLines,
+  folioWrongStoreMessage,
   staleFolioError,
   unloadFolioFromMesa,
   type CheckoutCartLine,
@@ -380,12 +381,17 @@ describe("unloadFolioFromMesa — quita el folio y deja lo demás", () => {
 describe("staleFolioError — el servidor dice que el folio ya no se puede entregar", () => {
   it("ya entregado", () => {
     const err = { message: "El folio PREV-00100 no está listo para liquidar (estado: delivered).", errors: { code: ["PRESALE_ORDER_ALREADY_DELIVERED"] } };
-    expect(staleFolioError(err)).toEqual({ alreadyDelivered: true, message: err.message });
+    expect(staleFolioError(err)).toEqual({ alreadyDelivered: true, wrongStore: false, message: err.message });
   });
 
   it("ya no está listo (cancelado, vencido)", () => {
     const err = { message: "El folio PREV-00100 no está listo para liquidar (estado: cancelled).", errors: { code: ["PRESALE_ORDER_NOT_READY"] } };
-    expect(staleFolioError(err)).toEqual({ alreadyDelivered: false, message: err.message });
+    expect(staleFolioError(err)).toEqual({ alreadyDelivered: false, wrongStore: false, message: err.message });
+  });
+
+  it("el folio es de otra tienda", () => {
+    const err = { message: "Este folio se apartó en MACRO y solo se recoge ahí.", errors: { code: ["PRESALE_ORDER_WRONG_STORE"] } };
+    expect(staleFolioError(err)).toEqual({ alreadyDelivered: false, wrongStore: true, message: err.message });
   });
 
   it("otros errores no son del folio", () => {
@@ -393,5 +399,22 @@ describe("staleFolioError — el servidor dice que el folio ya no se puede entre
     expect(staleFolioError({ message: "Precio fuera del catálogo" })).toBeNull();
     expect(staleFolioError(new Error("Network Error"))).toBeNull();
     expect(staleFolioError(null)).toBeNull();
+  });
+});
+
+describe("folioWrongStoreMessage — se recoge solo donde se apartó", () => {
+  const macro = { store: { id: 3, name: "MACRO" } };
+
+  it("avisa dónde se recoge si la tienda activa es otra", () => {
+    expect(folioWrongStoreMessage(macro, 1)).toBe("Este folio se apartó en MACRO y solo se recoge ahí.");
+  });
+
+  it("deja cargar en la tienda del folio", () => {
+    expect(folioWrongStoreMessage(macro, 3)).toBeNull();
+  });
+
+  it("sin datos de tienda no decide: valida el servidor", () => {
+    expect(folioWrongStoreMessage({ store: null }, 1)).toBeNull();
+    expect(folioWrongStoreMessage(macro, undefined)).toBeNull();
   });
 });
