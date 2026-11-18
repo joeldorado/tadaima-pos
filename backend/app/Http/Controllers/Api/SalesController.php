@@ -2,18 +2,24 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Exceptions\PreSaleOrderNotReadyException;
 use App\Exceptions\SalePaymentCorrectionForbidden;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\CheckoutRequest;
 use App\Http\Requests\CorrectSalePaymentsRequest;
+use App\Http\Requests\MixedCheckoutRequest;
+use App\Http\Resources\PreSaleOrderResource;
 use App\Http\Resources\SaleResource;
 use App\Models\Inventory;
 use App\Models\InventoryMovement;
+use App\Models\PreSaleOrder;
 use App\Models\Sale;
 use App\Models\SaleCancellation;
 use App\Services\CheckoutService;
+use App\Services\MixedCheckoutService;
 use App\Services\SaleCancellationService;
 use App\Services\SalePaymentCorrectionService;
+use App\Support\FolioCreatedNotifier;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -213,37 +219,54 @@ class SalesController extends Controller
     }
 
     /**
-     * Guard anti "caja abierta por días": rechaza el checkout si la sesión de
-     * caja del body está cerrada, o si quedó abierta de un día-negocio anterior
-     * (Tijuana) Y lleva 12h+ abierta. La regla doble protege turnos que cruzan
-     * medianoche (abrió 8pm, cobra 1am → día anterior pero <12h → pasa).
-     * El frontend detecta los códigos CASH_SESSION_CLOSED / CASH_SESSION_STALE
-     * y abre el flujo de corte.
+     * POST /sales/mixed — cobro mixto de Caja en UNA operación (2026-11-17).
+     *
+     * Una mesa con un folio de preventa cargado: entrega las partidas del folio
+     * y cobra lo que les falta (`liquidation`), más la venta regular (`sale`,
+     * opcional) y una preventa nueva (`new_order`, opcional). Todo en una sola
+     * transacción: si algo falla, no queda nada guardado. Antes eran tres
+     * llamadas y un folio ya entregado dejaba la venta cobrada (T-006).
+     *
+     * Body en `MixedCheckoutRequest`. Respuesta: `{ sale, delivered_order, new_order }`.
+     * Folio que ya no se puede entregar → 422 con `errors.code`
+     * PRESALE_ORDER_ALREADY_DELIVERED o PRESALE_ORDER_NOT_READY.
      */
-    private function cashSessionGuardError(Request $request): ?JsonResponse
+    public function mixed(MixedCheckoutRequest $request, MixedCheckoutService $service): JsonResponse
     {
-        $session = \App\Models\CashRegisterSession::find($request->input('register_session_id'));
-        if (! $session) {
-            return null; // exists ya lo valida el FormRequest; aquí no duplicamos
+        $data  = $request->validated();
+        $order = PreSaleOrder::findOrFail((int) $data['liquidation']['pre_sale_order_id']);
+
+        // Mismos candados que los endpoints de siempre: la tienda de la venta,
+        // la del folio y la caja (cerrada o de un día anterior).
+        if ($resp = $this->storeScopeError($request, $data['store_id'])) {
+            return $resp;
+        }
+        if ($resp = $this->storeScopeError($request, $order->store_id)) {
+            return $resp;
+        }
+        if ($resp = $this->cashSessionGuardError($request)) {
+            return $resp;
         }
 
-        if ($session->status !== \App\Models\CashRegisterSession::STATUS_OPEN) {
-            return $this->error(
-                'La caja de esta venta ya está cerrada. Abre una caja nueva para cobrar.',
-                422,
-                ['code' => ['CASH_SESSION_CLOSED']]
-            );
+        // El catch va FUERA de la transacción del servicio: cualquier error
+        // revierte la entrega, la venta y la preventa nueva juntas.
+        try {
+            $result = $service->checkout($order, $data, $request->user()->id);
+        } catch (PreSaleOrderNotReadyException $e) {
+            return $this->error($e->getMessage(), 422, ['code' => [$e->errorCode()]]);
+        } catch (\DomainException $e) {
+            return $this->error($e->getMessage(), 422);
         }
 
-        if ($openedLocal = $session->staleSince()) {
-            return $this->error(
-                "Tu caja quedó abierta desde el {$openedLocal->format('d/m/Y')}. Haz el corte antes de vender.",
-                422,
-                ['code' => ['CASH_SESSION_STALE']]
-            );
+        if ($result['new_order'] !== null) {
+            FolioCreatedNotifier::send($result['new_order']);
         }
 
-        return null;
+        return $this->success([
+            'sale'            => $result['sale'] !== null ? new SaleResource($result['sale']) : null,
+            'delivered_order' => new PreSaleOrderResource($result['delivered_order']),
+            'new_order'       => $result['new_order'] !== null ? new PreSaleOrderResource($result['new_order']) : null,
+        ], 'Cobro registrado correctamente.', 201);
     }
 
     /**

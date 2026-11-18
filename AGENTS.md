@@ -8,7 +8,7 @@
 > Detalle adicional: [`CLAUDE.md`](CLAUDE.md) (comandos y arquitectura del frontend) y
 > [`backend/AGENTS.md`](backend/AGENTS.md) (API, ADRs y referencia de endpoints).
 >
-> Última revisión: 2026-11-16.
+> Última revisión: 2026-11-17.
 
 ---
 
@@ -322,6 +322,22 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
     estado, así que una entrega parcial sale como «anticipo» hasta que el folio cierra (los totales cuadran).
     El ticket no imprime «queda N pendiente». Reversas de errores de usuario (anular un abono, reactivar un
     folio cancelado, deshacer «Llegó») están programadas en la rama `feat/preventas-reversas`, sin subir.
+
+- **Cobro de una mesa con folio = UNA operación (2026-11-17, T-006, caso: el mismo folio cobrado desde dos mesas).**
+  Caja cobra el folio cargado, los productos normales y la preventa nueva de la mesa con una sola llamada a
+  `POST /sales/mixed` (`MixedCheckoutService`: `liquidate` → `checkoutDirect` → `createOrder` en una transacción).
+  **Si algo falla no se guarda nada**: ni venta, ni pago, ni entrega, ni stock. Antes eran tres llamadas en serie y,
+  si el folio ya estaba entregado, la venta quedaba cobrada sin ticket ni aviso. El payload se arma en
+  `landing/src/lib/mixedCheckout.ts` (puro, con tests), que también arma las líneas de TODA venta
+  (`buildSaleDirectItems`): no vuelvas a copiar ese armado dentro de `SellPage.tsx`.
+  - **Un folio vive en una sola mesa:** `loadPreSaleOrderIntoCart` no lo carga si otra mesa ya lo tiene; avisa y
+    cambia a esa mesa (`findMesaWithFolio`).
+  - **Folio que ya no se puede entregar** (`errors.code` `PRESALE_ORDER_ALREADY_DELIVERED` / `PRESALE_ORDER_NOT_READY`):
+    Caja quita el folio de la mesa, deja los productos normales y avisa «Este folio ya se entregó. No se cobró nada».
+  - Los endpoints de siempre (`POST /sales`, `POST /pre-sale-orders`, `PATCH /pre-sale-orders/{id}/status`) no
+    cambian: la app móvil los sigue usando. Sin llave de idempotencia: el candado es el estado del folio
+    (`lockForUpdate` en `liquidate`), que va PRIMERO en la transacción.
+  - Pendiente conocido: una mesa SIN folio con producto + preventa nueva sigue en dos llamadas (venta y luego folio).
 
 ### Actividad y auditoría (2026-10-29)
 - **Administración → Actividad** (solo admin, `/admin?tab=actividad`): feed unificado de

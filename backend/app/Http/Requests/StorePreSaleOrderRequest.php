@@ -18,17 +18,31 @@ class StorePreSaleOrderRequest extends FormRequest
             'customer_id'           => ['required', 'integer', 'exists:customers,id'],
 
             'items'                 => ['required', 'array', 'min:1'],
-            'items.*.catalog_id'    => ['required', 'integer', 'exists:pre_sale_catalogs,id'],
-            'items.*.quantity'      => ['required', 'integer', 'min:1'],
-            'items.*.price_level'   => ['required', 'integer', 'min:1', 'max:5'],
-
-            // Anticipo inicial — obligatorio por diseño de negocio si el catálogo lo requiere
-            'advance_amount'        => ['nullable', 'numeric', 'min:0'],
-            'payment_method_id'     => ['nullable', 'integer', 'exists:payment_methods,id'],
+            ...self::orderRules(),
 
             'linked_sale_id'        => ['nullable', 'integer', 'exists:sales,id'],
+        ];
+    }
 
-            'notes'                 => ['nullable', 'string', 'max:1000'],
+    /**
+     * Reglas de las partidas, el anticipo y las notas de un folio nuevo.
+     * `$prefix` es el bloque donde viven (vacío aquí, `new_order.` en el cobro
+     * mixto).
+     *
+     * @return array<string, array<int, mixed>>
+     */
+    public static function orderRules(string $prefix = ''): array
+    {
+        return [
+            "{$prefix}items.*.catalog_id"  => ['required', 'integer', 'exists:pre_sale_catalogs,id'],
+            "{$prefix}items.*.quantity"    => ['required', 'integer', 'min:1'],
+            "{$prefix}items.*.price_level" => ['required', 'integer', 'min:1', 'max:5'],
+
+            // Anticipo inicial — obligatorio por diseño de negocio si el catálogo lo requiere
+            "{$prefix}advance_amount"      => ['nullable', 'numeric', 'min:0'],
+            "{$prefix}payment_method_id"   => ['nullable', 'integer', 'exists:payment_methods,id'],
+
+            "{$prefix}notes"               => ['nullable', 'string', 'max:1000'],
         ];
     }
 

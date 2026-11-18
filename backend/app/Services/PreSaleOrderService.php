@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Exceptions\PreSaleOrderNotReadyException;
 use App\Models\PreSaleCatalog;
 use App\Models\PreSaleDelivery;
 use App\Models\PreSaleOrder;
@@ -41,7 +42,10 @@ class PreSaleOrderService
             // ── Validate catalogs and limits ──────────────────────────────────
             $catalogIds = array_column($items, 'catalog_id');
             $storeId    = (int) $data['store_id'];
+            // Candado en orden de id: dos cobros con los mismos catálogos en
+            // distinto orden no se bloquean entre sí (liquidate() hace lo mismo).
             $catalogs = PreSaleCatalog::with(['activeOrderItems', 'storeLimits'])
+                ->orderBy('id')
                 ->lockForUpdate()
                 ->findMany($catalogIds)
                 ->keyBy('id');
@@ -319,8 +323,9 @@ class PreSaleOrderService
             $order = PreSaleOrder::lockForUpdate()->find($order->id);
 
             if ($order->status !== PreSaleOrder::STATUS_READY) {
-                throw new \DomainException(
-                    "El folio {$order->code} no está listo para liquidar (estado: {$order->status})."
+                throw new PreSaleOrderNotReadyException(
+                    "El folio {$order->code} no está listo para liquidar (estado: {$order->status}).",
+                    alreadyDelivered: $order->status === PreSaleOrder::STATUS_DELIVERED,
                 );
             }
 
@@ -339,7 +344,7 @@ class PreSaleOrderService
             // entrega que lo respalde). Pasa con un carrito guardado que ya no
             // corresponde al folio: mejor rechazar y que lo vuelvan a cargar.
             if ($tracked && $items->isEmpty()) {
-                throw new \DomainException(
+                throw new PreSaleOrderNotReadyException(
                     "El folio {$order->code} no tiene partidas por entregar. Vuelve a cargarlo en Caja."
                 );
             }
@@ -461,7 +466,10 @@ class PreSaleOrderService
         foreach ($items as $item) {
             $nombre = $item->catalog?->product_name ?? "Partida #{$item->id}";
             if ($item->status !== PreSaleOrderItem::STATUS_PENDING) {
-                throw new \DomainException("\"{$nombre}\" ya estaba entregada. Vuelve a cargar el folio en Caja.");
+                throw new PreSaleOrderNotReadyException(
+                    "\"{$nombre}\" ya estaba entregada. Vuelve a cargar el folio en Caja.",
+                    alreadyDelivered: true,
+                );
             }
             if ($item->catalog?->status !== PreSaleCatalog::STATUS_ARRIVED) {
                 throw new \DomainException("\"{$nombre}\" todavía no llega: no se puede entregar.");

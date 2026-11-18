@@ -1,5 +1,8 @@
 import { apiClient } from './client'
-import type { CreateSaleInput, Sale, SaleDetail, GetSalesParams, PaginatedResponse } from './types'
+import type {
+  CreateSaleInput, Sale, SaleDetail, GetSalesParams, PaginatedResponse,
+  MixedCheckoutInput, MixedCheckoutResult,
+} from './types'
 
 /**
  * Lista de ventas con filtros opcionales.
@@ -35,6 +38,21 @@ export async function getSale(id: number): Promise<SaleDetail> {
  */
 export async function createSale(input: CreateSaleInput): Promise<Sale> {
   const response = await apiClient.post<Sale>('/sales', input)
+  return response.data
+}
+
+/**
+ * Cobro mixto de Caja en UNA operación (2026-11-17): entrega las partidas de
+ * un folio de preventa y cobra lo que les falta, más la venta regular y la
+ * preventa nueva de la misma mesa.
+ * POST /sales/mixed
+ *
+ * Todo va en una transacción: si algo falla, no queda venta, pago ni entrega.
+ * Folio que ya no se puede entregar → 422 con `errors.code[0]` en
+ * `MIXED_CHECKOUT_FOLIO_CODES`.
+ */
+export async function createMixedCheckout(input: MixedCheckoutInput): Promise<MixedCheckoutResult> {
+  const response = await apiClient.post<MixedCheckoutResult>('/sales/mixed', input)
   return response.data
 }
 

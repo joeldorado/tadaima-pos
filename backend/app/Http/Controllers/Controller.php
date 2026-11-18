@@ -124,6 +124,41 @@ abstract class Controller
     }
 
     /**
+     * Guard anti "caja abierta por días": rechaza el cobro si la sesión de
+     * caja del body (`register_session_id`) está cerrada, o si quedó abierta de
+     * un día-negocio anterior (Tijuana) Y lleva 12h+ abierta. La regla doble
+     * protege turnos que cruzan medianoche (abrió 8pm, cobra 1am → día anterior
+     * pero <12h → pasa). El frontend detecta los códigos CASH_SESSION_CLOSED /
+     * CASH_SESSION_STALE y abre el flujo de corte.
+     * Lo comparten `POST /sales` y `POST /sales/mixed`.
+     */
+    protected function cashSessionGuardError(\Illuminate\Http\Request $request): ?JsonResponse
+    {
+        $session = CashRegisterSession::find($request->input('register_session_id'));
+        if (! $session) {
+            return null; // exists ya lo valida el FormRequest; aquí no duplicamos
+        }
+
+        if ($session->status !== CashRegisterSession::STATUS_OPEN) {
+            return $this->error(
+                'La caja de esta venta ya está cerrada. Abre una caja nueva para cobrar.',
+                422,
+                ['code' => ['CASH_SESSION_CLOSED']]
+            );
+        }
+
+        if ($openedLocal = $session->staleSince()) {
+            return $this->error(
+                "Tu caja quedó abierta desde el {$openedLocal->format('d/m/Y')}. Haz el corte antes de vender.",
+                422,
+                ['code' => ['CASH_SESSION_STALE']]
+            );
+        }
+
+        return null;
+    }
+
+    /**
      * La salida de caja de una cancelación solo puede ir a una caja ABIERTA de
      * quien cancela; el admin puede usar cualquier caja abierta (2026-09-30).
      * Antes bastaba que el `cash_session_id` existiera: se podía mandar la

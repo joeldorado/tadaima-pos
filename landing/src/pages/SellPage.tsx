@@ -30,7 +30,7 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { PaymentRestrictionBadge, getPayRestriction } from "@/components/ui/PaymentRestrictionBadge";
 import { SingleDatePicker } from "@/components/ui/SingleDatePicker";
 import { toast } from "sonner";
-import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, forceCloseSession, getActiveSession, createLayaway, getCustomers, createCustomer, refreshMember, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, updatePreSaleOrderStatus, getPreSaleOrders, getSales, getProductsLight, getCategories, storageUrl, sendPreSaleAssignAlert, getCatalogCustomerUsage } from "@tadaima/api";
+import { getDraft, createDraft, addDraftItem, updateDraftItem, removeDraftItem, cancelDraft, createSale, getPrice, openSession, forceCloseSession, getActiveSession, createLayaway, getCustomers, createCustomer, refreshMember, searchExternalCustomers, lookupCardCode, getInventory, getPreSaleCatalogs, getPreSaleOrder, createPreSaleOrder, createMixedCheckout, getPreSaleOrders, getSales, getProductsLight, getCategories, storageUrl, sendPreSaleAssignAlert, getCatalogCustomerUsage } from "@tadaima/api";
 import type { OpenSessionConflict } from "@tadaima/api";
 import type { CashSessionReport } from "@tadaima/api";
 import { CashCloseSummaryModal } from "@/components/cash/CashCloseSummaryModal";
@@ -79,7 +79,8 @@ import { LineCommentModal } from "@/components/sell/LineCommentModal";
 import { LineGiftModal } from "@/components/sell/LineGiftModal";
 import { GIFT_COLOR } from "@/lib/giftLine";
 import { PromoPaymentAlertModal } from "@/components/sell/PromoPaymentAlertModal";
-import { lineCommentPayload, withLineComment } from "@/lib/lineComment";
+import { withLineComment } from "@/lib/lineComment";
+import { buildMixedCheckout, buildSaleDirectItems, findMesaWithFolio, staleFolioError, unloadFolioFromMesa } from "@/lib/mixedCheckout";
 import { DISCOUNT_REASON_LABELS, SURCHARGE_REASON_LABELS } from "@/lib/discountReasons";
 import type { HistorialEntry } from "@/hooks/queries/useHistorial";
 import { useCartDraftStore } from "@/stores/cartDraftStore";
@@ -89,7 +90,7 @@ import { isAdmin as isAdminRole } from "@/lib/permisos";
 import { cartUnitLimit, storeAvailability } from "@/lib/presaleAvailability";
 import { chargeForLoadedLines, presaleDeliveryCharge } from "@/lib/presaleAllocation";
 import { canRevertPresaleDelivery } from "@/lib/presaleLastDelivery";
-import { presaleDiscountPayload, presaleGrossUnitPrice, presaleLineBreakdown, presaleLineCharge, presaleLineDiscount } from "@/lib/presaleDiscount";
+import { presaleGrossUnitPrice, presaleLineBreakdown, presaleLineCharge, presaleLineDiscount } from "@/lib/presaleDiscount";
 import { CancelTicketModal } from "@/components/cancel/CancelTicketModal";
 import { CorrectPaymentModal } from "@/components/sales/CorrectPaymentModal";
 import { motion as Motion, AnimatePresence } from "motion/react";
@@ -187,27 +188,6 @@ interface CartItem {
   sellingCatalogId?: number; // ID del PreSaleCatalog que se está reservando
   unitLimit?: number; // límite de unidades por cliente (catálogo.limit_per_customer)
   syncError?: boolean; // true si addDraftItem/updateDraftItem falló — bloquea checkout
-}
-
-/**
- * Captura del ajuste por línea para el checkout (2026-09-29): descuento O
- * aumento. Solo viaja tipo/base/valor/motivo/nota — el monto lo recomputa el
- * server (SaleCalculator), nunca se manda un monto.
- */
-function lineAdjustmentPayload(ci: Pick<CartItem, "discount" | "surcharge" | "isGift" | "giftNote">) {
-  // Regalo: el precio que viaja es el de catálogo; el server deja la línea en $0.
-  if (ci.isGift) {
-    return { is_gift: true, ...(ci.giftNote ? { gift_note: ci.giftNote } : {}) };
-  }
-  if (ci.discount) {
-    const d = ci.discount;
-    return { line_discount: { kind: d.kind, basis: d.basis, value: d.value, reason: d.reason, ...(d.note ? { note: d.note } : {}) } };
-  }
-  if (ci.surcharge) {
-    const x = ci.surcharge;
-    return { line_surcharge: { kind: x.kind, basis: x.basis, value: x.value, reason: x.reason, ...(x.note ? { note: x.note } : {}) } };
-  }
-  return {};
 }
 
 /** Historial sin data todavía: referencia estable (ver historialEntries). */
@@ -2583,12 +2563,14 @@ export function SellPage() {
     [lineCalcById],
   );
   /**
-   * Precio que viaja en `items[].price` al cobrar. Un regalo manda su precio de
-   * CATÁLOGO (el server lo valida y lo guarda en sale_gifts; la línea queda en
-   * $0); un dañado, su precio manual; el resto, el efectivo del motor.
+   * Lo que `buildSaleDirectItems` necesita para armar las líneas de una venta:
+   * el resultado del motor por línea y el precio de CATÁLOGO (el que manda un
+   * regalo; un dañado manda su precio manual y el resto, el efectivo del motor).
    */
-  const checkoutPriceOf = (ci: CartItem): number =>
-    ci.isGift ? getItemPrice(ci) : (ci.damagedPrice ?? priceOf(ci));
+  const saleLineCtx = useMemo(
+    () => ({ calcById: lineCalcById, listPriceOf: getItemPrice }),
+    [lineCalcById],
+  );
 
   /**
    * Renglón del ticket de una línea del carrito. Con aumento de precio va el
@@ -3070,6 +3052,26 @@ export function SellPage() {
       return;
     }
 
+    // Un folio vive en UNA sola mesa (2026-11-17, T-006): cargado en dos, se
+    // cobraba dos veces. Si otra mesa ya lo tiene, se cambia a esa mesa. Se lee
+    // de `mesasRef` (no del render del clic) y se revisa otra vez más abajo,
+    // justo antes de cargarlo: entre medio hay consultas al servidor.
+    const targetMesaId = activeMesa.id;
+    const switchToMesaWithFolio = (): boolean => {
+      const otherMesa = findMesaWithFolio(mesasRef.current, order.id, targetMesaId);
+      if (!otherMesa) return false;
+      setActiveMesaId(otherMesa.id);
+      setShowPreSalesModal(false);
+      setFolioInput("");
+      toast.warning(`El folio ${order.code} ya está cargado en ${otherMesa.name}.`, {
+        description: "Te cambié a esa mesa para que lo cobres ahí.",
+        duration: 7000,
+        style: AMBER_TOAST,
+      });
+      return true;
+    };
+    if (switchToMesaWithFolio()) return;
+
     const levelMap: Record<number, PriceLevel> = { 1: "a", 2: "b", 3: "c", 4: "d", 5: "e" };
 
     const toCartItem = (it: PreSaleOrderItem, pending: number): CartItem => {
@@ -3159,6 +3161,9 @@ export function SellPage() {
     );
     const preSaleItems = deliverable.map(it => toCartItem(it, pendingByLine[order.items!.indexOf(it)] ?? 0));
     const balance = presaleLoadedCharge(preSaleItems, oldDebt);
+
+    // Mientras se consultaba el stock, otra mesa pudo cargar este mismo folio.
+    if (switchToMesaWithFolio()) return;
 
     // Política: liquidación de preventa no se cobra con Tarjeta. Si la mesa
     // estaba en Tarjeta, forzar Efectivo + avisar.
@@ -3956,125 +3961,66 @@ export function SellPage() {
         "Efectivo": 1, "Dólares": 1, "Tarjeta": 2, "Transferencia": 4,
       };
       const payMethodId = PM_IDS[activeMesa.paymentMethod] ?? 1;
-      const priceLevelMap: Record<PriceLevel, 1 | 2 | 3 | 4 | 5> = { a: 1, b: 2, c: 3, d: 4, e: 5 };
-
-      // Split en 3 grupos: items a liquidar / productos regulares / catálogos de preventa nueva
-      // Solo las partidas que el cliente se lleva HOY: las que siguen en el carrito.
-      const liquidationItems = activeMesa.items.filter(i => i.isFromPreSale && !i.preSaleItemDelivered);
-      const liquidationItemIds = liquidationItems
-        .map(i => i.preSaleOrderItemId)
-        .filter((id): id is number => typeof id === "number");
-      const newCatalogItems  = activeMesa.items.filter(i => i.sellingCatalogId != null);
-      const regularItems     = activeMesa.items.filter(i => !i.isFromPreSale && i.sellingCatalogId == null);
-
-      const liquidationAmount = activeMesa.depositAmount || 0;
-      const presaleItemDiscounts = presaleDiscountPayload(liquidationItems);
-      const regularSubtotal   = regularItems.reduce((s, i) => s + priceOf(i) * i.quantity, 0);
-      const newPreventaDeposit = newCatalogItems.reduce((s, i) => s + (i.depositAmount ?? 0), 0);
+      const loadedOrderId = activeMesa.loadedPreSaleOrderId;
+      const checkoutMesaId = activeMesa.id;
 
       try {
         setIsProcessing(true);
+        if (!activeStore) throw new Error("Tienda no seleccionada");
+        if (!cashSession) throw new Error("No hay caja abierta");
 
-        // 1. Crear venta regular primero (si aplica). Si truena, no se liquida la preventa.
-        let regularSaleId: number | undefined;
-        if (regularItems.length > 0 && (regularSubtotal > 0 || regularItems.some(i => i.isGift))) {
-          const directItems = regularItems
-            .map(ci => ({
-              product_id: parseInt(ci.product.id, 10),
-              quantity: ci.quantity,
-              price: checkoutPriceOf(ci),
-              price_level: (lineCalcById[ci.lineId]?.promoRepriced ? "a" : ["a","b","c"].includes(ci.priceLevel) ? ci.priceLevel : "a") as "a" | "b" | "c",
-              // Dañado → precio manual; el backend salta la validación de catálogo.
-              ...(ci.isDamaged ? { is_damaged: true } : {}),
-              // Descuento o aumento por línea (v2): viaja la captura, el monto lo recomputa el server.
-              ...lineAdjustmentPayload(ci),
-              ...(ci.skipPromo ? { skip_promotion: true } : {}),
-              ...lineCommentPayload(ci),
-            }))
-            .filter(i => !Number.isNaN(i.product_id));
-          // Neto regular (con descuentos por línea) — el pago debe cuadrar con
-          // el recompute del backend, no con el bruto.
-          const regularNet = regularItems.reduce(
-            (sum, i) => sum + (lineCalcById[i.lineId]?.net ?? priceOf(i) * i.quantity), 0);
-
-          if (directItems.length > 0) {
-            // Efectivo del ticket (liquidación + regular + anticipo nuevo) en MXN
-            // incluyendo USD convertido + cambio, para el detalle/ticket.
-            const ticketReceivedUsd = usdAppliedRef.current ? (parseFloat(cashReceivedUsd) || 0) : 0;
-            const ticketReceived    = (parseFloat(cashReceived) || 0) + ticketReceivedUsd * tc;
-            const ticketTotalForCash = liquidationAmount + regularNet + newPreventaDeposit;
-            const ticketChange = ticketReceived > ticketTotalForCash ? ticketReceived - ticketTotalForCash : 0;
-            const saleResult = await createSale({
-              calc_version: 2,
-              items: directItems,
-              store_id: activeStore?.id ?? 0,
-              register_session_id: cashSession?.id,
-              ...(activeMesa.customerId ? { customer_id: Number(activeMesa.customerId) } : {}),
-              payments: [{
-                payment_method_id: payMethodId,
-                amount: regularNet,
-                ...(activeMesa.paymentMethod === "Tarjeta" && activeMesa.selectedTerminalId
-                  ? { terminal_id: activeMesa.selectedTerminalId } : {}),
-              }],
-              // Dólares físicos recibidos + TC usado (para Historial/Corte/Reporte).
-              // ticketReceivedUsd ya viene gateado por usdApplied (simulación no viaja).
-              ...(ticketReceivedUsd > 0 ? { cash_received_usd: ticketReceivedUsd, exchange_rate: tc } : {}),
-              ...(ticketReceived > 0 ? { cash_received: ticketReceived, change_amount: ticketChange } : {}),
-            });
-            regularSaleId = saleResult?.id;
-            // Escritura optimista: la respuesta del POST ya ES la fila que la
-            // lista de Ventas va a traer — la insertamos al cache (con el
-            // vendedor, que el endpoint de checkout no eager-loadea) y
-            // descontamos stock sin esperar el refetch de 1-3s contra prod.
-            prependSaleToSalesCaches(queryClient, {
-              ...(saleResult as unknown as SaleDetail),
-              user: user ? { id: Number(user.id), name: user.name ?? "" } : null,
-            });
-            decrementProductStockInCaches(queryClient, directItems);
-          }
-        }
-
-        // 2. Crear nuevo folio de preventa (si aplica). Mismo principio: si truena, no liquidamos.
-        let newOrderCode: string | undefined;
-        if (newCatalogItems.length > 0) {
-          if (!activeStore) throw new Error("Tienda no seleccionada");
-          if (!activeMesa.customerId) throw new Error("Falta cliente para la nueva preventa");
-          const newOrder = await createPreSaleOrder({
-            store_id: activeStore.id,
-            customer_id: Number(activeMesa.customerId),
-            items: newCatalogItems.map(item => ({
-              catalog_id: item.sellingCatalogId!,
-              quantity: item.quantity,
-              price_level: priceLevelMap[item.priceLevel],
-            })),
-            ...(newPreventaDeposit > 0 ? { advance_amount: newPreventaDeposit, payment_method_id: payMethodId } : {}),
-            ...(regularSaleId != null ? { linked_sale_id: regularSaleId } : {}),
-          });
-          newOrderCode = newOrder.code;
-          // Folio nuevo visible al instante en Folios/Ventas (mismo browser).
-          prependPreSaleOrderToCaches(queryClient, newOrder, activeStore.id);
-        }
-
-        // 3. Entregar las partidas del folio y cobrar lo que les falta, en UNA
-        // llamada (2026-11-13): si la entrega no procede, el pago tampoco queda.
-        // Va al final → si algo truena arriba, el folio queda sin tocar.
-        const deliveredOrder = await updatePreSaleOrderStatus(activeMesa.loadedPreSaleOrderId, {
-          status: "delivered",
-          ...(liquidationItemIds.length > 0 ? { item_ids: liquidationItemIds } : {}),
-          ...(liquidationAmount > 0 ? { payment: { amount: liquidationAmount, payment_method_id: payMethodId } } : {}),
-          // Descuento manual de las piezas que se llevan hoy (2026-11-16).
-          ...(presaleItemDiscounts.length > 0 ? { item_discounts: presaleItemDiscounts } : {}),
+        // UNA sola llamada (2026-11-17, T-006): entrega del folio + venta
+        // regular + preventa nueva viajan juntas y el servidor guarda todo o
+        // nada. Antes eran tres llamadas en serie: si la entrega del folio
+        // fallaba al final, la venta ya estaba guardada y el cajero no lo sabía.
+        const ticketReceivedUsd = usdAppliedRef.current ? (parseFloat(cashReceivedUsd) || 0) : 0;
+        const built = buildMixedCheckout({
+          storeId: activeStore.id,
+          registerSessionId: cashSession.id,
+          customerId: activeMesa.customerId ? Number(activeMesa.customerId) : null,
+          preSaleOrderId: loadedOrderId,
+          lines: activeMesa.items,
+          // Lo que falta de las partidas que el cliente se lleva HOY (las que
+          // siguen en el carrito), ya con su descuento manual.
+          folioCharge: activeMesa.depositAmount || 0,
+          paymentMethodId: payMethodId,
+          ...(activeMesa.paymentMethod === "Tarjeta" && activeMesa.selectedTerminalId
+            ? { terminalId: activeMesa.selectedTerminalId } : {}),
+          ...saleLineCtx,
+          // ticketReceivedUsd ya viene gateado por usdApplied (simulación no viaja).
+          cash: { received: parseFloat(cashReceived) || 0, receivedUsd: ticketReceivedUsd, exchangeRate: tc },
         });
+        const { liquidation: liquidationItems, regular: regularItems, newCatalog: newCatalogItems } = built.parts;
+        const liquidationAmount  = built.amounts.folio;
+        const newPreventaDeposit = built.amounts.newDeposit;
+
+        const result = await createMixedCheckout(built.payload);
+        const deliveredOrder = result.delivered_order;
+        const newOrderCode = result.new_order?.code;
+
+        // Escritura optimista con lo que devolvió el servidor: la venta, el
+        // folio nuevo y el folio entregado se ven al instante en Ventas/Folios
+        // y el stock baja en el catálogo, sin esperar el refetch.
+        if (result.sale) {
+          prependSaleToSalesCaches(queryClient, {
+            ...result.sale,
+            // El endpoint de cobro no eager-loadea al vendedor.
+            user: user ? { id: Number(user.id), name: user.name ?? "" } : null,
+          });
+          decrementProductStockInCaches(queryClient, built.saleItems);
+        }
+        if (result.new_order) {
+          prependPreSaleOrderToCaches(queryClient, result.new_order, activeStore.id);
+        }
         // Entrega parcial: el folio sigue en «listo» con lo que falta por entregar.
-        const pendingAfter = (deliveredOrder?.items ?? []).filter(it => it.status !== "delivered").length;
-        const isPartialDelivery = deliveredOrder?.status !== "delivered";
-        // Visible al instante con lo que devolvió el servidor, sin esperar el refetch.
-        patchPreSaleOrderInCaches(queryClient, activeMesa.loadedPreSaleOrderId, {
-          status: deliveredOrder?.status ?? "delivered",
-          ...(deliveredOrder?.items ? { items: deliveredOrder.items } : {}),
-          ...(deliveredOrder?.payments ? { payments: deliveredOrder.payments } : {}),
-          ...(deliveredOrder?.paid_amount != null ? { paid_amount: deliveredOrder.paid_amount } : {}),
-          balance: deliveredOrder?.balance ?? 0,
+        const pendingAfter = (deliveredOrder.items ?? []).filter(it => it.status !== "delivered").length;
+        const isPartialDelivery = deliveredOrder.status !== "delivered";
+        patchPreSaleOrderInCaches(queryClient, loadedOrderId, {
+          status: deliveredOrder.status ?? "delivered",
+          ...(deliveredOrder.items ? { items: deliveredOrder.items } : {}),
+          ...(deliveredOrder.payments ? { payments: deliveredOrder.payments } : {}),
+          ...(deliveredOrder.paid_amount != null ? { paid_amount: deliveredOrder.paid_amount } : {}),
+          balance: deliveredOrder.balance ?? 0,
         });
 
         // Snapshots para ticket antes de limpiar
@@ -4085,22 +4031,19 @@ export function SellPage() {
         const payMethodSnap      = activeMesa.paymentMethod;
         const liquidatedCodeSnap = activeMesa.loadedPreSaleOrderCode;
         const oldDebtSnap        = liquidationItems.length > 0 ? (activeMesa.loadedPreSaleOldDebt ?? 0) : 0;
-        const cashReceivedUsdSnap = usdAppliedRef.current ? (parseFloat(cashReceivedUsd) || 0) : 0;
-        const cashReceivedSnap    = (parseFloat(cashReceived) || 0) + cashReceivedUsdSnap * tc;
+        const cashReceivedUsdSnap = built.cash.receivedUsd;
+        const cashReceivedSnap    = built.cash.received;
 
         setCashReceived("");
         clearCart();
         draftStore.clearDraft(mesaId);
         draftStore.clearDraftItems(mesaId);
 
-        // 4. Ticket: items entregados (liquidados) + productos regulares.
-        // El total del ticket usa el NETO de las líneas regulares (con sus
-        // descuentos v2) — debe cuadrar con lo realmente cobrado, no el bruto.
-        const regularNetTicket = regularItems.reduce(
-          (sum, i) => sum + (lineCalcById[i.lineId]?.net ?? priceOf(i) * i.quantity), 0);
-        const regularBenefitTicket = regularItems.reduce(
-          (sum, i) => sum + (i.discount ? (lineCalcById[i.lineId]?.benefit?.amount ?? 0) : 0), 0);
-        const ticketTotal = liquidationAmount + regularNetTicket + newPreventaDeposit;
+        // Ticket: items entregados (liquidados) + productos regulares. El total
+        // es el del cobro: el NETO de las líneas regulares (con sus descuentos
+        // v2), lo que de verdad se cobró, no el bruto.
+        const regularNetTicket = built.amounts.regularNet;
+        const ticketTotal = built.amounts.total;
         const deliveredAndRegular = [
           ...liquidationItems.map(i => ({
             name: liquidatedCodeSnap ? `${i.product.name} (Folio ${liquidatedCodeSnap})` : i.product.name,
@@ -4162,6 +4105,26 @@ export function SellPage() {
           style: { background: '#064e3b', color: '#fff', border: '1px solid #10b981', borderRadius: '16px' }
         });
       } catch (err: unknown) {
+        // El folio ya se entregó (o ya no está listo): lo cobraron en otra mesa
+        // u otra caja. El servidor no guardó NADA; se quita el folio de la mesa
+        // para que no lo intenten cobrar otra vez y se quedan los productos.
+        const stale = staleFolioError(err);
+        if (stale) {
+          // Solo si la mesa sigue con ESE folio (no uno que se haya cargado después).
+          updMesa(checkoutMesaId, m => m.loadedPreSaleOrderId === loadedOrderId ? unloadFolioFromMesa(m) : m);
+          invalidateAfterSale(queryClient, { presale: true });
+          toast.error(
+            stale.alreadyDelivered ? "Este folio ya se entregó. No se cobró nada." : "Este folio ya no está listo para entregar. No se cobró nada.",
+            {
+              description: stale.alreadyDelivered
+                ? "Quité el folio de la mesa y dejé los productos. Si al folio le quedan piezas, vuelve a cargarlo."
+                // Cancelado, vencido o sin piezas: el servidor dice cuál fue.
+                : `${stale.message} Quité el folio de la mesa y dejé los productos.`.trim(),
+              duration: 10000,
+            },
+          );
+          return;
+        }
         const msg = err && typeof err === "object" && "message" in err
           ? String((err as { message: unknown }).message) : "Error al liquidar la preventa";
         handleCheckoutError(msg);
@@ -4258,20 +4221,9 @@ export function SellPage() {
         let regularSaleId: number | undefined;
         if (regularItems.length > 0) {
           const regularSubtotal = regularItems.reduce((s, i) => s + priceOf(i) * i.quantity, 0);
-          const directItems = regularItems
-            .map(ci => ({
-              product_id: parseInt(ci.product.id, 10),
-              quantity: ci.quantity,
-              price: checkoutPriceOf(ci),
-              price_level: (lineCalcById[ci.lineId]?.promoRepriced ? "a" : ["a","b","c"].includes(ci.priceLevel) ? ci.priceLevel : "a") as "a" | "b" | "c",
-              // Dañado → precio manual; el backend salta la validación de catálogo.
-              ...(ci.isDamaged ? { is_damaged: true } : {}),
-              // Descuento o aumento por línea (v2): viaja la captura, el monto lo recomputa el server.
-              ...lineAdjustmentPayload(ci),
-              ...(ci.skipPromo ? { skip_promotion: true } : {}),
-              ...lineCommentPayload(ci),
-            }))
-            .filter(i => !Number.isNaN(i.product_id));
+          // Viaja la captura de cada línea (descuento, aumento, regalo…): el
+          // monto lo recomputa el server.
+          const directItems = buildSaleDirectItems(regularItems, saleLineCtx);
           // Neto regular (con descuentos por línea) — debe cuadrar con el
           // recompute server-side del backend (SaleCalculator).
           const regularNet = regularItems.reduce(
@@ -4470,21 +4422,12 @@ export function SellPage() {
 
       // Items reales (no preventa-catálogo, no folio cargado). En esta rama
       // (venta regular sin folio cargado) todos los items son regulares.
-      const saleItems = activeMesa.items
-        .filter(i => i.sellingCatalogId == null && !i.isFromPreSale)
-        .map(ci => ({
-          product_id: parseInt(ci.product.id, 10),
-          quantity: ci.quantity,
-          price: checkoutPriceOf(ci),
-          price_level: (lineCalcById[ci.lineId]?.promoRepriced ? "a" : ["a","b","c"].includes(ci.priceLevel) ? ci.priceLevel : "a") as "a" | "b" | "c",
-          // Dañado → precio manual; el backend salta la validación de catálogo.
-          ...(ci.isDamaged ? { is_damaged: true } : {}),
-          // Descuento por línea (v2): viaja la captura, el monto lo recomputa el server.
-          ...lineAdjustmentPayload(ci),
-          ...(ci.skipPromo ? { skip_promotion: true } : {}),
-          ...lineCommentPayload(ci),
-        }))
-        .filter(i => !Number.isNaN(i.product_id));
+      // Viaja la captura de cada línea (descuento, aumento, regalo…): el monto
+      // lo recomputa el server.
+      const saleItems = buildSaleDirectItems(
+        activeMesa.items.filter(i => i.sellingCatalogId == null && !i.isFromPreSale),
+        saleLineCtx,
+      );
 
       if (saleItems.length === 0) {
         toast.error("No hay productos válidos para cobrar.");

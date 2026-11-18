@@ -59,47 +59,61 @@ class CheckoutRequest extends FormRequest
 
             // Shape B: items directos
             'items'                         => [$hasItems ? 'required' : 'nullable', 'array', 'min:1'],
-            'items.*.product_id'            => ['required_with:items', 'integer', 'exists:products,id'],
-            'items.*.quantity'              => ['required_with:items', 'numeric', 'min:0.01'],
-            'items.*.price'                 => ['required_with:items', 'numeric', 'min:0'],
-            'items.*.price_level'           => ['nullable', 'string', 'in:a,b,c'],
+            ...self::saleLineRules('items', $isV2),
+            'store_id'                      => [$hasItems ? 'required' : 'nullable', 'integer', 'exists:stores,id'],
+            'register_session_id'           => [$hasItems ? 'required' : 'nullable', 'integer', 'exists:cash_register_sessions,id'],
+            'customer_id'                   => ['nullable', 'integer', 'exists:customers,id'],
+        ];
+    }
+
+    /**
+     * Reglas de cada línea de una venta directa. `$items` es la llave del
+     * arreglo (`items` aquí, `sale.items` en el cobro mixto): un solo lugar
+     * para que los dos endpoints validen exactamente lo mismo.
+     *
+     * @return array<string, array<int, mixed>>
+     */
+    public static function saleLineRules(string $items, bool $isV2): array
+    {
+        return [
+            "{$items}.*.product_id"            => ["required_with:{$items}", 'integer', 'exists:products,id'],
+            "{$items}.*.quantity"              => ["required_with:{$items}", 'numeric', 'min:0.01'],
+            "{$items}.*.price"                 => ["required_with:{$items}", 'numeric', 'min:0'],
+            "{$items}.*.price_level"           => ['nullable', 'string', 'in:a,b,c'],
             // Producto dañado → precio manual permitido fuera del catálogo. Sin
             // este flag el precio se valida contra los niveles del catálogo.
-            'items.*.is_damaged'            => ['nullable', 'boolean'],
+            "{$items}.*.is_damaged"            => ['nullable', 'boolean'],
 
             // Descuento por línea (Descuentos v2). El cajero manda tipo/base/valor
             // + motivo; el MONTO lo recomputa el backend (SaleCalculator) — nunca
             // se acepta un monto pre-calculado del cliente.
             // El cajero renunció a la promo de esta línea (2026-07-24): es la
             // salida cuando la promo restringe el método de pago.
-            'items.*.skip_promotion'        => ['sometimes', 'boolean'],
-            'items.*.line_discount'         => ['nullable', 'array'],
-            'items.*.line_discount.kind'    => ['required_with:items.*.line_discount', 'string', 'in:fixed,percent'],
-            'items.*.line_discount.basis'   => ['required_with:items.*.line_discount', 'string', 'in:unit,line'],
-            'items.*.line_discount.value'   => ['required_with:items.*.line_discount', 'numeric', 'min:0.01', 'max:999999'],
-            'items.*.line_discount.reason'  => ['required_with:items.*.line_discount', 'string', 'in:danado,caducidad,exhibicion,cortesia,otro'],
-            'items.*.line_discount.note'    => ['nullable', 'string', 'max:255'],
+            "{$items}.*.skip_promotion"        => ['sometimes', 'boolean'],
+            "{$items}.*.line_discount"         => ['nullable', 'array'],
+            "{$items}.*.line_discount.kind"    => ["required_with:{$items}.*.line_discount", 'string', 'in:fixed,percent'],
+            "{$items}.*.line_discount.basis"   => ["required_with:{$items}.*.line_discount", 'string', 'in:unit,line'],
+            "{$items}.*.line_discount.value"   => ["required_with:{$items}.*.line_discount", 'numeric', 'min:0.01', 'max:999999'],
+            "{$items}.*.line_discount.reason"  => ["required_with:{$items}.*.line_discount", 'string', 'in:danado,caducidad,exhibicion,cortesia,otro'],
+            "{$items}.*.line_discount.note"    => ['nullable', 'string', 'max:255'],
             // Aumento de precio por línea (2026-09-29): mismo shape que el
             // descuento, motivos propios. Solo en v2 — sin calc_version el
             // calculador no corre y el aumento se perdería en silencio.
-            'items.*.line_surcharge'        => [$isV2 ? 'nullable' : 'prohibited', 'array'],
-            'items.*.line_surcharge.kind'   => ['required_with:items.*.line_surcharge', 'string', 'in:fixed,percent'],
-            'items.*.line_surcharge.basis'  => ['required_with:items.*.line_surcharge', 'string', 'in:unit,line'],
-            'items.*.line_surcharge.value'  => ['required_with:items.*.line_surcharge', 'numeric', 'min:0.01', 'max:999999'],
-            'items.*.line_surcharge.reason' => ['required_with:items.*.line_surcharge', 'string', Rule::in(SaleCalculator::SURCHARGE_REASONS)],
-            'items.*.line_surcharge.note'   => ['nullable', 'string', 'max:255'],
+            "{$items}.*.line_surcharge"        => [$isV2 ? 'nullable' : 'prohibited', 'array'],
+            "{$items}.*.line_surcharge.kind"   => ["required_with:{$items}.*.line_surcharge", 'string', 'in:fixed,percent'],
+            "{$items}.*.line_surcharge.basis"  => ["required_with:{$items}.*.line_surcharge", 'string', 'in:unit,line'],
+            "{$items}.*.line_surcharge.value"  => ["required_with:{$items}.*.line_surcharge", 'numeric', 'min:0.01', 'max:999999'],
+            "{$items}.*.line_surcharge.reason" => ["required_with:{$items}.*.line_surcharge", 'string', Rule::in(SaleCalculator::SURCHARGE_REASONS)],
+            "{$items}.*.line_surcharge.note"   => ['nullable', 'string', 'max:255'],
             // Comentario corto de la línea (2026-10-03): recordatorio interno del
             // cajero, no toca montos ni se imprime. Solo en v2, igual que el
             // aumento: sin calc_version las columnas por línea no se llenan.
-            'items.*.comment'               => [$isV2 ? 'nullable' : 'prohibited', 'string', 'max:' . SaleItem::COMMENT_MAX],
+            "{$items}.*.comment"               => [$isV2 ? 'nullable' : 'prohibited', 'string', 'max:' . SaleItem::COMMENT_MAX],
             // Regalo (2026-10-31): la línea se cobra en $0 y su costo en la venta
             // es 0 (products.cost no cambia). `price` sigue siendo el de catálogo
             // (se valida igual) y queda en sale_gifts. Solo en v2.
-            'items.*.is_gift'               => [$isV2 ? 'sometimes' : 'prohibited', 'boolean'],
-            'items.*.gift_note'             => [$isV2 ? 'nullable' : 'prohibited', 'string', 'max:' . SaleGift::NOTE_MAX],
-            'store_id'                      => [$hasItems ? 'required' : 'nullable', 'integer', 'exists:stores,id'],
-            'register_session_id'           => [$hasItems ? 'required' : 'nullable', 'integer', 'exists:cash_register_sessions,id'],
-            'customer_id'                   => ['nullable', 'integer', 'exists:customers,id'],
+            "{$items}.*.is_gift"               => [$isV2 ? 'sometimes' : 'prohibited', 'boolean'],
+            "{$items}.*.gift_note"             => [$isV2 ? 'nullable' : 'prohibited', 'string', 'max:' . SaleGift::NOTE_MAX],
         ];
     }
 
@@ -123,35 +137,49 @@ class CheckoutRequest extends FormRequest
     public function withValidator(\Illuminate\Validation\Validator $validator): void
     {
         $validator->after(function (\Illuminate\Validation\Validator $v): void {
-            foreach ((array) $this->input('items', []) as $i => $item) {
-                if (! empty($item['is_gift'])) {
-                    if (! empty($item['line_discount']) || ! empty($item['line_surcharge'])) {
-                        $v->errors()->add("items.{$i}.is_gift", 'Un regalo no lleva descuento ni aumento.');
-                    }
-                    if (! empty($item['is_damaged'])) {
-                        $v->errors()->add("items.{$i}.is_gift", 'Un regalo no puede ir como mercancía dañada.');
-                    }
-                }
+            self::validateSaleLines($v, (array) $this->input('items', []), 'items');
+        });
+    }
 
-                $d = $item['line_discount'] ?? null;
-                if (is_array($d) && ($d['kind'] ?? '') === 'percent' && (float) ($d['value'] ?? 0) > 100) {
-                    $v->errors()->add("items.{$i}.line_discount.value", 'El porcentaje de descuento no puede exceder 100.');
-                }
-
-                $s = $item['line_surcharge'] ?? null;
-                if (! is_array($s)) {
-                    continue;
-                }
-                if (($s['kind'] ?? '') === 'percent' && (float) ($s['value'] ?? 0) > 100) {
-                    $v->errors()->add("items.{$i}.line_surcharge.value", 'El porcentaje de aumento no puede exceder 100 (para más, usa un monto fijo).');
-                }
-                if (is_array($d)) {
-                    $v->errors()->add("items.{$i}.line_surcharge", 'Una línea lleva descuento o aumento, no ambos.');
+    /**
+     * Chequeos cruzados por línea (ver el docblock de `withValidator`). `$items`
+     * es la llave bajo la que se reportan los errores.
+     *
+     * @param  array<int|string, mixed>  $lines
+     */
+    public static function validateSaleLines(\Illuminate\Validation\Validator $v, array $lines, string $items): void
+    {
+        foreach ($lines as $i => $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+            if (! empty($item['is_gift'])) {
+                if (! empty($item['line_discount']) || ! empty($item['line_surcharge'])) {
+                    $v->errors()->add("{$items}.{$i}.is_gift", 'Un regalo no lleva descuento ni aumento.');
                 }
                 if (! empty($item['is_damaged'])) {
-                    $v->errors()->add("items.{$i}.line_surcharge", 'No se puede aplicar aumento a mercancía dañada.');
+                    $v->errors()->add("{$items}.{$i}.is_gift", 'Un regalo no puede ir como mercancía dañada.');
                 }
             }
-        });
+
+            $d = $item['line_discount'] ?? null;
+            if (is_array($d) && ($d['kind'] ?? '') === 'percent' && (float) ($d['value'] ?? 0) > 100) {
+                $v->errors()->add("{$items}.{$i}.line_discount.value", 'El porcentaje de descuento no puede exceder 100.');
+            }
+
+            $s = $item['line_surcharge'] ?? null;
+            if (! is_array($s)) {
+                continue;
+            }
+            if (($s['kind'] ?? '') === 'percent' && (float) ($s['value'] ?? 0) > 100) {
+                $v->errors()->add("{$items}.{$i}.line_surcharge.value", 'El porcentaje de aumento no puede exceder 100 (para más, usa un monto fijo).');
+            }
+            if (is_array($d)) {
+                $v->errors()->add("{$items}.{$i}.line_surcharge", 'Una línea lleva descuento o aumento, no ambos.');
+            }
+            if (! empty($item['is_damaged'])) {
+                $v->errors()->add("{$items}.{$i}.line_surcharge", 'No se puede aplicar aumento a mercancía dañada.');
+            }
+        }
     }
 }
