@@ -70,7 +70,7 @@ import { ticketTime } from "@/lib/historialGroups";
 import { computeMixedSplit } from "@/lib/mixedPayment";
 import { readFavoritePayment, saveFavoritePayment, startingPayment, toggleFavorite, withFavoriteTerminal, type StartingPayment } from "@/lib/favoritePaymentMethod";
 import { buildPromoPaymentAlert, clearDismissedForMesa, promoPoolLineIds } from "@/lib/promoPaymentAlert";
-import { computeRegularChargeAmount, discountPct } from "@/lib/promo";
+import { computeLoadedFolioChargeAmount, computeRegularChargeAmount, discountPct } from "@/lib/promo";
 import { newLineId, recalculateSale, type LineDiscount, type LineSurcharge } from "@/lib/saleCalc";
 import { acceptsNewUnits, applyLineAdjustment, lineAdjustmentOf, removeLineAdjustment, type LineAdjustment } from "@/lib/lineAdjustments";
 import { finalPriceLine } from "@/lib/ticketLines";
@@ -89,7 +89,7 @@ import { isAdmin as isAdminRole } from "@/lib/permisos";
 import { cartUnitLimit, storeAvailability } from "@/lib/presaleAvailability";
 import { chargeForLoadedLines, presaleDeliveryCharge } from "@/lib/presaleAllocation";
 import { canRevertPresaleDelivery } from "@/lib/presaleLastDelivery";
-import { presaleDiscountPayload, presaleGrossUnitPrice, presaleLineCharge, presaleLineDiscount } from "@/lib/presaleDiscount";
+import { presaleDiscountPayload, presaleGrossUnitPrice, presaleLineBreakdown, presaleLineCharge, presaleLineDiscount } from "@/lib/presaleDiscount";
 import { CancelTicketModal } from "@/components/cancel/CancelTicketModal";
 import { CorrectPaymentModal } from "@/components/sales/CorrectPaymentModal";
 import { motion as Motion, AnimatePresence } from "motion/react";
@@ -2771,6 +2771,20 @@ export function SellPage() {
     () => activeMesa.items.filter(i => !i.isFromPreSale).reduce((s, i) => s + priceOf(i) * i.quantity, 0),
     [activeMesa.items, priceOf]
   );
+  // Con un folio cargado, lo nuevo de la mesa se cobra distinto según qué es:
+  // los productos regulares a su precio y las preventas nuevas solo su anticipo.
+  const newRegularSubtotal = useMemo(
+    () => activeMesa.items
+      .filter(i => !i.isFromPreSale && i.sellingCatalogId == null)
+      .reduce((s, i) => s + priceOf(i) * i.quantity, 0),
+    [activeMesa.items, priceOf]
+  );
+  const newCatalogDeposit = useMemo(
+    () => activeMesa.items
+      .filter(i => i.sellingCatalogId != null)
+      .reduce((s, i) => s + (i.depositAmount ?? 0), 0),
+    [activeMesa.items]
+  );
   
   // Comisión interna: se calcula y se manda al backend para reportes,
   // pero NUNCA se suma al total que paga el cliente. La tienda absorbe siempre.
@@ -2810,15 +2824,19 @@ export function SellPage() {
   const currentPayAmount = useMemo(() => {
     if (activeMesa.loadedPreSaleOrderId) {
       // Folio cargado: se cobra lo que falta de las partidas que siguen en el
-      // carrito (`depositAmount`, que se recalcula al quitar una) más lo regular.
+      // carrito (`depositAmount`, que se recalcula al quitar una) más lo regular
+      // y el ANTICIPO de las preventas nuevas de la mesa (no su precio completo:
+      // así lo cobra `handleCheckout`; antes la pantalla pedía de más, 2026-11-17).
       // No se suma precio × cantidad de las líneas del folio: ese es solo el
       // desglose en pantalla y el redondeo por línea podía gatear 1¢ distinto de
       // lo que de verdad se cobra (review Fase 0 2026-07-14).
-      const regularSubtotal = activeMesa.items
-        .filter(i => !i.isFromPreSale)
-        .reduce((s, i) => s + priceOf(i) * i.quantity, 0);
-      // Clamp ≥0: un descuento ≥ subtotal no debe mostrar/gatear un total negativo.
-      return (activeMesa.depositAmount || 0) + Math.max(0, regularSubtotal - discountAmt + surchargeAmt);
+      return computeLoadedFolioChargeAmount({
+        folioCharge: activeMesa.depositAmount || 0,
+        regularSubtotal: newRegularSubtotal,
+        catalogDeposit: newCatalogDeposit,
+        discountAmt,
+        surchargeAmt,
+      });
     }
     if (activeMesa.isPreventa) {
       // Modo preventa explícito: solo se cobran los anticipos.
@@ -2834,7 +2852,7 @@ export function SellPage() {
       .filter(i => i.sellingCatalogId != null)
       .reduce((s, i) => s + (i.depositAmount ?? 0), 0);
     return computeRegularChargeAmount({ regularSubtotal, catalogDeposit, discountAmt, surchargeAmt });
-  }, [activeMesa.loadedPreSaleOrderId, activeMesa.isPreventa, activeMesa.items, activeMesa.depositAmount, totalDeposit, totalBeforeComm, discountAmt, surchargeAmt, priceOf]);
+  }, [activeMesa.loadedPreSaleOrderId, activeMesa.isPreventa, activeMesa.items, activeMesa.depositAmount, totalDeposit, totalBeforeComm, discountAmt, surchargeAmt, priceOf, newRegularSubtotal, newCatalogDeposit]);
     
   const totalUSD       = tc > 0 ? currentPayAmount / tc : 0;
 
@@ -6038,6 +6056,8 @@ export function SellPage() {
                       ? Math.max(0, lineTotal - presaleDiscAmt)
                       : lineDiscAmt > 0 || lineSurAmt > 0 ? (lineCalc?.net ?? lineTotal) : lineTotal;
                     const manualDiscAmt = item.isFromPreSale ? presaleDiscAmt : (lineCalc?.manualPart ?? 0);
+                    // Precio pactado y anticipo de la línea del folio (lo que se enseña).
+                    const presaleBreakdown = item.isFromPreSale ? presaleLineBreakdown(item, lineTotal) : null;
                     // Pieza de un folio cargado (2026-11-16): sí lleva descuento al
                     // liquidar, con tope en lo que le falta pagar.
                     const canLineDiscount = item.sellingCatalogId == null && !item.isGift
@@ -6368,7 +6388,7 @@ export function SellPage() {
                           {/* Compacto: fuera la etiqueta — el número grande habla solo. */}
                           {!compactCart && (
                             <p className="text-[10px] font-black uppercase tracking-[0.16em]" style={{ color: TMD }}>
-                              Subtotal
+                              {item.isFromPreSale ? "Por cobrar" : "Subtotal"}
                             </p>
                           )}
                           <p className={`text-[30px] leading-none font-black ${item.isDamaged ? "text-orange-400" : item.isFromPreSale ? "text-amber-400/70" : "text-white"}`}>
@@ -6387,9 +6407,26 @@ export function SellPage() {
                               <span className="line-through" style={{ color: TLO }}>{fmt(getItemPrice(item) * item.quantity)}</span>
                             </p>
                           )}
-                          <p className="mt-1 text-center text-[14px] font-black" style={{ color: TMD }}>
-                            {item.quantity} × {fmt(unitPrice)}
-                          </p>
+                          {item.isFromPreSale && presaleBreakdown ? (
+                            // Folio cargado (2026-11-17): se enseña el precio PACTADO y
+                            // el anticipo que ya cubre la línea. Antes decía «2 × $399»
+                            // con lo que falta por pieza y parecía que no restaba.
+                            <div className="mt-1 text-center" data-testid={`line-presale-breakdown-${item.lineId}`}>
+                              <p className="text-[13px] font-black whitespace-nowrap" style={{ color: TMD }}>
+                                {item.quantity} × {fmt(presaleBreakdown.unitPrice)}
+                                {item.quantity > 1 ? ` = ${fmt(presaleBreakdown.gross)}` : ""}
+                              </p>
+                              {presaleBreakdown.deposit > 0.005 && (
+                                <p className="text-[11px] font-black whitespace-nowrap text-amber-300/80">
+                                  − {fmt(presaleBreakdown.deposit)} anticipo
+                                </p>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="mt-1 text-center text-[14px] font-black" style={{ color: TMD }}>
+                              {item.quantity} × {fmt(unitPrice)}
+                            </p>
+                          )}
                           {/* Badge del descuento MANUAL: solo la parte manual (stacking
                               2026-07-17 — se acumula sobre el resultado de la promo). */}
                           {item.discount && manualDiscAmt > 0 && (
@@ -6714,10 +6751,17 @@ export function SellPage() {
                       </p>
                       <p className="text-sm font-black text-amber-400">{fmt(activeMesa.depositAmount || 0)}</p>
                     </div>
-                    {newItemsSubtotal > 0 && (
+                    {newRegularSubtotal > 0 && (
                       <div className="flex items-center justify-between gap-3">
                         <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: TMD }}>+ Items</p>
-                        <p className="text-sm font-black" style={{ color: TMD }}>{fmt(newItemsSubtotal)}</p>
+                        <p className="text-sm font-black" style={{ color: TMD }}>{fmt(newRegularSubtotal)}</p>
+                      </div>
+                    )}
+                    {/* Preventa nueva en la misma mesa: hoy solo se cobra su anticipo. */}
+                    {newCatalogDeposit > 0 && (
+                      <div className="flex items-center justify-between gap-3" data-testid="loaded-folio-new-deposit">
+                        <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: TMD }}>+ Anticipo preventa nueva</p>
+                        <p className="text-sm font-black" style={{ color: TMD }}>{fmt(newCatalogDeposit)}</p>
                       </div>
                     )}
                   </div>

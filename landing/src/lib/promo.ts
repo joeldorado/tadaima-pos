@@ -48,6 +48,30 @@ export function computeRegularChargeAmount(input: {
 }
 
 /**
+ * Monto real a cobrar con un folio de preventa CARGADO en la mesa: lo que falta
+ * de sus piezas (`folioCharge`) + el neto de los productos regulares + el
+ * ANTICIPO de las preventas nuevas agregadas a la misma mesa.
+ *
+ * Antes el cálculo en línea de `SellPage` sumaba la preventa nueva a precio
+ * completo, pero al cobrar solo viaja su anticipo: la pantalla pedía de más y el
+ * botón se quedaba en «Faltan $X» (2026-11-17). El descuento y el aumento son de
+ * las líneas regulares, así que el clamp ≥ 0 no toca al folio ni al anticipo.
+ */
+export function computeLoadedFolioChargeAmount(input: {
+  /** Lo que falta de las piezas del folio que se entregan hoy. */
+  folioCharge: number;
+  /** Σ precio × cantidad de los productos regulares (sin catálogos de preventa). */
+  regularSubtotal: number;
+  /** Σ anticipos de las preventas nuevas de la mesa. */
+  catalogDeposit: number;
+  discountAmt: number;
+  surchargeAmt?: number;
+}): number {
+  const regularNet = Math.max(0, input.regularSubtotal - input.discountAmt + (input.surchargeAmt ?? 0));
+  return Math.max(0, input.folioCharge) + Math.max(0, input.catalogDeposit) + regularNet;
+}
+
+/**
  * Porcentaje de descuento derivado del monto y el subtotal previo, redondeado a
  * entero. El % no se persiste (el descuento es monto absoluto), pero se reconstruye
  * para mostrarlo en ticket e Historial ("Promo (17%) −$60"). Si fue por precio final

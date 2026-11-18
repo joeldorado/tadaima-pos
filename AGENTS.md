@@ -291,6 +291,14 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   el reparto de pagos (`presaleLineTotal`). **Revertir la entrega quita el descuento** (la pieza vuelve a su precio).
   Queda en Actividad dentro del log de la entrega (`pre_sale_order.delivery`, `meta.discounts`). La app móvil no
   manda `item_discounts` y sigue igual.
+- **Línea del folio en Caja (2026-11-17, caso: «pide $798 y son $700»):** la línea de un folio cargado enseña el
+  precio PACTADO y el anticipo («2 × $599 = $1,198 · − $400 anticipo») y el número grande es «Por cobrar». Antes
+  decía «2 × $399» (lo que falta por pieza) y parecía que el anticipo no se restaba. El desglose sale de
+  `presaleLineBreakdown` (`lib/presaleDiscount.ts`). El precio del folio se congela al crearlo
+  (`pre_sale_order_items.unit_price`): si la tienda esperaba otro precio, se corrige con «Descuento» al liquidar.
+  Con un folio cargado, una preventa NUEVA en la misma mesa suma solo su anticipo al total
+  (`computeLoadedFolioChargeAmount`, `lib/promo.ts`); antes sumaba su precio completo y el botón se quedaba en
+  «Faltan $X».
 - **Revertir una entrega de preventa (2026-11-13).** `POST /pre-sale-orders/{id}/cancel` con
   `liquidation_rollback` deshace la ÚLTIMA entrega del folio y SU pago; nunca el anticipo (antes borraba «el
   último pago», que con una liquidación de $0 era el anticipo). Vale para folio liquidado o con entrega
