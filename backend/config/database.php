@@ -97,6 +97,15 @@ return [
             'prefix_indexes' => true,
             'search_path' => 'public',
             'sslmode' => env('DB_SSLMODE', 'prefer'),
+            // Un viaje de red por consulta (2026-11-17). Por defecto pdo_pgsql
+            // prepara cada consulta en el servidor: preparar + ejecutar + liberar
+            // = 3 viajes a Supabase por consulta, y una venta hace ~40. Con esta
+            // opción usa PQexecParams: 1 viaje, y los parámetros siguen viajando
+            // aparte del SQL (no es emulación). Medido con 15 ms de red simulada:
+            // 42 consultas bajan de ~2.4 s a ~1.1 s. Apagar: DB_PGSQL_DISABLE_PREPARES=false.
+            'options' => extension_loaded('pdo_pgsql') && env('DB_PGSQL_DISABLE_PREPARES', true)
+                ? [PDO::PGSQL_ATTR_DISABLE_PREPARES => true]
+                : [],
         ],
 
         // Conexión TARGET de la migración a Supabase (tadaima:copy-to-pgsql y

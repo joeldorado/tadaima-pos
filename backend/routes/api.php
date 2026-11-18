@@ -44,6 +44,7 @@ use App\Http\Controllers\Api\UsListingController;
 use App\Http\Controllers\Api\UsOrderController;
 use App\Http\Controllers\Api\WarehouseController;
 use Illuminate\Support\Facades\Route;
+use App\Http\Middleware\ThrottleApi;
 
 /*
 |--------------------------------------------------------------------------
@@ -103,7 +104,9 @@ Route::middleware(['auth:us', 'throttle:60,1'])->prefix('us/account')->group(fun
 // ── Rutas protegidas ──────────────────────────────────────────────────────────
 // Rate limit por usuario (120 req/min) — amortigua polling/abuso sin estorbar al
 // cajero (el carrito es client-side, ADR-014; el polling real ronda ~25/min/usuario).
-Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
+// El contador vive fuera de la base (ThrottleApi, 2026-11-17): con `throttle:120,1` a
+// secas cada petición gastaba ~6 consultas a Supabase solo en contar.
+Route::middleware(['auth:sanctum', ThrottleApi::class . ':120,1'])->group(function () {
 
     // ── Users ─────────────────────────────────────────────────────────────────
     Route::get('users/online',                  [UserController::class, 'online']);

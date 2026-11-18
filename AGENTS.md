@@ -95,6 +95,17 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
    para QA usa ventana de incógnito o recarga forzada.
 10. **Idioma:** UI, docs, comentarios de dominio y commits en español de México.
 11. **Cada deploy se registra en `MASTERLOG.md`** (revisión, qué entró, rollback).
+12. **Cada consulta es un viaje de red a Supabase, y van en serie** (2026-11-17). El tiempo de una
+    petición es casi todo eso: más CPU o más hilos no la aceleran, menos consultas sí. Dos ajustes lo
+    sostienen y no se quitan sin medir: la conexión `pgsql` lleva `PDO::PGSQL_ATTR_DISABLE_PREPARES`
+    (1 viaje por consulta en vez de 3; los parámetros siguen viajando aparte del SQL) y el grupo
+    autenticado usa `App\Http\Middleware\ThrottleApi` en vez de `throttle:120,1`, con el contador en
+    archivo (`cache.api_throttle_store`) y no en la caché de la base. Los límites de login y de la tienda
+    US (`throttle:pos-login`, `us-*`) siguen en la base a propósito: su llave trae correo e IP y debe
+    contar igual en todas las instancias. `ApiRoundTripsTest` pone techo a las consultas de `POST /sales`:
+    si una venta necesita más, se sube el techo a propósito. Para medir en local hay que simular la red
+    (Postgres local responde en 0 ms y esconde el problema). No muevas escrituras a `terminate()`:
+    Cloud Run le quita CPU a la instancia al terminar la respuesta y pueden quedarse a medias.
 
 ---
 
