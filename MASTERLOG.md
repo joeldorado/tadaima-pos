@@ -4,6 +4,22 @@
 
 ---
 
+### Sesión 2026-11-17 (c) — Caja: el cobro con preventa es una sola operación (PR #107, T-006) — rev tadaima-00150-luf
+
+**Origen:** al validar PREV-00100 en prod salió que el 17-nov a las 14:38 se guardaron dos ventas (#5523 y #5524) al reintentar el cobro de una mesa cuyo folio ya estaba entregado. Caja guardaba primero la venta y después entregaba el folio, en llamadas separadas; el folio estaba cargado en dos mesas del mismo navegador. La tienda canceló las ventas a mano.
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00148-nik`. **Sin migración.** Los endpoints anteriores no cambiaron, así que el frontend viejo funciona igual con cualquiera de las dos revisiones.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00148-nik=100 --project tadaimapos --region us-east1`
+
+- **`POST /sales/mixed`** (`MixedCheckoutService`): entrega del folio, venta regular y preventa nueva en UNA transacción; si algo falla no queda venta, pago ni entrega. Llama a los servicios de siempre (`liquidate`, `checkoutDirect`, `createOrder`) con los mismos candados de tienda y de caja. Folio que ya no se puede entregar → 422 con código `PRESALE_ORDER_ALREADY_DELIVERED` / `PRESALE_ORDER_NOT_READY`.
+- **Caja:** la mesa con folio cargado y la mesa sin folio con producto + preventa nueva cobran con una sola llamada (`lib/mixedCheckout.ts`). Un folio no se carga en dos mesas: Caja cambia a la mesa que ya lo tiene. Si el folio ya se entregó, lo quita de la mesa, deja los productos y avisa «Este folio ya se entregó. No se cobró nada».
+- **No cambia:** `POST /sales`, `PATCH /pre-sale-orders/{id}/status` y `POST /pre-sale-orders` (app móvil igual). La preventa nueva sola sigue por su endpoint.
+- **Desarrollo:** lo hizo otra sesión en dos commits (e400795 y 0840cd7); aquí se revisó el diff completo.
+- **Validación (sobre el PR mezclado con `main`, mismo árbol que se desplegó):** backend 1,032 ✓ en SQLite y Postgres 17 local; vitest 963 ✓; type-check 451 contra 458 de `main`. En Caja local: folio + producto en una llamada; mismo folio en segunda mesa → no carga; folio entregado por fuera → 422 y sin ventas, stock ni pagos nuevos; producto + preventa nueva en una llamada, y sin cupo → 422 y nada guardado.
+- **En prod 2026-11-17 ~17:42 (Tijuana):** candidato y dominio `/`, `/login`, `/caja`, `/tadaimaus/` 200, API sin token 401, `POST /sales/mixed` sin token 401 (antes 405); bundle con el aviso nuevo. No probado en prod con sesión: lo prueba la tienda.
+- **Velocidad en prod (rev 00148-nik, ventas reales):** `POST /sales` 2.34 → 0.78 s de mediana (4 ventas), `/cash/session` 0.93 → 0.24 s.
+- **Pendiente:** el candado de un folio por mesa es por pestaña (dos pestañas o dos PCs aún pueden cargarlo; el segundo cobro ya se rechaza completo). Sin llave de idempotencia para reintentos por red. Dólares y pago mixto con folio no se probaron en navegador.
+
 ### Sesión 2026-11-17 (b) — API más rápido: un viaje a la base por consulta (PR #106, T-007) — rev tadaima-00148-nik
 
 **Origen:** al revisar el cobro de PREV-00100 salió que cada venta tardaba 2.1–2.8 s y cualquier ruta del API al menos 0.6 s (logs de Cloud Run del 17-nov).
