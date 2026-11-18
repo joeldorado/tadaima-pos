@@ -4,6 +4,22 @@
 
 ---
 
+### Sesión 2026-11-17 (b) — API más rápido: un viaje a la base por consulta (PR #106, T-007) — rev tadaima-00148-nik
+
+**Origen:** al revisar el cobro de PREV-00100 salió que cada venta tardaba 2.1–2.8 s y cualquier ruta del API al menos 0.6 s (logs de Cloud Run del 17-nov).
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00146-zor`. **Sin migración**, solo backend.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00146-zor=100 --project tadaimapos --region us-east1`
+> Sin redeploy también se apaga la mitad: variable `DB_PGSQL_DISABLE_PREPARES=false`.
+
+- **Causa:** el tiempo se va en viajes de red a Supabase, en serie (no es CPU ni hilos). Cada consulta eran 3 viajes (sentencia preparada en el servidor) y el `throttle:120,1` del grupo autenticado contaba en la caché de la base (~6 consultas por petición).
+- **Conexión `pgsql`:** `PDO::PGSQL_ATTR_DISABLE_PREPARES` → 1 viaje por consulta; los parámetros siguen viajando aparte del SQL.
+- **`App\Http\Middleware\ThrottleApi`:** el contador del grupo autenticado va a archivo (`cache.api_throttle_store`); el límite es por instancia. Los límites de login y de la tienda US siguen en la base.
+- **Descartado en revisión:** `cache.limiter=file` global (llaves que escribe el visitante) y mover `TouchLastSeen` a `terminate()` (Cloud Run quita CPU al terminar la respuesta).
+- **Validación:** backend 998 ✓ en SQLite y Postgres 17 local con la opción activa; `ApiRoundTripsTest` (techo de consultas de `POST /sales`: hoy 32, techo 40). Local con 15 ms de red simulada, mediana de 10: `POST /sales` 2.51 s → 0.86 s, `/cash/session` 0.83 → 0.18 s, `/auth/me` 0.34 → 0.14 s.
+- **En prod 2026-11-17 ~17:05 (Tijuana):** candidato y dominio `/`, `/login`, `/caja`, `/tadaimaus/` 200, API sin token 401; `us/catalog` igual que antes salvo el dominio de las imágenes. Primeros minutos de tráfico real, sin errores: `/notifications` 0.82 → 0.21 s, `/cash/session` 0.93 → 0.29 s, `/auth/me` 0.42 → 0.23 s (mediana).
+- **Pendiente:** confirmar `POST /sales` con ventas reales (aún no hubo ninguna en la revisión nueva). Quitar consultas redundantes dentro de `CheckoutService` y Redis quedan fuera.
+
 ### Sesión 2026-11-17 — Caja: la línea del folio de preventa enseña el precio pactado (PR #105, T-005) — rev tadaima-00146-zor
 
 **Origen:** Pier reenvió de la tienda que una preventa «Booster Bundle Delta» ×2 con $400 de anticipo pedía $798 y «eran $700», y que «no dejaba cobrar».

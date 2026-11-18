@@ -19,6 +19,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Store del `throttle` del grupo autenticado (App\Http\Middleware\ThrottleApi)
+    |--------------------------------------------------------------------------
+    |
+    | Con la caché general en la base (producción), cada petición autenticada
+    | gastaba ~6 consultas a Supabase solo en contar el `throttle:120,1`
+    | (2026-11-17). Ese contador va a archivo local. Con cualquier otro store
+    | por defecto (p. ej. `array` en tests) se usa el de siempre (null).
+    | Los limitadores con nombre (login, tienda US) NO usan esta llave.
+    |
+    */
+
+    'api_throttle_store' => env('CACHE_API_THROTTLE_STORE', env('CACHE_STORE', 'database') === 'database' ? 'file' : null),
+
+    /*
+    |--------------------------------------------------------------------------
     | Cache Stores
     |--------------------------------------------------------------------------
     |
