@@ -20,6 +20,9 @@ class PreSaleOrder extends Model
     const CANCELLATION_PARTIAL = 'partial';
     const CANCELLATION_FULL    = 'full';
 
+    /** `errors.code` del 422: el folio solo se recoge en la tienda donde se apartó. */
+    const ERROR_WRONG_PICKUP_STORE = 'PRESALE_ORDER_WRONG_STORE';
+
     protected $fillable = [
         'code', 'store_id', 'linked_sale_id', 'user_id', 'customer_id',
         'status', 'pickup_deadline', 'notes',

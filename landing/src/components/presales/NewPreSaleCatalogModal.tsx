@@ -604,7 +604,7 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
               </div>
 
               <div>
-                <Label>Límite por cliente{["arrived","closed","cancelled"].includes(catalog?.status ?? "") ? " 🔒" : ""}</Label>
+                <Label>Límite por cliente, por tienda{["arrived","closed","cancelled"].includes(catalog?.status ?? "") ? " 🔒" : ""}</Label>
                 <input
                   type="number" min="1" value={limitPerCustomer}
                   onChange={e => setLimitPerCustomer(e.target.value)}
@@ -614,7 +614,7 @@ export function NewPreSaleCatalogModal({ onClose, onSuccess, catalog, restricted
                   style={{ ...inputStyle, opacity: ["arrived","closed","cancelled"].includes(catalog?.status ?? "") ? 0.45 : 1, cursor: ["arrived","closed","cancelled"].includes(catalog?.status ?? "") ? "not-allowed" : "auto" }}
                 />
                 <p style={{ fontSize: 10, color: "var(--td-text-lo)", margin: "5px 2px 0", lineHeight: 1.4 }}>
-                  Máximo de unidades que <strong>un mismo cliente</strong> puede comprar de esta preventa (de por vida). Vacío = sin límite. Distinto del "Límite de unidades" (tope global) y de las "Unidades por tienda".
+                  Máximo de unidades que <strong>un mismo cliente</strong> puede apartar de esta preventa <strong>en cada tienda</strong> (de por vida). Lo apartado en una tienda no cuenta en otra y se recoge donde se apartó. Vacío = sin límite. Distinto del "Límite de unidades" (tope global) y de las "Unidades por tienda".
                 </p>
               </div>
 

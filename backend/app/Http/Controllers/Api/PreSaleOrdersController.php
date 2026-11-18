@@ -181,6 +181,10 @@ class PreSaleOrdersController extends Controller
         $status = $request->validated()['status'];
         $notes  = $request->validated()['notes'] ?? null;
 
+        if ($status === 'delivered' && ($resp = $this->presaleCounterStoreError($request, $order))) {
+            return $resp;
+        }
+
         try {
             $updated = match ($status) {
                 'ready'     => $this->service->markReady(
@@ -221,6 +225,10 @@ class PreSaleOrdersController extends Controller
 
         $item   = PreSaleOrderItem::where('pre_sale_order_id', $id)->findOrFail($itemId);
         $status = $request->validate(['status' => 'required|in:pending,delivered'])['status'];
+
+        if ($status === 'delivered' && ($resp = $this->presaleCounterStoreError($request, $parentOrder))) {
+            return $resp;
+        }
 
         // Una partida entregada desde Caja pertenece a una entrega con su pago
         // (2026-11-13): se deshace revirtiendo esa entrega, que también devuelve

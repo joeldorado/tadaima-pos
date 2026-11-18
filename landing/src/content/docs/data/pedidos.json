@@ -90,8 +90,8 @@
           {
             "kind": "callout",
             "tone": "warn",
-            "title": "Límite por cliente",
-            "text": "Un catálogo puede tener límite de piezas por cliente. Ojo: solo bloquea en los catálogos donde SE CONFIGURÓ el límite (arrancan sin límite). La identidad del cliente combina id + teléfono + socio."
+            "title": "Límite por cliente, en cada tienda",
+            "text": "Un catálogo puede tener límite de piezas por cliente, y se cuenta aparte en cada tienda: con límite 2, la misma persona puede apartar 2 en Macro y 2 en Centro. Cada folio se recoge solo en la tienda donde se apartó. Ojo: solo bloquea en los catálogos donde SE CONFIGURÓ el límite (arrancan sin límite). La identidad del cliente combina id + teléfono + socio."
           },
           {
             "kind": "link",

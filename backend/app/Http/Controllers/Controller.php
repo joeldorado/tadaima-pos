@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\CashRegisterSession;
+use App\Models\PreSaleOrder;
+use App\Models\Store;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 
@@ -121,6 +123,50 @@ abstract class Controller
         }
 
         return null;
+    }
+
+    /**
+     * Una preventa se recoge solo en la tienda donde se apartó (regla de Pier,
+     * 2026-11-18). Devuelve el 422 si `$pickupStoreId` es otra tienda. Aplica
+     * también al admin, que `storeScopeError` deja pasar a cualquier tienda.
+     * Revertir, cancelar y abonar no pasan por aquí.
+     */
+    protected function presalePickupStoreError(PreSaleOrder $order, int|string|null $pickupStoreId): ?JsonResponse
+    {
+        if ($pickupStoreId === null || (int) $pickupStoreId === (int) $order->store_id) {
+            return null;
+        }
+
+        $storeName = Store::whereKey($order->store_id)->value('name') ?? 'otra tienda';
+
+        return $this->error(
+            "Este folio se apartó en {$storeName} y solo se recoge ahí.",
+            422,
+            ['code' => [PreSaleOrder::ERROR_WRONG_PICKUP_STORE]]
+        );
+    }
+
+    /**
+     * La misma regla para las entregas que no dicen en qué tienda ocurren
+     * (`PATCH` de folio y de partida, que usa la app móvil): se toma la tienda de
+     * la caja abierta del admin. Sin caja abierta no está en mostrador y pasa.
+     * Cajero y gerente ya los frenó `storeScopeError`: no gastan esta consulta.
+     */
+    protected function presaleCounterStoreError(\Illuminate\Http\Request $request, PreSaleOrder $order): ?JsonResponse
+    {
+        $user = $request->user();
+        if (! $user instanceof User || ! $user->isAdminRole()) {
+            return null;
+        }
+
+        $cashStoreId = CashRegisterSession::query()
+            ->join('cash_registers', 'cash_registers.id', '=', 'cash_register_sessions.register_id')
+            ->where('cash_register_sessions.user_id', $user->id)
+            ->where('cash_register_sessions.status', CashRegisterSession::STATUS_OPEN)
+            ->orderByDesc('cash_register_sessions.opened_at')
+            ->value('cash_registers.store_id');
+
+        return $this->presalePickupStoreError($order, $cashStoreId);
     }
 
     /**

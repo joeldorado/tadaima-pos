@@ -8,7 +8,7 @@
 > Detalle adicional: [`CLAUDE.md`](CLAUDE.md) (comandos y arquitectura del frontend) y
 > [`backend/AGENTS.md`](backend/AGENTS.md) (API, ADRs y referencia de endpoints).
 >
-> Última revisión: 2026-11-17.
+> Última revisión: 2026-11-18.
 
 ---
 
@@ -266,11 +266,25 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
 ### Preventas
 - Catálogo de proveedor → folios con anticipo → liquidación al recoger.
 - Límites: **por tienda** (`store_limits`, el cupo real: sin entrada = esa tienda no
-  vende) y **por cliente** (`limit_per_customer`; identifica a la persona por id,
-  teléfono o tarjeta de socio). `preorder_limit` ("Límite de unidades") es un tope global
+  vende) y **por cliente en cada tienda** (`limit_per_customer`; identifica a la persona por
+  id, teléfono o tarjeta de socio). `preorder_limit` ("Límite de unidades") es un tope global
   viejo que el backend ya NO aplica: no lo uses como cupo ni como límite por cliente
   (2026-10-09: Caja mostraba "Reservados 24 / 1" con 12+12 por tienda). En Caja el cupo
   sale de `lib/presaleAvailability.ts`.
+- **Cada sucursal se maneja aparte (regla definida por Pier el 2026-11-18).**
+  - **Qué dice:** con límite 2, la misma persona puede apartar 2 en Macro y otros 2 en Centro.
+    Cada folio se recoge y liquida **solo en la tienda donde se apartó**: apartó en Macro, no
+    recoge en Centro. Aplica a todos los roles, también al admin.
+  - **Por qué cambió:** antes el límite era global, de por vida en todo el catálogo. Salió al
+    revisar PREV-00097 (Macro) y PREV-00100 (Centro), Booster Bundle Delta con límite 2: dos
+    cuentas de nombre parecido se llevaron 4 piezas entre las dos tiendas. Pier decidió que
+    apartar en cada sucursal es válido y que lo que no se permite es cruzar el recoger.
+  - **Consecuencia aceptada:** una persona puede llevarse límite × número de tiendas. No lo
+    regreses a global sin hablarlo con Pier.
+  - **Dónde vive:** el conteo en `PreSaleOrderService::assertCapacity` (por `pre_sale_orders.store_id`,
+    sin migración: los folios viejos cuentan en la tienda donde se crearon) y el recoger en
+    `Controller::presalePickupStoreError` → 422 `PRESALE_ORDER_WRONG_STORE`. Cajero y gerente ya
+    estaban limitados a su tienda (403). Revertir entregas, cancelar y abonar no cambian.
 - No se entrega/liquida una partida sin **costo real** capturado.
 - Las preventas no tocan el stock de Exhibición/Bodega.
 - **Cancelar catálogo (2026-10-09):** NO existe "eliminar catálogo"; cancelar cancela TODOS sus

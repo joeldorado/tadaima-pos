@@ -329,18 +329,36 @@ export function unloadFolioFromMesa<
 }
 
 /**
- * ¿El error del cobro dice que el folio ya no se puede entregar? Null si es
+ * ¿El error del cobro dice que el folio ya no se puede entregar aquí? Null si es
  * otro error. Con esto Caja quita el folio de la mesa: no se cobró nada.
  */
-export function staleFolioError(err: unknown): { alreadyDelivered: boolean; message: string } | null {
+export function staleFolioError(err: unknown): { alreadyDelivered: boolean; wrongStore: boolean; message: string } | null {
   if (typeof err !== "object" || err === null) return null;
   const { errors, message } = err as { errors?: unknown; message?: unknown };
   if (typeof errors !== "object" || errors === null) return null;
   const codes = (errors as Record<string, unknown>)["code"];
   const code = Array.isArray(codes) ? codes[0] : undefined;
-  if (code !== MIXED_CHECKOUT_FOLIO_CODES.alreadyDelivered && code !== MIXED_CHECKOUT_FOLIO_CODES.notReady) return null;
+  if (
+    code !== MIXED_CHECKOUT_FOLIO_CODES.alreadyDelivered &&
+    code !== MIXED_CHECKOUT_FOLIO_CODES.notReady &&
+    code !== MIXED_CHECKOUT_FOLIO_CODES.wrongStore
+  ) return null;
   return {
     alreadyDelivered: code === MIXED_CHECKOUT_FOLIO_CODES.alreadyDelivered,
+    wrongStore: code === MIXED_CHECKOUT_FOLIO_CODES.wrongStore,
     message: typeof message === "string" ? message : "",
   };
+}
+
+/**
+ * Una preventa se recoge solo en la tienda donde se apartó (regla de Pier,
+ * 2026-11-18). Devuelve el aviso si el folio es de otra tienda, o null si se
+ * puede cargar. Sin datos de tienda no decide: el servidor valida al cobrar.
+ */
+export function folioWrongStoreMessage(
+  order: { store?: { id: number; name: string } | null },
+  activeStoreId: number | null | undefined,
+): string | null {
+  if (!order.store || activeStoreId == null || order.store.id === activeStoreId) return null;
+  return `Este folio se apartó en ${order.store.name} y solo se recoge ahí.`;
 }
