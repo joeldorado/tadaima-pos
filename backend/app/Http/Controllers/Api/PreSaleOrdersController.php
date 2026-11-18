@@ -9,17 +9,16 @@ use App\Http\Requests\UpdatePreSaleOrderStatusRequest;
 use App\Http\Resources\PreSaleOrderItemResource;
 use App\Http\Resources\PreSaleOrderPaymentResource;
 use App\Http\Resources\PreSaleOrderResource;
-use App\Mail\FolioCreatedMail;
 use App\Models\PreSaleOrder;
 use App\Models\PreSaleOrderItem;
 use App\Models\PreSaleOrderLog;
 use App\Models\SaleCancellation;
 use App\Services\PreSaleOrderService;
 use App\Services\SaleCancellationService;
+use App\Support\FolioCreatedNotifier;
 use App\Support\PreSaleAudit;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Mail;
 
 class PreSaleOrdersController extends Controller
 {
@@ -112,16 +111,9 @@ class PreSaleOrdersController extends Controller
         try {
             $order = $this->service->createOrder($request->validated(), $request->user()->id);
 
-            // Send confirmation email if customer has an email address.
-            // Wrapped in try/catch so a mail failure never blocks the response.
-            if ($order->customer?->email) {
-                try {
-                    Mail::to($order->customer->email)->send(new FolioCreatedMail($order));
-                } catch (\Throwable) {
-                    // Log silently — mail is best-effort
-                    \Log::warning("FolioCreatedMail failed for order {$order->code}");
-                }
-            }
+            // Correo de confirmación si el cliente tiene correo (mejor esfuerzo:
+            // una falla del correo nunca bloquea la respuesta).
+            FolioCreatedNotifier::send($order);
 
             return $this->success(new PreSaleOrderResource($order), 201);
         } catch (\DomainException $e) {

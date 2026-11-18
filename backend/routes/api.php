@@ -295,6 +295,10 @@ Route::middleware(['auth:sanctum', ThrottleApi::class . ':120,1'])->group(functi
     });
 
     // ── Sales ─────────────────────────────────────────────────────────────────
+    // Cobro mixto de Caja (2026-11-17): folio de preventa + venta + preventa
+    // nueva en UNA transacción. Va antes del apiResource para que quede claro
+    // que `mixed` no es un id de venta.
+    Route::post('sales/mixed', [SalesController::class, 'mixed']);
     Route::apiResource('sales', SalesController::class)->only(['index', 'show', 'store']);
     Route::post('sales/{sale}/return', [SalesController::class, 'return']);
     // ADR-016 — cancelación con log + reverso a cash_movements

@@ -674,6 +674,57 @@ export interface Sale {
   created_at: string
 }
 
+/**
+ * Cobro mixto de Caja (2026-11-17): `POST /sales/mixed`. Una mesa que mezcla
+ * preventa y venta se cobra en UNA operación; si algo falla no se guarda nada.
+ * Tiene que viajar `liquidation` o `new_order` (una venta sola es `POST /sales`).
+ */
+export interface MixedCheckoutInput {
+  store_id: number
+  register_session_id: number
+  /** Obligatorio si viaja `new_order`. */
+  customer_id?: number
+  /** Folio cargado que se entrega: partidas de hoy, su cobro y sus descuentos. */
+  liquidation?: {
+    pre_sale_order_id: number
+    /** Obligatorio aquí (en `PATCH …/status` es opcional): las piezas que se entregan hoy. */
+    item_ids: number[]
+    payment?: { amount: number; payment_method_id?: number }
+    item_discounts?: PreSaleItemDiscountInput[]
+    notes?: string
+  }
+  /** Venta regular de la mesa (siempre con el recálculo del servidor). */
+  sale?: {
+    calc_version: 2
+    items: SaleDirectItem[]
+    payments: SalePayment[]
+    cash_received_usd?: number
+    exchange_rate?: number
+    cash_received?: number
+    change_amount?: number
+  }
+  /** Preventa nueva de la misma mesa; el servidor la liga a la venta. */
+  new_order?: {
+    items: CreatePreSaleOrderInput['items']
+    advance_amount?: number
+    payment_method_id?: number
+    notes?: string
+  }
+}
+
+export interface MixedCheckoutResult {
+  sale: SaleDetail | null
+  /** El folio como quedó: `ready` si fue entrega parcial, `delivered` si cerró. Null sin `liquidation`. */
+  delivered_order: PreSaleOrder | null
+  new_order: PreSaleOrder | null
+}
+
+/** `errors.code[0]` de `POST /sales/mixed` cuando el folio ya no se puede entregar. */
+export const MIXED_CHECKOUT_FOLIO_CODES = {
+  alreadyDelivered: 'PRESALE_ORDER_ALREADY_DELIVERED',
+  notReady: 'PRESALE_ORDER_NOT_READY',
+} as const
+
 // ─── Layaways (Apartados) ─────────────────────────────────────────────────────
 
 export type LayawayStatus = 'active' | 'paid' | 'delivered' | 'cancelled' | 'expired'
