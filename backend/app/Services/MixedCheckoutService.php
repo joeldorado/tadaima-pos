@@ -11,7 +11,8 @@ use Illuminate\Support\Facades\DB;
  *
  * Antes Caja hacía tres llamadas en serie (venta → preventa nueva → entrega del
  * folio): si la última fallaba, la venta ya estaba guardada y el cajero no lo
- * sabía. Aquí las tres van juntas: si cualquiera falla, no queda nada.
+ * sabía. Aquí las tres van juntas: si cualquiera falla, no queda nada. Vale
+ * igual para la mesa SIN folio que lleva producto + preventa nueva.
  *
  * No tiene reglas propias: llama a los servicios de siempre, que abren su
  * transacción dentro de esta (savepoints). Quien lo llame atrapa la
@@ -40,12 +41,13 @@ class MixedCheckoutService
      * mesa, y falla sin haber tocado stock), luego la venta y al final la
      * preventa nueva, que se liga a la venta.
      *
+     * @param  PreSaleOrder|null  $order  folio que se entrega; null si la mesa no trae folio cargado
      * @param  array<string, mixed>  $data  payload validado de `MixedCheckoutRequest`
-     * @return array{sale: Sale|null, delivered_order: PreSaleOrder, new_order: PreSaleOrder|null}
+     * @return array{sale: Sale|null, delivered_order: PreSaleOrder|null, new_order: PreSaleOrder|null}
      *
      * @throws \DomainException si cualquiera de los pasos no procede (nada queda guardado)
      */
-    public function checkout(PreSaleOrder $order, array $data, int $userId): array
+    public function checkout(?PreSaleOrder $order, array $data, int $userId): array
     {
         return DB::transaction(fn (): array => $this->run($order, $data, $userId), self::DEADLOCK_ATTEMPTS);
     }
@@ -55,22 +57,24 @@ class MixedCheckoutService
      * `checkout()`; si el motor la tumba por un candado cruzado, se repite entera.
      *
      * @param  array<string, mixed>  $data
-     * @return array{sale: Sale|null, delivered_order: PreSaleOrder, new_order: PreSaleOrder|null}
+     * @return array{sale: Sale|null, delivered_order: PreSaleOrder|null, new_order: PreSaleOrder|null}
      */
-    private function run(PreSaleOrder $order, array $data, int $userId): array
+    private function run(?PreSaleOrder $order, array $data, int $userId): array
     {
-        $liquidation = $data['liquidation'];
+        $liquidation = $data['liquidation'] ?? [];
         $storeId     = (int) $data['store_id'];
         $customerId  = isset($data['customer_id']) ? (int) $data['customer_id'] : null;
 
-        $delivered = $this->preSaleOrderService->liquidate(
-            $order,
-            $userId,
-            $liquidation['notes'] ?? null,
-            $liquidation['item_ids'] ?? null,
-            $liquidation['payment'] ?? null,
-            $liquidation['item_discounts'] ?? null,
-        );
+        $delivered = $order !== null
+            ? $this->preSaleOrderService->liquidate(
+                $order,
+                $userId,
+                $liquidation['notes'] ?? null,
+                $liquidation['item_ids'] ?? null,
+                $liquidation['payment'] ?? null,
+                $liquidation['item_discounts'] ?? null,
+            )
+            : null;
 
         $sale = ! empty($data['sale'])
             ? $this->checkoutSale($data['sale'], $storeId, (int) $data['register_session_id'], $customerId, $userId)

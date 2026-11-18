@@ -6,14 +6,17 @@ use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 
 /**
- * Cobro mixto de Caja (2026-11-17): una mesa con un folio de preventa cargado
- * se cobra en UNA sola operación — `POST /sales/mixed`.
+ * Cobro mixto de Caja (2026-11-17): una mesa que mezcla preventa y venta se
+ * cobra en UNA sola operación — `POST /sales/mixed`.
  *
  * Tres bloques, validados con las mismas reglas que sus endpoints de siempre:
- *  - `liquidation` (obligatorio): el folio y las partidas que se entregan, su
- *    cobro y sus descuentos — reglas de `UpdatePreSaleOrderStatusRequest`.
- *  - `sale` (opcional): la venta regular de la mesa — reglas de `CheckoutRequest`.
- *  - `new_order` (opcional): una preventa nueva — reglas de `StorePreSaleOrderRequest`.
+ *  - `liquidation`: el folio cargado y las partidas que se entregan, su cobro
+ *    y sus descuentos — reglas de `UpdatePreSaleOrderStatusRequest`.
+ *  - `sale`: la venta regular de la mesa — reglas de `CheckoutRequest`.
+ *  - `new_order`: una preventa nueva — reglas de `StorePreSaleOrderRequest`.
+ *
+ * Los tres son opcionales, pero tiene que venir `liquidation` o `new_order`:
+ * una venta sola se cobra con `POST /sales`.
  *
  * `store_id`, `register_session_id` y `customer_id` son de toda la operación.
  */
@@ -33,14 +36,16 @@ class MixedCheckoutRequest extends FormRequest
             'customer_id'         => ['required_with:new_order', 'nullable', 'integer', 'exists:customers,id'],
 
             // ── Folio que se entrega ──────────────────────────────────────────
-            'liquidation'                   => ['required', 'array'],
-            'liquidation.pre_sale_order_id' => ['required', 'integer', 'exists:pre_sale_orders,id'],
+            // Un cobro mixto lleva un folio que se entrega, una preventa nueva
+            // o las dos cosas. Una venta sola es `POST /sales`.
+            'liquidation'                   => ['required_without:new_order', 'filled', 'array'],
+            'liquidation.pre_sale_order_id' => ['required_with:liquidation', 'integer', 'exists:pre_sale_orders,id'],
             'liquidation.notes'             => ['nullable', 'string', 'max:1000'],
             ...UpdatePreSaleOrderStatusRequest::deliveryRules('liquidation.'),
             // Aquí las partidas SIEMPRE viajan. Sin ellas `liquidate()` cae al
             // modo de la app móvil: entrega todo lo que llegó sin validar el
             // dinero ni registrar la entrega (no se podría revertir exacta).
-            'liquidation.item_ids' => ['required', 'array', 'min:1'],
+            'liquidation.item_ids' => ['required_with:liquidation', 'array', 'min:1'],
 
             // ── Venta regular (siempre con el recálculo del servidor, v2) ─────
             // `filled`: un bloque vacío (`sale: {}`) es un payload mal armado, no
@@ -70,8 +75,9 @@ class MixedCheckoutRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'liquidation.required'      => 'Falta el folio de preventa que se entrega.',
-            'liquidation.item_ids.required' => 'Faltan las piezas del folio que se entregan. Vuelve a cargar el folio en Caja.',
+            'liquidation.required_without' => 'El cobro mixto lleva un folio de preventa que se entrega o una preventa nueva.',
+            'liquidation.filled'        => 'El folio de preventa viene vacío.',
+            'liquidation.item_ids.required_with' => 'Faltan las piezas del folio que se entregan. Vuelve a cargar el folio en Caja.',
             'sale.filled'               => 'La venta viene vacía.',
             'new_order.filled'          => 'La preventa nueva viene vacía.',
             'sale.payments.required_with' => 'Se requiere al menos un método de pago.',

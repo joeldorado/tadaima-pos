@@ -1,8 +1,9 @@
 /**
- * Cobro de una mesa de Caja con un folio de preventa cargado (2026-11-17, T-006).
+ * Cobro de una mesa de Caja que mezcla preventa y venta (2026-11-17, T-006):
+ * con un folio cargado, o sin folio pero con producto + preventa nueva.
  *
- * Antes eran tres llamadas en serie (venta → preventa nueva → entrega del folio):
- * si la última fallaba, la venta ya estaba guardada. Ahora es UNA llamada a
+ * Antes eran hasta tres llamadas en serie (venta → preventa nueva → entrega del
+ * folio): si una fallaba, lo anterior ya estaba guardado. Ahora es UNA llamada a
  * `POST /sales/mixed` y el servidor guarda todo o nada. Aquí vive el armado del
  * payload y los candados de la mesa, como lógica pura: sin React y sin red.
  *
@@ -149,10 +150,10 @@ export interface MixedCheckoutBuildInput<L extends CheckoutCartLine> extends Sal
   storeId: number;
   registerSessionId: number;
   customerId?: number | null | undefined;
-  /** Folio cargado en la mesa. */
-  preSaleOrderId: number;
+  /** Folio cargado en la mesa. Sin folio: mesa de producto + preventa nueva. */
+  preSaleOrderId?: number | undefined;
   lines: readonly L[];
-  /** Lo que falta de las piezas del folio que se entregan hoy (ya con su descuento). */
+  /** Lo que falta de las piezas del folio que se entregan hoy (ya con su descuento). Sin folio no cuenta. */
   folioCharge: number;
   paymentMethodId: number;
   /** Solo con tarjeta. */
@@ -186,10 +187,13 @@ export interface MixedCheckoutBuild<L extends CheckoutCartLine> {
 }
 
 /**
- * Arma el cobro completo de una mesa con folio cargado.
+ * Arma el cobro completo de una mesa que mezcla preventa y venta: con folio
+ * cargado (con o sin productos y preventa nueva) o sin folio (producto +
+ * preventa nueva).
  *
- * @throws Error si la mesa trae una preventa nueva y no tiene cliente, o si el
- *   folio cargado no trae ninguna pieza por entregar.
+ * @throws Error si la mesa trae una preventa nueva y no tiene cliente, si el
+ *   folio cargado no trae ninguna pieza por entregar, o si no hay ni folio ni
+ *   preventa nueva (eso es una venta normal).
  */
 export function buildMixedCheckout<L extends CheckoutCartLine>(input: MixedCheckoutBuildInput<L>): MixedCheckoutBuild<L> {
   const parts = splitMesaLines(input.lines);
@@ -199,11 +203,16 @@ export function buildMixedCheckout<L extends CheckoutCartLine>(input: MixedCheck
     throw new Error("Falta cliente para la nueva preventa");
   }
 
-  const folio = round2(Math.max(0, input.folioCharge));
+  const hasFolio = input.preSaleOrderId != null;
+  if (!hasFolio && newCatalog.length === 0) {
+    throw new Error("No hay artículos de catálogo de preventa en la venta.");
+  }
+
+  const folio = hasFolio ? round2(Math.max(0, input.folioCharge)) : 0;
   const itemIds = liquidation.flatMap((l) => (typeof l.preSaleOrderItemId === "number" ? [l.preSaleOrderItemId] : []));
   // El servidor exige las piezas que se entregan: sin ellas entregaría todo lo
   // que ya llegó sin validar el dinero. Solo pasa con un carrito guardado muy viejo.
-  if (itemIds.length === 0) {
+  if (hasFolio && itemIds.length === 0) {
     throw new Error("El folio de esta mesa no trae piezas por entregar. Quítalo de la mesa y vuelve a cargarlo.");
   }
   const itemDiscounts = presaleDiscountPayload(liquidation);
@@ -237,12 +246,14 @@ export function buildMixedCheckout<L extends CheckoutCartLine>(input: MixedCheck
     store_id: input.storeId,
     register_session_id: input.registerSessionId,
     ...(input.customerId ? { customer_id: input.customerId } : {}),
-    liquidation: {
-      pre_sale_order_id: input.preSaleOrderId,
-      item_ids: itemIds,
-      ...(folio > 0 ? { payment: { amount: folio, payment_method_id: input.paymentMethodId } } : {}),
-      ...(itemDiscounts.length > 0 ? { item_discounts: itemDiscounts } : {}),
-    },
+    ...(input.preSaleOrderId != null ? {
+      liquidation: {
+        pre_sale_order_id: input.preSaleOrderId,
+        item_ids: itemIds,
+        ...(folio > 0 ? { payment: { amount: folio, payment_method_id: input.paymentMethodId } } : {}),
+        ...(itemDiscounts.length > 0 ? { item_discounts: itemDiscounts } : {}),
+      },
+    } : {}),
     ...(saleItems.length > 0 ? {
       sale: {
         calc_version: 2 as const,

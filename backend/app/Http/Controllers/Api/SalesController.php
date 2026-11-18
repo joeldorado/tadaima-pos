@@ -221,27 +221,32 @@ class SalesController extends Controller
     /**
      * POST /sales/mixed — cobro mixto de Caja en UNA operación (2026-11-17).
      *
-     * Una mesa con un folio de preventa cargado: entrega las partidas del folio
-     * y cobra lo que les falta (`liquidation`), más la venta regular (`sale`,
-     * opcional) y una preventa nueva (`new_order`, opcional). Todo en una sola
-     * transacción: si algo falla, no queda nada guardado. Antes eran tres
-     * llamadas y un folio ya entregado dejaba la venta cobrada (T-006).
+     * Una mesa que mezcla preventa y venta: entrega las partidas del folio
+     * cargado y cobra lo que les falta (`liquidation`), la venta regular
+     * (`sale`) y una preventa nueva (`new_order`). Todo en una sola
+     * transacción: si algo falla, no queda nada guardado. Antes eran hasta
+     * tres llamadas y un folio ya entregado dejaba la venta cobrada (T-006).
+     * Tiene que venir `liquidation` o `new_order`; una venta sola es `POST /sales`.
      *
-     * Body en `MixedCheckoutRequest`. Respuesta: `{ sale, delivered_order, new_order }`.
+     * Body en `MixedCheckoutRequest`. Respuesta: `{ sale, delivered_order, new_order }`
+     * (en null lo que no viajó).
      * Folio que ya no se puede entregar → 422 con `errors.code`
      * PRESALE_ORDER_ALREADY_DELIVERED o PRESALE_ORDER_NOT_READY.
      */
     public function mixed(MixedCheckoutRequest $request, MixedCheckoutService $service): JsonResponse
     {
         $data  = $request->validated();
-        $order = PreSaleOrder::findOrFail((int) $data['liquidation']['pre_sale_order_id']);
+        // Sin `liquidation` la mesa no trae folio cargado: producto + preventa nueva.
+        $order = isset($data['liquidation'])
+            ? PreSaleOrder::findOrFail((int) $data['liquidation']['pre_sale_order_id'])
+            : null;
 
         // Mismos candados que los endpoints de siempre: la tienda de la venta,
         // la del folio y la caja (cerrada o de un día anterior).
         if ($resp = $this->storeScopeError($request, $data['store_id'])) {
             return $resp;
         }
-        if ($resp = $this->storeScopeError($request, $order->store_id)) {
+        if ($order !== null && ($resp = $this->storeScopeError($request, $order->store_id))) {
             return $resp;
         }
         if ($resp = $this->cashSessionGuardError($request)) {
@@ -264,7 +269,7 @@ class SalesController extends Controller
 
         return $this->success([
             'sale'            => $result['sale'] !== null ? new SaleResource($result['sale']) : null,
-            'delivered_order' => new PreSaleOrderResource($result['delivered_order']),
+            'delivered_order' => $result['delivered_order'] !== null ? new PreSaleOrderResource($result['delivered_order']) : null,
             'new_order'       => $result['new_order'] !== null ? new PreSaleOrderResource($result['new_order']) : null,
         ], 'Cobro registrado correctamente.', 201);
     }

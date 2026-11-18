@@ -44,7 +44,7 @@ export async function createSale(input: CreateSaleInput): Promise<Sale> {
 /**
  * Cobro mixto de Caja en UNA operación (2026-11-17): entrega las partidas de
  * un folio de preventa y cobra lo que les falta, más la venta regular y la
- * preventa nueva de la misma mesa.
+ * preventa nueva de la misma mesa. Sin folio: venta regular + preventa nueva.
  * POST /sales/mixed
  *
  * Todo va en una transacción: si algo falla, no queda venta, pago ni entrega.

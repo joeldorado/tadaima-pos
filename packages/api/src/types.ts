@@ -675,16 +675,17 @@ export interface Sale {
 }
 
 /**
- * Cobro mixto de Caja (2026-11-17): `POST /sales/mixed`. Una mesa con un folio
- * de preventa cargado se cobra en UNA operación; si algo falla no se guarda nada.
+ * Cobro mixto de Caja (2026-11-17): `POST /sales/mixed`. Una mesa que mezcla
+ * preventa y venta se cobra en UNA operación; si algo falla no se guarda nada.
+ * Tiene que viajar `liquidation` o `new_order` (una venta sola es `POST /sales`).
  */
 export interface MixedCheckoutInput {
   store_id: number
   register_session_id: number
   /** Obligatorio si viaja `new_order`. */
   customer_id?: number
-  /** Folio que se entrega: partidas de hoy, su cobro y sus descuentos. */
-  liquidation: {
+  /** Folio cargado que se entrega: partidas de hoy, su cobro y sus descuentos. */
+  liquidation?: {
     pre_sale_order_id: number
     /** Obligatorio aquí (en `PATCH …/status` es opcional): las piezas que se entregan hoy. */
     item_ids: number[]
@@ -713,8 +714,8 @@ export interface MixedCheckoutInput {
 
 export interface MixedCheckoutResult {
   sale: SaleDetail | null
-  /** El folio como quedó: `ready` si fue entrega parcial, `delivered` si cerró. */
-  delivered_order: PreSaleOrder
+  /** El folio como quedó: `ready` si fue entrega parcial, `delivered` si cerró. Null sin `liquidation`. */
+  delivered_order: PreSaleOrder | null
   new_order: PreSaleOrder | null
 }
 

@@ -174,7 +174,7 @@ describe("buildMixedCheckout — el cobro de una mesa con folio en UNA llamada",
     const otra = { ...figura, lineId: "L-folio-2", preSaleOrderItemId: 32 };
     const entregada = { ...figura, lineId: "L-folio-3", preSaleOrderItemId: 33, preSaleItemDelivered: true };
     const { payload } = buildMixedCheckout({ ...base, lines: [figura, otra, entregada] });
-    expect(payload.liquidation.item_ids).toEqual([31, 32]);
+    expect(payload.liquidation?.item_ids).toEqual([31, 32]);
   });
 
   it("folio sin piezas por entregar (carrito viejo): no arma el cobro", () => {
@@ -187,10 +187,10 @@ describe("buildMixedCheckout — el cobro de una mesa con folio en UNA llamada",
   it("descuento de la pieza dañada del folio", () => {
     const danada = { ...figura, discount: { kind: "fixed" as const, basis: "line" as const, value: 100, reason: "danado" as const } };
     const { payload } = buildMixedCheckout({ ...base, folioCharge: 300, lines: [danada] });
-    expect(payload.liquidation.item_discounts).toEqual([
+    expect(payload.liquidation?.item_discounts).toEqual([
       { item_id: 31, kind: "fixed", basis: "line", value: 100, reason: "danado" },
     ]);
-    expect(payload.liquidation.payment).toEqual({ amount: 300, payment_method_id: 1 });
+    expect(payload.liquidation?.payment).toEqual({ amount: 300, payment_method_id: 1 });
   });
 
   it("preventa nueva: solo su anticipo, con el método de pago de la mesa", () => {
@@ -276,6 +276,59 @@ describe("buildMixedCheckout — el cobro de una mesa con folio en UNA llamada",
     });
     expect(built.amounts.regularNet).toBe(0.3);
     expect(built.amounts.total).toBe(0.6);
+  });
+});
+
+describe("buildMixedCheckout — mesa SIN folio: producto + preventa nueva", () => {
+  // Sin `preSaleOrderId`: la mesa no trae folio cargado.
+  const { preSaleOrderId: _folio, ...sinFolio } = { ...base, folioCharge: 0 };
+
+  it("venta y preventa nueva en el mismo payload, sin bloque de folio", () => {
+    const built = buildMixedCheckout({ ...sinFolio, lines: [funda, preventaNueva], cash: { received: 800, receivedUsd: 0, exchangeRate: 18 } });
+
+    expect(built.payload).toEqual({
+      store_id: 1,
+      register_session_id: 8,
+      customer_id: 44,
+      sale: {
+        calc_version: 2,
+        items: [{ product_id: 12, quantity: 1, price: 250, price_level: "a" }],
+        payments: [{ payment_method_id: 1, amount: 250 }],
+        cash_received: 800,
+        change_amount: 50,
+      },
+      new_order: {
+        items: [{ catalog_id: 5, quantity: 2, price_level: 2 }],
+        advance_amount: 500,
+        payment_method_id: 1,
+      },
+    });
+    expect(built.amounts).toEqual({ folio: 0, regularNet: 250, newDeposit: 500, total: 750 });
+  });
+
+  it("el cobro del folio se ignora si la mesa no trae folio", () => {
+    const built = buildMixedCheckout({ ...sinFolio, folioCharge: 999, lines: [funda, preventaNueva] });
+    expect(built.payload).not.toHaveProperty("liquidation");
+    expect(built.amounts.folio).toBe(0);
+    expect(built.amounts.total).toBe(750);
+  });
+
+  it("solo la preventa nueva: sin bloque de venta (Caja la manda por su endpoint de siempre)", () => {
+    const built = buildMixedCheckout({ ...sinFolio, lines: [preventaNueva] });
+    expect(built.payload.sale).toBeUndefined();
+    expect(built.payload.new_order).toEqual({
+      items: [{ catalog_id: 5, quantity: 2, price_level: 2 }], advance_amount: 500, payment_method_id: 1,
+    });
+  });
+
+  it("sin folio y sin preventa nueva no es un cobro mixto", () => {
+    expect(() => buildMixedCheckout({ ...sinFolio, lines: [funda] }))
+      .toThrow("No hay artículos de catálogo de preventa en la venta.");
+  });
+
+  it("sin cliente no arma la preventa nueva", () => {
+    expect(() => buildMixedCheckout({ ...sinFolio, customerId: null, lines: [funda, preventaNueva] }))
+      .toThrow("Falta cliente para la nueva preventa");
   });
 });
 

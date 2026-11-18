@@ -414,6 +414,113 @@ class MixedCheckoutTest extends TestCase
         $this->assertSame(0, Sale::count());
     }
 
+    // ── Mesa SIN folio: producto + preventa nueva ─────────────────────────────
+    // Mismo hueco, otra rama de Caja: guardaba la venta y luego el folio nuevo.
+    // Si el folio no cabía (cupo lleno), la venta ya estaba cobrada.
+
+    /**
+     * Bloque de preventa nueva de un catálogo.
+     *
+     * @return array<string, mixed>
+     */
+    private function newOrderBlock(PreSaleCatalog $catalog, int $qty, float $advance = 0): array
+    {
+        return [
+            'items' => [['catalog_id' => $catalog->id, 'quantity' => $qty, 'price_level' => 1]],
+            ...($advance > 0 ? ['advance_amount' => $advance, 'payment_method_id' => $this->cash->id] : []),
+        ];
+    }
+
+    public function test_sin_folio_venta_y_preventa_nueva_en_una_sola_llamada(): void
+    {
+        $product = $this->makeProduct(250);
+        $nuevo   = $this->makeCatalog('Figura nueva', 900, false);
+
+        $res = $this->mixed([
+            'sale'      => $this->saleBlock($product, 250) + ['cash_received' => 500, 'change_amount' => 50],
+            'new_order' => $this->newOrderBlock($nuevo, 1, 200),
+        ]);
+
+        $res->assertStatus(201)->assertJsonPath('data.delivered_order', null);
+        $sale  = Sale::sole();
+        $order = PreSaleOrder::sole();
+
+        $this->assertSame($sale->id, $res->json('data.sale.id'));
+        $this->assertSame($order->code, $res->json('data.new_order.code'));
+        $this->assertSame($sale->id, (int) $order->linked_sale_id);
+        $this->assertEquals(250, (float) $sale->total);
+        $this->assertEquals(200, $res->json('data.new_order.paid_amount'));
+        $this->assertEquals(700, $res->json('data.new_order.balance'));
+        $this->assertSame(0, PreSaleDelivery::count());
+        $this->assertEquals(9, $this->stockOf($product));
+    }
+
+    public function test_sin_folio_preventa_sin_cupo_no_deja_la_venta_cobrada(): void
+    {
+        $product = $this->makeProduct(250);
+        $nuevo   = $this->makeCatalog('Figura nueva', 900, false, 1);
+
+        $res = $this->mixed([
+            'sale'      => $this->saleBlock($product, 250),
+            'new_order' => $this->newOrderBlock($nuevo, 2, 200),
+        ]);
+
+        $res->assertStatus(422);
+        $this->assertStringContainsString('solo tiene 1 unidades disponibles', (string) $res->json('error'));
+        $this->assertSame(0, Sale::count(), 'la venta no debe quedar cobrada');
+        $this->assertSame(0, PreSaleOrder::count());
+        $this->assertSame(0, PreSaleOrderPayment::count());
+        $this->assertEquals(10, $this->stockOf($product));
+        $this->assertSame(0, InventoryMovement::where('product_id', $product->id)->count());
+    }
+
+    public function test_sin_folio_venta_rechazada_no_crea_la_preventa(): void
+    {
+        $product = $this->makeProduct(250);
+        $nuevo   = $this->makeCatalog('Figura nueva', 900, false);
+
+        $res = $this->mixed([
+            'sale'      => $this->saleBlock($product, 199),
+            'new_order' => $this->newOrderBlock($nuevo, 1, 200),
+        ]);
+
+        $res->assertStatus(422);
+        $this->assertSame(0, Sale::count());
+        $this->assertSame(0, PreSaleOrder::count());
+    }
+
+    public function test_sin_folio_solo_la_preventa_nueva_tambien_se_acepta(): void
+    {
+        $nuevo = $this->makeCatalog('Figura nueva', 900, false);
+
+        $res = $this->mixed(['new_order' => $this->newOrderBlock($nuevo, 1, 200)]);
+
+        $res->assertStatus(201)
+            ->assertJsonPath('data.sale', null)
+            ->assertJsonPath('data.delivered_order', null);
+        $this->assertNull(PreSaleOrder::sole()->linked_sale_id);
+    }
+
+    public function test_sin_folio_los_candados_de_tienda_y_caja_siguen(): void
+    {
+        $product    = $this->makeProduct(250);
+        $nuevo      = $this->makeCatalog('Figura nueva', 900, false);
+        $otherStore = Store::create(['company_id' => $this->company->id, 'name' => 'Otay']);
+        $intruder   = $this->makeUser('gerente-otay@test.com', $otherStore);
+        $body = [
+            'sale'      => $this->saleBlock($product, 250),
+            'new_order' => $this->newOrderBlock($nuevo, 1),
+        ];
+
+        $this->mixed($body, $intruder)->assertStatus(403);
+
+        $this->session->update(['opened_at' => now()->subHours(30)]);
+        $this->mixed($body)->assertStatus(422)->assertJsonPath('errors.code.0', 'CASH_SESSION_STALE');
+
+        $this->assertSame(0, Sale::count());
+        $this->assertSame(0, PreSaleOrder::count());
+    }
+
     // ── Si algo falla, no se guarda nada ──────────────────────────────────────
 
     public function test_folio_ya_entregado_no_crea_la_venta(): void
@@ -625,14 +732,32 @@ class MixedCheckoutTest extends TestCase
 
     // ── Validación ────────────────────────────────────────────────────────────
 
-    public function test_la_liquidacion_es_obligatoria(): void
+    public function test_una_venta_sola_no_es_un_cobro_mixto(): void
     {
         $product = $this->makeProduct(250);
 
+        // Sin folio y sin preventa nueva: eso es `POST /sales`.
         $res = $this->mixed(['sale' => $this->saleBlock($product, 250)]);
 
         $res->assertStatus(422)->assertJsonValidationErrors(['liquidation']);
         $this->assertSame(0, Sale::count());
+        $this->assertEquals(10, $this->stockOf($product));
+    }
+
+    public function test_bloque_de_folio_vacio_es_422(): void
+    {
+        $product = $this->makeProduct(250);
+        $nuevo   = $this->makeCatalog('Figura nueva', 900, false);
+
+        $res = $this->mixed([
+            'liquidation' => [],
+            'sale'        => $this->saleBlock($product, 250),
+            'new_order'   => ['items' => [['catalog_id' => $nuevo->id, 'quantity' => 1, 'price_level' => 1]]],
+        ]);
+
+        $res->assertStatus(422)->assertJsonValidationErrors(['liquidation']);
+        $this->assertSame(0, Sale::count());
+        $this->assertSame(0, PreSaleOrder::count());
     }
 
     public function test_las_piezas_del_folio_siempre_viajan(): void

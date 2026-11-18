@@ -190,6 +190,21 @@ interface CartItem {
   syncError?: boolean; // true si addDraftItem/updateDraftItem falló — bloquea checkout
 }
 
+/**
+ * Corre lo que solo adorna la pantalla DESPUÉS de que el servidor ya guardó un
+ * cobro (cachés optimistas). Si algo de eso falla, el cobro sigue su camino:
+ * limpiar el carrito e imprimir el ticket. Sin esto, un error ahí dejaba el
+ * carrito lleno con el cobro ya hecho y el cajero podía cobrarlo otra vez. La
+ * invalidación de queries de después trae el dato real del servidor.
+ */
+function afterChargeSaved(run: () => void): void {
+  try {
+    run();
+  } catch {
+    // Solo era el caché: el refetch lo corrige.
+  }
+}
+
 /** Historial sin data todavía: referencia estable (ver historialEntries). */
 const EMPTY_HISTORIAL: HistorialEntry[] = [];
 
@@ -3998,29 +4013,31 @@ export function SellPage() {
         const deliveredOrder = result.delivered_order;
         const newOrderCode = result.new_order?.code;
 
+        // Entrega parcial: el folio sigue en «listo» con lo que falta por entregar.
+        const pendingAfter = (deliveredOrder?.items ?? []).filter(it => it.status !== "delivered").length;
+        const isPartialDelivery = deliveredOrder != null && deliveredOrder.status !== "delivered";
         // Escritura optimista con lo que devolvió el servidor: la venta, el
         // folio nuevo y el folio entregado se ven al instante en Ventas/Folios
         // y el stock baja en el catálogo, sin esperar el refetch.
-        if (result.sale) {
-          prependSaleToSalesCaches(queryClient, {
-            ...result.sale,
-            // El endpoint de cobro no eager-loadea al vendedor.
-            user: user ? { id: Number(user.id), name: user.name ?? "" } : null,
+        afterChargeSaved(() => {
+          if (result.sale) {
+            prependSaleToSalesCaches(queryClient, {
+              ...result.sale,
+              // El endpoint de cobro no eager-loadea al vendedor.
+              user: user ? { id: Number(user.id), name: user.name ?? "" } : null,
+            });
+            decrementProductStockInCaches(queryClient, built.saleItems);
+          }
+          if (result.new_order) {
+            prependPreSaleOrderToCaches(queryClient, result.new_order, activeStore.id);
+          }
+          patchPreSaleOrderInCaches(queryClient, loadedOrderId, {
+            status: deliveredOrder?.status ?? "delivered",
+            ...(deliveredOrder?.items ? { items: deliveredOrder.items } : {}),
+            ...(deliveredOrder?.payments ? { payments: deliveredOrder.payments } : {}),
+            ...(deliveredOrder?.paid_amount != null ? { paid_amount: deliveredOrder.paid_amount } : {}),
+            balance: deliveredOrder?.balance ?? 0,
           });
-          decrementProductStockInCaches(queryClient, built.saleItems);
-        }
-        if (result.new_order) {
-          prependPreSaleOrderToCaches(queryClient, result.new_order, activeStore.id);
-        }
-        // Entrega parcial: el folio sigue en «listo» con lo que falta por entregar.
-        const pendingAfter = (deliveredOrder.items ?? []).filter(it => it.status !== "delivered").length;
-        const isPartialDelivery = deliveredOrder.status !== "delivered";
-        patchPreSaleOrderInCaches(queryClient, loadedOrderId, {
-          status: deliveredOrder.status ?? "delivered",
-          ...(deliveredOrder.items ? { items: deliveredOrder.items } : {}),
-          ...(deliveredOrder.payments ? { payments: deliveredOrder.payments } : {}),
-          ...(deliveredOrder.paid_amount != null ? { paid_amount: deliveredOrder.paid_amount } : {}),
-          balance: deliveredOrder.balance ?? 0,
         });
 
         // Snapshots para ticket antes de limpiar
@@ -4199,93 +4216,76 @@ export function SellPage() {
         "Efectivo": 1, "Dólares": 1, "Tarjeta": 2, "Transferencia": 4,
       };
       const payMethodId = PM_IDS[activeMesa.paymentMethod] ?? 1;
-      const priceLevelMap: Record<PriceLevel, 1 | 2 | 3 | 4 | 5> = { a: 1, b: 2, c: 3, d: 4, e: 5 };
-
       try {
         setIsProcessing(true);
+        if (!cashSession) throw new Error("No hay caja abierta");
 
-        // Split items: catalog items → createPreSaleOrder; regular items → createSale draft
         const catalogItems = activeMesa.items.filter(i => i.sellingCatalogId != null);
-        const regularItems = activeMesa.items.filter(i => i.sellingCatalogId == null && !i.isFromPreSale);
-
         if (catalogItems.length === 0) {
           toast.error("No hay artículos de catálogo de preventa en la venta.");
-          isCheckoutLockedRef.current = false;
           return;
         }
 
-        // Deposit for catalog items only
-        const catalogDeposit = catalogItems.reduce((s, i) => s + (i.depositAmount ?? 0), 0);
+        // Mismo armado que la mesa con folio (lib/mixedCheckout.ts): la venta
+        // regular va con el neto de sus líneas y el efectivo de TODO el ticket;
+        // la preventa nueva, con su anticipo.
+        const ticketReceivedUsd = usdAppliedRef.current ? (parseFloat(cashReceivedUsd) || 0) : 0;
+        const built = buildMixedCheckout({
+          storeId: activeStore.id,
+          registerSessionId: cashSession.id,
+          customerId: Number(activeMesa.customerId),
+          lines: activeMesa.items,
+          folioCharge: 0,
+          paymentMethodId: payMethodId,
+          ...(activeMesa.paymentMethod === "Tarjeta" && activeMesa.selectedTerminalId
+            ? { terminalId: activeMesa.selectedTerminalId } : {}),
+          ...saleLineCtx,
+          // ticketReceivedUsd ya viene gateado por usdApplied (simulación no viaja).
+          cash: { received: parseFloat(cashReceived) || 0, receivedUsd: ticketReceivedUsd, exchangeRate: tc },
+        });
+        const regularItems   = built.parts.regular;
+        const catalogDeposit = built.amounts.newDeposit;
 
-        // Create regular sale first so we can link it to the pre-sale order
+        let order: PreSaleOrder | null;
         let regularSaleId: number | undefined;
-        if (regularItems.length > 0) {
-          const regularSubtotal = regularItems.reduce((s, i) => s + priceOf(i) * i.quantity, 0);
-          // Viaja la captura de cada línea (descuento, aumento, regalo…): el
-          // monto lo recomputa el server.
-          const directItems = buildSaleDirectItems(regularItems, saleLineCtx);
-          // Neto regular (con descuentos por línea) — debe cuadrar con el
-          // recompute server-side del backend (SaleCalculator).
-          const regularNet = regularItems.reduce(
-            (sum, i) => sum + (lineCalcById[i.lineId]?.net ?? priceOf(i) * i.quantity), 0);
-
-          // Regalos (2026-10-31): una parte regular solo de regalos vale $0 pero
-          // igual se registra (sale el stock).
-          if (directItems.length > 0 && (regularSubtotal > 0 || regularItems.some(i => i.isGift))) {
-            // Efectivo del ticket (incluye USD convertido a TC) + cambio, para el
-            // detalle/ticket. Se adjunta a la venta regular (única fila Sale del
-            // ticket; el anticipo de preventa vive en pre_sale_orders).
-            const ticketReceivedUsd = usdAppliedRef.current ? (parseFloat(cashReceivedUsd) || 0) : 0;
-            const ticketReceived    = (parseFloat(cashReceived) || 0) + ticketReceivedUsd * tc;
-            const ticketTotalForCash = catalogDeposit + regularNet;
-            const ticketChange = ticketReceived > ticketTotalForCash ? ticketReceived - ticketTotalForCash : 0;
-            const saleResult = await createSale({
-              calc_version: 2,
-              items: directItems,
-              store_id: activeStore?.id ?? 0,
-              register_session_id: cashSession?.id,
-              ...(activeMesa.customerId ? { customer_id: Number(activeMesa.customerId) } : {}),
-              payments: [{
-                payment_method_id: payMethodId,
-                amount: regularNet,
-                ...(activeMesa.paymentMethod === "Tarjeta" && activeMesa.selectedTerminalId
-                  ? { terminal_id: activeMesa.selectedTerminalId } : {}),
-              }],
-              // Dólares físicos recibidos + TC usado (para Historial/Corte/Reporte).
-              // ticketReceivedUsd ya viene gateado por usdApplied (simulación no viaja).
-              ...(ticketReceivedUsd > 0 ? { cash_received_usd: ticketReceivedUsd, exchange_rate: tc } : {}),
-              ...(ticketReceived > 0 ? { cash_received: ticketReceived, change_amount: ticketChange } : {}),
-            });
-            regularSaleId = saleResult?.id;
-            // Escritura optimista — venta visible en Ventas y stock descontado
-            // en el catálogo al instante (el refetch de la invalidación
-            // reconcilia con el servidor en background).
+        if (built.payload.sale) {
+          // Producto + preventa nueva: UNA llamada (2026-11-17). Antes se
+          // guardaba la venta y luego el folio; si el folio no cabía (cupo
+          // lleno, límite por cliente), la venta ya estaba cobrada.
+          const result = await createMixedCheckout(built.payload);
+          order = result.new_order;
+          regularSaleId = result.sale?.id;
+          // Escritura optimista con la respuesta: venta visible en Ventas y
+          // stock descontado en el catálogo al instante (el refetch de la
+          // invalidación reconcilia con el servidor en background).
+          afterChargeSaved(() => {
+            if (!result.sale) return;
             prependSaleToSalesCaches(queryClient, {
-              ...(saleResult as unknown as SaleDetail),
+              ...result.sale,
               user: user ? { id: Number(user.id), name: user.name ?? "" } : null,
             });
-            decrementProductStockInCaches(queryClient, directItems);
-          }
+            decrementProductStockInCaches(queryClient, built.saleItems);
+          });
+        } else {
+          // Solo la preventa: una llamada de por sí, por el endpoint de siempre.
+          order = await createPreSaleOrder({
+            store_id: activeStore.id,
+            customer_id: Number(activeMesa.customerId),
+            items: built.payload.new_order?.items ?? [],
+            ...(catalogDeposit > 0 ? { advance_amount: catalogDeposit, payment_method_id: payMethodId } : {}),
+          });
         }
 
-        const order = await createPreSaleOrder({
-          store_id: activeStore.id,
-          customer_id: Number(activeMesa.customerId),
-          items: catalogItems.map(item => ({
-            catalog_id: item.sellingCatalogId!,
-            quantity: item.quantity,
-            price_level: priceLevelMap[item.priceLevel],
-          })),
-          ...(catalogDeposit > 0 ? { advance_amount: catalogDeposit, payment_method_id: payMethodId } : {}),
-          ...(regularSaleId != null ? { linked_sale_id: regularSaleId } : {}),
+        // Folio nuevo (anticipo) visible al instante en Folios/Ventas.
+        const createdOrder = order;
+        afterChargeSaved(() => {
+          if (createdOrder) prependPreSaleOrderToCaches(queryClient, createdOrder, activeStore.id);
         });
 
-        // Folio nuevo (anticipo) visible al instante en Folios/Ventas.
-        prependPreSaleOrderToCaches(queryClient, order, activeStore.id);
-
         // Keep in-memory pair for historial grouping in the same session
-        if (regularSaleId != null) {
-          setMixedPairs(prev => [...prev, { preSaleOrderId: order.id, saleId: regularSaleId! }]);
+        if (order && regularSaleId != null) {
+          const pair = { preSaleOrderId: order.id, saleId: regularSaleId };
+          setMixedPairs(prev => [...prev, pair]);
         }
 
         const mesaId = activeMesa.id;
@@ -4295,23 +4295,22 @@ export function SellPage() {
         const payMethodSnap    = activeMesa.paymentMethod;
         // NETO de las líneas regulares (con descuentos v2) — el ticket debe
         // cuadrar con lo cobrado, no con el bruto.
-        const regularSubtotalFinal = regularItems.reduce(
-          (sum, i) => sum + (lineCalcById[i.lineId]?.net ?? priceOf(i) * i.quantity), 0);
+        const regularSubtotalFinal = built.amounts.regularNet;
 
         setCashReceived("");
         clearCart();
         draftStore.clearDraft(mesaId);
         draftStore.clearDraftItems(mesaId);
 
-        const extraMsg = regularItems.length > 0 ? ` · Venta regular también registrada` : "";
+        const extraMsg = regularSaleId != null ? ` · Venta regular también registrada` : "";
         toast.success(
-          `Preventa registrada · Folio ${order.code}${catalogDeposit > 0 ? ` · Anticipo ${fmt(catalogDeposit)}` : ""}${extraMsg}`,
+          `Preventa registrada · Folio ${order?.code ?? ""}${catalogDeposit > 0 ? ` · Anticipo ${fmt(catalogDeposit)}` : ""}${extraMsg}`,
           { style: { background: '#1a0800', color: '#fff', border: '1px solid rgba(245,158,11,0.4)', borderRadius: '16px' } }
         );
 
         void queryClient.invalidateQueries({ queryKey: queryKeys.historial.all });
-        const mixedReceivedUsd = usdAppliedRef.current ? (parseFloat(cashReceivedUsd) || 0) : 0;
-        const mixedReceived    = (parseFloat(cashReceived) || 0) + mixedReceivedUsd * tc;
+        const mixedReceivedUsd = built.cash.receivedUsd;
+        const mixedReceived    = built.cash.received;
         const mixedTotal = catalogDeposit + regularSubtotalFinal;
         const mixedTicket: CompletedSaleData = {
           total: mixedTotal,
@@ -4334,7 +4333,7 @@ export function SellPage() {
             }
             return mixedReceived > mixedTotal ? mixedReceived - mixedTotal : undefined;
           })(),
-          preSaleCode: order.code,
+          preSaleCode: order?.code ?? "",
           preSaleItems: catalogItems.map(i => ({
             name: i.product.name,
             quantity: i.quantity,
