@@ -4,6 +4,20 @@
 
 ---
 
+### Sesión 2026-11-18 — Preventas: límite por cliente por sucursal y recoger solo donde se apartó (PR #108, T-008) — rev tadaima-00152-nos
+
+**Origen:** regla nueva definida por Pier el 2026-11-18, tras revisar PREV-00097 (Macro) y PREV-00100 (Centro): mismo producto, límite 2 por cliente, dos cuentas de nombre parecido y 4 piezas entre las dos tiendas. Pier decidió que cada sucursal se maneja aparte y que lo que no se permite es apartar en una y recoger en otra.
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00150-luf`. **Sin migración ni cambios de datos.** Al regresar, el límite vuelve a ser global: quien ya apartó en dos tiendas no pierde sus folios, pero no podrá apartar más.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00150-luf=100 --project tadaimapos --region us-east1`
+
+- **Límite:** `limit_per_customer` se cuenta por persona (id, teléfono o tarjeta de socio) y por tienda en `PreSaleOrderService::assertCapacity`. Vale para `POST /pre-sale-orders` y `POST /sales/mixed`. Los folios existentes cuentan en la tienda donde se crearon.
+- **Recoger:** `POST /sales/mixed` rechaza un folio de otra tienda con 422 `PRESALE_ORDER_WRONG_STORE`. En `PATCH` de folio y de partida, el admin se compara contra la tienda de su caja abierta. Cajero y gerente ya recibían 403. Revertir, cancelar y abonar no cambian.
+- **Caja:** `customer-usage` recibe `store_id`, los avisos dicen «en esta tienda» y un folio de otra tienda no se carga.
+- **Validación:** backend 1,047 ✓ en SQLite y Postgres 17 local; vitest 967 ✓; type-check 451 contra 451 de `main`, sin errores nuevos; ESLint igual que `main`. En local con API y Caja: 2 + 2 entre tiendas, la tercera se bloquea; admin no carga ni cobra un folio de otra tienda.
+- **En prod 2026-11-18 ~14:43 (Tijuana):** candidato y dominio `/`, `/login`, `/caja`, `/tadaimaus/` 200, API sin token 401, bundle con la regla nueva y sin errores en los registros de la revisión. No probado en prod con sesión: lo prueba la tienda.
+- **Pendiente:** un admin SIN caja abierta que entrega por `PATCH` no se bloquea, porque ese endpoint no indica la tienda (lo usa la app móvil).
+
 ### Sesión 2026-11-17 (c) — Caja: el cobro con preventa es una sola operación (PR #107, T-006) — rev tadaima-00150-luf
 
 **Origen:** al validar PREV-00100 en prod salió que el 17-nov a las 14:38 se guardaron dos ventas (#5523 y #5524) al reintentar el cobro de una mesa cuyo folio ya estaba entregado. Caja guardaba primero la venta y después entregaba el folio, en llamadas separadas; el folio estaba cargado en dos mesas del mismo navegador. La tienda canceló las ventas a mano.
