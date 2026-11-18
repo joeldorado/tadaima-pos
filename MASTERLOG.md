@@ -4,6 +4,20 @@
 
 ---
 
+### Sesión 2026-11-17 — Caja: la línea del folio de preventa enseña el precio pactado (PR #105, T-005) — rev tadaima-00146-zor
+
+**Origen:** Pier reenvió de la tienda que una preventa «Booster Bundle Delta» ×2 con $400 de anticipo pedía $798 y «eran $700», y que «no dejaba cobrar».
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00144-doj`. **Sin migración**, solo frontend.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00144-doj=100 --project tadaimapos --region us-east1`
+
+- **Diagnóstico (confirmado en prod, PREV-00100):** Caja sí restó el anticipo. El folio se apartó el 2-nov a precio NORMAL ($599 × 2 = $1,198 − $400 = $798); el cliente no está ligado a socio y el catálogo no cambió de precio (NORMAL $599 / SOCIO $550). Los $700 salen del precio socio. La línea decía «2 × $399» (lo que falta por pieza) y parecía el precio. «No dejaba cobrar» = botón en «Faltan $98» con $700 recibidos. La tienda lo liquidó el 17-nov 14:38 en $700 con descuento de $98 («ajuste»).
+- **Línea del folio cargado:** «2 × $599 = $1,198 · − $400 anticipo» y el número grande se llama «Por cobrar» (`presaleLineBreakdown`, `lib/presaleDiscount.ts`).
+- **Folio cargado + preventa nueva en la misma mesa:** el total sumaba la preventa nueva a precio completo aunque solo se cobra su anticipo; la pantalla pedía de más y el botón se bloqueaba. Ahora `computeLoadedFolioChargeAmount` (`lib/promo.ts`), igual a lo que cobra `handleCheckout`. El resumen separa «+ Items» de «+ Anticipo preventa nueva».
+- **Validación:** vitest 919 ✓ (9 nuevas, vistas fallar antes); type-check 458 contra 455 de `main` (3 `TS18048 activeMesa` más, misma clase que ya arrastra `SellPage.tsx`). En local (SQLite) en navegador: folio de 2 × $599 con $400 → total $798; con descuento de $98 → $700; con una preventa nueva de anticipo $200 → $998 (antes $1,197). No se cobró de punta a punta en local.
+- **En prod 2026-11-17 ~16:00 (Tijuana):** candidato y dominio `/`, `/login`, `/caja`, `/tadaimaus/` 200, API sin token 401; bundle con «Anticipo preventa nueva». No probado en prod con sesión: lo prueba la tienda.
+- **Pendiente:** que la tienda confirme si el cliente es socio y si apartaron $700 del cajón (el cobro sí está en el corte). El carrito guardado no se revalida contra el servidor antes de cobrar.
+
 ### Sesión 2026-11-16 (noche) — Excel de Reportes: negativos en rojo (Ruben, develop 1f7bf06) — rev tadaima-00144-doj
 
 **Origen:** Ruben subió a `develop` un commit de formato del Excel de Reportes → Ventas.
