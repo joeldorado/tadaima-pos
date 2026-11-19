@@ -4,6 +4,35 @@
 
 ---
 
+### Sesión 2026-11-18 (c) — Caja: precio Socio a mano para socio inactivo (PR #109, T-009) — rev tadaima-00154-hit
+
+**Origen:** la tienda reportó que con la membresía vencida Caja ya no dejaba elegir precio Socio a mano. El bloqueo existía desde el 2026-06-25. Piden que no se aplique solo, pero que el cajero pueda darlo (amigos, clientes de confianza).
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00152-nos`. **Solo frontend, sin migración.**
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00152-nos=100 --project tadaimapos --region us-east1`
+
+- **Caja:** el socio inactivo entra a precio Normal con la etiqueta «Socio inactivo»; la opción Socio del selector ya no está bloqueada y dice «· manual»; al usarla la etiqueta pasa a «Socio inactivo · precio socio manual».
+- **Precio manual que se conserva:** cambiar entre Efectivo, Transferencia, Dólares o Mixto ya no regresa la línea a Normal cuando el cliente no es socio activo (antes se perdía sin avisar, también con clientes sin membresía). Con Tarjeta sigue forzando Normal.
+- **No cambia:** socio activo automático, tarjeta y preventa sin precio Socio, promo gana sobre Socio. El servidor no distingue: solo valida que el precio sea un nivel del catálogo.
+- **Código:** lógica pura en `landing/src/lib/socioPrice.ts` con pruebas; `repriceForSocio` se movió ahí.
+- **Validación:** vitest 977 ✓ (10 nuevas); type-check y ESLint sin errores nuevos contra `main`; build de producción. En Caja local: de $1,100 a $980 a mano, se conserva con Transferencia, la venta se guarda a $980 y el socio activo sigue automático. Tarjeta con socio inactivo no se probó en navegador.
+- **En prod 2026-11-18 ~16:45 (Tijuana):** candidato y dominio `/`, `/login`, `/caja`, `/tadaimaus/` 200, API sin token 401, bundle con el cambio y sin errores en los registros de la revisión. No probado en prod con sesión: lo prueba la tienda.
+- **Pendiente:** no queda registro de quién dio precio Socio a un inactivo. La app móvil es otro repositorio.
+
+### Sesión 2026-11-18 (b) — Limpieza de revisiones, imágenes y archivos de despliegue (sin cambio de código)
+
+**Origen:** Joel pidió liberar espacio y dejar al menos 20 revisiones para rollback. No hubo despliegue: la revisión viva sigue siendo `tadaima-00152-nos`.
+
+> **EL ROLLBACK AHORA LLEGA HASTA `tadaima-00116-qut` (2026-11-02).** Las revisiones `tadaima-00114-jar` y anteriores ya no existen, ni sus imágenes: los puntos de rollback más viejos que cita esta bitácora quedan solo como historia.
+
+- **Cloud Run `tadaima` (us-east1):** de 79 revisiones quedaron las 20 más nuevas (`00152-nos` … `00116-qut`), incluidas la viva y la etiquetada `especial` (`00137-nox`). Se borraron 59.
+- **Imágenes (Artifact Registry `cloud-run-source-deploy`):** us-east1 de 79 a 20 (una por revisión conservada, comprobado digest por digest); us-central1 de 24 a 0 (región sin servicio desde agosto).
+- **Archivos de despliegue (`run-sources-tadaimapos-*`):** us-east1 de 79 zip (6.7 GiB) a 20 (1.3 GiB); us-central1 de 27 a 0. Los buckets tienen borrado suave de 7 días: el espacio termina de liberarse el 2026-11-25.
+- **No se tocó:** `tadaimapos-media`, secretos, variables del servicio, Supabase ni el proyecto `tadaimaus`. Sin políticas automáticas de borrado (una política podría borrar la imagen de una revisión etiquetada).
+- **Respaldo previo** (no versionado): `.claude/entregables/limpieza-2026-11-18/` con la configuración del servicio y las listas de lo conservado y lo borrado.
+- **Cómo repetirlo:** conservar las N revisiones más nuevas más cualquiera con tráfico o etiqueta; borrar revisiones, luego las imágenes cuyo digest no use ninguna conservada, luego los zip viejos. Siempre con `--project tadaimapos`.
+- **Verificación:** 20 revisiones, las 20 con su imagen; dominio `/login`, `/caja`, `/tadaimaus/` 200 y API sin token 401.
+
 ### Sesión 2026-11-18 — Preventas: límite por cliente por sucursal y recoger solo donde se apartó (PR #108, T-008) — rev tadaima-00152-nos
 
 **Origen:** regla nueva definida por Pier el 2026-11-18, tras revisar PREV-00097 (Macro) y PREV-00100 (Centro): mismo producto, límite 2 por cliente, dos cuentas de nombre parecido y 4 piezas entre las dos tiendas. Pier decidió que cada sucursal se maneja aparte y que lo que no se permite es apartar en una y recoger en otra.
