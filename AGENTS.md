@@ -8,7 +8,7 @@
 > Detalle adicional: [`CLAUDE.md`](CLAUDE.md) (comandos y arquitectura del frontend) y
 > [`backend/AGENTS.md`](backend/AGENTS.md) (API, ADRs y referencia de endpoints).
 >
-> Última revisión: 2026-11-18.
+> Última revisión: 2026-11-18 (b).
 
 ---
 
@@ -122,6 +122,13 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   vive en `sale_items` (ver "Descuentos y Promos" en `CLAUDE.md`).
 - **Precio socio:** a un socio Tadaima activo se le aplica el nivel de precio "b"
   automáticamente, excepto si paga con tarjeta o es preventa.
+  - **Socio inactivo (membresía vencida): precio Socio a mano sí (2026-11-18, pedido de la tienda).**
+    Entra a precio Normal y Caja lo marca «Socio inactivo», pero el cajero puede elegir el nivel
+    Socio en la línea (amigos, clientes de confianza), igual que con un cliente sin membresía. Del
+    2026-06-25 a esa fecha la opción estaba bloqueada. Un precio Socio puesto a mano se conserva al
+    cambiar entre Efectivo, Transferencia, Dólares o Mixto; con Tarjeta vuelve a Normal. La lógica
+    vive en `landing/src/lib/socioPrice.ts`; el servidor no distingue (solo valida que el precio
+    sea un nivel del catálogo). No queda registro de quién lo dio.
 - **Promo y precio socio NO se suman** (2026-09-30): si una línea entra a una promo,
   TODA la línea se cobra a precio NORMAL (nivel A) con la promo encima, aunque diga
   SOCIO (siempre gana la promo). Lo aplican `saleCalc.ts` y `SaleCalculator.php`

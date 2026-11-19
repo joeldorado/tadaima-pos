@@ -80,6 +80,7 @@ import { LineGiftModal } from "@/components/sell/LineGiftModal";
 import { GIFT_COLOR } from "@/lib/giftLine";
 import { PromoPaymentAlertModal } from "@/components/sell/PromoPaymentAlertModal";
 import { withLineComment } from "@/lib/lineComment";
+import { repriceForSocio, repriceOnPaymentChange, socioBadge, socioOptionNote } from "@/lib/socioPrice";
 import { buildMixedCheckout, buildSaleDirectItems, findMesaWithFolio, folioWrongStoreMessage, staleFolioError, unloadFolioFromMesa } from "@/lib/mixedCheckout";
 import { DISCOUNT_REASON_LABELS, SURCHARGE_REASON_LABELS } from "@/lib/discountReasons";
 import type { HistorialEntry } from "@/hooks/queries/useHistorial";
@@ -2089,12 +2090,9 @@ export function SellPage() {
 
   const changeDeposit = (val: number) => updMesa(activeMesa.id, m => ({ ...m, depositAmount: val }));
 
+  // El nivel se elige a mano sin candados: a un socio inactivo el cajero puede
+  // darle precio Socio (2026-11-18). Lo único automático es el socio ACTIVO.
   const changeLevel = (lineId: string, level: PriceLevel) => {
-    // Socio inactivo: no se puede forzar precio socio (b) a mano.
-    if (level === "b" && activeMesa?.customerIsSocio && !activeMesa?.customerSocioEligible) {
-      toast.info("Socio inactivo — no aplica precio socio.");
-      return;
-    }
     updMesa(activeMesa.id, m => ({ ...m, items: m.items.map(i => i.lineId === lineId ? { ...i, priceLevel: level } : i) }));
   };
 
@@ -2142,17 +2140,6 @@ export function SellPage() {
     || activeMesa.items.some(i => i.sellingCatalogId != null || i.isFromPreSale)
   ));
 
-  // Reaplica el nivel socio/normal a los items en el carril automático (a↔b).
-  // Respeta overrides manuales mayoristas (c/d/e) y deja en "a" los productos
-  // sin precio socio (price_b). Socio Tadaima + NO tarjeta = precio socio (b);
-  // con tarjeta la tienda absorbe la comisión, así que se cobra precio normal.
-  const repriceForSocio = (items: CartItem[], level: PriceLevel): CartItem[] =>
-    items.map(i => {
-      if (i.priceLevel !== "a" && i.priceLevel !== "b") return i;
-      const target: PriceLevel = (level === "b" && (i.product.price_b ?? 0) > 0) ? "b" : "a";
-      return i.priceLevel === target ? i : { ...i, priceLevel: target };
-    });
-
   const setPayment = (pm: PaymentMethod) => {
     if (pm === "Tarjeta" && hasPreventaInCart) {
       toast.error(
@@ -2193,7 +2180,8 @@ export function SellPage() {
         selectedTerminalId: undefined,
         // El monto de transferencia solo vive mientras el método sea Mixto.
         transferAmount: pm === "Mixto" ? (m.transferAmount ?? "") : "",
-        items: repriceForSocio(m.items, (m.customerSocioEligible && !m.isPreventa) ? "b" : "a"),
+        // Solo el socio activo se re-precia; un precio Socio puesto a mano se conserva.
+        items: repriceOnPaymentChange(m.items, { socioEligible: !!m.customerSocioEligible, isPreventa: !!m.isPreventa }),
       }));
     }
   };
@@ -2287,13 +2275,16 @@ export function SellPage() {
       customerSocioEligible: eligible,
       isNewCustomer: false,
       // Socio Tadaima ACTIVO → precio socio (salvo tarjeta o preventa). Socio
-      // inactivo se cobra precio normal (Joel 2026-06-25).
+      // inactivo entra a precio normal; el cajero puede ponerle Socio a mano.
       items: repriceForSocio(m.items, (eligible && m.paymentMethod !== "Tarjeta" && !m.isPreventa) ? "b" : "a"),
     }));
     setCustomerSearch(c.name);
     setShowCustDrop(false);
     if (isSocio && !eligible) {
-      toast.info("Socio inactivo — se cobra precio normal (sin descuento de socio).", { duration: 4500 });
+      toast.info("Socio inactivo: se cobra precio normal.", {
+        description: "Si quieres darle precio Socio, elígelo a mano en la línea.",
+        duration: 6000,
+      });
     }
   };
 
@@ -5511,7 +5502,7 @@ export function SellPage() {
                                 {activeMesa.isPreventa && (
                                   <button 
                                     onClick={() => {
-                                      updMesa(activeMesa.id, m => ({ ...m, isNewCustomer: true, customerName: customerSearch, customerPhone: "", customerIsSocio: false, customerSocioEligible: false }));
+                                      updMesa(activeMesa.id, m => ({ ...m, isNewCustomer: true, customerName: customerSearch, customerPhone: "", customerIsSocio: false, customerSocioEligible: false, items: repriceForSocio(m.items, "a") }));
                                       setShowCustDrop(false);
                                     }}
                                     className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-500 font-black text-[10px] uppercase tracking-widest hover:bg-amber-500/20 transition-all"
@@ -6280,11 +6271,14 @@ export function SellPage() {
                               }}
                             >
                               {priceLevels.map(lvl => {
-                                // Socio inactivo → la opción "Socio" (b) queda inseleccionable.
-                                const socioBlocked = lvl.level === "b" && !!activeMesa?.customerIsSocio && !activeMesa?.customerSocioEligible;
+                                // Socio inactivo: la opción "Socio" se puede elegir a mano y lo dice.
+                                const note = socioOptionNote(lvl.level, {
+                                  isSocio: !!activeMesa?.customerIsSocio,
+                                  eligible: !!activeMesa?.customerSocioEligible,
+                                });
                                 return (
-                                  <option key={lvl.level} value={lvl.level} disabled={socioBlocked}>
-                                    {lvl.label} {fmt(lvl.price)}{socioBlocked ? " · inactivo" : ""}
+                                  <option key={lvl.level} value={lvl.level}>
+                                    {lvl.label} {fmt(lvl.price)}{note}
                                   </option>
                                 );
                               })}
@@ -6845,18 +6839,19 @@ export function SellPage() {
                           {activeMesa.customerName}
                         </p>
                         {activeMesa?.customerIsSocio && !activeMesa?.isPreventa && (() => {
-                          // 3 estados: socio inactivo (rojo, precio normal), tarjeta
-                          // (gris, la tienda absorbe comisión), socio activo (ámbar).
-                          const eligible = !!activeMesa?.customerSocioEligible;
-                          const isTarjeta = activeMesa?.paymentMethod === "Tarjeta";
-                          const style = !eligible
+                          // 3 estados: socio inactivo (rojo; dice si lleva precio Socio a
+                          // mano), tarjeta (gris, la tienda absorbe comisión), activo (ámbar).
+                          const { tone, label } = socioBadge({
+                            eligible: !!activeMesa?.customerSocioEligible,
+                            isTarjeta: activeMesa?.paymentMethod === "Tarjeta",
+                            hasManualSocio: activeMesa.items.some(i =>
+                              i.priceLevel === "b" && !i.isFromPreSale && i.sellingCatalogId == null && !i.isGift),
+                          });
+                          const style = tone === "inactive"
                             ? { background: "rgba(239,68,68,0.14)", border: "1px solid rgba(239,68,68,0.4)", color: "#F87171" }
-                            : isTarjeta
+                            : tone === "card"
                               ? { background: "rgba(148,163,184,0.12)", border: "1px solid rgba(148,163,184,0.3)", color: "#94A3B8" }
                               : { background: "rgba(245,158,11,0.14)", border: "1px solid rgba(245,158,11,0.4)", color: "#F59E0B" };
-                          const label = !eligible
-                            ? "Socio inactivo · precio normal"
-                            : isTarjeta ? "Precio normal · tarjeta" : "Precio socio aplicado";
                           return (
                             <span
                               className="inline-flex items-center w-fit mt-1 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest"
@@ -8762,7 +8757,7 @@ export function SellPage() {
                               {p.candidate.ext.nivel && <div>🏅 Nivel: {p.candidate.ext.nivel}</div>}
                               <div style={{ marginTop: 6 }}><SocioPill status={p.candidate.ext.estatus} /></div>
                               {!isExtEligible(p.candidate.ext) && (
-                                <div style={{ marginTop: 4, color: "#F87171", fontWeight: 700 }}>Socio inactivo — se cobrará precio normal</div>
+                                <div style={{ marginTop: 4, color: "#F87171", fontWeight: 700 }}>Socio inactivo — entra a precio normal; el precio Socio se puede poner a mano</div>
                               )}
                               <div style={{ marginTop: 6, color: "#F59E0B", fontWeight: 700 }}>Se agregará a tu base al asignar</div>
                             </>

@@ -639,7 +639,7 @@ export function ClientsPage() {
                     </div>
                     {(selected.member_status ?? "").toUpperCase() !== "ACTIVO" && (
                       <p className="text-[10px] font-bold" style={{ color: "#FF4422" }}>
-                        Socio inactivo — en Caja se cobra precio normal (sin descuento de socio).
+                        Socio inactivo — en Caja entra a precio normal; el cajero puede darle precio Socio a mano.
                       </p>
                     )}
                   </div>
