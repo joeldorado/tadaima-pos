@@ -4,6 +4,21 @@
 
 ---
 
+### Sesión 2026-11-18 (c) — Caja: precio Socio a mano para socio inactivo (PR #109, T-009) — rev tadaima-00154-hit
+
+**Origen:** la tienda reportó que con la membresía vencida Caja ya no dejaba elegir precio Socio a mano. El bloqueo existía desde el 2026-06-25. Piden que no se aplique solo, pero que el cajero pueda darlo (amigos, clientes de confianza).
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00152-nos`. **Solo frontend, sin migración.**
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00152-nos=100 --project tadaimapos --region us-east1`
+
+- **Caja:** el socio inactivo entra a precio Normal con la etiqueta «Socio inactivo»; la opción Socio del selector ya no está bloqueada y dice «· manual»; al usarla la etiqueta pasa a «Socio inactivo · precio socio manual».
+- **Precio manual que se conserva:** cambiar entre Efectivo, Transferencia, Dólares o Mixto ya no regresa la línea a Normal cuando el cliente no es socio activo (antes se perdía sin avisar, también con clientes sin membresía). Con Tarjeta sigue forzando Normal.
+- **No cambia:** socio activo automático, tarjeta y preventa sin precio Socio, promo gana sobre Socio. El servidor no distingue: solo valida que el precio sea un nivel del catálogo.
+- **Código:** lógica pura en `landing/src/lib/socioPrice.ts` con pruebas; `repriceForSocio` se movió ahí.
+- **Validación:** vitest 977 ✓ (10 nuevas); type-check y ESLint sin errores nuevos contra `main`; build de producción. En Caja local: de $1,100 a $980 a mano, se conserva con Transferencia, la venta se guarda a $980 y el socio activo sigue automático. Tarjeta con socio inactivo no se probó en navegador.
+- **En prod 2026-11-18 ~16:45 (Tijuana):** candidato y dominio `/`, `/login`, `/caja`, `/tadaimaus/` 200, API sin token 401, bundle con el cambio y sin errores en los registros de la revisión. No probado en prod con sesión: lo prueba la tienda.
+- **Pendiente:** no queda registro de quién dio precio Socio a un inactivo. La app móvil es otro repositorio.
+
 ### Sesión 2026-11-18 (b) — Limpieza de revisiones, imágenes y archivos de despliegue (sin cambio de código)
 
 **Origen:** Joel pidió liberar espacio y dejar al menos 20 revisiones para rollback. No hubo despliegue: la revisión viva sigue siendo `tadaima-00152-nos`.
