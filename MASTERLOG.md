@@ -4,6 +4,20 @@
 
 ---
 
+### Sesión 2026-11-18 (b) — Limpieza de revisiones, imágenes y archivos de despliegue (sin cambio de código)
+
+**Origen:** Joel pidió liberar espacio y dejar al menos 20 revisiones para rollback. No hubo despliegue: la revisión viva sigue siendo `tadaima-00152-nos`.
+
+> **EL ROLLBACK AHORA LLEGA HASTA `tadaima-00116-qut` (2026-11-02).** Las revisiones `tadaima-00114-jar` y anteriores ya no existen, ni sus imágenes: los puntos de rollback más viejos que cita esta bitácora quedan solo como historia.
+
+- **Cloud Run `tadaima` (us-east1):** de 79 revisiones quedaron las 20 más nuevas (`00152-nos` … `00116-qut`), incluidas la viva y la etiquetada `especial` (`00137-nox`). Se borraron 59.
+- **Imágenes (Artifact Registry `cloud-run-source-deploy`):** us-east1 de 79 a 20 (una por revisión conservada, comprobado digest por digest); us-central1 de 24 a 0 (región sin servicio desde agosto).
+- **Archivos de despliegue (`run-sources-tadaimapos-*`):** us-east1 de 79 zip (6.7 GiB) a 20 (1.3 GiB); us-central1 de 27 a 0. Los buckets tienen borrado suave de 7 días: el espacio termina de liberarse el 2026-11-25.
+- **No se tocó:** `tadaimapos-media`, secretos, variables del servicio, Supabase ni el proyecto `tadaimaus`. Sin políticas automáticas de borrado (una política podría borrar la imagen de una revisión etiquetada).
+- **Respaldo previo** (no versionado): `.claude/entregables/limpieza-2026-11-18/` con la configuración del servicio y las listas de lo conservado y lo borrado.
+- **Cómo repetirlo:** conservar las N revisiones más nuevas más cualquiera con tráfico o etiqueta; borrar revisiones, luego las imágenes cuyo digest no use ninguna conservada, luego los zip viejos. Siempre con `--project tadaimapos`.
+- **Verificación:** 20 revisiones, las 20 con su imagen; dominio `/login`, `/caja`, `/tadaimaus/` 200 y API sin token 401.
+
 ### Sesión 2026-11-18 — Preventas: límite por cliente por sucursal y recoger solo donde se apartó (PR #108, T-008) — rev tadaima-00152-nos
 
 **Origen:** regla nueva definida por Pier el 2026-11-18, tras revisar PREV-00097 (Macro) y PREV-00100 (Centro): mismo producto, límite 2 por cliente, dos cuentas de nombre parecido y 4 piezas entre las dos tiendas. Pier decidió que cada sucursal se maneja aparte y que lo que no se permite es apartar en una y recoger en otra.
