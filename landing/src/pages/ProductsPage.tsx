@@ -11,7 +11,8 @@ import {
   Upload, Camera, Loader2,
   ArrowUp, ArrowDown, ArrowUpDown,
   Trash2, Pencil, PackageX, TicketPercent,
-  ChevronDown, SlidersHorizontal, FolderX
+  ChevronDown, SlidersHorizontal, FolderX,
+  History,
 } from "lucide-react";
 import { useActiveStore } from "@/contexts/StoreContext";
 import { useAuth } from "@tadaima/auth";
@@ -53,6 +54,7 @@ function formatApiError(err: unknown, fallback: string): { title: string; detail
 }
 import { ProductTypeSelectorModal } from "@/components/products/ProductTypeSelectorModal";
 import { StoreStockBreakdown } from "@/components/inventory/StoreStockBreakdown";
+import { StockHistoryModal } from "@/components/inventory/StockHistoryModal";
 import { MangaBatchModal } from "@/components/products/MangaBatchModal";
 import { MangaEditModal } from "@/components/products/MangaEditModal";
 import { DeleteProductModal } from "@/components/products/DeleteProductModal";
@@ -349,10 +351,14 @@ function ProductDetailModal({
     { level: "d", price: product.precioD },
     { level: "e", price: product.precioE },
   ].filter((row): row is { level: "a" | "b" | "c" | "d" | "e"; price: number } => Number(row.price) > 0);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={onClose} />
+      {historyOpen && (
+        <StockHistoryModal productId={product.id} productName={product.nombre} sku={product.sku || null} onClose={() => setHistoryOpen(false)} />
+      )}
       <div className="relative w-full max-w-3xl max-h-[90vh] overflow-hidden rounded-[32px] flex flex-col" style={T.glass}>
         <div className="p-6 flex items-center justify-between gap-4" style={{ borderBottom: PRODUCT_THEME.borderPanel }}>
           <div className="min-w-0">
@@ -479,6 +485,14 @@ function ProductDetailModal({
             {canNotify ? "Puedes avisar al gerente/admin cuando el stock esté por agotarse." : "Vista solo lectura."}
           </p>
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => setHistoryOpen(true)}
+              className="px-4 py-2 rounded-2xl text-sm font-bold flex items-center gap-2"
+              style={{ ...T.glassMd, color: T.textSecondary }}
+              title="Entradas y salidas de stock de tu tienda"
+            >
+              <History size={15} /> Historial
+            </button>
             <button onClick={onClose} className="px-4 py-2 rounded-2xl text-sm font-bold" style={{ ...T.glassMd, color: T.textSecondary }}>
               Cerrar
             </button>
@@ -524,10 +538,14 @@ function MangaDetailModal({
   highlightStoreId?: number | null;
 }) {
   const stock = manga.stock ?? 0;
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={onClose} />
+      {historyOpen && (
+        <StockHistoryModal productId={manga.id} productName={manga.name} sku={manga.code || null} onClose={() => setHistoryOpen(false)} />
+      )}
       <div className="relative w-full max-w-3xl max-h-[90vh] overflow-hidden rounded-[32px] flex flex-col" style={T.glass}>
         <div className="p-6 flex items-center justify-between gap-4" style={{ borderBottom: PRODUCT_THEME.borderPanel }}>
           <div className="min-w-0">
@@ -594,6 +612,14 @@ function MangaDetailModal({
             {canNotify ? "Puedes avisar al gerente/admin cuando este tomo se esté agotando." : "Vista solo lectura."}
           </p>
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => setHistoryOpen(true)}
+              className="px-4 py-2 rounded-2xl text-sm font-bold flex items-center gap-2"
+              style={{ ...T.glassMd, color: T.textSecondary }}
+              title="Entradas y salidas de stock de tu tienda"
+            >
+              <History size={15} /> Historial
+            </button>
             <button onClick={onClose} className="px-4 py-2 rounded-2xl text-sm font-bold" style={{ ...T.glassMd, color: T.textSecondary }}>
               Cerrar
             </button>

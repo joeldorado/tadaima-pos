@@ -350,7 +350,7 @@ permitido); `/products` no crea ni re-tipa paquetes; `PurgeNoStockProductsComman
 | Método | Path | Notas |
 |---|---|---|
 | GET | `/inventory` | Existencias scoped por tienda del usuario (eager-load warehouse.store) |
-| GET/POST | `/inventory/movements` | Historial / registrar movimiento |
+| GET/POST | `/inventory/movements` | Historial / registrar movimiento. GET: `?product_id&warehouse_id&store_id&type&from&to` (día de negocio Tijuana desde 2026-11-19; antes fecha UTC), `per_page` (máx 500; 0 = todo, viejo). No-admin: solo almacenes de su tienda. Cada renglón trae `stock_delta` con signo y `warehouse {name, type, store_id, store_name}`. **`?with_meta=1`** (Historial de stock, 2026-11-19): `data` = `{ data, pagination, current_stock[] }` (stock actual por almacén del producto, mismo alcance). Sin `with_meta` la respuesta es la de siempre. POST acepta solo `InventoryMovement::MANUAL_TYPES` (los de apartado no) |
 | PUT | `/inventory/{productId}/{warehouseId}` | Ajuste de stock (registra movimiento) |
 | GET | `/inventory/products-stock` | **Cross-tienda.** Lista paginada de productos con existencias por tienda embebidas. Cualquier rol autenticado; sin filtro de tienda; sin costos. `?search=&page=&per_page=` (máx 1000, para el Excel; orden con desempate por `id`). Respuesta: `{ data: [{ id, name, sku, image, stock: [{ store_id, store_name, phone, exhibicion, bodega }] }], pagination }`. Exclusivo de la pantalla "Existencias por Tienda". |
 | GET | `/inventory/by-product/{productId}` | **Cross-tienda.** Existencias de UN producto en todas las tiendas. Mismo alcance que `products-stock`. Respuesta: array de `InventoryItem` con warehouse.store. |

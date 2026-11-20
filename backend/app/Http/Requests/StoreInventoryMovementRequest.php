@@ -18,7 +18,7 @@ class StoreInventoryMovementRequest extends FormRequest
         return [
             'product_id'   => ['required', 'integer', 'exists:products,id'],
             'warehouse_id' => ['required', 'integer', 'exists:warehouses,id'],
-            'type'         => ['required', Rule::in(InventoryMovement::ALL_TYPES)],
+            'type'         => ['required', Rule::in(InventoryMovement::MANUAL_TYPES)],
 
             // Para ajuste y transferencia se permite negativo (el signo decide dirección).
             // Para el resto la cantidad siempre debe ser positiva.
@@ -32,7 +32,7 @@ class StoreInventoryMovementRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'type.in'       => 'Tipo inválido. Válidos: ' . implode(', ', InventoryMovement::ALL_TYPES),
+            'type.in'       => 'Tipo inválido. Válidos: ' . implode(', ', InventoryMovement::MANUAL_TYPES),
             'quantity.not_in' => 'La cantidad no puede ser cero.',
         ];
     }

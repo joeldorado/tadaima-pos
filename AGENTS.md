@@ -8,7 +8,7 @@
 > Detalle adicional: [`CLAUDE.md`](CLAUDE.md) (comandos y arquitectura del frontend) y
 > [`backend/AGENTS.md`](backend/AGENTS.md) (API, ADRs y referencia de endpoints).
 >
-> Última revisión: 2026-11-18 (b).
+> Última revisión: 2026-11-19.
 
 ---
 
@@ -240,6 +240,25 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   bloqueos viven ahí una vez. El DELETE acepta `expected` opcional (los conteos vistos): si el
   stock cambió, 422. La app móvil no lo manda y sigue igual. Lo mismo ven admin y gerente con
   `can_view_cost` (el dato ya es visible a todos en "Existencias por Tienda").
+
+- **Historial de stock por producto (2026-11-19, pedido de Tadaima Tijuana):** botón «Historial» en el
+  detalle de producto/tomo (Productos) y en el producto elegido de Existencias por Tienda. Muestra cada
+  movimiento (`inventory_movements`) con fecha en hora de Tijuana, tipo legible, +/−, quién, referencia
+  (`VENTA-`, `APARTADO-`, `PAQ-`, `TRASLADO-`, `MOV-`…), almacén y **saldo después**. Gerente y cajero solo
+  ven su tienda (lo limita el servidor); el admin elige tienda. Datos: `GET /inventory/movements?with_meta=1`
+  (paginado, `stock_delta` con signo y `current_stock` por almacén en la misma petición).
+  - **No hay columna de saldo:** se reconstruye HACIA ATRÁS desde `inventory.quantity` de cada almacén
+    (`landing/src/lib/stockHistory.ts`). Por eso el front pide desde «desde» hasta HOY aunque filtre un
+    «hasta». La UI avisa que es aproximado en historia vieja o importada. No agregues `stock_after` a la
+    tabla sin hablarlo con Joel.
+  - Un `ajuste` guarda en la nota «antes → después»; si no cuadra con la cuenta, el renglón sale con ⚠ (cambió
+    stock sin movimiento después de esa fecha) y la cuenta sigue desde lo que dice la nota.
+  - «Entró/Salió» con todos los almacenes no cuenta el paso Exhibición ↔ Bodega (`MOV-`).
+  - **Signo de apartados:** `apartado` saca stock y `apartado_cancelado` lo regresa (`TYPES_DECREASE` /
+    `TYPES_INCREASE` de `InventoryMovement`; antes salían como +N en Actividad). No se capturan a mano:
+    `POST /inventory/movements` valida contra `MANUAL_TYPES`.
+  - Recibir mercancía se sigue capturando como `ajuste` absoluto: en el Historial una entrada de mercancía y
+    una corrección se ven igual. Un botón «Entrada» aparte es idea pendiente (decisión de Joel).
 
 ### Paquetes (2026-10-07)
 - Un **paquete** es un producto (`products.product_type='bundle'`) hecho de 2+ productos con
