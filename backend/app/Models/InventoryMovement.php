@@ -35,8 +35,11 @@ class InventoryMovement extends Model
 
     // ─── Tipos válidos ────────────────────────────────────────────────────────
 
-    const TYPES_INCREASE = ['entrada', 'devolucion', 'preventa_cancelada'];
-    const TYPES_DECREASE = ['venta', 'preventa'];
+    // `apartado` / `apartado_cancelado` (2026-11-19): LayawayService los guarda
+    // con cantidad POSITIVA; sin estar aquí, stockDelta() los mostraba como +N
+    // aunque el apartado SACA stock (y la cancelación lo regresa).
+    const TYPES_INCREASE = ['entrada', 'devolucion', 'preventa_cancelada', 'apartado_cancelado'];
+    const TYPES_DECREASE = ['venta', 'preventa', 'apartado'];
     const TYPES_NEUTRAL  = ['ajuste', 'transferencia']; // el signo de quantity decide
 
     const ALL_TYPES = [

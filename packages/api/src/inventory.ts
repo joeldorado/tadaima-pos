@@ -109,3 +109,76 @@ export async function moveInventory(input: MoveInventoryInput): Promise<Inventor
   const response = await apiClient.post<InventoryItem>('/inventory/move', input)
   return response.data
 }
+
+// ─── Historial de stock (2026-11-19) ─────────────────────────────────────────
+// Módulo propio: GET /products/{id}/stock-history. GET /inventory/movements no
+// cambia (lo usa la app móvil).
+
+/** Tipos que escribe el sistema en `inventory_movements`. */
+export type InventoryMovementType =
+  | 'entrada' | 'venta' | 'ajuste' | 'transferencia' | 'devolucion'
+  | 'preventa' | 'preventa_cancelada' | 'apartado' | 'apartado_cancelado'
+
+export interface StockHistoryMovement {
+  id: number
+  /** Tipo crudo; puede venir uno que el front aún no conoce. */
+  type: InventoryMovementType | (string & {})
+  /** Cantidad tal como se guardó (en ventas y apartados viene positiva). */
+  quantity: number
+  /** Cambio REAL al stock, con signo (InventoryMovement::stockDelta del backend). */
+  stock_delta: number
+  reference: string | null
+  notes: string | null
+  warehouse_id: number | null
+  warehouse: {
+    id: number
+    name: string
+    type: 'central' | 'store' | 'bodega' | (string & {})
+    store_id: number | null
+    store_name: string | null
+  } | null
+  user: { id: number; name: string } | null
+  /** ISO UTC. */
+  created_at: string | null
+}
+
+/** Stock actual de un almacén (punto de partida del saldo hacia atrás). */
+export interface WarehouseCurrentStock {
+  warehouse_id: number
+  warehouse_name: string | null
+  warehouse_type: string | null
+  store_id: number | null
+  store_name: string | null
+  quantity: number
+}
+
+export interface ProductStockHistoryParams {
+  /** Solo el admin elige; gerente y cajero quedan en su tienda (otra → 403). */
+  store_id?: number
+  warehouse_id?: number
+  /** YYYY-MM-DD, día de negocio (America/Tijuana). */
+  from?: string
+  to?: string
+  page?: number
+  /** Máx. 500. */
+  per_page?: number
+}
+
+export interface ProductStockHistoryPage {
+  data: StockHistoryMovement[]
+  pagination: { total: number; per_page: number; current_page: number; last_page: number }
+  /** Stock actual por almacén, con los mismos filtros de tienda y almacén. */
+  current_stock: WarehouseCurrentStock[]
+}
+
+/**
+ * GET /products/{productId}/stock-history: movimientos de stock del producto o
+ * tomo (el más nuevo primero), paginados, más el stock actual por almacén.
+ */
+export async function getProductStockHistory(
+  productId: number,
+  params: ProductStockHistoryParams,
+): Promise<ProductStockHistoryPage> {
+  const response = await apiClient.get<ProductStockHistoryPage>(`/products/${productId}/stock-history`, { params })
+  return response.data
+}

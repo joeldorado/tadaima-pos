@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { Search, PackageSearch, Loader2, ChevronRight, X, Scan, Store, Phone, MessageCircle, Package, Download } from 'lucide-react'
+import { Search, PackageSearch, Loader2, ChevronRight, X, Scan, Store, Phone, MessageCircle, Package, Download, History } from 'lucide-react'
 import { useAuth } from '@tadaima/auth'
 import type { PreSaleCatalog } from '@tadaima/api'
 import type { ProductStockItem, ProductsStockParams } from '@tadaima/api'
@@ -13,6 +13,7 @@ import { useStoresQuery } from '@/hooks/queries/useStores'
 import { useCategoriesQuery } from '@/hooks/queries/useCategories'
 import { useBarcodeScanner } from '@/hooks/useBarcodeScanner'
 import { StoreStockBreakdown } from '@/components/inventory/StoreStockBreakdown'
+import { StockHistoryModal } from '@/components/inventory/StockHistoryModal'
 import { useProductsStockQuery } from '@/hooks/queries/useInventory'
 
 // ─── Helpers de teléfono (MX) ──────────────────────────────────────────────────
@@ -383,6 +384,7 @@ export function StockSearchPage() {
   const [debounced, setDebounced] = useState('')
   const [page, setPage] = useState(1)
   const [selectedId, setSelectedId] = useState<{ type: 'product' | 'presale'; id: number } | null>(null)
+  const [historyProduct, setHistoryProduct] = useState<{ id: number; name: string; sku: string | null } | null>(null)
   const [exporting, setExporting] = useState(false)
   const lastScanRef = useRef<string | null>(null)
 
@@ -813,7 +815,17 @@ export function StockSearchPage() {
             <div className="rounded-3xl p-4 sticky top-4"
               style={{ background: 'var(--td-panel-bg)', border: '1px solid var(--td-panel-border)' }}>
               <p className="text-sm font-black mb-1" style={{ color: 'var(--td-text-hi)' }}>{selectedProduct.name}</p>
-              <p className="text-[11px] font-mono mb-4" style={{ color: 'var(--td-text-lo)' }}>{selectedProduct.sku || 'Sin SKU'}</p>
+              <div className="flex items-center justify-between gap-2 mb-4">
+                <p className="text-[11px] font-mono" style={{ color: 'var(--td-text-lo)' }}>{selectedProduct.sku || 'Sin SKU'}</p>
+                <button
+                  onClick={() => setHistoryProduct({ id: selectedProduct.id, name: selectedProduct.name, sku: selectedProduct.sku })}
+                  className="inline-flex items-center gap-1.5 px-3 h-8 rounded-xl text-xs font-bold transition-colors hover:opacity-80"
+                  style={{ background: 'var(--td-surface-soft)', border: '1px solid var(--td-card-border)', color: 'var(--td-text-md)' }}
+                  title="Entradas y salidas de stock de tu tienda"
+                >
+                  <History size={13} /> Historial
+                </button>
+              </div>
               <StoreStockBreakdown productId={selectedProduct.id} showContact {...(myStoreId !== undefined ? { highlightStoreId: myStoreId } : {})} />
             </div>
           ) : selectedCatalog ? (
@@ -836,6 +848,14 @@ export function StockSearchPage() {
           )}
         </div>
       </div>
+      {historyProduct && (
+        <StockHistoryModal
+          productId={historyProduct.id}
+          productName={historyProduct.name}
+          sku={historyProduct.sku}
+          onClose={() => setHistoryProduct(null)}
+        />
+      )}
     </div>
   )
 }
