@@ -91,6 +91,7 @@ import { isAdmin as isAdminRole } from "@/lib/permisos";
 import { cartUnitLimit, storeAvailability } from "@/lib/presaleAvailability";
 import { chargeForLoadedLines, presaleDeliveryCharge } from "@/lib/presaleAllocation";
 import { canRevertPresaleDelivery } from "@/lib/presaleLastDelivery";
+import { formatPresaleDate, formatPresaleTime, presaleDeliveryInfo } from "@/lib/presaleDeliveryDate";
 import { presaleGrossUnitPrice, presaleLineBreakdown, presaleLineCharge, presaleLineDiscount } from "@/lib/presaleDiscount";
 import { CancelTicketModal } from "@/components/cancel/CancelTicketModal";
 import { CorrectPaymentModal } from "@/components/sales/CorrectPaymentModal";
@@ -8076,6 +8077,7 @@ export function SellPage() {
             const itemColor = (isAwaitingArrival || isVencida) ? '#888' : activeTab.accentColor;
             const pendingItems = (order.items ?? []).filter(it => it.status !== 'delivered');
             const allItems = isDelivered ? (order.items ?? []) : [];
+            const delivery = presaleDeliveryInfo(order.items);
 
             const card = (
               <button
@@ -8156,6 +8158,14 @@ export function SellPage() {
                   <div>
                     {(order.paid_amount ?? 0) > 0 && <p style={{ margin: 0, fontSize: 9, color: "var(--td-text-ghost)", fontWeight: 700 }}>Anticipo {fmt(order.paid_amount ?? 0)}</p>}
                     <p style={{ margin: 0, fontSize: 9, color: "var(--td-text-ghost)", fontWeight: 700 }}>Total {fmt(order.total ?? 0)}</p>
+                    <p style={{ margin: 0, fontSize: 9, color: "var(--td-text-ghost)", fontWeight: 700 }}>Apartado {formatPresaleDate(order.created_at)}</p>
+                    {delivery.lastDeliveredAt && (
+                      <p style={{ margin: 0, fontSize: 9, color: "#22C55E", fontWeight: 800 }}>
+                        {delivery.isPartial
+                          ? `Entrega parcial ${formatPresaleDate(delivery.lastDeliveredAt)} (${delivery.deliveredCount} de ${delivery.totalCount})`
+                          : `Entregado ${formatPresaleDate(delivery.lastDeliveredAt)} · ${formatPresaleTime(delivery.lastDeliveredAt)}`}
+                      </p>
+                    )}
                     {isVencida && order.pickup_deadline && (
                       <p style={{ margin: 0, fontSize: 9, color: "#EF4444", fontWeight: 800 }}>
                         Venció {new Date(order.pickup_deadline).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}
