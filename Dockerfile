@@ -47,13 +47,19 @@ FROM composer:2 AS vendor
 WORKDIR /app
 COPY backend/composer.json backend/composer.lock ./
 
+# --ignore-platform-req=php (2026-11-19): la imagen composer:2 trae la PHP más
+# nueva (8.6) y varias dependencias del lock solo declaran hasta 8.5, así que el
+# build tronaba sin que cambiara nada nuestro. El vendor corre en el runtime de
+# abajo (php:8.3), que es la versión para la que se resolvió el lock. Solo se
+# ignora la versión de PHP: las extensiones (ext-*) se siguen validando.
 RUN composer install \
     --no-dev \
     --no-interaction \
     --no-scripts \
     --no-progress \
     --prefer-dist \
-    --optimize-autoloader
+    --optimize-autoloader \
+    --ignore-platform-req=php
 
 
 # ─────────────────────────────────────────────────────────────────────────────
