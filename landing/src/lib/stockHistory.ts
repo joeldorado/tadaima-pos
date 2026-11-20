@@ -1,4 +1,4 @@
-import type { InventoryMovement, WarehouseCurrentStock } from "@tadaima/api";
+import type { StockHistoryMovement, WarehouseCurrentStock } from "@tadaima/api";
 import { toLocalYmd } from "./date";
 
 /**
@@ -24,7 +24,7 @@ const EPSILON = 0.0001;
 export type MovementTone = "in" | "out" | "zero";
 
 export interface StockHistoryRow {
-  movement: InventoryMovement;
+  movement: StockHistoryMovement;
   /** Cambio real al stock con signo. */
   delta: number;
   tone: MovementTone;
@@ -78,7 +78,7 @@ function toneOf(delta: number): MovementTone {
 }
 
 /** Más nuevo primero; el id desempata (un traslado deja 2 renglones a la misma hora). */
-function compareNewestFirst(a: InventoryMovement, b: InventoryMovement): number {
+function compareNewestFirst(a: StockHistoryMovement, b: StockHistoryMovement): number {
   const ta = a.created_at ? Date.parse(a.created_at) : 0;
   const tb = b.created_at ? Date.parse(b.created_at) : 0;
   return tb - ta || b.id - a.id;
@@ -95,7 +95,7 @@ function round(n: number): number {
  * Un almacén sin fila en `currentStock` arranca en 0.
  */
 export function buildStockHistory(
-  movements: readonly InventoryMovement[],
+  movements: readonly StockHistoryMovement[],
   currentStock: readonly WarehouseCurrentStock[],
 ): StockHistoryRow[] {
   const running = new Map<number, number>(currentStock.map(s => [s.warehouse_id, Number(s.quantity) || 0]));
@@ -135,7 +135,7 @@ export interface StockHistoryTotals {
 }
 
 /** Exhibición ↔ Bodega de la misma tienda (`MOV-`): no entra ni sale de la tienda. */
-export function isInternalMove(m: InventoryMovement): boolean {
+export function isInternalMove(m: StockHistoryMovement): boolean {
   return m.type === "transferencia" && (m.reference ?? "").toUpperCase().startsWith("MOV-");
 }
 

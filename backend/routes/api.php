@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\ProductStockHistoryController;
 use App\Http\Controllers\Api\ExternalCardController;
 use App\Http\Controllers\Api\LoyaltyController;
 use App\Http\Controllers\Api\NotificationsController;
@@ -168,6 +169,9 @@ Route::middleware(['auth:sanctum', ThrottleApi::class . ':120,1'])->group(functi
         // Vista previa antes de eliminar (2026-10-09): stock por tienda, ventas,
         // apartados, preventas, traslados, paquetes, promos, avisos y bloqueos.
         Route::get('delete-preview',             [ProductController::class, 'deletePreview']);
+        // Historial de stock (2026-11-19): movimientos + stock actual por almacén.
+        // Módulo aparte: /inventory/movements no cambia (app móvil).
+        Route::get('stock-history',              [ProductStockHistoryController::class, 'show']);
         // Images
         Route::post('images/upload',             [ProductController::class, 'uploadImage']);
         Route::post('images',                    [ProductController::class, 'addImage']);

@@ -111,16 +111,16 @@ export async function moveInventory(input: MoveInventoryInput): Promise<Inventor
 }
 
 // ─── Historial de stock (2026-11-19) ─────────────────────────────────────────
+// Módulo propio: GET /products/{id}/stock-history. GET /inventory/movements no
+// cambia (lo usa la app móvil).
 
 /** Tipos que escribe el sistema en `inventory_movements`. */
 export type InventoryMovementType =
   | 'entrada' | 'venta' | 'ajuste' | 'transferencia' | 'devolucion'
   | 'preventa' | 'preventa_cancelada' | 'apartado' | 'apartado_cancelado'
 
-export interface InventoryMovement {
+export interface StockHistoryMovement {
   id: number
-  product_id: number
-  warehouse_id: number | null
   /** Tipo crudo; puede venir uno que el front aún no conoce. */
   type: InventoryMovementType | (string & {})
   /** Cantidad tal como se guardó (en ventas y apartados viene positiva). */
@@ -129,16 +129,15 @@ export interface InventoryMovement {
   stock_delta: number
   reference: string | null
   notes: string | null
-  user_id: number | null
-  product?: { id: number; name: string; sku: string | null } | null
-  warehouse?: {
+  warehouse_id: number | null
+  warehouse: {
     id: number
     name: string
-    type: 'central' | 'store' | 'bodega' | string
+    type: 'central' | 'store' | 'bodega' | (string & {})
     store_id: number | null
     store_name: string | null
   } | null
-  user?: { id: number; name: string } | null
+  user: { id: number; name: string } | null
   /** ISO UTC. */
   created_at: string | null
 }
@@ -153,35 +152,33 @@ export interface WarehouseCurrentStock {
   quantity: number
 }
 
-export interface InventoryMovementsParams {
-  product_id?: number
-  warehouse_id?: number
-  /** Solo admin lo usa; gerente y cajero ya quedan en su tienda en el servidor. */
+export interface ProductStockHistoryParams {
+  /** Solo el admin elige; gerente y cajero quedan en su tienda (otra → 403). */
   store_id?: number
-  type?: string
+  warehouse_id?: number
   /** YYYY-MM-DD, día de negocio (America/Tijuana). */
   from?: string
   to?: string
   page?: number
-  /** Máx. 500 en el servidor. */
+  /** Máx. 500. */
   per_page?: number
 }
 
-export interface InventoryMovementsPage {
-  data: InventoryMovement[]
-  pagination: { total: number; per_page: number; current_page: number; last_page: number } | null
-  /** Solo con `product_id`: stock actual por almacén visible para el usuario. */
+export interface ProductStockHistoryPage {
+  data: StockHistoryMovement[]
+  pagination: { total: number; per_page: number; current_page: number; last_page: number }
+  /** Stock actual por almacén, con los mismos filtros de tienda y almacén. */
   current_stock: WarehouseCurrentStock[]
 }
 
 /**
- * GET /inventory/movements con `with_meta=1`: movimientos de stock (el más nuevo
- * primero), paginación y el stock actual del producto por almacén. Gerente y
- * cajero solo ven los almacenes de su tienda (el servidor lo limita).
+ * GET /products/{productId}/stock-history: movimientos de stock del producto o
+ * tomo (el más nuevo primero), paginados, más el stock actual por almacén.
  */
-export async function getInventoryMovements(params: InventoryMovementsParams): Promise<InventoryMovementsPage> {
-  const response = await apiClient.get<InventoryMovementsPage>('/inventory/movements', {
-    params: { ...params, with_meta: 1 },
-  })
+export async function getProductStockHistory(
+  productId: number,
+  params: ProductStockHistoryParams,
+): Promise<ProductStockHistoryPage> {
+  const response = await apiClient.get<ProductStockHistoryPage>(`/products/${productId}/stock-history`, { params })
   return response.data
 }

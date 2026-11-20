@@ -245,8 +245,13 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   detalle de producto/tomo (Productos) y en el producto elegido de Existencias por Tienda. Muestra cada
   movimiento (`inventory_movements`) con fecha en hora de Tijuana, tipo legible, +/−, quién, referencia
   (`VENTA-`, `APARTADO-`, `PAQ-`, `TRASLADO-`, `MOV-`…), almacén y **saldo después**. Gerente y cajero solo
-  ven su tienda (lo limita el servidor); el admin elige tienda. Datos: `GET /inventory/movements?with_meta=1`
-  (paginado, `stock_delta` con signo y `current_stock` por almacén en la misma petición).
+  ven su tienda (lo limita el servidor); el admin elige tienda.
+  - **Módulo propio (decisión de Joel, 2026-11-19):** `GET /products/{product}/stock-history`
+    (`ProductStockHistoryController` + `ProductStockHistoryService` + `StockHistoryMovementResource`):
+    paginado, `stock_delta` con signo y `current_stock` por almacén en la misma petición. Rango por día de
+    Tijuana. Gerente o cajero que pide otra tienda o un almacén de otra tienda → 403 (`storeScopeError`).
+    **`GET/POST /inventory/movements` no se toca** (la app móvil lo usa): sigue filtrando `from`/`to` por fecha
+    UTC y con su forma de siempre. Lo que pida esta pantalla va en su endpoint, no en el viejo.
   - **No hay columna de saldo:** se reconstruye HACIA ATRÁS desde `inventory.quantity` de cada almacén
     (`landing/src/lib/stockHistory.ts`). Por eso el front pide desde «desde» hasta HOY aunque filtre un
     «hasta». La UI avisa que es aproximado en historia vieja o importada. No agregues `stock_after` a la
@@ -255,8 +260,8 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
     stock sin movimiento después de esa fecha) y la cuenta sigue desde lo que dice la nota.
   - «Entró/Salió» con todos los almacenes no cuenta el paso Exhibición ↔ Bodega (`MOV-`).
   - **Signo de apartados:** `apartado` saca stock y `apartado_cancelado` lo regresa (`TYPES_DECREASE` /
-    `TYPES_INCREASE` de `InventoryMovement`; antes salían como +N en Actividad). No se capturan a mano:
-    `POST /inventory/movements` valida contra `MANUAL_TYPES`.
+    `TYPES_INCREASE` de `InventoryMovement`; antes salían como +N en Actividad). `POST /inventory/movements`
+    sigue aceptando los mismos tipos que antes (`ALL_TYPES`, sin los de apartado).
   - Recibir mercancía se sigue capturando como `ajuste` absoluto: en el Historial una entrada de mercancía y
     una corrección se ven igual. Un botón «Entrada» aparte es idea pendiente (decisión de Joel).
 

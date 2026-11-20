@@ -1,10 +1,10 @@
 import { useQuery } from '@tanstack/react-query'
 import {
-  getInventoryMovements,
   getProductStockByStore,
+  getProductStockHistory,
   getProductsStock,
-  type InventoryMovement,
   type ProductsStockParams,
+  type StockHistoryMovement,
   type WarehouseCurrentStock,
 } from '@tadaima/api'
 
@@ -54,7 +54,7 @@ export interface StockHistoryParams {
 }
 
 export interface StockHistoryData {
-  movements: InventoryMovement[]
+  movements: StockHistoryMovement[]
   currentStock: WarehouseCurrentStock[]
   /** Hubo más movimientos de los que se bajaron (los más viejos quedaron fuera). */
   truncated: boolean
@@ -70,16 +70,15 @@ export interface StockHistoryData {
  */
 export function useStockHistoryQuery(params: StockHistoryParams | null) {
   return useQuery({
-    queryKey: ['inventory', 'movements', params],
+    queryKey: ['inventory', 'stock-history', params],
     queryFn: async (): Promise<StockHistoryData> => {
       const p = params as StockHistoryParams
-      let movements: InventoryMovement[] = []
+      let movements: StockHistoryMovement[] = []
       let currentStock: WarehouseCurrentStock[] = []
       let lastPage = 1
       let page = 1
       for (; page <= Math.min(lastPage, HISTORY_MAX_PAGES); page++) {
-        const res = await getInventoryMovements({
-          product_id: p.productId,
+        const res = await getProductStockHistory(p.productId, {
           from: p.from,
           per_page: HISTORY_PAGE_SIZE,
           page,
@@ -90,7 +89,7 @@ export function useStockHistoryQuery(params: StockHistoryParams | null) {
         // Una venta durante la descarga recorre las páginas: sin repetidos.
         const seen = new Set(movements.map(m => m.id))
         movements = [...movements, ...res.data.filter(m => !seen.has(m.id))]
-        lastPage = res.pagination?.last_page ?? page
+        lastPage = res.pagination.last_page
       }
       return { movements, currentStock, truncated: lastPage > HISTORY_MAX_PAGES }
     },

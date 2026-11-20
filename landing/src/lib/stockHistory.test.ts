@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { InventoryMovement, WarehouseCurrentStock } from "@tadaima/api";
+import type { StockHistoryMovement, WarehouseCurrentStock } from "@tadaima/api";
 import {
   buildStockHistory,
   isInLocalRange,
@@ -9,16 +9,16 @@ import {
 } from "./stockHistory";
 
 let nextId = 1;
-function mov(p: Partial<InventoryMovement> & { created_at: string; stock_delta: number }): InventoryMovement {
+function mov(p: Partial<StockHistoryMovement> & { created_at: string; stock_delta: number }): StockHistoryMovement {
   return {
     id: nextId++,
-    product_id: 1,
     warehouse_id: 10,
+    warehouse: null,
     type: "venta",
     quantity: Math.abs(p.stock_delta),
     reference: null,
     notes: null,
-    user_id: 1,
+    user: null,
     ...p,
   };
 }

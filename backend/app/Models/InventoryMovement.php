@@ -42,18 +42,7 @@ class InventoryMovement extends Model
     const TYPES_DECREASE = ['venta', 'preventa', 'apartado'];
     const TYPES_NEUTRAL  = ['ajuste', 'transferencia']; // el signo de quantity decide
 
-    /** Todos los tipos que existen en la tabla (los escribe el sistema). */
     const ALL_TYPES = [
-        'entrada', 'venta', 'ajuste', 'transferencia',
-        'devolucion', 'preventa', 'preventa_cancelada',
-        'apartado', 'apartado_cancelado',
-    ];
-
-    /**
-     * Tipos que acepta `POST /inventory/movements` (captura manual). Los de
-     * apartado NO: solo los escribe LayawayService junto con su apartado.
-     */
-    const MANUAL_TYPES = [
         'entrada', 'venta', 'ajuste', 'transferencia',
         'devolucion', 'preventa', 'preventa_cancelada',
     ];

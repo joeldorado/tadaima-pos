@@ -13,7 +13,6 @@ use App\Models\InventoryMovement;
 use App\Models\Product;
 use App\Models\Warehouse;
 use App\Services\StockAdjustmentService;
-use App\Support\DateRange;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -432,93 +431,29 @@ class InventoryController extends Controller
     {
         $user    = $request->user();
         $perPage = (int) $request->get('per_page', 50);
-        // Tope por página (0 = todo, comportamiento viejo que se conserva).
-        if ($perPage > 0) {
-            $perPage = min($perPage, self::MOVEMENTS_MAX_PER_PAGE);
-        }
-        $isScoped = $user && ! $user->isAdminRole();
-        $storeId  = $isScoped ? $user->store_id : null;
 
         $query = InventoryMovement::query()
-            ->with(['product', 'warehouse.store', 'user'])
+            ->with(['product', 'warehouse', 'user'])
             ->when($request->filled('product_id'),   fn ($q) => $q->where('product_id',   $request->product_id))
             ->when($request->filled('warehouse_id'), fn ($q) => $q->where('warehouse_id', $request->warehouse_id))
-            ->when($request->filled('store_id'),     fn ($q) => $q->whereHas('warehouse', fn ($w) => $w->where('store_id', $request->integer('store_id'))))
             ->when($request->filled('type'),         fn ($q) => $q->where('type',         $request->type))
-            // Día de negocio (America/Tijuana), no la fecha UTC del timestamp.
-            ->when($request->filled('from'),         fn ($q) => $q->where('created_at', '>=', DateRange::fromUtc((string) $request->from)))
-            ->when($request->filled('to'),           fn ($q) => $q->where('created_at', '<=', DateRange::toUtc((string) $request->to)))
-            // Scope cross-tienda: el historial de movimientos solo de bodegas
-            // de SU tienda para no-admin.
-            ->when($isScoped, function ($q) use ($storeId) {
+            ->when($request->filled('from'),         fn ($q) => $q->whereDate('created_at', '>=', $request->from))
+            ->when($request->filled('to'),           fn ($q) => $q->whereDate('created_at', '<=', $request->to))
+            // Scope cross-tienda: el historial de movimientos (con costo) solo de
+            // bodegas de SU tienda para no-admin (ADR-015: el costo es sensible).
+            ->when($user && ! $user->isAdminRole(), function ($q) use ($user) {
+                $storeId = $user->store_id;
                 $storeId
                     ? $q->whereHas('warehouse', fn ($w) => $w->where('store_id', $storeId))
                     : $q->whereRaw('1=0');
             })
-            // id como desempate: un traslado deja dos renglones con la misma hora.
-            ->orderByDesc('created_at')
-            ->orderByDesc('id');
+            ->latest('created_at');
 
         $results = $perPage > 0 ? $query->paginate($perPage) : $query->get();
-        $items   = InventoryMovementResource::collection($perPage > 0 ? $results->items() : $results);
 
-        if (! $request->boolean('with_meta')) {
-            return $this->success($items);
-        }
-
-        // with_meta=1 (Historial de stock, 2026-11-19): paginación + el stock
-        // ACTUAL por almacén del producto, leído en la misma petición para que
-        // el saldo hacia atrás arranque del mismo momento que los movimientos.
-        return $this->success([
-            'data'          => $items,
-            'pagination'    => $perPage > 0 ? [
-                'total'        => $results->total(),
-                'per_page'     => $results->perPage(),
-                'current_page' => $results->currentPage(),
-                'last_page'    => $results->lastPage(),
-            ] : null,
-            'current_stock' => $request->filled('product_id')
-                ? $this->currentStockByWarehouse(
-                    (int) $request->product_id,
-                    $isScoped ? $storeId : null,
-                    $isScoped,
-                    $request->filled('store_id') ? $request->integer('store_id') : null,
-                )
-                : [],
-        ]);
-    }
-
-    /** Tope de renglones por página de GET /inventory/movements. */
-    private const MOVEMENTS_MAX_PER_PAGE = 500;
-
-    /**
-     * Stock actual del producto por almacén (Historial). Un no-admin solo ve su
-     * tienda; sin tienda asignada, nada. `filterStoreId` = el filtro `store_id`.
-     *
-     * @return list<array{warehouse_id:int, warehouse_name:?string, warehouse_type:?string, store_id:?int, store_name:?string, quantity:float}>
-     */
-    private function currentStockByWarehouse(int $productId, ?int $storeId, bool $isScoped, ?int $filterStoreId): array
-    {
-        if ($isScoped && ! $storeId) {
-            return [];
-        }
-
-        return Inventory::query()
-            ->with('warehouse.store')
-            ->where('product_id', $productId)
-            ->when($isScoped, fn ($q) => $q->whereHas('warehouse', fn ($w) => $w->where('store_id', $storeId)))
-            ->when($filterStoreId !== null, fn ($q) => $q->whereHas('warehouse', fn ($w) => $w->where('store_id', $filterStoreId)))
-            ->get()
-            ->map(fn (Inventory $inv) => [
-                'warehouse_id'   => (int) $inv->warehouse_id,
-                'warehouse_name' => $inv->warehouse?->name,
-                'warehouse_type' => $inv->warehouse?->type,
-                'store_id'       => $inv->warehouse?->store_id !== null ? (int) $inv->warehouse->store_id : null,
-                'store_name'     => $inv->warehouse?->store?->name,
-                'quantity'       => (float) $inv->quantity,
-            ])
-            ->values()
-            ->all();
+        return $this->success(
+            InventoryMovementResource::collection($perPage > 0 ? $results->items() : $results)
+        );
     }
 
     /**
