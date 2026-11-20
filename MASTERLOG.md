@@ -4,6 +4,26 @@
 
 ---
 
+### Sesión 2026-11-20 — Historial de stock por producto (PR #111) — rev tadaima-00158-gur
+
+**Origen:** Tadaima Tijuana pidió ver cuánto stock entra y sale de cada producto, para encontrar una entrada mal capturada o algo que no se descontó. Joel pidió que fuera un módulo aparte, sin tocar el API que ya existe (la app móvil usa `/inventory/movements`).
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00156-qom`. **Sin migración.** Al regresar se pierde el botón «Historial», y Actividad vuelve a mostrar los apartados con signo al revés.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00156-qom=100 --project tadaimapos --region us-east1`
+
+- **Pantalla:** botón «Historial» en el detalle de producto, en el de tomo y en Existencias por Tienda. Muestra fecha (hora de Tijuana), tipo, +/−, saldo después, quién, referencia y almacén, con filtros de almacén y rango. El admin además elige tienda.
+- **Endpoint nuevo:** `GET /products/{product}/stock-history` (`ProductStockHistoryController` + `ProductStockHistoryService` + `StockHistoryMovementResource`). Gerente y cajero solo su tienda; sin tienda asignada → 403. Sin costos.
+- **`/inventory/movements` no cambió:** su código es idéntico al anterior y hay tests que lo fijan (misma forma, `from`/`to` en UTC, el POST sigue rechazando `apartado`).
+- **Fix:** `apartado` ahora resta y `apartado_cancelado` suma en `InventoryMovement::stockDelta()`. Antes Actividad mostraba los apartados como +N.
+- **Saldo:** se reconstruye hacia atrás desde el stock actual (`landing/src/lib/stockHistory.ts`). Es aproximado en historia vieja o importada y la pantalla lo avisa; un ajuste que no cuadra sale con ⚠. No hay columna de saldo en la tabla.
+- **Validación:**
+  - `php artisan test` 1057 ✓; Postgres local (inventario, actividad, apartados) 59 ✓; vitest 997 ✓.
+  - Navegador local como cajero y admin (lo hizo la sesión que lo construyó).
+  - Candidato y dominio: `/` y `/tadaimaus/` 200; la ruta nueva sin token pasó de 404 a 401; `/inventory/movements` igual; bundle con el Historial; sin errores en los registros.
+  - No probado en prod con sesión: lo prueba la tienda.
+- **En prod 2026-11-20 ~13:00 (Tijuana).**
+- **Pendiente (idea):** recibir mercancía se sigue capturando como `ajuste` absoluto, así que en el Historial una entrada y una corrección se ven igual. Un botón «Entrada» aparte ayudaría.
+
 ### Sesión 2026-11-19 — Preventas: fecha de entrega en Folios y Caja (PR #110) + fix del build de composer — rev tadaima-00156-qom
 
 **Origen:** Tadaima Tijuana pidió que al entregar una preventa aparezca la fecha de entrega y no solo la fecha en que se hizo, «para tener un control por si algo extraño sucediera».
