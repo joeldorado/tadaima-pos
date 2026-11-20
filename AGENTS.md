@@ -8,7 +8,7 @@
 > Detalle adicional: [`CLAUDE.md`](CLAUDE.md) (comandos y arquitectura del frontend) y
 > [`backend/AGENTS.md`](backend/AGENTS.md) (API, ADRs y referencia de endpoints).
 >
-> Última revisión: 2026-11-18 (b).
+> Última revisión: 2026-11-19.
 
 ---
 
@@ -331,6 +331,10 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   Con un folio cargado, una preventa NUEVA en la misma mesa suma solo su anticipo al total
   (`computeLoadedFolioChargeAmount`, `lib/promo.ts`); antes sumaba su precio completo y el botón se quedaba en
   «Faltan $X».
+- **Fecha de entrega (2026-11-19, pedido de Tadaima Tijuana):** Preventas → Folios y las tarjetas de Caja →
+  Preventas muestran «Apartado …» y «Entregado … · hora» (o «Entrega parcial … (N de M)»). La fecha sale de
+  `pre_sale_order_items.delivered_at` (la del folio es la de la partida entregada más reciente; revertir la pone
+  en null). Lógica en `landing/src/lib/presaleDeliveryDate.ts`, en hora de Tijuana. Sin cambio de backend.
 - **Revertir una entrega de preventa (2026-11-13).** `POST /pre-sale-orders/{id}/cancel` con
   `liquidation_rollback` deshace la ÚLTIMA entrega del folio y SU pago; nunca el anticipo (antes borraba «el
   último pago», que con una liquidación de $0 era el anticipo). Vale para folio liquidado o con entrega
@@ -529,6 +533,9 @@ gcloud run services update-traffic tadaima --to-latest --project tadaimapos --re
   carpeta equivocada.
 - Rollback: `gcloud run services update-traffic tadaima --to-revisions <revisión-anterior>=100 --project tadaimapos --region us-east1`.
 - `deploy.sh` está obsoleto (apunta al proyecto viejo): no lo uses.
+- Si el build truena en `composer install` con «your php version (8.x) does not satisfy that requirement»: la
+  imagen `composer:2` sube sola de PHP. Desde 2026-11-19 el `Dockerfile` usa `--ignore-platform-req=php` en ese
+  paso (el runtime es `php:8.3`). No lo quites; si el runtime cambia de versión, revisa el lock.
 - Tienda EE. UU.: `(cd tadaimaus && gcloud run deploy tadaimaus --source . --project tadaimaus --region us-central1)`.
 
 ---

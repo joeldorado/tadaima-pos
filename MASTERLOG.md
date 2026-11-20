@@ -4,6 +4,25 @@
 
 ---
 
+### Sesión 2026-11-19 — Preventas: fecha de entrega en Folios y Caja (PR #110) + fix del build de composer — rev tadaima-00156-qom
+
+**Origen:** Tadaima Tijuana pidió que al entregar una preventa aparezca la fecha de entrega y no solo la fecha en que se hizo, «para tener un control por si algo extraño sucediera».
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00154-hit`. **Solo frontend + Dockerfile, sin migración.**
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00154-hit=100 --project tadaimapos --region us-east1`
+
+- **Preventas → Folios**, columna Fecha: «Apartado 17 nov 26», y debajo «Entregado 18 nov 26 · 2:42 p.m.» o «Entrega parcial 18 nov 26 (1 de 2)». Cada pieza entregada lleva su fecha. El «Hasta …» ya no sale en folios entregados.
+- **Caja → Preventas**: las tarjetas (Apartadas, Liquidadas, Vencidas) muestran «Apartado …» y, si hubo entrega, «Entregado …». Antes no mostraban ninguna fecha.
+- **Dato:** `pre_sale_order_items.delivered_at`, que ya existía desde abril. El API ya lo mandaba; no hubo cambios de backend. Lógica pura en `landing/src/lib/presaleDeliveryDate.ts` con pruebas (zona America/Tijuana).
+- **Fix de deploy (Dockerfile):** el primer build falló en `composer install` porque la imagen `composer:2` subió a PHP 8.6 y `nette/schema`, `nette/utils` y `league/config` del lock solo aceptan hasta 8.5. Se agregó `--ignore-platform-req=php` en ese paso. El runtime sigue en `php:8.3` y las extensiones se siguen validando. Sin esto, cualquier deploy desde `main` fallaba.
+- **Validación:**
+  - vitest 985 ✓ (8 nuevas); type-check con 451 errores, igual que `main`.
+  - Navegador local con la base SQLite de prueba: folio entregado, parcial y pendiente en Folios, y la tarjeta en Caja → Liquidadas.
+  - Candidato y dominio: `/` y `/tadaimaus/` 200, API sin token 401, bundle con los textos nuevos, sin errores en los registros.
+  - No probado en prod con sesión: lo prueba la tienda.
+- **En prod 2026-11-19 ~19:15 (Tijuana).**
+- **Estimado entregado a Joel:** historial de stock por producto (kardex) para gerente y cajero. Se trabaja en la rama `feat/historial-stock`, sin subir. Se encontró además que los apartados se ven con signo al revés en Actividad (+N cuando sale stock).
+
 ### Sesión 2026-11-18 (c) — Caja: precio Socio a mano para socio inactivo (PR #109, T-009) — rev tadaima-00154-hit
 
 **Origen:** la tienda reportó que con la membresía vencida Caja ya no dejaba elegir precio Socio a mano. El bloqueo existía desde el 2026-06-25. Piden que no se aplique solo, pero que el cajero pueda darlo (amigos, clientes de confianza).
