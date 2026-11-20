@@ -7,6 +7,7 @@ import { isAdmin as isAdminRole } from "@/lib/permisos";
 import { useActiveSessionQuery } from "@/hooks/queries/useCashSession";
 import { invalidateAfterSale } from "@/lib/optimisticSale";
 import { canRevertPresaleDelivery } from "@/lib/presaleLastDelivery";
+import { formatPresaleDate, formatPresaleTime, presaleDeliveryInfo } from "@/lib/presaleDeliveryDate";
 import { CancelTicketModal } from "@/components/cancel/CancelTicketModal";
 import { useActiveStore } from "@/contexts/StoreContext";
 import { useQueryClient } from "@tanstack/react-query";
@@ -201,6 +202,7 @@ export function PreSaleOrdersPanel() {
                 const meta = STATUS_META[order.status];
                 const Icon = meta.Icon;
                 const balance = order.balance ?? 0;
+                const delivery = presaleDeliveryInfo(order.items);
                 return (
                   <tr
                     key={order.id}
@@ -251,6 +253,11 @@ export function PreSaleOrdersPanel() {
                                   · {new Date(dl!).toLocaleDateString('es-MX', { day: '2-digit', month: 'short' })}
                                 </span>
                               )}
+                              {delivered && item.delivered_at && (
+                                <span className="text-[9px] font-black shrink-0" style={{ color: "#60a5fa" }} title={`Entregado ${formatPresaleDate(item.delivered_at)} ${formatPresaleTime(item.delivered_at)}`}>
+                                  · {formatPresaleDate(item.delivered_at, false)}
+                                </span>
+                              )}
                             </div>
                           );
                         })}
@@ -295,13 +302,23 @@ export function PreSaleOrdersPanel() {
 
                     {/* Fecha */}
                     <td className="px-4 py-3">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 whitespace-nowrap">
                         <Calendar size={11} className="shrink-0" style={{ color: ORDER_THEME.textMuted }} />
                         <span className="text-[11px]" style={{ color: ORDER_THEME.textSecondary }}>
-                          {new Date(order.created_at).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "2-digit" })}
+                          Apartado {formatPresaleDate(order.created_at)}
                         </span>
                       </div>
-                      {order.pickup_deadline && (
+                      {delivery.lastDeliveredAt && (
+                        <div className="flex items-center gap-1.5 mt-0.5 whitespace-nowrap">
+                          <CheckCircle2 size={11} className="shrink-0" style={{ color: "#60a5fa" }} />
+                          <span className="text-[11px] font-bold" style={{ color: "#60a5fa" }}>
+                            {delivery.isPartial
+                              ? `Entrega parcial ${formatPresaleDate(delivery.lastDeliveredAt)} (${delivery.deliveredCount} de ${delivery.totalCount})`
+                              : `Entregado ${formatPresaleDate(delivery.lastDeliveredAt)} · ${formatPresaleTime(delivery.lastDeliveredAt)}`}
+                          </span>
+                        </div>
+                      )}
+                      {order.pickup_deadline && order.status !== "delivered" && (
                         <div className="flex items-center gap-1.5 mt-0.5">
                           <Banknote size={11} className="shrink-0" style={{ color: ORDER_THEME.textMuted }} />
                           <span className="text-[10px] text-amber-400/70">
