@@ -14,6 +14,13 @@ class PreSaleOrderPaymentResource extends JsonResource
             'amount'     => $this->amount,
             'notes'      => $this->notes,
             'created_at' => $this->created_at,
+            // Preventa con Tarjeta y Mixto (2026-11-23, autorizado por Pier).
+            // `delivery_id`: entrega que liquidó este pago (en Mixto son dos
+            // pagos con la misma entrega). Comisión: la absorbe la tienda.
+            'payment_method_id' => $this->payment_method_id,
+            'terminal_id'       => $this->terminal_id,
+            'commission_amount' => (float) ($this->commission_amount ?? 0),
+            'delivery_id'       => $this->delivery_id,
 
             'payment_method' => $this->when($this->relationLoaded('paymentMethod'), fn () => [
                 'id'   => $this->paymentMethod?->id,

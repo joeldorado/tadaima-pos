@@ -240,9 +240,45 @@ describe("buildMixedCheckout — el cobro de una mesa con folio en UNA llamada",
     expect(payload.sale).toBeUndefined();
   });
 
-  it("tarjeta: la terminal viaja en el pago de la venta", () => {
-    const { payload } = buildMixedCheckout({ ...base, paymentMethodId: 2, terminalId: 6, lines: [figura, funda] });
+  it("tarjeta: la terminal viaja en la venta, en el folio y en la preventa nueva (2026-11-23, Pier)", () => {
+    const { payload } = buildMixedCheckout({ ...base, paymentMethodId: 2, terminalId: 6, lines: [figura, funda, preventaNueva] });
     expect(payload.sale?.payments).toEqual([{ payment_method_id: 2, amount: 250, terminal_id: 6 }]);
+    expect(payload.liquidation?.payments).toEqual([{ payment_method_id: 2, amount: 400, terminal_id: 6 }]);
+    expect(payload.liquidation?.payment).toBeUndefined();
+    expect(payload.new_order?.payments).toEqual([{ payment_method_id: 2, amount: 500, terminal_id: 6 }]);
+    expect(payload.new_order?.advance_amount).toBeUndefined();
+  });
+
+  it("un solo método sin terminal: folio y preventa nueva viajan con los campos de siempre", () => {
+    const { payload } = buildMixedCheckout({ ...base, paymentMethodId: 4, lines: [figura, preventaNueva] });
+    expect(payload.liquidation?.payment).toEqual({ amount: 400, payment_method_id: 4 });
+    expect(payload.new_order).toMatchObject({ advance_amount: 500, payment_method_id: 4 });
+  });
+
+  it("mixto: la transferencia se reparte y cada bloque suma su monto", () => {
+    const { payload, amounts } = buildMixedCheckout({
+      ...base, lines: [figura, funda, preventaNueva],
+      mixto: { cashMethodId: 1, transferMethodId: 4, transfer: 550 },
+    });
+    expect(amounts.total).toBe(1150);
+    // Un bloque que cae todo en transferencia viaja con los campos de siempre, con SU método.
+    expect(payload.liquidation?.payment).toEqual({ amount: 400, payment_method_id: 4 });
+    expect(payload.sale?.payments).toEqual([
+      { amount: 100, payment_method_id: 1 },
+      { amount: 150, payment_method_id: 4 },
+    ]);
+    expect(payload.new_order?.payments).toBeUndefined();
+    expect(payload.new_order).toMatchObject({ advance_amount: 500, payment_method_id: 1 });
+  });
+
+  it("mixto: el cambio es contra la parte en efectivo, no contra el total", () => {
+    const built = buildMixedCheckout({
+      ...base, lines: [figura, funda, preventaNueva],
+      mixto: { cashMethodId: 1, transferMethodId: 4, transfer: 550 },
+      cash: { received: 700, receivedUsd: 0, exchangeRate: 18 },
+    });
+    // 1,150 − 550 de transferencia = 600 en efectivo; entregó 700.
+    expect(built.cash.change).toBe(100);
   });
 
   it("dólares: recibido en pesos (USD × TC) y cambio contra TODO el ticket", () => {

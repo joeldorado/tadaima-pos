@@ -1442,6 +1442,10 @@ function ReporteDelDia({
               total={report.corte.liquidacion.total}
               isAdmin={isAdmin}
               centered
+              // Preventa con Tarjeta (2026-11-23, Pier): la columna Comisión
+              // aparece solo si algún folio se cobró con terminal.
+              showComision={report.corte.liquidacion.total.comision > 0}
+              ivaPct={ivaPct}
             />
           }
         />
@@ -2722,7 +2726,11 @@ export function SalesPage() {
       const map = new Map<string, ProdCorte>();
       orders.forEach(p => {
         const fecha = toLocalYmd(new Date(p.updated_at || p.created_at));
-        (p.items ?? []).forEach(it => {
+        // Comisión de terminal de los cobros con Tarjeta del folio (2026-11-23,
+        // autorizado por Pier): se reparte entre sus partidas por venta.
+        const folioComision = (p.payments ?? []).reduce((a, pay) => a + (Number(pay.commission_amount) || 0), 0);
+        const folioVenta = (p.items ?? []).reduce((a, it) => a + (it.subtotal ?? (it.unit_price ?? 0) * (it.quantity ?? 0)), 0);
+        (p.items ?? []).forEach((it, idx) => {
           const name = it.catalog?.product_name ?? `#${it.product_id ?? "?"}`;
           const qty = it.quantity ?? 0;
           // Venta del item de preventa: su neto (subtotal, con el descuento manual
@@ -2735,6 +2743,7 @@ export function SalesPage() {
           const row = map.get(key) ?? { key, name, fecha, precioUnit, precioLista, cantidad: 0, venta: 0, costo: 0, tieneCosto: false, comision: 0 };
           row.venta += venta;
           row.cantidad += qty;
+          row.comision += folioVenta > 0 ? folioComision * (venta / folioVenta) : (idx === 0 ? folioComision : 0);
           if (it.cost != null) { row.costo += it.cost * qty; row.tieneCosto = true; }
           map.set(key, row);
         });

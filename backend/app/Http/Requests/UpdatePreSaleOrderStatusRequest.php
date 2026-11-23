@@ -40,6 +40,9 @@ class UpdatePreSaleOrderStatusRequest extends FormRequest
             "{$prefix}payment"                   => ['sometimes', 'array'],
             "{$prefix}payment.amount"            => ["required_with:{$prefix}payment", 'numeric', 'min:0.01'],
             "{$prefix}payment.payment_method_id" => ['nullable', 'integer', 'exists:payment_methods,id'],
+            // Cobro en lista (2026-11-23, autorizado por Pier): Tarjeta con su
+            // terminal o Mixto. Si viene, manda sobre `payment`.
+            ...StorePreSaleOrderRequest::paymentListRules("{$prefix}payments"),
             // Descuento manual por partida al liquidar (2026-11-16): el mismo de
             // una venta normal. Solo para partidas de esta entrega (item_ids);
             // el servidor calcula el monto y lo topa en lo que le falta a la pieza.

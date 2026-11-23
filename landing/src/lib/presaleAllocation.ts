@@ -29,6 +29,8 @@ export interface AllocationLine {
    * anteriores, líneas pendientes) el reparto es el de siempre.
    */
   delivery_payment_id?: number | null;
+  /** Entrega en la que se llevó la línea. En Mixto (2026-11-23) la entrega tiene dos pagos. */
+  delivery_id?: number | null;
   /**
    * Descuento manual que se le puso a la línea al entregarla (2026-11-16). El
    * total de la línea es precio × cantidad − descuento.
@@ -45,6 +47,21 @@ export interface AllocationPayment {
   id?: number;
   amount: number;
   created_at: string;
+  /** Entrega que liquidó este pago (desde 2026-11-23; en Mixto, dos pagos con la misma). */
+  delivery_id?: number | null;
+}
+
+/**
+ * ¿Este pago liquidó la entrega de esta línea? Por `delivery_id` del pago
+ * (todos los pagos de la entrega, también los dos de un Mixto) o, en pagos
+ * anteriores a 2026-11-23, por `delivery_payment_id` de la línea.
+ */
+export function paymentLiquidatesLine(
+  payment: Pick<AllocationPayment, "id" | "delivery_id">,
+  line: Pick<AllocationLine, "delivery_payment_id" | "delivery_id">,
+): boolean {
+  if (payment.delivery_id != null && line.delivery_id != null) return payment.delivery_id === line.delivery_id;
+  return payment.id != null && line.delivery_payment_id === payment.id;
 }
 
 export interface PresaleAllocation<P extends AllocationPayment> {
@@ -115,7 +132,7 @@ function splitPayment(
   capacity: readonly number[],
 ): number[] {
   const amount = Math.max(0, payment.amount || 0);
-  const isOwn = (line: AllocationLine) => payment.id != null && line.delivery_payment_id === payment.id;
+  const isOwn = (line: AllocationLine) => paymentLiquidatesLine(payment, line);
   if (!lines.some(isOwn)) return splitByPiece(amount, pieces, capacity);
 
   let remaining = amount;

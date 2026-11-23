@@ -2131,33 +2131,7 @@ export function SellPage() {
 
 
 
-  // Política: preventas no aceptan Tarjeta (no podemos pasar la comisión al cliente
-  // y el cobro físico se hace en mostrador con efectivo/transferencia). Detecta:
-  //  - mesa marcada como preventa (catálogos en el carrito)
-  //  - items de catálogo agregados con sellingCatalogId (mixed cart)
-  //  - folio cargado para liquidación (isFromPreSale)
-  const hasPreventaInCart = !!(activeMesa && (
-    activeMesa.isPreventa
-    || activeMesa.items.some(i => i.sellingCatalogId != null || i.isFromPreSale)
-  ));
-
   const setPayment = (pm: PaymentMethod) => {
-    if (pm === "Tarjeta" && hasPreventaInCart) {
-      toast.error(
-        "Esta venta incluye preventas. No se permite cobrar con Tarjeta · usa Efectivo, Dólares o Transferencia.",
-        { duration: 5500 }
-      );
-      return;
-    }
-    // Mixto es solo para ventas regulares: los anticipos de preventa viajan
-    // con UN payment_method_id (createPreSaleOrder) — no hay dónde partirlos.
-    if (pm === "Mixto" && (hasPreventaInCart || activeMesa?.loadedPreSaleOrderId != null)) {
-      toast.error(
-        "Las preventas no admiten pago mixto · usa Efectivo o Transferencia.",
-        { duration: 5500 }
-      );
-      return;
-    }
     // Log de pagos: deja rastro del cambio de método en la ventanita.
     if (pm !== activeMesa?.paymentMethod) pushPayLog(`Método → ${pm}`, "info");
     // Tarjeta y Transferencia no usan campo de efectivo recibido — limpiarlo para
@@ -2226,15 +2200,9 @@ export function SellPage() {
 
   const togglePreventa = () => {
     const turningOn = !activeMesa.isPreventa;
-    if (turningOn && activeMesa.paymentMethod === "Tarjeta") {
-      toast.info(
-        "Cambié el método de pago a Efectivo porque las preventas no se cobran con Tarjeta.",
-        { duration: 5000 }
-      );
-    }
     updMesa(activeMesa.id, m => {
       const nextVal = !m.isPreventa;
-      const nextPayment: PaymentMethod = (nextVal && m.paymentMethod === "Tarjeta") ? "Efectivo" : m.paymentMethod;
+      const nextPayment: PaymentMethod = m.paymentMethod;
       // Reset items that don't have preventa stock if turning ON. El cobro de
       // preventa no guarda sale_items: el comentario de la línea se perdería en
       // silencio, así que se limpia aquí (y el menú ⋮ ya no lo ofrece).
@@ -2650,8 +2618,8 @@ export function SellPage() {
    */
   const itemAcceptsMethod = useCallback((item: CartItem, method: PaymentMethod): boolean => {
     const isCardMethod = method === "Tarjeta";
-    // Preventa (catálogo) → no Tarjeta.
-    if (item.sellingCatalogId != null) return !isCardMethod;
+    // Preventa (catálogo): cualquier método desde 2026-11-23 (autorizado por Pier).
+    if (item.sellingCatalogId != null) return true;
     // Un regalo no se cobra: su restricción no bloquea el resto (2026-10-31).
     if (item.isGift) return true;
     // Flags del producto.
@@ -2677,7 +2645,6 @@ export function SellPage() {
       .filter(i => !itemAcceptsMethod(i, method))
       .map(i => {
         const nombre = i.product.name;
-        if (i.sellingCatalogId != null) return { item: i, motivo: "preventa" as const, nombre, promo: null, promoId: null };
         if (isCard ? i.product.allow_card === false : i.product.allow_cash === false) {
           return { item: i, motivo: "producto" as const, nombre, promo: null, promoId: null };
         }
@@ -2715,8 +2682,6 @@ export function SellPage() {
   /** Por qué no se puede cambiar al método que conserva la promo (si aplica). */
   const promoAlertKeepBlockedReason = (() => {
     if (!promoAlert) return undefined;
-    // Mismo criterio que setPayment: una venta con preventa no va con Tarjeta.
-    if (promoAlert.keepMethod === "Tarjeta" && hasPreventaInCart) return "las preventas no se cobran con Tarjeta";
     const blocker = activeMesa?.items.find(i => !itemAcceptsMethod(i, promoAlert.keepMethod))?.product.name;
     return blocker ? `"${blocker}" no acepta ${promoAlert.keepMethod}` : undefined;
   })();
@@ -2848,7 +2813,6 @@ export function SellPage() {
   // Pago Mixto: split transferencia/efectivo contra el total actual. El cambio
   // y el gate de Cobrar se calculan contra cashPortion, no contra el total.
   const isMixtoPay = activeMesa?.paymentMethod === "Mixto";
-  const mixtoBlocked = hasPreventaInCart || activeMesa?.loadedPreSaleOrderId != null;
   const mixedSplit = useMemo(
     () => computeMixedSplit(currentPayAmount, transferAmount),
     [currentPayAmount, transferAmount],
@@ -3182,19 +3146,10 @@ export function SellPage() {
     // Mientras se consultaba el stock, otra mesa pudo cargar este mismo folio.
     if (switchToMesaWithFolio()) return;
 
-    // Política: liquidación de preventa no se cobra con Tarjeta. Si la mesa
-    // estaba en Tarjeta, forzar Efectivo + avisar.
-    if (activeMesa.paymentMethod === "Tarjeta") {
-      toast.info(
-        "Cambié el método de pago a Efectivo porque las preventas no se cobran con Tarjeta.",
-        { duration: 5000 }
-      );
-    }
-
+    // La liquidación se cobra con el método que tenga la mesa, Tarjeta y Mixto
+    // incluidos (2026-11-23, autorizado por Pier).
     updMesa(activeMesa.id, m => ({
       ...m,
-      paymentMethod: m.paymentMethod === "Tarjeta" ? "Efectivo" : m.paymentMethod,
-      ...(m.paymentMethod === "Tarjeta" ? { selectedTerminalId: undefined } : {}),
       items: [...preSaleItems, ...m.items.filter(i => !i.isFromPreSale)],
       loadedPreSaleOrderId: order.id,
       loadedPreSaleOrderCode: order.code,
@@ -3253,20 +3208,9 @@ export function SellPage() {
     const anticipo = catalog.advance_payment ?? 0;
     const catalogImg = catalog.image_url ?? (catalog.image_path ? storageUrl(catalog.image_path) : "");
 
-    // Política: preventas no aceptan Tarjeta. Si la mesa estaba en Tarjeta, cambia
-    // a Efectivo automáticamente y avisa al cajero (tomamos control como pidió Joel).
-    if (activeMesa.paymentMethod === "Tarjeta") {
-      toast.info(
-        "Cambié el método de pago a Efectivo porque las preventas no se cobran con Tarjeta.",
-        { duration: 5000 }
-      );
-    }
-
     // NO setear isPreventa: true a nivel mesa — el item ya viene con sellingCatalogId
     // y su propio depositAmount, así no contamina con anticipo a productos regulares.
     updMesa(activeMesa.id, m => {
-      // Asegura que el método de pago no sea Tarjeta cuando entra una preventa.
-      const safePayment: PaymentMethod = m.paymentMethod === "Tarjeta" ? "Efectivo" : m.paymentMethod;
       // Idempotente: si ya existe un item con el mismo sellingCatalogId, sumar qty
       // en lugar de duplicar la fila (bug típico al doble-click en la card del modal).
       const existing = m.items.find(i => i.sellingCatalogId === catalog.id);
@@ -3280,8 +3224,6 @@ export function SellPage() {
         }
         return {
           ...m,
-          paymentMethod: safePayment,
-          ...(safePayment !== "Tarjeta" ? { selectedTerminalId: undefined } : {}),
           items: m.items.map(i => i.sellingCatalogId === catalog.id
             ? { ...i, quantity: i.quantity + 1, depositAmount: (i.depositAmount ?? 0) + anticipo }
             : i),
@@ -3311,8 +3253,6 @@ export function SellPage() {
       };
       return {
         ...m,
-        paymentMethod: safePayment,
-        ...(safePayment !== "Tarjeta" ? { selectedTerminalId: undefined } : {}),
         items: [...m.items, item],
       };
     });
@@ -3916,6 +3856,19 @@ export function SellPage() {
     toast.error(msg);
   };
 
+  /**
+   * Pago Mixto en una mesa con folio o preventa nueva (2026-11-23, autorizado
+   * por Pier): la transferencia de TODO el ticket, que `buildMixedCheckout`
+   * reparte entre folio, venta y preventa nueva. Null si el método no es Mixto;
+   * "invalid" si falta capturar una transferencia válida.
+   */
+  const presaleMixtoInput = (): { cashMethodId: number; transferMethodId: number; transfer: number } | null | "invalid" => {
+    if (activeMesa.paymentMethod !== "Mixto") return null;
+    const split = computeMixedSplit(currentPayAmount, transferAmount);
+    if (!split.valid) return "invalid";
+    return { cashMethodId: 1, transferMethodId: 4, transfer: split.transfer };
+  };
+
   const handleCheckout = async (opts?: { allowZero?: boolean }) => {
     if (!activeMesa.items.length) return;
 
@@ -3980,6 +3933,12 @@ export function SellPage() {
       const payMethodId = PM_IDS[activeMesa.paymentMethod] ?? 1;
       const loadedOrderId = activeMesa.loadedPreSaleOrderId;
       const checkoutMesaId = activeMesa.id;
+      const mixto = presaleMixtoInput();
+      if (mixto === "invalid") {
+        toast.error("Captura el monto de la transferencia para el pago mixto.");
+        isCheckoutLockedRef.current = false;
+        return;
+      }
 
       try {
         setIsProcessing(true);
@@ -4003,6 +3962,7 @@ export function SellPage() {
           paymentMethodId: payMethodId,
           ...(activeMesa.paymentMethod === "Tarjeta" && activeMesa.selectedTerminalId
             ? { terminalId: activeMesa.selectedTerminalId } : {}),
+          ...(mixto ? { mixto } : {}),
           ...saleLineCtx,
           // ticketReceivedUsd ya viene gateado por usdApplied (simulación no viaja).
           cash: { received: parseFloat(cashReceived) || 0, receivedUsd: ticketReceivedUsd, exchangeRate: tc },
@@ -4099,7 +4059,14 @@ export function SellPage() {
           ...(cashReceivedUsdSnap > 0 ? { amountReceivedUsd: cashReceivedUsdSnap } : {}),
           // cashReceivedSnap ya está en MXN (incluye USD * tc). El cambio se calcula
           // directamente en pesos — se entrega siempre en MXN aunque haya recibido USD.
-          change: cashReceivedSnap > ticketTotal ? cashReceivedSnap - ticketTotal : undefined,
+          change: mixto
+            ? (built.cash.change > 0 ? built.cash.change : undefined)
+            : cashReceivedSnap > ticketTotal ? cashReceivedSnap - ticketTotal : undefined,
+          // Mixto (2026-11-23): el ticket enseña cuánto fue en efectivo y cuánto por transferencia.
+          ...(mixto ? { paymentBreakdown: [
+            { name: "Efectivo", amount: Math.round((built.amounts.total - mixto.transfer) * 100) / 100 },
+            { name: "Transferencia", amount: mixto.transfer },
+          ] } : {}),
           ...(newOrderCode ? {
             preSaleCode: newOrderCode,
             preSaleItems: newCatalogItems.map(i => ({
@@ -4220,6 +4187,12 @@ export function SellPage() {
         "Efectivo": 1, "Dólares": 1, "Tarjeta": 2, "Transferencia": 4,
       };
       const payMethodId = PM_IDS[activeMesa.paymentMethod] ?? 1;
+      const mixto = presaleMixtoInput();
+      if (mixto === "invalid") {
+        toast.error("Captura el monto de la transferencia para el pago mixto.");
+        isCheckoutLockedRef.current = false;
+        return;
+      }
       try {
         setIsProcessing(true);
         if (!cashSession) throw new Error("No hay caja abierta");
@@ -4243,6 +4216,7 @@ export function SellPage() {
           paymentMethodId: payMethodId,
           ...(activeMesa.paymentMethod === "Tarjeta" && activeMesa.selectedTerminalId
             ? { terminalId: activeMesa.selectedTerminalId } : {}),
+          ...(mixto ? { mixto } : {}),
           ...saleLineCtx,
           // ticketReceivedUsd ya viene gateado por usdApplied (simulación no viaja).
           cash: { received: parseFloat(cashReceived) || 0, receivedUsd: ticketReceivedUsd, exchangeRate: tc },
@@ -4272,11 +4246,16 @@ export function SellPage() {
           });
         } else {
           // Solo la preventa: una llamada de por sí, por el endpoint de siempre.
+          // El anticipo viaja como lo armó buildMixedCheckout: campos de siempre,
+          // o lista con terminal (Tarjeta) o con dos pagos (Mixto).
+          const newOrder = built.payload.new_order;
           order = await createPreSaleOrder({
             store_id: activeStore.id,
             customer_id: Number(activeMesa.customerId),
-            items: built.payload.new_order?.items ?? [],
-            ...(catalogDeposit > 0 ? { advance_amount: catalogDeposit, payment_method_id: payMethodId } : {}),
+            items: newOrder?.items ?? [],
+            ...(newOrder?.advance_amount != null ? { advance_amount: newOrder.advance_amount } : {}),
+            ...(newOrder?.payment_method_id != null ? { payment_method_id: newOrder.payment_method_id } : {}),
+            ...(newOrder?.payments ? { payments: newOrder.payments } : {}),
           });
         }
 
@@ -4329,8 +4308,13 @@ export function SellPage() {
           amountReceived: mixedReceived > 0 ? mixedReceived : undefined,
           ...(mixedReceivedUsd > 0 ? { amountReceivedUsd: mixedReceivedUsd } : {}),
           // Mismo fix USD/MXN que la rama de folio cargado.
+          ...(mixto ? { paymentBreakdown: [
+            { name: "Efectivo", amount: Math.round((built.amounts.total - mixto.transfer) * 100) / 100 },
+            { name: "Transferencia", amount: mixto.transfer },
+          ] } : {}),
           change: (() => {
             if (mixedReceived <= 0) return undefined;
+            if (mixto) return built.cash.change > 0 ? built.cash.change : undefined;
             if (payMethodSnap === "Dólares") {
               const receivedMxn = mixedReceived * tc;
               return receivedMxn > mixedTotal ? (receivedMxn - mixedTotal) / tc : undefined;
@@ -7373,24 +7357,17 @@ export function SellPage() {
                                   // backend. Antes referenciaba `hasCashOnly`, variable que
                                   // nunca existió → ReferenceError al abrir el menú (QA 06-12).
                                   const bloqueados = activeMesa.items.filter(i => !itemAcceptsMethod(i, pm));
-                                  // Mixto solo aplica a ventas regulares: los anticipos
-                                  // de preventa viajan con UN método (createPreSaleOrder).
-                                  const mixtoBloqueado = pm === "Mixto" && mixtoBlocked;
-                                  const isBlocked = bloqueados.length > 0 || mixtoBloqueado;
+                                  const isBlocked = bloqueados.length > 0;
                                   // Antes la única pista era un triángulo de
                                   // 11px sin tooltip. Y distingue producto de
                                   // promo: decir "el producto no acepta
                                   // tarjeta" cuando el que estorba es un 2x1
                                   // manda al cajero a revisar lo que no es.
                                   const blockedTitle = (() => {
-                                    if (mixtoBloqueado) {
-                                      return "Las preventas no admiten pago mixto — usa Efectivo o Transferencia.";
-                                    }
                                     const primero = bloqueados[0];
                                     if (!primero) return undefined;
                                     const esCard = pm === "Tarjeta";
-                                    const culpaProducto = primero.sellingCatalogId != null
-                                      || (esCard ? primero.product.allow_card === false : primero.product.allow_cash === false);
+                                    const culpaProducto = (esCard ? primero.product.allow_card === false : primero.product.allow_cash === false);
                                     const resto = bloqueados.length > 1 ? ` (y ${bloqueados.length - 1} más)` : "";
                                     if (culpaProducto) {
                                       return `No disponible: "${primero.product.name}" no acepta ${pm}.${resto}`;

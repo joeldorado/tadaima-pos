@@ -518,7 +518,12 @@ class SaleCancellationService
 
         if ($delivery) {
             $items    = $delivered->where('delivery_id', $delivery->id)->values();
-            $payments = $order->payments->where('id', $delivery->payment_id)->values();
+            // Una entrega en Mixto deja dos pagos (2026-11-23): todos llevan
+            // `delivery_id`; los de antes solo están en `payment_id`.
+            $payments = $order->payments
+                ->filter(fn (PreSaleOrderPayment $p) => (int) $p->delivery_id === (int) $delivery->id
+                    || ($delivery->payment_id !== null && (int) $p->id === (int) $delivery->payment_id))
+                ->values();
 
             return [$items, $payments, $delivery];
         }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allocatePresalePayments, chargeForLoadedLines, presaleDeliveryCharge, sumByLine } from "./presaleAllocation";
+import { allocatePresalePayments, chargeForLoadedLines, paymentLiquidatesLine, presaleDeliveryCharge, sumByLine } from "./presaleAllocation";
 
 // Reparto de los pagos de un folio entre sus líneas (2026-11-01). Los pagos se
 // guardan por folio, no por producto: la tienda aparta a $200 por pieza, y el
@@ -255,5 +255,35 @@ describe("chargeForLoadedLines — cobro de las partidas que quedan en el carrit
 
   it("no arrastra errores de punto flotante", () => {
     expect(chargeForLoadedLines([0.1, 0.2], 0)).toBe(0.3);
+  });
+});
+
+describe("paymentLiquidatesLine — pagos de una entrega (2026-11-23)", () => {
+  it("por delivery_id: los dos pagos de un Mixto liquidan la línea de su entrega", () => {
+    const line = { quantity: 1, unit_price: 1000, delivery_id: 9, delivery_payment_id: 21 };
+    expect(paymentLiquidatesLine({ id: 21, delivery_id: 9 }, line)).toBe(true);
+    expect(paymentLiquidatesLine({ id: 22, delivery_id: 9 }, line)).toBe(true);
+    expect(paymentLiquidatesLine({ id: 30, delivery_id: 10 }, line)).toBe(false);
+  });
+
+  it("pagos anteriores sin delivery_id: por delivery_payment_id de la línea", () => {
+    const line = { quantity: 1, unit_price: 1000, delivery_payment_id: 21 };
+    expect(paymentLiquidatesLine({ id: 21 }, line)).toBe(true);
+    expect(paymentLiquidatesLine({ id: 20 }, line)).toBe(false);
+  });
+
+  it("el reparto pone los dos pagos de la entrega en su línea", () => {
+    const lines = [
+      { quantity: 1, unit_price: 1000, delivery_id: 9, delivery_payment_id: 21 },
+      { quantity: 1, unit_price: 1000 },
+    ];
+    const payments = [
+      { id: 20, amount: 400, created_at: "2026-11-01T10:00:00Z" },
+      { id: 21, amount: 500, created_at: "2026-11-20T10:00:00Z", delivery_id: 9 },
+      { id: 22, amount: 300, created_at: "2026-11-20T10:00:01Z", delivery_id: 9 },
+    ];
+    const { paidByLine } = allocatePresalePayments(lines, payments);
+    expect(paidByLine[0]).toBeCloseTo(1000, 2);
+    expect(paidByLine[1]).toBeCloseTo(200, 2);
   });
 });

@@ -27,6 +27,8 @@ interface DeliveryPayment {
   id: number;
   amount: number;
   notes?: string | null;
+  /** Entrega que liquidó el pago (desde 2026-11-23; en Mixto son dos pagos). */
+  delivery_id?: number | null;
 }
 
 export interface LastPresaleDelivery {
@@ -54,8 +56,10 @@ export function lastPresaleDelivery(
     const lastId = Math.max(...tracked.map((it) => it.delivery_id!));
     const group = tracked.filter((it) => it.delivery_id === lastId);
     const paymentId = group[0]?.delivery_payment_id ?? null;
-    const payment = (payments ?? []).find((p) => p.id === paymentId);
-    return summary(group, payment?.amount ?? 0);
+    // Todos los pagos de esa entrega (Mixto = dos); los de antes, por `delivery_payment_id`.
+    const own = (payments ?? []).filter((p) => p.delivery_id === lastId || (paymentId != null && p.id === paymentId));
+    const refund = Math.round(own.reduce((sum, p) => sum + (p.amount || 0), 0) * 100) / 100;
+    return summary(group, refund);
   }
 
   const last = [...(payments ?? [])].sort((a, b) => b.id - a.id)[0];

@@ -88,3 +88,15 @@ describe("canRevertPresaleDelivery", () => {
     expect(canRevertPresaleDelivery({ status: "delivered" })).toBe(true);
   });
 });
+
+describe("lastPresaleDelivery — entrega cobrada en Mixto (2026-11-23)", () => {
+  it("devuelve la suma de los dos pagos de la entrega, nunca el anticipo", () => {
+    const items = [{ id: 1, status: "delivered", delivery_id: 9, delivery_payment_id: 21 }];
+    const payments = [
+      { id: 20, amount: 200, notes: "Anticipo inicial" },
+      { id: 21, amount: 500, notes: "Liquidación", delivery_id: 9 },
+      { id: 22, amount: 300, notes: "Liquidación", delivery_id: 9 },
+    ];
+    expect(lastPresaleDelivery(items, payments)?.refund).toBe(800);
+  });
+});

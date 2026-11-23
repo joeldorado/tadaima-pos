@@ -73,6 +73,7 @@ class MixedCheckoutService
                 $liquidation['item_ids'] ?? null,
                 $liquidation['payment'] ?? null,
                 $liquidation['item_discounts'] ?? null,
+                $liquidation['payments'] ?? null,
             )
             : null;
 

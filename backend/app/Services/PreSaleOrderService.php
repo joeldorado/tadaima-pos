@@ -11,6 +11,7 @@ use App\Models\PreSaleOrderLog;
 use App\Models\PreSaleOrderPayment;
 use App\Support\PreSaleAudit;
 use App\Support\PresaleItemDiscount;
+use App\Support\PresalePayments;
 use Illuminate\Support\Facades\DB;
 
 class PreSaleOrderService
@@ -70,7 +71,14 @@ class PreSaleOrderService
             }
 
             // ── Validate advance_amount does not exceed total price ───────────
-            $advanceAmount = (float) ($data['advance_amount'] ?? 0);
+            // El anticipo puede venir como lista de pagos (Tarjeta con terminal o
+            // Mixto, 2026-11-23, autorizado por Pier) o con los campos de siempre.
+            $advancePayments = PresalePayments::normalize(
+                $data['payments'] ?? null,
+                isset($data['advance_amount']) ? (float) $data['advance_amount'] : null,
+                isset($data['payment_method_id']) ? (int) $data['payment_method_id'] : null,
+            );
+            $advanceAmount = PresalePayments::total($advancePayments);
             $totalPrice = 0.0;
             foreach ($items as $line) {
                 $catalog    = $catalogs->get((int) $line['catalog_id']);
@@ -132,11 +140,13 @@ class PreSaleOrderService
             }
 
             // ── Initial anticipo payment ──────────────────────────────────────
-            if ($advanceAmount > 0) {
+            foreach ($advancePayments as $p) {
                 PreSaleOrderPayment::create([
                     'pre_sale_order_id' => $order->id,
-                    'amount'            => $advanceAmount,
-                    'payment_method_id' => $data['payment_method_id'] ?? null,
+                    'amount'            => $p['amount'],
+                    'payment_method_id' => $p['payment_method_id'],
+                    'terminal_id'       => $p['terminal_id'],
+                    'commission_amount' => $p['commission_amount'],
                     'cashier_id'        => $userId,
                     'notes'             => 'Anticipo inicial',
                 ]);
@@ -229,7 +239,7 @@ class PreSaleOrderService
      * Guarda un pago del folio y lo deja en su historial. Debe llamarse dentro
      * de una transacción con el folio bloqueado.
      *
-     * @param  array{amount: float|int|string, payment_method_id?: int|null, notes?: string|null}  $data
+     * @param  array{amount: float|int|string, payment_method_id?: int|null, terminal_id?: int|null, commission_amount?: float|null, notes?: string|null}  $data
      */
     private function recordPayment(PreSaleOrder $order, array $data, int $userId): PreSaleOrderPayment
     {
@@ -239,6 +249,8 @@ class PreSaleOrderService
             'pre_sale_order_id' => $order->id,
             'amount'            => $amount,
             'payment_method_id' => $data['payment_method_id'] ?? null,
+            'terminal_id'       => $data['terminal_id'] ?? null,
+            'commission_amount' => $data['commission_amount'] ?? 0,
             'cashier_id'        => $userId,
             'notes'             => $data['notes'] ?? null,
         ]);
@@ -311,6 +323,8 @@ class PreSaleOrderService
      *
      * @param  array<int, int>|null  $itemIds
      * @param  array{amount: float|int|string, payment_method_id?: int|null}|null  $payment
+     * @param  array<int, array<string, mixed>>|null  $payments  cobro en lista (Tarjeta con terminal o
+     *         Mixto, 2026-11-23); si viene, manda sobre `$payment`
      * @throws \DomainException si el folio no está listo o la entrega no procede
      */
     public function liquidate(
@@ -320,8 +334,9 @@ class PreSaleOrderService
         ?array $itemIds = null,
         ?array $payment = null,
         ?array $itemDiscounts = null,
+        ?array $payments = null,
     ): PreSaleOrder {
-        return DB::transaction(function () use ($order, $userId, $notes, $itemIds, $payment, $itemDiscounts) {
+        return DB::transaction(function () use ($order, $userId, $notes, $itemIds, $payment, $itemDiscounts, $payments) {
             $order = PreSaleOrder::lockForUpdate()->find($order->id);
 
             if ($order->status !== PreSaleOrder::STATUS_READY) {
@@ -331,7 +346,7 @@ class PreSaleOrderService
                 );
             }
 
-            $tracked = $itemIds !== null || $payment !== null;
+            $tracked = $itemIds !== null || $payment !== null || ! empty($payments);
             if ($tracked) {
                 // Candado folio → catálogo: mientras se entrega, el estado de los
                 // catálogos de este folio no puede cambiar por debajo.
@@ -374,16 +389,23 @@ class PreSaleOrderService
                 $items = $items->fresh(['catalog:id,product_name,status']);
             }
 
-            $paymentRow = $tracked ? $this->chargeDelivery($order, $payment, $userId) : null;
+            $paymentRows = $tracked ? $this->chargeDelivery($order, $payment, $payments, $userId) : [];
 
+            // `payment_id` = el primer pago (compatibilidad); en Mixto todos
+            // quedan ligados por `pre_sale_order_payments.delivery_id`.
             $delivery = $tracked && $items->isNotEmpty()
                 ? PreSaleDelivery::create([
                     'pre_sale_order_id' => $order->id,
                     'user_id'           => $userId,
-                    'payment_id'        => $paymentRow?->id,
-                    'amount'            => $paymentRow?->amount ?? 0,
+                    'payment_id'        => $paymentRows[0]->id ?? null,
+                    'amount'            => round(array_sum(array_map(static fn ($p) => (float) $p->amount, $paymentRows)), 2),
                 ])
                 : null;
+
+            if ($delivery && $paymentRows !== []) {
+                PreSaleOrderPayment::whereIn('id', array_map(static fn ($p) => $p->id, $paymentRows))
+                    ->update(['delivery_id' => $delivery->id]);
+            }
 
             if ($items->isNotEmpty()) {
                 PreSaleOrderItem::whereIn('id', $items->pluck('id'))->update([
@@ -530,16 +552,24 @@ class PreSaleOrderService
     }
 
     /**
-     * Cobro de una entrega. Null si la entrega no lleva cobro (el anticipo ya
-     * cubría). No acepta cobrar más que el saldo del folio.
+     * Cobro de una entrega: cero, uno o dos pagos (Mixto). Vacío si la entrega
+     * no lleva cobro (el anticipo ya cubría). No acepta cobrar más que el saldo
+     * del folio.
      *
      * @param  array{amount: float|int|string, payment_method_id?: int|null}|null  $payment
+     * @param  array<int, array<string, mixed>>|null  $payments
+     * @return list<PreSaleOrderPayment>
      */
-    private function chargeDelivery(PreSaleOrder $order, ?array $payment, int $userId): ?PreSaleOrderPayment
+    private function chargeDelivery(PreSaleOrder $order, ?array $payment, ?array $payments, int $userId): array
     {
-        $amount = round((float) ($payment['amount'] ?? 0), 2);
+        $rows = PresalePayments::normalize(
+            $payments,
+            isset($payment['amount']) ? (float) $payment['amount'] : null,
+            isset($payment['payment_method_id']) ? (int) $payment['payment_method_id'] : null,
+        );
+        $amount = PresalePayments::total($rows);
         if ($amount <= 0) {
-            return null;
+            return [];
         }
 
         $order->load(['items', 'payments']);
@@ -549,11 +579,10 @@ class PreSaleOrderService
             );
         }
 
-        return $this->recordPayment($order, [
-            'amount'            => $amount,
-            'payment_method_id' => $payment['payment_method_id'] ?? null,
-            'notes'             => 'Liquidación',
-        ], $userId);
+        return array_map(fn (array $row): PreSaleOrderPayment => $this->recordPayment($order, [
+            ...$row,
+            'notes' => 'Liquidación',
+        ], $userId), $rows);
     }
 
     /**

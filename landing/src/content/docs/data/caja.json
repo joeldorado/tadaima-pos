@@ -134,7 +134,7 @@
             "kind": "callout",
             "tone": "info",
             "title": "Tu método favorito",
-            "text": "Si casi todo lo cobras igual (por ejemplo con Tarjeta o Transferencia), abre el menú del método y toca el círculo a la derecha del que quieras: queda marcado como favorito y cada venta nueva (y cada caja nueva) arranca con él en lugar de Efectivo. Solo hay un favorito; tocarlo otra vez lo quita. Si es Tarjeta, recuerda la última terminal que elegiste. Es tuyo y de esa computadora: otro cajero tiene el suyo, y en otra caja lo vuelves a marcar. Las reglas siguen mandando: con preventas o productos solo efectivo el método cambia solo, como siempre."
+            "text": "Si casi todo lo cobras igual (por ejemplo con Tarjeta o Transferencia), abre el menú del método y toca el círculo a la derecha del que quieras: queda marcado como favorito y cada venta nueva (y cada caja nueva) arranca con él en lugar de Efectivo. Solo hay un favorito; tocarlo otra vez lo quita. Si es Tarjeta, recuerda la última terminal que elegiste. Es tuyo y de esa computadora: otro cajero tiene el suyo, y en otra caja lo vuelves a marcar. Las reglas siguen mandando: con productos solo efectivo o solo tarjeta el método cambia solo, como siempre."
           },
           {
             "kind": "callout",
@@ -205,7 +205,7 @@
             "kind": "callout",
             "tone": "warn",
             "title": "Solo ventas normales",
-            "text": "Las preventas y los folios no admiten pago mixto (el anticipo viaja con un solo método) — la opción se apaga sola con el aviso “Las preventas no admiten pago mixto · usa Efectivo o Transferencia.” Tampoco se pueden combinar dólares con Mixto."
+            "text": "Desde el 23 de noviembre de 2026 (autorizado por Pier) las preventas y los folios también se cobran en Mixto y con Tarjeta: el anticipo, la liquidación del folio y la venta de la misma mesa se reparten solos entre efectivo y transferencia. Con Tarjeta se elige la terminal y la comisión la absorbe la tienda. Ojo: un folio cobrado con Tarjeta no se puede cancelar ni revertir en el sistema; se devuelve en la terminal. Tampoco se pueden combinar dólares con Mixto."
           },
           {
             "kind": "callout",
