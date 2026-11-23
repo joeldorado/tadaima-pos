@@ -59,12 +59,12 @@ const PRESALE_FOLIO: PresaleFolioRow = {
   fecha: "2026-10-03T18:00:00Z", method: "cash",
 };
 
-function buildBook(canViewCost = false, incomeMovements: ReportExportParams["incomeMovements"] = []): ExcelJS.Workbook {
+function buildBook(canViewCost = false, incomeMovements: ReportExportParams["incomeMovements"] = [], cardPresales: PresaleRow[] = []): ExcelJS.Workbook {
   const groupedProducts = buildGroupedProducts(SALES, [], ["all"], "2026-10-03", "2026-10-03", canViewCost);
   const params: ReportExportParams = {
     presaleRows: [PRESALE],
     presaleFolioRows: [PRESALE_FOLIO],
-    presaleRowsByMethod: { cash: [PRESALE_CASH], card: [], transfer: [] },
+    presaleRowsByMethod: { cash: [PRESALE_CASH], card: cardPresales, transfer: [] },
     groupedProducts,
     regularProducts: groupedProducts,
     tomoProducts: [],
@@ -405,5 +405,43 @@ describe("buildGroupedProducts — detalle de descuentos por ticket", () => {
     const rows = buildGroupedProducts(SALES, [], ["all"], "2026-10-03", "2026-10-03", false);
     const entry = rows.find(r => r.name === "ETB")!.discount_entries?.[0];
     expect(entry).toEqual(expect.objectContaining({ bucket: "transfer", kind: "manual", reason: "cortesia", amount: 50, cashier: "Ana" }));
+  });
+
+  describe("preventa con Tarjeta: comisión en la tabla de Preventas (2026-11-23, Pier)", () => {
+    const PRESALE_CARD: PresaleRow = {
+      productId: 12, name: "Figura Z (Liquidada)", entregado: true, qty: 1,
+      apartado: 700, deuda: 0, pactado: 700, costoReal: 800, costoNeto: 560, utilidad: 140, comision: 24.5,
+    };
+
+    it("Tarjeta: la tabla de Preventas suma Comisión TPV e IVA y la utilidad los resta", () => {
+      const tj = sheet(buildBook(true, [], [PRESALE_CARD]), "Tarjeta");
+      const top = find(tj, "2. TARJETA — APARTADOS Y PREVENTAS");
+      const row = find(tj, "Figura Z (Liquidada)").row;
+      // Columnas con costo: Producto · Cant · CostoU · Abonado · Pendiente · Pactado · Comisión · IVA · Costo · Utilidad
+      const comCol = top.col + 6;
+      expect(text(tj, top.row + 1, comCol)).toBe("Comisión TPV");
+      expect(result(tj, row, comCol)).toBeCloseTo(24.5);
+      expect(result(tj, row, comCol + 1)).toBeCloseTo(3.92);
+      expect(result(tj, row, comCol + 3)).toBeCloseTo(140 - 24.5 * 1.16);
+      expect(formula(tj, row, comCol + 3)).toContain("-");
+    });
+
+    it("Resumen: la fila Preventas de Tarjeta es el abonado neto (abonado − comisión − IVA)", () => {
+      const res = sheet(buildBook(true, [], [PRESALE_CARD]), "Resumen");
+      const tarjeta = find(res, "Tarjeta").row;
+      let preRow = -1;
+      res.eachRow((r, n) => { if (preRow < 0 && n > tarjeta && String(r.getCell(2).value ?? "").startsWith("Preventas")) preRow = n; });
+      expect(preRow).toBeGreaterThan(0);
+      expect(result(res, preRow, 4)).toBeCloseTo(700 - 24.5 * 1.16);
+      expect(formula(res, preRow, 4)).toContain("'Tarjeta'!");
+    });
+
+    it("sin comisión la tabla de Preventas queda como siempre (sin columnas nuevas)", () => {
+      const tj = sheet(buildBook(true, [], [{ ...PRESALE_CARD, comision: 0 }]), "Tarjeta");
+      const top = find(tj, "2. TARJETA — APARTADOS Y PREVENTAS").row;
+      let hasComm = false;
+      tj.getRow(top + 1).eachCell((c) => { if (String(c.value).includes("Comisión")) hasComm = true; });
+      expect(hasComm).toBe(false);
+    });
   });
 });
