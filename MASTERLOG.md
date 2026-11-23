@@ -4,6 +4,38 @@
 
 ---
 
+### Sesión 2026-11-23 — Preventa con Tarjeta y Mixto (AUTORIZADO POR PIER) + aviso de código repetido en alta de tomos (PR #113) — rev tadaima-00160-wiy
+
+**Origen:**
+1. **Pier autorizó** cobrar preventas con Tarjeta y Transferencia. Joel pidió dejar registrado quién pidió el cambio, por si después hay algún problema. Transferencia ya se permitía; lo bloqueado eran Tarjeta y Mixto, y solo en Caja (`SellPage.tsx`). El backend nunca tuvo candado. Se abrieron los dos.
+2. El alta de tomos no tenía el aviso de «este código ya existe» que sí tiene el alta de productos.
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00158-gur`. **Hay migración ADITIVA** (`2026_11_23_000001`: `pre_sale_order_payments.terminal_id`, `commission_amount`, `delivery_id`). No hace falta revertirla: la revisión anterior ignora esas columnas. Al regresar vuelve el candado de Tarjeta/Mixto en Caja.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00158-gur=100 --project tadaimapos --region us-east1`
+
+- **Preventa con Tarjeta y Mixto (autorizado por Pier):**
+  - **Dónde aplica:** anticipo, liquidación del folio y preventa nueva, también en la mesa que mezcla folio, productos y preventa nueva.
+  - **Tarjeta:** pide la terminal; cada pago guarda la terminal y la comisión. La comisión la absorbe la tienda y sale en la tabla «Liquidaciones» del Reporte del Día, con IVA. **No** se sumó al corte de caja ni a Reportes.
+  - **Mixto:** la transferencia se reparte sola entre folio, venta y preventa nueva, en centavos exactos (`landing/src/lib/presalePayments.ts`).
+  - **API:** `payments[]` (máx. 2) en `POST /pre-sale-orders`, `PATCH /pre-sale-orders/{id}/status` y `/sales/mixed`. Los campos de siempre siguen iguales para la app móvil. Las reglas viven en `App\Support\PresalePayments`: Mixto sin tarjeta y terminal solo con tarjeta.
+  - **Revertir una entrega cobrada en Mixto:** quita los dos pagos (se ligan por `delivery_id`) y del cajón sale solo la parte en efectivo.
+  - **Sigue igual:** un folio con algún pago con Tarjeta no se cancela ni se revierte en el sistema; se devuelve en la terminal.
+  - **Documentado en:** `AGENTS.md` §5 Preventas y la guía de Caja.
+- **Alta de tomos:**
+  - **Aviso por tomo:** cada tomo del lote avisa si su código ya existe. Si es de un tomo, ofrece «Editar tomo» y «Cambiar existencia»; si es de un producto, «Editar ese producto». Solo para admin y gerente.
+  - **Sin lotes a medias:** si algún código está tomado o se repite dentro del lote, no se crea ningún tomo. Antes los tomos anteriores al repetido ya quedaban guardados.
+  - **Alta de producto:** si el código es de un tomo, ahora abre el editor de tomos.
+- **Validación:**
+  - Pruebas: `php artisan test` 1069 ✓ (12 casos nuevos), Postgres local de preventas y cobro mixto 165 ✓, vitest 1024 ✓. Sin errores de tipos nuevos contra `main`.
+  - Navegador local:
+    - Una preventa con Tarjeta guardó terminal y comisión de $7 (3.5% de $200).
+    - Una en Mixto guardó $120 en efectivo y $80 por transferencia.
+    - Tomos con código repetido: el lote no creó nada.
+  - Candidato y dominio: `/`, `/login`, `/caja` y `/tadaimaus/` responden 200; el API sin token, 401. El bundle trae los textos nuevos y no el candado viejo. La migración corrió en 230 ms y no hay errores en los registros.
+  - No probado en prod con sesión: lo prueba la tienda con una terminal real.
+- **En prod 2026-11-23 (Tijuana).**
+- **Pendiente:** la app móvil (repo aparte) sigue cobrando preventas con un solo método y sin terminal. La comisión de preventas no aparece en el corte de caja ni en Reportes.
+
 ### Sesión 2026-11-20 — Historial de stock por producto (PR #111) — rev tadaima-00158-gur
 
 **Origen:** Tadaima Tijuana pidió ver cuánto stock entra y sale de cada producto, para encontrar una entrada mal capturada o algo que no se descontó. Joel pidió que fuera un módulo aparte, sin tocar el API que ya existe (la app móvil usa `/inventory/movements`).
