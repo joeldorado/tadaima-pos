@@ -107,6 +107,12 @@ export interface PresaleRow {
   /** Utilidad (modelo dueño): apartada → $0 (el abono no es utilidad);
    *  liquidada → Venta − Costo (= margen real reconocido al entregar). */
   utilidad: number;
+  /**
+   * Comisión de terminal de los pagos con Tarjeta en el rango (2026-11-23,
+   * preventa con Tarjeta autorizada por Pier). La absorbe la tienda. 0 si no
+   * hubo pagos con terminal. `utilidad` NO la resta: la resta la tabla de Tarjeta.
+   */
+  comision?: number;
 }
 
 /** Método del pago que generó el renglón de folio (decide en qué bloque cae). */

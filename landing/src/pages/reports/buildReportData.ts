@@ -70,7 +70,29 @@ function presaleLineMoney(order: PreSaleOrder, paymentsInRange: PreSaleOrderPaym
     apartado: sumByLine(allocation.byPayment, paymentsInRange),
     paidBefore: sumByLine(allocation.byPayment, paymentsBefore),
     deuda: allocation.pendingByLine,
+    comision: presaleCommissionByLine(allocation.byPayment, paymentsInRange, (order.items ?? []).length),
   };
+}
+
+/**
+ * Comisión de terminal de los pagos con Tarjeta de un folio, repartida por
+ * línea igual que el abono (preventa con Tarjeta, 2026-11-23, autorizado por
+ * Pier). La comisión la absorbe la tienda: resta a la utilidad, nunca al cliente.
+ */
+export function presaleCommissionByLine(
+  byPayment: ReadonlyMap<PreSaleOrderPayment, readonly number[]>,
+  payments: readonly PreSaleOrderPayment[],
+  lineCount: number,
+): number[] {
+  const out: number[] = Array.from({ length: lineCount }, () => 0);
+  for (const p of payments) {
+    const commission = Number(p.commission_amount) || 0;
+    const amount = Number(p.amount) || 0;
+    const share = byPayment.get(p);
+    if (commission <= 0 || amount <= 0 || !share) continue;
+    share.forEach((part, i) => { out[i] = (out[i] ?? 0) + commission * (part / amount); });
+  }
+  return out;
 }
 
 /** Folios de preventa que matchean los filtros activos de la barra. */
@@ -609,6 +631,10 @@ export function buildGroupedProducts(
 
           pGroup.price_breakdown[unitPrice] = (pGroup.price_breakdown[unitPrice] ?? 0) + qty;
 
+          // Comisión de terminal de esta línea (Tarjeta): la UI la resta de la utilidad.
+          const itemComision = lineMoney.comision[lineIdx] ?? 0;
+          if (itemComision > 0) pGroup.commission_amount = (pGroup.commission_amount ?? 0) + itemComision;
+
           pGroup.pre_sale_apartado = (pGroup.pre_sale_apartado ?? 0) + itemApartado;
           pGroup.pre_sale_deuda = (pGroup.pre_sale_deuda ?? 0) + itemDeuda;
           // Costo real SIEMPRE (anticipos incluidos): dato informativo del bloque de preventa.
@@ -680,7 +706,7 @@ export function buildPresaleRows(
   to: string,
   dates?: string[],
 ): PresaleRow[] {
-    const map = new Map<string, { productId: number; baseName: string; entregado: boolean; qty: number; apartado: number; deuda: number; costoReal: number; paidBefore: number }>();
+    const map = new Map<string, { productId: number; baseName: string; entregado: boolean; qty: number; apartado: number; deuda: number; costoReal: number; paidBefore: number; comision: number }>();
     for (const order of filteredPreSaleOrders) {
       const paymentsInRange = presalePaymentsInRange(order.payments, from, to, dates);
       const lineMoney = presaleLineMoney(order, paymentsInRange, from);
@@ -696,8 +722,9 @@ export function buildPresaleRows(
         const deliveredInRange = item.status === "delivered" && !!item.delivered_at &&
           (() => { const d = toLocalYmd(new Date(item.delivered_at!)); return d >= from && d <= to; })();
         const key = `${prodId}__${deliveredInRange ? "liq" : "abono"}`;
-        const g = map.get(key) ?? { productId: prodId, baseName, entregado: deliveredInRange, qty: 0, apartado: 0, deuda: 0, costoReal: 0, paidBefore: 0 };
+        const g = map.get(key) ?? { productId: prodId, baseName, entregado: deliveredInRange, qty: 0, apartado: 0, deuda: 0, costoReal: 0, paidBefore: 0, comision: 0 };
         g.qty += qty; g.apartado += itemApartado; g.deuda += itemDeuda; g.costoReal += itemCostoReal; g.paidBefore += itemPaidBefore;
+        g.comision += lineMoney.comision[lineIdx] ?? 0;
         map.set(key, g);
       }
     }
@@ -710,7 +737,7 @@ export function buildPresaleRows(
         productId: g.productId,
         name: `${g.baseName} ${g.entregado ? "(Liquidada)" : "(Apartada)"}`,
         entregado: g.entregado, qty: g.qty, apartado: g.apartado, deuda: g.deuda,
-        pactado, costoReal: g.costoReal, costoNeto, utilidad,
+        pactado, costoReal: g.costoReal, costoNeto, utilidad, comision: g.comision,
       };
     }).sort((a, b) => (a.productId - b.productId) || (a.entregado === b.entregado ? 0 : a.entregado ? -1 : 1));
 }
@@ -735,7 +762,7 @@ export function buildPresaleRowsByMethod(
   matchesMethod: (name: string) => boolean,
   dates?: string[],
 ): PresaleRow[] {
-    const map = new Map<string, { productId: number; baseName: string; entregado: boolean; qty: number; apartado: number; deuda: number; costoReal: number; paidBefore: number }>();
+    const map = new Map<string, { productId: number; baseName: string; entregado: boolean; qty: number; apartado: number; deuda: number; costoReal: number; paidBefore: number; comision: number }>();
     for (const order of filteredPreSaleOrders) {
       const allPaymentsInRange = presalePaymentsInRange(order.payments, from, to, dates);
       const paymentsInRange = allPaymentsInRange
@@ -763,8 +790,9 @@ export function buildPresaleRowsByMethod(
         const deliveredInRange = item.status === "delivered" && !!item.delivered_at &&
           (() => { const d = toLocalYmd(new Date(item.delivered_at!)); return d >= from && d <= to; })();
         const key = `${prodId}__${deliveredInRange ? "liq" : "abono"}`;
-        const g = map.get(key) ?? { productId: prodId, baseName, entregado: deliveredInRange, qty: 0, apartado: 0, deuda: 0, costoReal: 0, paidBefore: 0 };
+        const g = map.get(key) ?? { productId: prodId, baseName, entregado: deliveredInRange, qty: 0, apartado: 0, deuda: 0, costoReal: 0, paidBefore: 0, comision: 0 };
         g.qty += qty; g.apartado += itemApartado; g.deuda += itemDeuda; g.costoReal += itemCostoReal; g.paidBefore += itemPaidBefore;
+        g.comision += lineMoney.comision[lineIdx] ?? 0;
         map.set(key, g);
       }
     }
@@ -776,7 +804,7 @@ export function buildPresaleRowsByMethod(
         productId: g.productId,
         name: `${g.baseName} ${g.entregado ? "(Liquidada)" : "(Apartada)"}`,
         entregado: g.entregado, qty: g.qty, apartado: g.apartado, deuda: g.deuda,
-        pactado, costoReal: g.costoReal, costoNeto, utilidad,
+        pactado, costoReal: g.costoReal, costoNeto, utilidad, comision: g.comision,
       };
     }).sort((a, b) => (a.productId - b.productId) || (a.entregado === b.entregado ? 0 : a.entregado ? -1 : 1));
 }

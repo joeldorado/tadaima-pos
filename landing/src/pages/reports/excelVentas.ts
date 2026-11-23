@@ -15,7 +15,7 @@ import {
 import type { PresaleRow } from "./reportTypes";
 import {
   FIRST_TABLE_ROW, PRESALE_COLS, PRESALE_FOLIO_COLS, RETURN_COLS,
-  cardTable, drawPresales, drawPresaleFolios, drawProductTable, drawReturns, drawTableHeaders,
+  cardTable, drawPresales, drawPresaleFolios, presaleHasCommission, drawProductTable, drawReturns, drawTableHeaders,
   isCardMethod, isCashLike, isManga, isTransferMethod, methodTable, tableWidth, withMethod,
   type PresaleTotals, type TableResult,
 } from "./excelTopTables";
@@ -81,6 +81,8 @@ function productSheet(
   titles: { main: string; manga: string; presale: string }, colors: [string, string],
   table: ReturnType<typeof methodTable>, groups: GroupedProduct[], ventaKey: string,
   presaleRows: readonly PresaleRow[],
+  /** Solo Tarjeta: la tabla de Preventas suma Comisión TPV + IVA (2026-11-23). */
+  presaleIvaRate?: number,
 ): ProductSheet & { sh: SheetBuilder } {
   const sh = createSheet(wb.addWorksheet(name));
   const w = tableWidth(table);
@@ -101,7 +103,7 @@ function productSheet(
   let afterPresale = r1.next;
   if (presaleRows.length > 0) {
     const presaleTop = r1.next + STACK_GAP;
-    const pr = drawPresales(sh, presaleRows, 1, p.canViewCost, presaleTop, titles.presale);
+    const pr = drawPresales(sh, presaleRows, 1, p.canViewCost, presaleTop, titles.presale, presaleIvaRate);
     presaleTotals = pr.totals;
     afterPresale = pr.next;
   }
@@ -110,7 +112,10 @@ function productSheet(
   // que usan Manga y el Resumen).
   const presaleFor = (key: string): { ref: string; value: number } | undefined => {
     if (!presaleTotals) return undefined;
-    if (key === ventaKey) return presaleTotals.apartado;
+    // Tarjeta con comisión: la venta que suma es el abonado NETO (abonado − comisión − IVA).
+    if (key === ventaKey) return presaleTotals.neto ?? presaleTotals.apartado;
+    if (key === "comm") return presaleTotals.comision;
+    if (key === "iva") return presaleTotals.iva;
     if (key === "costo") return presaleTotals.costoNeto;
     if (key === "util") return presaleTotals.utilidad;
     return undefined;
@@ -163,7 +168,7 @@ function productSheet(
     result = { ...r1, next: afterPresale };
   }
 
-  tableWidths(sh, 1, Math.max(w, PRESALE_COLS(p.canViewCost)), 48);
+  tableWidths(sh, 1, Math.max(w, PRESALE_COLS(p.canViewCost, presaleIvaRate != null && presaleHasCommission(presaleRows))), 48);
   return { sh, name, ventaKey, result, regularTotals: r1.totals, mangaTotals, presaleTotals };
 }
 
@@ -287,7 +292,12 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
     let presaleRow = -1;
     if (t.presaleTotals) {
       sh.set(r, 2, "Preventas:", label);
-      sh.setF(r, ventaCol, xref(t.name, t.presaleTotals.apartado.ref), t.presaleTotals.apartado.value, money);
+      // Tarjeta con comisión (2026-11-23): abonado − comisión − IVA, como el resto de la pestaña.
+      const pt = t.presaleTotals;
+      const ventaF = pt.neto && pt.comision && pt.iva
+        ? `${xref(t.name, pt.apartado.ref)}-${xref(t.name, pt.comision.ref)}-${xref(t.name, pt.iva.ref)}`
+        : xref(t.name, pt.apartado.ref);
+      sh.setF(r, ventaCol, ventaF, (pt.neto ?? pt.apartado).value, money);
       if (canViewCost) {
         if (t.presaleTotals.costoNeto) sh.setF(r, costoCol, xref(t.name, t.presaleTotals.costoNeto.ref), t.presaleTotals.costoNeto.value, money);
         if (t.presaleTotals.utilidad)  sh.setF(r, utilCol,  xref(t.name, t.presaleTotals.utilidad.ref),  t.presaleTotals.utilidad.value,  t.presaleTotals.utilidad.value < 0 ? red : green);
@@ -318,7 +328,7 @@ function drawResumen(sh: SheetBuilder, p: ReportExportParams, groups: GroupedPro
 
     // Subtotal del método
     const subRows = [regRow, ...(mangaRow >= 0 ? [mangaRow] : []), ...(presaleRow >= 0 ? [presaleRow] : [])];
-    const subVenta = (regTotals[t.ventaKey]?.value ?? 0) + (hasManga ? (mangTotals[t.ventaKey]?.value ?? 0) : 0) + (t.presaleTotals?.apartado.value ?? 0);
+    const subVenta = (regTotals[t.ventaKey]?.value ?? 0) + (hasManga ? (mangTotals[t.ventaKey]?.value ?? 0) : 0) + ((t.presaleTotals?.neto ?? t.presaleTotals?.apartado)?.value ?? 0);
     const subCosto = (regTotals["costo"]?.value ?? 0) + (hasManga ? (mangTotals["costo"]?.value ?? 0) : 0) + (t.presaleTotals?.costoNeto?.value ?? 0);
     const subUtil  = (regTotals["util"]?.value  ?? 0) + (hasManga ? (mangTotals["util"]?.value  ?? 0) : 0) + (t.presaleTotals?.utilidad?.value ?? 0);
     const subLabel = canViewCost ? `$ ` : `$ `;
@@ -498,7 +508,7 @@ export function addVentasSheets(workbook: Workbook, p: ReportExportParams): void
   // Tarjeta: regulares arriba + Manga abajo + Preventas abonadas con tarjeta + TOTAL FINAL TARJETA
   const card = productSheet(workbook, p, "Tarjeta",
     { main: " 2. DESGLOSE DE COBROS CON TARJETA", manga: "2. TARJETA — MANGA NACIONAL", presale: "2. TARJETA — APARTADOS Y PREVENTAS" },
-    ["2266BB", "4488DD"], cardTable(1, canViewCost, ivaRate), withMethod(groups, isCardMethod), "neto", p.presaleRowsByMethod.card);
+    ["2266BB", "4488DD"], cardTable(1, canViewCost, ivaRate), withMethod(groups, isCardMethod), "neto", p.presaleRowsByMethod.card, ivaRate);
 
   // Transferencias: regulares arriba + Manga abajo + Preventas abonadas por transferencia + TOTAL FINAL TRANSFERENCIAS
   const transfer = productSheet(workbook, p, "Transferencias",

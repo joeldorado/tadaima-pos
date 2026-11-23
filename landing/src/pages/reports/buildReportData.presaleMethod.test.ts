@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PreSaleOrder, PreSaleOrderPayment } from "@tadaima/api";
-import { buildPresaleRows, buildPresaleRowsByMethod } from "./buildReportData";
+import { buildGroupedProducts, buildPresaleRows, buildPresaleRowsByMethod } from "./buildReportData";
 import { isCardMethod, isCashLike, isTransferMethod } from "./excelTopTables";
 import type { PresaleRow } from "./reportTypes";
 
@@ -130,5 +130,38 @@ describe("buildPresaleRowsByMethod — costo repartido entre métodos", () => {
     expect(cash[0]!.utilidad).toBeCloseTo(0);
     expect(transfer[0]!.costoNeto).toBeCloseTo(200);
     expect(transfer[0]!.utilidad).toBeCloseTo(0);
+  });
+});
+
+describe("comisión de preventa con Tarjeta (2026-11-23, autorizado por Pier)", () => {
+  const conComision = (id: number, amount: number, commission: number, method: string, at: string): PreSaleOrderPayment => ({
+    ...payment(id, amount, method, at), commission_amount: commission, terminal_id: 1,
+  });
+
+  it("la fila de Tarjeta trae la comisión del pago; Efectivo no", () => {
+    const orders = [order([payment(1, 300, "Efectivo", APARTADO), conComision(2, 700, 24.5, "Tarjeta Débito", LIQUIDACION)])];
+    const { cash, card } = byMethod(orders, ...OCTUBRE);
+    expect(card[0]!.comision).toBeCloseTo(24.5);
+    expect(cash[0]!.comision ?? 0).toBe(0);
+    // La utilidad de la fila no la resta: la resta la tabla de Tarjeta del Excel.
+    expect(card[0]!.utilidad).toBeCloseTo(140);
+  });
+
+  it("con varias líneas, la comisión se reparte como el abono (parejo por pieza)", () => {
+    const base = order([conComision(1, 400, 14, "Tarjeta Débito", APARTADO)], false);
+    const dosLineas: PreSaleOrder = {
+      ...base,
+      items: [base.items![0]!, { ...base.items![0]!, id: 11, product_id: 8, catalog: { ...base.items![0]!.catalog!, id: 4, product_name: "Figura W" } }],
+      total: 2000,
+    };
+    const card = buildPresaleRowsByMethod([dosLineas], ...OCTUBRE, isCardMethod);
+    expect(card.map((r) => r.comision)).toEqual([7, 7]);
+  });
+
+  it("Reportes: el renglón de la preventa trae la comisión para restarla de la utilidad", () => {
+    const orders = [order([conComision(2, 1000, 35, "Tarjeta Débito", LIQUIDACION)])];
+    const groups = buildGroupedProducts([], orders, ["all"], ...OCTUBRE, true);
+    const liq = groups.find((g) => g.name.includes("(Liquidada)"));
+    expect(liq?.commission_amount).toBeCloseTo(35);
   });
 });

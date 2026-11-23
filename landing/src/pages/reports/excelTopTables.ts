@@ -231,13 +231,22 @@ export const withMethod = (groups: readonly GroupedProduct[], pred: (n: string) 
     return qty !== 0 || revenue !== 0;
   });
 
-export const PRESALE_COLS = (canViewCost: boolean): number => (canViewCost ? 8 : 5);
+export const PRESALE_COLS = (canViewCost: boolean, withCommission = false): number =>
+  (canViewCost ? 8 : 5) + (withCommission ? 2 : 0);
+
+/** ¿La tabla de Preventas lleva columnas de comisión? Solo si algún renglón la trae (Tarjeta). */
+export const presaleHasCommission = (rows: readonly PresaleRow[]): boolean =>
+  rows.some((r) => (r.comision ?? 0) > 0);
 
 /** Totales de la fila "TOTAL PREVENTAS" (para enlazar con el Resumen). `null` si la tabla vino vacía. */
 export interface PresaleTotals {
   apartado: MangaSubtotal;
   costoNeto?: MangaSubtotal;
   utilidad?: MangaSubtotal;
+  /** Solo con comisión (Tarjeta, 2026-11-23): comisión TPV, su IVA y abonado neto (abonado − comisión − IVA). */
+  comision?: MangaSubtotal;
+  iva?: MangaSubtotal;
+  neto?: MangaSubtotal;
 }
 
 export interface PresaleResult {
@@ -249,17 +258,33 @@ export interface PresaleResult {
 /**
  * Preventas (con su encabezado en la fila `top`): Producto · Cant ·
  * [Costo Unitario] · Abonado · Pendiente · Pactado(=Abonado+Pendiente) ·
- * [Costo · Utilidad(=Abonado−Costo)]. Costo Unitario va justo después de la
+ * [Comisión TPV · IVA] · [Costo · Utilidad]. Costo Unitario va justo después de la
  * cantidad, igual que en las tablas de productos regulares (methodTable/cardTable).
+ *
+ * Comisión (preventa con Tarjeta, 2026-11-23, autorizado por Pier): con
+ * `ivaRate` y algún renglón con comisión, se agregan Comisión TPV e IVA
+ * (= Comisión × tasa) y la Utilidad queda Abonado − Comisión − IVA − Costo,
+ * igual que la tabla de Tarjeta. Sin comisión la tabla queda como siempre.
  */
 export function drawPresales(
   sh: SheetBuilder, rows: readonly PresaleRow[], col: number, canViewCost: boolean,
-  top = FIRST_TABLE_ROW, label = " 4. APARTADOS Y PREVENTAS",
+  top = FIRST_TABLE_ROW, label = " 4. APARTADOS Y PREVENTAS", ivaRate?: number,
 ): PresaleResult {
-  sectionHeader(sh, top, col, col + PRESALE_COLS(canViewCost) - 1, label, "AA66FF");
-  subHeader(sh, top + 1, col, ["Producto", "Cant. Preventa", ...(canViewCost ? ["Costo Unitario"] : []), "Abonado", "Pendiente", "Pactado", ...(canViewCost ? ["Costo Producto", "Utilidad"] : [])], "CC88FF");
+  const withComm = ivaRate != null && presaleHasCommission(rows);
+  const rate = ivaRate ?? 0;
+  sectionHeader(sh, top, col, col + PRESALE_COLS(canViewCost, withComm) - 1, label, "AA66FF");
+  subHeader(sh, top + 1, col, [
+    "Producto", "Cant. Preventa", ...(canViewCost ? ["Costo Unitario"] : []), "Abonado", "Pendiente", "Pactado",
+    ...(withComm ? ["Comisión TPV", `IVA (${Math.round(rate * 100)}%)`] : []),
+    ...(canViewCost ? ["Costo Producto", "Utilidad"] : []),
+  ], "CC88FF");
   const first = top + 2;
-  const costCol = canViewCost ? col + 3 : col + 2; // columna de "Abonado" (se recorre 1 si hay Costo Unitario)
+  const abonoCol = canViewCost ? col + 3 : col + 2; // columna de "Abonado" (se recorre 1 si hay Costo Unitario)
+  const commCol = abonoCol + 3;
+  const ivaCol = abonoCol + 4;
+  const costCol = withComm ? abonoCol + 5 : abonoCol + 3; // "Costo Producto"
+  const commOf = (p: PresaleRow) => (withComm ? p.comision ?? 0 : 0);
+  const utilOf = (p: PresaleRow) => p.utilidad - commOf(p) * (1 + rate);
   let r = first;
   for (const p of rows) {
     sh.set(r, col, p.name, cellName);
@@ -268,13 +293,20 @@ export function drawPresales(
       const costoUnit = p.qty !== 0 ? p.costoNeto / p.qty : 0;
       sh.set(r, col + 2, costoUnit, cellMoney(GRAY)); // informativo: no entra a TOTAL PREVENTAS
     }
-    sh.set(r, costCol, p.apartado, cellMoney(GREEN, true));
-    sh.set(r, costCol + 1, p.deuda, cellMoney(RED, true));
-    sh.setF(r, costCol + 2, `${cellRef(r, costCol)}+${cellRef(r, costCol + 1)}`, p.pactado, cellMoney(GRAY));
+    sh.set(r, abonoCol, p.apartado, cellMoney(GREEN, true));
+    sh.set(r, abonoCol + 1, p.deuda, cellMoney(RED, true));
+    sh.setF(r, abonoCol + 2, `${cellRef(r, abonoCol)}+${cellRef(r, abonoCol + 1)}`, p.pactado, cellMoney(GRAY));
+    if (withComm) {
+      sh.set(r, commCol, commOf(p), cellMoney(RED));
+      sh.setF(r, ivaCol, `${cellRef(r, commCol)}*${rate}`, commOf(p) * rate, cellMoney(AMBER));
+    }
     if (canViewCost) {
-      sh.setF(r, costCol + 3, `${cellRef(r, col + 1)}*${cellRef(r, col + 2)}`, p.costoNeto, cellMoney(GRAY));
+      sh.setF(r, costCol, `${cellRef(r, col + 1)}*${cellRef(r, col + 2)}`, p.costoNeto, cellMoney(GRAY));
       // Modelo del dueño: apartada → costo = abono (utilidad $0); liquidada → venta − costo.
-      sh.setF(r, costCol + 4, `${cellRef(r, costCol)}-${cellRef(r, costCol + 3)}`, p.utilidad, cellMoney(p.utilidad < 0 ? RED : GREEN, true));
+      // Con Tarjeta también resta la comisión y su IVA (los absorbe la tienda).
+      const commPart = withComm ? `-${cellRef(r, commCol)}-${cellRef(r, ivaCol)}` : "";
+      const util = utilOf(p);
+      sh.setF(r, costCol + 1, `${cellRef(r, abonoCol)}${commPart}-${cellRef(r, costCol)}`, util, cellMoney(util < 0 ? RED : GREEN, true));
     }
     sh.height(r, 20);
     r++;
@@ -284,19 +316,30 @@ export function drawPresales(
   const sum = (pick: (p: PresaleRow) => number) => rows.reduce((a, p) => a + pick(p), 0);
   const tApartado = sum((p) => p.apartado);
   const tCostoNeto = sum((p) => p.costoNeto);
-  const tUtil = sum((p) => p.utilidad);
+  const tUtil = sum(utilOf);
   sh.set(r, col, "TOTAL PREVENTAS", totalLabel);
   sh.setF(r, col + 1, sumFormula(col + 1, all), sum((p) => p.qty), totalQty);
   // Costo Unitario no se suma: es informativo, igual que en las demás tablas.
-  sh.setF(r, costCol, sumFormula(costCol, all), tApartado, totalMoney(GREEN));
-  sh.setF(r, costCol + 1, sumFormula(costCol + 1, all), sum((p) => p.deuda), totalMoney(RED));
-  sh.setF(r, costCol + 2, sumFormula(costCol + 2, all), sum((p) => p.pactado), totalMoney(GRAY));
-  const totals: PresaleTotals = { apartado: { ref: cellRef(r, costCol), value: tApartado } };
+  sh.setF(r, abonoCol, sumFormula(abonoCol, all), tApartado, totalMoney(GREEN));
+  sh.setF(r, abonoCol + 1, sumFormula(abonoCol + 1, all), sum((p) => p.deuda), totalMoney(RED));
+  sh.setF(r, abonoCol + 2, sumFormula(abonoCol + 2, all), sum((p) => p.pactado), totalMoney(GRAY));
+  const totals: PresaleTotals = { apartado: { ref: cellRef(r, abonoCol), value: tApartado } };
+  if (withComm) {
+    const tComm = sum(commOf);
+    sh.setF(r, commCol, sumFormula(commCol, all), tComm, totalMoney(RED));
+    sh.setF(r, ivaCol, sumFormula(ivaCol, all), tComm * rate, totalMoney(AMBER));
+    totals.comision = { ref: cellRef(r, commCol), value: tComm };
+    totals.iva = { ref: cellRef(r, ivaCol), value: tComm * rate };
+    totals.neto = {
+      ref: `(${cellRef(r, abonoCol)}-${cellRef(r, commCol)}-${cellRef(r, ivaCol)})`,
+      value: tApartado - tComm * (1 + rate),
+    };
+  }
   if (canViewCost) {
-    sh.setF(r, costCol + 3, sumFormula(costCol + 3, all), tCostoNeto, totalMoney(GRAY));
-    sh.setF(r, costCol + 4, sumFormula(costCol + 4, all), tUtil, totalMoney(tUtil < 0 ? RED : GREEN));
-    totals.costoNeto = { ref: cellRef(r, costCol + 3), value: tCostoNeto };
-    totals.utilidad = { ref: cellRef(r, costCol + 4), value: tUtil };
+    sh.setF(r, costCol, sumFormula(costCol, all), tCostoNeto, totalMoney(GRAY));
+    sh.setF(r, costCol + 1, sumFormula(costCol + 1, all), tUtil, totalMoney(tUtil < 0 ? RED : GREEN));
+    totals.costoNeto = { ref: cellRef(r, costCol), value: tCostoNeto };
+    totals.utilidad = { ref: cellRef(r, costCol + 1), value: tUtil };
   }
   sh.height(r, 20);
   return { next: r + 1, totals };

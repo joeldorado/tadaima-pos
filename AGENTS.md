@@ -302,8 +302,12 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
     Antes Caja solo dejaba Efectivo/Transferencia (el candado vivía solo en `SellPage.tsx`; el backend
     nunca lo tuvo). Si algo sale mal con cobros de preventa con tarjeta, esta decisión fue de Pier.
   - **Comisión:** como en ventas, la absorbe la tienda; se guarda por pago en
-    `pre_sale_order_payments.terminal_id` / `commission_amount` y sale en la tabla «Liquidaciones» del
-    Reporte del Día (con IVA). El cliente nunca la paga.
+    `pre_sale_order_payments.terminal_id` / `commission_amount`. El cliente nunca la paga. Sale en la
+    tabla «Liquidaciones» del Reporte del Día y, desde 2026-11-23 (segunda parte), en Reportes y en el Excel
+    del corte: se reparte por línea igual que el abono (`presaleCommissionByLine`), el renglón de la
+    preventa en Reportes la resta de la utilidad y, en la pestaña Tarjeta del Excel, la tabla de Preventas
+    suma «Comisión TPV» e IVA y su total entra al Neto (`drawPresales` con `ivaRate`; sin comisión la tabla
+    queda igual que antes).
   - **API:** `payments: [{amount, payment_method_id, terminal_id?}]` (máx. 2) en `POST /pre-sale-orders`,
     `PATCH /pre-sale-orders/{id}/status` y los bloques `liquidation` / `new_order` de `POST /sales/mixed`;
     manda sobre los campos de siempre (`advance_amount`+`payment_method_id`, `payment`), que siguen
