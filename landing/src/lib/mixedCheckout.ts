@@ -19,6 +19,7 @@ import type {
 } from "@tadaima/api";
 import { lineCommentPayload } from "./lineComment";
 import { presaleDiscountPayload } from "./presaleDiscount";
+import { needsPaymentList, splitTablePayment, type TablePayment } from "./presalePayments";
 import { computeLoadedFolioChargeAmount } from "./promo";
 import type { LineDiscount, LineSurcharge } from "./saleCalc";
 
@@ -156,8 +157,14 @@ export interface MixedCheckoutBuildInput<L extends CheckoutCartLine> extends Sal
   /** Lo que falta de las piezas del folio que se entregan hoy (ya con su descuento). Sin folio no cuenta. */
   folioCharge: number;
   paymentMethodId: number;
-  /** Solo con tarjeta. */
+  /** Solo con tarjeta. Desde 2026-11-23 también viaja en el folio y la preventa nueva. */
   terminalId?: number | undefined;
+  /**
+   * Pago Mixto (efectivo + transferencia) de todo el ticket. Desde 2026-11-23
+   * (autorizado por Pier) también con folio y preventa nueva: la transferencia
+   * se reparte entre los bloques (`splitTablePayment`).
+   */
+  mixto?: { cashMethodId: number; transferMethodId: number; transfer: number } | undefined;
   cash: {
     /** Pesos entregados. */
     received: number;
@@ -238,9 +245,17 @@ export function buildMixedCheckout<L extends CheckoutCartLine>(input: MixedCheck
     discountAmt: 0,
   }));
 
+  // Pagos de cada bloque (folio, venta, preventa nueva), cada uno exacto.
+  const tablePayment: TablePayment = input.mixto
+    ? { kind: "mixto", ...input.mixto }
+    : { kind: "single", paymentMethodId: input.paymentMethodId, terminalId: input.terminalId };
+  const [folioRows = [], saleRows = [], newOrderRows = []] = splitTablePayment([folio, regularNet, newDeposit], tablePayment);
+
   const receivedUsd = Math.max(0, input.cash.receivedUsd);
   const received = round2(Math.max(0, input.cash.received) + receivedUsd * input.cash.exchangeRate);
-  const change = received > total ? round2(received - total) : 0;
+  // En Mixto el efectivo solo cubre la parte que no fue transferencia.
+  const cashDue = input.mixto ? round2(Math.max(0, total - input.mixto.transfer)) : total;
+  const change = received > cashDue ? round2(received - cashDue) : 0;
 
   const payload: MixedCheckoutInput = {
     store_id: input.storeId,
@@ -250,7 +265,11 @@ export function buildMixedCheckout<L extends CheckoutCartLine>(input: MixedCheck
       liquidation: {
         pre_sale_order_id: input.preSaleOrderId,
         item_ids: itemIds,
-        ...(folio > 0 ? { payment: { amount: folio, payment_method_id: input.paymentMethodId } } : {}),
+        ...(folio > 0
+          ? needsPaymentList(folioRows)
+            ? { payments: folioRows }
+            : { payment: { amount: folio, payment_method_id: folioRows[0]?.payment_method_id ?? input.paymentMethodId } }
+          : {}),
         ...(itemDiscounts.length > 0 ? { item_discounts: itemDiscounts } : {}),
       },
     } : {}),
@@ -258,10 +277,11 @@ export function buildMixedCheckout<L extends CheckoutCartLine>(input: MixedCheck
       sale: {
         calc_version: 2 as const,
         items: saleItems,
-        payments: [{
-          payment_method_id: input.paymentMethodId,
+        // Una parte regular solo de regalos ($0) se cobra con un pago de $0.
+        payments: saleRows.length > 0 ? saleRows : [{
+          payment_method_id: input.mixto ? input.mixto.cashMethodId : input.paymentMethodId,
           amount: regularNet,
-          ...(input.terminalId != null ? { terminal_id: input.terminalId } : {}),
+          ...(!input.mixto && input.terminalId != null ? { terminal_id: input.terminalId } : {}),
         }],
         // Dólares físicos y TC usado (Historial, corte y reporte); efectivo
         // entregado y cambio de TODO el ticket, para el ticket y el detalle.
@@ -276,7 +296,11 @@ export function buildMixedCheckout<L extends CheckoutCartLine>(input: MixedCheck
           quantity: l.quantity,
           price_level: PRESALE_PRICE_LEVEL[l.priceLevel] ?? 1,
         })),
-        ...(newDeposit > 0 ? { advance_amount: newDeposit, payment_method_id: input.paymentMethodId } : {}),
+        ...(newDeposit > 0
+          ? needsPaymentList(newOrderRows)
+            ? { payments: newOrderRows }
+            : { advance_amount: newDeposit, payment_method_id: newOrderRows[0]?.payment_method_id ?? input.paymentMethodId }
+          : {}),
       },
     } : {}),
   };

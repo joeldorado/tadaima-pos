@@ -21,7 +21,7 @@ import { isAdmin as isAdminRole, isManager as isManagerRole, canDeleteProducts }
 import { CategoryMultiPicker } from "@/components/products/CategoryMultiPicker";
 import { joinCategoryNames } from "@/lib/categoryPicker";
 import { toast } from "sonner";
-import { lookupProductByCode, createProduct, updateProduct, uploadProductImage, removeProductImage, getInventory, updateInventory, getPrice, sendStockAlert, getCategories, getSuppliers, createSupplier, attachPromotionProducts } from "@tadaima/api";
+import { getMangas, createProduct, updateProduct, uploadProductImage, removeProductImage, getInventory, updateInventory, getPrice, sendStockAlert, getCategories, getSuppliers, createSupplier, attachPromotionProducts } from "@tadaima/api";
 import type { ApiError } from "@tadaima/api";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useProductsQuery, useProductStatsQuery, type ProductsCatalogFilter, type ProductsSortOption } from "@/hooks/queries/useProducts";
@@ -34,7 +34,8 @@ import { useStoresQuery } from "@/hooks/queries/useStores";
 import { useWarehousesQuery } from "@/hooks/queries/useWarehouses";
 import { queryKeys } from "@/lib/queryKeys";
 import { generateBarcode, generatePlaceholderSku } from "@/lib/barcode";
-import { isSkuMatch, normalizeCode, shouldLookupCode } from "@/lib/productCode";
+import { isSkuMatch } from "@/lib/productCode";
+import { useCodeLookup } from "@/hooks/useCodeLookup";
 import { DuplicateCodeNotice } from "@/components/products/DuplicateCodeNotice";
 import { useFormDraft, draftKeyFor, clearFormDraftStorage, isEmptyDraft } from "@/hooks/useFormDraft";
 import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
@@ -688,6 +689,9 @@ function ProductModal({
   onAddProveedor,
   locations = [],
   onOpenExisting,
+  onOpenExistingManga,
+  onOpenStock,
+  stacked = false,
 }: {
   onClose: () => void;
   // Promise<void> (2026-08-04): el modal espera la confirmación del padre
@@ -706,6 +710,12 @@ function ProductModal({
   locations: {warehouseId: number, name: string, store: string, storeId: number | null, type: 'central' | 'store' | 'bodega'}[];
   /** Alta con código repetido → abrir ESE producto en edición (Joel 2026-09-25). */
   onOpenExisting?: (p: Product) => void;
+  /** Si el código es de un TOMO, se edita en su propio modal (2026-11-23). */
+  onOpenExistingManga?: (p: Product) => void;
+  /** Tomo con el código → "Cambiar existencia" (QuickStockModal). */
+  onOpenStock?: (p: Product) => void;
+  /** Abierto encima de otro modal (alta de tomos): sube de capa. */
+  stacked?: boolean;
 }) {
   // Borrador en localStorage (Joel 2026-08-05): protege lo capturado si algo
   // interrumpe la sesión ANTES de guardar — solo en alta. Desde 2026-09-30
@@ -840,22 +850,7 @@ function ProductModal({
   // existe artículo con código X, ¿desea modificarlo?"). Se consulta al
   // backend con debounce mientras escriben/escanean; en edición se excluye
   // el propio producto.
-  const [lookupCode, setLookupCode] = useState(() => normalizeCode(formData.sku));
-  useEffect(() => {
-    const t = window.setTimeout(() => setLookupCode(normalizeCode(formData.sku)), 400);
-    return () => window.clearTimeout(t);
-  }, [formData.sku]);
-  const duplicateQuery = useQuery({
-    queryKey: [...queryKeys.products.all, "lookup", lookupCode, product?.id ?? null],
-    queryFn: () => lookupProductByCode(lookupCode, product?.id),
-    enabled: shouldLookupCode(lookupCode),
-    staleTime: 30_000,
-  });
-  // Solo si el resultado corresponde a lo que HOY está en el campo.
-  const duplicates = shouldLookupCode(lookupCode) && lookupCode === normalizeCode(formData.sku)
-    ? (duplicateQuery.data ?? [])
-    : [];
-  const skuTaken = duplicates.some(d => isSkuMatch(d, formData.sku));
+  const { duplicates, skuTaken } = useCodeLookup(formData.sku, { excludeId: product?.id ?? null });
 
   const openExisting = (p: Product) => {
     // El borrador NO se borra (2026-09-30): solo al crear o con "Limpiar datos".
@@ -992,7 +987,7 @@ function ProductModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+    <div className={`fixed inset-0 ${stacked ? "z-[110]" : "z-[100]"} flex items-center justify-center p-4`}>
       <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={handleDismiss} />
       
       <div 
@@ -1162,8 +1157,10 @@ function ProductModal({
                       matches={duplicates}
                       code={formData.sku ?? ""}
                       mode={product ? "edit" : "create"}
-                      canEdit={canManage && !!onOpenExisting}
-                      onEdit={openExisting}
+                      canEdit={canManage}
+                      {...(onOpenExisting ? { onEditProduct: openExisting } : {})}
+                      {...(onOpenExistingManga ? { onEditManga: onOpenExistingManga } : {})}
+                      {...(onOpenStock ? { onOpenStock } : {})}
                       fmt={fmt}
                     />
                   )}
@@ -2153,6 +2150,29 @@ export function ProductsPage() {
     () => queryClient.invalidateQueries({ queryKey: queryKeys.mangas.all }),
     [queryClient]
   );
+
+  // Aviso "este código ya existe" (alta de producto y de tomos, 2026-11-23):
+  // un TOMO se abre en su propio modal. El lookup trae un Product; el modal de
+  // tomo necesita el Manga, así que se busca por código y se toma el mismo id.
+  const openExistingManga = useCallback(async (p: Product) => {
+    try {
+      const found = (await getMangas({ search: p.sku, per_page: 200 })).find(m => m.id === p.id);
+      if (!found) {
+        toast.error(`No se encontró el tomo «${p.name}» para editarlo.`, { description: "Búscalo en la pestaña Tomos." });
+        return;
+      }
+      setEditingManga(found);
+    } catch (err: unknown) {
+      toast.error("No se pudo abrir el tomo.", { description: (err as { message?: string })?.message ?? "Revisa tu conexión." });
+    }
+  }, []);
+  const openExistingMangaStock = useCallback((p: Product) => {
+    setStockModalProduct({ id: p.id, name: p.name, kind: "manga" });
+  }, []);
+  const openExistingProduct = useCallback((p: Product) => {
+    setEditingProduct(apiProductToProducto(p));
+    setIsModalOpen(true);
+  }, []);
 
   /** Resuelve (o crea on-the-fly) el id del proveedor desde el nombre. */
   const resolveSupplierId = async (nombre: string): Promise<number | null> => {
@@ -3622,6 +3642,9 @@ export function ProductsPage() {
           key={editingProduct?.id ?? 'new'}
           onSave={handleSaveProduct}
           onOpenExisting={(p) => setEditingProduct(apiProductToProducto(p))}
+          onOpenExistingManga={(p) => { void openExistingManga(p); }}
+          onOpenStock={openExistingMangaStock}
+          stacked={showMangaModal}
           onDelete={(p) => setDeleteTarget(p)}
           {...(editingProduct !== undefined ? { product: editingProduct } : {})}
           proveedores={proveedores}
@@ -3659,6 +3682,10 @@ export function ProductsPage() {
           }}
           locations={locations}
           canViewCost={canViewCost}
+          canManage={canManage}
+          onOpenExistingManga={(p) => { void openExistingManga(p); }}
+          onOpenStock={openExistingMangaStock}
+          onOpenExistingProduct={openExistingProduct}
         />
       )}
 
@@ -3679,6 +3706,8 @@ export function ProductsPage() {
       {editingManga && (
         <MangaEditModal
           manga={editingManga}
+          key={editingManga.id}
+          stacked={showMangaModal || isModalOpen}
           canDelete={canDelete}
           onClose={() => setEditingManga(null)}
           onSuccess={_updated => {

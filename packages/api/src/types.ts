@@ -679,6 +679,17 @@ export interface Sale {
  * preventa y venta se cobra en UNA operación; si algo falla no se guarda nada.
  * Tiene que viajar `liquidation` o `new_order` (una venta sola es `POST /sales`).
  */
+/**
+ * Un pago de un cobro de preventa (2026-11-23, autorizado por Pier): Tarjeta con
+ * su terminal o una de las dos partes de un Mixto (efectivo + transferencia).
+ */
+export interface PreSalePaymentInput {
+  amount: number
+  payment_method_id: number
+  /** Solo con Tarjeta: la comisión la absorbe la tienda (se guarda para reportes). */
+  terminal_id?: number
+}
+
 export interface MixedCheckoutInput {
   store_id: number
   register_session_id: number
@@ -690,6 +701,8 @@ export interface MixedCheckoutInput {
     /** Obligatorio aquí (en `PATCH …/status` es opcional): las piezas que se entregan hoy. */
     item_ids: number[]
     payment?: { amount: number; payment_method_id?: number }
+    /** Cobro en lista (Tarjeta con terminal o Mixto, máx. 2). Manda sobre `payment`. */
+    payments?: PreSalePaymentInput[]
     item_discounts?: PreSaleItemDiscountInput[]
     notes?: string
   }
@@ -708,6 +721,8 @@ export interface MixedCheckoutInput {
     items: CreatePreSaleOrderInput['items']
     advance_amount?: number
     payment_method_id?: number
+    /** Anticipo en lista (Tarjeta con terminal o Mixto, máx. 2). */
+    payments?: PreSalePaymentInput[]
     notes?: string
   }
 }
@@ -1086,6 +1101,13 @@ export interface PreSaleOrderPayment {
   created_at: string
   payment_method: { id: number; name: string } | null
   cashier: { id: number; name: string } | null
+  /** Desde 2026-11-23 (preventa con Tarjeta y Mixto). */
+  payment_method_id?: number | null
+  terminal_id?: number | null
+  /** Comisión de la terminal: la absorbe la tienda. */
+  commission_amount?: number
+  /** Entrega que liquidó este pago; en Mixto son dos pagos con la misma entrega. */
+  delivery_id?: number | null
 }
 
 export interface PreSaleOrderLog {
@@ -1168,6 +1190,8 @@ export interface CreatePreSaleOrderInput {
   }>
   advance_amount?: number
   payment_method_id?: number
+  /** Anticipo en lista (Tarjeta con terminal o Mixto, máx. 2; 2026-11-23). Manda sobre advance_amount. */
+  payments?: PreSalePaymentInput[]
   linked_sale_id?: number
   notes?: string
 }
@@ -1189,6 +1213,8 @@ export interface UpdatePreSaleOrderStatusInput {
   item_ids?: number[]
   /** Cobro de esa entrega, en la misma llamada (si falla la entrega, el pago no queda). */
   payment?: { amount: number; payment_method_id?: number }
+  /** Cobro en lista (Tarjeta con terminal o Mixto, máx. 2; 2026-11-23). Manda sobre `payment`. */
+  payments?: PreSalePaymentInput[]
   /**
    * Descuento manual por pieza (2026-11-16): solo de partidas de `item_ids`.
    * El servidor calcula el monto y lo topa en lo que le falta pagar a la pieza.

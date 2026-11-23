@@ -8,7 +8,7 @@
 > Detalle adicional: [`CLAUDE.md`](CLAUDE.md) (comandos y arquitectura del frontend) y
 > [`backend/AGENTS.md`](backend/AGENTS.md) (API, ADRs y referencia de endpoints).
 >
-> Última revisión: 2026-11-19.
+> Última revisión: 2026-11-23.
 
 ---
 
@@ -151,8 +151,8 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   la dejan fuera de promos. Venta 100% regalo = pago Efectivo de $0 (el único pago en $0 permitido).
   Etiqueta «Regalo» en Caja, Historial, Ventas, corte y los 3 tickets.
 - **Pagos:** `sales` no tiene método de pago; viven en `payments` (1:N) y deben sumar
-  el total (±$0.01). "Mixto" = solo efectivo + transferencia, solo ventas regulares,
-  sin dólares.
+  el total (±$0.01). "Mixto" = solo efectivo + transferencia, sin dólares (desde
+  2026-11-23 también en preventas y folios, ver «Preventa con Tarjeta y Mixto»).
 - **Dólares:** los USD recibidos se quedan íntegros en el cajón y el cambio siempre es
   en pesos; el corte separa esperado en pesos y en dólares.
 
@@ -296,6 +296,24 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
 
 ### Preventas
 - Catálogo de proveedor → folios con anticipo → liquidación al recoger.
+- **Preventa con Tarjeta y Mixto (2026-11-23, AUTORIZADO POR PIER; lo pidió él a Joel).**
+  - **Qué dice:** el anticipo, la liquidación del folio y la preventa nueva se cobran con cualquier
+    método: Efectivo, Transferencia, Tarjeta (con su terminal) o Mixto (efectivo + transferencia).
+    Antes Caja solo dejaba Efectivo/Transferencia (el candado vivía solo en `SellPage.tsx`; el backend
+    nunca lo tuvo). Si algo sale mal con cobros de preventa con tarjeta, esta decisión fue de Pier.
+  - **Comisión:** como en ventas, la absorbe la tienda; se guarda por pago en
+    `pre_sale_order_payments.terminal_id` / `commission_amount` y sale en la tabla «Liquidaciones» del
+    Reporte del Día (con IVA). El cliente nunca la paga.
+  - **API:** `payments: [{amount, payment_method_id, terminal_id?}]` (máx. 2) en `POST /pre-sale-orders`,
+    `PATCH /pre-sale-orders/{id}/status` y los bloques `liquidation` / `new_order` de `POST /sales/mixed`;
+    manda sobre los campos de siempre (`advance_amount`+`payment_method_id`, `payment`), que siguen
+    igual para la app móvil. Reglas en `App\Support\PresalePayments` (Mixto sin tarjeta, terminal solo
+    con tarjeta). Caja reparte el cobro de la mesa entre bloques con `landing/src/lib/presalePayments.ts`.
+  - **Entrega en Mixto = dos pagos:** ambos llevan `pre_sale_order_payments.delivery_id`
+    (`pre_sale_deliveries.payment_id` sigue apuntando al primero). «Revertir entrega» quita los dos y
+    del cajón sale solo el efectivo. Los reportes ligan pagos y partidas con `paymentLiquidatesLine`.
+  - **Se queda la regla de siempre:** un folio con algún pago con Tarjeta NO se cancela ni se revierte
+    en el sistema (`assertNoCardPayments`); se devuelve en la terminal.
 - Límites: **por tienda** (`store_limits`, el cupo real: sin entrada = esa tienda no
   vende) y **por cliente en cada tienda** (`limit_per_customer`; identifica a la persona por
   id, teléfono o tarjeta de socio). `preorder_limit` ("Límite de unidades") es un tope global

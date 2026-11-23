@@ -5,7 +5,8 @@ import {
   Camera, Scan,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { createManga, updateMangaInventory, uploadMangaImage } from '@tadaima/api'
+import { createManga, updateMangaInventory, uploadMangaImage, type Product } from '@tadaima/api'
+import { useQueryClient } from '@tanstack/react-query'
 import { CategoryMultiPicker } from '@/components/products/CategoryMultiPicker'
 import type { ApiError } from '@tadaima/api'
 import { EDITORIALS, MANGA_GENRES } from './mangaConstants'
@@ -15,6 +16,9 @@ import { useFormDraft, draftKeyFor } from '@/hooks/useFormDraft'
 import { useAuth } from '@tadaima/auth'
 import { saveDraftFiles, loadDraftFiles, clearDraftFiles } from '@/lib/draftFiles'
 import { isEmptyMangaBatchDraft } from '@/lib/mangaBatchDraft'
+import { useCodeLookup, fetchCodeLookup } from '@/hooks/useCodeLookup'
+import { findBatchDuplicateIds, findSkuOwner, isMangaMatch } from '@/lib/duplicateCodeActions'
+import { DuplicateCodeNotice } from '@/components/products/DuplicateCodeNotice'
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 
@@ -114,7 +118,7 @@ type VolumeStatus = 'idle' | 'loading' | 'ok' | 'error'
 interface VolumeRow {
   id: string; numero: string; isbn: string
   imageFile?: File; imagePreview?: string
-  status: VolumeStatus; errorMsg?: string
+  status: VolumeStatus; errorMsg?: string | undefined
 }
 
 type TomoAction =
@@ -133,7 +137,12 @@ function tomoReducer(state: VolumeRow[], action: TomoAction): VolumeRow[] {
   switch (action.type) {
     case 'ADD':        return [...state, action.row]
     case 'REMOVE':     return state.filter(r => r.id !== action.id)
-    case 'UPDATE':     return state.map(r => r.id === action.id ? { ...r, [action.field]: action.value } : r)
+    // Cambiar el código quita el error anterior (casi siempre era el código repetido).
+    case 'UPDATE':     return state.map(r => {
+      if (r.id !== action.id) return r
+      if (action.field !== 'isbn' || r.status !== 'error') return { ...r, [action.field]: action.value }
+      return { ...r, isbn: action.value, status: 'idle', errorMsg: undefined }
+    })
     case 'SET_IMAGE':  return state.map(r => r.id === action.id ? { ...r, imageFile: action.imageFile, imagePreview: action.imagePreview } : r)
     case 'SET_STATUS': return state.map(r => r.id === action.id ? { ...r, status: action.status, errorMsg: action.errorMsg } : r)
     case 'RESET':      return action.rows
@@ -155,7 +164,24 @@ interface Props {
   onSuccess: () => void
   locations?: Location[]
   canViewCost?: boolean
+  /** Admin/gerente: el aviso de código repetido ofrece abrir lo que ya existe. */
+  canManage?: boolean
+  /** Código de un TOMO que ya existe → "Editar tomo" (encima de este modal). */
+  onOpenExistingManga?: (p: Product) => void
+  /** Código de un TOMO que ya existe → "Cambiar existencia". */
+  onOpenStock?: (p: Product) => void
+  /** Código de un PRODUCTO que ya existe → "Editar ese producto". */
+  onOpenExistingProduct?: (p: Product) => void
 }
+
+/** Mensaje del renglón cuyo código ya es SKU de otro (el backend lo rechazaría). */
+function takenCodeMessage(owner: Product, canManage: boolean): string {
+  const what = isMangaMatch(owner) ? 'del tomo' : 'de'
+  const next = canManage ? 'Usa otro código o abre ese desde el aviso.' : 'Usa otro código o pide a un gerente que lo edite.'
+  return `Ese código ya es ${what} «${owner.name}». ${next}`
+}
+
+const REPEATED_IN_BATCH_MSG = 'Este código se repite en otro tomo del lote. Cada tomo necesita su propio código.'
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -172,8 +198,12 @@ const EMPTY_SERIES: SeriesFields = { nombre: '', editorial: '', genero: '', prec
 const EMPTY_PRICES: PriceFields = { price1: '', price2: '', price3: '', price4: '', price5: '' }
 const MANGA_DRAFT_BASE = 'tadaima-manga-batch-draft'
 
-export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCost = false }: Props) {
+export function MangaBatchModal({
+  onClose, onSuccess, locations = [], canViewCost = false,
+  canManage = false, onOpenExistingManga, onOpenStock, onOpenExistingProduct,
+}: Props) {
   const [tab, setTab] = useState<Tab>('tomos')
+  const queryClient = useQueryClient()
 
   // Borrador en localStorage (Joel 2026-08-05): protege el lote completo si
   // algo interrumpe la sesión antes de guardar. Siempre alta — este modal no
@@ -374,9 +404,51 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
 
   // ── Submit ─────────────────────────────────────────────────────────────────
 
+  // Códigos repetidos dentro del lote (en vivo, solo renglones sin registrar).
+  const repeatedInBatch = findBatchDuplicateIds(
+    tomos.filter(t => t.status !== 'ok').map(t => ({ id: t.id, code: t.isbn })),
+  )
+
+  /**
+   * Antes de crear NADA: ningún tomo pendiente puede llevar un código que ya
+   * es SKU de otro producto/tomo ni repetirse dentro del lote. Antes el lote se
+   * guardaba a medias (los tomos anteriores al repetido ya quedaban creados).
+   * Regresa cuántos renglones quedaron marcados (0 = se puede registrar).
+   */
+  const markBlockedCodes = useCallback(async (pending: VolumeRow[]): Promise<number> => {
+    const repeated = findBatchDuplicateIds(pending.map(t => ({ id: t.id, code: t.isbn })))
+    const owners = await Promise.all(pending.map(async t => {
+      try {
+        return findSkuOwner(await fetchCodeLookup(queryClient, t.isbn), t.isbn)
+      } catch {
+        // Sin respuesta del lookup no se bloquea: el backend vuelve a validar
+        // el código al crear y lo marca en el renglón.
+        return undefined
+      }
+    }))
+    const blocked = pending.flatMap((t, i) => {
+      const owner = owners[i]
+      if (owner) return [{ id: t.id, msg: takenCodeMessage(owner, canManage) }]
+      if (repeated.has(t.id)) return [{ id: t.id, msg: REPEATED_IN_BATCH_MSG }]
+      return []
+    })
+    blocked.forEach(b => dispatch({ type: 'SET_STATUS', id: b.id, status: 'error', errorMsg: b.msg }))
+    return blocked.length
+  }, [queryClient, canManage])
+
   const handleSubmit = useCallback(async () => {
     if (!canSave) return
     setSubmitting(true)
+
+    const blockedCount = await markBlockedCodes(tomos.filter(t => t.status !== 'ok'))
+    if (blockedCount > 0) {
+      setSubmitting(false)
+      setTab('tomos')
+      toast.error(`No se registró ningún tomo: ${blockedCount} con código repetido`, {
+        description: 'Corrige los códigos marcados y vuelve a registrar.',
+      })
+      return
+    }
 
     const precio = parseFloat(series.precioPublico)
     const margen = parseFloat(series.margenPct)
@@ -435,7 +507,7 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
 
     setSubmitting(false)
     if (!anyError) { clearDraft(); void clearDraftFiles(draftKey); onSuccess(); onClose() }
-  }, [canSave, series, prices, warehouseGroups, tomos, onSuccess, onClose, clearDraft, draftKey])
+  }, [canSave, series, prices, warehouseGroups, tomos, onSuccess, onClose, clearDraft, draftKey, markBlockedCodes])
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -568,6 +640,11 @@ export function MangaBatchModal({ onClose, onSuccess, locations = [], canViewCos
                     onChangeNumero={v => dispatch({ type: 'UPDATE', id: tomo.id, field: 'numero', value: v })}
                     onChangeIsbn={v => dispatch({ type: 'UPDATE', id: tomo.id, field: 'isbn', value: v })}
                     onSetImage={(file, preview) => dispatch({ type: 'SET_IMAGE', id: tomo.id, imageFile: file, imagePreview: preview })}
+                    repeatedInBatch={repeatedInBatch.has(tomo.id)}
+                    canManage={canManage}
+                    {...(onOpenExistingManga ? { onOpenExistingManga } : {})}
+                    {...(onOpenStock ? { onOpenStock } : {})}
+                    {...(onOpenExistingProduct ? { onOpenExistingProduct } : {})}
                   />
                 ))}
                 <button
@@ -868,10 +945,24 @@ interface TomoCardProps {
   onChangeNumero: (v: string) => void
   onChangeIsbn: (v: string) => void
   onSetImage: (file: File, preview: string) => void
+  /** Otro renglón del lote trae el mismo código. */
+  repeatedInBatch: boolean
+  canManage: boolean
+  onOpenExistingManga?: (p: Product) => void
+  onOpenStock?: (p: Product) => void
+  onOpenExistingProduct?: (p: Product) => void
 }
 
-function TomoCard({ tomo, index, onRemove, onChangeNumero, onChangeIsbn, onSetImage, inputStyle }: TomoCardProps) {
+const AMBER_BORDER = 'rgba(245,158,11,0.55)'
+
+function TomoCard({
+  tomo, index, onRemove, onChangeNumero, onChangeIsbn, onSetImage, inputStyle,
+  repeatedInBatch, canManage, onOpenExistingManga, onOpenStock, onOpenExistingProduct,
+}: TomoCardProps) {
   const isbnRef = useRef<HTMLInputElement>(null)
+  // ¿El código ya existe en el catálogo? (mismo aviso que el alta de producto)
+  const { duplicates } = useCodeLookup(tomo.isbn, { enabled: tomo.status !== 'ok' })
+  const codeWarning = tomo.status !== 'ok' && (duplicates.length > 0 || repeatedInBatch)
 
   const sc = {
     idle:    { bg: SURFACE_MUTED, border: 'var(--td-card-border)' },
@@ -884,7 +975,12 @@ function TomoCard({ tomo, index, onRemove, onChangeNumero, onChangeIsbn, onSetIm
   const disabled = tomo.status === 'ok' || tomo.status === 'loading'
 
   return (
-    <div className="p-4 rounded-2xl transition-all" style={{ background: sc.bg, border: `1px solid ${sc.border}` }}>
+    <div
+      className="p-4 rounded-2xl transition-all"
+      data-testid="tomo-card"
+      data-code-warning={codeWarning ? 'true' : undefined}
+      style={{ background: sc.bg, border: `1px solid ${codeWarning && tomo.status !== 'error' ? AMBER_BORDER : sc.border}` }}
+    >
       <div className="flex items-start gap-3">
 
         {/* ── Imagen / Estado ── */}
@@ -946,7 +1042,7 @@ function TomoCard({ tomo, index, onRemove, onChangeNumero, onChangeIsbn, onSetIm
               <input
                 ref={isbnRef}
                 className="w-full pl-3 pr-9 py-2 rounded-xl outline-none text-sm font-mono"
-                style={inputStyle}
+                style={codeWarning ? { ...inputStyle, border: `1px solid ${AMBER_BORDER}` } : inputStyle}
                 placeholder="Escanear o escribir…"
                 value={tomo.isbn}
                 disabled={disabled}
@@ -973,6 +1069,25 @@ function TomoCard({ tomo, index, onRemove, onChangeNumero, onChangeIsbn, onSetIm
           </button>
         )}
       </div>
+
+      {tomo.status !== 'ok' && duplicates.length > 0 && (
+        <div className="mt-2.5">
+          <DuplicateCodeNotice
+            matches={duplicates}
+            code={tomo.isbn}
+            mode="create"
+            canEdit={canManage}
+            {...(onOpenExistingManga ? { onEditManga: onOpenExistingManga } : {})}
+            {...(onOpenStock ? { onOpenStock } : {})}
+            {...(onOpenExistingProduct ? { onEditProduct: onOpenExistingProduct } : {})}
+          />
+        </div>
+      )}
+      {tomo.status !== 'ok' && repeatedInBatch && duplicates.length === 0 && tomo.status !== 'error' && (
+        <p className="mt-2 text-[11px] font-bold" style={{ color: '#F59E0B' }}>
+          {REPEATED_IN_BATCH_MSG}
+        </p>
+      )}
 
       {tomo.status === 'error' && tomo.errorMsg && (
         <div className="mt-2.5 px-3 py-2 rounded-xl text-xs" style={{ background: 'rgba(204,34,0,0.1)', border: '1px solid rgba(204,34,0,0.2)', color: '#FF4422' }}>

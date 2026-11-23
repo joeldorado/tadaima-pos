@@ -2,8 +2,8 @@
  * Método de pago favorito de Caja (2026-10-09): el cajero marca UN método con
  * un check y cada venta nueva (y cada mesa nueva) arranca con él en vez de
  * Efectivo. Es por USUARIO en esa computadora (localStorage, sin backend):
- * en otra caja se vuelve a marcar. Las reglas de cobro (preventa sin Tarjeta
- * ni Mixto, productos solo efectivo/solo tarjeta, precio socio) siguen
+ * en otra caja se vuelve a marcar. Las reglas de cobro (productos solo
+ * efectivo/solo tarjeta, precio socio) siguen
  * mandando sobre el favorito — esto solo decide con qué método ARRANCA.
  */
 

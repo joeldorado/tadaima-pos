@@ -6,7 +6,7 @@
     "icon": "package",
     "summary": "Crear un producto con nombre, precios, métodos de pago e inventario por tienda.",
     "tourId": "alta-producto",
-    "updatedAt": "2026-09-30",
+    "updatedAt": "2026-11-23",
     "keywords": [
       "alta",
       "nuevo producto",
@@ -19,6 +19,8 @@
       "borrador",
       "manga nacional",
       "tomos",
+      "código repetido",
+      "isbn",
       "proveedor",
       "categoría",
       "subir imagen"
@@ -96,6 +98,22 @@
             "tone": "info",
             "title": "Si el guardado falla, no pierdes lo capturado",
             "text": "El formulario ya no se cierra solo: si el servidor rechaza el alta (por ejemplo, un SKU repetido), el modal se queda abierto con todos tus datos para que corrijas y vuelvas a intentar."
+          }
+        ]
+      },
+      {
+        "id": "codigo-repetido",
+        "heading": "Aviso “Este código ya existe”",
+        "blocks": [
+          {
+            "kind": "prose",
+            "text": "Al escanear o escribir el código, el sistema revisa todo el catálogo (también tomos y desactivados). Si ya existe, sale un aviso ámbar debajo del campo con su foto, nombre, código, precio y existencias. Un admin o gerente puede abrir lo que ya existe desde ahí: “Editar ese producto” si es un producto, o “Editar tomo” y “Cambiar existencia” si es un tomo. Un cajero ve cuál es y el texto “Pide a un gerente que lo edite”."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
+            "title": "En el alta de Tomos no se guarda a medias",
+            "text": "Cada tomo del lote revisa su ISBN / Código y se marca en ámbar si ya existe. Si al registrar algún tomo trae un código que ya es de otro producto o tomo, o se repite dentro del mismo lote, no se registra ninguno: se marcan los tomos con problema para que corrijas el código. Lo que abras desde el aviso sale encima y el lote sigue ahí al cerrarlo."
           }
         ]
       },

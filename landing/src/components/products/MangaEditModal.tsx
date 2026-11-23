@@ -77,13 +77,15 @@ interface Props {
   /** Eliminar tomo (admin o gerente con permiso de costo, 2026-08-17). Si no se pasa, cae a isAdmin. */
   canDelete?: boolean
   locations?: { warehouseId: number; name: string; store: string; type: 'central' | 'store' | 'bodega' }[]
+  /** Abierto encima de otro modal (aviso de código repetido en un alta): sube de capa. */
+  stacked?: boolean
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function MangaEditModal({
   manga, onClose, onSuccess, onDeleted,
-  canViewCost = false, isAdmin = false, canDelete, locations = [],
+  canViewCost = false, isAdmin = false, canDelete, locations = [], stacked = false,
 }: Props) {
   const [tab, setTab] = useState<Tab>('tomo')
   // Gerente/cajero: el tab Inventario muestra y modifica solo el stock de su
@@ -239,7 +241,7 @@ export function MangaEditModal({
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <>
-      <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+      <div className={`fixed inset-0 ${stacked ? 'z-[110]' : 'z-[100]'} flex items-center justify-center p-4`}>
         <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={() => !saving && onClose()} />
 
         <div className="relative w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-[32px] flex flex-col shadow-2xl" style={T.glass}>

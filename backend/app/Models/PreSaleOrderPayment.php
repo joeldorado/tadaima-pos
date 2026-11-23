@@ -11,11 +11,14 @@ class PreSaleOrderPayment extends Model
 
     protected $fillable = [
         'pre_sale_order_id', 'amount', 'payment_method_id', 'cashier_id', 'notes',
+        // Preventa con Tarjeta y Mixto (2026-11-23, autorizado por Pier).
+        'terminal_id', 'commission_amount', 'delivery_id',
     ];
 
     protected $casts = [
-        'amount'     => 'float',
-        'created_at' => 'datetime',
+        'amount'            => 'float',
+        'commission_amount' => 'float',
+        'created_at'        => 'datetime',
     ];
 
     // ── Relations ─────────────────────────────────────────────────────────────
@@ -28,6 +31,11 @@ class PreSaleOrderPayment extends Model
     public function paymentMethod(): BelongsTo
     {
         return $this->belongsTo(PaymentMethod::class);
+    }
+
+    public function terminal(): BelongsTo
+    {
+        return $this->belongsTo(Terminal::class);
     }
 
     public function cashier(): BelongsTo
