@@ -4,6 +4,27 @@
 
 ---
 
+### Sesión 2026-11-23 (b) — Comisión de preventas con Tarjeta en Reportes y en el Excel del corte (PR #115) — rev tadaima-00162-nes
+
+**Origen:** pendiente de la sesión anterior. La comisión de las preventas cobradas con tarjeta solo salía en el Reporte del Día.
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00160-wiy`. **Solo frontend, sin migración.** Al regresar, Reportes y el Excel vuelven a ignorar la comisión de preventas.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00160-wiy=100 --project tadaimapos --region us-east1`
+
+- **Reparto:** la comisión de cada pago de preventa con terminal se reparte por pieza igual que el abono (`presaleCommissionByLine` en `buildReportData.ts`).
+- **Reportes (pantalla):** el renglón de la preventa trae la comisión, y la utilidad resta comisión + IVA como en las ventas con tarjeta.
+- **Excel (Reportes y corte):**
+  - En la pestaña Tarjeta, la tabla de Preventas agrega «Comisión TPV» e IVA, y la Utilidad queda Abonado − Comisión − IVA − Costo.
+  - TOTAL FINAL TARJETA y la fila «Preventas» del Resumen usan el abonado neto.
+  - Sin comisión, la tabla queda igual que antes.
+- **App móvil:** PR tadaima-app-pos#3 hacia `desarrollo` (preventas con Tarjeta y Mixto en Apartar, Liquidar y Cobrar). Sin merge ni prueba en teléfono; queda con Ruben.
+- **Validación:**
+  - vitest 1030 ✓ (7 nuevas).
+  - Candidato y dominio: `/`, `/login`, `/caja` y `/tadaimaus/` responden 200; el API sin token, 401. Bundle nuevo (`index-C91blJss.js`) y sin errores en los registros.
+  - No probado con un Excel real: lo revisa Ruben.
+- **En prod 2026-11-23 (Tijuana).**
+- **Aclaración:** de cancelaciones con tarjeta, solo las preventas siguen bloqueadas (regla del 2026-06-10). Las ventas normales con tarjeta se cancelan desde el 2026-09-30.
+
 ### Sesión 2026-11-23 — Preventa con Tarjeta y Mixto (AUTORIZADO POR PIER) + aviso de código repetido en alta de tomos (PR #113) — rev tadaima-00160-wiy
 
 **Origen:**
