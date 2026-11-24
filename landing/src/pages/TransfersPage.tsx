@@ -28,6 +28,7 @@ import {
   TRANSFER_DRAFT_KEY, TRANSFER_DRAFT_VERSION,
   type DraftItem, type TransferDraft,
 } from "@/lib/transferDraft";
+import { mapWithConcurrency, transferStockSnapshot, TRANSFER_STOCK_CONCURRENCY } from "@/lib/transferStock";
 
 // ─── Paleta Tadaima ───────────────────────────────────────────────────────────
 const T = {
@@ -90,6 +91,9 @@ interface ItemStockSnapshot {
 
 /** Resultados que muestra el buscador de artículos del traslado. */
 const PRODUCT_RESULTS = 8;
+
+/** Espera antes de recargar el stock de la lista al cambiar origen/destino (agrupa cambios seguidos). */
+const STOCK_REFRESH_DELAY_MS = 300;
 
 interface ProductSearchResult {
   id: number;
@@ -329,7 +333,20 @@ export function TransfersPage() {
     }
   };
 
-  const loadItemStock = async (productId: number, _originId: string, destinationId: string) => {
+  /** Guarda el stock de un artículo calculado con las filas de `getInventory({ product_id })`. */
+  const storeItemStock = (productId: number, rows: InventoryItem[], originId: string, destinationId: string) => {
+    const originStoreId = warehouses.find(w => String(w.id) === originId)?.store?.id;
+    const snapshot = {
+      ...transferStockSnapshot(rows, originStoreId, destinationId ? Number(destinationId) : null),
+      loading: false,
+    };
+    setItemStock(prev => ({ ...prev, [productId]: snapshot }));
+    return snapshot;
+  };
+
+  // UNA consulta por artículo (2026-11-24): antes eran dos, y la del destino siempre llegaba vacía
+  // para gerente/cajero. Ver lib/transferStock.ts.
+  const loadItemStock = async (productId: number, originId: string, destinationId: string) => {
     setItemStock(prev => ({
       ...prev,
       [productId]: {
@@ -338,23 +355,16 @@ export function TransfersPage() {
         loading: true,
       },
     }));
-
-    // fromAvailable = stock combinado piso+bodega de la tienda origen (scoped al gerente)
-    const [fromRows, toRows] = await Promise.all([
-      getInventory({ product_id: productId }),
-      destinationId
-        ? getInventory({ product_id: productId, warehouse_id: Number(destinationId) })
-        : Promise.resolve([]),
-    ]);
-
-    const snapshot = {
-      fromAvailable: fromRows.reduce((sum, r) => sum + r.quantity, 0),
-      toAvailable: toRows[0]?.quantity ?? 0,
-      loading: false,
-    };
-
-    setItemStock(prev => ({ ...prev, [productId]: snapshot }));
-    return snapshot;
+    try {
+      const rows = await getInventory({ product_id: productId });
+      return storeItemStock(productId, rows, originId, destinationId);
+    } catch (err: unknown) {
+      setItemStock(prev => ({
+        ...prev,
+        [productId]: { fromAvailable: prev[productId]?.fromAvailable ?? null, toAvailable: prev[productId]?.toAvailable ?? null, loading: false },
+      }));
+      throw err;
+    }
   };
 
   const addSelectedProductToTransfer = async () => {
@@ -379,44 +389,41 @@ export function TransfersPage() {
       return;
     }
 
+    if (selectedProductInventoryLoading) {
+      toast.info("Cargando el stock del artículo…");
+      return;
+    }
+
+    let stock: { fromAvailable: number; toAvailable: number };
     try {
-      const stock = await loadItemStock(selectedProduct.id, fromWhId, toWhId);
-
-      setItems(prev => {
-        const existing = prev.find(i => i.product_id === selectedProduct.id);
-        const nextQty = parsedQty;
-
-        if (stock.fromAvailable < 1) {
-          toast.error(`"${selectedProduct.name}" no tiene stock en el origen seleccionado`);
-          return prev;
-        }
-
-        if (nextQty > stock.fromAvailable) {
-          toast.error(`Máximo disponible para mover: ${stock.fromAvailable}`);
-          return prev;
-        }
-
-        if (existing) {
-          return prev.map(i =>
-            i.product_id === selectedProduct.id
-              ? { ...i, quantity: nextQty, quantityInput: String(nextQty) }
-              : i
-          );
-        }
-
-        return [
-          ...prev,
-          {
-            product_id: selectedProduct.id,
-            name: selectedProduct.name,
-            sku: selectedProduct.sku,
-            quantity: nextQty,
-            quantityInput: String(nextQty),
-          },
-        ];
-      });
+      // El inventario ya se cargó al elegir el artículo: no se vuelve a pedir (antes, 2 consultas
+      // más por artículo). Solo si esa carga falló o no trajo filas se consulta otra vez.
+      stock = selectedProductInventory.length > 0
+        ? storeItemStock(selectedProduct.id, selectedProductInventory, fromWhId, toWhId)
+        : await loadItemStock(selectedProduct.id, fromWhId, toWhId);
     } catch {
-      toast.error("No se pudo consultar el stock del producto");
+      // Se deja el artículo elegido para reintentar sin volver a escanear.
+      toast.error("No se pudo consultar el stock (conexión). Da «Agregar» otra vez.");
+      return;
+    }
+
+    if (stock.fromAvailable < 1) {
+      toast.error(`"${selectedProduct.name}" no tiene stock en el origen seleccionado`);
+    } else if (parsedQty > stock.fromAvailable) {
+      toast.error(`Máximo disponible para mover: ${stock.fromAvailable}`);
+    } else {
+      const product = selectedProduct;
+      setItems(prev => (prev.some(i => i.product_id === product.id)
+        ? prev.map(i => (i.product_id === product.id
+          ? { ...i, quantity: parsedQty, quantityInput: String(parsedQty) }
+          : i))
+        : [...prev, {
+          product_id: product.id,
+          name: product.name,
+          sku: product.sku,
+          quantity: parsedQty,
+          quantityInput: String(parsedQty),
+        }]));
     }
 
     clearSearchComposer();
@@ -652,6 +659,9 @@ export function TransfersPage() {
 
   useEffect(() => {
     if (!selectedProduct) return;
+    // Mientras carga su inventario la lista de orígenes está vacía: antes ponía el origen en "" y
+    // luego lo regresaba, y ese rebote recargaba el stock de toda la lista dos veces por artículo.
+    if (selectedProductInventoryLoading) return;
     if (availableOriginWarehouses.length === 0) {
       setFromWhId("");
       return;
@@ -659,19 +669,26 @@ export function TransfersPage() {
     if (!availableOriginWarehouses.some(option => String(option.id) === fromWhId)) {
       setFromWhId(String(availableOriginWarehouses[0]!.id));
     }
-  }, [selectedProduct, availableOriginWarehouses, fromWhId]);
+  }, [selectedProduct, selectedProductInventoryLoading, availableOriginWarehouses, fromWhId]);
+
+  // Stock de la lista (2026-11-24): se recarga SOLO cuando cambia la tienda origen o el destino (o al
+  // restaurar un borrador), de a pocas consultas. Agregar o quitar un artículo ya no recarga toda la
+  // lista: un traslado de ~76 productos hizo ~18,900 consultas en 2 h, el servidor contestó 429 y
+  // agotó las conexiones de Supabase, y «Agregar» fallaba. Ver lib/transferStock.ts.
+  const itemsRef = useRef(items);
+  useEffect(() => { itemsRef.current = items; }, [items]);
+  const stockContextKey = fromStoreId != null && toWhId ? `${fromStoreId}|${toWhId}` : null;
+  const loadedStockContext = useRef<string | null>(null);
 
   useEffect(() => {
-    if (items.length === 0) {
-      setItemStock({});
-      return;
-    }
-
-    void Promise.all(items.map(async (item) => {
-      try {
-        const stock = await loadItemStock(item.product_id, fromWhId, toWhId);
+    if (stockContextKey === null || stockContextKey === loadedStockContext.current) return;
+    const timer = setTimeout(() => {
+      loadedStockContext.current = stockContextKey;
+      const productIds = itemsRef.current.map(item => item.product_id);
+      void mapWithConcurrency(productIds, TRANSFER_STOCK_CONCURRENCY, async (productId) => {
+        const stock = await loadItemStock(productId, fromWhId, toWhId);
         setItems(prev => prev.map(current => {
-          if (current.product_id !== item.product_id) return current;
+          if (current.product_id !== productId) return current;
           if (stock.fromAvailable < 1) return current;
           if (current.quantity > stock.fromAvailable) {
             return {
@@ -682,11 +699,13 @@ export function TransfersPage() {
           }
           return current;
         }));
-      } catch {
-        // keep current item editable; create action will still re-check limits
-      }
-    }));
-  }, [fromWhId, toWhId, items.map(item => item.product_id).join(",")]);
+      });
+      // Un artículo que falle queda editable; al crear, el servidor vuelve a validar el stock.
+    }, STOCK_REFRESH_DELAY_MS);
+    return () => clearTimeout(timer);
+    // Solo la combinación origen+destino dispara la recarga; fromWhId/toWhId van dentro de la llave.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stockContextKey]);
 
   // ─── Render ────────────────────────────────────────────────────────────────
   return (

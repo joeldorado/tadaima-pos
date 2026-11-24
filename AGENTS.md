@@ -536,6 +536,13 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   (origen, destino, notas, artículos) se guarda con `useFormDraft` por usuario en esa PC
   (`lib/transferDraft.ts`): sobrevive a la X, a «Cerrar» y a recargar; se borra al crear o con
   «Empezar de cero». No vuelvas a poner un `onClick` de cierre en el fondo de un modal de captura.
+- **Traslados sin ráfagas de stock** (2026-11-24): un traslado de ~76 productos hizo ~18,900
+  `GET /inventory?product_id` en 2 h (la lista recargaba el stock de TODOS los artículos, 2 consultas
+  cada uno, dos veces por artículo elegido): 429 por usuario (el teléfono del mismo usuario también) y
+  `EMAXCONNSESSION` del pooler de Supabase (session mode, `pool_size` 15). Ahora elegir+agregar = 1
+  consulta; la lista solo se recarga al cambiar tienda origen o destino, de a 3
+  (`lib/transferStock.ts`). Una pantalla que dispare N consultas en paralelo puede tumbar Caja de todas
+  las tiendas: limita la concurrencia.
 
 ---
 
