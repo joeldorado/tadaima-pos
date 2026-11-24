@@ -4,6 +4,75 @@
 
 ---
 
+### Sesión 2026-11-24 — Traslados: el clic afuera ya no cierra el modal y lo escaneado se guarda (PR #116) — rev tadaima-00164-dep
+
+**Origen:** la tienda mandó un video: «estábamos escaneando productos para traslado, llevábamos apenas unos y nos sacó de la nada» y «tampoco aparece como si se hubiera guardado lo que ya se había escaneado».
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00162-nes`. **Solo frontend, sin migración.** Al regresar vuelve el cierre con clic afuera; los borradores guardados en localStorage se ignoran.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00162-nes=100 --project tadaimapos --region us-east1`
+
+- **Causa:** no era cierre de sesión (en el video siguen en la lista con sesión abierta). El fondo oscuro del modal «Nueva Transferencia» tenía un `onClick` que cerraba y llamaba `resetModal()`, que vaciaba la lista. La lista vivía solo en memoria: nada se guarda hasta «Crear». Alternando lector y mouse, un clic fuera del recuadro es fácil.
+- **Arreglo (`TransfersPage.tsx`):** el fondo ya no cierra; se cierra con la X o «Cerrar» (antes «Cancelar»), sin borrar. Borrador con `useFormDraft` por usuario en esa PC (`lib/transferDraft.ts`, llave `tadaima-transfer-draft:{userId}`): origen, destino, notas, artículos y paso. El botón dice «Continuar traslado (N)» y al reabrir avisa «Se restauró…». Se borra al crear o con «Empezar de cero» (pide confirmación). Almacenes restaurados que ya no existen se descartan.
+- **Validación:**
+  - vitest 1044 ✓ (14 nuevas); type-check 446 errores y lint igual que `main`; `vite build` ✓.
+  - Navegador local como gerente: clic afuera → sigue abierto; X → «Continuar traslado (1)»; recargar → se restaura con aviso; crear → borrador borrado; «Empezar de cero» → lista vacía.
+  - Candidato y dominio: `/login` y `/tadaimaus/` 200, API 401 sin token, bundle con el borrador.
+  - No probado en prod con sesión: lo prueba la tienda con su lector.
+- **En prod 2026-11-24 (Tijuana).** Guía in-app de Traslados y `AGENTS.md` al día.
+
+### Sesión 2026-11-23 (b) — Comisión de preventas con Tarjeta en Reportes y en el Excel del corte (PR #115) — rev tadaima-00162-nes
+
+**Origen:** pendiente de la sesión anterior. La comisión de las preventas cobradas con tarjeta solo salía en el Reporte del Día.
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00160-wiy`. **Solo frontend, sin migración.** Al regresar, Reportes y el Excel vuelven a ignorar la comisión de preventas.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00160-wiy=100 --project tadaimapos --region us-east1`
+
+- **Reparto:** la comisión de cada pago de preventa con terminal se reparte por pieza igual que el abono (`presaleCommissionByLine` en `buildReportData.ts`).
+- **Reportes (pantalla):** el renglón de la preventa trae la comisión, y la utilidad resta comisión + IVA como en las ventas con tarjeta.
+- **Excel (Reportes y corte):**
+  - En la pestaña Tarjeta, la tabla de Preventas agrega «Comisión TPV» e IVA, y la Utilidad queda Abonado − Comisión − IVA − Costo.
+  - TOTAL FINAL TARJETA y la fila «Preventas» del Resumen usan el abonado neto.
+  - Sin comisión, la tabla queda igual que antes.
+- **App móvil:** PR tadaima-app-pos#3 hacia `desarrollo` (preventas con Tarjeta y Mixto en Apartar, Liquidar y Cobrar). Sin merge ni prueba en teléfono; queda con Ruben.
+- **Validación:**
+  - vitest 1030 ✓ (7 nuevas).
+  - Candidato y dominio: `/`, `/login`, `/caja` y `/tadaimaus/` responden 200; el API sin token, 401. Bundle nuevo (`index-C91blJss.js`) y sin errores en los registros.
+  - No probado con un Excel real: lo revisa Ruben.
+- **En prod 2026-11-23 (Tijuana).**
+- **Aclaración:** de cancelaciones con tarjeta, solo las preventas siguen bloqueadas (regla del 2026-06-10). Las ventas normales con tarjeta se cancelan desde el 2026-09-30.
+
+### Sesión 2026-11-23 — Preventa con Tarjeta y Mixto (AUTORIZADO POR PIER) + aviso de código repetido en alta de tomos (PR #113) — rev tadaima-00160-wiy
+
+**Origen:**
+1. **Pier autorizó** cobrar preventas con Tarjeta y Transferencia. Joel pidió dejar registrado quién pidió el cambio, por si después hay algún problema. Transferencia ya se permitía; lo bloqueado eran Tarjeta y Mixto, y solo en Caja (`SellPage.tsx`). El backend nunca tuvo candado. Se abrieron los dos.
+2. El alta de tomos no tenía el aviso de «este código ya existe» que sí tiene el alta de productos.
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00158-gur`. **Hay migración ADITIVA** (`2026_11_23_000001`: `pre_sale_order_payments.terminal_id`, `commission_amount`, `delivery_id`). No hace falta revertirla: la revisión anterior ignora esas columnas. Al regresar vuelve el candado de Tarjeta/Mixto en Caja.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00158-gur=100 --project tadaimapos --region us-east1`
+
+- **Preventa con Tarjeta y Mixto (autorizado por Pier):**
+  - **Dónde aplica:** anticipo, liquidación del folio y preventa nueva, también en la mesa que mezcla folio, productos y preventa nueva.
+  - **Tarjeta:** pide la terminal; cada pago guarda la terminal y la comisión. La comisión la absorbe la tienda y sale en la tabla «Liquidaciones» del Reporte del Día, con IVA. **No** se sumó al corte de caja ni a Reportes.
+  - **Mixto:** la transferencia se reparte sola entre folio, venta y preventa nueva, en centavos exactos (`landing/src/lib/presalePayments.ts`).
+  - **API:** `payments[]` (máx. 2) en `POST /pre-sale-orders`, `PATCH /pre-sale-orders/{id}/status` y `/sales/mixed`. Los campos de siempre siguen iguales para la app móvil. Las reglas viven en `App\Support\PresalePayments`: Mixto sin tarjeta y terminal solo con tarjeta.
+  - **Revertir una entrega cobrada en Mixto:** quita los dos pagos (se ligan por `delivery_id`) y del cajón sale solo la parte en efectivo.
+  - **Sigue igual:** un folio con algún pago con Tarjeta no se cancela ni se revierte en el sistema; se devuelve en la terminal.
+  - **Documentado en:** `AGENTS.md` §5 Preventas y la guía de Caja.
+- **Alta de tomos:**
+  - **Aviso por tomo:** cada tomo del lote avisa si su código ya existe. Si es de un tomo, ofrece «Editar tomo» y «Cambiar existencia»; si es de un producto, «Editar ese producto». Solo para admin y gerente.
+  - **Sin lotes a medias:** si algún código está tomado o se repite dentro del lote, no se crea ningún tomo. Antes los tomos anteriores al repetido ya quedaban guardados.
+  - **Alta de producto:** si el código es de un tomo, ahora abre el editor de tomos.
+- **Validación:**
+  - Pruebas: `php artisan test` 1069 ✓ (12 casos nuevos), Postgres local de preventas y cobro mixto 165 ✓, vitest 1024 ✓. Sin errores de tipos nuevos contra `main`.
+  - Navegador local:
+    - Una preventa con Tarjeta guardó terminal y comisión de $7 (3.5% de $200).
+    - Una en Mixto guardó $120 en efectivo y $80 por transferencia.
+    - Tomos con código repetido: el lote no creó nada.
+  - Candidato y dominio: `/`, `/login`, `/caja` y `/tadaimaus/` responden 200; el API sin token, 401. El bundle trae los textos nuevos y no el candado viejo. La migración corrió en 230 ms y no hay errores en los registros.
+  - No probado en prod con sesión: lo prueba la tienda con una terminal real.
+- **En prod 2026-11-23 (Tijuana).**
+- **Pendiente:** la app móvil (repo aparte) sigue cobrando preventas con un solo método y sin terminal. La comisión de preventas no aparece en el corte de caja ni en Reportes.
+
 ### Sesión 2026-11-20 — Historial de stock por producto (PR #111) — rev tadaima-00158-gur
 
 **Origen:** Tadaima Tijuana pidió ver cuánto stock entra y sale de cada producto, para encontrar una entrada mal capturada o algo que no se descontó. Joel pidió que fuera un módulo aparte, sin tocar el API que ya existe (la app móvil usa `/inventory/movements`).
