@@ -228,6 +228,12 @@
           {
             "kind": "callout",
             "tone": "info",
+            "title": "Lo que escaneas no se pierde",
+            "text": "Mientras armas el traslado, la lista se guarda sola en esa computadora. Un clic fuera de la ventana ya no la cierra; si la cierras con la X o con «Cerrar», o se recarga la página, el botón dice «Continuar traslado (N)» y al abrirlo sigue todo ahí. La lista se borra al crear el traslado o con «Empezar de cero»."
+          },
+          {
+            "kind": "callout",
+            "tone": "info",
             "title": "¿Qué productos van en el traslado?",
             "text": "La tarjeta solo enseña el primer producto. Toca “Ver N productos” y se abre el detalle: quién lo pidió, la nota, cada producto con su SKU y cuántas piezas van, y el total de piezas (con muchos productos aparece un buscador). Si está pendiente y te toca, puedes Recibir o Cancelar desde ahí mismo después de revisar la lista."
           }

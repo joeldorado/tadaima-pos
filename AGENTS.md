@@ -8,7 +8,7 @@
 > Detalle adicional: [`CLAUDE.md`](CLAUDE.md) (comandos y arquitectura del frontend) y
 > [`backend/AGENTS.md`](backend/AGENTS.md) (API, ADRs y referencia de endpoints).
 >
-> Última revisión: 2026-11-23.
+> Última revisión: 2026-11-24.
 
 ---
 
@@ -531,6 +531,11 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
   un Excel que pide "5000" recibe solo el tope y se corta en silencio (Existencias bajaba 200 de
   ~14k). Usa `lib/fetchAllPages.ts`, con páginas grandes para no gastar el límite de 120
   peticiones por minuto. Los encabezados cuentan las filas que de verdad salen.
+- **Borrador de traslados** (2026-11-24, «nos sacó de la nada» escaneando): el modal «Nueva
+  Transferencia» ya no se cierra con clic afuera (antes cerraba y borraba la lista). Lo capturado
+  (origen, destino, notas, artículos) se guarda con `useFormDraft` por usuario en esa PC
+  (`lib/transferDraft.ts`): sobrevive a la X, a «Cerrar» y a recargar; se borra al crear o con
+  «Empezar de cero». No vuelvas a poner un `onClick` de cierre en el fondo de un modal de captura.
 
 ---
 

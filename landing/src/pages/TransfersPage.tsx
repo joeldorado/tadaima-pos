@@ -22,6 +22,12 @@ import { transferItemsLabel } from "@/lib/transferItems";
 import { errorMessage } from "@/lib/deletePreviewFormat";
 import { getStatusInfo } from "@/components/transfers/transferStatus";
 import { TransferDetailModal } from "@/components/transfers/TransferDetailModal";
+import { draftKeyFor, useFormDraft } from "@/hooks/useFormDraft";
+import {
+  isEmptyTransferDraft, sanitizeTransferDraft, transferDraftButtonLabel,
+  TRANSFER_DRAFT_KEY, TRANSFER_DRAFT_VERSION,
+  type DraftItem, type TransferDraft,
+} from "@/lib/transferDraft";
 
 // ─── Paleta Tadaima ───────────────────────────────────────────────────────────
 const T = {
@@ -75,14 +81,6 @@ const T = {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type FilterStatus = "all" | "pending" | "completed" | "cancelled";
-
-interface DraftItem {
-  product_id: number;
-  name: string;
-  sku: string;
-  quantity: number;
-  quantityInput: string;
-}
 
 interface ItemStockSnapshot {
   fromAvailable: number | null;
@@ -146,13 +144,21 @@ export function TransfersPage() {
   const [searchQuery, setSearchQuery]   = useState("");
   const [filterStatus, setFilterStatus] = useState<FilterStatus>("all");
 
-  // New transfer form
-  const [fromWhId, setFromWhId] = useState<string>("");
-  const [toWhId, setToWhId]     = useState<string>("");
-  const [notes, setNotes]       = useState("");
-  const [items, setItems]       = useState<DraftItem[]>([]);
+  // New transfer form — arranca con el borrador guardado (si lo hay): lo escaneado
+  // sobrevive a cerrar el modal y a recargar (reporte de la tienda 2026-11-24).
+  const { draft: savedDraft, saveDraft, clearDraft } = useFormDraft<TransferDraft>({
+    key: draftKeyFor(TRANSFER_DRAFT_KEY, user?.id),
+    version: TRANSFER_DRAFT_VERSION,
+    isEmpty: isEmptyTransferDraft,
+  });
+  const [restoredDraft] = useState(() => sanitizeTransferDraft(savedDraft));
+  const restoreNoticePending = useRef(restoredDraft !== null);
+  const [fromWhId, setFromWhId] = useState<string>(restoredDraft?.fromWhId ?? "");
+  const [toWhId, setToWhId]     = useState<string>(restoredDraft?.toWhId ?? "");
+  const [notes, setNotes]       = useState(restoredDraft?.notes ?? "");
+  const [items, setItems]       = useState<DraftItem[]>(restoredDraft?.items ?? []);
   const [transferMode, setTransferMode] = useState<"pending" | "complete">("pending");
-  const [currentStep, setCurrentStep] = useState<1 | 2>(1);
+  const [currentStep, setCurrentStep] = useState<1 | 2>(restoredDraft?.currentStep ?? 1);
 
   // Product search inside modal
   const [productSearch, setProductSearch]     = useState("");
@@ -177,8 +183,17 @@ export function TransfersPage() {
 
   // Auto-pick piso warehouses once they load (if not already set):
   // origen = piso de la tienda propia del gerente; destino = piso de otra tienda.
+  const restoredWarehousesChecked = useRef(false);
   useEffect(() => {
     if (warehouses.length === 0) return;
+    // Un borrador restaurado puede traer un almacén que ya no existe o se desactivó:
+    // se descarta una vez y cae al default de abajo.
+    if (restoredDraft && !restoredWarehousesChecked.current) {
+      restoredWarehousesChecked.current = true;
+      const activeIds = new Set(warehouses.map(w => String(w.id)));
+      setFromWhId(prev => (activeIds.has(prev) ? prev : ""));
+      setToWhId(prev => (activeIds.has(prev) ? prev : ""));
+    }
     const myStorePiso = warehouses.find(
       w => w.type === 'store' && w.store?.id === user?.store_id
     );
@@ -451,6 +466,7 @@ export function TransfersPage() {
     ));
   };
 
+  /** Vacía la captura y borra el borrador guardado (al crear o con «Empezar de cero»). */
   const resetModal = () => {
     setItems([]);
     setItemStock({});
@@ -458,7 +474,29 @@ export function TransfersPage() {
     setTransferMode("pending");
     setCurrentStep(1);
     setNotes("");
+    clearDraft();
   };
+
+  // Cerrar (X o Cerrar) ya NO borra la lista: queda guardada para seguir después.
+  const closeModal = () => setIsModalOpen(false);
+
+  const openModal = () => {
+    setIsModalOpen(true);
+    if (restoreNoticePending.current) {
+      restoreNoticePending.current = false;
+      toast.info("Se restauró lo que tenías capturado. Usa «Empezar de cero» para limpiar.", { id: "transfer-draft-restored" });
+    }
+  };
+
+  const startOver = () => {
+    if (items.length > 0 && !window.confirm(`¿Quitar los ${items.length} artículo(s) capturados y empezar de cero?`)) return;
+    resetModal();
+  };
+
+  // Cada cambio de la captura se guarda (debounced en useFormDraft).
+  useEffect(() => {
+    saveDraft({ fromWhId, toWhId, notes, items, currentStep });
+  }, [fromWhId, toWhId, notes, items, currentStep, saveDraft]);
 
   // ─── Actions ───────────────────────────────────────────────────────────────
   const handleCreate = async () => {
@@ -674,12 +712,12 @@ export function TransfersPage() {
         </div>
 
         <button
-          onClick={() => setIsModalOpen(true)}
+          onClick={openModal}
           className="w-full sm:w-auto justify-center flex items-center gap-2 px-5 sm:px-6 py-3 font-black text-[11px] uppercase tracking-widest transition-all hover:scale-105 active:scale-95"
           style={T.btnRed}
         >
           <Plus size={16} strokeWidth={3} />
-          Nueva Transferencia
+          {transferDraftButtonLabel(items.length)}
         </button>
       </header>
 
@@ -902,11 +940,12 @@ export function TransfersPage() {
       {/* ── Modal: Nueva Transferencia ───────────────────────────────────── */}
       {isModalOpen && canRequestTransfers && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6">
+          {/* Sin onClick a propósito (2026-11-24): un clic afuera mientras escaneaban
+              cerraba el modal y borraba la lista. Se cierra con la X o «Cerrar». */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             className="absolute inset-0 bg-[#07070a]/90 backdrop-blur-2xl"
-            onClick={() => { setIsModalOpen(false); resetModal(); }}
           />
           <motion.div
             initial={{ scale: 0.9, opacity: 0 }}
@@ -918,7 +957,10 @@ export function TransfersPage() {
             <div className="relative px-4 sm:px-6 lg:px-8 py-4 sm:py-5 flex flex-col gap-3 shrink-0" style={{ borderBottom: `1px solid ${T.fieldBorder}` }}>
               {/* Botón cerrar — esquina superior derecha */}
               <button
-                onClick={() => { setIsModalOpen(false); resetModal(); }}
+                type="button"
+                onClick={closeModal}
+                aria-label="Cerrar (lo capturado se guarda)"
+                title="Cerrar — lo capturado se guarda"
                 className="absolute top-4 right-4 w-9 h-9 rounded-xl flex items-center justify-center transition-colors z-10"
                 style={{ background: T.routeChip, color: T.softText, border: `1px solid ${T.fieldBorder}` }}
               >
@@ -998,6 +1040,18 @@ export function TransfersPage() {
                       <span className="text-[10px] font-bold" style={{ color: T.softText }}>
                         Mueve el stock ya; la tienda destino no tendrá que recibir.
                       </span>
+                    )}
+                    {(items.length > 0 || notes.trim() !== "") && (
+                      <button
+                        type="button"
+                        onClick={startOver}
+                        className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[10px] font-black uppercase tracking-wider transition-colors"
+                        style={{ ...T.softButton, color: T.softText }}
+                        title="Quita los artículos capturados y el borrador guardado"
+                      >
+                        <Trash2 size={12} />
+                        Empezar de cero
+                      </button>
                     )}
                   </div>
                 </div>
@@ -1356,13 +1410,12 @@ export function TransfersPage() {
                     setCurrentStep(1);
                     return;
                   }
-                  setIsModalOpen(false);
-                  resetModal();
+                  closeModal();
                 }}
                 className="flex-1 py-5 rounded-[24px] font-black text-[11px] uppercase transition-colors"
                 style={{ background: T.routeChip, color: T.panelText, border: `1px solid ${T.fieldBorder}` }}
               >
-                {currentStep > 1 ? "Atrás" : "Cancelar"}
+                {currentStep > 1 ? "Atrás" : "Cerrar"}
               </button>
               {currentStep === 1 && (
                 <button
