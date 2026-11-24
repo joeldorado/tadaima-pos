@@ -4,6 +4,23 @@
 
 ---
 
+### Sesión 2026-11-24 (b) — Traslados: sin ráfagas de consultas de stock (PR #117) — rev tadaima-00166-tow
+
+**Origen:** feedback de la tienda tras el PR #116: con algunos productos «Agregar» marcaba error de stock aunque sí había, el teléfono salía en rojo y a veces había que intentar 3+ veces.
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00164-dep`. **Solo frontend, sin migración.** Al regresar vuelven las ráfagas de consultas en traslados largos.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00164-dep=100 --project tadaimapos --region us-east1`
+
+- **Causa (logs de Cloud Run, 21:00–22:33 UTC):** una sola PC hizo ~18,900 `GET /inventory?product_id` en ~2 h, en ráfagas de 100–250 por segundo con una lista de ~76 productos. La pantalla recargaba el stock de TODOS los artículos (2 consultas cada uno) y lo hacía dos veces por artículo elegido (el origen rebotaba a `""` mientras cargaba). Resultado: 429 por usuario (el teléfono del mismo usuario también) y ~1,500 respuestas 500 por `EMAXCONNSESSION` del pooler de Supabase (session mode, `pool_size` 15). No hubo 5xx en otros endpoints, pero el riesgo era tumbar Caja.
+- **Arreglo (`TransfersPage.tsx` + `lib/transferStock.ts`):** elegir + agregar = 1 consulta (Agregar usa el inventario ya cargado); la lista solo se recarga al cambiar tienda origen o destino (o al restaurar el borrador), de a 3; 1 consulta por artículo; sin rebote del origen; si falla, el artículo queda elegido para reintentar. Admin: el máximo de origen es la tienda origen, no la suma de todas.
+- **Validación:**
+  - vitest 1053 ✓ (9 nuevas); type-check y lint sin errores nuevos; `vite build` ✓.
+  - Local como gerente: agregar el 4.º artículo = 1 consulta; recargar con borrador de 4 = 4 consultas, máx. 3 a la vez.
+  - Candidato y dominio: `/login` y `/tadaimaus/` 200, API 401 sin token, bundle con el arreglo.
+  - Pendiente: confirmar en logs el siguiente traslado largo de la tienda.
+- **En prod 2026-11-24 (Tijuana).**
+- **Aparte:** la defensa del lado del servidor (pooler de Supabase / concurrencia de php-fpm) se evalúa en otra sesión.
+
 ### Sesión 2026-11-24 — Traslados: el clic afuera ya no cierra el modal y lo escaneado se guarda (PR #116) — rev tadaima-00164-dep
 
 **Origen:** la tienda mandó un video: «estábamos escaneando productos para traslado, llevábamos apenas unos y nos sacó de la nada» y «tampoco aparece como si se hubiera guardado lo que ya se había escaneado».
