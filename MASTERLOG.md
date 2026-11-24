@@ -4,6 +4,22 @@
 
 ---
 
+### Sesión 2026-11-24 — Traslados: el clic afuera ya no cierra el modal y lo escaneado se guarda (PR #116) — rev tadaima-00164-dep
+
+**Origen:** la tienda mandó un video: «estábamos escaneando productos para traslado, llevábamos apenas unos y nos sacó de la nada» y «tampoco aparece como si se hubiera guardado lo que ya se había escaneado».
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00162-nes`. **Solo frontend, sin migración.** Al regresar vuelve el cierre con clic afuera; los borradores guardados en localStorage se ignoran.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00162-nes=100 --project tadaimapos --region us-east1`
+
+- **Causa:** no era cierre de sesión (en el video siguen en la lista con sesión abierta). El fondo oscuro del modal «Nueva Transferencia» tenía un `onClick` que cerraba y llamaba `resetModal()`, que vaciaba la lista. La lista vivía solo en memoria: nada se guarda hasta «Crear». Alternando lector y mouse, un clic fuera del recuadro es fácil.
+- **Arreglo (`TransfersPage.tsx`):** el fondo ya no cierra; se cierra con la X o «Cerrar» (antes «Cancelar»), sin borrar. Borrador con `useFormDraft` por usuario en esa PC (`lib/transferDraft.ts`, llave `tadaima-transfer-draft:{userId}`): origen, destino, notas, artículos y paso. El botón dice «Continuar traslado (N)» y al reabrir avisa «Se restauró…». Se borra al crear o con «Empezar de cero» (pide confirmación). Almacenes restaurados que ya no existen se descartan.
+- **Validación:**
+  - vitest 1044 ✓ (14 nuevas); type-check 446 errores y lint igual que `main`; `vite build` ✓.
+  - Navegador local como gerente: clic afuera → sigue abierto; X → «Continuar traslado (1)»; recargar → se restaura con aviso; crear → borrador borrado; «Empezar de cero» → lista vacía.
+  - Candidato y dominio: `/login` y `/tadaimaus/` 200, API 401 sin token, bundle con el borrador.
+  - No probado en prod con sesión: lo prueba la tienda con su lector.
+- **En prod 2026-11-24 (Tijuana).** Guía in-app de Traslados y `AGENTS.md` al día.
+
 ### Sesión 2026-11-23 (b) — Comisión de preventas con Tarjeta en Reportes y en el Excel del corte (PR #115) — rev tadaima-00162-nes
 
 **Origen:** pendiente de la sesión anterior. La comisión de las preventas cobradas con tarjeta solo salía en el Reporte del Día.
