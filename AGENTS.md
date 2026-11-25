@@ -106,6 +106,13 @@ React Native). En este repo la carpeta `pos-app/` está en `.gitignore`.
     si una venta necesita más, se sube el techo a propósito. Para medir en local hay que simular la red
     (Postgres local responde en 0 ms y esconde el problema). No muevas escrituras a `terminate()`:
     Cloud Run le quita CPU a la instancia al terminar la respuesta y pueden quedarse a medias.
+13. **El pool de Supabase es de 15 conexiones y no espera** (2026-11-24): el cliente 16 recibe 500
+    `EMAXCONNSESSION` al instante. Cada worker de php-fpm ocupa una conexión mientras dura su petición, así
+    que **`pm.max_children` (Dockerfile) × `--max-instances` (Cloud Run) tiene que quedar abajo de 15** con
+    holgura: 6 × 2 = 12. Si subes uno, baja el otro o sube el pool en Supabase (con OK de Joel). Las ráfagas
+    se frenan con `ApiBurstGuard` ANTES de autenticar (por token, `API_BURST_LIMITS`, default 60/10 s y
+    120/min): un 429 suyo no toca la base. No pases a transaction mode (6543) sin leer
+    `docs/conexiones-supabase.md`: `ReadOnlyDatabase` de prodro dejaría prod en solo lectura.
 
 ---
 

@@ -108,6 +108,14 @@ RUN { \
     } > /usr/local/etc/php/conf.d/opcache.ini
 
 # php-fpm: unix socket, run as www-data
+# pm.max_children = tope de conexiones a Supabase POR INSTANCIA (2026-11-24): cada
+# worker abre su propia conexión al session pooler (:5432) y la suelta al acabar
+# la petición. El pool es de 15 en TODO el servicio, así que
+# max_children × instancias máximas de Cloud Run (--max-instances) debe quedar
+# por debajo de 15 con holgura (migraciones del arranque, revisión candidate,
+# prodro local). 6 × 2 = 12. Con 20 × 5 eran 100 y una ráfaga de una PC tumbó el
+# pool (500 EMAXCONNSESSION). Lo que no cabe espera en la cola de php-fpm en vez
+# de tronar. Ver docs/conexiones-supabase.md.
 RUN { \
         echo '[www]'; \
         echo 'user = www-data'; \
@@ -117,10 +125,10 @@ RUN { \
         echo 'listen.group = nginx'; \
         echo 'listen.mode = 0660'; \
         echo 'pm = dynamic'; \
-        echo 'pm.max_children = 20'; \
-        echo 'pm.start_servers = 4'; \
+        echo 'pm.max_children = 6'; \
+        echo 'pm.start_servers = 3'; \
         echo 'pm.min_spare_servers = 2'; \
-        echo 'pm.max_spare_servers = 10'; \
+        echo 'pm.max_spare_servers = 4'; \
         echo 'clear_env = no'; \
         echo 'catch_workers_output = yes'; \
         echo 'decorate_workers_output = no'; \

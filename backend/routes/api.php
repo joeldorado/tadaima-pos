@@ -45,6 +45,7 @@ use App\Http\Controllers\Api\UsListingController;
 use App\Http\Controllers\Api\UsOrderController;
 use App\Http\Controllers\Api\WarehouseController;
 use Illuminate\Support\Facades\Route;
+use App\Http\Middleware\ApiBurstGuard;
 use App\Http\Middleware\ThrottleApi;
 
 /*
@@ -107,7 +108,8 @@ Route::middleware(['auth:us', 'throttle:60,1'])->prefix('us/account')->group(fun
 // cajero (el carrito es client-side, ADR-014; el polling real ronda ~25/min/usuario).
 // El contador vive fuera de la base (ThrottleApi, 2026-11-17): con `throttle:120,1` a
 // secas cada petición gastaba ~6 consultas a Supabase solo en contar.
-Route::middleware(['auth:sanctum', ThrottleApi::class . ':120,1'])->group(function () {
+// ApiBurstGuard (2026-11-24) va primero: frena ráfagas por token sin tocar la base.
+Route::middleware([ApiBurstGuard::class, 'auth:sanctum', ThrottleApi::class . ':120,1'])->group(function () {
 
     // ── Users ─────────────────────────────────────────────────────────────────
     Route::get('users/online',                  [UserController::class, 'online']);

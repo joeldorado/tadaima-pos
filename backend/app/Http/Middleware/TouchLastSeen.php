@@ -28,6 +28,12 @@ class TouchLastSeen
         // bearer token $request->user() aún es null. Tras $next ya hay user.
         $response = $next($request);
 
+        // Un 429 no toca la base: con una ráfaga, resolver el usuario aquí
+        // gastaría una conexión a Supabase por cada rechazo (2026-11-24).
+        if ($response->getStatusCode() === Response::HTTP_TOO_MANY_REQUESTS) {
+            return $response;
+        }
+
         $user = $request->user() ?? $request->user('sanctum');
         // Solo Users del POS: un UsCustomer (tienda US, guard `us`) no tiene
         // columna last_seen_at y el forceFill explotaría en cada request.
