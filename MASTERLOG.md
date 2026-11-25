@@ -4,6 +4,27 @@
 
 ---
 
+### Sesión 2026-11-24 (c) — El servidor ya no deja que una PC agote las conexiones a Supabase (PR #119) — rev tadaima-00168-gok
+
+**Origen:** el incidente de Traslados de la tarde (sesión b). Arreglado el front, faltaba que el servidor no pudiera caerse con la próxima pantalla que tenga un bug igual.
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00166-tow`. **Sin migración.** Al regresar vuelven 20 workers × 5 instancias (100 conexiones posibles contra 15) y el throttle solo después de autenticar.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00166-tow=100 --project tadaimapos --region us-east1`
+
+- **Causa (logs 21:00–22:45 UTC):** `pm.max_children` 20 × `--max-instances` 5 = 100 conexiones posibles contra el `pool_size` 15 del session pooler, que no hace esperar. En el incidente hubo hasta 100 peticiones en vuelo y **3,697 respuestas 500** `EMAXCONNSESSION` (la sesión b contó ~1,500 por error), todas de la PC de Traslados. Ya había pasado el 5, 13, 14, 15 y 17-nov. El throttle de 120/min corría después de Sanctum (cada 429 gastaba una conexión) y cuenta por instancia.
+- **Arreglo:**
+  - `ApiBurstGuard`: freno por token ANTES de autenticar, 60 en 10 s y 120/min (`API_BURST_LIMITS`). Su 429 no consulta la base. `TouchLastSeen` tampoco en un 429.
+  - Dockerfile: `pm.max_children` 20 → 6.
+  - Cloud Run: `--max-instances` 5 → **2**, `--concurrency` 40 → **20**. 6 × 2 = 12 conexiones de 15.
+  - `ReadOnlyDatabase` (prodro) truena si lo apuntan al 6543 (transaction mode).
+  - Detalle y opciones en `docs/conexiones-supabase.md`; regla 13 en `AGENTS.md`.
+- **Validación:**
+  - phpunit 1074 ✓ (5 nuevas en `ApiBurstGuardTest`).
+  - Candidato: `/up`, `/`, `/tadaimaus/` 200, API 401 sin token. Ráfaga de 150 con 30 en paralelo y token falso: 63 × 401, 82 × 429 con `Retry-After`.
+  - 5 × 502 en esa prueba: la 2.ª instancia recibió peticiones antes de que php-fpm creara su socket (`connect() to unix:/run/php-fpm.sock failed`). Ya pasaba antes (32 × 502 en el incidente). **Pendiente aparte:** que nginx espere al socket.
+  - Pendiente: confirmar en logs que `EMAXCONNSESSION` no vuelve y que nadie ve 429 en uso normal.
+- **En prod 2026-11-24 (Tijuana).**
+
 ### Sesión 2026-11-24 (b) — Traslados: sin ráfagas de consultas de stock (PR #117) — rev tadaima-00166-tow
 
 **Origen:** feedback de la tienda tras el PR #116: con algunos productos «Agregar» marcaba error de stock aunque sí había, el teléfono salía en rojo y a veces había que intentar 3+ veces.
