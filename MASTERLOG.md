@@ -4,6 +4,21 @@
 
 ---
 
+### Sesión 2026-11-24 (d) — Sin 502 al arrancar una instancia: nginx espera a php-fpm (PR #121) — rev tadaima-00170-rir
+
+**Origen:** en la prueba del candidato de la sesión (c) salieron 5 × 502 cuando arrancó la 2.ª instancia; en el incidente de Traslados hubo 32.
+
+> **PUNTO DE ROLLBACK:** revisión `tadaima-00168-gok`. **Sin migración.** Al regresar vuelven los 502 en las primeras peticiones de cada instancia nueva.
+> `gcloud run services update-traffic tadaima --to-revisions tadaima-00168-gok=100 --project tadaimapos --region us-east1`
+
+- **Causa:** Cloud Run da la instancia por lista cuando el 8080 acepta conexiones (startup probe TCP). supervisord levantaba php-fpm y nginx casi a la vez; nginx abría el 8080 antes de que existiera `/run/php-fpm.sock` → `connect() to unix:/run/php-fpm.sock failed (2: No such file)` → 502.
+- **Arreglo:** `docker/nginx-after-fpm.sh` espera el socket (cada 0.1 s, tope 60 s) y hace `exec` de nginx; `supervisord.conf` lo usa y el `Dockerfile` lo copia. Mientras espera, el 8080 sigue cerrado y Cloud Run no manda tráfico.
+- **Validación:**
+  - Local (sin Docker): socket a 1.5 s → espera y pasa `-g "daemon off;"` intacto; sin socket → arranca igual al tope.
+  - Candidato: `/up`, `/`, `/tadaimaus/` 200. 360 peticiones con 40 en paralelo: 0 × 502. Las 2 instancias abrieron nginx 0.2 s después de «ready to handle connections»; la 2.ª arrancó con carga y atendió 111 peticiones sin error.
+  - Dominio tras promover: `/up` 200, API 401 sin token, `/tadaimaus/` 200.
+- **En prod 2026-11-24 (Tijuana).**
+
 ### Sesión 2026-11-24 (c) — El servidor ya no deja que una PC agote las conexiones a Supabase (PR #119) — rev tadaima-00168-gok
 
 **Origen:** el incidente de Traslados de la tarde (sesión b). Arreglado el front, faltaba que el servidor no pudiera caerse con la próxima pantalla que tenga un bug igual.
