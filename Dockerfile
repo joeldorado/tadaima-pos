@@ -151,8 +151,9 @@ COPY --from=frontend-builder /repo/tadaimaus/dist/ /var/www/public/tadaimaus/
 COPY docker/nginx.conf       /etc/nginx/nginx.conf
 COPY docker/supervisord.conf /etc/supervisord.conf
 COPY docker/entrypoint.sh    /usr/local/bin/entrypoint.sh
+COPY docker/nginx-after-fpm.sh /usr/local/bin/nginx-after-fpm.sh
 
-RUN chmod +x /usr/local/bin/entrypoint.sh \
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/nginx-after-fpm.sh \
     && mkdir -p \
         /var/www/storage/framework/cache \
         /var/www/storage/framework/sessions \
