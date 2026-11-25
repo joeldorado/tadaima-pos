@@ -33,6 +33,14 @@ return [
     'api_throttle_store' => env('CACHE_API_THROTTLE_STORE', env('CACHE_STORE', 'database') === 'database' ? 'file' : null),
 
     /*
+    | Freno de ráfagas ANTES de autenticar (ApiBurstGuard, 2026-11-24): pares
+    | «máximo:segundos» por token y por instancia. Rechaza sin abrir conexión a
+    | Supabase. Vacío = apagado.
+    */
+
+    'api_burst_limits' => env('API_BURST_LIMITS', '60:10,120:60'),
+
+    /*
     |--------------------------------------------------------------------------
     | Cache Stores
     |--------------------------------------------------------------------------

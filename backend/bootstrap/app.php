@@ -16,6 +16,12 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'auth' => \App\Http\Middleware\Authenticate::class,
         ]);
+        // El freno de ráfagas va ANTES de autenticar y de resolver bindings: así
+        // un 429 no abre conexión a Supabase (ApiBurstGuard, 2026-11-24).
+        $middleware->prependToPriorityList(
+            before: \Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests::class,
+            prepend: \App\Http\Middleware\ApiBurstGuard::class,
+        );
         // Toca users.last_seen_at en cada request /api/* autenticada (dedupe 30s).
         // Admin/gerente lo lee vía GET /users/online para saber quién está
         // conectado al POS aunque no haya abierto caja todavía.

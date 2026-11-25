@@ -27,6 +27,13 @@ class ReadOnlyDatabase
 {
     public function handle(Request $request, Closure $next): Response
     {
+        // El SET de abajo es de SESIÓN. En el pooler en modo transacción (puerto
+        // 6543) caería en una conexión que comparte prod y le pondría solo
+        // lectura a las ventas de las tiendas. prodro va siempre por el 5432.
+        if ((string) config('database.connections.pgsql.port') === '6543') {
+            abort(500, 'prodro no puede usar el pooler en modo transacción (6543): usa el 5432.');
+        }
+
         if ($request->is('api/*/auth/login')) {
             return $next($request);
         }
